@@ -412,6 +412,13 @@ impl Session {
         Ok(Outcome::Done(done))
     }
 
+    /// The `USE`'d dataset, for callers that must decide whether to
+    /// `USE` at all — the app door binds per request and skips the
+    /// remount when the binding already holds.
+    pub fn dataset(&self) -> Option<String> {
+        self.shared.dataset.read().expect("state lock").clone()
+    }
+
     async fn use_dataset(&self, name: &str) -> Result<Outcome, SessionError> {
         if !self.shared.store.dataset_exists(name).await? {
             return Err(SessionError::Store(glossql_glossary::Error::Unknown {
@@ -536,8 +543,19 @@ impl Session {
     ) -> Result<(), SessionError> {
         if let Some(provider) = schema.table(table).await? {
             let _ = self.ctx.deregister_table(table);
-            self.ctx.register_table(table, provider)?;
-            self.aliased.write().expect("aliases").push(table.to_string());
+            if let Err(e) = self.ctx.register_table(table, provider) {
+                // Two concurrent `USE`s of the same dataset can race
+                // between the deregister and the register (the app
+                // door's frames share one session). The winner mounted
+                // the same generation — losing that race is fine.
+                if !self.ctx.table_exist(table)? {
+                    return Err(e.into());
+                }
+            }
+            let mut aliased = self.aliased.write().expect("aliases");
+            if !aliased.iter().any(|t| t == table) {
+                aliased.push(table.to_string());
+            }
         }
         Ok(())
     }

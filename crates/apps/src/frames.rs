@@ -49,8 +49,10 @@ pub async fn frame(
         }
     };
     // The app's own session on the plane — Human-kind, like `/query`.
-    // USE per request is idempotent and keeps the binding self-healing;
-    // nobody else steers this session's state.
+    // Nobody else steers this session's state, so the binding holds
+    // between requests; `USE` runs only when it doesn't (first hit, or
+    // the app.toml changed), and a first-burst race inside the mount is
+    // absorbed at the alias.
     let actor = Actor {
         kind: ActorKind::Human,
         id: format!("app:{}", def.name),
@@ -59,7 +61,9 @@ pub async fn frame(
         Ok(session) => session,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    if let Err(e) = session.execute(&format!("USE {};", def.dataset)).await {
+    if session.dataset().as_deref() != Some(def.dataset.as_str())
+        && let Err(e) = session.execute(&format!("USE {};", def.dataset)).await
+    {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string());
     }
     let values: HashMap<String, ScalarValue> = params

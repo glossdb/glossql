@@ -17,6 +17,7 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("store.js", "text/javascript"),
     asset!("gl-chart.js", "text/javascript"),
     asset!("gl-table.js", "text/javascript"),
+    asset!("gl-value.js", "text/javascript"),
     asset!("vendor/htmx.min.js", "text/javascript"),
     asset!("vendor/vega.min.js", "text/javascript"),
     asset!("vendor/vega-lite.min.js", "text/javascript"),
@@ -26,10 +27,13 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
 
 pub async fn asset(Path(file): Path<String>) -> Response {
     match ASSETS.iter().find(|(name, ..)| *name == file) {
+        // no-cache: the browser revalidates on every load, so a new
+        // binary's assets land immediately — a laptop server has no
+        // CDN economics to honor, and a stale island renders wrong.
         Some((_, bytes, mime)) => (
             [
                 (header::CONTENT_TYPE, *mime),
-                (header::CACHE_CONTROL, "max-age=3600"),
+                (header::CACHE_CONTROL, "no-cache"),
             ],
             *bytes,
         )

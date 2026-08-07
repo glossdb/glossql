@@ -1,23 +1,42 @@
 {# The shared tile vocabulary. Frame and spec references are relative
-   to the app — frames/<name>, specs/<file> — and the browser resolves
-   them against the app root, carrying the page's query params over:
-   the URL is the only state. A chart with drill_field navigates on
-   click, setting drill_param (defaults to the field) from the clicked
-   datum — drill is navigation, nothing else. #}
+   to the app — frames/<name>, specs/<file> — resolved against the app
+   root; a reference's own params are the author's defaults and the
+   page URL overrides them. The chip is the tile's provenance — which
+   metric surface the number comes from — with `note` as its hover
+   text (a disclosed assumption, a composition rule). A chart with
+   drill_field navigates on click: the clicked datum's field lands in
+   the URL as drill_param — drill is navigation, nothing else. #}
 
-{% macro chart(frame, spec, title="", drill_field="", drill_param="", drill_type="") %}
+{% macro chart(frame, spec, title="", chip="", note="", hint="", drill_field="", drill_param="", drill_type="") %}
 <section class="tile">
-  {% if title %}<h3>{{ title }}</h3>{% endif %}
+  {% if title or chip %}<header>
+    {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
+    {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
+  </header>{% endif %}
+  {% if hint %}<p class="hint">{{ hint | safe }}</p>{% endif %}
   <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"{% if drill_field %} drill-field="{{ drill_field | safe }}"{% endif %}{% if drill_param %} drill-param="{{ drill_param | safe }}"{% endif %}{% if drill_type %} drill-type="{{ drill_type | safe }}"{% endif %}></gl-chart>
 </section>
 {% endmacro chart %}
 
-{% macro table(frame, title="", rows=50) %}
+{% macro table(frame, title="", chip="", note="", rows=50) %}
 <section class="tile">
-  {% if title %}<h3>{{ title }}</h3>{% endif %}
+  {% if title or chip %}<header>
+    {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
+    {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
+  </header>{% endif %}
   <gl-table frame="{{ frame | safe }}" rows="{{ rows }}"></gl-table>
 </section>
 {% endmacro table %}
+
+{% macro value(frame, field, label, delta_field="", unit="", format="compact", good="up", chip="", note="") %}
+<section class="tile kpi">
+  <header>
+    <span class="eyebrow">{{ label }}</span>
+    {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
+  </header>
+  <gl-value frame="{{ frame | safe }}" field="{{ field }}"{% if delta_field %} delta-field="{{ delta_field }}"{% endif %}{% if unit %} unit="{{ unit }}"{% endif %} format="{{ format }}" good="{{ good }}"></gl-value>
+</section>
+{% endmacro value %}
 
 {% macro prose(text) %}
 <section class="tile prose"><p>{{ text }}</p></section>

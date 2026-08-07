@@ -24,3 +24,6 @@ target
 .DS_Store
 __pycache__/
 .*.pending-snap
+
+# Playwright MCP session artifacts (UI review loop)
+.playwright-mcp/

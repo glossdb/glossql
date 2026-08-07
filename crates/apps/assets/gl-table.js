@@ -21,6 +21,7 @@
 
   class GlTable extends HTMLElement {
     async connectedCallback() {
+      this.setAttribute('aria-busy', 'true');
       try {
         const t = await glStore.table(this.getAttribute('frame'));
         if (!this.isConnected) return;
@@ -58,6 +59,8 @@
         this.replaceChildren(el, foot);
       } catch (e) {
         this.replaceChildren(glStore.errorBox(e.message || String(e)));
+      } finally {
+        this.removeAttribute('aria-busy');
       }
     }
   }
