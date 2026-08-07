@@ -49,6 +49,13 @@ documents:
   on both sides, the aspect schema is the one validated contract, a
   function without RETURNS is a detector, and witnesses gate actors and
   adjudicate only — function voices ride the RETURNS binding.
+  · `apps` (the app door at `/app`, mounted by serverd — server-rendered
+  data apps: an app is a workspace directory (`app.toml`, tera pages,
+  `frames/*.sql`, `specs/*.vl.json`), frames stream Arrow IPC through the
+  one-query path with URL params bound as plan placeholders, the browser
+  holds each frame once (htmx + vega-lite + arrow-js, vendored, the only
+  JS), the URL is the only state, drill is navigation; authors write
+  declarative artifacts, never code — stack ruled 2026-08-07)
   · `serverd` (the doors, M5: one axum listener — the MCP shim at `/mcp`,
   rmcp streamable HTTP, stateless per the 2026-07-28 revision, one
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end
