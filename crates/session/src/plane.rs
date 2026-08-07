@@ -2,15 +2,18 @@
 //! runtime, and the workspace's sessions keyed by actor. The transports
 //! are stateless (the 2026-07-28 MCP revision removed transport
 //! sessions), so continuity lives here — which is also what `USE` needs
-//! to survive between an agent's tool calls.
+//! to survive between an agent's tool calls. It lives in the session
+//! crate because every door needs it (serverd's `/mcp` and `/query`,
+//! the app door's frame reads).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, Store};
-use glossql_session::{FunctionRuntime, Session, SessionError};
 use tokio::sync::RwLock;
+
+use crate::session::{FunctionRuntime, Session, SessionError};
 
 pub struct Plane {
     store: Store,

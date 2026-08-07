@@ -11,16 +11,22 @@ QUERY aspects, glosses, functions, witnesses. The governing rule:
 **nothing is evaluated before a reader asks; everything a reader
 proves may be recorded.**
 
+The framework is domain-neutral: a metric is whatever the target asks
+— throughput, defect rate, utilization, revenue. The worked examples
+below come from our finance test runs.
+
 ## 1. Read the floor first
 
 Every grounding cites the judged knowledge underneath it. Before
 writing any SQL: no summed term without a `behavior` gloss under it
 (`behavior_evidence` first), no join without its grain-check gloss on
-the relationship, the sign convention stated before any P&L split,
-units checked before cross-currency arithmetic. A grounding whose
-assumptions cannot name their bases is not ready to write.
+the relationship, any sign convention stated before signed values
+split into measures, units checked before cross-unit arithmetic. A
+grounding whose assumptions cannot name their bases is not ready to
+write.
 
-The sign convention has measured evidence: a behavior_evidence anchor
+Where the data carries a sign convention (ledger-style bookings), the
+convention has measured evidence: a behavior_evidence anchor
 carries `sign` — voters re-judged against the negated convention. A
 mirror-heavy count says the store carries the negation of the anchor's
 named convention (ledger-signed); primary-heavy says the convention
@@ -64,9 +70,9 @@ GLOSS revenue ON fin AS $${
 }$$;
 ```
 
-A stock's extract is bounded by its **source grain** (a trial balance
-speaks per period; no read can answer finer) — serve the grain column
-as-is and say so in the assumptions.
+A stock's extract is bounded by its **source grain** (a table of
+period balances speaks per period; no read can answer finer) — serve
+the grain column as-is and say so in the assumptions.
 
 **After grounding, run the collision read.** Two concepts grounding to
 the same extract make every ratio between them compute 1.0, silently:
@@ -148,7 +154,7 @@ SELECT journal_check() FROM journal_lines;
   voice, and the next read recomputes.
 - **Promote confirmed reconciliations.** A behavior_evidence
   convention that reconciled at ~0 residual (a balance equal to the
-  sum of its journal lines) is a standing invariant — turn it into a
+  sum of its movement rows) is a standing invariant — turn it into a
   check.
 - Checks and detectors are workspace-authored (`FOR` the dataset,
   not GLOBAL) — write them per the glossql-functions skill.

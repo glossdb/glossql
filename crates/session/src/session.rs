@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
-use datafusion::common::DataFusionError;
+use datafusion::common::{DataFusionError, ParamValues};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::StreamExt as _;
@@ -688,6 +688,19 @@ impl Session {
     /// The result says whether the query reads only the store's
     /// relations — the doors' cap policy wants to know.
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
+        self.query_stream_with_params(sql, None).await
+    }
+
+    /// [`Session::query_stream`] with placeholder values: `$name` in the
+    /// query binds from the map — typed values through the plan, never
+    /// text spliced into SQL. The app door's frames ride this; a
+    /// placeholder nobody bound fails at execution, which is the read
+    /// telling the author what the URL owed it.
+    pub async fn query_stream_with_params(
+        &self,
+        sql: &str,
+        params: Option<ParamValues>,
+    ) -> Result<QueryStream, SessionError> {
         let mut statements = GlossqlParser::parse_sql(sql)?;
         let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
             if matches!(&**statement, DFStatement::Statement(inner)
@@ -699,7 +712,10 @@ impl Session {
             unreachable!("just matched")
         };
         let metadata_only = reads_only_metadata(&statement);
-        let plan = self.ctx.state().statement_to_plan(*statement).await?;
+        let mut plan = self.ctx.state().statement_to_plan(*statement).await?;
+        if let Some(params) = params {
+            plan = plan.with_param_values(params)?;
+        }
         Ok(QueryStream {
             stream: self
                 .ctx

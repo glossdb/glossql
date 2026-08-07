@@ -19,7 +19,8 @@ use tower::ServiceExt;
 async fn app_with(doors: DoorConfig) -> Router {
     let store = Store::open_memory().await.unwrap();
     let plane = Arc::new(Plane::new(store, None, Arc::new(NoRuntime)));
-    router(plane, doors)
+    // No apps live here — the app door serves an empty home.
+    router(plane, doors, std::env::temp_dir())
 }
 
 async fn app() -> Router {

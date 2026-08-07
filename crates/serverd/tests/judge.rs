@@ -28,7 +28,8 @@ async fn app() -> (Router, tempfile::TempDir) {
     })
     .await
     .unwrap();
-    (router(plane, DoorConfig::default()), dir)
+    let workspace = dir.path().to_path_buf();
+    (router(plane, DoorConfig::default(), workspace), dir)
 }
 
 /// The agent's door: one `glossql` tool call, outcomes parsed from the

@@ -16,8 +16,10 @@
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 
+mod plane;
 mod reads;
 mod session;
 mod subject;
 
+pub use plane::Plane;
 pub use session::{FunctionRuntime, NoRuntime, Outcome, Session, SessionError, SqlDoor};

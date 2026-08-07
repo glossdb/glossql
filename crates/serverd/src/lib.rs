@@ -7,16 +7,16 @@
 
 mod bootstrap;
 mod mcp;
-mod plane;
 mod query;
 mod wire;
 
 pub use bootstrap::bootstrap;
+pub use glossql_session::Plane;
 pub use mcp::GlossqlMcp;
-pub use plane::Plane;
 pub use query::ARROW_STREAM;
 pub use wire::DEFAULT_ROW_CAP;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -53,8 +53,11 @@ pub struct AppState {
     pub row_cap: usize,
 }
 
-pub fn router(plane: Arc<Plane>, doors: DoorConfig) -> Router {
+/// The doors: `/mcp` (agent), `/query` (Arrow IPC), `/app` (the
+/// server-rendered app door; `workspace` is where its apps live).
+pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Router {
     let mcp_plane = Arc::clone(&plane);
+    let app_plane = Arc::clone(&plane);
     let agent = doors.agent;
     let row_cap = doors.row_cap;
     // Plain JSON answers; nothing here streams partial results.
@@ -72,5 +75,6 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig) -> Router {
             human: doors.human,
             row_cap: doors.row_cap,
         })
+        .nest("/app", glossql_apps::router(app_plane, workspace))
         .nest_service("/mcp", mcp)
 }

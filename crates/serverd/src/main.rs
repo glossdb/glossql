@@ -67,10 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         id: args.doors.human.clone(),
     })
     .await?;
-    let app = router(plane, args.doors);
+    let app = router(plane, args.doors, args.workspace.clone());
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     println!(
-        "serverd on {} — /mcp (agent door), /query (arrow door)",
+        "serverd on {} — /mcp (agent door), /query (arrow door), /app (app door)",
         args.addr
     );
     axum::serve(listener, app).await?;

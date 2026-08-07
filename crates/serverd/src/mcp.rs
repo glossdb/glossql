@@ -16,7 +16,7 @@ use rmcp::{ErrorData as McpError, ServerHandler};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::SessionError;
 
-use crate::plane::Plane;
+use glossql_session::Plane;
 use crate::wire;
 
 const INSTRUCTIONS: &str = "glossql workspace server. One tool: `glossql` executes \

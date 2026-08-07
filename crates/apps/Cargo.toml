@@ -1,28 +1,22 @@
 [package]
-name = "glossql-serverd"
+name = "glossql-apps"
 version = "0.1.0"
 edition.workspace = true
-
-[[bin]]
-name = "serverd"
-path = "src/main.rs"
 
 [dependencies]
 glossql-glossary = { path = "../glossary" }
 glossql-session = { path = "../session" }
-glossql-apps = { path = "../apps" }
-glossql-catalog = { path = "../catalog" }
-glossql-scripts = { path = "../scripts" }
 datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
-arrow-json = { workspace = true }
 axum = { workspace = true }
 futures = "0.3"
-rmcp = { workspace = true }
 serde_json = { workspace = true }
+tera = { version = "1", default-features = false }
 tokio = { workspace = true }
+toml = "0.8"
 
 [dev-dependencies]
+glossql-catalog = { path = "../catalog" }
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 

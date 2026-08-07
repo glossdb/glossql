@@ -1,0 +1,24 @@
+{# The shared tile vocabulary. Frame and spec references are relative
+   to the app — frames/<name>, specs/<file> — and the browser resolves
+   them against the app root, carrying the page's query params over:
+   the URL is the only state. A chart with drill_field navigates on
+   click, setting drill_param (defaults to the field) from the clicked
+   datum — drill is navigation, nothing else. #}
+
+{% macro chart(frame, spec, title="", drill_field="", drill_param="") %}
+<section class="tile">
+  {% if title %}<h3>{{ title }}</h3>{% endif %}
+  <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"{% if drill_field %} drill-field="{{ drill_field | safe }}"{% endif %}{% if drill_param %} drill-param="{{ drill_param | safe }}"{% endif %}></gl-chart>
+</section>
+{% endmacro chart %}
+
+{% macro table(frame, title="", rows=50) %}
+<section class="tile">
+  {% if title %}<h3>{{ title }}</h3>{% endif %}
+  <gl-table frame="{{ frame | safe }}" rows="{{ rows }}"></gl-table>
+</section>
+{% endmacro table %}
+
+{% macro prose(text) %}
+<section class="tile prose"><p>{{ text }}</p></section>
+{% endmacro prose %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% if app %}{{ app.title }}{% else %}glossql{% endif %}{% endblock %}</title>
+<link rel="stylesheet" href="/app/assets/app.css">
+<script src="/app/assets/vendor/htmx.min.js"></script>
+<script src="/app/assets/vendor/vega.min.js"></script>
+<script src="/app/assets/vendor/vega-lite.min.js"></script>
+<script src="/app/assets/vendor/vega-embed.min.js"></script>
+<script src="/app/assets/vendor/arrow.min.js"></script>
+<script src="/app/assets/store.js"></script>
+<script src="/app/assets/gl-chart.js"></script>
+<script src="/app/assets/gl-table.js"></script>
+</head>
+<body hx-boost="true"{% if app %} data-approot="/app/{{ app.name }}/"{% endif %}>
+<header class="shell-nav">
+  <a class="brand" href="/app">glossql</a>
+  <nav>
+    {% for a in apps %}<a{% if app and a.name == app.name %} class="current"{% endif %} href="/app/{{ a.name }}">{{ a.title }}</a>{% endfor %}
+  </nav>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>
