@@ -26,7 +26,7 @@ pub async fn query(State(state): State<AppState>, body: String) -> Response {
         kind: ActorKind::Human,
         id: state.human.clone(),
     };
-    let session = match state.plane.session(actor).await {
+    let session = match state.plane.session(actor.clone()).await {
         Ok(session) => session,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
@@ -35,8 +35,9 @@ pub async fn query(State(state): State<AppState>, body: String) -> Response {
         // drains a stream; `metadata_only` is the MCP door's concern.
         Ok(query) => stream(query.stream),
         // Not one query: statement sequences, declarations, and writes
-        // run through execute and answer in JSON.
-        Err(SessionError::NotOneRead) => match session.execute(&body).await {
+        // run at the plane (`USE` selects the actor's channel there)
+        // and answer in JSON.
+        Err(SessionError::NotOneRead) => match state.plane.execute(actor, &body).await {
             Ok(outcomes) => match wire::outcomes_json(&outcomes, state.row_cap) {
                 Ok(rendered) => Json(rendered).into_response(),
                 Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),

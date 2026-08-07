@@ -48,24 +48,19 @@ pub async fn frame(
             );
         }
     };
-    // The app's own session on the plane — Human-kind, like `/query`.
-    // Nobody else steers this session's state, so the binding holds
-    // between requests; `USE` runs only when it doesn't (first hit, or
-    // the app.toml changed), and a first-burst race inside the mount is
-    // absorbed at the alias.
+    // The app's channel on the plane — Human-kind, like `/query`, keyed
+    // (actor, dataset) with the dataset from app.toml. The binding is
+    // fixed at channel construction, so concurrent frames never steer
+    // each other; an unknown dataset fails the channel here, before any
+    // query runs.
     let actor = Actor {
         kind: ActorKind::Human,
         id: format!("app:{}", def.name),
     };
-    let session = match door.plane.session(actor).await {
+    let session = match door.plane.channel(actor, Some(&def.dataset)).await {
         Ok(session) => session,
-        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     };
-    if session.dataset().as_deref() != Some(def.dataset.as_str())
-        && let Err(e) = session.execute(&format!("USE {};", def.dataset)).await
-    {
-        return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string());
-    }
     let values: HashMap<String, ScalarValue> = params
         .into_iter()
         .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))

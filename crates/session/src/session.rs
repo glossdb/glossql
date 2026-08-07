@@ -3,8 +3,8 @@
 use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
-use datafusion::common::{DataFusionError, ParamValues};
+use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider, TableProvider};
+use datafusion::common::{DataFusionError, ParamValues, TableReference};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::StreamExt as _;
@@ -208,9 +208,6 @@ pub struct Session {
     ctx: SessionContext,
     shared: Arc<Shared>,
     actor: Actor,
-    /// Bare-name mounts of the `USE`'d dataset's tables in the default
-    /// schema, so `orders` and `fin.orders` resolve alike.
-    aliased: RwLock<Vec<String>>,
     /// How many rows the reader will actually be shown. It bounds what the
     /// non-streaming paths ask the engine for; `usize::MAX` (the default)
     /// means the caller drains everything itself.
@@ -251,6 +248,12 @@ impl Session {
         let mut ctx = SessionContext::new_with_state(state);
         datafusion_functions_json::register_all(&mut ctx)?;
         glossql_import::casts::register_try_functions(&ctx);
+        // The staging ground for materializations: a session-local memory
+        // schema, kept apart from the bound dataset's schema — a bare
+        // registration there would create a real table in the lake.
+        ctx.catalog("datafusion")
+            .expect("default catalog")
+            .register_schema("glossql_stage", Arc::new(MemorySchemaProvider::new()))?;
         // The planner was built before the context existed; close the loop
         // so the metric bind can plan groundings as their own statements.
         *shared.ctx.write().expect("ctx lock") = Some(ctx.clone());
@@ -258,7 +261,6 @@ impl Session {
             ctx,
             shared,
             actor,
-            aliased: RwLock::new(Vec::new()),
             row_cap: usize::MAX,
         })
     }
@@ -305,7 +307,15 @@ impl Session {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<Vec<Outcome>, SessionError> {
-        let statements = GlossqlParser::parse_sql(sql)?;
+        self.execute_statements(GlossqlParser::parse_sql(sql)?).await
+    }
+
+    /// The statement loop over parsed statements — the plane's channel
+    /// router feeds it the runs between `USE`s.
+    pub(crate) async fn execute_statements(
+        &self,
+        statements: Vec<Statement>,
+    ) -> Result<Vec<Outcome>, SessionError> {
         let mut outcomes = Vec::with_capacity(statements.len());
         for statement in statements {
             outcomes.push(match statement {
@@ -367,7 +377,6 @@ impl Session {
                         if replaced {
                             let mounted = self.mount_schema(dataset).await?;
                             mounted.deregister_table(table)?;
-                            let _ = self.ctx.deregister_table(table);
                             self.shared
                                 .store
                                 .invalidate_table_evidence(dataset, table)
@@ -412,34 +421,47 @@ impl Session {
         Ok(Outcome::Done(done))
     }
 
-    /// The `USE`'d dataset, for callers that must decide whether to
-    /// `USE` at all — the app door binds per request and skips the
-    /// remount when the binding already holds.
+    /// The bound dataset — fixed at channel construction on the plane;
+    /// a directly held session may move it with `USE`/[`Session::bind`].
     pub fn dataset(&self) -> Option<String> {
         self.shared.dataset.read().expect("state lock").clone()
     }
 
     async fn use_dataset(&self, name: &str) -> Result<Outcome, SessionError> {
+        self.bind(name).await?;
+        Ok(Outcome::Done(format!("USE {name}")))
+    }
+
+    /// Bind the session to a dataset — channel construction and `USE`
+    /// share this. With a lake, the dataset's schema mounts from the
+    /// lake's shared provider and becomes the session's default schema:
+    /// bare names then resolve through the substrate's own resolution
+    /// (datafusion-53.1.0 session_state.rs:295 reads the config per
+    /// statement), so there is no per-table alias machinery and no
+    /// per-session provider build.
+    pub async fn bind(&self, name: &str) -> Result<(), SessionError> {
         if !self.shared.store.dataset_exists(name).await? {
             return Err(SessionError::Store(glossql_glossary::Error::Unknown {
                 what: "dataset",
                 name: name.into(),
             }));
         }
-        *self.shared.dataset.write().expect("state lock") = Some(name.to_string());
         if let Some(lake) = self.lake() {
+            // A dataset declared while no lake was attached has no
+            // namespace yet; creating it here keeps `USE` self-healing.
             lake.ensure_namespace(name).await?;
-            let schema = self.mount_schema(name).await?;
-            let stale: Vec<String> = std::mem::take(&mut *self.aliased.write().expect("aliases"));
-            for old in stale {
-                let _ = self.ctx.deregister_table(old.as_str());
-            }
-            *self.shared.read_cache.write().expect("read cache") = None;
-            for table in lake.table_names(name).await? {
-                self.alias(&table, &schema).await?;
-            }
+            self.mount_schema(name).await?;
+            self.ctx
+                .state_ref()
+                .write()
+                .config_mut()
+                .options_mut()
+                .catalog
+                .default_schema = name.to_string();
         }
-        Ok(Outcome::Done(format!("USE {name}")))
+        *self.shared.dataset.write().expect("state lock") = Some(name.to_string());
+        *self.shared.read_cache.write().expect("read cache") = None;
+        Ok(())
     }
 
     /// Land what a recipe produced as its table: create the table through
@@ -471,14 +493,21 @@ impl Session {
 
         if rows > 0 {
             let batches = MemTable::try_new(Arc::clone(&landed.schema), vec![landed.batches])?;
-            self.ctx.register_table(&staged, Arc::new(batches))?;
-            let insert = format!("INSERT INTO \"{dataset}\".\"{table}\" SELECT * FROM {staged}");
+            // Qualified into the session's staging schema: a bound
+            // session's bare names resolve into the dataset's schema,
+            // where a registration would create a real lake table.
+            let staged_ref = TableReference::partial("glossql_stage", staged.as_str());
+            self.ctx
+                .register_table(staged_ref.clone(), Arc::new(batches))?;
+            let insert = format!(
+                "INSERT INTO \"{dataset}\".\"{table}\" SELECT * FROM glossql_stage.{staged}"
+            );
             let inserted = async {
                 self.ctx.sql(&insert).await?.collect().await?;
                 Ok::<(), DataFusionError>(())
             }
             .await;
-            let _ = self.ctx.deregister_table(&staged);
+            let _ = self.ctx.deregister_table(staged_ref);
             inserted?;
         }
         self.shared
@@ -492,9 +521,6 @@ impl Session {
             )
             .await?;
         *self.shared.read_cache.write().expect("read cache") = None;
-        if self.shared.dataset.read().expect("state lock").as_deref() == Some(dataset) {
-            self.alias(table, &mounted).await?;
-        }
         Ok((rows, dropped, cast_summary(&landed.casts)))
     }
 
@@ -518,46 +544,28 @@ impl Session {
     }
 
     /// The dataset's namespace as a schema in the session's default catalog
-    /// — `fin.orders` resolves, views land beside it in the default schema.
+    /// — `fin.orders` resolves; after [`Session::bind`] it is also the
+    /// default schema. The schema is an Arc clone of the lake's shared
+    /// provider's, never a per-session build; a miss rebuilds the shared
+    /// provider once, in case it predates the namespace.
     async fn mount_schema(&self, dataset: &str) -> Result<Arc<dyn SchemaProvider>, SessionError> {
         let default = self.ctx.catalog("datafusion").expect("default catalog");
         if let Some(existing) = default.schema(dataset) {
             return Ok(existing);
         }
         let lake = self.lake().expect("caller holds a lake");
-        let provider = lake.provider().await?;
-        let schema = provider.schema(dataset).ok_or_else(|| {
+        let mut schema = lake.provider().await?.schema(dataset);
+        if schema.is_none() {
+            lake.invalidate_provider();
+            schema = lake.provider().await?.schema(dataset);
+        }
+        let schema = schema.ok_or_else(|| {
             SessionError::Lake(glossql_catalog::Error::Workspace(format!(
                 "namespace `{dataset}` is missing from the catalog"
             )))
         })?;
         default.register_schema(dataset, Arc::clone(&schema))?;
         Ok(schema)
-    }
-
-    /// Mount `dataset.table` under its bare name in the default schema.
-    async fn alias(
-        &self,
-        table: &str,
-        schema: &Arc<dyn SchemaProvider>,
-    ) -> Result<(), SessionError> {
-        if let Some(provider) = schema.table(table).await? {
-            let _ = self.ctx.deregister_table(table);
-            if let Err(e) = self.ctx.register_table(table, provider) {
-                // Two concurrent `USE`s of the same dataset can race
-                // between the deregister and the register (the app
-                // door's frames share one session). The winner mounted
-                // the same generation — losing that race is fine.
-                if !self.ctx.table_exist(table)? {
-                    return Err(e.into());
-                }
-            }
-            let mut aliased = self.aliased.write().expect("aliases");
-            if !aliased.iter().any(|t| t == table) {
-                aliased.push(table.to_string());
-            }
-        }
-        Ok(())
     }
 
     /// The subject's table snapshot at write time — `None` for dataset-level
@@ -885,7 +893,6 @@ impl Session {
         let mounted = self.mount_schema(&dataset).await?;
         mounted.deregister_table(table)?;
         self.shared.store.drop_table_records(&dataset, table).await?;
-        let _ = self.ctx.deregister_table(table);
         *self.shared.read_cache.write().expect("read cache") = None;
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }

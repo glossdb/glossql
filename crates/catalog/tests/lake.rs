@@ -101,3 +101,32 @@ async fn front_door_roundtrip() {
     assert_eq!(reopened.table_names("fin").await.unwrap(), vec!["orders"]);
     assert_eq!(reopened.snapshot_id("fin", "orders").await.unwrap(), later);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn provider_is_shared_until_a_namespace_lands() {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    lake.ensure_namespace("fin").await.unwrap();
+
+    // Every touch is the same mounted representation — an Arc clone,
+    // never a rebuild — and clones of the Lake share it.
+    let first = lake.provider().await.unwrap();
+    let again = lake.provider().await.unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    let through_clone = lake.clone().provider().await.unwrap();
+    assert!(Arc::ptr_eq(&first, &through_clone));
+
+    // A namespace create invalidates: the next touch rebuilds over the
+    // current list, and the new dataset is visible.
+    assert!(first.schema("ops").is_none());
+    lake.ensure_namespace("ops").await.unwrap();
+    let rebuilt = lake.provider().await.unwrap();
+    assert!(!Arc::ptr_eq(&first, &rebuilt));
+    assert!(rebuilt.schema("ops").is_some());
+    assert!(rebuilt.schema("fin").is_some());
+}

@@ -115,12 +115,13 @@ impl ServerHandler for GlossqlMcp {
             .unwrap_or_else(|| self.fallback.clone());
         // The monitor line: what the agent actually sends, as it sends it.
         println!("glossql <- {id}: {statements}");
+        let actor = Actor {
+            kind: ActorKind::Agent,
+            id: id.clone(),
+        };
         let session = self
             .plane
-            .session(Actor {
-                kind: ActorKind::Agent,
-                id: id.clone(),
-            })
+            .session(actor.clone())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -140,7 +141,9 @@ impl ServerHandler for GlossqlMcp {
                     .await
                     .map(|rows| serde_json::Value::Array(vec![rows]))
             }
-            Err(SessionError::NotOneRead) => match session.execute(statements).await {
+            // Statement sequences run at the plane: `USE` selects the
+            // actor's channel there, never rebinds a session.
+            Err(SessionError::NotOneRead) => match self.plane.execute(actor, statements).await {
                 Ok(outcomes) => wire::outcomes_json(&outcomes, self.row_cap),
                 Err(e) => Err(e.to_string()),
             },

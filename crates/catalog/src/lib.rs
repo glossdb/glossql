@@ -33,6 +33,12 @@ pub enum Error {
 pub struct Lake {
     catalog: Arc<dyn Catalog>,
     warehouse: PathBuf,
+    /// The one mounted representation of the lake, shared by every
+    /// session — `provider()` hands out Arc clones of it. A namespace
+    /// create invalidates it (the namespace list is the one thing
+    /// [`IcebergCatalogProvider`] freezes); table lookups inside a
+    /// namespace go to the catalog live and need no rebuild.
+    provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
 }
 
 impl Lake {
@@ -68,6 +74,7 @@ impl Lake {
         Ok(Lake {
             catalog: Arc::new(catalog),
             warehouse,
+            provider: Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -80,22 +87,35 @@ impl Lake {
     }
 
     /// Create the dataset's namespace if it is missing; `true` = created.
-    /// After a create, mounted providers must be rebuilt — the namespace
-    /// list is the one thing [`IcebergCatalogProvider`] freezes.
+    /// A create invalidates the shared provider — the next `provider()`
+    /// rebuilds over the current namespace list.
     pub async fn ensure_namespace(&self, dataset: &str) -> Result<bool> {
         let ns = NamespaceIdent::new(dataset.to_string());
         if self.catalog.namespace_exists(&ns).await? {
             return Ok(false);
         }
         self.catalog.create_namespace(&ns, HashMap::new()).await?;
+        self.invalidate_provider();
         Ok(true)
     }
 
-    /// A freshly built catalog provider over the current namespace list.
+    /// The shared catalog provider — built over the current namespace
+    /// list on first touch, then an Arc clone for every caller. Two
+    /// concurrent first touches may both build; either result is valid
+    /// and one wins the slot.
     pub async fn provider(&self) -> Result<Arc<IcebergCatalogProvider>> {
-        Ok(Arc::new(
-            IcebergCatalogProvider::try_new(self.catalog()).await?,
-        ))
+        if let Some(shared) = self.provider.read().expect("provider lock").as_ref() {
+            return Ok(Arc::clone(shared));
+        }
+        let built = Arc::new(IcebergCatalogProvider::try_new(self.catalog()).await?);
+        *self.provider.write().expect("provider lock") = Some(Arc::clone(&built));
+        Ok(built)
+    }
+
+    /// Forget the cached provider. Callers that miss a namespace another
+    /// writer just created invalidate and touch again.
+    pub fn invalidate_provider(&self) {
+        *self.provider.write().expect("provider lock") = None;
     }
 
     /// Current snapshot id of `dataset.table`; `None` when the table does

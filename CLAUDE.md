@@ -35,9 +35,13 @@ documents:
   disclosure, ruled 2026-08-05 — imports counters) · `session`
   (SessionContext assembly, RelationPlanner reads, statement router with
   the substrate allowlist, recipe materialization, probe routing,
-  DROP TABLE lifecycle, detector-at-read) · `catalog` (the workspace Lake:
+  DROP TABLE lifecycle, detector-at-read; the plane — channels keyed
+  (actor, dataset), `USE` selects the channel and never rebinds a
+  session, bare names resolve through the substrate's default-schema
+  config, ruled 2026-08-07) · `catalog` (the workspace Lake:
   iceberg-rust SqlCatalog on SQLite + warehouse dir; datasets are
-  namespaces) · `import` (recipe and probe execution over file sources,
+  namespaces; one shared IcebergCatalogProvider, invalidated only when
+  a namespace lands) · `import` (recipe and probe execution over file sources,
   try_to_date/try_to_timestamp, source-row counting; ADBC executor
   planned) · `scripts` (rhai runtime behind FunctionRuntime, zero-copy
   column kernels, the reference function library and its bootstrap
@@ -61,8 +65,9 @@ documents:
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end
   to end via `Session::query_stream` — one batch in memory, the MCP row
   cap (`--row-cap`) terminates the stream early so it bounds engine work.
-  Sessions live in the plane keyed by actor; actor rides the connection
-  via initialize clientInfo with a boot-flag fallback. The door tells,
+  Sessions live in the plane as channels keyed (actor, dataset); actor
+  rides the connection via initialize clientInfo with a boot-flag
+  fallback. The door tells,
   skills teach — agent knowledge is statically written into
   `.claude/skills/` (glossql, glossql-add-source with the framing block,
   the table entity verdict — ported 2026-08-05 — and per-column glossing
