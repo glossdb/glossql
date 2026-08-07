@@ -1,10 +1,11 @@
 // The frame store: every frame is fetched once per state as Arrow IPC
 // and shared by every tile bound to it — one copy in memory, charts
 // and tables read the same arrow Table. A frame reference resolves
-// against the app root (body[data-approot]) and inherits the page's
-// query params; params written on the reference itself win. The URL
-// is the only state: htmx swaps the page, reconnecting components ask
-// the store, and only frames whose URL actually changed refetch.
+// against the app root (body[data-approot]); params written on the
+// reference are the author's defaults, and the page's query params
+// override them. The URL is the only state: htmx swaps the page,
+// reconnecting components ask the store, and only frames whose URL
+// actually changed refetch.
 (function () {
   'use strict';
 
@@ -21,7 +22,7 @@
     const url = new URL(ref, approot());
     const page = new URLSearchParams(document.location.search);
     for (const [k, v] of page) {
-      if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+      url.searchParams.set(k, v);
     }
     return url.toString();
   }

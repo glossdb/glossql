@@ -38,9 +38,13 @@
       const field = this.getAttribute('drill-field');
       if (!field) return;
       const param = this.getAttribute('drill-param') || field;
+      // Vega hands temporal datums back as epoch numbers; drill-type
+      // "date" says the URL wants the ISO day.
+      const asDate = this.getAttribute('drill-type') === 'date';
       view.addEventListener('click', (_event, item) => {
         if (!item || !item.datum || item.datum[field] === undefined) return;
         let value = item.datum[field];
+        if (asDate && !(value instanceof Date)) value = new Date(value);
         if (value instanceof Date) value = value.toISOString().slice(0, 10);
         const url = new URL(document.location);
         url.searchParams.set(param, value);

@@ -5,10 +5,10 @@
    click, setting drill_param (defaults to the field) from the clicked
    datum — drill is navigation, nothing else. #}
 
-{% macro chart(frame, spec, title="", drill_field="", drill_param="") %}
+{% macro chart(frame, spec, title="", drill_field="", drill_param="", drill_type="") %}
 <section class="tile">
   {% if title %}<h3>{{ title }}</h3>{% endif %}
-  <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"{% if drill_field %} drill-field="{{ drill_field | safe }}"{% endif %}{% if drill_param %} drill-param="{{ drill_param | safe }}"{% endif %}></gl-chart>
+  <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"{% if drill_field %} drill-field="{{ drill_field | safe }}"{% endif %}{% if drill_param %} drill-param="{{ drill_param | safe }}"{% endif %}{% if drill_type %} drill-type="{{ drill_type | safe }}"{% endif %}></gl-chart>
 </section>
 {% endmacro chart %}
 
