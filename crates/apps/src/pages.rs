@@ -25,7 +25,32 @@ fn base_tera() -> Result<Tera, tera::Error> {
         ("home.html", HOME),
         ("modules/tiles.html", TILES),
     ])?;
+    tera.register_filter("urlencode", urlencode);
     Ok(tera)
+}
+
+/// Query-component percent-encoding for template-built hrefs (state
+/// values carry customer names and dates). Tera's own `urlencode`
+/// lives behind the builtins feature, which pulls chrono/rand/slug —
+/// this is the one builtin the templates need.
+fn urlencode(
+    value: &Value,
+    _: &std::collections::HashMap<String, Value>,
+) -> tera::Result<Value> {
+    let s = match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    Ok(Value::String(out))
 }
 
 fn state_map(params: Vec<(String, String)>) -> Value {

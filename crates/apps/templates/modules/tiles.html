@@ -5,12 +5,29 @@
    metric surface the number comes from — with `note` as its hover
    text (a disclosed assumption, a composition rule). A chart with
    drill_field navigates on click: the clicked datum's field lands in
-   the URL as drill_param — drill is navigation, nothing else. #}
+   the URL as drill_param — drill is navigation, nothing else.
 
-{% macro chart(frame, spec, title="", chip="", note="", hint="", drill_field="", drill_param="", drill_type="") %}
-<section class="tile">
-  {% if title or chip %}<header>
+   Widget-local controls: give a tile an `id` and a seg
+   (seg_param/seg_options/seg_labels/seg_value + state) and it renders
+   a segmented control in its own header that writes the URL
+   (hx-push-url) but swaps only this tile (hx-target + hx-select) —
+   the rest of the page never re-renders. The links preserve what the
+   page URL states (params the author names stay page-scoped and
+   unique); defaults reapply on their own. #}
+
+{% macro seg(id, param, options, labels="", value="", state="") %}
+<span class="seg-group">
+  {%- for opt in options -%}
+  <a class="seg{% if value == opt %} active{% endif %}" hx-get="?{% if state %}{% for k, v in state %}{% if k != param %}{{ k }}={{ v | urlencode }}&{% endif %}{% endfor %}{% endif %}{{ param }}={{ opt | urlencode }}" hx-target="#{{ id }}" hx-select="#{{ id }}" hx-swap="outerHTML" hx-push-url="true">{% if labels %}{{ labels | nth(n=loop.index0) }}{% else %}{{ opt }}{% endif %}</a>
+  {%- endfor -%}
+</span>
+{% endmacro seg %}
+
+{% macro chart(frame, spec, title="", chip="", note="", hint="", drill_field="", drill_param="", drill_type="", id="", seg_param="", seg_options="", seg_labels="", seg_value="", state="") %}
+<section class="tile"{% if id %} id="{{ id }}"{% endif %}>
+  {% if title or chip or seg_param %}<header>
     {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
+    {% if seg_param %}{{ self::seg(id=id, param=seg_param, options=seg_options, labels=seg_labels, value=seg_value, state=state) }}{% endif %}
     {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
   </header>{% endif %}
   {% if hint %}<p class="hint">{{ hint | safe }}</p>{% endif %}
@@ -18,10 +35,11 @@
 </section>
 {% endmacro chart %}
 
-{% macro table(frame, title="", chip="", note="", rows=50) %}
-<section class="tile">
-  {% if title or chip %}<header>
+{% macro table(frame, title="", chip="", note="", rows=50, id="", seg_param="", seg_options="", seg_labels="", seg_value="", state="") %}
+<section class="tile"{% if id %} id="{{ id }}"{% endif %}>
+  {% if title or chip or seg_param %}<header>
     {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
+    {% if seg_param %}{{ self::seg(id=id, param=seg_param, options=seg_options, labels=seg_labels, value=seg_value, state=state) }}{% endif %}
     {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
   </header>{% endif %}
   <gl-table frame="{{ frame | safe }}" rows="{{ rows }}"></gl-table>

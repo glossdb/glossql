@@ -216,6 +216,12 @@ code { font-family: var(--mono); font-size: 0.9em; }
   color: var(--muted);
 }
 
+/* A tile's own seg control: sits with the chip in the header and
+   swaps only its tile — smaller than the toolbar's. */
+.tile header .seg-group { margin-left: auto; padding: 1px; }
+.tile header .seg { font-size: 0.68rem; padding: 0.16rem 0.5rem; }
+.tile header .seg-group ~ .chip { margin-left: 0; }
+
 /* The provenance chip: where this number comes from is part of the
    instrument, not a footnote. Hover holds the disclosed assumption. */
 .chip {
