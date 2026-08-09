@@ -35,13 +35,14 @@
 </section>
 {% endmacro chart %}
 
-{% macro table(frame, title="", chip="", note="", rows=50, id="", seg_param="", seg_options="", seg_labels="", seg_value="", state="") %}
+{% macro table(frame, title="", chip="", note="", hint="", rows=50, id="", seg_param="", seg_options="", seg_labels="", seg_value="", state="") %}
 <section class="tile"{% if id %} id="{{ id }}"{% endif %}>
   {% if title or chip or seg_param %}<header>
     {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
     {% if seg_param %}{{ self::seg(id=id, param=seg_param, options=seg_options, labels=seg_labels, value=seg_value, state=state) }}{% endif %}
     {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
   </header>{% endif %}
+  {% if hint %}<p class="hint">{{ hint | safe }}</p>{% endif %}
   <gl-table frame="{{ frame | safe }}" rows="{{ rows }}"></gl-table>
 </section>
 {% endmacro table %}

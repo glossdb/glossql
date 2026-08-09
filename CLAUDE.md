@@ -72,7 +72,9 @@ documents:
   `.claude/skills/` (glossql, glossql-add-source with the framing block,
   the table entity verdict — ported 2026-08-05 — and per-column glossing
   rules, glossql-functions, glossql-relationships, glossql-metrics —
-  the operating-model deliverable, 2026-08-06), the one teaching
+  the operating-model deliverable, 2026-08-06 — and glossql-apps,
+  the app-authoring conventions, first sketch 2026-08-09 from the
+  hand-written cash and model apps), the one teaching
   layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never v0.3
   phase names (ruled 2026-08-05); the judge pattern — measurements
   optimize recall, the agent judge removes false positives —
