@@ -52,6 +52,14 @@ const SCRIPTS: &[(&str, &str)] = &[
         "slot_entropy.rhai",
         include_str!("../../scripts/functions/slot_entropy.rhai"),
     ),
+    (
+        "metric_bands.rhai",
+        include_str!("../../scripts/functions/metric_bands.rhai"),
+    ),
+    (
+        "band_breach.rhai",
+        include_str!("../../scripts/functions/band_breach.rhai"),
+    ),
 ];
 
 /// The measurement library's declarations.

@@ -56,10 +56,13 @@ async fn fixture(root: &std::path::Path) {
     write_table(
         root,
         "survey",
-        RecordBatch::try_new(survey, vec![
-            Arc::new(StringArray::from(ids)),
-            Arc::new(StringArray::from(segments)),
-        ])
+        RecordBatch::try_new(
+            survey,
+            vec![
+                Arc::new(StringArray::from(ids)),
+                Arc::new(StringArray::from(segments)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -90,13 +93,16 @@ async fn fixture(root: &std::path::Path) {
     write_table(
         root,
         "geo",
-        RecordBatch::try_new(geo, vec![
-            Arc::new(StringArray::from(zip)),
-            Arc::new(StringArray::from(city)),
-            Arc::new(StringArray::from(city_code)),
-            Arc::new(StringArray::from(state)),
-            Arc::new(StringArray::from(flag)),
-        ])
+        RecordBatch::try_new(
+            geo,
+            vec![
+                Arc::new(StringArray::from(zip)),
+                Arc::new(StringArray::from(city)),
+                Arc::new(StringArray::from(city_code)),
+                Arc::new(StringArray::from(state)),
+                Arc::new(StringArray::from(flag)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -124,14 +130,12 @@ async fn measure(session: &Session, function: &str, subject: &str) -> serde_json
         "detect_hierarchies" => "hierarchy_candidates",
         other => other,
     };
-    let value = one(
-        &session
-            .execute(&format!(
-                "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
-            ))
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
+        ))
+        .await
+        .unwrap());
     serde_json::from_str(&value).unwrap()
 }
 
@@ -154,14 +158,20 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
     std::fs::create_dir_all(&root).unwrap();
     fixture(&root).await;
 
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -203,7 +213,10 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
     // profile's landing heals the cached abstention through ACCEPTS.
     let unhealed = measure(&session, "dimension_relevance", "survey.segment").await;
     assert_eq!(unhealed["applicable"], false, "{unhealed}");
-    assert_eq!(unhealed["missing_aspects"][0], "column_profile", "{unhealed}");
+    assert_eq!(
+        unhealed["missing_aspects"][0], "column_profile",
+        "{unhealed}"
+    );
 
     session
         .execute("SELECT profile() FROM survey.segment;")
@@ -244,8 +257,14 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
 
     // The bijection is an alias candidate in both directions — whether
     // relabeling or coincidence is the judge's call, never the script's.
-    assert_eq!(candidate(&geo, "city", "city_code").unwrap()["kind"], "alias");
-    assert_eq!(candidate(&geo, "city_code", "city").unwrap()["kind"], "alias");
+    assert_eq!(
+        candidate(&geo, "city", "city_code").unwrap()["kind"],
+        "alias"
+    );
+    assert_eq!(
+        candidate(&geo, "city_code", "city").unwrap()["kind"],
+        "alias"
+    );
 
     // The vacuous-skew class survives the g3 screen — and carries the
     // λ signature the judge kills it by.

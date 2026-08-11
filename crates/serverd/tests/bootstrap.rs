@@ -47,19 +47,21 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         "derivations.rhai",
         "coherence.rhai",
         "slot_entropy.rhai",
+        "metric_bands.rhai",
+        "band_breach.rhai",
     ] {
         assert!(dir.path().join("functions").join(name).exists(), "{name}");
     }
 
-    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "11");
-    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "10");
-    // The one function without RETURNS is the detector.
+    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "13");
+    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "11");
+    // The functions without RETURNS are the detectors.
     assert_eq!(
         count(
             &plane,
-            "SELECT name FROM functions WHERE returns IS NULL;"
+            "SELECT count(*) FROM functions WHERE returns IS NULL;"
         )
         .await,
-        "slot_entropy"
+        "2"
     );
 }

@@ -16,6 +16,9 @@ rhai = { version = "1.25", features = ["sync", "serde"] }
 # same substrate drivers will need (numeric-substrate report, 2026-08-05).
 faer = "0.22"
 regex = "1"
+# The TabICL forward for the band kernel (sibling link, see the workspace
+# manifest); the model loads lazily from the workspace's weights/.
+tabicl-candle.workspace = true
 
 [features]
 # rhai's registered-function reflection, for the kernel-mirror test only —

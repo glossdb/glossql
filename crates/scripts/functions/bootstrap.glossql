@@ -125,6 +125,26 @@ DECLARE ASPECT grounding_collisions WITH $${
   }
 }$$ AS MEASUREMENT ON DATASET;
 
+DECLARE ASPECT metric_bands WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {
+    "applicable": {"type": "boolean"},
+    "metrics": {"type": "array", "items": {"type": "object",
+      "properties": {
+        "metric": {"type": "string"}, "applicable": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "grain": {"type": "string"}, "aggregation": {"type": "string"},
+        "trained_on": {"type": "integer"},
+        "points": {"type": "array", "items": {"type": "object",
+          "properties": {
+            "period": {"type": "string"}, "actual": {"type": "number"},
+            "p05": {"type": "number"}, "p10": {"type": "number"},
+            "p50": {"type": "number"}, "p90": {"type": "number"},
+            "p95": {"type": "number"},
+            "pit": {"type": "number"}}}}}}}
+  }
+}$$ AS MEASUREMENT ON DATASET;
+
 DECLARE FUNCTION profile FOR GLOBAL FROM 'functions/profile.rhai'
   RETURNS column_profile;
 
@@ -163,3 +183,9 @@ DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL FROM 'functions/groundin
   RETURNS grounding_collisions;
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL FROM 'functions/slot_entropy.rhai';
+
+DECLARE FUNCTION metric_bands FOR GLOBAL FROM 'functions/metric_bands.rhai'
+  ACCEPTS (glossary)
+  RETURNS metric_bands;
+
+DECLARE FUNCTION band_breach FOR GLOBAL FROM 'functions/band_breach.rhai';

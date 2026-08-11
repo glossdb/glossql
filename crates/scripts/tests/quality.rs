@@ -44,10 +44,13 @@ async fn session_over(dir: &std::path::Path) -> Session {
         .await
         .unwrap();
     let store = Store::open_memory().await.unwrap();
-    Session::new(store, Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))))
@@ -88,14 +91,17 @@ async fn derivations_surface_with_their_violations() {
     write_table(
         &root,
         "lines",
-        RecordBatch::try_new(schema, vec![
-            Arc::new(Int64Array::from(units)),
-            Arc::new(Float64Array::from(price)),
-            Arc::new(Float64Array::from(line)),
-            Arc::new(Float64Array::from(net)),
-            Arc::new(Float64Array::from(tax)),
-            Arc::new(Float64Array::from(gross)),
-        ])
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(units)),
+                Arc::new(Float64Array::from(price)),
+                Arc::new(Float64Array::from(line)),
+                Arc::new(Float64Array::from(net)),
+                Arc::new(Float64Array::from(tax)),
+                Arc::new(Float64Array::from(gross)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -124,12 +130,12 @@ async fn derivations_surface_with_their_violations() {
         .execute("SELECT detect_derivations() FROM lines;")
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute("SELECT value FROM GLOSSARY(lines::derivation_candidates) WHERE state = 'current';")
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(lines::derivation_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
     let doc: serde_json::Value = serde_json::from_str(&value).unwrap();
     assert_eq!(doc["applicable"], true);
     let candidates = doc["candidates"].as_array().unwrap();
@@ -175,10 +181,13 @@ async fn coherence_reads_what_the_declared_join_asserts() {
     write_table(
         &root,
         "invoices",
-        RecordBatch::try_new(invoices, vec![
-            Arc::new(Int64Array::from(inv_ids)),
-            Arc::new(Date32Array::from(inv_dates)),
-        ])
+        RecordBatch::try_new(
+            invoices,
+            vec![
+                Arc::new(Int64Array::from(inv_ids)),
+                Arc::new(Date32Array::from(inv_dates)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -189,7 +198,11 @@ async fn coherence_reads_what_the_declared_join_asserts() {
     let pay_inv: Vec<i64> = (1..=18).chain([98, 99]).collect();
     let pay_dates: Vec<i32> = (1..=18)
         .map(|i| {
-            if i <= 3 { 100 + i as i32 - 10 } else { 100 + i as i32 + 30 }
+            if i <= 3 {
+                100 + i as i32 - 10
+            } else {
+                100 + i as i32 + 30
+            }
         })
         .chain([500, 501])
         .collect();
@@ -201,11 +214,14 @@ async fn coherence_reads_what_the_declared_join_asserts() {
     write_table(
         &root,
         "payments",
-        RecordBatch::try_new(payments, vec![
-            Arc::new(Int64Array::from((1..=20).collect::<Vec<i64>>())),
-            Arc::new(Int64Array::from(pay_inv)),
-            Arc::new(Date32Array::from(pay_dates)),
-        ])
+        RecordBatch::try_new(
+            payments,
+            vec![
+                Arc::new(Int64Array::from((1..=20).collect::<Vec<i64>>())),
+                Arc::new(Int64Array::from(pay_inv)),
+                Arc::new(Date32Array::from(pay_dates)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -237,12 +253,10 @@ async fn coherence_reads_what_the_declared_join_asserts() {
         .execute("SELECT relationship_coherence() FROM fin;")
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute("SELECT value FROM GLOSSARY(fin::relationship_coherence) WHERE state = 'current';")
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute("SELECT value FROM GLOSSARY(fin::relationship_coherence) WHERE state = 'current';")
+        .await
+        .unwrap());
     let doc: serde_json::Value = serde_json::from_str(&value).unwrap();
     assert_eq!(doc["applicable"], true);
     let rels = doc["relationships"].as_array().unwrap();

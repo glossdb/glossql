@@ -35,15 +35,13 @@ async fn relevance(session: &Session, subject: &str) -> serde_json::Value {
         ))
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute(&format!(
-                "SELECT value FROM GLOSSARY({subject}::dimension_relevance) \
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY({subject}::dimension_relevance) \
                  WHERE state = 'current';"
-            ))
-            .await
-            .unwrap(),
-    );
+        ))
+        .await
+        .unwrap());
     serde_json::from_str(&value).unwrap()
 }
 
@@ -57,14 +55,20 @@ async fn the_generator_grades_the_relevance_score() {
     };
 
     let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));

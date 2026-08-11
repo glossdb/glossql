@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Decimal128Array, Float64Array, Int64Array, LargeStringArray,
@@ -60,14 +60,120 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
     Err(message.into().into())
 }
 
+/// The TabICL regressor behind the band kernel: loaded once per runtime
+/// from the workspace's weights directory on first call, shared across
+/// scripts and threads (the forward takes `&self`).
+struct BandModel {
+    dir: PathBuf,
+    model: OnceLock<Result<tabicl_candle::tabicl::TabIcl, String>>,
+}
+
+impl BandModel {
+    fn get(&self) -> Result<&tabicl_candle::tabicl::TabIcl, String> {
+        self.model
+            .get_or_init(|| {
+                let ckpt = tabicl_candle::weights::load_dir(
+                    &self.dir,
+                    "regressor",
+                    &tabicl_candle::Device::Cpu,
+                )
+                .map_err(|e| format!("tabicl weights at {}: {e}", self.dir.display()))?;
+                tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// One fit + one read: bands at the given levels for one test row,
+    /// and the PIT — the quantile at which the observed value lands in
+    /// the predicted distribution, read off the monotone quantile grid.
+    /// Ordinal by construction; raw densities never leave the kernel.
+    fn bands(
+        &self,
+        train_x: &rhai::Array,
+        train_y: &rhai::Array,
+        test_x: &rhai::Array,
+        alphas: &rhai::Array,
+        actual: f64,
+    ) -> Result<rhai::Map, String> {
+        let number = |d: &Dynamic| -> Result<f64, String> {
+            d.as_float()
+                .or_else(|_| d.as_int().map(|v| v as f64))
+                .map_err(|t| format!("tabicl_bands takes numbers, got {t}"))
+        };
+        let row = |d: &Dynamic| -> Result<Vec<f64>, String> {
+            d.clone()
+                .into_array()
+                .map_err(|t| format!("tabicl_bands takes rows of numbers, got {t}"))?
+                .iter()
+                .map(&number)
+                .collect()
+        };
+
+        let rows = train_x.len();
+        if rows != train_y.len() || rows < 2 {
+            return Err(format!(
+                "tabicl_bands: {rows} training rows against {} targets (need >= 2)",
+                train_y.len()
+            ));
+        }
+        let test: Vec<f64> = row(&Dynamic::from(test_x.clone()))?;
+        let cols = test.len();
+        let mut x = Vec::with_capacity(rows * cols);
+        for r in train_x {
+            let r = row(r)?;
+            if r.len() != cols {
+                return Err(format!(
+                    "tabicl_bands: ragged training row ({} features against {cols})",
+                    r.len()
+                ));
+            }
+            x.extend(r);
+        }
+        let y: Vec<f64> = train_y.iter().map(&number).collect::<Result<_, _>>()?;
+        let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
+
+        let model = self.get()?;
+        let est = tabicl_candle::regressor::TabIclRegressor::fit(model, &x, rows, cols, &y);
+        let pred = est
+            .predict(&test, 1, &tabicl_candle::Device::Cpu)
+            .map_err(|e| e.to_string())?;
+        let q: Vec<f32> = pred
+            .quantiles(&levels)
+            .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
+            .map_err(|e| e.to_string())?;
+        let grid: Vec<f32> = pred
+            .raw_quantiles()
+            .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
+            .map_err(|e| e.to_string())?;
+        let below = grid.iter().filter(|v| f64::from(**v) <= actual).count();
+
+        let mut out = rhai::Map::new();
+        out.insert(
+            "q".into(),
+            Dynamic::from(
+                q.iter()
+                    .map(|v| Dynamic::from(f64::from(*v)))
+                    .collect::<rhai::Array>(),
+            ),
+        );
+        out.insert(
+            "pit".into(),
+            Dynamic::from(below as f64 / (grid.len() + 1) as f64),
+        );
+        Ok(out)
+    }
+}
+
 impl RhaiRuntime {
     /// `root` is the workspace's functions directory; `FROM` paths resolve
     /// under it, fenced like import paths (no absolute, no `..`).
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         let mut engine = Engine::new_raw();
-        engine.register_global_module(
-            rhai::packages::Package::as_shared_module(&rhai::packages::StandardPackage::new()),
-        );
+        engine.register_global_module(rhai::packages::Package::as_shared_module(
+            &rhai::packages::StandardPackage::new(),
+        ));
         // The default file resolver reads the filesystem and its base path
         // is not a jail (rhai-1.25.1 file.rs:272-290); no imports until a
         // corpus script needs them.
@@ -118,24 +224,27 @@ impl RhaiRuntime {
             })
             // The first row's value in a named column — the one-row
             // aggregate read every script does; () for NULL or no rows.
-            .register_fn("cell", |t: &mut Table, name: &str| -> ScriptResult<Dynamic> {
-                let Some(first) = t.0.first() else {
-                    return fail(format!("no rows carry a column `{name}`"));
-                };
-                let Some((index, _)) = first.schema().column_with_name(name) else {
-                    return fail(format!("no column `{name}` in the result"));
-                };
-                let Some(batch) = t.0.iter().find(|b| b.num_rows() > 0) else {
-                    return Ok(Dynamic::UNIT);
-                };
-                let column = batch.column(index);
-                if column.is_null(0) {
-                    return Ok(Dynamic::UNIT);
-                }
-                Ok(Dynamic::from(
-                    array_value_to_string(column, 0).map_err(|e| e.to_string())?,
-                ))
-            });
+            .register_fn(
+                "cell",
+                |t: &mut Table, name: &str| -> ScriptResult<Dynamic> {
+                    let Some(first) = t.0.first() else {
+                        return fail(format!("no rows carry a column `{name}`"));
+                    };
+                    let Some((index, _)) = first.schema().column_with_name(name) else {
+                        return fail(format!("no column `{name}` in the result"));
+                    };
+                    let Some(batch) = t.0.iter().find(|b| b.num_rows() > 0) else {
+                        return Ok(Dynamic::UNIT);
+                    };
+                    let column = batch.column(index);
+                    if column.is_null(0) {
+                        return Ok(Dynamic::UNIT);
+                    }
+                    Ok(Dynamic::from(
+                        array_value_to_string(column, 0).map_err(|e| e.to_string())?,
+                    ))
+                },
+            );
 
         engine
             .register_type_with_name::<Col>("Col")
@@ -155,9 +264,7 @@ impl RhaiRuntime {
                     if c.0.is_null(i) {
                         continue;
                     }
-                    seen.insert(
-                        array_value_to_string(&c.0, i).map_err(|e| e.to_string())?,
-                    );
+                    seen.insert(array_value_to_string(&c.0, i).map_err(|e| e.to_string())?);
                 }
                 Ok(seen.len() as i64)
             })
@@ -185,14 +292,20 @@ impl RhaiRuntime {
                     })
                     .sum())
             })
-            .register_fn("min", |c: &mut Col| -> ScriptResult<Dynamic> { extremum(c, true) })
-            .register_fn("max", |c: &mut Col| -> ScriptResult<Dynamic> { extremum(c, false) })
+            .register_fn("min", |c: &mut Col| -> ScriptResult<Dynamic> {
+                extremum(c, true)
+            })
+            .register_fn("max", |c: &mut Col| -> ScriptResult<Dynamic> {
+                extremum(c, false)
+            })
             .register_fn("sum", |c: &mut Col| -> ScriptResult<Dynamic> {
                 if !numeric_like(c.0.data_type()) {
                     return Ok(Dynamic::UNIT);
                 }
                 let floats = as_floats(&c.0)?;
-                Ok(aggregate::sum(&floats).map(Dynamic::from).unwrap_or(Dynamic::UNIT))
+                Ok(aggregate::sum(&floats)
+                    .map(Dynamic::from)
+                    .unwrap_or(Dynamic::UNIT))
             })
             .register_fn("mean", |c: &mut Col| -> ScriptResult<Dynamic> {
                 let v = valid_floats(&c.0)?;
@@ -212,18 +325,21 @@ impl RhaiRuntime {
                     v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
                 Ok(Dynamic::from(var.sqrt()))
             })
-            .register_fn("percentile", |c: &mut Col, p: f64| -> ScriptResult<Dynamic> {
-                // Linear interpolation, matching SQL PERCENTILE_CONT.
-                if !(0.0..=1.0).contains(&p) {
-                    return fail("percentile wants p in [0, 1]");
-                }
-                let mut v = valid_floats(&c.0)?;
-                if v.is_empty() {
-                    return Ok(Dynamic::UNIT);
-                }
-                v.sort_by(f64::total_cmp);
-                Ok(Dynamic::from(interpolate(&v, p)))
-            })
+            .register_fn(
+                "percentile",
+                |c: &mut Col, p: f64| -> ScriptResult<Dynamic> {
+                    // Linear interpolation, matching SQL PERCENTILE_CONT.
+                    if !(0.0..=1.0).contains(&p) {
+                        return fail("percentile wants p in [0, 1]");
+                    }
+                    let mut v = valid_floats(&c.0)?;
+                    if v.is_empty() {
+                        return Ok(Dynamic::UNIT);
+                    }
+                    v.sort_by(f64::total_cmp);
+                    Ok(Dynamic::from(interpolate(&v, p)))
+                },
+            )
             .register_fn("mad", |c: &mut Col| -> ScriptResult<Dynamic> {
                 // Median absolute deviation — the robust spread the modified
                 // Z-score fences ride on.
@@ -237,29 +353,31 @@ impl RhaiRuntime {
                 deviations.sort_by(f64::total_cmp);
                 Ok(Dynamic::from(interpolate(&deviations, 0.5)))
             })
-            .register_fn("top_k", |c: &mut Col, k: i64| -> ScriptResult<rhai::Array> {
-                let mut counts: HashMap<String, i64> = HashMap::new();
-                for i in 0..c.0.len() {
-                    if c.0.is_null(i) {
-                        continue;
+            .register_fn(
+                "top_k",
+                |c: &mut Col, k: i64| -> ScriptResult<rhai::Array> {
+                    let mut counts: HashMap<String, i64> = HashMap::new();
+                    for i in 0..c.0.len() {
+                        if c.0.is_null(i) {
+                            continue;
+                        }
+                        let value = array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
+                        *counts.entry(value).or_insert(0) += 1;
                     }
-                    let value =
-                        array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
-                    *counts.entry(value).or_insert(0) += 1;
-                }
-                let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
-                pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                pairs.truncate(k.max(0) as usize);
-                Ok(pairs
-                    .into_iter()
-                    .map(|(value, count)| {
-                        let mut row = rhai::Map::new();
-                        row.insert("value".into(), Dynamic::from(value));
-                        row.insert("count".into(), Dynamic::from(count));
-                        Dynamic::from_map(row)
-                    })
-                    .collect())
-            })
+                    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+                    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                    pairs.truncate(k.max(0) as usize);
+                    Ok(pairs
+                        .into_iter()
+                        .map(|(value, count)| {
+                            let mut row = rhai::Map::new();
+                            row.insert("value".into(), Dynamic::from(value));
+                            row.insert("count".into(), Dynamic::from(count));
+                            Dynamic::from_map(row)
+                        })
+                        .collect())
+                },
+            )
             .register_fn("len_stats", |c: &mut Col| -> ScriptResult<Dynamic> {
                 let Some(values) = c.0.as_any().downcast_ref::<StringArray>() else {
                     return Ok(Dynamic::UNIT);
@@ -302,7 +420,11 @@ impl RhaiRuntime {
                             matched += 1;
                         }
                     }
-                    Ok(if total == 0 { 0.0 } else { matched as f64 / total as f64 })
+                    Ok(if total == 0 {
+                        0.0
+                    } else {
+                        matched as f64 / total as f64
+                    })
                 },
             )
             .register_fn(
@@ -318,7 +440,10 @@ impl RhaiRuntime {
                     let cast = cast_with_options(
                         &c.0,
                         &to,
-                        &CastOptions { safe: true, ..Default::default() },
+                        &CastOptions {
+                            safe: true,
+                            ..Default::default()
+                        },
                     )
                     .map_err(|e| e.to_string())?;
                     let parsed = (cast.len() - cast.null_count()) as f64;
@@ -456,8 +581,33 @@ impl RhaiRuntime {
                 rhai::serde::to_dynamic(&value).map_err(|e| e.to_string().into())
             });
 
+        // The TabICL band kernel (ruled 2026-08-11): the forward pass is
+        // native — the model is never reimplemented in script — while the
+        // walk-forward protocol stays authored in metric_bands.rhai.
+        // Weights load lazily, digest-verified, from the workspace's
+        // weights/ directory (flat layout: tabicl-regressor.safetensors,
+        // its config json, DIGESTS); a missing directory fails the
+        // calling function with the loader's message.
+        let band_model = Arc::new(BandModel {
+            dir: root.join("weights"),
+            model: OnceLock::new(),
+        });
+        engine.register_fn(
+            "tabicl_bands",
+            move |train_x: rhai::Array,
+                  train_y: rhai::Array,
+                  test_x: rhai::Array,
+                  alphas: rhai::Array,
+                  actual: f64|
+                  -> ScriptResult<rhai::Map> {
+                band_model
+                    .bands(&train_x, &train_y, &test_x, &alphas, actual)
+                    .map_err(Into::into)
+            },
+        );
+
         RhaiRuntime {
-            root: root.into(),
+            root,
             engine,
             asts: RwLock::new(HashMap::new()),
         }
@@ -475,8 +625,7 @@ impl RhaiRuntime {
             ));
         }
         let path = self.root.join(relative);
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("script `{script}`: {e}"))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("script `{script}`: {e}"))?;
         if let Some((cached_text, ast)) = self.asts.read().expect("asts").get(script)
             && *cached_text == text
         {
@@ -524,8 +673,12 @@ impl FunctionRuntime for RhaiRuntime {
             .engine
             .eval_ast_with_scope(&mut scope, &ast)
             .map_err(|e| format!("`{}`: {e}", function.name))?;
-        serde_json::to_value(&result)
-            .map_err(|e| format!("`{}` returned something JSON cannot carry: {e}", function.name))
+        serde_json::to_value(&result).map_err(|e| {
+            format!(
+                "`{}` returned something JSON cannot carry: {e}",
+                function.name
+            )
+        })
     }
 }
 
@@ -537,7 +690,11 @@ fn numeric_like(dt: &DataType) -> bool {
     dt.is_numeric()
         || matches!(
             dt,
-            DataType::Boolean | DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View | DataType::Null
+            DataType::Boolean
+                | DataType::Utf8
+                | DataType::LargeUtf8
+                | DataType::Utf8View
+                | DataType::Null
         )
 }
 
@@ -548,7 +705,9 @@ fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
         } else {
             aggregate::max_string(values)
         };
-        return Ok(v.map(|s| Dynamic::from(s.to_string())).unwrap_or(Dynamic::UNIT));
+        return Ok(v
+            .map(|s| Dynamic::from(s.to_string()))
+            .unwrap_or(Dynamic::UNIT));
     }
     if numeric_like(c.0.data_type()) {
         let floats = as_floats(&c.0)?;
@@ -608,7 +767,10 @@ fn as_floats(array: &ArrayRef) -> ScriptResult<Float64Array> {
     let cast = cast_with_options(
         array,
         &DataType::Float64,
-        &CastOptions { safe: true, ..Default::default() },
+        &CastOptions {
+            safe: true,
+            ..Default::default()
+        },
     )
     .map_err(|e| e.to_string())?;
     Ok(cast
@@ -657,12 +819,23 @@ const FNV_SEED: u64 = 0xcbf2_9ce4_8422_2325;
 fn cell_keys(array: &ArrayRef) -> ScriptResult<Vec<Option<u64>>> {
     use DataType::*;
     let keys = match array.data_type() {
-        Int8 | Int16 | Int32 | Int64 | Date32 | Date64 | Timestamp(_, _) | Time32(_)
-        | Time64(_) | Duration(_) => {
+        Int8
+        | Int16
+        | Int32
+        | Int64
+        | Date32
+        | Date64
+        | Timestamp(_, _)
+        | Time32(_)
+        | Time64(_)
+        | Duration(_) => {
             let cast = cast_with_options(
                 array,
                 &Int64,
-                &CastOptions { safe: true, ..Default::default() },
+                &CastOptions {
+                    safe: true,
+                    ..Default::default()
+                },
             )
             .map_err(|e| e.to_string())?;
             let a = cast
@@ -677,7 +850,10 @@ fn cell_keys(array: &ArrayRef) -> ScriptResult<Vec<Option<u64>>> {
             let cast = cast_with_options(
                 array,
                 &UInt64,
-                &CastOptions { safe: true, ..Default::default() },
+                &CastOptions {
+                    safe: true,
+                    ..Default::default()
+                },
             )
             .map_err(|e| e.to_string())?;
             let a = cast
@@ -926,7 +1102,10 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
             current = Some(e);
         }
         if let Some(&row) = mrows.get(&(e, b)) {
-            segments.last_mut().expect("segment exists").push((yv.value(i), row));
+            segments
+                .last_mut()
+                .expect("segment exists")
+                .push((yv.value(i), row));
         }
     }
     let n_common = y_entities.intersection(&m_entities).count();
@@ -1034,7 +1213,10 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
         };
         let mut s = rhai::Map::new();
         s.insert("convention".into(), Dynamic::from(conv_names[c].clone()));
-        s.insert("terms".into(), Dynamic::from(if t2.is_some() { 2i64 } else { 1i64 }));
+        s.insert(
+            "terms".into(),
+            Dynamic::from(if t2.is_some() { 2i64 } else { 1i64 }),
+        );
         s.insert("verdict".into(), Dynamic::from(verdict.to_string()));
         s.insert("voted".into(), Dynamic::from(voted as i64));
         s.insert("winners".into(), Dynamic::from(winners as i64));

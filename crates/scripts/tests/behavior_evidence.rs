@@ -52,9 +52,10 @@ async fn fixture(root: &std::path::Path) {
     write_table(
         root,
         "ledgers",
-        RecordBatch::try_new(ledgers, vec![Arc::new(StringArray::from(
-            ENTITIES.to_vec(),
-        ))])
+        RecordBatch::try_new(
+            ledgers,
+            vec![Arc::new(StringArray::from(ENTITIES.to_vec()))],
+        )
         .unwrap(),
     )
     .await;
@@ -85,13 +86,16 @@ async fn fixture(root: &std::path::Path) {
     write_table(
         root,
         "positions",
-        RecordBatch::try_new(positions, vec![
-            Arc::new(StringArray::from(p_entity)),
-            Arc::new(StringArray::from(p_period)),
-            Arc::new(Float64Array::from(p_balance)),
-            Arc::new(Float64Array::from(p_turnover)),
-            Arc::new(Float64Array::from(p_noise)),
-        ])
+        RecordBatch::try_new(
+            positions,
+            vec![
+                Arc::new(StringArray::from(p_entity)),
+                Arc::new(StringArray::from(p_period)),
+                Arc::new(Float64Array::from(p_balance)),
+                Arc::new(Float64Array::from(p_turnover)),
+                Arc::new(Float64Array::from(p_noise)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -120,11 +124,14 @@ async fn fixture(root: &std::path::Path) {
     write_table(
         root,
         "moves",
-        RecordBatch::try_new(moves, vec![
-            Arc::new(StringArray::from(m_entity)),
-            Arc::new(StringArray::from(m_date)),
-            Arc::new(Float64Array::from(m_amount)),
-        ])
+        RecordBatch::try_new(
+            moves,
+            vec![
+                Arc::new(StringArray::from(m_entity)),
+                Arc::new(StringArray::from(m_date)),
+                Arc::new(Float64Array::from(m_amount)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -144,18 +151,18 @@ fn one(outcomes: &[Outcome]) -> String {
 
 async fn evidence(session: &Session, column: &str) -> serde_json::Value {
     session
-        .execute(&format!("SELECT behavior_evidence() FROM positions.{column};"))
+        .execute(&format!(
+            "SELECT behavior_evidence() FROM positions.{column};"
+        ))
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute(&format!(
-                "SELECT value FROM GLOSSARY(positions.{column}::behavior_evidence) \
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY(positions.{column}::behavior_evidence) \
                  WHERE state = 'current';"
-            ))
-            .await
-            .unwrap(),
-    );
+        ))
+        .await
+        .unwrap());
     serde_json::from_str(&value).unwrap()
 }
 
@@ -176,14 +183,20 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     std::fs::create_dir_all(&root).unwrap();
     fixture(&root).await;
 
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -252,8 +265,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     let anchor = moves_anchor(&noise);
     assert_eq!(anchor["verdict"], "abstain", "{anchor}");
     assert_eq!(
-        anchor["reason"],
-        "no entity series reconciled: wrong anchor, short series, or dead values",
+        anchor["reason"], "no entity series reconciled: wrong anchor, short series, or dead values",
         "{anchor}"
     );
 }
@@ -266,10 +278,13 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
         .await
         .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -310,9 +325,10 @@ async fn a_ledger_signed_entity_reads_in_the_mirror_count() {
     write_table(
         &root,
         "ledgers",
-        RecordBatch::try_new(ledgers, vec![Arc::new(StringArray::from(vec![
-            "a", "b", "c", "d",
-        ]))])
+        RecordBatch::try_new(
+            ledgers,
+            vec![Arc::new(StringArray::from(vec!["a", "b", "c", "d"]))],
+        )
         .unwrap(),
     )
     .await;
@@ -349,11 +365,14 @@ async fn a_ledger_signed_entity_reads_in_the_mirror_count() {
     write_table(
         &root,
         "positions",
-        RecordBatch::try_new(positions, vec![
-            Arc::new(StringArray::from(p_entity)),
-            Arc::new(StringArray::from(p_period)),
-            Arc::new(Float64Array::from(p_balance)),
-        ])
+        RecordBatch::try_new(
+            positions,
+            vec![
+                Arc::new(StringArray::from(p_entity)),
+                Arc::new(StringArray::from(p_period)),
+                Arc::new(Float64Array::from(p_balance)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -365,11 +384,14 @@ async fn a_ledger_signed_entity_reads_in_the_mirror_count() {
     write_table(
         &root,
         "moves",
-        RecordBatch::try_new(moves, vec![
-            Arc::new(StringArray::from(m_entity)),
-            Arc::new(StringArray::from(m_date)),
-            Arc::new(Float64Array::from(m_amount)),
-        ])
+        RecordBatch::try_new(
+            moves,
+            vec![
+                Arc::new(StringArray::from(m_entity)),
+                Arc::new(StringArray::from(m_date)),
+                Arc::new(Float64Array::from(m_amount)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -397,7 +419,10 @@ async fn a_ledger_signed_entity_reads_in_the_mirror_count() {
     let balance = evidence(&session, "balance").await;
     let anchor = moves_anchor(&balance);
     assert_eq!(anchor["verdict"], "stock", "{anchor}");
-    assert_eq!(anchor["voted"], 3, "d abstains under the original sign: {anchor}");
+    assert_eq!(
+        anchor["voted"], 3,
+        "d abstains under the original sign: {anchor}"
+    );
     assert_eq!(anchor["sign"]["primary"], 3, "{anchor}");
     assert_eq!(anchor["sign"]["mirror"], 1, "{anchor}");
     assert_eq!(anchor["sign"]["both"], 0, "{anchor}");
@@ -418,9 +443,10 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
     write_table(
         &root,
         "ledgers",
-        RecordBatch::try_new(ledgers, vec![Arc::new(StringArray::from(vec![
-            "a", "b", "c",
-        ]))])
+        RecordBatch::try_new(
+            ledgers,
+            vec![Arc::new(StringArray::from(vec!["a", "b", "c"]))],
+        )
         .unwrap(),
     )
     .await;
@@ -454,11 +480,14 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
     write_table(
         &root,
         "reports",
-        RecordBatch::try_new(reports, vec![
-            Arc::new(StringArray::from(r_entity)),
-            Arc::new(StringArray::from(r_period)),
-            Arc::new(Float64Array::from(r_net)),
-        ])
+        RecordBatch::try_new(
+            reports,
+            vec![
+                Arc::new(StringArray::from(r_entity)),
+                Arc::new(StringArray::from(r_period)),
+                Arc::new(Float64Array::from(r_net)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -471,12 +500,15 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
     write_table(
         &root,
         "flows",
-        RecordBatch::try_new(flows, vec![
-            Arc::new(StringArray::from(f_entity)),
-            Arc::new(StringArray::from(f_date)),
-            Arc::new(Float64Array::from(f_credit)),
-            Arc::new(Float64Array::from(f_debit)),
-        ])
+        RecordBatch::try_new(
+            flows,
+            vec![
+                Arc::new(StringArray::from(f_entity)),
+                Arc::new(StringArray::from(f_date)),
+                Arc::new(Float64Array::from(f_credit)),
+                Arc::new(Float64Array::from(f_debit)),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -505,15 +537,13 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
         .execute("SELECT behavior_evidence() FROM reports.net;")
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute(
-                "SELECT value FROM GLOSSARY(reports.net::behavior_evidence) \
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(reports.net::behavior_evidence) \
                  WHERE state = 'current';",
-            )
-            .await
-            .unwrap(),
-    );
+        )
+        .await
+        .unwrap());
     let net: serde_json::Value = serde_json::from_str(&value).unwrap();
     let anchor = net["anchors"]
         .as_array()

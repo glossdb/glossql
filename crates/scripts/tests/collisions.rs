@@ -11,10 +11,13 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 fn session(store: &Store) -> Session {
-    Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))))
 }
@@ -83,7 +86,10 @@ async fn concepts_sharing_an_extract_collide_and_spelling_does_not_hide_it() {
     assert_eq!(v["applicable"], true);
     assert_eq!(v["groundings"], 3);
     assert_eq!(v["collisions"].as_array().unwrap().len(), 1, "{v}");
-    assert_eq!(v["collisions"][0]["aspects"], serde_json::json!(["revenue", "turnover"]));
+    assert_eq!(
+        v["collisions"][0]["aspects"],
+        serde_json::json!(["revenue", "turnover"])
+    );
 
     // A gloss write stales the measurement through the `glossary` edge:
     // turnover re-grounds to its own extract, the re-read recomputes, and

@@ -42,10 +42,13 @@ async fn parquet_fixture(root: &std::path::Path) {
     write_table(
         root,
         "customers",
-        RecordBatch::try_new(customers, vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
-            Arc::new(StringArray::from(vec!["ann", "ann", "bob", "bob", "cat"])),
-        ])
+        RecordBatch::try_new(
+            customers,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
+                Arc::new(StringArray::from(vec!["ann", "ann", "bob", "bob", "cat"])),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -59,10 +62,13 @@ async fn parquet_fixture(root: &std::path::Path) {
     write_table(
         root,
         "orders",
-        RecordBatch::try_new(orders, vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
-            Arc::new(Int64Array::from(vec![1, 2, 2, 3, 9])),
-        ])
+        RecordBatch::try_new(
+            orders,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
+                Arc::new(Int64Array::from(vec![1, 2, 2, 3, 9])),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -87,14 +93,20 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     std::fs::create_dir_all(&root).unwrap();
     parquet_fixture(&root).await;
 
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -119,19 +131,22 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         .await
         .unwrap();
 
-    let landed = one(&session.execute("SELECT count(*) FROM imports;").await.unwrap());
+    let landed = one(&session
+        .execute("SELECT count(*) FROM imports;")
+        .await
+        .unwrap());
     assert_eq!(landed, "2", "both recipes landed and recorded");
 
     session
         .execute("SELECT detect_relationships() FROM fin;")
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute("SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';")
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
 
     // The true edge, with its evidence: 3 of 4 distinct customer ids
     // resolve, one orphan.
@@ -152,29 +167,25 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         .execute("DECLARE RELATIONSHIP orders.customer_id -> customers.id;")
         .await
         .unwrap();
-    let declared = one(
-        &session
-            .execute("SELECT count(*) FROM relationships;")
-            .await
-            .unwrap(),
-    );
+    let declared = one(&session
+        .execute("SELECT count(*) FROM relationships;")
+        .await
+        .unwrap());
     assert_eq!(declared, "1");
-    let right = one(
-        &session
-            .execute("SELECT right_path FROM relationships;")
-            .await
-            .unwrap(),
-    );
+    let right = one(&session
+        .execute("SELECT right_path FROM relationships;")
+        .await
+        .unwrap());
     assert_eq!(right, "customers.id");
 
     // The reject was not declared — and not erased: it stays visible
     // in the measurement.
-    let after = one(
-        &session
-            .execute("SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';")
-            .await
-            .unwrap(),
-    );
+    let after = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
     assert!(after.contains(r#""from":"orders.order_id""#), "{after}");
 }
 
@@ -189,10 +200,13 @@ async fn tenant_fixture(root: &std::path::Path) {
     write_table(
         root,
         "parties",
-        RecordBatch::try_new(parties, vec![
-            Arc::new(Int64Array::from(vec![1, 1, 1, 2, 2])),
-            Arc::new(StringArray::from(vec!["ann", "bob", "cat", "ann", "bob"])),
-        ])
+        RecordBatch::try_new(
+            parties,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 1, 1, 2, 2])),
+                Arc::new(StringArray::from(vec!["ann", "bob", "cat", "ann", "bob"])),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -203,10 +217,13 @@ async fn tenant_fixture(root: &std::path::Path) {
     write_table(
         root,
         "txns",
-        RecordBatch::try_new(txns, vec![
-            Arc::new(Int64Array::from(vec![1, 1, 1, 2, 2])),
-            Arc::new(StringArray::from(vec!["ann", "ann", "bob", "ann", "bob"])),
-        ])
+        RecordBatch::try_new(
+            txns,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 1, 1, 2, 2])),
+                Arc::new(StringArray::from(vec!["ann", "ann", "bob", "ann", "bob"])),
+            ],
+        )
         .unwrap(),
     )
     .await;
@@ -219,14 +236,20 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
     std::fs::create_dir_all(&root).unwrap();
     tenant_fixture(&root).await;
 
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -255,21 +278,19 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         .execute("SELECT detect_relationships() FROM fin;")
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute("SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';")
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
 
     // No column is a key alone here — the composite pass is the only
     // producer: the anchor pair plus the scoping leg, data-decided.
     assert!(value.contains(r#""from":"txns.party""#), "{value}");
     assert!(value.contains(r#""to":"parties.name""#), "{value}");
     assert!(
-        value.contains(
-            r#""key_columns":[{"from":"txns.business_id","to":"parties.business_id"}]"#
-        ),
+        value.contains(r#""key_columns":[{"from":"txns.business_id","to":"parties.business_id"}]"#),
         "{value}"
     );
     assert!(value.contains(r#""cardinality":"many-to-one""#), "{value}");
@@ -291,22 +312,18 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         )
         .await
         .unwrap();
-    let right = one(
-        &session
-            .execute("SELECT right_path FROM relationships;")
-            .await
-            .unwrap(),
-    );
+    let right = one(&session
+        .execute("SELECT right_path FROM relationships;")
+        .await
+        .unwrap());
     assert_eq!(right, "parties.(business_id, name)");
-    let swept = one(
-        &session
-            .execute(
-                "SELECT subject FROM GLOSSARY(txns) \
+    let swept = one(&session
+        .execute(
+            "SELECT subject FROM GLOSSARY(txns) \
                  WHERE aspect = 'meaning' AND state = 'current';",
-            )
-            .await
-            .unwrap(),
-    );
+        )
+        .await
+        .unwrap());
     assert_eq!(
         swept,
         "txns.(business_id, party) -> parties.(business_id, name)"

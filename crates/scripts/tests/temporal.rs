@@ -196,7 +196,10 @@ fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     );
     let out = temporal(door, "events.d");
     assert_eq!(out["applicable"], json!(false));
-    assert_eq!(out["reason"], json!("no non-null values — nothing bounds a window"));
+    assert_eq!(
+        out["reason"],
+        json!("no non-null values — nothing bounds a window")
+    );
 }
 
 #[test]

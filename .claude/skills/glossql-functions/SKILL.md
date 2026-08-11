@@ -102,6 +102,13 @@ pairs should be reaching for one instead:
   `ORDER BY e, b`): conventions (each term and every ordered pair
   difference) as one matrix product, residuals and voting gates per
   entity; returns `n_common` and per-convention summaries.
+- `tabicl_bands(train_x, train_y, test_x, alphas, actual)` — one
+  TabICL fit and read: train on rows of features (arrays of numbers),
+  predict one test row, return `q` (a band value per alpha, in order)
+  and `pit` — the quantile at which `actual` lands in the predicted
+  distribution, 0..1. The model is native and loads once from the
+  workspace's `weights/` directory; a fit needs at least 2 training
+  rows (scripts should require more — `metric_bands.rhai` uses 5).
 
 ## Abstention
 

@@ -23,20 +23,23 @@ async fn parquet_fixture(root: &std::path::Path) {
         Field::new("order_date", DataType::Utf8, true),
         Field::new("legacy_code", DataType::Utf8, true),
     ]));
-    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![
-        Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
-        Arc::new(StringArray::from(vec![
-            "12.50", "8.00", "99.90", "7.25", "n/a",
-        ])),
-        Arc::new(StringArray::from(vec![
-            "15.01.2024",
-            "16.01.2024",
-            "17.01.2024",
-            "18.01.2024",
-            "19.01.2024",
-        ])),
-        Arc::new(StringArray::from(vec![None::<&str>; 5])),
-    ])
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
+            Arc::new(StringArray::from(vec![
+                "12.50", "8.00", "99.90", "7.25", "n/a",
+            ])),
+            Arc::new(StringArray::from(vec![
+                "15.01.2024",
+                "16.01.2024",
+                "17.01.2024",
+                "18.01.2024",
+                "19.01.2024",
+            ])),
+            Arc::new(StringArray::from(vec![None::<&str>; 5])),
+        ],
+    )
     .unwrap();
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -57,10 +60,13 @@ fn runtime() -> Arc<RhaiRuntime> {
 }
 
 fn session_for(kind: ActorKind, id: &str, store: &Store, lake: &Lake) -> Session {
-    Session::new(store.clone(), Actor {
-        kind,
-        id: id.into(),
-    })
+    Session::new(
+        store.clone(),
+        Actor {
+            kind,
+            id: id.into(),
+        },
+    )
     .unwrap()
     .with_lake(lake.clone())
     .with_runtime(runtime())
@@ -136,9 +142,12 @@ async fn fixture_11_with_real_scripts() {
     std::fs::create_dir_all(&erp_root).unwrap();
     parquet_fixture(&erp_root).await;
 
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
     let agent = session_for(ActorKind::Agent, "agent-1", &store, &lake);
 
@@ -223,7 +232,11 @@ async fn fixture_11_with_real_scripts() {
         .execute("SELECT min(order_date) FROM orders;")
         .await
         .unwrap();
-    assert_eq!(one(&earliest), "2024-01-15", "the recipe's expr parsed EU dates");
+    assert_eq!(
+        one(&earliest),
+        "2024-01-15",
+        "the recipe's expr parsed EU dates"
+    );
     let gone = agent
         .execute("SELECT legacy_code FROM orders;")
         .await
@@ -247,7 +260,11 @@ async fn fixture_11_with_real_scripts() {
         .execute("SELECT value FROM GLOSSARY(orders.amount::outlier_profile);")
         .await
         .unwrap();
-    assert!(one(&early).contains("\"applicable\":false"), "{}", one(&early));
+    assert!(
+        one(&early).contains("\"applicable\":false"),
+        "{}",
+        one(&early)
+    );
     assert!(
         one(&early).contains("\"missing_aspects\":[\"column_profile\"]"),
         "{}",
@@ -267,8 +284,16 @@ async fn fixture_11_with_real_scripts() {
         .execute("SELECT value FROM GLOSSARY(orders.amount::outlier_profile);")
         .await
         .unwrap();
-    assert!(one(&outlier).contains("\"applicable\":true"), "{}", one(&outlier));
-    assert!(one(&outlier).contains("\"count\":1"), "99.90 is beyond both fences: {}", one(&outlier));
+    assert!(
+        one(&outlier).contains("\"applicable\":true"),
+        "{}",
+        one(&outlier)
+    );
+    assert!(
+        one(&outlier).contains("\"count\":1"),
+        "99.90 is beyond both fences: {}",
+        one(&outlier)
+    );
 
     // The temporal family is one ordinary function on the landed column:
     // five consecutive days read as day cadence, complete and gapless.
@@ -355,7 +380,11 @@ async fn fixture_11_with_real_scripts() {
         .execute("SELECT count(*) FROM GLOSSARY(orders) WHERE state = 'unassessed';")
         .await
         .unwrap();
-    assert_ne!(one(&unassessed), "0", "absence is a visible row, not an omission");
+    assert_ne!(
+        one(&unassessed),
+        "0",
+        "absence is a visible row, not an omission"
+    );
 
     // A typing correction is a recipe correction — supersede-and-reland
     // (ruled 2026-08-06): the changed recipe drops the old landing and

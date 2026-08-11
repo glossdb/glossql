@@ -33,15 +33,13 @@ async fn evidence(session: &Session, subject: &str) -> serde_json::Value {
         .execute(&format!("SELECT behavior_evidence() FROM {subject};"))
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute(&format!(
-                "SELECT value FROM GLOSSARY({subject}::behavior_evidence) \
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY({subject}::behavior_evidence) \
                  WHERE state = 'current';"
-            ))
-            .await
-            .unwrap(),
-    );
+        ))
+        .await
+        .unwrap());
     serde_json::from_str(&value).unwrap()
 }
 
@@ -64,14 +62,20 @@ async fn the_generator_grades_the_discriminator() {
     };
 
     let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -155,7 +159,10 @@ async fn the_generator_grades_the_discriminator() {
     let fx = evidence(&session, "fx_rates.rate").await;
     assert_eq!(fx["applicable"], false, "{fx}");
     assert!(
-        fx["reason"].as_str().unwrap().contains("no declared relationships"),
+        fx["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no declared relationships"),
         "{fx}"
     );
 }

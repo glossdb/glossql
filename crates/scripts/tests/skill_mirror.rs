@@ -56,7 +56,10 @@ fn every_taught_kernel_is_registered() {
         .captures_iter(&section)
         .map(|c| c[1].to_string())
         .collect();
-    assert!(!taught.is_empty(), "no kernels found in the Kernels section");
+    assert!(
+        !taught.is_empty(),
+        "no kernels found in the Kernels section"
+    );
     let registered = registered_names();
     let phantom: Vec<_> = taught.difference(&registered).collect();
     assert!(

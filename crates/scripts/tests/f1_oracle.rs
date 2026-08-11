@@ -27,19 +27,22 @@ fn one(outcomes: &[Outcome]) -> String {
     }
 }
 
-async fn measurement(session: &Session, subject: &str, function: &str, aspect: &str) -> serde_json::Value {
+async fn measurement(
+    session: &Session,
+    subject: &str,
+    function: &str,
+    aspect: &str,
+) -> serde_json::Value {
     session
         .execute(&format!("SELECT {function}() FROM {subject};"))
         .await
         .unwrap();
-    let value = one(
-        &session
-            .execute(&format!(
-                "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
-            ))
-            .await
-            .unwrap(),
-    );
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
+        ))
+        .await
+        .unwrap());
     serde_json::from_str(&value).unwrap()
 }
 
@@ -58,9 +61,15 @@ const TABLES: [&str; 9] = [
 /// RelBench's own FK metadata — the declared truth the candidates must
 /// cover (recall is the contract; extras are the judge's to reject).
 const DECLARED_FKS: [(&str, &str); 13] = [
-    ("constructor_results.constructorId", "constructors.constructorId"),
+    (
+        "constructor_results.constructorId",
+        "constructors.constructorId",
+    ),
     ("constructor_results.raceId", "races.raceId"),
-    ("constructor_standings.constructorId", "constructors.constructorId"),
+    (
+        "constructor_standings.constructorId",
+        "constructors.constructorId",
+    ),
     ("constructor_standings.raceId", "races.raceId"),
     ("qualifying.constructorId", "constructors.constructorId"),
     ("qualifying.driverId", "drivers.driverId"),
@@ -87,14 +96,20 @@ async fn rel_f1_grades_the_planes_at_scale() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let store = Store::open_memory().await.unwrap();
-    let session = Session::new(store.clone(), Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
@@ -136,12 +151,20 @@ async fn rel_f1_grades_the_planes_at_scale() {
     // The sweep that used to time out: 34 Int64 columns across 9
     // tables, batched through the door.
     let t0 = std::time::Instant::now();
-    let rels = measurement(&session, "f1", "detect_relationships", "relationship_candidates").await;
+    let rels = measurement(
+        &session,
+        "f1",
+        "detect_relationships",
+        "relationship_candidates",
+    )
+    .await;
     eprintln!("detect_relationships: {:?}", t0.elapsed());
     let candidates = rels["candidates"].as_array().unwrap();
     for (from, to) in DECLARED_FKS {
         assert!(
-            candidates.iter().any(|c| c["from"] == from && c["to"] == to),
+            candidates
+                .iter()
+                .any(|c| c["from"] == from && c["to"] == to),
             "declared FK {from} -> {to} missing from {} candidates",
             candidates.len()
         );
@@ -149,7 +172,13 @@ async fn rel_f1_grades_the_planes_at_scale() {
 
     // The nest the near-key gate used to strip: location (75 distinct
     // of 77) → country.
-    let circuits = measurement(&session, "circuits", "detect_hierarchies", "hierarchy_candidates").await;
+    let circuits = measurement(
+        &session,
+        "circuits",
+        "detect_hierarchies",
+        "hierarchy_candidates",
+    )
+    .await;
     assert_eq!(circuits["applicable"], true, "{circuits}");
     let nest = circuits["candidates"]
         .as_array()
@@ -169,7 +198,13 @@ async fn rel_f1_grades_the_planes_at_scale() {
     session.execute(&edges).await.unwrap();
 
     let t1 = std::time::Instant::now();
-    let points = measurement(&session, "standings.points", "behavior_evidence", "behavior_evidence").await;
+    let points = measurement(
+        &session,
+        "standings.points",
+        "behavior_evidence",
+        "behavior_evidence",
+    )
+    .await;
     eprintln!("behavior_evidence(standings.points): {:?}", t1.elapsed());
     assert_eq!(points["applicable"], true, "{points}");
 

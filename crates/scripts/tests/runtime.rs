@@ -15,14 +15,15 @@ struct FakeDoor;
 impl SqlDoor for FakeDoor {
     fn sql(&self, _query: &str) -> Result<Vec<RecordBatch>, String> {
         let schema = Arc::new(Schema::new(vec![Field::new("v", DataType::Utf8, true)]));
-        let batch = RecordBatch::try_new(schema, vec![
-            Arc::new(StringArray::from(vec![
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec![
                 Some("12.50"),
                 Some("8.00"),
                 Some("n/a"),
                 None,
-            ])),
-        ])
+            ]))],
+        )
         .unwrap();
         Ok(vec![batch])
     }
