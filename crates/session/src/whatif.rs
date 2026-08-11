@@ -1,0 +1,694 @@
+//! The `whatif.` door (ruled 2026-08-11, fixture 19): a declared scenario —
+//! a FACT aspect carrying column overrides — served as bands over recipe
+//! replay. The proven pipeline (dataraum-eval PHASE2 Leg B, tfmeval E4)
+//! applied to real rows: the server replays each concept's current QUERY
+//! grounding with the overrides applied at a bracketing grid of strengths
+//! (support worlds), the band kernel reads across the worlds with the
+//! factors as features, and the declared point is always interpolation.
+//! The override never touches storage: it is a plan rewrite — every scan
+//! of an overridden table gains a projection scaling the overridden
+//! column from the scenario's start month (`reports/
+//! 2026-08-11-tabicl-integration.md`, the corrected verdict).
+//!
+//! Judgment rides the `basis` column, never a hidden guess: a concept
+//! whose grounding is not current says so; one the overrides never move
+//! is refused with the reason (no declared path — `detect_derivations`
+//! proposes the missing identities); one whose grounding lacks a time
+//! axis or a `value` column says which. The `replay` column carries the
+//! mechanical recomputation at the declared factors — the arithmetic
+//! half — beside the model's bands, so both halves stay visible.
+//!
+//! Cache: extract semantics (SPEC.md §6) under function name `whatif`,
+//! witness = the scenario aspect — recomputed when the scenario gloss is
+//! newer than the cached read, forced by `DELETE FROM cache` like any
+//! function value. Data landing after the cache was cut is the reader's
+//! delete until snapshot stamping joins (same posture as extraction).
+
+use std::sync::Arc;
+
+use datafusion::arrow::array::{Array, ArrayRef, Float64Array, StringArray};
+use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::common::tree_node::{Transformed, TreeNode};
+use datafusion::common::{Column, Result as DFResult};
+use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, cast, lit, when};
+use datafusion::prelude::SessionContext;
+use datafusion::sql::sqlparser::ast::Statement as SQLStatement;
+use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
+use datafusion::sql::sqlparser::parser::Parser;
+use glossql_glossary::Scope;
+use serde_json::{Value, json};
+
+use crate::reads::{Shared, ensure_verdicts};
+use crate::session::SessionError;
+
+const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
+/// The bracket rule (ruled 2026-08-11): strengths placed on both sides
+/// of the declared factor, so the scenario's own read is interpolation.
+const BRACKET: [f64; 5] = [-0.25, -0.10, -0.05, 0.05, 0.15];
+
+/// One declared override: a real column, a factor, a start month.
+#[derive(Clone)]
+struct Override {
+    table: String,
+    column: String,
+    factor: f64,
+    from: String, // "YYYY-MM"
+}
+
+/// One served row; refusal rows carry only concept and basis.
+struct Row {
+    concept: String,
+    month: Option<String>,
+    replay: Option<f64>,
+    q: Option<[f64; 5]>,
+    basis: String,
+}
+
+impl Row {
+    fn to_json(&self) -> Value {
+        json!({
+            "concept": self.concept, "month": self.month, "replay": self.replay,
+            "q": self.q.map(|q| q.to_vec()), "basis": self.basis,
+        })
+    }
+
+    fn from_json(v: &Value) -> Option<Row> {
+        Some(Row {
+            concept: v["concept"].as_str()?.to_string(),
+            month: v["month"].as_str().map(str::to_string),
+            replay: v["replay"].as_f64(),
+            q: v["q"].as_array().and_then(|a| {
+                let q: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
+                q.try_into().ok()
+            }),
+            basis: v["basis"].as_str()?.to_string(),
+        })
+    }
+}
+
+pub(crate) async fn whatif_batch(
+    shared: &Shared,
+    scenario: &str,
+) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let bad = |detail: String| SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"));
+
+    let Some((_, kind, _)) = shared.store.aspect(scenario).await? else {
+        return Err(bad(format!("no aspect `{scenario}` is declared")));
+    };
+    if kind != "fact" {
+        return Err(bad(format!(
+            "`{scenario}` is a {kind} aspect — a scenario is a FACT aspect carrying overrides \
+             (fixture 19)"
+        )));
+    }
+
+    // The scenario's collapsed current body, witness-gated and judged
+    // like any read; its newest write stamps cache freshness.
+    let scope = Scope::Subject(dataset.clone());
+    ensure_verdicts(shared, &dataset, &scope, Some(scenario)).await?;
+    let collapsed = shared
+        .store
+        .collapsed_read(
+            &dataset,
+            &scope,
+            Some(scenario),
+            &shared.read_context().await?,
+        )
+        .await?;
+    let current = collapsed
+        .into_iter()
+        .find(|r| r.subject == dataset && r.aspect == scenario)
+        .ok_or_else(|| bad(format!("no scenario is glossed on `{dataset}`")))?;
+    if current.state != "current" {
+        return Err(bad(format!(
+            "the scenario on `{dataset}` is {}",
+            current.state
+        )));
+    }
+    let body: Value = current
+        .value
+        .as_deref()
+        .and_then(|v| serde_json::from_str(v).ok())
+        .ok_or_else(|| bad("the scenario body is not JSON".into()))?;
+    let overrides = decode_overrides(&body).map_err(bad)?;
+    let newest = shared
+        .store
+        .raw_read(&dataset, &scope, Some(scenario))
+        .await?
+        .into_iter()
+        .map(|r| r.written_at)
+        .max()
+        .unwrap_or_default();
+
+    let cached = shared
+        .store
+        .cache_get(&dataset, &dataset, "whatif", Some(scenario))
+        .await?
+        .filter(|c| c.computed_at >= newest);
+    let rows: Vec<Row> = match cached {
+        Some(c) => serde_json::from_str::<Value>(&c.body)
+            .ok()
+            .and_then(|v| {
+                v["rows"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Row::from_json).collect())
+            })
+            .ok_or_else(|| bad("the cached read does not decode — DELETE FROM cache".into()))?,
+        None => {
+            let rows = compute(shared, &dataset, scenario, &overrides).await?;
+            let body: Vec<Value> = rows.iter().map(Row::to_json).collect();
+            shared
+                .store
+                .cache_put(
+                    &dataset,
+                    &dataset,
+                    "whatif",
+                    Some(scenario),
+                    &json!({ "rows": body }).to_string(),
+                    None,
+                )
+                .await?;
+            rows
+        }
+    };
+    Ok(row_batch(rows))
+}
+
+fn decode_overrides(body: &Value) -> Result<Vec<Override>, String> {
+    let list = body["overrides"]
+        .as_array()
+        .filter(|l| !l.is_empty())
+        .ok_or("the scenario body carries no overrides")?;
+    list.iter()
+        .map(|o| {
+            let column = o["column"]
+                .as_str()
+                .ok_or("an override names its `column` as `table.column`")?;
+            let (table, column) = column
+                .split_once('.')
+                .ok_or(format!("`{column}` — an override column is `table.column`"))?;
+            let factor = o["factor"]
+                .as_f64()
+                .filter(|f| *f > 0.0)
+                .ok_or("an override carries a positive `factor`")?;
+            let from = o["from"]
+                .as_str()
+                .filter(|f| f.len() == 7 && f.as_bytes()[4] == b'-')
+                .ok_or("an override carries `from` as \"YYYY-MM\"")?;
+            Ok(Override {
+                table: table.to_string(),
+                column: column.to_string(),
+                factor,
+                from: from.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// The replay: every current QUERY grounding, run over the support
+/// worlds, banded by the runtime's kernel. One `Row` per (concept,
+/// month) — or one refusal row per concept, with the reason.
+async fn compute(
+    shared: &Shared,
+    dataset: &str,
+    scenario: &str,
+    overrides: &[Override],
+) -> Result<Vec<Row>, SessionError> {
+    let ctx = shared
+        .ctx
+        .read()
+        .expect("ctx lock")
+        .clone()
+        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let bad = |detail: String| SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"));
+
+    // Every overridden column must exist, and its table must carry a
+    // date column for the start-month condition — checked up front so a
+    // misdeclared scenario fails whole, not per concept.
+    for o in overrides {
+        let frame = ctx
+            .table(&o.table)
+            .await
+            .map_err(|_| bad(format!("`{}` names no table in the dataset", o.table)))?;
+        let fields: Fields = frame.schema().fields().clone();
+        if !fields.iter().any(|f| f.name() == &o.column) {
+            return Err(bad(format!("`{}` has no column `{}`", o.table, o.column)));
+        }
+        if date_column(&fields).is_none() {
+            return Err(bad(format!(
+                "`{}` carries no date column to anchor `from` — override the landed table \
+                 that carries the time",
+                o.table
+            )));
+        }
+    }
+
+    // The support worlds: baseline, then each lever bracketed alone
+    // (singles — the proven two-lever shape trains on baseline +
+    // singles and reads the joint).
+    let baseline: Vec<f64> = vec![1.0; overrides.len()];
+    let mut worlds: Vec<Vec<f64>> = vec![baseline.clone()];
+    for (i, o) in overrides.iter().enumerate() {
+        for offset in BRACKET {
+            let s = o.factor + offset;
+            if s > 0.01 && (s - 1.0).abs() > 1e-9 {
+                let mut w = baseline.clone();
+                w[i] = s;
+                if !worlds.contains(&w) {
+                    worlds.push(w);
+                }
+            }
+        }
+    }
+    let declared: Vec<f64> = overrides.iter().map(|o| o.factor).collect();
+    let from_month = overrides
+        .iter()
+        .map(|o| o.from.as_str())
+        .min()
+        .expect("overrides checked non-empty")
+        .to_string();
+
+    // Latest current QUERY grounding per concept, judgment included.
+    let scope = Scope::Subject(dataset.to_string());
+    ensure_verdicts(shared, dataset, &scope, None).await?;
+    let kinds: std::collections::HashMap<String, String> = shared
+        .store
+        .relation_rows("aspects")
+        .await?
+        .into_iter()
+        .filter_map(|r| Some((r[0].clone()?, r[1].clone()?)))
+        .collect();
+    let collapsed = shared
+        .store
+        .collapsed_read(dataset, &scope, None, &shared.read_context().await?)
+        .await?;
+
+    let mut out = Vec::new();
+    for c in collapsed {
+        if c.subject != dataset || kinds.get(&c.aspect).map(String::as_str) != Some("query") {
+            continue;
+        }
+        let refusal = |basis: String| Row {
+            concept: c.aspect.clone(),
+            month: None,
+            replay: None,
+            q: None,
+            basis,
+        };
+        if c.state != "current" {
+            out.push(refusal(format!("not served: the grounding is {}", c.state)));
+            continue;
+        }
+        let Some(body) = c
+            .value
+            .as_deref()
+            .and_then(|v| serde_json::from_str::<Value>(v).ok())
+        else {
+            out.push(refusal("not served: the grounding body is not JSON".into()));
+            continue;
+        };
+        let Some(sql) = body["sql"].as_str().map(str::to_string) else {
+            out.push(refusal("not served: the grounding carries no `sql`".into()));
+            continue;
+        };
+        match concept_rows(
+            shared,
+            &ctx,
+            &c.aspect,
+            &sql,
+            &body,
+            overrides,
+            &worlds,
+            &declared,
+            &from_month,
+        )
+        .await
+        {
+            Ok(rows) => out.extend(rows),
+            Err(SessionError::BadSubject(detail)) => out.push(refusal(detail)),
+            Err(e) => return Err(e),
+        }
+    }
+    if out.is_empty() {
+        return Err(bad(format!(
+            "no QUERY grounding is current on `{dataset}` — there is nothing to replay"
+        )));
+    }
+    Ok(out)
+}
+
+/// One concept through the pipeline: monthly series per world, the
+/// unmoved check, the frame, the kernel. `BadSubject` here means a
+/// refusal row, not a failed read.
+#[allow(clippy::too_many_arguments)]
+async fn concept_rows(
+    shared: &Shared,
+    ctx: &SessionContext,
+    concept: &str,
+    sql: &str,
+    body: &Value,
+    overrides: &[Override],
+    worlds: &[Vec<f64>],
+    declared: &[f64],
+    from_month: &str,
+) -> Result<Vec<Row>, SessionError> {
+    let refuse = |detail: String| SessionError::BadSubject(detail);
+
+    // The grounding's shape: a `value` column and a time axis, found by
+    // dtype exactly as any reader finds them (the metric_bands probe) —
+    // from the plan's schema, nothing scanned.
+    let probe = build_plan(ctx, sql).await?;
+    let fields: Fields = probe.schema().fields().clone();
+    if !fields.iter().any(|f| f.name() == "value") {
+        return Err(refuse(
+            "not served: the grounding carries no `value` column".into(),
+        ));
+    }
+    let Some(tcol) = date_column(&fields) else {
+        return Err(refuse(
+            "not served: the grounding carries no time axis".into(),
+        ));
+    };
+
+    // Flows sum per month; a marked stock takes its last value per month
+    // (the metric_bands convention — the marker is authored).
+    let is_stock = body["behavior"].as_str() == Some("stock");
+    let series_sql = if is_stock {
+        format!(
+            "SELECT period, value FROM ( \
+               SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
+                      value, \
+                      row_number() OVER ( \
+                        PARTITION BY date_trunc('month', \"{tcol}\") \
+                        ORDER BY \"{tcol}\" DESC) AS rn \
+               FROM ({sql})) WHERE rn = 1 ORDER BY period"
+        )
+    } else {
+        format!(
+            "SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
+                    sum(value) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+        )
+    };
+
+    let base = run_series(ctx, &series_sql, None).await?;
+    let post: Vec<usize> = (0..base.len())
+        .filter(|i| base[*i].0.as_str() >= from_month)
+        .collect();
+    if post.is_empty() {
+        let last = base.last().map(|(m, _)| m.as_str()).unwrap_or("nothing");
+        return Err(refuse(format!(
+            "not served: the scenario starts after the recorded history ends ({last}) — \
+             replay needs recorded months from the start on"
+        )));
+    }
+
+    // The mechanical half: the exact recomputation at the declared
+    // factors. Identical to baseline on every post month = the
+    // overrides never reach this grounding — refused, never served
+    // as a silently unchanged number.
+    let joint = run_series(ctx, &series_sql, Some((overrides, declared))).await?;
+    if joint.len() != base.len() {
+        return Err(refuse(
+            "not served: the replay changed the month roster — the grounding is not \
+             stable under the override"
+                .into(),
+        ));
+    }
+    let moved = post.iter().any(|&i| {
+        let (b, j) = (base[i].1, joint[i].1);
+        (j - b).abs() > 1e-9 * b.abs().max(1.0)
+    });
+    let named_columns = overrides
+        .iter()
+        .map(|o| format!("{}.{}", o.table, o.column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !moved {
+        return Err(refuse(format!(
+            "unmoved by the overrides: no declared path from {named_columns} into this \
+             grounding — declare the derivation (detect_derivations proposes candidates) \
+             or gloss the assumption"
+        )));
+    }
+
+    // The frame, the eval's shape: train on the support worlds' post
+    // months, (factors…, month_index) → value; read at the declared
+    // factors — inside the bracket by construction.
+    let mut train_x = Vec::new();
+    let mut train_y = Vec::new();
+    for w in worlds {
+        let owned;
+        let s = if w.iter().all(|f| (*f - 1.0).abs() < 1e-9) {
+            &base
+        } else {
+            owned = run_series(ctx, &series_sql, Some((overrides, w))).await?;
+            &owned
+        };
+        if s.len() != base.len() {
+            continue;
+        }
+        for &i in &post {
+            train_x.extend(w.iter().copied());
+            train_x.push(i as f64);
+            train_y.push(s[i].1);
+        }
+    }
+    let cols = declared.len() + 1;
+    let rows = train_y.len();
+    let mut test_x = Vec::new();
+    for &i in &post {
+        test_x.extend(declared.iter().copied());
+        test_x.push(i as f64);
+    }
+    let q = shared
+        .runtime()
+        .band_grid(&train_x, rows, cols, &train_y, &test_x, post.len(), &ALPHAS)
+        .map_err(|e| refuse(format!("not served: the band kernel refused — {e}")))?;
+    if q.len() != post.len() * ALPHAS.len() {
+        return Err(SessionError::Runtime(format!(
+            "the band kernel returned {} values for {} test rows",
+            q.len(),
+            post.len()
+        )));
+    }
+
+    let grid: Vec<String> = worlds
+        .iter()
+        .skip(1)
+        .map(|w| {
+            w.iter()
+                .filter(|s| (**s - 1.0).abs() > 1e-9)
+                .map(|s| format!("{s:.2}"))
+                .collect::<Vec<_>>()
+                .join("*")
+        })
+        .collect();
+    let asked: Vec<String> = declared.iter().map(|f| format!("{f:.2}")).collect();
+    let basis = format!(
+        "replayed x[{}] on {named_columns}; {} worlds x {} months; asked ({}) in support",
+        grid.join(", "),
+        worlds.len(),
+        post.len(),
+        asked.join(", "),
+    );
+    Ok(post
+        .iter()
+        .enumerate()
+        .map(|(t, &i)| Row {
+            concept: concept.to_string(),
+            month: Some(base[i].0.clone()),
+            replay: Some(joint[i].1),
+            q: Some([
+                q[t * 5],
+                q[t * 5 + 1],
+                q[t * 5 + 2],
+                q[t * 5 + 3],
+                q[t * 5 + 4],
+            ]),
+            basis: basis.clone(),
+        })
+        .collect())
+}
+
+/// Plan a query through the session's own pipeline, so a nested `read.`
+/// re-enters the relation planner.
+async fn build_plan(ctx: &SessionContext, sql: &str) -> Result<LogicalPlan, SessionError> {
+    let query = Parser::new(&PostgreSqlDialect {})
+        .try_with_sql(sql)
+        .and_then(|mut p| p.parse_query())
+        .map_err(|e| {
+            SessionError::BadSubject(format!("not served: the grounding does not parse: {e}"))
+        })?;
+    let statement =
+        datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
+    ctx.state()
+        .statement_to_plan(statement)
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+}
+
+/// A monthly series: Vec<(period "YYYY-MM", value)>, optionally with
+/// the override rewrite applied at the given strengths.
+async fn run_series(
+    ctx: &SessionContext,
+    sql: &str,
+    overlay: Option<(&[Override], &[f64])>,
+) -> Result<Vec<(String, f64)>, SessionError> {
+    let mut plan = build_plan(ctx, sql).await?;
+    if let Some((overrides, factors)) = overlay {
+        plan = apply_overrides(plan, overrides, factors)
+            .map_err(|e| SessionError::Runtime(format!("the override rewrite failed: {e}")))?;
+    }
+    let batches = ctx
+        .execute_logical_plan(plan)
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .collect()
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+    let mut out = Vec::new();
+    for b in &batches {
+        let period = b.column(0);
+        let value = b
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .ok_or_else(|| {
+                SessionError::BadSubject("not served: `value` does not read as a number".into())
+            })?;
+        for i in 0..b.num_rows() {
+            if value.is_null(i) {
+                continue;
+            }
+            let p = array_value_to_string(period, i)
+                .map_err(|e| SessionError::Runtime(e.to_string()))?;
+            out.push((p, value.value(i)));
+        }
+    }
+    Ok(out)
+}
+
+/// The replay rewrite: every `TableScan` of an overridden table gains a
+/// projection scaling the overridden columns from the start month on,
+/// re-aliased under the table's own name so every outer reference
+/// resolves unchanged. Storage is never touched.
+fn apply_overrides(
+    plan: LogicalPlan,
+    overrides: &[Override],
+    factors: &[f64],
+) -> DFResult<LogicalPlan> {
+    plan.transform_up(|node| {
+        let (table_name, fields) = match &node {
+            LogicalPlan::TableScan(scan) => (
+                scan.table_name.clone(),
+                scan.projected_schema.fields().clone(),
+            ),
+            _ => return Ok(Transformed::no(node)),
+        };
+        let table = table_name.table().to_string();
+        let active: Vec<(&Override, f64)> = overrides
+            .iter()
+            .zip(factors.iter().copied())
+            .filter(|(o, f)| o.table == table && (*f - 1.0).abs() > 1e-9)
+            .collect();
+        if active.is_empty() {
+            return Ok(Transformed::no(node));
+        }
+        let Some(tcol) = date_column(&fields) else {
+            return Ok(Transformed::no(node));
+        };
+        let tcol_type = fields
+            .iter()
+            .find(|f| f.name() == &tcol)
+            .expect("date column found above")
+            .data_type()
+            .clone();
+        let qualified =
+            |name: &str| Expr::Column(Column::new(Some(table_name.clone()), name.to_string()));
+        let exprs: DFResult<Vec<Expr>> = fields
+            .iter()
+            .map(|field| {
+                let mut expr = qualified(field.name());
+                for (o, f) in &active {
+                    if o.column != *field.name() {
+                        continue;
+                    }
+                    let start = cast(lit(format!("{}-01", o.from)), tcol_type.clone());
+                    let scaled = cast(expr.clone() * lit(*f), field.data_type().clone());
+                    expr = when(qualified(&tcol).gt_eq(start), scaled).otherwise(expr)?;
+                }
+                Ok(expr.alias(field.name()))
+            })
+            .collect();
+        let rebuilt = LogicalPlanBuilder::from(node)
+            .project(exprs?)?
+            .alias(table_name)?
+            .build()?;
+        Ok(Transformed::yes(rebuilt))
+    })
+    .map(|t| t.data)
+}
+
+/// The first date-typed column, the same discovery every reader does.
+fn date_column(fields: &Fields) -> Option<String> {
+    fields
+        .iter()
+        .find(|f| {
+            matches!(
+                f.data_type(),
+                DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _)
+            )
+        })
+        .map(|f| f.name().clone())
+}
+
+/// `(concept, month, replay, p05, p10, p50, p90, p95, basis)`.
+fn row_batch(rows: Vec<Row>) -> RecordBatch {
+    let float = |name: &str| Field::new(name, DataType::Float64, true);
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("concept", DataType::Utf8, false),
+        Field::new("month", DataType::Utf8, true),
+        float("replay"),
+        float("p05"),
+        float("p10"),
+        float("p50"),
+        float("p90"),
+        float("p95"),
+        Field::new("basis", DataType::Utf8, false),
+    ]));
+    let quant = |k: usize| -> ArrayRef {
+        Arc::new(Float64Array::from_iter(
+            rows.iter().map(|r| r.q.map(|q| q[k])),
+        ))
+    };
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.concept.as_str()),
+            )),
+            Arc::new(StringArray::from_iter(
+                rows.iter().map(|r| r.month.as_deref()),
+            )),
+            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.replay))),
+            quant(0),
+            quant(1),
+            quant(2),
+            quant(3),
+            quant(4),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.basis.as_str()),
+            )),
+        ],
+    )
+    .expect("column shapes match the schema")
+}

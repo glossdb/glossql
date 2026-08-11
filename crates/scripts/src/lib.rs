@@ -33,6 +33,9 @@ pub struct RhaiRuntime {
     root: PathBuf,
     engine: Engine,
     asts: RwLock<HashMap<String, (String, Arc<AST>)>>,
+    /// Shared with the `tabicl_bands` closure: one lazily loaded model
+    /// serves both the script kernel and the `band_grid` seam.
+    band_model: Arc<BandModel>,
 }
 
 impl std::fmt::Debug for RhaiRuntime {
@@ -592,6 +595,7 @@ impl RhaiRuntime {
             dir: root.join("weights"),
             model: OnceLock::new(),
         });
+        let kernel_model = Arc::clone(&band_model);
         engine.register_fn(
             "tabicl_bands",
             move |train_x: rhai::Array,
@@ -600,7 +604,7 @@ impl RhaiRuntime {
                   alphas: rhai::Array,
                   actual: f64|
                   -> ScriptResult<rhai::Map> {
-                band_model
+                kernel_model
                     .bands(&train_x, &train_y, &test_x, &alphas, actual)
                     .map_err(Into::into)
             },
@@ -610,6 +614,7 @@ impl RhaiRuntime {
             root,
             engine,
             asts: RwLock::new(HashMap::new()),
+            band_model,
         }
     }
 
@@ -679,6 +684,39 @@ impl FunctionRuntime for RhaiRuntime {
                 function.name
             )
         })
+    }
+
+    /// The `whatif.` door's kernel (ruled 2026-08-11): the regressor
+    /// ensemble over the replayed worlds — a replay grid is a handful
+    /// of worlds, exactly the sparse-support regime the ensemble was
+    /// ruled in for (dataraum-tabicl README, stage 3). Members from the
+    /// crate's own generator, seed pinned; quantiles averaged across
+    /// members in the original y space.
+    fn band_grid(
+        &self,
+        train_x: &[f64],
+        rows: usize,
+        cols: usize,
+        train_y: &[f64],
+        test_x: &[f64],
+        test_rows: usize,
+        alphas: &[f64],
+    ) -> Result<Vec<f64>, String> {
+        if rows < 2 || train_x.len() != rows * cols || test_x.len() != test_rows * cols {
+            return Err(format!(
+                "band_grid: {rows} train rows x {cols} features against {} train values \
+                 and {} test values",
+                train_y.len(),
+                test_x.len()
+            ));
+        }
+        let model = self.band_model.get()?;
+        let members = tabicl_candle::ensemble::EnsembleMember::generate(cols, 8, 0);
+        let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
+            model, train_x, rows, cols, train_y, members,
+        );
+        est.predict_quantiles(test_x, test_rows, alphas, &tabicl_candle::Device::Cpu)
+            .map_err(|e| e.to_string())
     }
 }
 

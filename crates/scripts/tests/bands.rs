@@ -238,3 +238,51 @@ fn band_breach_adjudicates_the_worst_pit() {
     assert_eq!(breach["band"], json!("red"));
     assert!(breach["score"].as_f64().unwrap() > 0.98);
 }
+
+#[test]
+fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
+    // The whatif door's seam (ruled 2026-08-11) against the real model:
+    // the eval's frame shape — (factor, month_index) over bracketing
+    // support worlds, y exactly linear in the factor — read at the
+    // held-out declared point. The numeric fidelity of the ensemble is
+    // the sibling suite's business; here the contract is shape,
+    // monotone quantiles, and a read that lands near the surface.
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    workspace(dir.path());
+    let rt = RhaiRuntime::new(dir.path());
+
+    let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
+    let months = 6..12;
+    let mut train_x = Vec::new();
+    let mut train_y = Vec::new();
+    for f in factors {
+        for m in months.clone() {
+            train_x.extend([f, m as f64]);
+            train_y.push(1000.0 * f);
+        }
+    }
+    let mut test_x = Vec::new();
+    for m in months.clone() {
+        test_x.extend([1.15, m as f64]);
+    }
+    let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
+    let q = rt
+        .band_grid(&train_x, train_y.len(), 2, &train_y, &test_x, 6, &alphas)
+        .unwrap();
+
+    assert_eq!(q.len(), 6 * alphas.len());
+    for row in q.chunks(alphas.len()) {
+        for pair in row.windows(2) {
+            assert!(pair[0] <= pair[1] + 1e-6, "monotone quantiles: {row:?}");
+        }
+        let p50 = row[2];
+        assert!(
+            (p50 - 1150.0).abs() / 1150.0 < 0.15,
+            "the declared point reads near the surface: p50 = {p50}"
+        );
+    }
+}

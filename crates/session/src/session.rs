@@ -108,6 +108,27 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         context: &Value,
         door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String>;
+
+    /// The band kernel behind the `whatif.` door (ruled 2026-08-11):
+    /// fit one estimator on the replayed worlds, quantiles at `alphas`
+    /// for every test row. Slices are row-major; the return is
+    /// row-major (test_rows × alphas). The runtime that carries the
+    /// model overrides this (the ensemble — sparse replay grids are the
+    /// regime it was ruled in for); the default refuses, and the door
+    /// reports why.
+    #[allow(clippy::too_many_arguments)]
+    fn band_grid(
+        &self,
+        _train_x: &[f64],
+        _rows: usize,
+        _cols: usize,
+        _train_y: &[f64],
+        _test_x: &[f64],
+        _test_rows: usize,
+        _alphas: &[f64],
+    ) -> Result<Vec<f64>, String> {
+        Err("this runtime carries no band kernel".into())
+    }
 }
 
 #[derive(Debug)]

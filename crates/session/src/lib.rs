@@ -20,6 +20,7 @@ mod plane;
 mod reads;
 mod session;
 mod subject;
+mod whatif;
 
 pub use plane::Plane;
 pub use session::{FunctionRuntime, NoRuntime, Outcome, Session, SessionError, SqlDoor};

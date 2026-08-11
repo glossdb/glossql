@@ -111,7 +111,7 @@ impl SqlDoor for DeniedDoor {
 /// Detector freshness at read (project lead, 2026-08-04): a verdict missing
 /// or older than the newest slot write recomputes here, is cached like any
 /// function result, and `DELETE FROM cache` still forces it.
-async fn ensure_verdicts(
+pub(crate) async fn ensure_verdicts(
     shared: &Shared,
     dataset: &str,
     scope: &Scope,
@@ -259,6 +259,38 @@ impl RelationPlanner for GlossqlReads {
                 )));
             }
             return self.plan_serve(&aspect, alias.clone());
+        }
+        // `whatif.<scenario>()` — the scenario door (ruled 2026-08-11,
+        // fixture 19): one operation-named prefix beside `read.`, serving
+        // a declared scenario as bands over recipe replay. Computed at
+        // plan time behind the cache, exactly as detector verdicts are.
+        if name.0.len() == 2
+            && name.0[0]
+                .as_ident()
+                .is_some_and(|i| i.value.eq_ignore_ascii_case("whatif"))
+        {
+            let (Some(scenario), Some(a)) = (name.0[1].as_ident().map(|i| i.value.clone()), args)
+            else {
+                return Ok(RelationPlanning::Original(Box::new(relation)));
+            };
+            if !a.args.is_empty() {
+                return Err(DataFusionError::Plan(format!(
+                    "whatif.{scenario}() takes no arguments — the scenario body carries the \
+                     overrides (fixture 19)"
+                )));
+            }
+            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario))?;
+            let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+            let plan = LogicalPlanBuilder::scan(
+                format!("whatif.{scenario}()"),
+                provider_as_source(Arc::new(provider)),
+                None,
+            )?
+            .build()?;
+            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                plan,
+                alias.clone(),
+            ))));
         }
         if name.0.len() != 1 {
             return Ok(RelationPlanning::Original(Box::new(relation)));
