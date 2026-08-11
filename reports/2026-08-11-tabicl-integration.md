@@ -368,6 +368,41 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
 Parked with triggers, unchanged: width scaling, frame-limits
 machinery, Fork B, feature 4's product design.
 
+## The misfit build (2026-08-11, ruled and landed same day)
+
+The #6 plan item, through corpus-first: the ruling is fixture 20 —
+the frame is an ordinary QUERY aspect (`x-kind: "sample"` by
+convention), one frame ranked against itself, served by
+`misfit.<frame>()`. The first-class-kind fork died on the x-kind
+precedent (fixtures 16, 19); the `reference_sql` fork on the closed
+grounding schema (SPEC §5.2) plus the measured protocol robustness
+(tfmeval: self-fit ≡ clean-reference for TabICL, unlike the classical
+density); SQL-at-the-door on the bare-call rule.
+
+Built: `crates/session/src/misfit.rs` — the door plans the frame
+through the session pipeline (nested `read.` composes), discovers the
+numeric surface (text, constants, and id-named columns excluded by
+name in `basis`; temporal columns ride their underlying
+representation), refuses by name past the stated caps (2000 rows, 16
+usable columns) or under 2 usable columns (the `sales_orders`
+abstention), and hands the row-major frame to the
+`FunctionRuntime::misfit_scores` seam. No cache — the ranking is
+ephemeral by design, the judge's gloss is the record; a misfit
+refusal refuses the read, since the relation's shape is the frame.
+The kernel in `glossql-scripts`: the port's chain-rule density
+(`unsupervised.rs`, oracle-graded in the sibling's `density.rs`),
+self-fit, regressor checkpoint, numeric features, two deterministic
+orderings (identity + reverse), fixed-seed normal stream for the
+dummy column, log space end to end. Suites: 4 door tests on a fake
+mean-deviation kernel (ranking, named exclusions, caps, no-cache +
+supersession), and a real-weights test where the planted
+impossible-pairing row (in-range marginals, broken relation — the
+eval's shuffled-FK shape) carries the lowest log density. Skills:
+metrics §7 (the investigation step of the judge loop, surface choice,
+read `basis` first), apps (the misfit read stays out of frames — a
+tile would turn signal-triggered into a routine sweep). Workspace
+suite green throughout.
+
 ## Records
 
 - Port and gate: `../dataraum-tabicl` (README carries the three-stage

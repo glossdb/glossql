@@ -274,7 +274,43 @@ In a workspace with apps, a scenario ships with its authored chart
 tile (glossql-apps: "A scenario ships with its tile"); the built-in
 model app lists scenarios without it.
 
-## 7. Read back
+## 7. Misfit — rank a frame when a signal fires
+
+When something breaks pattern — `band_breach` flags a month, a
+validation goes red, a user says these numbers look wrong — the next
+question is *which rows*. Author a sample frame: a QUERY aspect,
+`x-kind: "sample"`, glossed with one SELECT that holds history and
+suspects together. The `misfit.` door serves the frame's rows back
+with a `misfit` score — how badly each row fits the rest of the same
+frame — and the top of the ranking is where to look. This is the
+investigation step of the judge loop: the ranking optimizes recall,
+you remove the false positives, and what you conclude lands as a
+gloss. Run it on a signal, never as a routine sweep.
+
+```glossql
+DECLARE ASPECT payment_pairs WITH $${
+  "title": "Payments against their invoice, six months and March",
+  "x-kind": "sample"}$$ AS QUERY ON DATASET;
+
+GLOSS payment_pairs ON fin AS $${
+  "sql": "SELECT p.amount, i.amount AS invoiced, p.paid_date - i.invoice_date AS day_delta, i.terms_days FROM payments p JOIN invoices i ON p.invoice_id = i.invoice_id WHERE p.paid_date >= DATE '2025-09-01'",
+  "assumptions": [{"assumption": "joined surface: the suspicion is the pairing"}]}$$;
+
+SELECT * FROM misfit.payment_pairs() ORDER BY misfit DESC LIMIT 20;
+```
+
+Pick the surface to match the suspicion: a relationship suspicion
+needs the **join** in the frame — a single table is structurally
+blind to wrong pairings whose individual values are all legal. A
+value suspicion can frame the metric's own extract. `basis` names
+the columns ranked and every exclusion (text, constants, id-named
+columns); read it before trusting the ranking. The read refuses by
+name rather than serve noise: a frame past the row cap (narrow with
+WHERE), or too little numeric surface — some frames cannot carry a
+density read, and the abstention is the honest answer. Nothing is
+cached; the durable record is your verdict, glossed.
+
+## 8. Read back
 
 ```glossql
 SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
@@ -284,7 +320,7 @@ SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 Red bands are where a human closes what you could not; unassessed
 rows are the vocabulary nobody has spoken to yet.
 
-## 8. The pinning agenda — end every framework with it
+## 9. The pinning agenda — end every framework with it
 
 A definition is a choice between formula families the data cannot
 arbitrate: both DSO variants compute, both gross-profit subtrahends

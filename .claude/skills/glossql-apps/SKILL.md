@@ -115,6 +115,14 @@ unmoved concept's refusal row doesn't feed the chart, and consider a
 `gl-rows` tile beside the chart listing `DISTINCT concept, basis` so
 refusals stay visible instead of filtered away.
 
+## The misfit read stays out of frames
+
+`misfit.<frame>()` (the metrics skill teaches it) is signal-triggered
+investigation: it recomputes the density on every fetch, so a tile
+bound to it turns an on-demand read into a routine sweep on every
+page load. Apps surface the conclusions — the judge's glosses —
+through `GLOSSARY()` frames; the ranking itself stays a session act.
+
 ## Composition honesty
 
 Flows re-aggregate freely; ratios are final at their grain — a
