@@ -203,11 +203,12 @@ SELECT metric_bands() FROM fin;
 SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 ```
 
-- The measurement needs the workspace's `weights/` directory — the
-  safetensors, their config, and the pinned `DIGESTS` file beside them
-  (the server's operator provisions all three; digest verification is
-  mandatory). A missing piece fails the extraction with the absence
-  named.
+- The model weights ride the build: `build.rs` stages safetensors,
+  config, and the pinned `DIGESTS` beside the binaries from the
+  tabicl-candle checkout, digest-verified at load. A workspace
+  `weights/` directory overrides the staged set; a build made without
+  the checkout's weights fails the extraction with every path it
+  tried.
 - **The read is recall, you are the judge**: a business shift and a
   data defect breach identically — telling them apart is your work,
   not the detector's. Read the body for which metric and month, look

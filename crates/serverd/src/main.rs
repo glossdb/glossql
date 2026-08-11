@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::{RhaiRuntime, WeightsProvision, provision_weights};
+use glossql_scripts::RhaiRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
@@ -47,16 +47,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = parse(std::env::args()).map_err(|e| format!("{e}\n{USAGE}"))?;
     let warehouse = args.workspace.join("warehouse");
     std::fs::create_dir_all(&warehouse)?;
-    // The model ships with the boot, never by hand: a fresh workspace
-    // gets weights + DIGESTS from the build's checkout (or
-    // GLOSSQL_WEIGHTS_SOURCE); an already-provisioned one is untouched.
-    match provision_weights(&args.workspace)? {
-        WeightsProvision::Provisioned { from } => {
-            println!("weights provisioned from {}", from.display());
-        }
-        WeightsProvision::AlreadyPresent => {}
-        WeightsProvision::Unavailable { reason } => eprintln!("warning: {reason}"),
-    }
 
     let store_url = format!(
         "sqlite://{}?mode=rwc",
