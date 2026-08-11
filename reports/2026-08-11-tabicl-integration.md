@@ -326,11 +326,19 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    is an authored tile beside the scenario — its name sits in frame
    SQL, which no built-in can know — taught in the apps skill. An
    identifier param in the frame contract (fork C) stays parked
-   until per-scenario authoring proves a burden. Still open: the
-   generator-oracle acceptance run through the door (E4 protocol,
-   the workspace built from the finance corpus, recovered effect
-   graded against generated levered truth) — sequenced right after
-   this cycle, per the project lead.
+   until per-scenario authoring proves a burden. **Live trial the
+   same evening** (the running server, MCP door, clean finance
+   corpus): the whole flow — recipe, groundings, scenario gloss,
+   `whatif.price_hike()` — ran end to end. Revenue served six post
+   months with the p50 within 0.4–0.7 % of the exact replay and the
+   replay inside [p05, p95] on every month; the stored-total
+   contrast concept refused as unmoved, as designed. The trial
+   caught one bug, fixed same day: a failed weights load was cached
+   for the process lifetime (the OnceLock held the error) — the
+   loader now retries. Still open: the generator-oracle acceptance
+   run through the door (E4 protocol, recovered effect graded
+   against generated levered truth) — sequenced right after this
+   cycle, per the project lead.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is
