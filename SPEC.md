@@ -488,7 +488,9 @@ Analyses stay operation-named doors — `whatif.<scenario>()` (ruled
 scenario carrying overrides, the server replaying the recipes at a
 bracketing grid of strengths and reading across the replayed worlds;
 the grid, reach, and support guard are machinery, never statement
-syntax.
+syntax; `misfit.<frame>()` (ruled 2026-08-11, fixture 20) ranks a
+declared frame's rows against the frame itself — the frame is an
+ordinary QUERY gloss, the density kernel and its caps machinery.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

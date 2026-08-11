@@ -40,3 +40,4 @@ simplified language (see `reports/2026-08-03-simplification.md`).
 | 17 | relational spine (sqlite run, 2026-08-07) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
 | 18 | app authoring (model app, 2026-08-11) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |
 | 19 | what-if scenario (evaluation runs, 2026-08-11) | TRANSCRIBES (scenario = FACT aspect per scenario; `whatif.` door; replay grid is machinery) |
+| 20 | misfit sample frame (evaluation runs, 2026-08-11) | TRANSCRIBES (frame = QUERY aspect + `x-kind`; `misfit.` door; self-fit density is machinery) |
