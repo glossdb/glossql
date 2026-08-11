@@ -132,7 +132,12 @@ folder renamed to `tabicl-candle`, and weights now ride the build —
 `build.rs` stages safetensors + pinned DIGESTS beside the binaries;
 no manual copying, no boot copy.
 
-## Leg 3 — fk-shuffled (2026-08-12): PASSED as composed; the frontier measured
+## Leg 3 — fk-shuffled (2026-08-12): localization proven, detection wiring owed
+
+(Verdict corrected same day, on the project lead's question — the
+first write-up said "passed as composed", which overstated: the
+standing loop never rang on this fault. What follows keeps the
+original findings and adds the correction.)
 
 The fault: 1,492 of 14,928 `payments.invoice_id` (10%) traded among
 payments owing the identical amount — every value legal, no orphans,
@@ -172,6 +177,31 @@ The lanes, in order:
 Bookkeeping: the truth table (`eval_moved_pairs`) landed only after
 every detection lane had run — grading machinery, not context.
 
+**The correction (2026-08-12).** Three facts sharpen the verdict:
+
+1. **Nothing paged on its own.** Pager green, reconciliation clean,
+   orphans zero — the temporal check was run ad hoc, knowing where
+   to look. For this fault class the signal must be a **declared
+   validation** (§5 flow: expectation + check voice + witness +
+   ATTEST); the leg proved the check's power, not its standing
+   wiring. As run, leg 3 demonstrated localization, not detection.
+2. **A second deterministic lane exists and was missed**: on clean
+   rows every vendor maps to exactly one bank counterparty (via the
+   declared payments↔bank_transactions edge), so a claimed invoice
+   whose vendor disagrees with the bank counterparty is a wrong
+   pairing — 290 more moved rows, zero false flags. The two rules
+   together: **788 of 1,492 = 52.8% at precision 1.0**, before any
+   model. Confirmed flags are also threads (the wronged invoice's
+   true payment sits elsewhere among same-amount candidates) —
+   unpulled here.
+3. **The remaining 704 are only probabilistically visible** (the
+   0.79 queue), and for genuinely evidence-free swaps that may be
+   the ceiling — the eval's own "no single-row contradiction".
+
+Owed to close the leg properly: the two checks declared as standing
+validations in the workspace, so ATTEST goes red without anyone
+knowing where to look.
+
 ## The verdict across three legs
 
 The assembled application does what the evals said the engines could,
@@ -179,9 +209,11 @@ through the product doors, at product speeds: the null passes at the
 judge with a green standing pager; a stationary value fault is caught
 by the framework's own redundancy (two chains), the deterministic
 identity, and a 0.99/0.95 misfit ranking; a pure pairing fault —
-invisible to every value lane — is caught by the composed
-relationship tier: rule takes 42% at precision 1.0, the joined
-density ranks the remainder at 0.79–0.84. Each leg also improved the
+invisible to every value lane — is localized by the composed
+relationship tier (two declared-relationship rules reach 52.8% at
+precision 1.0, the joined density ranks the remainder at 0.79–0.84),
+but the standing loop only rings for it once those rules are wired
+as validations — the wiring leg 3 still owes. Each leg also improved the
 product it was grading: the stock-marker schema gap, the DIGESTS
 message, build-staged weights, and the Metal/parallel/capped kernel
 came out of legs 1 and 2.
