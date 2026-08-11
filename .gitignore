@@ -27,3 +27,6 @@ __pycache__/
 
 # Playwright MCP session artifacts (UI review loop)
 .playwright-mcp/
+
+# converted model weights (digest-verified at load; never in git)
+/weights/
