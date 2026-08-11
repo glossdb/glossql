@@ -35,7 +35,10 @@ deferred pieces come up.
   `metric.*` folds in completely, no alias; the metric flavor lives
   in `x-kind` and the skills, not the call syntax. Analyses (the
   misfit read) stay their own operation-named doors — one prefix per
-  operation, never dispatch on the aspect's kind.
+  operation, never dispatch on the aspect's kind. The sweep landed
+  same day (planner, tests, corpus 15/16, SPEC §7 note, three
+  skills); workspace apps written before the rename must update
+  their frame SQL by hand — there is no alias to catch them.
 
 ## Feature map
 

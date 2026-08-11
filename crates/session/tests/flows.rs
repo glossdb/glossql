@@ -624,10 +624,12 @@ async fn a_grounding_admits_and_serves_its_sql_back() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_metric_read_runs_the_current_grounding() {
-    // Fixture 16 §6, bound 2026-08-07: `metric.<aspect>()` expands the
-    // collapsed current QUERY grounding as an ordinary relation — the
-    // reader composes around it, the pinned definition is what runs.
+async fn the_serve_door_runs_the_current_grounding() {
+    // Fixture 16 §6, bound 2026-08-07; the door renamed to `read.`
+    // 2026-08-11 (one generic serving prefix over every QUERY gloss):
+    // `read.<aspect>()` expands the collapsed current QUERY grounding as
+    // an ordinary relation — the reader composes around it, the pinned
+    // definition is what runs.
     let store = Store::open_memory().await.unwrap();
     let agent = session_with(ActorKind::Agent, "agent-1", &store).await;
     run(&agent, SETUP).await;
@@ -657,23 +659,23 @@ async fn a_metric_read_runs_the_current_grounding() {
         DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;
         DECLARE ASPECT doubled WITH $${"title": "Doubled"}$$ AS QUERY ON DATASET;
         GLOSS revenue ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;
-        GLOSS doubled ON fin AS $${"sql": "SELECT value * 2 AS value FROM metric.revenue()"}$$;
+        GLOSS doubled ON fin AS $${"sql": "SELECT value * 2 AS value FROM read.revenue()"}$$;
         "##,
     )
     .await;
 
-    let total = table(&agent, "SELECT sum(value) AS total FROM metric.revenue();").await;
+    let total = table(&agent, "SELECT sum(value) AS total FROM read.revenue();").await;
     assert!(total.contains("42.5"), "{total}");
     // Filters ride WHERE, composed around the expansion.
     let filtered = table(
         &agent,
-        "SELECT sum(value) AS total FROM metric.revenue() WHERE value > 20;",
+        "SELECT sum(value) AS total FROM read.revenue() WHERE value > 20;",
     )
     .await;
     assert!(filtered.contains("32.5"), "{filtered}");
     // A recorded evaluation composes from sibling metrics — nesting is
     // the formula composition, done by the engine.
-    let doubled = table(&agent, "SELECT sum(value) AS total FROM metric.doubled();").await;
+    let doubled = table(&agent, "SELECT sum(value) AS total FROM read.doubled();").await;
     assert!(doubled.contains("85"), "{doubled}");
 
     // The human pin supersedes, and propagates through composition.
@@ -684,9 +686,9 @@ async fn a_metric_read_runs_the_current_grounding() {
         GLOSS revenue ON fin AS $${"sql": "SELECT amount * 2 AS value FROM orders"}$$;"##,
     )
     .await;
-    let pinned = table(&agent, "SELECT sum(value) AS total FROM metric.revenue();").await;
+    let pinned = table(&agent, "SELECT sum(value) AS total FROM read.revenue();").await;
     assert!(pinned.contains("85"), "{pinned}");
-    let repinned = table(&agent, "SELECT sum(value) AS total FROM metric.doubled();").await;
+    let repinned = table(&agent, "SELECT sum(value) AS total FROM read.doubled();").await;
     assert!(repinned.contains("170"), "{repinned}");
 
     // A grounding that reaches itself errors naming the loop.
@@ -694,21 +696,21 @@ async fn a_metric_read_runs_the_current_grounding() {
         &agent,
         r##"
         DECLARE ASPECT looping WITH $${"title": "Loop"}$$ AS QUERY ON DATASET;
-        GLOSS looping ON fin AS $${"sql": "SELECT value FROM metric.looping()"}$$;
+        GLOSS looping ON fin AS $${"sql": "SELECT value FROM read.looping()"}$$;
         "##,
     )
     .await;
     let e = agent
-        .execute("SELECT * FROM metric.looping();")
+        .execute("SELECT * FROM read.looping();")
         .await
         .unwrap_err();
-    assert!(e.to_string().contains("metric cycle: looping -> looping"), "{e}");
+    assert!(e.to_string().contains("read cycle: looping -> looping"), "{e}");
 
     // The refusals name what the reader should do instead.
     for (sql, said) in [
-        ("SELECT * FROM metric.nothing();", "no aspect"),
-        ("SELECT * FROM metric.unit();", "GLOSSARY"),
-        ("SELECT * FROM metric.revenue(1);", "takes no arguments"),
+        ("SELECT * FROM read.nothing();", "no aspect"),
+        ("SELECT * FROM read.unit();", "GLOSSARY"),
+        ("SELECT * FROM read.revenue(1);", "takes no arguments"),
     ] {
         let e = agent.execute(sql).await.unwrap_err();
         assert!(e.to_string().contains(said), "`{sql}`: {e}");
@@ -718,7 +720,7 @@ async fn a_metric_read_runs_the_current_grounding() {
         r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
     )
     .await;
-    let e = agent.execute("SELECT * FROM metric.dso();").await.unwrap_err();
+    let e = agent.execute("SELECT * FROM read.dso();").await.unwrap_err();
     assert!(e.to_string().contains("no current grounding"), "{e}");
 }
 

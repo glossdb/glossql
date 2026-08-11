@@ -6,7 +6,7 @@ description: Author a server-rendered data app on the glossql app door — app.t
 # Authoring apps
 
 First sketch (2026-08-09). Two hand-written apps exist — cash (tiles
-over `metric.billings()` / `metric.dso()`) and model (tiles over
+over `read.billings()` / `read.dso()`) and model (tiles over
 `GLOSSARY()` itself) — and every rule below survived building them.
 Expect this to move as more apps are written.
 
@@ -66,7 +66,7 @@ read, the specs draw.
 
 `value` / `chart` / `table` / `prose` from `modules/tiles.html`. The
 chip is the tile's provenance — which surface the number comes from
-(`metric.dso()`, `GLOSSARY()`) — with `note` as its hover text: a
+(`read.dso()`, `GLOSSARY()`) — with `note` as its hover text: a
 disclosed assumption, a composition rule, a stated cap. `hint` is the
 teaching line and carries the back-links.
 

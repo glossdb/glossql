@@ -49,7 +49,7 @@ Top-N per period without a subquery:
 
 ```sql
 SELECT period, customer, value
-FROM metric.billings()
+FROM read.billings()
 QUALIFY rank() OVER (PARTITION BY date_trunc('month', period_date)
                      ORDER BY value DESC) <= 10
 ```

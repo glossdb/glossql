@@ -102,7 +102,7 @@ definitional DAG from formula FACT glosses, groundings from the
 glossary, landed tables from `imports` — the app draws, nothing
 serves a drawing. The *click* was the consumer that pulled
 value-at-read out of §9's parking: ruled 2026-08-06 (fixture 16 §6) —
-`metric.` table functions, bound when the UI transformation starts;
+`read.` table functions, bound when the UI transformation starts;
 until then the app runs the served SQL through the query door:
 
 ```glossql

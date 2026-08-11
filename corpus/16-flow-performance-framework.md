@@ -6,7 +6,7 @@ generator's real shapes (`../dataraum-testdata/output/clean`, seed 42;
 `ground_truth.yaml` is the oracle). The operating-model deliverable as
 a statement sequence: fixtures 01/03/04/07's ruled shapes, exercised
 end to end for the first time. Presented and ruled 2026-08-06:
-windows are read policy; `metric.` table functions are the
+windows are read policy; `read.` table functions are the
 value-at-read spelling, bound when the UI transformation starts;
 the scorecard runs first with the reader inlining served SQL.
 
@@ -109,9 +109,9 @@ disease the drill re-think kills. The coherent rule:
   served SQL through the door):
 
 ```glossql
-SELECT date_trunc('month', date) AS month, sum(value) FROM metric.revenue() GROUP BY 1 ORDER BY 1;
-SELECT date_trunc('decade', date) AS decade, sum(value) FROM metric.revenue() GROUP BY 1;
-SELECT cost_center, sum(value) FROM metric.revenue() GROUP BY 1 ORDER BY 2 DESC;
+SELECT date_trunc('month', date) AS month, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 1;
+SELECT date_trunc('decade', date) AS decade, sum(value) FROM read.revenue() GROUP BY 1;
+SELECT cost_center, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 The window a given reader picks is theirs — the app defaults to
@@ -258,12 +258,12 @@ the value arriving as an ordinary relation the reader composes
 around:
 
 ```glossql
-SELECT date_trunc('week', date) AS week, sum(value) FROM metric.revenue() GROUP BY 1;
-SELECT * FROM metric.dso();
+SELECT date_trunc('week', date) AS week, sum(value) FROM read.revenue() GROUP BY 1;
+SELECT * FROM read.dso();
 ```
 
 `GLOSSARY` and `ATTEST` are the only FROM-position functions today,
-both grammar-fixed; `metric.` is the first user-named family and the
+both grammar-fixed; `read.` is the first user-named family and the
 namespace prevents table collisions. The spelling parses under the
 grammar already — binding is engine work on the relation-planning
 path the session owns, zero grammar growth. A `::` spelling
@@ -277,7 +277,7 @@ script, no cache, no voice — running stays the reader's act, spelled
 inside the reader's SQL. The seam to respect: composing around the
 *output* is free, but a ratio cannot be re-scoped from its output
 rows — drilling DSO by country means re-scoping its components per
-the `formulas` gloss, not regrouping `metric.dso()`.
+the `formulas` gloss, not regrouping `read.dso()`.
 
 ## Findings
 
@@ -294,9 +294,12 @@ the `formulas` gloss, not regrouping `metric.dso()`.
   a read proves may be recorded — pre-evaluation and recording are
   different acts. Fixture 03's parameter question closes with it: the
   parameter was the window, and the window belongs to the reader.
-- **Value-at-read ruled** (§6): `metric.` table functions, bound when
+- **Value-at-read ruled** (§6): `read.` table functions, bound when
   the UI transformation starts; run-first until then. Fixture 15
-  still holds the conformed-group fork.
+  still holds the conformed-group fork. The prefix was `metric.`
+  until 2026-08-11, renamed `read.` when it was ruled the one generic
+  serving door over every QUERY gloss — no alias; the flavor lives in
+  `x-kind`, never in the call syntax.
 - The `expected_rate: 0.895` gloss is the anti-overcleaning stance in
   one statement: the expectation is authored, never assumed zero.
 - **The pinning agenda** (added 2026-08-06, the run-7 lesson): the

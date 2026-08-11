@@ -103,13 +103,15 @@ gloss write, so a re-read after new groundings recomputes.
 
 Grain is the reader's: the app defaults to month, another reader asks
 by day, the same definitions answer both. Evaluate through
-`metric.<aspect>()` — the current grounding served as an ordinary
+`read.<aspect>()` — the current grounding served as an ordinary
 relation (human slot outranking agent, so a pinned definition is what
-runs); windows and filters ride your SQL:
+runs); windows and filters ride your SQL. The prefix is `read.` for
+every QUERY gloss — metrics, suspect lists, any declared aggregation —
+one serving door, whatever `x-kind` names:
 
 ```glossql
 SELECT date_trunc('month', date) AS month, sum(value)
-FROM metric.revenue() GROUP BY 1 ORDER BY 1;
+FROM read.revenue() GROUP BY 1 ORDER BY 1;
 ```
 
 - **Flows sum** over any partition — time window or judged dimension.
@@ -123,8 +125,8 @@ FROM metric.revenue() GROUP BY 1 ORDER BY 1;
 **Record what a read proves.** A composed evaluation you verified
 (against the oracle, against the ledger) may land as the metric's own
 QUERY gloss — durable executable knowledge, superseding as
-definitions change, served by `metric.<aspect>()` from then on.
-Record it composing `FROM metric.revenue()` where you can: a
+definitions change, served by `read.<aspect>()` from then on.
+Record it composing `FROM read.revenue()` where you can: a
 re-pinned component then propagates through every metric built on it
 (a self-reference is refused as a cycle). The formula gloss and the
 recorded evaluation are one definition in two forms: change one,

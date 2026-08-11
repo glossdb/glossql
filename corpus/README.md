@@ -36,6 +36,6 @@ simplified language (see `reports/2026-08-03-simplification.md`).
 | 13 | typing patterns | TRANSCRIBES (patterns as FACT glosses) |
 | 14 | composite relationships (finance_2 run, 2026-08-05) | TRANSCRIBES (composite = tuple endpoint; view cure retired) |
 | 15 | consumption surface (cockpit sweep, 2026-08-06) | TRANSCRIBES (reads compose it) · axis additivity SEMANTICS UNDEFINED · conformed-group FORK open |
-| 16 | flow: performance framework (scorecard target, 2026-08-06) | TRANSCRIBES (extracts + formulas; windows are read policy; `metric.` value-at-read ruled, bind deferred to UI) |
+| 16 | flow: performance framework (scorecard target, 2026-08-06) | TRANSCRIBES (extracts + formulas; windows are read policy; `read.` value-at-read ruled, bind deferred to UI) |
 | 17 | relational spine (sqlite run, 2026-08-07) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
 | 18 | app authoring (model app, 2026-08-11) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |

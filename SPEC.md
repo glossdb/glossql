@@ -478,9 +478,11 @@ PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · actor transport rides the connection, DuckDB-style ·
 value-at-read, ruled 2026-08-06, bound 2026-08-07: a QUERY aspect's
-value materializes as a namespaced table function — `FROM metric.dso()`
+value materializes as a namespaced table function — `FROM read.dso()`
 expands the collapsed current grounding at plan time, nesting allowed
-behind a cycle guard; running stays the reader's act.
+behind a cycle guard; running stays the reader's act. The prefix is
+`read.` (ruled 2026-08-11, renamed from `metric.`, no alias): one
+serving door over every QUERY gloss, whatever flavor `x-kind` names.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.
