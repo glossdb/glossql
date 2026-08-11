@@ -38,3 +38,4 @@ simplified language (see `reports/2026-08-03-simplification.md`).
 | 15 | consumption surface (cockpit sweep, 2026-08-06) | TRANSCRIBES (reads compose it) · axis additivity SEMANTICS UNDEFINED · conformed-group FORK open |
 | 16 | flow: performance framework (scorecard target, 2026-08-06) | TRANSCRIBES (extracts + formulas; windows are read policy; `metric.` value-at-read ruled, bind deferred to UI) |
 | 17 | relational spine (sqlite run, 2026-08-07) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
+| 18 | app authoring (model app, 2026-08-11) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |
