@@ -97,14 +97,18 @@ async fn the_generator_grades_the_relevance_score() {
         .await
         .unwrap();
 
-    // Five statuses, no nulls: coverage 1, evenness from the yaml's own
-    // totals. The skew is real (85% paid) and the score reports it —
-    // the number never overrules the business judgment of interest.
+    // Five statuses, no nulls: coverage 1, evenness computed
+    // independently from the corpus's own status totals (corpus
+    // 9dbcf6b6c6f3, seed 42, 12 months — re-pin when output/clean is
+    // regenerated on a changed generator: the constants moved once
+    // already, 2026-08-11, when the corpus gained families). The skew
+    // is real (87% paid) and the score reports it — the number never
+    // overrules the business judgment of interest.
     let status = relevance(&session, "invoices.status").await;
     assert_eq!(status["applicable"], true, "{status}");
     assert_eq!(status["groups"], 5, "{status}");
     assert!(
-        (status["relevance"].as_f64().unwrap() - 0.3682).abs() < 0.01,
+        (status["relevance"].as_f64().unwrap() - 0.3067).abs() < 0.01,
         "{status}"
     );
     assert!(
@@ -113,11 +117,11 @@ async fn the_generator_grades_the_relevance_score() {
     );
 
     // The generator's stated reconciliation rate, read back through the
-    // score: Pielou([0.8951, 0.1049]) ≈ 0.4842.
+    // score: Pielou([0.9013, 0.0987]) ≈ 0.4650 on the same corpus.
     let reconciled = relevance(&session, "bank_transactions.reconciled").await;
     assert_eq!(reconciled["groups"], 2, "{reconciled}");
     assert!(
-        (reconciled["relevance"].as_f64().unwrap() - 0.4842).abs() < 0.01,
+        (reconciled["relevance"].as_f64().unwrap() - 0.4650).abs() < 0.01,
         "{reconciled}"
     );
 

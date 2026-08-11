@@ -41,6 +41,14 @@ const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../../scripts/functions/grounding_collisions.rhai"),
     ),
     (
+        "derivations.rhai",
+        include_str!("../../scripts/functions/derivations.rhai"),
+    ),
+    (
+        "coherence.rhai",
+        include_str!("../../scripts/functions/coherence.rhai"),
+    ),
+    (
         "slot_entropy.rhai",
         include_str!("../../scripts/functions/slot_entropy.rhai"),
     ),

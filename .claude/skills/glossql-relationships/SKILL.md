@@ -99,7 +99,28 @@ GLOSS meaning ON orders.customer_id -> customers.id AS
   $${"value": "each order belongs to one customer; 140 orphans are the cancelled orders, never posted"}$$;
 ```
 
-## 5. Read back
+## 5. Watch what you declared
+
+Once edges are declared, `relationship_coherence` measures what each
+one asserts, at dataset grain:
+
+```glossql
+SELECT relationship_coherence() FROM fin;
+SELECT value FROM GLOSSARY(fin::relationship_coherence) WHERE state = 'current';
+```
+
+Per declared relationship: `orphans` / `orphan_rate` (from-side values
+that resolve to no row — exact, and it catches shapes no column
+statistic can, including a single repeated invented key), and
+`temporal` — for each date-column pair across the join, how often the
+child's date precedes the parent's. The temporal read is evidence, not
+a verdict: a payment before its invoice's *due* date is ordinary; a
+payment before the invoice *exists* is the trace a wrong pairing
+leaves. Read the pair's names before concluding anything. Re-run it
+after new batches land — a rising orphan rate or a fresh
+precedes signal on a previously quiet pair is an admission question.
+
+## 6. Read back
 
 ```glossql
 SELECT * FROM relationships;
