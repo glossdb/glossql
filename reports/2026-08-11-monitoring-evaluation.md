@@ -237,7 +237,22 @@ queue with lift, no detection. The self-fit contamination cost is
 the model-side fact; the rules postscript (52.8% at precision 1.0,
 red on ATTEST once wired) is authored coverage written with
 knowledge of the fault, recorded but not credited to the model.
-This fault class remains open product work. Each leg also improved the
+This fault class remains open product work.
+
+**The scope verdict (project lead, 2026-08-12): leg 3's test was
+mis-scoped for a product evaluation.** Real mis-pairings — bad
+merges, cash-application errors, re-keyed imports — leave loud
+traces, and the eval's own table shows the plain orphan join
+catching those shapes (`distinct`, `repeated`) completely at
+precision 1.0. The untraceable 58% exists only because the injector
+was built to defeat detection (same-amount trades) — an
+engine-stress adversary inherited from tfmeval, not a data-quality
+problem production produces. The product is first and foremost
+declared data apps: numbers right, fast to stand up, basis and dirt
+disclosed — which is what legs 1 and 2 tested and passed. A future
+evaluation that wants real-shaped mess has booksql on the shelf
+(broken + composite, the testdata map) rather than adversarial
+injections. Each leg also improved the
 product it was grading: the stock-marker schema gap, the DIGESTS
 message, build-staged weights, and the Metal/parallel/capped kernel
 came out of legs 1 and 2.
