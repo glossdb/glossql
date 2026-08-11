@@ -80,8 +80,14 @@ support (3-factor grid, 18 rows) the ensemble buys 2–3× lower point
 error and consistently better effect recovery. The one demonstrated
 case where ensembling earns its cost is therefore point reads on
 sparse support — a decision for when a feature quotes point values
-from sparse grids, not implemented preemptively. The port stays one
-member, norm "none", fp32.
+from sparse grids, not implemented preemptively.
+
+Ruled same day: **what-if ships with the ensemble.** Most workspace
+metrics stand on fewer than six inputs, so sparse support is the
+normal what-if regime, not the edge case. The port grows the recorded
+ensemble configuration (power normalization, feature shuffles, member
+aggregation), graded against the recorded 8-member E4 run. Calibration
+and ranking reads keep the pinned single member.
 
 ## The fp32 chaos finding and score semantics
 
@@ -132,6 +138,19 @@ corpus-first immediately.
   whether sparse-support point features ship with multi-member
   ensembling, constrained support, or documented degraded error.
 - **E2.2 reproduction** (~1 day): gates feature 4.
+- **Row anomaly ranking (feature 2)** — deferred by ruling
+  (2026-08-11). It is a data-*update* story and the system does not
+  yet support data updates: on initial seed imports the read would
+  have to be skipped entirely, or a millions-of-rows seed adds tens
+  of minutes to every test and eval run. It cannot be made cheap by
+  sampling — a read whose claim is "this row does not fit" undercuts
+  itself by sampling rows away — and "does not fit" is itself
+  unspecified (in which sense: distributional, referential,
+  temporal?). Triggers, all required before any build: data updates
+  exist as a system concept; background jobs exist; the read's
+  semantics are specified; test scenarios and eval runs are designed
+  so the cost and behavior are understood before it touches an
+  import path.
 - **Width scaling**: the evaluation's 8-column surfaces were a harness
   artifact, not a model or platform bound; the wrapper has no column
   cap. Unestablished at width: single-member sufficiency (shuffles
@@ -148,7 +167,8 @@ corpus-first immediately.
   large updates. The concrete thresholds come from the width/cost
   curves; not designed yet.
 - **Density budget defaults** (context size, permutation count):
-  product decision informed by the width experiment.
+  subsumed by the feature-2 deferral above; decided as part of that
+  read's specification when its triggers are met.
 
 ## Records
 
