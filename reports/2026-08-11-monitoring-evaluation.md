@@ -132,7 +132,7 @@ folder renamed to `tabicl-candle`, and weights now ride the build —
 `build.rs` stages safetensors + pinned DIGESTS beside the binaries;
 no manual copying, no boot copy.
 
-## Leg 3 — fk-shuffled (2026-08-12): localization proven, detection wiring owed
+## Leg 3 — fk-shuffled (2026-08-12): PASSED — localization first, detection wired and rung same day
 
 (Verdict corrected same day, on the project lead's question — the
 first write-up said "passed as composed", which overstated: the
@@ -198,9 +198,22 @@ every detection lane had run — grading machinery, not context.
    0.79 queue), and for genuinely evidence-free swaps that may be
    the ceiling — the eval's own "no single-row contradiction".
 
-Owed to close the leg properly: the two checks declared as standing
-validations in the workspace, so ATTEST goes red without anyone
-knowing where to look.
+**The close (same day): wired and rung.** `settlement_coherence`
+declared FACT ON TABLE through the §5 flow: the expectation glossed
+on `payments` (tolerance 0.0, severity critical); a
+workspace-authored check (`settlement_check.rhai` — one SQL over the
+declared edges: payment dated before its claimed invoice, and bank
+counterparty disagreeing with the claimed vendor's majority mapping,
+learned from the data itself); a workspace-authored detector
+(`coherence_gate.rhai` — rate above the authored tolerance is red,
+scored by the rate; the witness THRESHOLD is the fallback tolerance);
+`DECLARE WITNESS settlement_w ON settlement_coherence BY (AGENT,
+HUMAN) DETECTOR coherence_gate THRESHOLD 0.0`. The standing read:
+**ATTEST red at 0.0528 on the fault corpus — 788 violations, the
+truth union exactly** (629 + 290, zero false flags), and **green at
+0.0 on the clean twin** (0 of 14,928). The loop now rings on this
+fault with nothing anywhere knowing where to look. Detection:
+demonstrated.
 
 ## The verdict across three legs
 
@@ -212,8 +225,9 @@ identity, and a 0.99/0.95 misfit ranking; a pure pairing fault —
 invisible to every value lane — is localized by the composed
 relationship tier (two declared-relationship rules reach 52.8% at
 precision 1.0, the joined density ranks the remainder at 0.79–0.84),
-but the standing loop only rings for it once those rules are wired
-as validations — the wiring leg 3 still owes. Each leg also improved the
+and with the settlement-coherence validation wired through the §5
+flow the standing loop rings for it: ATTEST red 0.0528 on the fault,
+green 0.0 on the clean twin. Each leg also improved the
 product it was grading: the stock-marker schema gap, the DIGESTS
 message, build-staged weights, and the Metal/parallel/capped kernel
 came out of legs 1 and 2.
