@@ -81,4 +81,55 @@ fitted point-in-time.
    missing DIGESTS and that verification is mandatory; the metrics
    skill's provisioning note now lists all three files.
 
-Legs 2 (outliers) and 3 (fk-shuffled) follow in this file.
+## Leg 2 — one_column_outliers (2026-08-11/12): PASSED on four lanes
+
+The fault: 5% of `journal_lines.credit` scaled ×10 (some ×−10),
+stationary — every month of history corrupted equally, all account
+classes. Landed as dataset `outliers_s42`, same recipes and framework
+as leg 1 (relationships redeclared from the leg-1 judgment — the
+corpora differ only in the injected values). Truth: 7,892 injected
+rows by clean-twin diff; equivalently, exactly the rows whose
+`net_amount` contradicts `debit - credit` (the injector does not
+maintain the row's own arithmetic — verified 1:1).
+
+Four lanes, in the order the operator meets them:
+
+1. **The pager fires: red 0.998** where leg 1's identical read was
+   green 0.476. Honest mechanics: a stationary fault has no
+   trajectory break, but the corrupted series is noisier and December
+   drew outside its own corridor — partly the draw. The lane that
+   cannot miss is:
+2. **Cross-chain reconciliation**: GL revenue against billings (the
+   untouched operating chain) swings **−24.3% to +8.2%** monthly
+   where clean it held ~0.05% constant. The framework's redundancy —
+   two independently grounded chains for the same business — catches
+   a stationary corruption that trajectory monitoring structurally
+   cannot.
+3. **The deterministic identity**: rows where `net_amount ≠ debit −
+   credit` = **7,892 — the injected set to the row, precision and
+   recall 1.0**, zero model cost. The judge tier's first move.
+4. **The misfit ranking** (door-side grade, the identity as the
+   label; frame = December revenue credit lines sampled to the
+   1024-row cap in the frame SQL): full surface **AUROC 0.9863**,
+   all 44 sampled positives inside the top 100 of 1,024; with
+   `net_amount` withheld — the pure distribution lane, as if the
+   injector had kept the arithmetic — **AUROC 0.9452**, 45 of 53 in
+   the top 100. Both above the eval's recorded class for this fault
+   (row AUROC 0.85–0.87).
+
+**The performance interlude the leg forced** (2026-08-12, ruled by
+the project lead after the first misfit reads pegged the CPU for
+minutes): the issue was the CPU. The kernel now runs on Metal by
+default (CPU fallback, `GLOSSQL_DEVICE=cpu` to force), candle work
+sits on a dedicated capped pool (`GLOSSQL_CANDLE_THREADS`, default 4)
+so the server never takes the machine, the chain rule's feature
+conditionals run in parallel (`score_log_mean` in the port, noise
+pre-drawn — bit-identical to sequential, oracle tests green), and the
+row cap moved to the measured bound: 256 → 1024 rows at 1.75s on
+Metal (0.47s at 256). A frame past the cap is killed and rejected
+with the sampling teaching in the message. Alongside: the sibling
+folder renamed to `tabicl-candle`, and weights now ride the build —
+`build.rs` stages safetensors + pinned DIGESTS beside the binaries;
+no manual copying, no boot copy.
+
+Leg 3 (fk-shuffled) follows in this file.
