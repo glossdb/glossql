@@ -13,11 +13,15 @@ deferred pieces come up.
   no vendoring. The repo stays the self-contained publishable unit.
 - Weights follow the existing policy: digest-verified local cache;
   container images bake weights at build time, never fetch at start.
-- TabICL reads enter the language as **declared detector functions**
-  with native bodies — not rhai scripts. The FunctionRuntime's native
-  column kernels are the precedent; declarations, witnesses, and
-  ACCEPTS-invalidation govern them like every other function. The
-  statement forms still go through the corpus-first process.
+- TabICL reads enter the language as **declared detector functions**.
+  The FunctionRuntime's native column kernels are the precedent;
+  declarations, witnesses, and ACCEPTS-invalidation govern them like
+  every other function. The statement forms still go through the
+  corpus-first process. Refined same day to **Fork A**: the protocol
+  (metric selection, series assembly, walk policy) lives in a shipped
+  rhai script an installation can read and adapt; only the forward is
+  a native kernel (`tabicl_bands`). A fully native body (Fork B)
+  waits for data points from real installations.
 - **Frame limits**: be careful with very long and very wide frames;
   enforce a maximum where necessary — an actor can shape the frame to
   fit what we support. On input, batch; for very large updates, skip
@@ -169,6 +173,14 @@ corpus-first immediately.
 - **Density budget defaults** (context size, permutation count):
   subsumed by the feature-2 deferral above; decided as part of that
   read's specification when its triggers are met.
+- **Fork B (fully native band function)**: bands shipped as Fork A so
+  the protocol stays readable and adaptable per installation.
+  Trigger: data points from real installations showing the protocol
+  has stabilized.
+- **Stocks in the band walk**: metric_bands sums per month — flows
+  only, stocks excluded (documented in the glossql-metrics skill).
+  Trigger: an authored stock marker in the grounding body or the
+  behavior-measurement wiring; small either way.
 
 ## Records
 
