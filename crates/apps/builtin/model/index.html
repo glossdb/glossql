@@ -37,6 +37,11 @@
   </section>
   </div>
 
+  {{ tiles::chart(frame="frames/bands", spec="specs/bands.vl.json",
+       title="The trajectory · " ~ metric, chip="metric_bands",
+       note="The TabICL walk: each recent month against the range everything before it predicted, trained only on what came before. PIT is where the actual landed — 0.5 is the median, past 0.9 or 0.1 the point marks red.",
+       hint="shaded: the 80 and 90 ranges · dashed: the predicted median · line: the actual. An empty tile means the measurement has not run — <code>SELECT metric_bands() FROM</code> the dataset.") }}
+
   <section class="tile">
     <header><span class="eyebrow">Assumptions</span>
       <code class="chip" title="Every dimension of the claim with its basis. Full confidence renders fixed, less renders loose — the loose ones are the queue's entries.">assumptions</code></header>

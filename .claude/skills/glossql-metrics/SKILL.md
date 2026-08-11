@@ -167,6 +167,36 @@ SELECT journal_check() FROM journal_lines;
 - Checks and detectors are workspace-authored (`FOR` the dataset,
   not GLOBAL) — write them per the glossql-functions skill.
 
+### Expected ranges — the band walk
+
+The library ships a trajectory read (still finding out how well this
+works in practice): `metric_bands` walks each grounded metric's recent
+months and asks a TabICL forward what range each month should have
+landed in, given only what came before. Each point records its bands
+and its PIT — the quantile where the actual fell, 0..1, 0.5 at the
+median. `band_breach` is its detector. The vertical wiring is yours:
+
+```glossql
+DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
+SELECT metric_bands() FROM fin;
+SELECT subject, band, score FROM ATTEST(fin::metric_bands);
+```
+
+- The measurement needs the workspace's `weights/` directory (the
+  server's operator provisions it); a missing one fails the extraction
+  with the path in the message.
+- **The read is recall, you are the judge**: a red band says one
+  metric's latest month landed outside its expected range — read the
+  measurement's cached body for which metric and month, look at the
+  data, and rule. Seasonality the walk has seen, it expects; a genuine
+  shift and a data defect both breach, and telling them apart is your
+  work, not the detector's.
+- Flow metrics only for now: the read sums per month. A stock summed
+  across months is wrong — leave stocks out until the behavior wiring
+  lands.
+- The model app's metric dossier renders the walk (the trajectory
+  tile); the score is ordinal (band displacement), never a probability.
+
 ## 6. Read back
 
 ```glossql
