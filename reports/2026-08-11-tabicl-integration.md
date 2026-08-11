@@ -70,11 +70,17 @@ parallel to integration work.
 
 ## The ensemble question
 
-Multi-member ensembling was shown unnecessary for every *graded* read:
-calibration summaries and rank-based reads are aggregate or ordinal,
-and member variance washes out. The one place it plausibly matters is
-per-row point error — exactly feature 3 — so the E4 reproduction
-doubles as the deciding experiment. Until then the port stays one
+Multi-member ensembling was shown unnecessary for every calibration
+and ranking read: those are aggregate or ordinal, and member variance
+washes out. The E4 reproduction (run 2026-08-11, same day) answered
+the remaining case — per-row point error — with a split: on dense
+support (7-factor grid, 42 train rows) the pinned member matches the
+recorded 8-member run within thousandths of median APE; on sparse
+support (3-factor grid, 18 rows) the ensemble buys 2–3× lower point
+error and consistently better effect recovery. The one demonstrated
+case where ensembling earns its cost is therefore point reads on
+sparse support — a decision for when a feature quotes point values
+from sparse grids, not implemented preemptively. The port stays one
 member, norm "none", fp32.
 
 ## The fp32 chaos finding and score semantics
@@ -120,9 +126,11 @@ corpus-first immediately.
 
 ## Deferred — documented, each with its trigger
 
-- **E4 reproduction** (~1 day): gates feature 3 and answers the point-
-  read ensemble question. Trigger: before any feature quotes point
-  values.
+- **E4 reproduction** — done 2026-08-11 (dataraum-tabicl `tests/e4.rs`,
+  21 fits at 5.7e-5 vs the pinned oracle). Feature 3's evidence gap is
+  closed; the ensemble split (see above) leaves one open decision:
+  whether sparse-support point features ship with multi-member
+  ensembling, constrained support, or documented degraded error.
 - **E2.2 reproduction** (~1 day): gates feature 4.
 - **Width scaling**: the evaluation's 8-column surfaces were a harness
   artifact, not a model or platform bound; the wrapper has no column
