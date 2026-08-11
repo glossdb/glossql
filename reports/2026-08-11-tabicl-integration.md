@@ -104,6 +104,40 @@ ensemble configuration (power normalization, feature shuffles, member
 aggregation), graded against the recorded 8-member E4 run. Calibration
 and ranking reads keep the pinned single member.
 
+## The workspace-support answer (E4b, run 2026-08-11)
+
+E4's factor grid does not exist in a workspace, so the support
+experiment re-asked E4.1 under workspace shapes (tfmeval
+`experiments/e4b_workspace.py`; the full figures in its FINDINGS.md):
+train only on the baseline's pre-activation history, the driver
+measured from the data as an agent's SQL would (monthly
+revenue-weighted unit price), truth the same-seed levered corpus.
+
+- **Pure metric history is disqualified** — flat or trended, 6 or 18
+  train months: negative effect recovery (the read gets the *sign* of
+  a +15% price move wrong), coverage 0 at nominal 80, narrow bands —
+  confidently wrong, the E4.2 pattern. Structural, not statistical:
+  history has no driver variation independent of time, and the
+  ensemble is immaterial to it (pinned matches to three decimals).
+- **A judged dimension carries the read.** The panel shape —
+  (product_group × month) cells, cross-sectional price span ~15×,
+  scenario read per cell summed to totals — recovers the effect:
+  mape 7.6 %, effect recovery 1.07, coverage 80/90 both 100 % at 18
+  months of cells. Six months of cells is not enough (recovery 0.11)
+  — the dimension does not excuse short history.
+- **The ensemble earns its keep where ruled**: on the working panel,
+  ensemble 7.6 % vs pinned 10.7 % mape, recovery 1.07 vs 0.88.
+
+**Quoting policy, decided by the experiment: points + bands, only
+over dimensional support.** A scenario read must ride a judged
+dimension frame with enough history; a pure-history scenario is
+refused as a conditional read — a mechanical lever on plain history
+belongs to formula arithmetic through the groundings, not to a model.
+Bands are wide (0.3–0.44 relative) and are always quoted with the
+point. This shapes the what-if statement forms (plan item 5): the
+scenario names its dimension frame, and refusal-with-reason is part
+of the contract.
+
 ## The fp32 chaos finding and score semantics
 
 On near-deterministic conditionals (amount given amount_inv) the
@@ -209,10 +243,12 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    Feature 4 is the diagnosis read (rate-vs-mix cause after a metric
    moved), not what-if; its product design comes after what-if lands
    — they share the dimensions-as-drivers vocabulary.
-4. **What-if support experiment** (sibling, 1–2 days, needs 1):
-   workspace-shaped support on the finance generator, with the
-   ensemble; decides the quoting policy (points + bands vs
-   intervals-only).
+4. **What-if support experiment** — done 2026-08-11 (tfmeval E4b,
+   same day as planned): pure history disqualified on sign, the
+   judged-dimension panel carries the read, ensemble confirmed over
+   pinned there. Quoting policy: points + bands, only over
+   dimensional support with enough history; refusal-with-reason for
+   pure-history scenarios (see the workspace-support section).
 5. **What-if build** (glossql, ~2 chunks, needs 4 + ruling):
    scenario-as-gloss statement forms through corpus-first, then
    script, aspect, tile, skill.
