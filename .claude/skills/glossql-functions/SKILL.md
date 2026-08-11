@@ -106,9 +106,12 @@ pairs should be reaching for one instead:
   TabICL fit and read: train on rows of features (arrays of numbers),
   predict one test row, return `q` (a band value per alpha, in order)
   and `pit` — the quantile at which `actual` lands in the predicted
-  distribution, 0..1. The model is native and loads once from the
-  workspace's `weights/` directory; a fit needs at least 2 training
-  rows (scripts should require more — `metric_bands.rhai` uses 5).
+  distribution, 0..1. What it buys a script: given these examples,
+  the corridor a new value would have to land in for nobody to be
+  surprised — and where the actual fell. The model is native and
+  loads once from the workspace's `weights/` directory; a fit needs
+  at least 2 training rows (scripts should require more —
+  `metric_bands.rhai` uses 5).
 
 ## Abstention
 

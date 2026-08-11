@@ -170,11 +170,27 @@ SELECT journal_check() FROM journal_lines;
 ### Expected ranges — the band walk
 
 The library ships a trajectory read (still finding out how well this
-works in practice): `metric_bands` walks each grounded metric's recent
-months and asks a TabICL forward what range each month should have
-landed in, given only what came before. Each point records its bands
-and its PIT — the quantile where the actual fell, 0..1, 0.5 at the
-median. `band_breach` is its detector. The vertical wiring is yours:
+works in practice). `metric_bands` answers, for each grounded metric
+and each of its recent months: **knowing only what came before, what
+would this month's number have had to be for nobody to be
+surprised?** Each walked point records that corridor (p05–p95, p50
+the single most expected value), the actual, and the PIT — where the
+actual landed in the corridor, 0..1. Read PIT in plain terms: 0.5,
+the month landed where the trajectory pointed; 0.9, it beat nine in
+ten plausible outcomes — high but explainable; past 0.95 or under
+0.05, the month is outside what the metric's own history can explain
+— something changed, the business or the data. Seasonality the walk
+has seen is inside the corridor: a strong December does not flag, a
+flat one might. Every point is honest — its fit saw only the months
+before it, so the corridor was drawn before looking at the answer.
+
+`band_breach` is the detector on top, the pager line: does any
+monitored metric currently have a month its history cannot explain,
+and how decisively? Green — every metric's recent months continue
+their story. Red — one broke pattern; the score says how far outside
+(0.98 is beyond the 99th percentile of expectation), and the
+measurement's cached body names the metric and the month. The
+vertical wiring is yours:
 
 ```glossql
 DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
@@ -185,12 +201,13 @@ SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 - The measurement needs the workspace's `weights/` directory (the
   server's operator provisions it); a missing one fails the extraction
   with the path in the message.
-- **The read is recall, you are the judge**: a red band says one
-  metric's latest month landed outside its expected range — read the
-  measurement's cached body for which metric and month, look at the
-  data, and rule. Seasonality the walk has seen, it expects; a genuine
-  shift and a data defect both breach, and telling them apart is your
-  work, not the detector's.
+- **The read is recall, you are the judge**: a business shift and a
+  data defect breach identically — telling them apart is your work,
+  not the detector's. Read the body for which metric and month, look
+  at the rows underneath, and rule.
+- The corridor knows only the history it is shown: a short history
+  gives wide corridors and weak claims, and under about five months
+  the walk says nothing. The read sharpens as the workspace ages.
 - Flow metrics only for now: the read sums per month. A stock summed
   across months is wrong — leave stocks out until the behavior wiring
   lands.
