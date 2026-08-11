@@ -122,9 +122,9 @@ does:
   end (exp space destroys the information — measured). `misfit` is
   the negated mean log density.
 - **The numeric surface is discovered, exclusions named in `basis`**:
-  non-numeric columns, constants, and id-like columns (all-distinct
-  integers) are excluded — key-like columns would separate any two
-  row sets trivially, the eval's structural lesson.
+  non-numeric columns, constants, and id-named columns (`id`, `*_id`)
+  are excluded — key-like columns would separate any two row sets
+  trivially, the eval's structural lesson.
 - **Stated caps, never silent ones**: the row cap refuses with the
   number; fewer than two usable columns abstains with the reason.
   An investigation frame is small by construction.

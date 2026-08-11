@@ -722,6 +722,62 @@ impl FunctionRuntime for RhaiRuntime {
         est.predict_quantiles(test_x, test_rows, alphas, &tabicl_candle::Device::Cpu)
             .map_err(|e| e.to_string())
     }
+
+    /// The `misfit.` door's kernel (ruled 2026-08-11, fixture 20): the
+    /// chain-rule density read, fit on the frame and scored on the same
+    /// frame (self-fit — measured protocol-robust for this model).
+    /// Numeric features only, through the regressor checkpoint. Two
+    /// deterministic orderings — identity and reverse — so every
+    /// feature conditions both early and late; nothing semantic rides
+    /// the ordering stream (the port's own note). Log space end to end.
+    fn misfit_scores(&self, x: &[f64], rows: usize, cols: usize) -> Result<Vec<f64>, String> {
+        if rows < 2 || cols < 2 || x.len() != rows * cols {
+            return Err(format!(
+                "misfit_scores: {rows} rows x {cols} features against {} values",
+                x.len()
+            ));
+        }
+        let model = self.band_model.get()?;
+        let xf: Vec<f32> = x.iter().map(|v| *v as f32).collect();
+        let unsup = tabicl_candle::unsupervised::Unsupervised::fit(
+            &model,
+            None,
+            xf.clone(),
+            rows,
+            cols,
+            vec![],
+        );
+        let perms: Vec<Vec<usize>> = vec![(0..cols).collect(), (0..cols).rev().collect()];
+        // The dummy column for empty conditionings: a fixed-seed normal
+        // stream — deterministic, so the read reproduces.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut noise = move |n: usize| -> Vec<f32> {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 11) as f64 / (1u64 << 53) as f64
+            };
+            (0..n)
+                .map(|_| {
+                    let (u1, u2) = (next().max(1e-12), next());
+                    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+                    z as f32
+                })
+                .collect()
+        };
+        let mut acc = vec![0f64; rows];
+        for perm in &perms {
+            let lp = unsup
+                .log_density(&xf, rows, perm, &mut noise, &tabicl_candle::Device::Cpu)
+                .map_err(|e| e.to_string())?;
+            for (a, v) in acc.iter_mut().zip(lp) {
+                *a += v;
+            }
+        }
+        let k = perms.len() as f64;
+        Ok(acc.into_iter().map(|s| s / k).collect())
+    }
 }
 
 /// What the float kernels may read as numbers: numeric types themselves,

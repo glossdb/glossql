@@ -292,6 +292,39 @@ impl RelationPlanner for GlossqlReads {
                 alias.clone(),
             ))));
         }
+        // `misfit.<frame>()` — the ranking door (ruled 2026-08-11,
+        // fixture 20): a declared sample frame served back with a
+        // per-row misfit score from the density kernel. Computed at
+        // plan time like the other doors; never cached — the ranking
+        // is ephemeral by design, the judge's gloss is the record.
+        if name.0.len() == 2
+            && name.0[0]
+                .as_ident()
+                .is_some_and(|i| i.value.eq_ignore_ascii_case("misfit"))
+        {
+            let (Some(frame), Some(a)) = (name.0[1].as_ident().map(|i| i.value.clone()), args)
+            else {
+                return Ok(RelationPlanning::Original(Box::new(relation)));
+            };
+            if !a.args.is_empty() {
+                return Err(DataFusionError::Plan(format!(
+                    "misfit.{frame}() takes no arguments — the frame is the aspect's \
+                     grounding (fixture 20)"
+                )));
+            }
+            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame))?;
+            let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+            let plan = LogicalPlanBuilder::scan(
+                format!("misfit.{frame}()"),
+                provider_as_source(Arc::new(provider)),
+                None,
+            )?
+            .build()?;
+            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                plan,
+                alias.clone(),
+            ))));
+        }
         if name.0.len() != 1 {
             return Ok(RelationPlanning::Original(Box::new(relation)));
         }

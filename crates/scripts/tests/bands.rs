@@ -286,3 +286,42 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
         );
     }
 }
+
+#[test]
+fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
+    // The misfit door's seam (ruled 2026-08-11, fixture 20) against the
+    // real chain-rule density: a frame whose columns cohere (y ≈ 2x,
+    // z = x + y) with one planted row that betrays the relation while
+    // every marginal value stays in range — the eval's shuffled-pairing
+    // shape. The score's fidelity is the sibling suite's business; here
+    // the contract is shape and that the violator ranks worst.
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    workspace(dir.path());
+    let rt = RhaiRuntime::new(dir.path());
+
+    let n = 40;
+    let mut x = Vec::with_capacity(n * 3);
+    for i in 0..n {
+        let a = 10.0 + (i as f64) * 37.0 % 90.0;
+        let (a, b) = if i == 17 {
+            (15.0, 170.0) // in-range marginals, impossible pairing
+        } else {
+            (a, 2.0 * a + (i as f64 % 5.0))
+        };
+        x.extend([a, b, a + b]);
+    }
+    let scores = rt.misfit_scores(&x, n, 3).unwrap();
+
+    assert_eq!(scores.len(), n);
+    let worst = scores
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i)
+        .unwrap();
+    assert_eq!(worst, 17, "the violator carries the lowest log density");
+}

@@ -129,6 +129,16 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<f64>, String> {
         Err("this runtime carries no band kernel".into())
     }
+
+    /// The misfit kernel behind the `misfit.` door (ruled 2026-08-11,
+    /// fixture 20): fit on the frame, score the same frame — one mean
+    /// log density per row, log space end to end (higher = fits the
+    /// frame better). `x` is row-major (rows × cols), nulls as NaN.
+    /// The runtime that carries the model overrides this; the default
+    /// refuses, and the door reports why.
+    fn misfit_scores(&self, _x: &[f64], _rows: usize, _cols: usize) -> Result<Vec<f64>, String> {
+        Err("this runtime carries no misfit kernel".into())
+    }
 }
 
 #[derive(Debug)]

@@ -520,8 +520,12 @@ async fn concept_rows(
 }
 
 /// Plan a query through the session's own pipeline, so a nested `read.`
-/// re-enters the relation planner.
-async fn build_plan(ctx: &SessionContext, sql: &str) -> Result<LogicalPlan, SessionError> {
+/// re-enters the relation planner. The `misfit.` door plans its frame
+/// through the same gate.
+pub(crate) async fn build_plan(
+    ctx: &SessionContext,
+    sql: &str,
+) -> Result<LogicalPlan, SessionError> {
     let query = Parser::new(&PostgreSqlDialect {})
         .try_with_sql(sql)
         .and_then(|mut p| p.parse_query())
