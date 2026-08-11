@@ -270,6 +270,9 @@ refusals matter:
 Superseding the scenario gloss recomputes the read; `DELETE FROM
 cache` forces it. One scenario = one factor set — a different
 strength is a new gloss (re-gloss to revise) or a sibling aspect.
+In a workspace with apps, a scenario ships with its authored chart
+tile (glossql-apps: "A scenario ships with its tile"); the built-in
+model app lists scenarios without it.
 
 ## 7. Read back
 

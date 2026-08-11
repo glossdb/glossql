@@ -86,6 +86,35 @@ Fixed pixel heights — step heights fight autosize-fit and warn.
 Zero console warnings is the bar: an all-null layer, a step height,
 a wrong axis type all show up there.
 
+## A scenario ships with its tile
+
+A what-if scenario (a FACT aspect read through `whatif.<name>()` —
+the metrics skill teaches declaring one) charts through an authored
+tile: the scenario's name sits in the frame's FROM clause, which no
+built-in can know, so when you declare a scenario for a workspace
+with apps, author its tile in the same flow. The built-in model app
+lists scenarios generically; the chart is yours.
+
+The frame picks one concept and serves the door's columns:
+
+```sql
+-- frames/whatif_price_hike.sql
+SELECT month, replay, p05, p10, p50, p90, p95, basis
+FROM whatif.price_hike()
+WHERE concept = 'revenue' ORDER BY month
+```
+
+The spec is a band fan with the replay line over it — the model's
+uncertainty and the exact recomputation, visibly separate (follow the
+model app's `specs/bands.vl.json` shape: two area layers p05/p95 and
+p10/p90, a dashed p50 line, a solid `replay` line). The chip is
+`whatif.price_hike()`; the `note` names the lever and its basis; the
+`hint` says what the bands are and that `basis` carries refusals.
+Refusal rows have NULL months — keep the `WHERE concept = …` so an
+unmoved concept's refusal row doesn't feed the chart, and consider a
+`gl-rows` tile beside the chart listing `DISTINCT concept, basis` so
+refusals stay visible instead of filtered away.
+
 ## Composition honesty
 
 Flows re-aggregate freely; ratios are final at their grain — a
