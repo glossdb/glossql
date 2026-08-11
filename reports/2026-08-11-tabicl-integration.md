@@ -142,19 +142,38 @@ and an in-context read over ~15 monthly rows shrinks it away. The
 panel's apparent success was the model re-learning a linear identity
 the formula computes exactly.
 
-**Verdict, closing the what-if model question (E4/E4b/E4c):** the
-counterfactual read is out of what-if. Fidelity was proven (E4, grid
-support); value on workspace-shaped data is disproven — monthly
-histories cannot support causal claims. What-if is built as:
-declared scenario overrides, deterministic recomposition through the
-formula graph, the baseline's uncertainty quoted from the
-`metric_bands` corridor, downstream propagation quoted only where a
-formula or a user-pinned assumption covers it, refused with the
-reason otherwise. The TFM's standing roles are the ones proven in
-support: the corridor (E2.1, shipped), cause classification (E2.2,
-reproduced), row ranking (E1.2s3, ported). The ensemble port keeps
-its parity grade and currently has no consuming feature — recorded
-plainly, not justified retroactively.
+**Verdict (corrected 2026-08-11, on the project lead's challenge):**
+the first write-up of E4b/E4c concluded "the counterfactual read is
+out of what-if" — that overreached, and the archives themselves
+refute it. Every proven what-if run (dataraum-eval PHASE2 Leg B,
+tfmeval E4) trained on lever-varied support worlds: same-seed copies
+of the corpus at several factor values, the factor an observed
+feature. E4b/E4c removed those worlds and asked bare history to
+carry the read — the regime PHASE2 Leg A had already measured and
+closed ("what-if must run through explicit lever conditioning, never
+through the forecast read-out alone"). So E4b/E4c confirm Leg A;
+they say nothing against Leg B. What they do close is one idea: a
+workspace's own unvaried history cannot substitute for the support
+worlds.
+
+What-if is therefore built as the proven two-stage pipeline, applied
+to real data: the scenario is a declared statement (driver column,
+factor, start, optional further overrides — units elasticity, terms);
+the server **replays the recipes** over the source rows with the
+override applied at a small grid of strengths, landing scenario
+worlds as tables (the eval's generator slot, filled by the formula
+graph — mechanical links and observed behavior such as per-invoice
+payment delays ride the replay; undeclared behavioral responses are
+named as assumptions, never guessed); the conditional read then runs
+across the replayed worlds with the factor as a feature, quoting
+bands, guarded at the support boundary (flag/widen/refuse outside
+the replayed range — TabICL's own widening is the measured signal,
+17–24× out of support). A replay grid is small (5–7 worlds), which
+is exactly the sparse-support regime where the ensemble was ruled in
+— the ensemble port's consuming feature is this read. The TFM's
+other standing roles are unchanged: the corridor (E2.1, shipped),
+cause classification (E2.2, reproduced), row ranking (E1.2s3,
+ported).
 
 ## The fp32 chaos finding and score semantics
 
@@ -268,14 +287,21 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    moved), not what-if; its product design comes after what-if lands
    — they share the dimensions-as-drivers vocabulary.
 4. **What-if support experiment** — done 2026-08-11, extended to E4c
-   (propagation) the same day under the project lead's challenge.
-   Final verdict in the workspace-support section: the counterfactual
-   read is out of what-if; the model's standing roles are corridor,
-   diagnosis, and row ranking.
-5. **What-if build** (glossql, ~2 chunks, needs ruling): scenario as
-   declared overrides recomposed through the formula graph, corridor
-   bands on the baseline, refusal-with-reason where propagation is
-   uncovered; statement forms through corpus-first. No model kernel.
+   (propagation) the same day under the project lead's challenge, and
+   the verdict corrected the same day on his second challenge: E4b/E4c
+   measured the no-support regime (bare history, no lever variation)
+   and confirm PHASE2 Leg A; the proven what-if (Leg B, E4) always
+   trained on lever-varied support worlds and stands. See the
+   corrected verdict in the workspace-support section.
+5. **What-if build** (glossql, ~3 chunks, needs ruling): the proven
+   pipeline on real data — scenario as a declared statement (driver,
+   factor, start, optional overrides), recipe **replay** at a small
+   grid of strengths producing scenario worlds as tables, the
+   conditional read across those worlds (factor as feature, ensemble
+   per the sparse-support ruling) with bands and the support-boundary
+   guard; undeclared behavior named as an assumption in the answer,
+   out-of-range queries refused with the reason. Statement forms
+   through corpus-first.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is
