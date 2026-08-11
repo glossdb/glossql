@@ -208,7 +208,12 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    breach, red check, user doubt), never per-import; the frame is
    authored, not passed as SQL-in-SQL; statement-form forks (sample
    as plain QUERY aspect + convention vs a first-class kind) go
-   through corpus-first.
+   through corpus-first. The serving-prefix question rides the same
+   round: one generic serve door over every QUERY gloss (any declared
+   aggregation becomes a reusable, judged, versioned read — not only
+   metrics), with `metric.*` folding in or staying an alias; analyses
+   like the misfit read stay their own operation-named doors — one
+   prefix per operation, never dispatch on the aspect's kind.
 7. **A real execution** (project lead triggers): feeds Fork B and
    the protocol-stability question; needs only a provisioned
    `weights/` beside the workspace.
