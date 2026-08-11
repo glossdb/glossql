@@ -190,7 +190,7 @@ read it through the language" has no answer for it here.
 
 ## 7. An agent cannot land an engineer pin where the framework expects it
 
-The glossql-metrics skill §7 closes the flow by asking the user to pin
+The glossql-metrics skill (now §8) closes the flow by asking the user to pin
 every definitional choice, and says: *"The user's answer lands as a
 re-gloss — the human slot supersedes and outranks yours in every
 collapsed read, and the grounding's basis becomes `engineer-pinned`

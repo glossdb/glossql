@@ -308,7 +308,21 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    ruled 2026-08-11 (fixture 19): each scenario is its own FACT
    aspect served by `whatif.<name>()`; the shared-aspect and
    arguments-at-the-door forks died. No grammar change; SPEC carries
-   a note-sized addition beside the `read.` ruling.
+   a note-sized addition beside the `read.` ruling. **Built same day**
+   (`crates/session/src/whatif.rs`): the replay is a plan rewrite —
+   every scan of an overridden table gains a projection scaling the
+   column from the start month, storage untouched — so a support
+   world is queries, never copies; the kernel rides a new
+   `FunctionRuntime::band_grid` seam the rhai runtime answers with
+   the sparse-support ensemble; the `replay` column carries the
+   mechanical recomputation beside the bands; unmoved groundings
+   refuse with a pointer at `detect_derivations`; cache follows
+   extract semantics under `(whatif, scenario)`. Door mechanics
+   pinned with a deterministic kernel (`crates/session/tests/
+   whatif.rs`), the real-ensemble seam in the scripts bands suite.
+   The metrics skill teaches the flow (§6). Still open: the app
+   tile (how a tile names its scenario), and the generator-oracle
+   acceptance run through the door.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is

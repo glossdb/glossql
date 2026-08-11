@@ -220,7 +220,58 @@ SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 - The model app's metric dossier renders the walk (the trajectory
   tile); the score is ordinal (band displacement), never a probability.
 
-## 6. Read back
+## 6. What-if — a scenario is declared, then read
+
+A scenario is its own FACT aspect, exactly as a metric is its own
+QUERY aspect: declare it with `x-kind: "scenario"`, gloss the
+overrides, read it through the `whatif.` door. Never compute a
+scenario by hand-editing SQL — the declared form is versioned,
+witness-gated, and reproducible; an ad-hoc calculation is none of
+those.
+
+```glossql
+DECLARE ASPECT price_hike WITH $${
+  "title": "Price +15% from July", "x-kind": "scenario",
+  "type": "object", "required": ["overrides"]
+}$$ AS FACT ON DATASET;
+
+GLOSS price_hike ON fin AS $${"overrides": [
+  {"column": "sales_data.unit_price", "factor": 1.15, "from": "2026-07",
+   "basis": "the declared lever"}]}$$;
+
+SELECT month, replay, p50, p90, basis FROM whatif.price_hike()
+WHERE concept = 'revenue';
+```
+
+Each override names a **raw column on a landed table** (the table
+must carry a date column — the start month anchors there), a factor,
+and its basis. A behavioral response the history never saw — demand
+dropping when prices rise — is a second override with its basis
+saying it is assumed; undeclared, the read proceeds as if behavior
+holds, and says so.
+
+What comes back, per concept and month: `replay` is the exact
+recomputation of the grounding at the declared factors (the
+arithmetic half — trust it as arithmetic), `p05..p95` are the model's
+bands read across replayed support worlds around the declared point,
+and `basis` is the judgment. Read `basis` before the numbers. Three
+refusals matter:
+
+- **"unmoved by the overrides"** — the grounding reads a stored total
+  (`line_amount`) the overridden parts never reach. Run
+  `detect_derivations` on the table and gloss the identity, or ground
+  the concept on the parts.
+- **"starts after the recorded history ends"** — replay works over
+  recorded months; a scenario about a future with no rows needs its
+  start inside the books.
+- **"the grounding is contested/stale"** — the concept's own state,
+  not the scenario's; fix the grounding first.
+
+Superseding the scenario gloss recomputes the read; `DELETE FROM
+cache` forces it. One scenario = one factor set — a different
+strength is a new gloss (re-gloss to revise) or a sibling aspect.
+
+## 7. Read back
 
 ```glossql
 SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
@@ -230,7 +281,7 @@ SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 Red bands are where a human closes what you could not; unassessed
 rows are the vocabulary nobody has spoken to yet.
 
-## 7. The pinning agenda — end every framework with it
+## 8. The pinning agenda — end every framework with it
 
 A definition is a choice between formula families the data cannot
 arbitrate: both DSO variants compute, both gross-profit subtrahends
