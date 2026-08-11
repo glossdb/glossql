@@ -132,12 +132,14 @@ folder renamed to `tabicl-candle`, and weights now ride the build —
 `build.rs` stages safetensors + pinned DIGESTS beside the binaries;
 no manual copying, no boot copy.
 
-## Leg 3 — fk-shuffled (2026-08-12): PASSED — localization first, detection wired and rung same day
+## Leg 3 — fk-shuffled (2026-08-12): FAILED — the model did not find the pairings
 
-(Verdict corrected same day, on the project lead's question — the
-first write-up said "passed as composed", which overstated: the
-standing loop never rang on this fault. What follows keeps the
-original findings and adds the correction.)
+(Verdict corrected twice, finally 2026-08-12 when the project lead
+called it plainly. The set test was: can the in-context density find
+the shuffled pairings through the product door. It did not — a
+ranked queue is not a finding, and nothing fired. Earlier write-ups
+dressed a rules rescue as a composed pass; the facts below stand,
+the framing does not.)
 
 The fault: 1,492 of 14,928 `payments.invoice_id` (10%) traded among
 payments owing the identical amount — every value legal, no orphans,
@@ -198,7 +200,8 @@ every detection lane had run — grading machinery, not context.
    0.79 queue), and for genuinely evidence-free swaps that may be
    the ceiling — the eval's own "no single-row contradiction".
 
-**The close (same day): wired and rung.** `settlement_coherence`
+**The rules postscript — not the model, not the test.**
+`settlement_coherence`
 declared FACT ON TABLE through the §5 flow: the expectation glossed
 on `payments` (tolerance 0.0, severity critical); a
 workspace-authored check (`settlement_check.rhai` — one SQL over the
@@ -211,35 +214,30 @@ scored by the rate; the witness THRESHOLD is the fallback tolerance);
 HUMAN) DETECTOR coherence_gate THRESHOLD 0.0`. The standing read:
 **ATTEST red at 0.0528 on the fault corpus — 788 violations, the
 truth union exactly** (629 + 290, zero false flags), and **green at
-0.0 on the clean twin** (0 of 14,928). The loop now rings on this
-fault with nothing anywhere knowing where to look. Detection:
-demonstrated.
-
-One honesty note on authorship (the project lead's question): the
-checks were written *after* leg 3 named the fault class — the
-timing rule is a domain invariant any author writes unprompted, but
-the vendor-counterparty rule was found under leg 3's streetlight.
-The durable fix is that both are instances of mechanical templates
-over declared relationships (time-order along an FK with two
-clocks; identity agreement across a pairing edge), now taught in
-the metrics skill §5 as build-time candidates — written fault or no
-fault, judged by the author. The next evaluation should grade the
-skill: does a framework built fresh from the skills carry these
-checks before anyone knows a fault exists?
+0.0 on the clean twin** (0 of 14,928). Two caveats keep this a
+postscript, not a result: the rules are not the model — leg 3's test
+was TabICL, and rules finding what the model could not does not
+rescue the leg — and the checks were written knowing the fault class
+(the timing rule is a defensible domain invariant; the
+vendor-counterparty rule was found under leg 3's streetlight).
+Whether such checks get written blind, before any fault is known, is
+an open question, not a result. A skill teaching generalized from
+this one fault was added and reverted the same day — one niche fault
+does not make doctrine.
 
 ## The verdict across three legs
 
-The assembled application does what the evals said the engines could,
-through the product doors, at product speeds: the null passes at the
-judge with a green standing pager; a stationary value fault is caught
-by the framework's own redundancy (two chains), the deterministic
-identity, and a 0.99/0.95 misfit ranking; a pure pairing fault —
-invisible to every value lane — is localized by the composed
-relationship tier (two declared-relationship rules reach 52.8% at
-precision 1.0, the joined density ranks the remainder at 0.79–0.84),
-and with the settlement-coherence validation wired through the §5
-flow the standing loop rings for it: ATTEST red 0.0528 on the fault,
-green 0.0 on the clean twin. Each leg also improved the
+Two legs passed, one failed. The null passes at the judge with a
+green standing pager; a stationary value fault is caught by the
+framework's own redundancy (two chains), the deterministic identity,
+and a 0.99/0.95 misfit ranking. Leg 3 failed its test: the
+in-context density did not find the shuffled pairings through the
+product door — 0.79–0.84 against the eval's clean-twin 0.9338, a
+queue with lift, no detection. The self-fit contamination cost is
+the model-side fact; the rules postscript (52.8% at precision 1.0,
+red on ATTEST once wired) is authored coverage written with
+knowledge of the fault, recorded but not credited to the model.
+This fault class remains open product work. Each leg also improved the
 product it was grading: the stock-marker schema gap, the DIGESTS
 message, build-staged weights, and the Metal/parallel/capped kernel
 came out of legs 1 and 2.

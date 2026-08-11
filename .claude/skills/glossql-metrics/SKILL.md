@@ -169,25 +169,6 @@ SELECT journal_check() FROM journal_lines;
   convention that reconciled at ~0 residual (a balance equal to the
   sum of its movement rows) is a standing invariant — turn it into a
   check.
-- **Derive candidate validations from the declared relationships,
-  before any fault is suspected.** Each edge proposes its own
-  expectations mechanically; write the sensible ones at
-  framework-build time, fault or no fault:
-  - an FK edge whose two tables both carry a time axis → *the child
-    event does not precede the parent's* (a payment is not dated
-    before the invoice it settles);
-  - a 1:1 edge pairing two entities → *identities agree across the
-    pair* (the bank counterparty is the claimed vendor's — learn the
-    expected mapping from the data's own majority when no master
-    exists);
-  - an FK edge as such → the orphan rate (and remember the judged
-    read's lesson: an orphan check is blind to wrong-but-valid
-    pairings — that is what the other two cover).
-
-  These are recall-shaped templates; you are the judge of which
-  become declared checks. A pairing fault caught this way was the
-  fk-shuffled evaluation leg: two template instances found 52.8% of
-  the moved rows at precision 1.0 and turned the standing read red.
 - Checks and detectors are workspace-authored (`FOR` the dataset,
   not GLOBAL) — write them per the glossql-functions skill. The
   usual detector is twenty lines; copy this shape and adapt the
