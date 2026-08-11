@@ -335,10 +335,21 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    contrast concept refused as unmoved, as designed. The trial
    caught one bug, fixed same day: a failed weights load was cached
    for the process lifetime (the OnceLock held the error) — the
-   loader now retries. Still open: the generator-oracle acceptance
-   run through the door (E4 protocol, recovered effect graded
-   against generated levered truth) — sequenced right after this
-   cycle, per the project lead.
+   loader now retries. **The generator-oracle acceptance run
+   (same evening) passes.** The levered twin of the mounted corpus
+   (same seed, price ×1.15 at k=6; the generated baseline verified
+   byte-identical to the workspace's source files) graded the live
+   door's served read: the `replay` column matches the generated
+   counterfactual truth at ~1e-7 relative on every post month — the
+   plan-rewrite replay *is* the generator's counterfactual world,
+   to floating point; the model's p50 lands at median mape 0.0056
+   (the recorded E4 fine-grid class), median effect recovery 0.958,
+   truth inside [p05, p95] on all six months. The trial's
+   "14,770 dropped" recipe message resolved as a reporting wart,
+   not data loss: the counter sums source rows across both files a
+   join recipe reads, so the parent rows read as dropped — zero
+   orphan lines at the source; a per-file landing message is a
+   small import-crate follow-up.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is
