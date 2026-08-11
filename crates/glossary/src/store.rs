@@ -304,10 +304,7 @@ pub const RELATIONS: &[Relation] = &[
 /// The column shape of a readable store relation, `None` for any other
 /// name — the lookup the session's planner and the doors share.
 pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
-    RELATIONS
-        .iter()
-        .find(|r| r.name == name)
-        .map(|r| r.columns)
+    RELATIONS.iter().find(|r| r.name == name).map(|r| r.columns)
 }
 
 /// The declaration relations `ACCEPTS` admits as invalidation edges
@@ -337,12 +334,7 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
 
 /// Grain admission (ruled 2026-08-05): an aspect declared `ON grain, …`
 /// only accepts subjects of those grains; `None` (no clause) admits all.
-pub fn admit_grain(
-    aspect: &str,
-    grains: Option<&str>,
-    dataset: &str,
-    subject: &str,
-) -> Result<()> {
+pub fn admit_grain(aspect: &str, grains: Option<&str>, dataset: &str, subject: &str) -> Result<()> {
     let Some(declared) = grains else {
         return Ok(());
     };
@@ -454,13 +446,12 @@ impl Store {
     }
 
     pub async fn recipe(&self, dataset: &str, table: &str) -> Result<Option<RecipeRow>> {
-        let row = sqlx::query(
-            "SELECT source, sql FROM recipes WHERE dataset = ? AND table_name = ?",
-        )
-        .bind(dataset)
-        .bind(table)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row =
+            sqlx::query("SELECT source, sql FROM recipes WHERE dataset = ? AND table_name = ?")
+                .bind(dataset)
+                .bind(table)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|r| RecipeRow {
             source: r.get("source"),
             sql: r.get("sql"),
@@ -553,13 +544,15 @@ impl Store {
                 });
             }
         }
-        sqlx::query("INSERT OR REPLACE INTO aspects (name, schema, kind, grains) VALUES (?, ?, ?, ?)")
-            .bind(decl.name.value.as_str())
-            .bind(decl.schema.raw.as_str())
-            .bind(kind_str(decl.kind))
-            .bind(declared_grains)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO aspects (name, schema, kind, grains) VALUES (?, ?, ?, ?)",
+        )
+        .bind(decl.name.value.as_str())
+        .bind(decl.schema.raw.as_str())
+        .bind(kind_str(decl.kind))
+        .bind(declared_grains)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -808,9 +801,8 @@ impl Store {
             };
             let (pred, binds) = scope.predicate("subject");
             let marks = vec!["?"; dependents.len()].join(", ");
-            let sql = format!(
-                "DELETE FROM cache WHERE dataset = ? AND function IN ({marks}) AND {pred}"
-            );
+            let sql =
+                format!("DELETE FROM cache WHERE dataset = ? AND function IN ({marks}) AND {pred}");
             let mut q = sqlx::query(&sql).bind(dataset);
             for f in &dependents {
                 q = q.bind(f.as_str());
@@ -923,9 +915,7 @@ impl Store {
     /// 2026-08-04; the function witnesses it replaced were ceremony).
     async fn returning(&self, aspect: Option<&str>) -> Result<Vec<(String, String)>> {
         let q = match aspect {
-            Some(a) => {
-                sqlx::query("SELECT name, returns FROM functions WHERE returns = ?").bind(a)
-            }
+            Some(a) => sqlx::query("SELECT name, returns FROM functions WHERE returns = ?").bind(a),
             None => sqlx::query("SELECT name, returns FROM functions WHERE returns IS NOT NULL"),
         };
         Ok(q.fetch_all(&self.pool)
@@ -978,12 +968,7 @@ impl Store {
     /// The current slots under a scope: gloss slots by supersession (one per
     /// actor kind), plus the measurement slot of every witness-bound
     /// function, from the cache. Both read shapes build from these.
-    async fn slots(
-        &self,
-        dataset: &str,
-        scope: &Scope,
-        aspect: Option<&str>,
-    ) -> Result<Vec<Slot>> {
+    async fn slots(&self, dataset: &str, scope: &Scope, aspect: Option<&str>) -> Result<Vec<Slot>> {
         let (pred, binds) = scope.predicate("g.subject");
         let aspect_clause = if aspect.is_some() {
             "AND g.aspect = ? "
@@ -1143,8 +1128,13 @@ impl Store {
             {
                 continue;
             }
-            let Some(detector) = &w.detector else { continue };
-            for c in self.latest_cache(dataset, scope, detector, Some(&w.name)).await? {
+            let Some(detector) = &w.detector else {
+                continue;
+            };
+            for c in self
+                .latest_cache(dataset, scope, detector, Some(&w.name))
+                .await?
+            {
                 let body: Value = serde_json::from_str(&c.body)
                     .map_err(|e| Error::Corrupt(format!("attest body for `{detector}`: {e}")))?;
                 if let (Some(band), Some(score)) = (
@@ -1241,9 +1231,7 @@ impl Store {
             for a in &witnessed {
                 let in_grain = match grain_map.get(a).and_then(|g| g.as_deref()) {
                     None => true,
-                    Some(declared) => declared
-                        .split(',')
-                        .any(|g| g == grain_of(dataset, subject)),
+                    Some(declared) => declared.split(',').any(|g| g == grain_of(dataset, subject)),
                 };
                 if !in_grain {
                     continue;
@@ -1282,7 +1270,10 @@ impl Store {
             let Some(detector) = &w.detector else {
                 continue;
             };
-            for c in self.latest_cache(dataset, scope, detector, Some(&w.name)).await? {
+            for c in self
+                .latest_cache(dataset, scope, detector, Some(&w.name))
+                .await?
+            {
                 let body: Value = serde_json::from_str(&c.body)
                     .map_err(|e| Error::Corrupt(format!("attest body for `{detector}`: {e}")))?;
                 let band = body

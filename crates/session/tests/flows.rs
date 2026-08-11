@@ -40,7 +40,9 @@ impl FunctionRuntime for Fake {
             // A voice validates against the aspect it speaks (fixture 06's
             // respelling): the check's verdict is an `outcome` too, with
             // its measurement beside it.
-            "journal_check" => json!({"outcome": "measured: debits equal credits", "imbalance": 0.0}),
+            "journal_check" => {
+                json!({"outcome": "measured: debits equal credits", "imbalance": 0.0})
+            }
             "framework_bands" => json!({
                 "subject": "trial_balance", "aspect": "journal_balanced",
                 "witness": "journal_w", "band": "green", "score": 0.0,
@@ -53,7 +55,11 @@ impl FunctionRuntime for Fake {
             // shared-detector test below.
             "slot_bands" => {
                 let slots = context["slots"].as_array().map_or(0, Vec::len);
-                let (band, score) = if slots > 1 { ("red", 1.0) } else { ("green", 0.0) };
+                let (band, score) = if slots > 1 {
+                    ("red", 1.0)
+                } else {
+                    ("green", 0.0)
+                };
                 json!({
                     "subject": context["subject"], "aspect": context["aspect"],
                     "witness": context["witness"], "band": band, "score": score,
@@ -246,9 +252,7 @@ async fn accepts_must_name_declared_aspects() {
     let (session, _) = agent_session().await;
     run(&session, SETUP).await;
     let e = session
-        .execute(
-            r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (nope);"#,
-        )
+        .execute(r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (nope);"#)
         .await
         .unwrap_err();
     assert!(e.to_string().contains("aspect"), "{e}");
@@ -357,7 +361,11 @@ async fn substrate_sql_runs_against_registered_tables() {
         )
         .unwrap();
 
-    let rows = table(&session, "SELECT id, amount FROM orders WHERE amount > 20 ORDER BY id;").await;
+    let rows = table(
+        &session,
+        "SELECT id, amount FROM orders WHERE amount > 20 ORDER BY id;",
+    )
+    .await;
     insta::assert_snapshot!(rows, @r"
     +----+--------+
     | id | amount |
@@ -372,7 +380,10 @@ async fn substrate_sql_runs_against_registered_tables() {
         .execute("CREATE VIEW big_orders AS SELECT id FROM orders;")
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("not open for CREATE VIEW"), "{err}");
+    assert!(
+        err.to_string().contains("not open for CREATE VIEW"),
+        "{err}"
+    );
 
     // DESCRIBE and EXPLAIN are reads, so they pass (2026-08-07) —
     // before this, the only way to see a landed schema was burning a
@@ -388,7 +399,10 @@ async fn substrate_sql_runs_against_registered_tables() {
     // EXPLAIN carries a statement of its own — the allowlist repeats
     // inside it rather than being walked around.
     for (sneak, refused_as) in [
-        ("EXPLAIN INSERT INTO orders VALUES (3, 1.0);", "EXPLAIN INSERT"),
+        (
+            "EXPLAIN INSERT INTO orders VALUES (3, 1.0);",
+            "EXPLAIN INSERT",
+        ),
         ("EXPLAIN SELECT 1 AS a INTO scratch;", "SELECT INTO"),
     ] {
         let e = session.execute(sneak).await.unwrap_err();
@@ -546,7 +560,10 @@ async fn the_declarations_read_as_plain_relations() {
         "SELECT name FROM functions WHERE scope = 'GLOBAL';",
     )
     .await;
-    assert!(global.contains("outliers") && !global.contains("checker"), "{global}");
+    assert!(
+        global.contains("outliers") && !global.contains("checker"),
+        "{global}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -584,10 +601,15 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
     // The detector saw both slots: the agent's authored expectation and
     // the check voice's measured result.
     let ctx = fake.last_context.lock().unwrap().clone().unwrap();
-    let slots = ctx["slots"].as_array().unwrap_or_else(|| panic!("no slots in {ctx}"));
+    let slots = ctx["slots"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no slots in {ctx}"));
     assert_eq!(slots.len(), 2, "{ctx}");
     let all = ctx.to_string();
-    assert!(all.contains("outcome") && all.contains("imbalance"), "{ctx}");
+    assert!(
+        all.contains("outcome") && all.contains("imbalance"),
+        "{ctx}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -704,7 +726,10 @@ async fn the_serve_door_runs_the_current_grounding() {
         .execute("SELECT * FROM read.looping();")
         .await
         .unwrap_err();
-    assert!(e.to_string().contains("read cycle: looping -> looping"), "{e}");
+    assert!(
+        e.to_string().contains("read cycle: looping -> looping"),
+        "{e}"
+    );
 
     // The refusals name what the reader should do instead.
     for (sql, said) in [
@@ -720,7 +745,10 @@ async fn the_serve_door_runs_the_current_grounding() {
         r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
     )
     .await;
-    let e = agent.execute("SELECT * FROM read.dso();").await.unwrap_err();
+    let e = agent
+        .execute("SELECT * FROM read.dso();")
+        .await
+        .unwrap_err();
     assert!(e.to_string().contains("no current grounding"), "{e}");
 }
 
@@ -824,7 +852,10 @@ async fn select_into_is_not_a_way_to_make_a_table() {
         assert!(session.execute(sneak).await.is_err(), "{sneak}");
     }
     for made in ["SELECT * FROM sneak_cte;", "SELECT * FROM sneak_sub;"] {
-        assert!(session.execute(made).await.is_err(), "nothing was created: {made}");
+        assert!(
+            session.execute(made).await.is_err(),
+            "nothing was created: {made}"
+        );
     }
 }
 

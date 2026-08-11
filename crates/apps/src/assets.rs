@@ -8,7 +8,11 @@ use axum::response::{IntoResponse, Response};
 
 macro_rules! asset {
     ($name:literal, $mime:literal) => {
-        ($name, include_bytes!(concat!("../assets/", $name)).as_slice(), $mime)
+        (
+            $name,
+            include_bytes!(concat!("../assets/", $name)).as_slice(),
+            $mime,
+        )
     };
 }
 

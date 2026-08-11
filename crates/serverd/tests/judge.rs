@@ -22,10 +22,15 @@ async fn app() -> (Router, tempfile::TempDir) {
     let store = Store::open_memory().await.unwrap();
     let runtime = Arc::new(RhaiRuntime::new(dir.path().to_path_buf()));
     let plane = Arc::new(Plane::new(store.clone(), None, runtime));
-    bootstrap(&store, &plane, dir.path(), Actor {
-        kind: ActorKind::Human,
-        id: "cockpit".into(),
-    })
+    bootstrap(
+        &store,
+        &plane,
+        dir.path(),
+        Actor {
+            kind: ActorKind::Human,
+            id: "cockpit".into(),
+        },
+    )
     .await
     .unwrap();
     let workspace = dir.path().to_path_buf();
@@ -144,7 +149,11 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
         "SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
     )
     .await;
-    assert_eq!(glossary[0]["rows"][0]["state"], json!("contested"), "{glossary}");
+    assert_eq!(
+        glossary[0]["rows"][0]["state"],
+        json!("contested"),
+        "{glossary}"
+    );
     assert_eq!(glossary[0]["rows"][0]["value"], Value::Null, "{glossary}");
 
     // Closure by convergence: the human re-grounds, accepts the agent's
@@ -168,7 +177,11 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
         "SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
     )
     .await;
-    assert_eq!(glossary[0]["rows"][0]["state"], json!("current"), "{glossary}");
+    assert_eq!(
+        glossary[0]["rows"][0]["state"],
+        json!("current"),
+        "{glossary}"
+    );
     assert!(
         glossary[0]["rows"][0]["value"]
             .as_str()
@@ -196,7 +209,11 @@ async fn closure_by_striking_the_disputed_slot_recomputes_the_verdict() {
         "SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
     )
     .await;
-    assert_eq!(glossary[0]["rows"][0]["state"], json!("contested"), "{glossary}");
+    assert_eq!(
+        glossary[0]["rows"][0]["state"],
+        json!("contested"),
+        "{glossary}"
+    );
 
     // Closure by authority: the human strikes the agent's slot. Deletion
     // makes the slot set smaller, never newer — the strike itself must
@@ -223,7 +240,11 @@ async fn closure_by_striking_the_disputed_slot_recomputes_the_verdict() {
         "SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
     )
     .await;
-    assert_eq!(glossary[0]["rows"][0]["state"], json!("current"), "{glossary}");
+    assert_eq!(
+        glossary[0]["rows"][0]["state"],
+        json!("current"),
+        "{glossary}"
+    );
     assert!(
         glossary[0]["rows"][0]["value"]
             .as_str()

@@ -53,10 +53,13 @@ async fn front_door_roundtrip() {
     assert_eq!(lake.snapshot_id("fin", "orders").await.unwrap(), None);
 
     // WRITE: staged batches through DataFusion's INSERT path.
-    let batch = RecordBatch::try_new(orders_schema(), vec![
-        Arc::new(Int64Array::from(vec![1, 2, 3])),
-        Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
-    ])
+    let batch = RecordBatch::try_new(
+        orders_schema(),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
+        ],
+    )
     .unwrap();
     let staged = MemTable::try_new(orders_schema(), vec![vec![batch]]).unwrap();
     ctx.register_table("__staged", Arc::new(staged)).unwrap();
@@ -78,7 +81,10 @@ async fn front_door_roundtrip() {
         .collect()
         .await
         .unwrap();
-    assert_eq!(format!("{:?}", rows[0].column(0)), "PrimitiveArray<Int64>\n[\n  3,\n]");
+    assert_eq!(
+        format!("{:?}", rows[0].column(0)),
+        "PrimitiveArray<Int64>\n[\n  3,\n]"
+    );
 
     // A second append moves the snapshot forward.
     ctx.sql("INSERT INTO fin.orders SELECT * FROM __staged")

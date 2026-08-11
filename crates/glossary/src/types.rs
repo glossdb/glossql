@@ -36,9 +36,7 @@ pub enum Error {
         "function `{function}` RETURNS `{aspect}`, a QUERY aspect — metrics run as their SQL, functions never fill them"
     )]
     ReturnsQueryAspect { function: String, aspect: String },
-    #[error(
-        "aspect `{aspect}` is declared ON {declared} — `{subject}` is a {grain} subject"
-    )]
+    #[error("aspect `{aspect}` is declared ON {declared} — `{subject}` is a {grain} subject")]
     GrainRefused {
         aspect: String,
         subject: String,
@@ -59,7 +57,9 @@ pub enum Error {
         "function `{function}` both ACCEPTS and RETURNS `{aspect}` — a function cannot be its own input"
     )]
     SelfAccepting { function: String, aspect: String },
-    #[error("`{0}` is a store relation — a table cannot take its name, it would shadow the relation")]
+    #[error(
+        "`{0}` is a store relation — a table cannot take its name, it would shadow the relation"
+    )]
     ReservedTableName(String),
     #[error("stored JSON is corrupt: {0}")]
     Corrupt(String),

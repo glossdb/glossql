@@ -29,11 +29,17 @@ async fn write_parquet_fixture(dir: &std::path::Path) {
         ),
         Field::new("amount", DataType::Utf8, true),
     ]));
-    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![
-        Arc::new(Int64Array::from(vec![1, 2])),
-        Arc::new(TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000i64, 1_700_000_100_000_000_000i64])),
-        Arc::new(StringArray::from(vec!["12.50", "8.00"])),
-    ])
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2])),
+            Arc::new(TimestampNanosecondArray::from(vec![
+                1_700_000_000_000_000_000i64,
+                1_700_000_100_000_000_000i64,
+            ])),
+            Arc::new(StringArray::from(vec!["12.50", "8.00"])),
+        ],
+    )
     .unwrap();
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -91,7 +97,11 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
     .await
     .unwrap();
     assert!(
-        landed.schema.fields().iter().all(|f| f.data_type() == &DataType::Utf8),
+        landed
+            .schema
+            .fields()
+            .iter()
+            .all(|f| f.data_type() == &DataType::Utf8),
         "an uncast csv column is a string"
     );
     let col = landed.batches[0]
@@ -99,7 +109,11 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
-    assert_eq!(col.value(0), "00123", "no inferred typing — leading zeros survive");
+    assert_eq!(
+        col.value(0),
+        "00123",
+        "no inferred typing — leading zeros survive"
+    );
 
     // Authored casts land typed: the landed table is the typed table
     // (ruled 2026-08-04) — the schema the probe rehearsed, not a refold
@@ -136,7 +150,10 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     )
     .await
     .unwrap_err();
-    assert!(err.to_string().contains("must stay under the source's location"));
+    assert!(
+        err.to_string()
+            .contains("must stay under the source's location")
+    );
 
     // A symlink under the root is the same escape by another spelling
     // (2026-08-06): the fence resolves the path before reading it.
@@ -149,7 +166,10 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     )
     .await
     .unwrap_err();
-    assert!(err.to_string().contains("outside the source's location"), "{err}");
+    assert!(
+        err.to_string().contains("outside the source's location"),
+        "{err}"
+    );
 }
 
 // -- cast accounting (cells, not rows — 2026-08-06) ------------------------
@@ -179,7 +199,10 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
     )
     .await
     .unwrap();
-    assert_eq!(landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(), 5);
+    assert_eq!(
+        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+        5
+    );
 
     let glossql_import::CastAccounting::Checked(checks) = &landed.casts else {
         panic!("accounted: {:?}", landed.casts);
@@ -213,7 +236,9 @@ async fn accounting_discloses_what_it_cannot_account() {
     );
 
     // No casts: the account is complete and empty.
-    let landed = run_recipe(&s, "SELECT * FROM read_csv('t.csv')").await.unwrap();
+    let landed = run_recipe(&s, "SELECT * FROM read_csv('t.csv')")
+        .await
+        .unwrap();
     assert!(
         matches!(&landed.casts, glossql_import::CastAccounting::Checked(c) if c.is_empty()),
         "{:?}",
@@ -273,7 +298,10 @@ fn sqlite_driver() -> Option<String> {
         return Some(path);
     }
     let out = std::process::Command::new("python3")
-        .args(["-c", "import adbc_driver_sqlite; print(adbc_driver_sqlite._driver_path())"])
+        .args([
+            "-c",
+            "import adbc_driver_sqlite; print(adbc_driver_sqlite._driver_path())",
+        ])
         .output()
         .ok()?;
     out.status
@@ -313,10 +341,13 @@ async fn a_relational_recipe_lands_from_sqlite() {
             Field::new("order_id", DataType::Int64, true),
             Field::new("amount", DataType::Utf8, true),
         ]));
-        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3])),
-            Arc::new(StringArray::from(vec!["12.50", "8.00", "1.25"])),
-        ])
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec!["12.50", "8.00", "1.25"])),
+            ],
+        )
         .unwrap();
         st.set_option(OptionStatement::TargetTable, "orders".into())
             .unwrap();
@@ -351,14 +382,13 @@ async fn a_relational_recipe_lands_from_sqlite() {
     // The source's own catalog answers a key-harvest probe — the skill
     // teaches this spelling; declared keys are judge evidence, never
     // declared relationships (recipes reshape what lands).
-    let keys = glossql_import::run_probe(
-        &s,
-        "SELECT * FROM pragma_table_info('orders')",
-        200,
-    )
-    .await
-    .unwrap();
-    assert!(keys.iter().map(|b| b.num_rows()).sum::<usize>() >= 2, "pragma rows");
+    let keys = glossql_import::run_probe(&s, "SELECT * FROM pragma_table_info('orders')", 200)
+        .await
+        .unwrap();
+    assert!(
+        keys.iter().map(|b| b.num_rows()).sum::<usize>() >= 2,
+        "pragma rows"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -401,5 +431,8 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     let landed = run_recipe(&spec, "SELECT * FROM read_parquet('orders/*.parquet')")
         .await
         .unwrap();
-    assert_eq!(landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
+    assert_eq!(
+        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+        2
+    );
 }

@@ -116,11 +116,7 @@ impl Plane {
     /// refuses here and the pointer stays); everything between `USE`s
     /// runs on the channel the pointer names. A failing statement stops
     /// the sequence, as it does inside a session.
-    pub async fn execute(
-        &self,
-        actor: Actor,
-        sql: &str,
-    ) -> Result<Vec<Outcome>, SessionError> {
+    pub async fn execute(&self, actor: Actor, sql: &str) -> Result<Vec<Outcome>, SessionError> {
         let statements = GlossqlParser::parse_sql(sql)?;
         let mut outcomes = Vec::with_capacity(statements.len());
         let mut run: Vec<Statement> = Vec::new();

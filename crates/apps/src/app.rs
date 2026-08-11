@@ -43,7 +43,9 @@ pub fn safe_segment(name: &str) -> bool {
 /// Fit to ride a `USE` statement verbatim.
 fn identifier(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
@@ -51,12 +53,7 @@ fn identifier(name: &str) -> bool {
 /// absent means bind at request time.
 fn manifest(origin: &str, text: &str) -> Result<(Option<String>, Option<String>), String> {
     let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-    let field = |key: &str| {
-        value
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-    };
+    let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let dataset = field("dataset");
     if let Some(dataset) = &dataset
         && !identifier(dataset)

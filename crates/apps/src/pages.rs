@@ -33,10 +33,7 @@ fn base_tera() -> Result<Tera, tera::Error> {
 /// values carry customer names and dates). Tera's own `urlencode`
 /// lives behind the builtins feature, which pulls chrono/rand/slug —
 /// this is the one builtin the templates need.
-fn urlencode(
-    value: &Value,
-    _: &std::collections::HashMap<String, Value>,
-) -> tera::Result<Value> {
+fn urlencode(value: &Value, _: &std::collections::HashMap<String, Value>) -> tera::Result<Value> {
     let s = match value {
         Value::String(s) => s.clone(),
         other => other.to_string(),
@@ -102,19 +99,17 @@ pub async fn page(
     page_response(&door, &app, &page, params)
 }
 
-fn page_response(
-    door: &AppDoor,
-    app: &str,
-    page: &str,
-    params: Vec<(String, String)>,
-) -> Response {
+fn page_response(door: &AppDoor, app: &str, page: &str, params: Vec<(String, String)>) -> Response {
     let def = match AppDef::load(&door.workspace, app) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
     if def.read("", &format!("{page}.html")).is_none() {
-        return plain(StatusCode::NOT_FOUND, format!("no page `{page}` in `{app}`"));
+        return plain(
+            StatusCode::NOT_FOUND,
+            format!("no page `{page}` in `{app}`"),
+        );
     }
     let tera = base_tera().and_then(|mut tera| {
         // Every page of the app loads, so pages can include each other.
@@ -148,7 +143,10 @@ pub async fn spec(
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
     let Some(text) = def.read("specs", &spec) else {
-        return plain(StatusCode::NOT_FOUND, format!("no spec `{spec}` in `{app}`"));
+        return plain(
+            StatusCode::NOT_FOUND,
+            format!("no spec `{spec}` in `{app}`"),
+        );
     };
     ([(header::CONTENT_TYPE, "application/json")], text).into_response()
 }

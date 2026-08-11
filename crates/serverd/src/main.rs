@@ -30,9 +30,7 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
             "--agent" => doors.agent = value()?,
             "--human" => doors.human = value()?,
             "--row-cap" => {
-                doors.row_cap = value()?
-                    .parse()
-                    .map_err(|e| format!("--row-cap: {e}"))?;
+                doors.row_cap = value()?.parse().map_err(|e| format!("--row-cap: {e}"))?;
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -60,12 +58,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // scripts the way the corpus spells them: 'functions/profile.rhai'.
     let runtime = Arc::new(RhaiRuntime::new(args.workspace.clone()));
 
-    let plane = Arc::new(Plane::new(store.clone(), Some(lake), runtime).with_row_cap(args.doors.row_cap));
+    let plane =
+        Arc::new(Plane::new(store.clone(), Some(lake), runtime).with_row_cap(args.doors.row_cap));
     // A fresh workspace receives the shipped system before any door opens.
-    bootstrap(&store, &plane, &args.workspace, Actor {
-        kind: ActorKind::Human,
-        id: args.doors.human.clone(),
-    })
+    bootstrap(
+        &store,
+        &plane,
+        &args.workspace,
+        Actor {
+            kind: ActorKind::Human,
+            id: args.doors.human.clone(),
+        },
+    )
     .await?;
     let app = router(plane, args.doors, args.workspace.clone());
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;

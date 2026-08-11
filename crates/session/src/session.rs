@@ -7,15 +7,15 @@ use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider,
 use datafusion::common::{DataFusionError, ParamValues, TableReference};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
-use futures::StreamExt as _;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor, Value as SqlValue,
-    visit_expressions_mut, visit_relations,
+    Expr, FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor,
+    Value as SqlValue, visit_expressions_mut, visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
+use futures::StreamExt as _;
 use serde_json::Value;
 
 use glossql_catalog::Lake;
@@ -58,7 +58,9 @@ pub enum SessionError {
         "the substrate is not open for {0} — tables come from recipes; removal is DROP TABLE (SPEC.md §3)"
     )]
     SubstrateClosed(String),
-    #[error("DROP TABLE {table} refused: {reason} (replacement is postponed — declare under another name)")]
+    #[error(
+        "DROP TABLE {table} refused: {reason} (replacement is postponed — declare under another name)"
+    )]
     DropRefused { table: String, reason: String },
     #[error("streaming takes exactly one query — everything else answers through execute")]
     NotOneRead,
@@ -186,8 +188,7 @@ impl SqlDoor for CtxDoor {
                                 .await
                                 .map_err(|e| e.to_string())?;
                             let schema = Arc::new(df.schema().as_arrow().clone());
-                            let mut batches =
-                                df.collect().await.map_err(|e| e.to_string())?;
+                            let mut batches = df.collect().await.map_err(|e| e.to_string())?;
                             if batches.is_empty() {
                                 batches.push(RecordBatch::new_empty(schema));
                             }
@@ -307,7 +308,8 @@ impl Session {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<Vec<Outcome>, SessionError> {
-        self.execute_statements(GlossqlParser::parse_sql(sql)?).await
+        self.execute_statements(GlossqlParser::parse_sql(sql)?)
+            .await
     }
 
     /// The statement loop over parsed statements — the plane's channel
@@ -371,9 +373,11 @@ impl Session {
                         // not have destroyed the table it was replacing.
                         let replaced = admission == RecipeAdmission::Replaced
                             && lake.table_exists(dataset, table).await?;
-                        let landed =
-                            glossql_import::run_recipe(&self.source_spec(&d.source.value).await?, &d.sql)
-                                .await?;
+                        let landed = glossql_import::run_recipe(
+                            &self.source_spec(&d.source.value).await?,
+                            &d.sql,
+                        )
+                        .await?;
                         if replaced {
                             let mounted = self.mount_schema(dataset).await?;
                             mounted.deregister_table(table)?;
@@ -388,7 +392,11 @@ impl Session {
                         // The counts arrive at the decision moment: whether
                         // the dropped rows — and the cells the casts nulled
                         // — are acceptable is the author's call, made now.
-                        let verb = if replaced { "superseded and re-landed: " } else { "" };
+                        let verb = if replaced {
+                            "superseded and re-landed: "
+                        } else {
+                            ""
+                        };
                         format!(
                             "DECLARE RECIPE {table} ON {dataset} ({verb}{rows} rows landed, {dropped} dropped{casts})"
                         )
@@ -534,12 +542,15 @@ impl Session {
     }
 
     async fn source_spec(&self, source: &str) -> Result<SourceSpec, SessionError> {
-        let settings = self.shared.store.source_settings(source).await?.ok_or(
-            SessionError::Store(glossql_glossary::Error::Unknown {
-                what: "source",
-                name: source.into(),
-            }),
-        )?;
+        let settings =
+            self.shared
+                .store
+                .source_settings(source)
+                .await?
+                .ok_or(SessionError::Store(glossql_glossary::Error::Unknown {
+                    what: "source",
+                    name: source.into(),
+                }))?;
         Ok(SourceSpec::from_settings(source, &settings)?)
     }
 
@@ -809,9 +820,9 @@ impl Session {
                 }
                 SQLStatement::Query(_) => {}
                 SQLStatement::ExplainTable { .. } => {}
-                SQLStatement::Drop { object_type, names, .. }
-                    if *object_type == ObjectType::Table && names.len() == 1 =>
-                {
+                SQLStatement::Drop {
+                    object_type, names, ..
+                } if *object_type == ObjectType::Table && names.len() == 1 => {
                     let name = names[0].to_string();
                     return self.drop_table(&name).await;
                 }
@@ -864,7 +875,9 @@ impl Session {
                 name: table.into(),
             }));
         }
-        let rows = self.door().sql(&format!("SELECT count(*) FROM \"{dataset}\".\"{table}\""));
+        let rows = self
+            .door()
+            .sql(&format!("SELECT count(*) FROM \"{dataset}\".\"{table}\""));
         let has_data = match rows {
             Ok(batches) => batches.iter().any(|b| {
                 b.column(0)
@@ -892,11 +905,13 @@ impl Session {
         // move (iceberg-datafusion-0.10.1 schema.rs:215-236).
         let mounted = self.mount_schema(&dataset).await?;
         mounted.deregister_table(table)?;
-        self.shared.store.drop_table_records(&dataset, table).await?;
+        self.shared
+            .store
+            .drop_table_records(&dataset, table)
+            .await?;
         *self.shared.read_cache.write().expect("read cache") = None;
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }
-
 
     async fn subject(&self, subject: &Subject) -> Result<Resolved, SessionError> {
         let use_dataset = self.shared.dataset.read().expect("state lock").clone();
@@ -1042,7 +1057,11 @@ fn statement_verb(statement: &DFStatement) -> String {
         DFStatement::CreateExternalTable(_) => "CREATE EXTERNAL TABLE".into(),
         DFStatement::CopyTo(_) => "COPY".into(),
         DFStatement::Statement(inner) => verb_of(inner),
-        other => format!("{other}").split_whitespace().take(2).collect::<Vec<_>>().join(" "),
+        other => format!("{other}")
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }
 

@@ -20,10 +20,13 @@ async fn parquet_fixture(root: &std::path::Path) {
         Field::new("order_id", DataType::Int64, true),
         Field::new("amount", DataType::Utf8, true),
     ]));
-    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![
-        Arc::new(Int64Array::from(vec![1, 2, 3])),
-        Arc::new(StringArray::from(vec!["12.50", "8.00", "n/a"])),
-    ])
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["12.50", "8.00", "n/a"])),
+        ],
+    )
     .unwrap();
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -44,10 +47,13 @@ async fn workspace(dir: &std::path::Path) -> Session {
         .await
         .unwrap();
     let store = Store::open_memory().await.unwrap();
-    Session::new(store, Actor {
-        kind: ActorKind::Agent,
-        id: "agent-1".into(),
-    })
+    Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
     .unwrap()
     .with_lake(lake)
 }
@@ -139,12 +145,14 @@ async fn fixture_11_add_source_flow() {
 
     // The engine keeps one number about what the recipe filtered away.
     let dropped = session
-        .execute(
-            "SELECT dropped_rows_count FROM imports WHERE table_name = 'orders';",
-        )
+        .execute("SELECT dropped_rows_count FROM imports WHERE table_name = 'orders';")
         .await
         .unwrap();
-    assert_eq!(single_value(&dropped), "1", "which row is the author's question");
+    assert_eq!(
+        single_value(&dropped),
+        "1",
+        "which row is the author's question"
+    );
 
     // A gloss on a column subject carries the table's snapshot id.
     session
@@ -161,7 +169,11 @@ async fn fixture_11_add_source_flow() {
         .execute("SELECT snapshot_id FROM glossary WHERE aspect = 'unit';")
         .await
         .unwrap();
-    assert_ne!(single_value(&stamped), "", "column gloss carries the snapshot id");
+    assert_ne!(
+        single_value(&stamped),
+        "",
+        "column gloss carries the snapshot id"
+    );
 
     // A dataset-level gloss has no table to pin — snapshot id stays NULL.
     session
@@ -169,9 +181,7 @@ async fn fixture_11_add_source_flow() {
         .await
         .unwrap();
     let unstamped = session
-        .execute(
-            "SELECT count(*) FROM glossary WHERE subject = 'fin' AND snapshot_id IS NULL;",
-        )
+        .execute("SELECT count(*) FROM glossary WHERE subject = 'fin' AND snapshot_id IS NULL;")
         .await
         .unwrap();
     assert_eq!(single_value(&unstamped), "1");
@@ -184,7 +194,10 @@ async fn fixture_11_add_source_flow() {
                FROM read_parquet('orders/*.parquet') \
                WHERE try_cast(amount AS DOUBLE) IS NOT NULL$$;";
     let outcomes = session.execute(redeclare).await.unwrap();
-    assert_eq!(done(&outcomes[0]), "DECLARE RECIPE orders ON fin (unchanged)");
+    assert_eq!(
+        done(&outcomes[0]),
+        "DECLARE RECIPE orders ON fin (unchanged)"
+    );
     let changed = "DECLARE RECIPE orders ON fin FROM erp_export AS $$SELECT order_id FROM read_parquet('orders/*.parquet')$$;";
     let outcomes = session.execute(changed).await.unwrap();
     assert!(
@@ -239,10 +252,7 @@ async fn fixture_11_add_source_flow() {
         .execute("CREATE VIEW shadow AS SELECT * FROM orders;")
         .await
         .unwrap_err();
-    assert!(
-        matches!(err, SessionError::SubstrateClosed(_)),
-        "{err}"
-    );
+    assert!(matches!(err, SessionError::SubstrateClosed(_)), "{err}");
     let err = session
         .execute("INSERT INTO orders VALUES (9, 1.0);")
         .await
@@ -293,7 +303,10 @@ async fn drop_table_removes_an_empty_misdeclaration_whole() {
         )
         .await
         .unwrap();
-    assert_eq!(done(&outcomes[0]), "DECLARE RECIPE mistake ON fin (3 rows landed, 0 dropped)");
+    assert_eq!(
+        done(&outcomes[0]),
+        "DECLARE RECIPE mistake ON fin (3 rows landed, 0 dropped)"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

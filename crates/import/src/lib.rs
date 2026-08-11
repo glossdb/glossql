@@ -31,10 +31,10 @@ use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
 use datafusion::error::DataFusionError;
-use futures::StreamExt as _;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
+use futures::StreamExt as _;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -231,7 +231,11 @@ async fn account_casts(
                 .first()
                 .and_then(|b| b.column(i).as_any().downcast_ref::<Int64Array>())
                 .map_or(0, |a| {
-                    if a.is_empty() || a.is_null(0) { 0 } else { a.value(0) as u64 }
+                    if a.is_empty() || a.is_null(0) {
+                        0
+                    } else {
+                        a.value(0) as u64
+                    }
                 })
         })
         .collect();
@@ -257,9 +261,8 @@ async fn account_casts(
                     .ok_or_else(|| Error::Batches("token count is not Int64".into()))?;
                 for i in 0..batch.num_rows() {
                     if !t.is_null(i) {
-                        let token =
-                            datafusion::arrow::util::display::array_value_to_string(t, i)
-                                .map_err(|e| Error::Batches(e.to_string()))?;
+                        let token = datafusion::arrow::util::display::array_value_to_string(t, i)
+                            .map_err(|e| Error::Batches(e.to_string()))?;
                         tokens.push((token, n.value(i) as u64));
                     }
                 }
@@ -389,7 +392,11 @@ impl TableFunctionImpl for ReadFiles {
         // names — everything before the first glob segment.
         let mut real = self.root.clone();
         for component in rel_path.components() {
-            if component.as_os_str().to_string_lossy().contains(['*', '?', '[']) {
+            if component
+                .as_os_str()
+                .to_string_lossy()
+                .contains(['*', '?', '['])
+            {
                 break;
             }
             real.push(component);

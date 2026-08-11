@@ -37,7 +37,10 @@ pub async fn frame(
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
     let Some(sql) = def.read("frames", &format!("{frame}.sql")) else {
-        return fail(StatusCode::NOT_FOUND, format!("no frame `{frame}` in `{app}`"));
+        return fail(
+            StatusCode::NOT_FOUND,
+            format!("no frame `{frame}` in `{app}`"),
+        );
     };
     // The app's channel on the plane — Human-kind, like `/query`, keyed
     // (actor, dataset). The dataset is the manifest's pin, or — for an

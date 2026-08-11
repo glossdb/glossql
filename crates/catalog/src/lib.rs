@@ -147,7 +147,6 @@ impl Lake {
         Ok(self.catalog.table_exists(&ident).await?)
     }
 
-
     /// Column names of `dataset.table`, empty when the table is missing —
     /// the session's disclosure grid enumerates them as subjects.
     pub async fn table_columns(&self, dataset: &str, table: &str) -> Result<Vec<String>> {

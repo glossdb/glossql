@@ -25,10 +25,13 @@ async fn parquet_fixture(root: &std::path::Path) {
         Field::new("order_id", DataType::Int64, true),
         Field::new("amount", DataType::Utf8, true),
     ]));
-    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![
-        Arc::new(Int64Array::from(vec![1, 2, 3])),
-        Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
-    ])
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
+        ],
+    )
     .unwrap();
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -134,10 +137,7 @@ async fn a_landed_table_reads_across_channels() {
 
     // And the app-door shape — a channel asked for by dataset, no USE
     // statement anywhere.
-    let app = plane
-        .channel(agent("app:cash"), Some("fin"))
-        .await
-        .unwrap();
+    let app = plane.channel(agent("app:cash"), Some("fin")).await.unwrap();
     let qualified = app
         .execute("SELECT sum(amount) FROM fin.orders;")
         .await

@@ -126,7 +126,10 @@ async fn ensure_verdicts(
         let Some(detector) = w.detector.clone() else {
             continue;
         };
-        let slots = shared.store.raw_read(dataset, scope, Some(&w.aspect)).await?;
+        let slots = shared
+            .store
+            .raw_read(dataset, scope, Some(&w.aspect))
+            .await?;
         let mut newest: std::collections::BTreeMap<&str, &str> = Default::default();
         for s in &slots {
             let t = newest.entry(s.subject.as_str()).or_insert(&s.written_at);
@@ -178,12 +181,12 @@ async fn ensure_verdicts(
                 .map_err(SessionError::Runtime)?;
             // A detector's output answers to the engine's attest contract
             // (SPEC.md §7.2) — role by shape, nothing authored.
-            schemas::validate_instance(&schemas::attest_contract(), &output).map_err(
-                |detail| SessionError::OutputRejected {
+            schemas::validate_instance(&schemas::attest_contract(), &output).map_err(|detail| {
+                SessionError::OutputRejected {
                     function: detector.clone(),
                     detail,
-                },
-            )?;
+                }
+            })?;
             let snapshot = match (shared.lake(), glossary_table_of(subject)) {
                 (Some(lake), Some(table)) => lake.snapshot_id(dataset, table).await?,
                 _ => None,
@@ -309,11 +312,7 @@ impl GlossqlReads {
     /// SQL, plan it as a derived subquery. Expansion nests (a recorded
     /// evaluation may compose `FROM read.revenue()`), so a stack guards
     /// against a grounding that reaches itself.
-    fn plan_serve(
-        &self,
-        aspect: &str,
-        alias: Option<TableAlias>,
-    ) -> DFResult<RelationPlanning> {
+    fn plan_serve(&self, aspect: &str, alias: Option<TableAlias>) -> DFResult<RelationPlanning> {
         thread_local! {
             static EXPANDING: std::cell::RefCell<Vec<String>> =
                 const { std::cell::RefCell::new(Vec::new()) };
@@ -352,9 +351,7 @@ impl GlossqlReads {
             .try_with_sql(&sql)
             .and_then(|mut p| p.parse_query())
             .map_err(|e| {
-                DataFusionError::Plan(format!(
-                    "the grounding for `{aspect}` does not parse: {e}"
-                ))
+                DataFusionError::Plan(format!("the grounding for `{aspect}` does not parse: {e}"))
             })?;
         // Planned as its own statement: `statement_to_plan` collects table
         // references per statement, so the grounding's tables resolve even
@@ -367,9 +364,8 @@ impl GlossqlReads {
             .expect("ctx lock")
             .clone()
             .ok_or_else(|| DataFusionError::Plan("the session context is not wired".into()))?;
-        let statement = datafusion::sql::parser::Statement::Statement(Box::new(
-            SQLStatement::Query(query),
-        ));
+        let statement =
+            datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
         let plan = tokio::task::block_in_place(|| {
             self.shared
                 .handle
@@ -411,7 +407,12 @@ async fn served_grounding(shared: &Shared, aspect: &str) -> Result<String, Sessi
     ensure_verdicts(shared, &dataset, &scope, Some(aspect)).await?;
     let rows = shared
         .store
-        .collapsed_read(&dataset, &scope, Some(aspect), &shared.read_context().await?)
+        .collapsed_read(
+            &dataset,
+            &scope,
+            Some(aspect),
+            &shared.read_context().await?,
+        )
         .await?;
     let row = rows
         .into_iter()
@@ -436,14 +437,9 @@ async fn served_grounding(shared: &Shared, aspect: &str) -> Result<String, Sessi
     let body: Value = serde_json::from_str(&value).map_err(|e| {
         SessionError::BadSubject(format!("read.{aspect}(): the grounding is not JSON: {e}"))
     })?;
-    body["sql"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| {
-            SessionError::BadSubject(format!(
-                "read.{aspect}(): the grounding carries no `sql`"
-            ))
-        })
+    body["sql"].as_str().map(str::to_string).ok_or_else(|| {
+        SessionError::BadSubject(format!("read.{aspect}(): the grounding carries no `sql`"))
+    })
 }
 
 // -- argument decoding ---------------------------------------------------

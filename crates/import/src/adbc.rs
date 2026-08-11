@@ -66,21 +66,16 @@ pub(crate) fn run_at_source(spec: &SourceSpec, sql: &str, row_cap: usize) -> Res
         name: spec.name.clone(),
         detail: e.to_string(),
     };
-    let mut driver = ManagedDriver::load_from_name(
-        driver,
-        None,
-        AdbcVersion::V100,
-        LOAD_FLAG_DEFAULT,
-        None,
-    )
-    .map_err(|e| Error::Relational {
-        name: spec.name.clone(),
-        detail: format!(
-            "{e} — `driver` is the ADBC index slug the operator installed \
+    let mut driver =
+        ManagedDriver::load_from_name(driver, None, AdbcVersion::V100, LOAD_FLAG_DEFAULT, None)
+            .map_err(|e| Error::Relational {
+                name: spec.name.clone(),
+                detail: format!(
+                    "{e} — `driver` is the ADBC index slug the operator installed \
              ({}) or a path to the driver library",
-            KNOWN_DRIVERS.join(", ")
-        ),
-    })?;
+                    KNOWN_DRIVERS.join(", ")
+                ),
+            })?;
     // The source's location IS its URI — one setting names where a
     // source lives, whatever kind it is.
     let uri = spec.location.to_string_lossy();

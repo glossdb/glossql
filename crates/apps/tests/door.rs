@@ -24,9 +24,12 @@ async fn workspace() -> (Router, tempfile::TempDir) {
     .unwrap();
 
     let store = Store::open_memory().await.unwrap();
-    let lake = Lake::open(&dir.path().join("catalog.db"), &dir.path().join("warehouse"))
-        .await
-        .unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
     let plane = Arc::new(Plane::new(store, Some(lake), Arc::new(NoRuntime)));
     let session = plane
         .session(Actor {
@@ -80,11 +83,7 @@ async fn workspace() -> (Router, tempfile::TempDir) {
          WHERE cohort = $cohort GROUP BY month ORDER BY month",
     )
     .unwrap();
-    std::fs::write(
-        apps.join("frames/evil.sql"),
-        "DROP TABLE ledger",
-    )
-    .unwrap();
+    std::fs::write(apps.join("frames/evil.sql"), "DROP TABLE ledger").unwrap();
     std::fs::write(
         apps.join("specs/monthly.vl.json"),
         "{\"mark\": \"bar\", \"encoding\": {}}",
@@ -147,8 +146,14 @@ async fn pages_render_and_frames_stream() {
     assert_eq!(page.status(), StatusCode::OK);
     let page = text(page).await;
     assert!(page.contains("data-approot=\"/app/perf/\""), "{page}");
-    assert!(page.contains("<gl-chart frame=\"frames/monthly\""), "{page}");
-    assert!(page.contains("<gl-table frame=\"frames/monthly\""), "{page}");
+    assert!(
+        page.contains("<gl-chart frame=\"frames/monthly\""),
+        "{page}"
+    );
+    assert!(
+        page.contains("<gl-table frame=\"frames/monthly\""),
+        "{page}"
+    );
 
     // A frame streams IPC: two months, summed.
     let frame = get(&app, "/app/perf/frames/monthly").await;

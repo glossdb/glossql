@@ -31,9 +31,13 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
     let store = Store::open_memory().await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
 
-    bootstrap(&store, &plane, dir.path(), cockpit()).await.unwrap();
+    bootstrap(&store, &plane, dir.path(), cockpit())
+        .await
+        .unwrap();
     // Every boot calls it; the second changes nothing.
-    bootstrap(&store, &plane, dir.path(), cockpit()).await.unwrap();
+    bootstrap(&store, &plane, dir.path(), cockpit())
+        .await
+        .unwrap();
 
     for name in [
         "profile.rhai",

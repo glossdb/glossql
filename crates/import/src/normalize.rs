@@ -62,7 +62,9 @@ fn recast(
 }
 
 /// Fold types Iceberg v2 cannot hold onto their nearest v2 shape.
-pub fn compat(schema: SchemaRef, batches: Vec<RecordBatch>) -> Result<(SchemaRef, Vec<RecordBatch>)> {
+pub fn compat(
+    schema: SchemaRef,
+    batches: Vec<RecordBatch>,
+) -> Result<(SchemaRef, Vec<RecordBatch>)> {
     recast(&schema, batches, |f| compat_type(f.data_type()))
 }
-

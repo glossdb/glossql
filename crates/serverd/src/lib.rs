@@ -64,7 +64,13 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     let mut config = StreamableHttpServerConfig::default();
     config.json_response = true;
     let mcp = StreamableHttpService::new(
-        move || Ok(GlossqlMcp::new(Arc::clone(&mcp_plane), agent.clone(), row_cap)),
+        move || {
+            Ok(GlossqlMcp::new(
+                Arc::clone(&mcp_plane),
+                agent.clone(),
+                row_cap,
+            ))
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     );

@@ -59,7 +59,14 @@ fn human() -> Actor {
 async fn write(store: &Store, actor: &Actor, statement: &str) -> Result<(), Error> {
     let g = gloss(statement);
     store
-        .gloss("fin", actor, &g.aspect.value, "orders.amount", &g.body, None)
+        .gloss(
+            "fin",
+            actor,
+            &g.aspect.value,
+            "orders.amount",
+            &g.body,
+            None,
+        )
         .await
 }
 
@@ -205,7 +212,8 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
 #[tokio::test]
 async fn a_detector_is_a_function_without_returns() {
     let s = store().await;
-    let Declaration::Function(f) = decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
+    let Declaration::Function(f) =
+        decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
     else {
         unreachable!()
     };
@@ -360,18 +368,18 @@ async fn collapse_serves_by_precedence_human_over_agent() {
 #[tokio::test]
 async fn accepts_names_must_be_declared_aspects() {
     let s = store().await;
-    let Declaration::Function(good) = decl(
-        r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (unit);"#,
-    ) else {
+    let Declaration::Function(good) =
+        decl(r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (unit);"#)
+    else {
         unreachable!()
     };
     s.declare_function(&good).await.unwrap();
     let row = s.function("f", Some("fin")).await.unwrap().unwrap();
     assert_eq!(row.accepts, vec!["unit"]);
 
-    let Declaration::Function(bad) = decl(
-        r#"DECLARE FUNCTION g FOR fin FROM 'g.rhai' ACCEPTS (nope);"#,
-    ) else {
+    let Declaration::Function(bad) =
+        decl(r#"DECLARE FUNCTION g FOR fin FROM 'g.rhai' ACCEPTS (nope);"#)
+    else {
         unreachable!()
     };
     let e = s.declare_function(&bad).await.unwrap_err();
@@ -381,8 +389,7 @@ async fn accepts_names_must_be_declared_aspects() {
 #[tokio::test]
 async fn function_scope_gates_visibility() {
     let s = store().await;
-    let Declaration::Function(f) =
-        decl(r#"DECLARE FUNCTION profile FOR fin FROM 'p.rhai';"#)
+    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin FROM 'p.rhai';"#)
     else {
         unreachable!()
     };
@@ -438,8 +445,7 @@ async fn a_glossary_delete_invalidates_detector_verdicts() {
     let s = store().await;
     // One detector (no RETURNS), one extraction function (RETURNS) —
     // only the detector's cache is a verdict about slots.
-    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin FROM 'e.rhai';")
-    else {
+    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin FROM 'e.rhai';") else {
         unreachable!()
     };
     s.declare_function(&det).await.unwrap();
@@ -457,9 +463,16 @@ async fn a_glossary_delete_invalidates_detector_verdicts() {
     )
     .await
     .unwrap();
-    s.cache_put("fin", "orders.amount", "entropy", Some("unit_w"), r#"{"band": "red"}"#, None)
-        .await
-        .unwrap();
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "entropy",
+        Some("unit_w"),
+        r#"{"band": "red"}"#,
+        None,
+    )
+    .await
+    .unwrap();
     s.cache_put("fin", "orders.amount", "vibes", None, r#"{"n": 1}"#, None)
         .await
         .unwrap();
@@ -502,15 +515,21 @@ async fn declaration_relations_are_invalidation_edges() {
         unreachable!()
     };
     s.declare_function(&dep).await.unwrap();
-    let Declaration::Function(other) = decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai';")
-    else {
+    let Declaration::Function(other) = decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai';") else {
         unreachable!()
     };
     s.declare_function(&other).await.unwrap();
 
-    s.cache_put("fin", "orders.amount", "evidence", None, r#"{"applicable": false}"#, None)
-        .await
-        .unwrap();
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "evidence",
+        None,
+        r#"{"applicable": false}"#,
+        None,
+    )
+    .await
+    .unwrap();
     s.cache_put("fin", "orders.amount", "vibes", None, r#"{"n": 1}"#, None)
         .await
         .unwrap();
@@ -526,9 +545,16 @@ async fn declaration_relations_are_invalidation_edges() {
         "a declared edge kills the accepting function's cache"
     );
 
-    s.cache_put("fin", "orders.amount", "evidence", None, r#"{"applicable": false}"#, None)
-        .await
-        .unwrap();
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "evidence",
+        None,
+        r#"{"applicable": false}"#,
+        None,
+    )
+    .await
+    .unwrap();
     s.import_put("fin", "payments", 10, 10, "{}").await.unwrap();
     assert!(
         s.cache_get("fin", "orders.amount", "evidence", None)
@@ -587,27 +613,22 @@ async fn recipe_redeclare_is_content_idempotent_and_change_is_refused() {
         admission
     }
 
-    let v1 = recipe("DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders/*.parquet')$$;");
-    assert_eq!(declare(&s, &v1).await, RecipeAdmission::Created);
-    assert_eq!(
-        declare(&s, &v1).await,
-        RecipeAdmission::Unchanged
+    let v1 = recipe(
+        "DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders/*.parquet')$$;",
     );
+    assert_eq!(declare(&s, &v1).await, RecipeAdmission::Created);
+    assert_eq!(declare(&s, &v1).await, RecipeAdmission::Unchanged);
 
     // A changed SQL supersedes (ruled 2026-08-06) — the row updates and
     // the session re-lands on `Replaced`.
-    let v2 = recipe("DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders_v2/*.parquet')$$;");
-    assert_eq!(
-        declare(&s, &v2).await,
-        RecipeAdmission::Replaced
+    let v2 = recipe(
+        "DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders_v2/*.parquet')$$;",
     );
+    assert_eq!(declare(&s, &v2).await, RecipeAdmission::Replaced);
     let row = s.recipe("fin", "orders").await.unwrap().unwrap();
     assert!(row.sql.contains("orders_v2"), "{}", row.sql);
     // The new spelling is now the unchanged one.
-    assert_eq!(
-        declare(&s, &v2).await,
-        RecipeAdmission::Unchanged
-    );
+    assert_eq!(declare(&s, &v2).await, RecipeAdmission::Unchanged);
 }
 
 // -- writes invalidate (project lead, 2026-08-04) --------------------------
@@ -615,9 +636,9 @@ async fn recipe_redeclare_is_content_idempotent_and_change_is_refused() {
 #[tokio::test]
 async fn a_gloss_invalidates_the_caches_of_functions_accepting_its_aspect() {
     let s = store().await;
-    let Declaration::Function(f) = decl(
-        r#"DECLARE FUNCTION conv FOR GLOBAL FROM 'conv.rhai' ACCEPTS (unit);"#,
-    ) else {
+    let Declaration::Function(f) =
+        decl(r#"DECLARE FUNCTION conv FOR GLOBAL FROM 'conv.rhai' ACCEPTS (unit);"#)
+    else {
         unreachable!()
     };
     s.declare_function(&f).await.unwrap();
@@ -677,8 +698,7 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
     };
     s.declare_aspect(&role).await.unwrap();
     // A witness puts the aspect on the disclosure grid.
-    let Declaration::Witness(w) = decl("DECLARE WITNESS role_w ON role BY (AGENT, HUMAN);")
-    else {
+    let Declaration::Witness(w) = decl("DECLARE WITNESS role_w ON role BY (AGENT, HUMAN);") else {
         unreachable!()
     };
     s.declare_witness(&w).await.unwrap();
@@ -700,11 +720,7 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
     // Disclosure stays within grain: the unglossed column is a visible
     // absence, the table never shows a role row at all.
     let ctx = ReadContext {
-        universe: vec![
-            "orders".into(),
-            "orders.amount".into(),
-            "orders.qty".into(),
-        ],
+        universe: vec!["orders".into(), "orders.amount".into(), "orders.qty".into()],
         ..Default::default()
     };
     let rows = s
@@ -769,7 +785,9 @@ async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
     s.cache_put("fin", "orderxitems.qty", "profile", None, "{}", None)
         .await
         .unwrap();
-    s.invalidate_table_evidence("fin", "order_items").await.unwrap();
+    s.invalidate_table_evidence("fin", "order_items")
+        .await
+        .unwrap();
     assert!(
         s.cache_get("fin", "order_items.qty", "profile", None)
             .await
@@ -798,9 +816,9 @@ async fn a_table_cannot_take_a_store_relation_name() {
         unreachable!()
     };
     s.declare_source(&src).await.unwrap();
-    let Declaration::Recipe(r) = decl(
-        "DECLARE RECIPE imports ON fin FROM erp AS $$SELECT * FROM read_csv('i.csv')$$;",
-    ) else {
+    let Declaration::Recipe(r) =
+        decl("DECLARE RECIPE imports ON fin FROM erp AS $$SELECT * FROM read_csv('i.csv')$$;")
+    else {
         unreachable!()
     };
     let e = s.recipe_admission(&r).await.unwrap_err();
@@ -810,9 +828,9 @@ async fn a_table_cannot_take_a_store_relation_name() {
 #[tokio::test]
 async fn a_function_cannot_accept_the_aspect_it_returns() {
     let s = store().await;
-    let Declaration::Function(f) = decl(
-        "DECLARE FUNCTION refine FOR fin FROM 'r.rhai' ACCEPTS (unit) RETURNS unit;",
-    ) else {
+    let Declaration::Function(f) =
+        decl("DECLARE FUNCTION refine FOR fin FROM 'r.rhai' ACCEPTS (unit) RETURNS unit;")
+    else {
         unreachable!()
     };
     let e = s.declare_function(&f).await.unwrap_err();
@@ -825,9 +843,9 @@ async fn an_aspect_with_cached_values_under_it_does_not_re_declare() {
     // aspect can only hold the latter, so its schema could change under
     // values validated against the old one.
     let s = store().await;
-    let Declaration::Aspect(a) = decl(
-        r#"DECLARE ASPECT profile_stats WITH $${"type": "object"}$$ AS MEASUREMENT;"#,
-    ) else {
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT profile_stats WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
+    else {
         unreachable!()
     };
     s.declare_aspect(&a).await.unwrap();

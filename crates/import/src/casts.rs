@@ -81,7 +81,11 @@ impl ScalarUDFImpl for TryParse {
             return exec_err!("{} expects a string format", self.name);
         };
         let format_at = |i: usize| {
-            if formats.is_null(i) { None } else { Some(formats.value(i)) }
+            if formats.is_null(i) {
+                None
+            } else {
+                Some(formats.value(i))
+            }
         };
         let out: ArrayRef = match self.returns {
             DataType::Date32 => {

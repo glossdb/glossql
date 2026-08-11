@@ -127,7 +127,10 @@ async fn the_query_door_answers_a_refusal_in_the_body() {
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(response).await;
-    assert!(body["error"].as_str().unwrap().contains("nothing"), "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("nothing"),
+        "{body}"
+    );
 }
 
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
@@ -264,23 +267,27 @@ async fn metadata_reads_pass_the_cap_uncapped() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     // A metadata sweep wider than the cap arrives whole.
-    let body = expect_ok(
-        mcp(app.clone(), call(8, "SELECT subject FROM glossary;")).await,
-    )
-    .await;
+    let body = expect_ok(mcp(app.clone(), call(8, "SELECT subject FROM glossary;")).await).await;
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
     assert_eq!(outcomes[0]["row_count"], json!(5), "{outcomes}");
     assert_eq!(outcomes[0]["truncated"], json!(false));
 
     let body = expect_ok(
-        mcp(app, call(9, "SELECT subject FROM GLOSSARY(fin, all => true);")).await,
+        mcp(
+            app,
+            call(9, "SELECT subject FROM GLOSSARY(fin, all => true);"),
+        )
+        .await,
     )
     .await;
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
     assert_eq!(outcomes[0]["truncated"], json!(false), "{outcomes}");
-    assert!(outcomes[0]["row_count"].as_u64().unwrap() >= 5, "{outcomes}");
+    assert!(
+        outcomes[0]["row_count"].as_u64().unwrap() >= 5,
+        "{outcomes}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

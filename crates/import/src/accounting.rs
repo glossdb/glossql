@@ -171,7 +171,9 @@ pub(crate) fn tokens_sql(
     format!("{q} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 8")
 }
 
-fn parse_projection(sql: &str) -> Result<SelectItem, datafusion::sql::sqlparser::parser::ParserError> {
+fn parse_projection(
+    sql: &str,
+) -> Result<SelectItem, datafusion::sql::sqlparser::parser::ParserError> {
     Ok(SelectItem::UnnamedExpr(
         Parser::new(&GenericDialect {})
             .try_with_sql(sql)?
@@ -195,22 +197,16 @@ fn try_input(expr: &Expr) -> Option<String> {
                 ..
             } => Some(expr.to_string()),
             Expr::Function(f)
-                if f.name
-                    .0
-                    .last()
-                    .and_then(|p| p.as_ident())
-                    .is_some_and(|i| {
-                        let n = i.value.to_lowercase();
-                        n == "try_to_date" || n == "try_to_timestamp"
-                    }) =>
+                if f.name.0.last().and_then(|p| p.as_ident()).is_some_and(|i| {
+                    let n = i.value.to_lowercase();
+                    n == "try_to_date" || n == "try_to_timestamp"
+                }) =>
             {
                 let FunctionArguments::List(list) = &f.args else {
                     return ControlFlow::Continue(());
                 };
                 match list.args.first() {
-                    Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(arg))) => {
-                        Some(arg.to_string())
-                    }
+                    Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(arg))) => Some(arg.to_string()),
                     _ => return ControlFlow::Continue(()),
                 }
             }

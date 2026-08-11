@@ -11,7 +11,10 @@ use glossql_glossary::{Actor, Store};
 use crate::Plane;
 
 const SCRIPTS: &[(&str, &str)] = &[
-    ("profile.rhai", include_str!("../../scripts/functions/profile.rhai")),
+    (
+        "profile.rhai",
+        include_str!("../../scripts/functions/profile.rhai"),
+    ),
     (
         "outliers.rhai",
         include_str!("../../scripts/functions/outliers.rhai"),
