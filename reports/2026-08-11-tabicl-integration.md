@@ -28,6 +28,14 @@ deferred pieces come up.
   the synchronous analysis and/or offer a background job. Start
   narrow, learn from it, and defer explicitly — documented, which is
   this report's deferral section.
+- **The serve door is `read.*`** (ruled 2026-08-11): one generic
+  serving prefix over every QUERY gloss — `read.revenue()`,
+  `read.march_suspects()`, any declared aggregation — because serving
+  declared SQL is one operation whatever flavor sits behind it.
+  `metric.*` folds in completely, no alias; the metric flavor lives
+  in `x-kind` and the skills, not the call syntax. Analyses (the
+  misfit read) stay their own operation-named doors — one prefix per
+  operation, never dispatch on the aspect's kind.
 
 ## Feature map
 
