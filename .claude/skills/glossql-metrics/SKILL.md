@@ -203,9 +203,11 @@ SELECT metric_bands() FROM fin;
 SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 ```
 
-- The measurement needs the workspace's `weights/` directory (the
-  server's operator provisions it); a missing one fails the extraction
-  with the path in the message.
+- The measurement needs the workspace's `weights/` directory — the
+  safetensors, their config, and the pinned `DIGESTS` file beside them
+  (the server's operator provisions all three; digest verification is
+  mandatory). A missing piece fails the extraction with the absence
+  named.
 - **The read is recall, you are the judge**: a business shift and a
   data defect breach identically — telling them apart is your work,
   not the detector's. Read the body for which metric and month, look

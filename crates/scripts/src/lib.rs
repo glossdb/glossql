@@ -79,6 +79,17 @@ impl BandModel {
         if let Some(model) = self.model.read().expect("band model lock").as_ref() {
             return Ok(Arc::clone(model));
         }
+        // Name the exact absence: load_dir's own ENOENT reads as if the
+        // directory were missing when only the pinned DIGESTS is (the
+        // live-trial confusion, 2026-08-11) — digest verification is
+        // mandatory, so the operator ships DIGESTS beside the weights.
+        if self.dir.exists() && !self.dir.join("DIGESTS").exists() {
+            return Err(format!(
+                "no DIGESTS beside the weights at {} — digest verification is mandatory; \
+                 ship the pinned DIGESTS file with the safetensors",
+                self.dir.display()
+            ));
+        }
         let ckpt =
             tabicl_candle::weights::load_dir(&self.dir, "regressor", &tabicl_candle::Device::Cpu)
                 .map_err(|e| format!("tabicl weights at {}: {e}", self.dir.display()))?;

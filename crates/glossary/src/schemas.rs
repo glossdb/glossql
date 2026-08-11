@@ -11,6 +11,7 @@ pub const GROUNDING_SCHEMA: &str = r#"{
   "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"},
+    "behavior": {"enum": ["stock", "flow"]},
     "assumptions": {
       "type": "array",
       "items": {

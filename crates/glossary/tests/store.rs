@@ -129,6 +129,24 @@ async fn query_gloss_validates_against_the_grounding_schema() {
     )
     .await
     .unwrap();
+    // The authored stock marker (ruled 2026-08-11 with the band walk;
+    // the schema learned it after the monitoring evaluation caught the
+    // rejection): "stock"/"flow" admitted, anything else refused.
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "behavior": "stock"}$$;"#,
+    )
+    .await
+    .unwrap();
+    let e = write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "behavior": "level"}$$;"#,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
 }
 
 #[tokio::test]

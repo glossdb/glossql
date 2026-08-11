@@ -230,6 +230,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"},
+    "behavior": {"enum": ["stock", "flow"]},
     "assumptions": {
       "type": "array",
       "items": {
@@ -246,6 +247,12 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   }
 }
 ```
+
+- `behavior` is the authored stock marker (ruled 2026-08-11 with the
+  band walk): readers that window a grounding take last-per-window for
+  `"stock"`, sum for `"flow"`; absent reads as flow. Landed 2026-08-11
+  after the monitoring evaluation found the closed schema rejecting the
+  marker both readers already honored.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
   stay separate; a witness adjudicates across them (§7).
