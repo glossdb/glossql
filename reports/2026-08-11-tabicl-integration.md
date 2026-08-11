@@ -160,7 +160,11 @@ What-if is therefore built as the proven two-stage pipeline, applied
 to real data: the scenario is a declared statement (driver column,
 factor, start, optional further overrides — units elasticity, terms);
 the server **replays the recipes** over the source rows with the
-override applied at a small grid of strengths, landing scenario
+override applied at a small grid of strengths — the grid implied by
+the declared factor, bracketed never extrapolated (baseline plus ~5
+strengths on both sides, so the scenario's own read is always
+interpolation; singles per lever plus the declared joint for
+multi-override — ruled 2026-08-11), landing scenario
 worlds as tables (the eval's generator slot, filled by the formula
 graph — mechanical links and observed behavior such as per-invoice
 payment delays ride the replay; undeclared behavioral responses are
@@ -301,7 +305,10 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    per the sparse-support ruling) with bands and the support-boundary
    guard; undeclared behavior named as an assumption in the answer,
    out-of-range queries refused with the reason. Statement forms
-   through corpus-first.
+   ruled 2026-08-11 (fixture 19): each scenario is its own FACT
+   aspect served by `whatif.<name>()`; the shared-aspect and
+   arguments-at-the-door forks died. No grammar change; SPEC carries
+   a note-sized addition beside the `read.` ruling.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is

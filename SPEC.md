@@ -483,6 +483,12 @@ expands the collapsed current grounding at plan time, nesting allowed
 behind a cycle guard; running stays the reader's act. The prefix is
 `read.` (ruled 2026-08-11, renamed from `metric.`, no alias): one
 serving door over every QUERY gloss, whatever flavor `x-kind` names.
+Analyses stay operation-named doors — `whatif.<scenario>()` (ruled
+2026-08-11, fixture 19) serves a declared scenario: a FACT aspect per
+scenario carrying overrides, the server replaying the recipes at a
+bracketing grid of strengths and reading across the replayed worlds;
+the grid, reach, and support guard are machinery, never statement
+syntax.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.
