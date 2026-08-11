@@ -59,7 +59,11 @@ documents:
   one-query path with URL params bound as plan placeholders, the browser
   holds each frame once (htmx + vega-lite + arrow-js, vendored, the only
   JS), the URL is the only state, drill is navigation; authors write
-  declarative artifacts, never code — stack ruled 2026-08-07)
+  declarative artifacts, never code — stack ruled 2026-08-07; gl-rows
+  renders row surfaces through author templates, display logic computed
+  in frame SQL — 2026-08-10, built for the world-model app, the
+  verification surface over the glossary: judgement queue, dossiers,
+  contest-as-statement)
   · `serverd` (the doors, M5: one axum listener — the MCP shim at `/mcp`,
   rmcp streamable HTTP, stateless per the 2026-07-28 revision, one
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end
@@ -72,9 +76,11 @@ documents:
   `.claude/skills/` (glossql, glossql-add-source with the framing block,
   the table entity verdict — ported 2026-08-05 — and per-column glossing
   rules, glossql-functions, glossql-relationships, glossql-metrics —
-  the operating-model deliverable, 2026-08-06 — and glossql-apps,
+  the operating-model deliverable, 2026-08-06 — glossql-apps,
   the app-authoring conventions, first sketch 2026-08-09 from the
-  hand-written cash and model apps), the one teaching
+  hand-written cash and model apps — and glossql-windows, the
+  window/aggregation SQL layer over glossed data, verified against
+  the pinned substrate, 2026-08-10), the one teaching
   layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never v0.3
   phase names (ruled 2026-08-05); the judge pattern — measurements
   optimize recall, the agent judge removes false positives —
@@ -89,6 +95,9 @@ documents:
   sources, relationships) read as plain tables. Flight SQL cut from
   M5: a future door, pyarrow reads the HTTP stream).
 - `reports/` — pivot records, review verdicts, and evaluation records.
+- `docs/` — coverage inventories (built / not-built per concern; the
+  not-built half is the lightweight backlog — `docs/quality/` first).
+  Operational only, never normative language prose.
 
 **Standing invariant:** workspace `cargo test` passes — every ```sql block
 in SPEC.md parses and every corpus fixture behaves as tagged (the

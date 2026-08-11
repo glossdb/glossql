@@ -74,6 +74,14 @@ A stock's extract is bounded by its **source grain** (a table of
 period balances speaks per period; no read can answer finer) — serve
 the grain column as-is and say so in the assumptions.
 
+The assumptions array is a contract, not commentary: every metric
+writing carries `assumptions: [{dimension, assumption, basis,
+confidence}]`, and confidence means it — 1.0 only for what is pinned
+or proven, less for judgment however common. The world-model surface
+reads exactly this shape to build its judgement queue, so an
+assumption you leave out is invisible to the humans who would have
+caught it, and a confidence you inflate empties their queue falsely.
+
 **After grounding, run the collision read.** Two concepts grounding to
 the same extract make every ratio between them compute 1.0, silently:
 

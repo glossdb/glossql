@@ -340,3 +340,111 @@ gl-table tr:hover td { background: var(--bg2); }
 .cards a:hover { border-color: var(--amber); }
 .cards strong { font-size: 0.95rem; }
 .cards span { color: var(--faint); font-family: var(--mono); font-size: 0.78rem; }
+
+/* ---- row surfaces (gl-rows) --------------------------------------- */
+
+/* The provenance glyphs. Shape encodes who holds a claim; hue keeps
+   its reserved meanings — amber only where a human's judgement is
+   wanted, red only where the model owes a claim it doesn't have. */
+.g { font-family: var(--mono); width: 1.2rem; text-align: center; flex-shrink: 0; }
+.g-pin { color: var(--amber); }
+.g-jud { color: var(--ink); }
+.g-mea { color: var(--cyan); }
+.g-abs { color: var(--faint); }
+.g-una { color: var(--neg); }
+
+/* A row list: the template states the grid, these keep the rhythm. */
+.rrow {
+  display: grid;
+  gap: 0.7rem;
+  align-items: baseline;
+  padding: 0.55rem 0.2rem;
+  border-top: 1px solid var(--line-soft);
+}
+gl-rows > .rrow:first-of-type, gl-rows > template + .rrow { border-top: 0; }
+.rrow > * { min-width: 0; }
+.r-conf { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+.r-subj { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
+.r-subj .asp { color: var(--cyan); }
+.r-what { color: var(--muted); font-size: 0.82rem; max-width: 60ch; }
+.r-meta { font-family: var(--mono); font-size: 0.7rem; color: var(--faint); }
+.r-num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.r-gap { color: var(--amber); }
+.rows-empty { color: var(--faint); font-size: 0.8rem; margin: 0.4rem 0; }
+
+/* Witness verdicts and states ride chips. */
+.chip.ok { color: var(--pos); border-bottom-color: rgba(109, 189, 141, 0.4); }
+.chip.warn { color: var(--amber); border-bottom-color: rgba(226, 163, 63, 0.4); }
+
+/* A measured bar: the template sets the width from the frame. */
+.meter { height: 7px; border-radius: 4px; background: var(--bg2); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 4px; background: var(--cyan); }
+
+/* The statement block: contest rendered as the glossql to run. */
+.statement {
+  background: var(--bg0);
+  border: 1px solid rgba(226, 163, 63, 0.35);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* Where a claim travels: node chain, plain text arrows. */
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; font-family: var(--mono); font-size: 0.78rem; }
+.chain .node { background: var(--bg2); border: 1px solid var(--line); border-radius: 5px; padding: 0.24rem 0.55rem; }
+.chain .arr { color: var(--faint); }
+
+/* Contest folds closed; the statement is one click of intent away. */
+details.contest summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  list-style: none;
+}
+details.contest summary:hover { color: var(--amber); }
+details.contest[open] summary { color: var(--amber); margin-bottom: 0.4rem; }
+.r-what { overflow-wrap: break-word; min-width: 0; }
+
+/* ---- navigation and depth ------------------------------------------ */
+
+/* Crumbs: one line of where-am-I. The standing view is always one hop. */
+.crumbs {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-family: var(--mono); font-size: 0.75rem; color: var(--faint);
+  margin: 0 0 0.9rem;
+}
+.crumbs a { color: var(--muted); }
+.crumbs a:hover { color: var(--amber); }
+.crumbs .here { color: var(--ink); }
+
+/* Full lists scroll instead of truncating — depth over dismissal. */
+.scroll { max-height: 26rem; overflow-y: auto; scrollbar-width: thin; }
+
+/* The one-line lede: what this surface is for. */
+.lede { color: var(--muted); font-size: 0.85rem; max-width: 78ch; margin: 0 0 1.1rem; }
+
+/* Census drill: a count opens the list behind it. Platform popover,
+   no script — the page supplies the content beside the tile. */
+.pop-open {
+  font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 5px;
+  padding: 0.14rem 0.5rem; cursor: pointer; margin-left: auto;
+}
+.pop-open:hover { color: var(--amber); border-color: var(--amber); }
+[popover].pop {
+  background: var(--bg1); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1.1rem 1.3rem; width: min(48rem, 92vw); max-height: 72vh;
+  overflow-y: auto; color: var(--ink);
+}
+[popover].pop::backdrop { background: rgba(4, 8, 14, 0.55); }
+.pop .eyebrow { display: block; margin-bottom: 0.2rem; }
+
+/* A ruled-out axis stays visible, quietly. */
+.chip.off { color: var(--faint); }

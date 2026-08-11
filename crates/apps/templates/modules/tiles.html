@@ -47,10 +47,11 @@
 </section>
 {% endmacro table %}
 
-{% macro value(frame, field, label, delta_field="", unit="", format="compact", good="up", chip="", note="") %}
+{% macro value(frame, field, label, delta_field="", unit="", format="compact", good="up", chip="", note="", pop="") %}
 <section class="tile kpi">
   <header>
     <span class="eyebrow">{{ label }}</span>
+    {% if pop %}<button class="pop-open" popovertarget="{{ pop }}">list</button>{% endif %}
     {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
   </header>
   <gl-value frame="{{ frame | safe }}" field="{{ field }}"{% if delta_field %} delta-field="{{ delta_field }}"{% endif %}{% if unit %} unit="{{ unit }}"{% endif %} format="{{ format }}" good="{{ good }}"></gl-value>

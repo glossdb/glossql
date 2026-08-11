@@ -34,7 +34,10 @@ read, the specs draw.
   one clever spec.
 - Cast view types back to classic. `substr()` returns Utf8View and
   the browser's arrow reader speaks only classic types:
-  `arrow_cast(substr(body, 1, 200), 'Utf8')`.
+  `arrow_cast(substr(body, 1, 200), 'Utf8')`. `||` concatenations and
+  `CAST(x AS VARCHAR)` produce view types too — arrow_cast the final
+  string expression, or the tile shows `Unrecognized type` instead of
+  data.
 - A stated cap, never a silent one: `LIMIT` in the frame, the number
   on the tile's note.
 - `GLOSSARY(all => true)` is an ordinary frame source — the model app
@@ -66,6 +69,15 @@ chip is the tile's provenance — which surface the number comes from
 (`metric.dso()`, `GLOSSARY()`) — with `note` as its hover text: a
 disclosed assumption, a composition rule, a stated cap. `hint` is the
 teaching line and carries the back-links.
+
+For row-shaped surfaces (queues, claim lists, ledgers) there is
+`gl-rows`: give it a frame and a `<template>` child, and every
+`{field}` in the template's text or attributes takes the row's value.
+Display logic — glyphs, css classes, drill hrefs — is the frame's
+job, computed as SQL columns; the template stays dumb. An `empty`
+attribute states what a zero-row frame means (absence is a claim);
+a cap over `rows` gets the same honest footer a table gets. The
+world model app is the reference use.
 
 ## Specs
 
