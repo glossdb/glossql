@@ -182,6 +182,40 @@ corpus-first immediately.
   Trigger: an authored stock marker in the grounding body or the
   behavior-measurement wiring; small either way.
 
+## The plan (2026-08-11, project lead approved the sequence)
+
+Chunk-sized, run in order with 2 and 3 as fillers beside 1:
+
+1. **Ensemble port** (sibling, 2–4 days): power normalization,
+   feature shuffles, member aggregation; graded against the recorded
+   8-member E4 run. Point reads only — calibration and ranking reads
+   keep the pinned member.
+2. **Stocks in the band walk** (glossql, small): authored stock
+   marker, last-per-month path in metric_bands.
+3. **E2.2 reproduction** (sibling, ~1 day): feature 4's evidence.
+   Feature 4 is the diagnosis read (rate-vs-mix cause after a metric
+   moved), not what-if; its product design comes after what-if lands
+   — they share the dimensions-as-drivers vocabulary.
+4. **What-if support experiment** (sibling, 1–2 days, needs 1):
+   workspace-shaped support on the finance generator, with the
+   ensemble; decides the quoting policy (points + bands vs
+   intervals-only).
+5. **What-if build** (glossql, ~2 chunks, needs 4 + ruling):
+   scenario-as-gloss statement forms through corpus-first, then
+   script, aspect, tile, skill.
+6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
+   re-scoped 2026-08-11 — triggered **only on a signal** (band
+   breach, red check, user doubt), never per-import; the frame is
+   authored, not passed as SQL-in-SQL; statement-form forks (sample
+   as plain QUERY aspect + convention vs a first-class kind) go
+   through corpus-first.
+7. **A real execution** (project lead triggers): feeds Fork B and
+   the protocol-stability question; needs only a provisioned
+   `weights/` beside the workspace.
+
+Parked with triggers, unchanged: width scaling, frame-limits
+machinery, Fork B, feature 4's product design.
+
 ## Records
 
 - Port and gate: `../dataraum-tabicl` (README carries the three-stage
