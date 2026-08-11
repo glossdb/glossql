@@ -325,3 +325,32 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
         .unwrap();
     assert_eq!(worst, 17, "the violator carries the lowest log density");
 }
+
+/// Not a gate — the measurement behind the row cap. Run explicitly:
+/// `cargo test -p glossql-scripts --test bands -- --ignored --nocapture`
+/// (GLOSSQL_DEVICE=cpu for the CPU numbers).
+#[test]
+#[ignore]
+fn misfit_timing_by_frame_size() {
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    workspace(dir.path());
+    let rt = RhaiRuntime::new(dir.path());
+
+    for rows in [128usize, 256, 512, 1024] {
+        let cols = 4usize;
+        let mut x = Vec::with_capacity(rows * cols);
+        for i in 0..rows {
+            let a = 10.0 + (i as f64) * 37.0 % 90.0;
+            let b = 2.0 * a + (i as f64 % 5.0);
+            x.extend([a, b, a + b, (i % 30) as f64]);
+        }
+        let t = std::time::Instant::now();
+        let scores = rt.misfit_scores(&x, rows, cols).unwrap();
+        assert_eq!(scores.len(), rows);
+        eprintln!("misfit {rows} rows x {cols} cols: {:.2?}", t.elapsed());
+    }
+}

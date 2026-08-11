@@ -72,6 +72,35 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
 struct BandModel {
     dir: PathBuf,
     model: RwLock<Option<Arc<tabicl_candle::tabicl::TabIcl>>>,
+    /// Chosen once: Metal when the machine has it (only the candle
+    /// compute rides the GPU), CPU otherwise or under
+    /// `GLOSSQL_DEVICE=cpu`.
+    device: tabicl_candle::Device,
+}
+
+/// The pool the candle CPU work runs on — capped so the model never
+/// takes the machine (`GLOSSQL_CANDLE_THREADS`, default 4). Only candle
+/// calls run inside it; the rest of the server is untouched.
+fn compute_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let n = std::env::var("GLOSSQL_CANDLE_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("candle-{i}"))
+            .build()
+            .expect("candle thread pool")
+    })
+}
+
+fn pick_device() -> tabicl_candle::Device {
+    if std::env::var("GLOSSQL_DEVICE").is_ok_and(|v| v.eq_ignore_ascii_case("cpu")) {
+        return tabicl_candle::Device::Cpu;
+    }
+    tabicl_candle::Device::new_metal(0).unwrap_or(tabicl_candle::Device::Cpu)
 }
 
 impl BandModel {
@@ -111,12 +140,16 @@ impl BandModel {
             })
     }
 
+    fn device(&self) -> &tabicl_candle::Device {
+        &self.device
+    }
+
     fn get(&self) -> Result<Arc<tabicl_candle::tabicl::TabIcl>, String> {
         if let Some(model) = self.model.read().expect("band model lock").as_ref() {
             return Ok(Arc::clone(model));
         }
         let dir = self.resolve_dir()?;
-        let ckpt = tabicl_candle::weights::load_dir(&dir, "regressor", &tabicl_candle::Device::Cpu)
+        let ckpt = tabicl_candle::weights::load_dir(&dir, "regressor", &self.device)
             .map_err(|e| format!("tabicl weights at {}: {e}", dir.display()))?;
         let loaded = Arc::new(
             tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
@@ -177,10 +210,13 @@ impl BandModel {
         let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
 
         let model = self.get()?;
-        let est = tabicl_candle::regressor::TabIclRegressor::fit(&model, &x, rows, cols, &y);
-        let pred = est
-            .predict(&test, 1, &tabicl_candle::Device::Cpu)
-            .map_err(|e| e.to_string())?;
+        let pred =
+            compute_pool()
+                .install(|| {
+                    tabicl_candle::regressor::TabIclRegressor::fit(&model, &x, rows, cols, &y)
+                        .predict(&test, 1, &self.device)
+                })
+                .map_err(|e| e.to_string())?;
         let q: Vec<f32> = pred
             .quantiles(&levels)
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
@@ -634,6 +670,7 @@ impl RhaiRuntime {
         let band_model = Arc::new(BandModel {
             dir: root.join("weights"),
             model: RwLock::new(None),
+            device: pick_device(),
         });
         let kernel_model = Arc::clone(&band_model);
         engine.register_fn(
@@ -752,10 +789,13 @@ impl FunctionRuntime for RhaiRuntime {
         }
         let model = self.band_model.get()?;
         let members = tabicl_candle::ensemble::EnsembleMember::generate(cols, 8, 0);
-        let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
-            &model, train_x, rows, cols, train_y, members,
-        );
-        est.predict_quantiles(test_x, test_rows, alphas, &tabicl_candle::Device::Cpu)
+        compute_pool()
+            .install(|| {
+                let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
+                    &model, train_x, rows, cols, train_y, members,
+                );
+                est.predict_quantiles(test_x, test_rows, alphas, self.band_model.device())
+            })
             .map_err(|e| e.to_string())
     }
 
@@ -802,17 +842,13 @@ impl FunctionRuntime for RhaiRuntime {
                 })
                 .collect()
         };
-        let mut acc = vec![0f64; rows];
-        for perm in &perms {
-            let lp = unsup
-                .log_density(&xf, rows, perm, &mut noise, &tabicl_candle::Device::Cpu)
-                .map_err(|e| e.to_string())?;
-            for (a, v) in acc.iter_mut().zip(lp) {
-                *a += v;
-            }
-        }
-        let k = perms.len() as f64;
-        Ok(acc.into_iter().map(|s| s / k).collect())
+        // The feature conditionals run in parallel on the capped candle
+        // pool (CPU) or in order on the accelerator's one queue.
+        compute_pool()
+            .install(|| {
+                unsup.score_log_mean(&xf, rows, &perms, &mut noise, self.band_model.device())
+            })
+            .map_err(|e| e.to_string())
     }
 }
 

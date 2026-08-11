@@ -215,8 +215,10 @@ async fn the_door_refuses_what_is_not_a_frame() {
 async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
     let (session, _) = frame_session().await;
 
-    // A frame past the row cap: refused with the cap, never cut.
-    let n = 2001;
+    // A frame past the row cap: refused with the cap, never cut. The
+    // cap bounds the kernel's context (1024, measured 2026-08-12) —
+    // the refusal teaches sampling in the frame SQL.
+    let n = 1100;
     let schema = Arc::new(Schema::new(vec![
         Field::new("a", DataType::Float64, false),
         Field::new("b", DataType::Float64, false),
@@ -248,7 +250,7 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("past the stated cap"), "{e}");
-    assert!(e.to_string().contains("narrow the SQL"), "{e}");
+    assert!(e.to_string().contains("sample in the frame SQL"), "{e}");
 
     // Text plus a constant is no surface: the read abstains with the
     // reason instead of serving noise.

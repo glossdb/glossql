@@ -308,10 +308,12 @@ blind to wrong pairings whose individual values are all legal. A
 value suspicion can frame the metric's own extract. `basis` names
 the columns ranked and every exclusion (text, constants, id-named
 columns); read it before trusting the ranking. The read refuses by
-name rather than serve noise: a frame past the row cap (narrow with
-WHERE), or too little numeric surface — some frames cannot carry a
-density read, and the abstention is the honest answer. Nothing is
-cached; the durable record is your verdict, glossed.
+name rather than serve noise: a frame past the row cap — the cap
+bounds the model's context, so sample a bigger population in the
+frame SQL (`ORDER BY random() LIMIT 1024`) or narrow with WHERE — or
+too little numeric surface: some frames cannot carry a density read,
+and the abstention is the honest answer. Nothing is cached; the
+durable record is your verdict, glossed.
 
 ## 8. Read back
 

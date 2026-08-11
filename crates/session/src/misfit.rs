@@ -29,7 +29,11 @@ use crate::reads::{Shared, ensure_verdicts};
 use crate::session::SessionError;
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
-const ROW_CAP: usize = 2000;
+/// The row cap bounds the kernel's context — a bigger population is
+/// sampled down in the frame SQL, never streamed through the model.
+/// 1024 is the measured bound (2026-08-12: 1.75s on Metal with the
+/// parallel chain rule; the CPU-era cap was the whole problem).
+const ROW_CAP: usize = 1024;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(
@@ -111,8 +115,8 @@ pub(crate) async fn misfit_batch(
     }
     if rows > ROW_CAP {
         return Err(bad(format!(
-            "the frame serves more than {ROW_CAP} rows — past the stated cap; narrow the \
-             SQL with WHERE (an investigation frame is small by construction)"
+            "the frame serves more than {ROW_CAP} rows — past the stated cap; sample in \
+             the frame SQL (ORDER BY random() LIMIT {ROW_CAP}) or narrow with WHERE"
         )));
     }
     for reserved in ["misfit", "basis"] {
