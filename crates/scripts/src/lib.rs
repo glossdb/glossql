@@ -183,6 +183,74 @@ impl BandModel {
     }
 }
 
+/// What booting a workspace did about the model weights.
+pub enum WeightsProvision {
+    /// The workspace already carries a complete `weights/` — left as is.
+    AlreadyPresent,
+    /// Copied safetensors + config + pinned DIGESTS from the source.
+    Provisioned { from: PathBuf },
+    /// No source found; band and misfit reads will refuse with the path
+    /// until the operator provisions the directory.
+    Unavailable { reason: String },
+}
+
+/// Ship the model into the workspace as part of boot. Manual copying was
+/// the live pain (2026-08-11/12: two files by hand, then the DIGESTS
+/// confusion): the build pins the checkout it compiled beside as the
+/// default source, `GLOSSQL_WEIGHTS_SOURCE` overrides it (a directory
+/// carrying safetensors, configs, and DIGESTS — what a container bakes),
+/// and a workspace whose `weights/` is already complete is left
+/// untouched. Weights never ride git and are never fetched over the
+/// network — this only copies local files, digest-verified at load.
+pub fn provision_weights(workspace: &std::path::Path) -> Result<WeightsProvision, String> {
+    let target = workspace.join("weights");
+    let complete = |dir: &std::path::Path| {
+        dir.join("DIGESTS").exists()
+            && dir.join("tabicl-regressor.safetensors").exists()
+            && dir.join("tabicl-regressor.config.json").exists()
+    };
+    if complete(&target) {
+        return Ok(WeightsProvision::AlreadyPresent);
+    }
+    let (src_weights, src_digests) = match std::env::var_os("GLOSSQL_WEIGHTS_SOURCE") {
+        Some(dir) => {
+            let d = PathBuf::from(dir);
+            let digests = d.join("DIGESTS");
+            (d, digests)
+        }
+        None => {
+            let checkout =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tabicl-candle");
+            (checkout.join("weights"), checkout.join("fixtures/DIGESTS"))
+        }
+    };
+    if !src_weights.join("tabicl-regressor.safetensors").exists() || !src_digests.exists() {
+        return Ok(WeightsProvision::Unavailable {
+            reason: format!(
+                "no converted weights at {} — band and misfit reads will refuse until \
+                 {} is provisioned (safetensors + config + DIGESTS)",
+                src_weights.display(),
+                target.display()
+            ),
+        });
+    }
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    for name in [
+        "tabicl-regressor.safetensors",
+        "tabicl-regressor.config.json",
+        "tabicl-classifier.safetensors",
+        "tabicl-classifier.config.json",
+    ] {
+        let s = src_weights.join(name);
+        if s.exists() {
+            std::fs::copy(&s, target.join(name)).map_err(|e| format!("copying {name}: {e}"))?;
+        }
+    }
+    std::fs::copy(&src_digests, target.join("DIGESTS"))
+        .map_err(|e| format!("copying DIGESTS: {e}"))?;
+    Ok(WeightsProvision::Provisioned { from: src_weights })
+}
+
 impl RhaiRuntime {
     /// `root` is the workspace's functions directory; `FROM` paths resolve
     /// under it, fenced like import paths (no absolute, no `..`).
@@ -704,7 +772,7 @@ impl FunctionRuntime for RhaiRuntime {
     /// The `whatif.` door's kernel (ruled 2026-08-11): the regressor
     /// ensemble over the replayed worlds — a replay grid is a handful
     /// of worlds, exactly the sparse-support regime the ensemble was
-    /// ruled in for (dataraum-tabicl README, stage 3). Members from the
+    /// ruled in for (tabicl-candle README, stage 3). Members from the
     /// crate's own generator, seed pinned; quantiles averaged across
     /// members in the original y space.
     fn band_grid(

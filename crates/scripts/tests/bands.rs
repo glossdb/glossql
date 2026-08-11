@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 fn sibling() -> &'static Path {
     Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../dataraum-tabicl"
+        "/../../../tabicl-candle"
     ))
 }
 
@@ -324,4 +324,38 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
         .map(|(i, _)| i)
         .unwrap();
     assert_eq!(worst, 17, "the violator carries the lowest log density");
+}
+
+#[test]
+fn provision_weights_fills_a_fresh_workspace_and_respects_a_full_one() {
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let outcome = glossql_scripts::provision_weights(dir.path()).unwrap();
+    assert!(matches!(
+        outcome,
+        glossql_scripts::WeightsProvision::Provisioned { .. }
+    ));
+    for name in [
+        "DIGESTS",
+        "tabicl-regressor.safetensors",
+        "tabicl-regressor.config.json",
+    ] {
+        assert!(dir.path().join("weights").join(name).exists(), "{name}");
+    }
+    // The provisioned workspace loads through the digest gate.
+    let rt = RhaiRuntime::new(dir.path());
+    rt.misfit_scores(
+        &[1.0, 2.0, 2.0, 4.0, 3.0, 6.0, 4.0, 8.0, 5.0, 10.0, 6.0, 12.0],
+        6,
+        2,
+    )
+    .unwrap();
+    // A second boot leaves the complete directory untouched.
+    assert!(matches!(
+        glossql_scripts::provision_weights(dir.path()).unwrap(),
+        glossql_scripts::WeightsProvision::AlreadyPresent
+    ));
 }
