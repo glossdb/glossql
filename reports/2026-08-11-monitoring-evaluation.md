@@ -215,6 +215,18 @@ truth union exactly** (629 + 290, zero false flags), and **green at
 fault with nothing anywhere knowing where to look. Detection:
 demonstrated.
 
+One honesty note on authorship (the project lead's question): the
+checks were written *after* leg 3 named the fault class — the
+timing rule is a domain invariant any author writes unprompted, but
+the vendor-counterparty rule was found under leg 3's streetlight.
+The durable fix is that both are instances of mechanical templates
+over declared relationships (time-order along an FK with two
+clocks; identity agreement across a pairing edge), now taught in
+the metrics skill §5 as build-time candidates — written fault or no
+fault, judged by the author. The next evaluation should grade the
+skill: does a framework built fresh from the skills carry these
+checks before anyone knows a fault exists?
+
 ## The verdict across three legs
 
 The assembled application does what the evals said the engines could,

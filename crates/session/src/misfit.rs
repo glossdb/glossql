@@ -31,9 +31,9 @@ use crate::session::SessionError;
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
 /// The row cap bounds the kernel's context — a bigger population is
 /// sampled down in the frame SQL, never streamed through the model.
-/// 1024 is the measured bound (2026-08-12: 1.75s on Metal with the
-/// parallel chain rule; the CPU-era cap was the whole problem).
-const ROW_CAP: usize = 1024;
+/// 2000 is the measured bound (2026-08-12: 3.7s at 2048 on Metal with
+/// the parallel chain rule; the CPU-era cap was the whole problem).
+const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(

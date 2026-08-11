@@ -365,6 +365,12 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    the protocol-stability question; needs only a provisioned
    `weights/` beside the workspace.
 
+Parked with a trigger (2026-08-12): the cloud setup for the kernel —
+Metal is Apple-only, so a cloud deployment means candle's CUDA
+feature on GPU instances (the port's code is device-generic; weights
+staging is device-independent) or capped-CPU sizing, and neither is
+measured yet. Trigger: the first deployment target.
+
 Parked with triggers, unchanged: width scaling, frame-limits
 machinery, Fork B, feature 4's product design.
 
