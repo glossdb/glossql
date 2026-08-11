@@ -128,15 +128,33 @@ revenue-weighted unit price), truth the same-seed levered corpus.
 - **The ensemble earns its keep where ruled**: on the working panel,
   ensemble 7.6 % vs pinned 10.7 % mape, recovery 1.07 vs 0.88.
 
-**Quoting policy, decided by the experiment: points + bands, only
-over dimensional support.** A scenario read must ride a judged
-dimension frame with enough history; a pure-history scenario is
-refused as a conditional read — a mechanical lever on plain history
-belongs to formula arithmetic through the groundings, not to a model.
-Bands are wide (0.3–0.44 relative) and are always quoted with the
-point. This shapes the what-if statement forms (plan item 5): the
-scenario names its dimension frame, and refusal-with-reason is part
-of the contract.
+The panel result was then re-read under the project lead's challenge
+(why a model where arithmetic is exact?) and completed by **E4c
+(propagation, same day)**: the one candidate role left for the
+conditional read — propagating a revenue move into ar_balance and
+cash_balance through collection-lag structure no formula carries —
+fails too. Trained on the baseline's own co-movement and fed the
+exact scenario revenue path, the model misses the effect entirely
+(cash effect recovery −0.11; the no-lag-structure control at least
+overshoots in the right direction) for the same measured reason as
+the history regimes: the effect is out of support by construction,
+and an in-context read over ~15 monthly rows shrinks it away. The
+panel's apparent success was the model re-learning a linear identity
+the formula computes exactly.
+
+**Verdict, closing the what-if model question (E4/E4b/E4c):** the
+counterfactual read is out of what-if. Fidelity was proven (E4, grid
+support); value on workspace-shaped data is disproven — monthly
+histories cannot support causal claims. What-if is built as:
+declared scenario overrides, deterministic recomposition through the
+formula graph, the baseline's uncertainty quoted from the
+`metric_bands` corridor, downstream propagation quoted only where a
+formula or a user-pinned assumption covers it, refused with the
+reason otherwise. The TFM's standing roles are the ones proven in
+support: the corridor (E2.1, shipped), cause classification (E2.2,
+reproduced), row ranking (E1.2s3, ported). The ensemble port keeps
+its parity grade and currently has no consuming feature — recorded
+plainly, not justified retroactively.
 
 ## The fp32 chaos finding and score semantics
 
@@ -249,15 +267,15 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    Feature 4 is the diagnosis read (rate-vs-mix cause after a metric
    moved), not what-if; its product design comes after what-if lands
    — they share the dimensions-as-drivers vocabulary.
-4. **What-if support experiment** — done 2026-08-11 (tfmeval E4b,
-   same day as planned): pure history disqualified on sign, the
-   judged-dimension panel carries the read, ensemble confirmed over
-   pinned there. Quoting policy: points + bands, only over
-   dimensional support with enough history; refusal-with-reason for
-   pure-history scenarios (see the workspace-support section).
-5. **What-if build** (glossql, ~2 chunks, needs 4 + ruling):
-   scenario-as-gloss statement forms through corpus-first, then
-   script, aspect, tile, skill.
+4. **What-if support experiment** — done 2026-08-11, extended to E4c
+   (propagation) the same day under the project lead's challenge.
+   Final verdict in the workspace-support section: the counterfactual
+   read is out of what-if; the model's standing roles are corridor,
+   diagnosis, and row ranking.
+5. **What-if build** (glossql, ~2 chunks, needs ruling): scenario as
+   declared overrides recomposed through the formula graph, corridor
+   bands on the baseline, refusal-with-reason where propagation is
+   uncovered; statement forms through corpus-first. No model kernel.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is
