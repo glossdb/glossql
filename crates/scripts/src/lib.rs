@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Decimal128Array, Float64Array, Int64Array, LargeStringArray,
@@ -65,26 +65,30 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
 
 /// The TabICL regressor behind the band kernel: loaded once per runtime
 /// from the workspace's weights directory on first call, shared across
-/// scripts and threads (the forward takes `&self`).
+/// scripts and threads (the forward takes `&self`). A failed load is
+/// never cached — weights provisioned after the first refused read are
+/// picked up by the next call, no restart (found live 2026-08-11, the
+/// whatif trial: the OnceLock held the error for the process lifetime).
 struct BandModel {
     dir: PathBuf,
-    model: OnceLock<Result<tabicl_candle::tabicl::TabIcl, String>>,
+    model: RwLock<Option<Arc<tabicl_candle::tabicl::TabIcl>>>,
 }
 
 impl BandModel {
-    fn get(&self) -> Result<&tabicl_candle::tabicl::TabIcl, String> {
-        self.model
-            .get_or_init(|| {
-                let ckpt = tabicl_candle::weights::load_dir(
-                    &self.dir,
-                    "regressor",
-                    &tabicl_candle::Device::Cpu,
-                )
+    fn get(&self) -> Result<Arc<tabicl_candle::tabicl::TabIcl>, String> {
+        if let Some(model) = self.model.read().expect("band model lock").as_ref() {
+            return Ok(Arc::clone(model));
+        }
+        let ckpt =
+            tabicl_candle::weights::load_dir(&self.dir, "regressor", &tabicl_candle::Device::Cpu)
                 .map_err(|e| format!("tabicl weights at {}: {e}", self.dir.display()))?;
-                tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())
-            })
-            .as_ref()
-            .map_err(Clone::clone)
+        let loaded = Arc::new(
+            tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
+        );
+        let mut slot = self.model.write().expect("band model lock");
+        // Two readers racing both load; the first write wins, the loads
+        // are identical (digest-verified), nothing is poisoned.
+        Ok(Arc::clone(slot.get_or_insert(loaded)))
     }
 
     /// One fit + one read: bands at the given levels for one test row,
@@ -137,7 +141,7 @@ impl BandModel {
         let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
 
         let model = self.get()?;
-        let est = tabicl_candle::regressor::TabIclRegressor::fit(model, &x, rows, cols, &y);
+        let est = tabicl_candle::regressor::TabIclRegressor::fit(&model, &x, rows, cols, &y);
         let pred = est
             .predict(&test, 1, &tabicl_candle::Device::Cpu)
             .map_err(|e| e.to_string())?;
@@ -593,7 +597,7 @@ impl RhaiRuntime {
         // calling function with the loader's message.
         let band_model = Arc::new(BandModel {
             dir: root.join("weights"),
-            model: OnceLock::new(),
+            model: RwLock::new(None),
         });
         let kernel_model = Arc::clone(&band_model);
         engine.register_fn(
@@ -713,7 +717,7 @@ impl FunctionRuntime for RhaiRuntime {
         let model = self.band_model.get()?;
         let members = tabicl_candle::ensemble::EnsembleMember::generate(cols, 8, 0);
         let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
-            model, train_x, rows, cols, train_y, members,
+            &model, train_x, rows, cols, train_y, members,
         );
         est.predict_quantiles(test_x, test_rows, alphas, &tabicl_candle::Device::Cpu)
             .map_err(|e| e.to_string())
