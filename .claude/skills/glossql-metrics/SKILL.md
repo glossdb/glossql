@@ -305,7 +305,11 @@ SELECT * FROM misfit.payment_pairs() ORDER BY misfit DESC LIMIT 20;
 Pick the surface to match the suspicion: a relationship suspicion
 needs the **join** in the frame — a single table is structurally
 blind to wrong pairings whose individual values are all legal. A
-value suspicion can frame the metric's own extract. `basis` names
+value suspicion can frame the metric's own extract. The frame is
+also the model's context: the more known-good history it carries
+relative to suspects, the cleaner the ranking — when a clean stretch
+exists, put it in the frame (measured: heavy contamination costs
+ranking quality). `basis` names
 the columns ranked and every exclusion (text, constants, id-named
 columns); read it before trusting the ranking. The read refuses by
 name rather than serve noise: a frame past the row cap — the cap

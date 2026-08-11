@@ -132,4 +132,56 @@ folder renamed to `tabicl-candle`, and weights now ride the build —
 `build.rs` stages safetensors + pinned DIGESTS beside the binaries;
 no manual copying, no boot copy.
 
-Leg 3 (fk-shuffled) follows in this file.
+## Leg 3 — fk-shuffled (2026-08-12): PASSED as composed; the frontier measured
+
+The fault: 1,492 of 14,928 `payments.invoice_id` (10%) traded among
+payments owing the identical amount — every value legal, no orphans,
+the amounts still matching the claimed invoice on 1,489 of 1,492.
+Landed as `fkshuffled_s42`, same recipes and framework. Truth by
+clean-twin diff; 629 of the moved rows (42.2% — the eval's number
+exactly) are dated before the invoice they claim to settle.
+
+The lanes, in order:
+
+- **Every value lane is blind, as the eval predicted structurally.**
+  The walk is byte-equivalent to clean (pager green at the identical
+  0.476), GL-vs-billings reconciliation holds at 0.01–0.03%, the
+  orphan join finds zero. Nothing value-shaped can see pairings.
+- **The deterministic temporal check catches its share exactly**:
+  629 payments dated before their claimed invoice — equal to the
+  truth's traced subset, precision 1.0. The other 863 moved rows
+  leave no single-row contradiction.
+- **The joined misfit frame reaches where nothing else does** (frame:
+  payments⋈invoices — amount, invoiced, day_delta, amount_gap,
+  terms_days — hash-sampled deterministically to 891 rows, 90 moved):
+  full **AUROC 0.841**; on the trace-free subset alone — the 58% no
+  rule can reach — **AUROC 0.788** (50 hidden positives vs 801
+  negatives). Top-50 precision 0.36 against a 10% base rate (3.6×
+  lift). Recall-oriented by design; the judge adjudicates the queue.
+- **Against the eval's 0.9338**: the gap has a named cause. The eval
+  scored clean-twin (reference = the clean corpus's joined rows);
+  the product self-fits, and this fault contaminates 10% of the
+  context's joint distribution corpus-wide — there is no clean
+  period in the corpus to tilt the frame toward. Self-fit robustness
+  was measured at low contamination; at 10% relational contamination
+  it costs measurable AUROC. The composition lesson (now one line in
+  the metrics skill): the more known-good history a frame carries
+  relative to suspects, the cleaner the context — when a clean
+  stretch exists, put it in the frame.
+
+Bookkeeping: the truth table (`eval_moved_pairs`) landed only after
+every detection lane had run — grading machinery, not context.
+
+## The verdict across three legs
+
+The assembled application does what the evals said the engines could,
+through the product doors, at product speeds: the null passes at the
+judge with a green standing pager; a stationary value fault is caught
+by the framework's own redundancy (two chains), the deterministic
+identity, and a 0.99/0.95 misfit ranking; a pure pairing fault —
+invisible to every value lane — is caught by the composed
+relationship tier: rule takes 42% at precision 1.0, the joined
+density ranks the remainder at 0.79–0.84. Each leg also improved the
+product it was grading: the stock-marker schema gap, the DIGESTS
+message, build-staged weights, and the Metal/parallel/capped kernel
+came out of legs 1 and 2.
