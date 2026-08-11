@@ -186,7 +186,12 @@ corpus-first immediately.
   closed; the ensemble split (see above) leaves one open decision:
   whether sparse-support point features ship with multi-member
   ensembling, constrained support, or documented degraded error.
-- **E2.2 reproduction** (~1 day): gates feature 4.
+- **E2.2 reproduction** — done 2026-08-11 (dataraum-tabicl
+  `tests/e22.rs`): the pinned classifier lands the recorded ensemble
+  accuracies exactly (full 18/24, blind 13/24), the Rust wrapper
+  matches the pinned oracle at ~7e-6. Feature 4's evidence gap is
+  closed; its product design still waits for what-if (shared
+  dimensions-as-drivers vocabulary).
 - **Row anomaly ranking (feature 2)** — deferred by ruling
   (2026-08-11). It is a data-*update* story and the system does not
   yet support data updates: on initial seed imports the read would
@@ -239,7 +244,8 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    keep the pinned member.
 2. **Stocks in the band walk** (glossql, small): authored stock
    marker, last-per-month path in metric_bands.
-3. **E2.2 reproduction** (sibling, ~1 day): feature 4's evidence.
+3. **E2.2 reproduction** — done 2026-08-11 (see the deferral list
+   entry): recorded accuracies reproduced exactly, wrapper at ~7e-6.
    Feature 4 is the diagnosis read (rate-vs-mix cause after a metric
    moved), not what-if; its product design comes after what-if lands
    — they share the dimensions-as-drivers vocabulary.
