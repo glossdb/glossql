@@ -33,6 +33,38 @@ async fn body_json(response: Response<Body>) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_model_app_ships_in_the_binary() {
+    // The workspace carries no apps — the built-in answers for the name.
+    let app = app().await;
+    let response = app
+        .oneshot(Request::get("/app/model").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(html.contains("World model"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_builtin_frame_names_the_missing_dataset() {
+    // No dataset in the workspace: the frame states the condition
+    // instead of failing opaquely — the tile renders the message.
+    let app = app().await;
+    let response = app
+        .oneshot(
+            Request::get("/app/model/frames/census")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(response).await;
+    assert!(body["error"].as_str().unwrap().contains("no dataset"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_streams_arrow_ipc() {
     let app = app().await;
     let response = app

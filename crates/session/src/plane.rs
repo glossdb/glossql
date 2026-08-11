@@ -51,6 +51,16 @@ impl Plane {
         self
     }
 
+    /// The workspace's declared datasets — for doors that bind by
+    /// convention: an app without a pinned dataset binds to the sole one.
+    pub async fn datasets(&self) -> Result<Vec<String>, SessionError> {
+        let rows = self.store.relation_rows("datasets").await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_iter().next().flatten())
+            .collect())
+    }
+
     fn key(actor: &Actor) -> String {
         format!("{}:{}", actor.kind, actor.id)
     }

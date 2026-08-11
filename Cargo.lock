@@ -2638,6 +2638,7 @@ dependencies = [
  "futures",
  "glossql-catalog",
  "glossql-glossary",
+ "glossql-parser",
  "glossql-session",
  "serde_json",
  "tempfile",

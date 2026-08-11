@@ -1,0 +1,2 @@
+title = "World model"
+# no dataset line: a built-in binds to the workspace's sole dataset at request time

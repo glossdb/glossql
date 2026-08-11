@@ -63,7 +63,12 @@ documents:
   renders row surfaces through author templates, display logic computed
   in frame SQL — 2026-08-10, built for the world-model app, the
   verification surface over the glossary: judgement queue, dossiers,
-  contest-as-statement)
+  contest-as-statement. The model app ships in the binary
+  (`crates/apps/builtin/model/`, ruled 2026-08-11): a workspace
+  `apps/<name>/` shadows the built-in — forking is copying the
+  directory out — and an app.toml without a `dataset` pin binds to the
+  workspace's sole dataset at request time; every built-in frame
+  parses under the test suite)
   · `serverd` (the doors, M5: one axum listener — the MCP shim at `/mcp`,
   rmcp streamable HTTP, stateless per the 2026-07-28 revision, one
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end

@@ -36,28 +36,47 @@ pub async fn frame(
         Ok(None) => return fail(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let Some(path) = def.file("frames", &format!("{frame}.sql")) else {
+    let Some(sql) = def.read("frames", &format!("{frame}.sql")) else {
         return fail(StatusCode::NOT_FOUND, format!("no frame `{frame}` in `{app}`"));
     };
-    let sql = match std::fs::read_to_string(&path) {
-        Ok(sql) => sql,
-        Err(e) => {
-            return fail(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("reading {}: {e}", path.display()),
-            );
-        }
-    };
     // The app's channel on the plane — Human-kind, like `/query`, keyed
-    // (actor, dataset) with the dataset from app.toml. The binding is
-    // fixed at channel construction, so concurrent frames never steer
-    // each other; an unknown dataset fails the channel here, before any
-    // query runs.
+    // (actor, dataset). The dataset is the manifest's pin, or — for an
+    // app that pins none, like the built-in model app — the workspace's
+    // sole dataset, resolved per request so the binding follows the
+    // workspace. The binding is fixed at channel construction, so
+    // concurrent frames never steer each other; an unknown dataset
+    // fails the channel here, before any query runs.
+    let dataset = match &def.dataset {
+        Some(dataset) => dataset.clone(),
+        None => match door.plane.datasets().await {
+            Ok(names) => match names.len() {
+                1 => names.into_iter().next().expect("len checked"),
+                0 => {
+                    return fail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "no dataset in the workspace yet — the app binds to the sole \
+                         dataset once a source lands"
+                            .to_string(),
+                    );
+                }
+                n => {
+                    return fail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        format!(
+                            "{n} datasets in the workspace — pin one in app.toml \
+                             (a dataset selector is a later concern)"
+                        ),
+                    );
+                }
+            },
+            Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        },
+    };
     let actor = Actor {
         kind: ActorKind::Human,
         id: format!("app:{}", def.name),
     };
-    let session = match door.plane.channel(actor, Some(&def.dataset)).await {
+    let session = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,
         Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     };

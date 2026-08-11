@@ -65,7 +65,13 @@ fn apps_json(workspace: &std::path::Path) -> Value {
     Value::Array(
         AppDef::list(workspace)
             .iter()
-            .map(|a| json!({ "name": a.name, "title": a.title, "dataset": a.dataset }))
+            .map(|a| {
+                json!({
+                    "name": a.name,
+                    "title": a.title,
+                    "dataset": a.dataset.clone().unwrap_or_default(),
+                })
+            })
             .collect(),
     )
 }
@@ -107,27 +113,24 @@ fn page_response(
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    if def.file("", &format!("{page}.html")).is_none() {
+    if def.read("", &format!("{page}.html")).is_none() {
         return plain(StatusCode::NOT_FOUND, format!("no page `{page}` in `{app}`"));
     }
     let tera = base_tera().and_then(|mut tera| {
         // Every page of the app loads, so pages can include each other.
-        if let Ok(entries) = std::fs::read_dir(&def.dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".html")
-                    && let Ok(text) = std::fs::read_to_string(entry.path())
-                {
-                    tera.add_raw_template(&format!("pages/{name}"), &text)?;
-                }
-            }
+        for (name, text) in def.html_pages() {
+            tera.add_raw_template(&format!("pages/{name}"), &text)?;
         }
         Ok(tera)
     });
     let mut ctx = tera::Context::new();
     ctx.insert(
         "app",
-        &json!({ "name": def.name, "title": def.title, "dataset": def.dataset }),
+        &json!({
+            "name": def.name,
+            "title": def.title,
+            "dataset": def.dataset.clone().unwrap_or_default(),
+        }),
     );
     ctx.insert("apps", &apps_json(&door.workspace));
     ctx.insert("state", &state_map(params));
@@ -144,20 +147,10 @@ pub async fn spec(
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let Some(path) = def.file("specs", &spec) else {
+    let Some(text) = def.read("specs", &spec) else {
         return plain(StatusCode::NOT_FOUND, format!("no spec `{spec}` in `{app}`"));
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => (
-            [(header::CONTENT_TYPE, "application/json")],
-            bytes,
-        )
-            .into_response(),
-        Err(e) => plain(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("reading {}: {e}", path.display()),
-        ),
-    }
+    ([(header::CONTENT_TYPE, "application/json")], text).into_response()
 }
 
 /// Render errors answer as readable text with the whole tera error

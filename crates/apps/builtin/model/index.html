@@ -1,0 +1,312 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{% set subject = state.subject | default(value="") %}
+{% set metric = state.metric | default(value="") %}
+
+{% if metric %}
+{# ---- the metric dossier: one subject, two faces ------------------- #}
+<nav class="crumbs"><a href="?">standing</a><span>›</span><span class="here">{{ metric }}</span></nav>
+<div class="tiles">
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">The formula · {{ metric }}</span>
+      <code class="chip" title="The pinned definition from the workspace's formulas gloss — it names no window, so it covers every window.">formulas</code></header>
+    <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
+      <template>
+        <div class="rrow" style="grid-template-columns:1fr">
+          <span class="r-subj" style="font-size:1rem">{formula}</span>
+          <span class="r-meta">{title} · {mkind} · {unit}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">The materialization</span>
+      <code class="chip" title="The recorded read this metric expands to — it must keep matching the formula.">GLOSSARY()</code></header>
+    <gl-rows frame="frames/metric">
+      <template>
+        <pre class="statement" style="border-color:var(--line)">{sql}</pre>
+        <p class="r-meta" style="margin:.5rem 0 0">written by {actor} · {written}</p>
+        <details class="contest"><summary>contest</summary><pre class="statement">{statement}</pre></details>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+
+  <section class="tile">
+    <header><span class="eyebrow">Assumptions</span>
+      <code class="chip" title="Every dimension of the claim with its basis. Full confidence renders fixed, less renders loose — the loose ones are the queue's entries.">assumptions</code></header>
+    <p class="hint">● fixed at 1.00 · ◐ loose — to pin one, rule it in your own session: the agent rewrites the metric gloss with the assumption at full confidence and your ruling as its basis, and the queue entry disappears.</p>
+    <gl-rows frame="frames/assumptions" empty="this metric discloses no assumptions — the convention wants them recorded">
+      <template>
+        <div class="rrow" style="grid-template-columns:1.2rem 3rem 7.5rem 1fr">
+          <span class="g {gcls}">{glyph}</span>
+          <span class="r-conf">{conf}</span>
+          <span class="r-subj asp">{dim}</span>
+          <span class="r-what">{what}<br><span class="r-meta">{basis}</span>
+            <details class="contest"><summary>contest</summary><p class="r-meta" style="margin:.3rem 0">the gloss is the unit of writing — edit this assumption inside the body (its confidence, or the claim itself); the rest rides along unchanged</p><pre class="statement">{statement}</pre></details>
+          </span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+</div>
+
+{% elif subject %}
+{# ---- the subject dossier: claims, verdicts, measurements ---------- #}
+<nav class="crumbs"><a href="?">standing</a><span>›</span><span class="here">{{ subject }}</span></nav>
+<div class="tiles">
+  <div class="two-thirds">
+  <section class="tile">
+    <header><span class="eyebrow">Claims · {{ subject }}</span>
+      <code class="chip" title="Every live fact on the subject with its provenance — nothing sampled, nothing trimmed. Contest folds open to the exact statement a counter-writing runs.">GLOSSARY(all => true)</code></header>
+    <p class="hint">◐ judged · – owed and unwritten. To judge: fold open <em>contest</em> (or <em>write</em>, where nothing exists yet), edit the statement to what you know — the admitted values come from the aspect's own schema — and run it from your own session. A human writing outranks the agent slot at every read, and the superseded claim stays in history.</p>
+    <div class="scroll">
+    <gl-rows frame="frames/claims" empty="no fact claims on this subject yet">
+      <template>
+        <div class="rrow" style="grid-template-columns:1.2rem 8.5rem 1fr">
+          <span class="g {gcls}">{glyph}</span>
+          <span class="r-subj asp">{aspect}</span>
+          <span class="r-what">{text}<br>
+            <span class="r-meta">{meta}</span>
+            <details class="contest"><summary>{act}</summary><p class="r-meta" style="margin:.3rem 0">the aspect admits: {admits}</p><pre class="statement">{statement}</pre></details>
+          </span>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+  <section class="tile">
+    <header><span class="eyebrow">Inside</span>
+      <code class="chip" title="The column subjects under this table, each with its claimed meaning — every one opens its own dossier.">GLOSSARY(all => true)</code></header>
+    <div class="scroll">
+    <gl-rows frame="frames/inside" empty="nothing finer inside this subject">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:12rem 1fr">
+          <span class="r-subj">{name}</span>
+          <span class="r-meta">{meaning}</span>
+        </a>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+  <section class="tile">
+    <header><span class="eyebrow">Joins</span>
+      <code class="chip" title="Declared relationships touching this subject — the join structure groundings lean on. Each is a subject of its own.">relationships</code></header>
+    <gl-rows frame="frames/joins" empty="no declared relationship touches this subject">
+      <template>
+        <span class="chain" style="display:inline-flex;margin:.15rem .3rem .15rem 0"><a class="node" href="{link}">{rel}</a></span>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+
+  <div class="third">
+  <section class="tile">
+    <header><span class="eyebrow">Witness verdicts</span>
+      <code class="chip" title="The collapsed read on this subject: band and score where a detector spoke, and what is owed but unwritten.">GLOSSARY()</code></header>
+    <gl-rows frame="frames/verdicts" empty="nothing witnessed on this subject">
+      <template>
+        <div class="rrow" style="grid-template-columns:1fr auto">
+          <span class="r-subj asp">{aspect}</span>
+          <code class="chip {bcls}">{state} {band} {score}</code>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  <section class="tile">
+    <header><span class="eyebrow">Measured</span>
+      <code class="chip" title="The measurement plane on this subject. An abstention states its reason — the claim above it stands on judgment alone.">cache</code></header>
+    <gl-rows frame="frames/measured" empty="nothing measured on this subject">
+      <template>
+        <div class="rrow" style="grid-template-columns:1.2rem 1fr">
+          <span class="g {gcls}">{glyph}</span>
+          <span class="r-what"><span class="r-subj asp">{aspect}</span> · {text}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  <section class="tile">
+    <header><span class="eyebrow">Travels into</span>
+      <code class="chip" title="Metric surfaces whose recorded SQL mentions this column's bare name — a textual mention, stated as such.">metrics</code></header>
+    <gl-rows frame="frames/travels" empty="no metric mentions this subject">
+      <template>
+        <span class="chain" style="display:inline-flex;margin:.15rem .3rem .15rem 0"><a class="node" href="{link}">{metric}</a></span>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+</div>
+
+{% else %}
+{# ---- the standing view: the queue is the front door --------------- #}
+<p class="lede">The model, not the data: every row below is a claim with an
+author. Pin what you know, contest what is wrong — the queue holds what
+needs your judgement, loosest first, all of it.</p>
+<div class="tiles">
+  {{ tiles::value(frame="frames/census", field="needs", label="Need judgement", format="raw",
+                  chip="the queue",
+                  note="Judged assumptions below full confidence plus claims the model's rules owe and nobody wrote. Empties by pinning or contesting, never by dismissal.") }}
+  {{ tiles::value(frame="frames/census", field="facts", label="Fact claims", format="raw",
+                  chip="GLOSSARY()", pop="pop-facts",
+                  note="Live fact glosses — superseded writings are already gone from the relation.") }}
+  {{ tiles::value(frame="frames/census", field="subjects", label="Subjects", format="raw",
+                  chip="GLOSSARY()", pop="pop-subjects",
+                  note="Everything carrying at least one live slot — tables, columns, relationships, the dataset itself.") }}
+  {{ tiles::value(frame="frames/census", field="aspects", label="Aspects", format="raw",
+                  chip="aspects", pop="pop-aspects",
+                  note="The vocabulary — every declared aspect: its kind, its grains, and the values it admits.") }}
+  {{ tiles::value(frame="frames/census", field="measurements", label="Measurements", format="raw",
+                  chip="cache", pop="pop-measurements",
+                  note="The measurement plane's live slots, joined into the read through each function's RETURNS.") }}
+  {{ tiles::value(frame="frames/census", field="witnesses", label="Witnesses", format="raw",
+                  chip="witnesses", pop="pop-witnesses",
+                  note="Declared benches — who may speak to an aspect, and which detector adjudicates.") }}
+
+  <section class="tile">
+    <header><span class="eyebrow">Needs judgement</span>
+      <code class="chip" title="Everything below full confidence, loosest first — the whole queue, scrollable. – owed and unwritten · ◐ judged with the confidence its author disclosed.">the queue</code></header>
+    <p class="hint">● pinned · ◐ judged · ○ measured · ◌ abstained · – unassessed — click a row for its dossier; the queue empties by pinning or contesting, never by dismissal.</p>
+    <div class="scroll">
+    <gl-rows frame="frames/queue" empty="nothing waits on your judgement — every claim is held at full confidence">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:1.2rem 3rem 1fr">
+          <span class="g {gcls}">{glyph}</span>
+          <span class="r-conf">{conf}</span>
+          <span class="r-what"><span class="r-subj">{subj} <span class="asp">{asp}</span></span><br>{what}</span>
+        </a>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Metric surfaces</span>
+      <code class="chip" title="Declared QUERY aspects with the pinned formula where one exists. A surface with nothing recorded is vocabulary that cannot serve a read yet.">aspects</code></header>
+    <gl-rows frame="frames/surfaces" empty="no metric surfaces declared yet">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 5rem 8rem">
+          <span class="r-subj">{title}<br><span class="r-meta">{name} · {mkind}</span></span>
+          <span class="r-what">{formula}</span>
+          <span class="r-meta">{unit}</span>
+          <code class="chip {scls}">{status}</code>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">Coverage</span>
+      <code class="chip" title="Owed claims only: behavior and unit are owed where role = measure. An em dash is not applicable — absence bounded by the model's own rules, never column arithmetic.">GLOSSARY(all => true)</code></header>
+    <gl-rows frame="frames/coverage">
+      <template>
+        <a class="rrow" href="?subject={t}" style="grid-template-columns:1fr 3rem 4.5rem 3.5rem 3.5rem 3rem">
+          <span class="r-subj">{t}</span>
+          <span class="r-num">{cols}</span>
+          <span class="r-num">{meaning} named</span>
+          <span class="r-num {bcls}">{btxt}</span>
+          <span class="r-num {ucls}">{utxt}</span>
+          <span class="r-num">{dims}</span>
+        </a>
+      </template>
+    </gl-rows>
+    <p class="hint">columns · meaning · behavior/owed · unit/owed · judged dimensions</p>
+  </section>
+  </div>
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">Where slicing pays</span>
+      <code class="chip" title="Every judged axis — primary, supporting, and the ruled-out — ranked by measured relevance (coverage times evenness). Why an axis was ruled out is knowledge too.">dimension_relevance</code></header>
+    <p class="hint">primary · supporting · ruled out — the full judged list; the bar is measured relevance.</p>
+    <div class="scroll">
+    <gl-rows frame="frames/drivers" empty="no axes judged yet">
+      <template>
+        <div class="rrow" style="grid-template-columns:10rem 5.5rem 1fr 3rem">
+          <span class="r-subj"><a href="{link}">{subject}</a></span>
+          <code class="chip {vcls}">{val}</code>
+          <span class="meter"><i style="width:{pct}%"></i></span>
+          <span class="r-num">{relevance}</span>
+          <span class="r-meta" style="grid-column:1/-1">{grounds}</span>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+  </div>
+</div>
+
+{# ---- the census lists: each count opens the relation behind it ---- #}
+<div popover id="pop-facts" class="pop">
+  <span class="eyebrow">Fact claims</span>
+  <p class="hint">Every live fact gloss — the preview is navigation; the dossier holds the full text.</p>
+  <gl-rows frame="frames/facts_list">
+    <template>
+      <a class="rrow" href="{link}" style="grid-template-columns:11rem 8rem 1fr">
+        <span class="r-subj">{subject}</span>
+        <span class="r-subj asp">{aspect}</span>
+        <span class="r-meta">{what}</span>
+      </a>
+    </template>
+  </gl-rows>
+</div>
+<div popover id="pop-subjects" class="pop">
+  <span class="eyebrow">Subjects</span>
+  <p class="hint">A subject is anything a claim attaches to: the dataset, its tables, their columns, the declared relationships. The count is the live slots on each.</p>
+  <gl-rows frame="frames/subjects_list">
+    <template>
+      <a class="rrow" href="{link}" style="grid-template-columns:1fr 7rem 3rem">
+        <span class="r-subj">{subject}</span>
+        <span class="r-meta">{skind}</span>
+        <span class="r-num">{n}</span>
+      </a>
+    </template>
+  </gl-rows>
+</div>
+<div popover id="pop-aspects" class="pop">
+  <span class="eyebrow">Aspects</span>
+  <p class="hint">The vocabulary: each aspect names what can be claimed, at which grains, and what values it admits — read from its declared schema.</p>
+  <gl-rows frame="frames/aspects_list">
+    <template>
+      <div class="rrow" style="grid-template-columns:11rem 7rem 1fr">
+        <span class="r-subj asp">{name}</span>
+        <span class="r-meta">{kind} · {grains}</span>
+        <span class="r-what">{title}<br><span class="r-meta">admits: {admits}</span></span>
+      </div>
+    </template>
+  </gl-rows>
+</div>
+<div popover id="pop-measurements" class="pop">
+  <span class="eyebrow">Measurements</span>
+  <p class="hint">What functions measured, on what — joined into every read through each function's RETURNS. The dossier holds the payload.</p>
+  <gl-rows frame="frames/measurements_list">
+    <template>
+      <a class="rrow" href="{link}" style="grid-template-columns:1fr 10rem 9rem 5.5rem">
+        <span class="r-subj">{subject}</span>
+        <span class="r-subj asp">{aspect}</span>
+        <span class="r-meta">{actor}</span>
+        <span class="r-meta">{written}</span>
+      </a>
+    </template>
+  </gl-rows>
+</div>
+<div popover id="pop-witnesses" class="pop">
+  <span class="eyebrow">Witnesses</span>
+  <p class="hint">Who may speak to an aspect, and which detector adjudicates at what threshold. No detector — the slots coexist uncontested.</p>
+  <gl-rows frame="frames/witnesses_list">
+    <template>
+      <div class="rrow" style="grid-template-columns:8.5rem 10rem 8rem 1fr">
+        <span class="r-subj">{name}</span>
+        <span class="r-subj asp">{aspect}</span>
+        <span class="r-meta">{speakers}</span>
+        <span class="r-meta">{detector} {threshold}</span>
+      </div>
+    </template>
+  </gl-rows>
+</div>
+{% endif %}
+{% endblock %}

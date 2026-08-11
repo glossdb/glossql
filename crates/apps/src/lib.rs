@@ -10,10 +10,12 @@
 
 mod app;
 mod assets;
+mod builtin;
 mod frames;
 mod pages;
 
 pub use app::AppDef;
+pub use builtin::{BUILTINS, BuiltinApp};
 
 use std::path::PathBuf;
 use std::sync::Arc;
