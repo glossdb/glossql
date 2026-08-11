@@ -320,9 +320,17 @@ Chunk-sized, run in order with 2 and 3 as fillers beside 1:
    extract semantics under `(whatif, scenario)`. Door mechanics
    pinned with a deterministic kernel (`crates/session/tests/
    whatif.rs`), the real-ensemble seam in the scripts bands suite.
-   The metrics skill teaches the flow (§6). Still open: the app
-   tile (how a tile names its scenario), and the generator-oracle
-   acceptance run through the door.
+   The metrics skill teaches the flow (§6). The tile ruled same day
+   (A+B): the built-in model app lists scenarios generically (the
+   vocabulary names them, the cache says what was read); the chart
+   is an authored tile beside the scenario — its name sits in frame
+   SQL, which no built-in can know — taught in the apps skill. An
+   identifier param in the frame contract (fork C) stays parked
+   until per-scenario authoring proves a burden. Still open: the
+   generator-oracle acceptance run through the door (E4 protocol,
+   the workspace built from the finance corpus, recovered effect
+   graded against generated levered truth) — sequenced right after
+   this cycle, per the project lead.
 6. **Density on demand** (glossql, ~2 chunks, needs ruling only):
    re-scoped 2026-08-11 — triggered **only on a signal** (band
    breach, red check, user doubt), never per-import; the frame is
