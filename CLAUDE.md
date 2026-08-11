@@ -47,7 +47,11 @@ documents:
   column kernels, the reference function library and its bootstrap
   declarations under `crates/scripts/functions/`; abstentions name absent
   ACCEPTS inputs — `missing_aspects`, ruled 2026-08-04; the kernel-mirror
-  test keeps the glossql-functions skill honest). Typing is authored in recipes (ruled
+  test keeps the glossql-functions skill honest; the band plane, ruled
+  2026-08-11 — `tabicl_bands` native kernel over the sibling-linked
+  `../dataraum-tabicl` port, weights digest-verified from the
+  workspace's `weights/`, `metric_bands` + `band_breach` in the
+  library, rulings in `reports/2026-08-11-tabicl-integration.md`). Typing is authored in recipes (ruled
   2026-08-04) — no derived views, no raw twin, no typing functions.
   RETURNS mirrors ACCEPTS (ruled 2026-08-04): functions reference aspects
   on both sides, the aspect schema is the one validated contract, a
