@@ -72,7 +72,10 @@ GLOSS revenue ON fin AS $${
 
 A stock's extract is bounded by its **source grain** (a table of
 period balances speaks per period; no read can answer finer) — serve
-the grain column as-is and say so in the assumptions.
+the grain column as-is and say so in the assumptions. Mark it too:
+`"behavior": "stock"` as a top-level key in the grounding body. The
+library's readers follow the marker (a stock takes last-per-window,
+never a sum), and an unmarked grounding reads as a flow.
 
 The assumptions array is a contract, not commentary: every metric
 writing carries `assumptions: [{dimension, assumption, basis,
@@ -208,9 +211,10 @@ SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 - The corridor knows only the history it is shown: a short history
   gives wide corridors and weak claims, and under about five months
   the walk says nothing. The read sharpens as the workspace ages.
-- Flow metrics only for now: the read sums per month. A stock summed
-  across months is wrong — leave stocks out until the behavior wiring
-  lands.
+- The read follows the grounding's authored behavior: flows sum per
+  month; a grounding whose body carries `"behavior": "stock"` takes
+  the last value per month instead. No marker reads as flow — mark
+  your stocks (§3), or their walk sums levels and lies.
 - The model app's metric dossier renders the walk (the trajectory
   tile); the score is ordinal (band displacement), never a probability.
 

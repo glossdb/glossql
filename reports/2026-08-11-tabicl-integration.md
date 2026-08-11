@@ -185,10 +185,12 @@ corpus-first immediately.
   the protocol stays readable and adaptable per installation.
   Trigger: data points from real installations showing the protocol
   has stabilized.
-- **Stocks in the band walk**: metric_bands sums per month — flows
-  only, stocks excluded (documented in the glossql-metrics skill).
-  Trigger: an authored stock marker in the grounding body or the
-  behavior-measurement wiring; small either way.
+- **Stocks in the band walk** — done 2026-08-11: an authored
+  `"behavior": "stock"` key in the grounding body switches the walk
+  to last-per-month; unmarked groundings read as flows. The
+  behavior-*measurement* wiring (deriving the marker from
+  behavior_evidence instead of authorship) stays open, trigger: real
+  workspaces showing authors forget the marker.
 
 ## The plan (2026-08-11, project lead approved the sequence)
 

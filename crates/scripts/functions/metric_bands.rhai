@@ -12,10 +12,11 @@
 // band_breach detector adjudicates PITs; this measurement only reports.
 //
 // Runs at dataset grain (`SELECT metric_bands() FROM fin`). ACCEPTS
-// (glossary): a grounding write stales this cache. Simplifications,
-// stated: the monthly read is sum-per-month — a stock metric summed
-// across is wrong (the metrics skill's warning) and stock handling
-// waits on the behavior verdict wiring; months are taken as returned,
+// (glossary): a grounding write stales this cache. The monthly read
+// follows the grounding's authored behavior: flows sum per month; a
+// body carrying `"behavior": "stock"` takes the last value per month
+// instead — no marker reads as flow, so stocks must be marked (the
+// metrics skill teaches the marker). Months are taken as returned,
 // gap detection being temporal_profile's business.
 
 let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
@@ -73,10 +74,25 @@ for key in slots.keys() {
     }
     if tcol == "" { continue; }
 
-    let series = db.query(`
-        SELECT date_trunc('month', "${tcol}") AS period, sum(value) AS value
-        FROM (${body.sql}) GROUP BY 1 ORDER BY 1
-    `);
+    // Flows sum per month; a marked stock takes its last value per
+    // month — a level summed across a partition is not a level.
+    let is_stock = "behavior" in body && body.behavior == "stock";
+    let series = if is_stock {
+        db.query(`
+            SELECT period, value FROM (
+                SELECT date_trunc('month', "${tcol}") AS period, value,
+                       row_number() OVER (
+                           PARTITION BY date_trunc('month', "${tcol}")
+                           ORDER BY "${tcol}" DESC) AS rn
+                FROM (${body.sql})
+            ) WHERE rn = 1 ORDER BY period
+        `)
+    } else {
+        db.query(`
+            SELECT date_trunc('month', "${tcol}") AS period, sum(value) AS value
+            FROM (${body.sql}) GROUP BY 1 ORDER BY 1
+        `)
+    };
     let v = series.col("value").floats();
     let n = v.len();
     if n < min_train + 1 {
@@ -120,7 +136,8 @@ for key in slots.keys() {
     }
     metrics.push(#{
         metric: slots[key].aspect, applicable: true, grain: "month",
-        aggregation: "sum", trained_on: n, points: points,
+        aggregation: if is_stock { "last" } else { "sum" },
+        trained_on: n, points: points,
     });
 }
 

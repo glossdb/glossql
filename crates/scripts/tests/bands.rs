@@ -73,11 +73,12 @@ impl SqlDoor for MetricDoor {
                 RecordBatch::try_new(
                     schema,
                     vec![
-                        Arc::new(StringArray::from(vec!["fin"])),
-                        Arc::new(StringArray::from(vec!["revenue"])),
-                        Arc::new(StringArray::from(vec!["agent"])),
+                        Arc::new(StringArray::from(vec!["fin", "fin"])),
+                        Arc::new(StringArray::from(vec!["revenue", "inventory"])),
+                        Arc::new(StringArray::from(vec!["agent", "agent"])),
                         Arc::new(StringArray::from(vec![
                             r#"{"sql": "SELECT date, value FROM lines"}"#,
+                            r#"{"sql": "SELECT date, value FROM levels", "behavior": "stock"}"#,
                         ])),
                     ],
                 )
@@ -85,19 +86,25 @@ impl SqlDoor for MetricDoor {
             ]);
         }
         // A year and a half of a rising monthly flow with seasonality;
-        // the last month is an obvious breach.
+        // the last month is an obvious breach. The stock series is a
+        // rising level whose last month collapses — a lower breach.
         let months = 18usize;
         let (mut periods, mut values) = (Vec::new(), Vec::new());
+        let stock = query.contains("row_number");
         for i in 0..months {
             periods.push(format!(
                 "20{:02}-{:02}-01T00:00:00",
                 24 + i / 12,
                 1 + i % 12
             ));
-            let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
-            values.push(100.0 + 3.0 * i as f64 + seasonal);
+            if stock {
+                values.push(1000.0 + 5.0 * i as f64);
+            } else {
+                let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
+                values.push(100.0 + 3.0 * i as f64 + seasonal);
+            }
         }
-        *values.last_mut().unwrap() = 500.0; // the breach
+        *values.last_mut().unwrap() = if stock { 200.0 } else { 500.0 }; // the breach
         if query.contains("date_trunc") {
             let schema = Arc::new(Schema::new(vec![
                 Field::new("period", DataType::Utf8, false),
@@ -160,33 +167,48 @@ fn metric_bands_walks_and_reads_the_breach() {
     let out = invoke(dir.path(), "metric_bands", "fin", json!({}));
 
     assert_eq!(out["applicable"], json!(true));
-    let metric = &out["metrics"][0];
-    assert_eq!(metric["metric"], json!("revenue"));
-    assert_eq!(metric["grain"], json!("month"));
-    let points = metric["points"].as_array().unwrap();
-    assert_eq!(points.len(), 6, "the walk covers the last six months");
-    for p in points {
-        let (p05, p10, p50, p90, p95) = (
-            p["p05"].as_f64().unwrap(),
-            p["p10"].as_f64().unwrap(),
-            p["p50"].as_f64().unwrap(),
-            p["p90"].as_f64().unwrap(),
-            p["p95"].as_f64().unwrap(),
+    let by_name = |name: &str| -> Value {
+        out["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["metric"] == json!(name))
+            .unwrap_or_else(|| panic!("metric {name} missing"))
+            .clone()
+    };
+
+    for (name, aggregation) in [("revenue", "sum"), ("inventory", "last")] {
+        let metric = by_name(name);
+        assert_eq!(metric["grain"], json!("month"));
+        assert_eq!(metric["aggregation"], json!(aggregation), "{name}");
+        let points = metric["points"].as_array().unwrap();
+        assert_eq!(points.len(), 6, "the walk covers the last six months");
+        for p in points {
+            let (p05, p10, p50, p90, p95) = (
+                p["p05"].as_f64().unwrap(),
+                p["p10"].as_f64().unwrap(),
+                p["p50"].as_f64().unwrap(),
+                p["p90"].as_f64().unwrap(),
+                p["p95"].as_f64().unwrap(),
+            );
+            assert!(p05 <= p10 && p10 <= p50 && p50 <= p90 && p90 <= p95);
+            let pit = p["pit"].as_f64().unwrap();
+            assert!((0.0..=1.0).contains(&pit));
+        }
+        let inside = &points[points.len() - 3];
+        let pit = inside["pit"].as_f64().unwrap();
+        assert!(
+            (0.02..0.98).contains(&pit),
+            "{name}: an in-pattern month, pit {pit}"
         );
-        assert!(p05 <= p10 && p10 <= p50 && p50 <= p90 && p90 <= p95);
-        let pit = p["pit"].as_f64().unwrap();
-        assert!((0.0..=1.0).contains(&pit));
     }
-    // The in-pattern months read inside; the manufactured 500 reads as
-    // an extreme upper breach.
-    let last = points.last().unwrap();
-    assert!(last["pit"].as_f64().unwrap() > 0.95, "the breach month");
-    let inside = &points[points.len() - 3];
-    let pit = inside["pit"].as_f64().unwrap();
-    assert!(
-        (0.02..0.98).contains(&pit),
-        "an in-pattern month, pit {pit}"
-    );
+
+    // The manufactured breaches: the flow's 500 is an extreme upper
+    // breach; the stock's collapse to 200 an extreme lower one.
+    let flow_last = by_name("revenue")["points"][5]["pit"].as_f64().unwrap();
+    assert!(flow_last > 0.95, "flow breach month, pit {flow_last}");
+    let stock_last = by_name("inventory")["points"][5]["pit"].as_f64().unwrap();
+    assert!(stock_last < 0.05, "stock breach month, pit {stock_last}");
 }
 
 #[test]
