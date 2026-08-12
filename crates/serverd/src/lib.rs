@@ -74,6 +74,11 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
         Arc::new(LocalSessionManager::default()),
         config,
     );
+    // The revision's list-caching fields ride in from the door until the
+    // library models them (see mcp::amend_tools_list).
+    let mcp = Router::new()
+        .fallback_service(mcp)
+        .layer(axum::middleware::from_fn(mcp::amend_tools_list));
     Router::new()
         .route("/query", post(query::query))
         .with_state(AppState {

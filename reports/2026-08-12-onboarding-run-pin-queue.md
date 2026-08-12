@@ -170,14 +170,20 @@ store suite; the strike path keeps its blunt full sweep (rare, and
 over-invalidation there is safe). The finer per-metric keying (the
 whatif pattern) remains open if this proves still too coarse.
 
-The `/mcp` reconnect failure root-caused the same way: Claude Code
-now declares protocol `2026-07-28`, so the shim (rmcp, spec-MUST)
-began including SEP-2322's `resultType: "complete"` on every result
-— and Claude Code's own validator rejects the field. The spec's
-compatibility rule makes an absent field read as `"complete"` by
-every client, and rmcp models it as an `Option`, so the shim now
-omits it on tools/list and tools/call — the one shape old and new
-clients both parse. Pinned in the doors suite; rmcp bumped 3.1.0 →
+The `/mcp` reconnect failure took two attempts, and the record keeps
+both. Claude Code now declares protocol `2026-07-28`, whose
+tools/list result carries the SEP-2322 `resultType` **plus
+list-caching metadata** — `ttlMs` (number) and `cacheScope`
+(`"public" | "private"`) — and its validator requires all three.
+rmcp 3.1.2 models only the discriminator. The first fix omitted
+`resultType` (reading the absent-means-complete rule as a bridge);
+the client rightly refused — that bridge applies only to
+earlier-revision servers. The fix that stands: `resultType` rides as
+the library sends it, and a door middleware injects the two caching
+fields on tools/list alone — the list is static per process (an
+hour's TTL) and workspace-local (private) — until rmcp models them.
+Pinned in the doors suite both ways: the full contract on
+tools/list, no caching fields on tools/call; rmcp bumped 3.1.0 →
 3.1.2 along the way (no behavior change in the bump itself).
 
 One more observation, carried not fixed:
