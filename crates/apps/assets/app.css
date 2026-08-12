@@ -276,6 +276,32 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .chip[title] { cursor: help; border-bottom-color: var(--faint); }
 
+/* The question card: the one queue's signable rows. A card that is
+   answered retires in place — the rest state says where the answer
+   went, and the row leaves by derivation on the next navigation. */
+[x-cloak] { display: none !important; }
+.qrow {
+  display: grid;
+  grid-template-columns: 1fr 6.5rem auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.2rem;
+  border-bottom: 1px solid var(--line-soft);
+  transition: opacity 0.45s ease;
+}
+.qrow.q-done { opacity: 0.55; }
+.qrow.q-done .r-subj { text-decoration: none; }
+.q-rest {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--amber);
+  white-space: nowrap;
+}
+.qrow.q-done:not(.q-mine) .q-rest { color: var(--faint); }
+@media (prefers-reduced-motion: reduce) {
+  .qrow, .qrow * { transition: none !important; }
+}
+
 /* The pin action: the one write a page carries — it must read as a
    button, not as a provenance chip (chips carry help cursors). */
 button.pin-act {

@@ -102,10 +102,12 @@ pub async fn pin(
         // mismatch, grain, speaker gate. Serve it readable.
         return refuse(e.to_string());
     }
-    // htmx reloads the page (the URL is the only state); a plain form
-    // post gets a redirect to a local path.
+    // An htmx post gets a bare 204: the question card retires in
+    // place (its own rest state) instead of a full reload — the row
+    // leaves the queue by derivation on the next natural navigation.
+    // A plain form post gets a redirect to a local path.
     if headers.contains_key("hx-request") {
-        return ([("hx-refresh", "true")], StatusCode::NO_CONTENT).into_response();
+        return StatusCode::NO_CONTENT.into_response();
     }
     let back = if form.back.starts_with('/') && !form.back.starts_with("//") {
         form.back

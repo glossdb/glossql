@@ -646,6 +646,48 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_queue_hides_assumptions_an_open_question_covers() {
+    // The one queue (ruled 2026-08-12): a loose assumption renders as
+    // an investigate row only while no open agenda question targets
+    // its (subject, aspect) — once the agent composes the answer, the
+    // pinnable card is the row and the investigate twin disappears.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    // The seed's dso gloss carries one loose assumption (0.7) and its
+    // agenda question targets definitions, not dso — the queue shows it.
+    let before = get(&app, "/app/model/frames/queue").await;
+    assert_eq!(before.status(), StatusCode::OK);
+    assert_eq!(row_count(before).await, 1);
+
+    // The agent composes the answer: an agenda question on (perf, dso).
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               GLOSS pin_questions ON perf AS $${"questions": [
+                 {"subject": "perf", "aspect": "dso",
+                  "question": "grain: per line?", "option": "per line at 1.0",
+                  "body": {"sql": "SELECT month, value FROM ledger",
+                           "assumptions": [{"dimension": "definition", "assumption": "per line",
+                                            "basis": "engineer", "confidence": 1.0}]},
+                  "chosen": true, "confidence": 0.7}
+               ]}$$;"#,
+        )
+        .await
+        .unwrap();
+    let after = get(&app, "/app/model/frames/queue").await;
+    assert_eq!(after.status(), StatusCode::OK);
+    assert_eq!(row_count(after).await, 0, "the covered assumption must leave");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metric_faces_serve_the_winning_slot_once() {
     // Found live 2026-08-12: after a pin, `formulas` holds two slots
     // (human and agent) and the dossier rendered the formula and the

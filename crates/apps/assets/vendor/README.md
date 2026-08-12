@@ -2,11 +2,14 @@
 
 Embedded into the serverd binary and served at `/app/assets/vendor/` —
 the app door works offline, no CDN. UMD builds; the globals are
-`htmx`, `vega`, `vegaLite`, `vegaEmbed`, `Arrow`.
+`htmx`, `vega`, `vegaLite`, `vegaEmbed`, `Arrow`, `Alpine`. Division
+of labor (the lead, 2026-08-12): htmx is transport, alpine owns local
+state where a transition needs it — the queue's question cards.
 
 | file | package | version | license |
 | :--- | :--- | :--- | :--- |
 | htmx.min.js | htmx.org | 2.0.8 | 0BSD |
+| alpine.min.js | alpinejs (dist/cdn.min.js) | 3.15.0 | MIT |
 | vega.min.js | vega | 6.2.0 | BSD-3-Clause |
 | vega-lite.min.js | vega-lite | 6.4.3 | BSD-3-Clause |
 | vega-embed.min.js | vega-embed | 7.0.2 | BSD-3-Clause |
