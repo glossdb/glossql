@@ -192,14 +192,17 @@ needs your judgement, loosest first, all of it.</p>
               x-bind:class="{ 'q-done': done, 'q-mine': mine }">
           <span class="r-what"><span class="r-subj">{question}</span><br>
             <span class="r-meta">{meta} · writes {aspect} on {subject}</span></span>
-          <code class="chip {scls}">{stance}</code>
+          <span class="q-stance"><span class="r-conf">{conf}</span>
+            <code class="chip {scls}">{stance}</code></span>
           <input type="hidden" name="subject" value="{subject}">
           <input type="hidden" name="aspect" value="{aspect}">
           <input type="hidden" name="body" value="{body}">
-          <span class="q-rest" x-cloak x-show="mine" x-transition.opacity>pinned · governs every read now</span>
-          <span class="q-rest" x-cloak x-show="done && !mine" x-transition.opacity>answered</span>
-          <button class="pin-act" type="submit" x-show="!done"
-                  title="write this option as your HUMAN gloss">pin</button>
+          <span class="q-act">
+            <span class="q-rest" x-cloak x-show="mine" x-transition.opacity>pinned · governs every read now</span>
+            <span class="q-rest" x-cloak x-show="done && !mine" x-transition.opacity>answered</span>
+            <button class="pin-act" type="submit" x-show="!done"
+                    title="write this option as your HUMAN gloss">pin</button>
+          </span>
         </form>
       </template>
     </gl-rows>

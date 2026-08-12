@@ -18,7 +18,7 @@ WITH approvals AS (
 waiting_recipes AS (
   SELECT 'recipe change on ' || a.tbl AS what,
          'approved — the re-declare has not run' AS why,
-         arrow_cast(substr(a.written_at, 1, 16), 'Utf8') AS since,
+         arrow_cast(replace(substr(a.written_at, 1, 16), 'T', ' '), 'Utf8') AS since,
          '?subject=' || a.tbl AS link
   FROM approvals a
   WHERE a.tbl IS NOT NULL
@@ -28,7 +28,7 @@ waiting_recipes AS (
 waiting_formulas AS (
   SELECT 'formula pin on ' || g.aspect AS what,
          'the recorded materialization predates it' AS why,
-         arrow_cast(substr(h.written_at, 1, 16), 'Utf8') AS since,
+         arrow_cast(replace(substr(h.written_at, 1, 16), 'T', ' '), 'Utf8') AS since,
          '?metric=' || g.aspect AS link
   FROM glossary g
   JOIN aspects a ON a.name = g.aspect AND a.kind = 'query'
@@ -46,7 +46,7 @@ waiting_formulas AS (
 ),
 contested AS (
   SELECT 'contested: ' || c.subject || ' ' || c.aspect AS what,
-         'voices differ — awaits re-grounding' AS why,
+         'withheld at read — a detector crossed or voices differ; the signal is yours to run down' AS why,
          '' AS since,
          '?subject=' || c.subject AS link
   FROM GLOSSARY() c
