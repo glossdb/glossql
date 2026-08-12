@@ -13,6 +13,7 @@ mod assets;
 mod builtin;
 mod frames;
 mod pages;
+mod pin;
 
 pub use app::AppDef;
 pub use builtin::{BUILTINS, BuiltinApp};
@@ -21,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use glossql_session::Plane;
 
 /// State behind the door: the shared plane and the workspace root the
@@ -42,6 +43,7 @@ pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
         .route("/{app}", get(pages::index))
         .route("/{app}/p/{page}", get(pages::page))
         .route("/{app}/frames/{frame}", get(frames::frame))
+        .route("/{app}/pin", post(pin::pin))
         .route("/{app}/specs/{spec}", get(pages::spec))
         .with_state(AppDoor { plane, workspace })
 }

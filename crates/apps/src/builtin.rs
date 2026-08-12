@@ -26,6 +26,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         model!("index.html"),
         model!("frames/aspects_list.sql"),
         model!("frames/assumptions.sql"),
+        model!("frames/bands.sql"),
         model!("frames/census.sql"),
         model!("frames/claims.sql"),
         model!("frames/coverage.sql"),
@@ -36,12 +37,15 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         model!("frames/measured.sql"),
         model!("frames/measurements_list.sql"),
         model!("frames/metric.sql"),
+        model!("frames/pins.sql"),
         model!("frames/queue.sql"),
+        model!("frames/scenarios.sql"),
         model!("frames/subjects_list.sql"),
         model!("frames/surfaces.sql"),
         model!("frames/travels.sql"),
         model!("frames/verdicts.sql"),
         model!("frames/witnesses_list.sql"),
+        model!("specs/bands.vl.json"),
     ],
 }];
 

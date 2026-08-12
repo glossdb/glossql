@@ -2920,6 +2920,7 @@ dependencies = [
  "glossql-glossary",
  "glossql-parser",
  "glossql-session",
+ "serde",
  "serde_json",
  "tempfile",
  "tera",

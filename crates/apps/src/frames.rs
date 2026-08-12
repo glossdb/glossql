@@ -43,37 +43,12 @@ pub async fn frame(
         );
     };
     // The app's channel on the plane — Human-kind, like `/query`, keyed
-    // (actor, dataset). The dataset is the manifest's pin, or — for an
-    // app that pins none, like the built-in model app — the workspace's
-    // sole dataset, resolved per request so the binding follows the
-    // workspace. The binding is fixed at channel construction, so
-    // concurrent frames never steer each other; an unknown dataset
+    // (actor, dataset). The binding is fixed at channel construction,
+    // so concurrent frames never steer each other; an unknown dataset
     // fails the channel here, before any query runs.
-    let dataset = match &def.dataset {
-        Some(dataset) => dataset.clone(),
-        None => match door.plane.datasets().await {
-            Ok(names) => match names.len() {
-                1 => names.into_iter().next().expect("len checked"),
-                0 => {
-                    return fail(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "no dataset in the workspace yet — the app binds to the sole \
-                         dataset once a source lands"
-                            .to_string(),
-                    );
-                }
-                n => {
-                    return fail(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        format!(
-                            "{n} datasets in the workspace — pin one in app.toml \
-                             (a dataset selector is a later concern)"
-                        ),
-                    );
-                }
-            },
-            Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        },
+    let dataset = match resolve_dataset(&door, &def).await {
+        Ok(dataset) => dataset,
+        Err(response) => return response,
     };
     let actor = Actor {
         kind: ActorKind::Human,
@@ -93,6 +68,37 @@ pub async fn frame(
     {
         Ok(query) => stream(query.stream),
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+    }
+}
+
+/// The app's dataset: the manifest's pin, or — for an app that pins
+/// none, like the built-in model app — the workspace's sole dataset,
+/// resolved per request so the binding follows the workspace.
+pub(crate) async fn resolve_dataset(
+    door: &crate::AppDoor,
+    def: &AppDef,
+) -> Result<String, Response> {
+    match &def.dataset {
+        Some(dataset) => Ok(dataset.clone()),
+        None => match door.plane.datasets().await {
+            Ok(names) => match names.len() {
+                1 => Ok(names.into_iter().next().expect("len checked")),
+                0 => Err(fail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "no dataset in the workspace yet — the app binds to the sole \
+                     dataset once a source lands"
+                        .to_string(),
+                )),
+                n => Err(fail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    format!(
+                        "{n} datasets in the workspace — pin one in app.toml \
+                         (a dataset selector is a later concern)"
+                    ),
+                )),
+            },
+            Err(e) => Err(fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        },
     }
 }
 

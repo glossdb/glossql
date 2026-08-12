@@ -52,14 +52,13 @@ debts live in `../system/`.
 Approved — the build items:
 
 1. **The pin loop through the app** (F3 + the question surface;
-   approved 2026-08-12). Onboarding flows already end with the
-   pinning agenda; nothing serves the questions to the human, and a
-   relayed answer lands in the *agent* slot. The build: questions
-   raised during onboarding land as a queue in the model app
-   (queue/dossier pattern, "humans do not volunteer disagreement —
-   the UX is triage"); the human's answer is a one-gesture approval
-   that writes the HUMAN slot. Recipe-borne semantic corrections (F6)
-   ride the same approval surface.
+   approved and BUILT 2026-08-12 —
+   `../../reports/2026-08-12-pin-loop.md`). The agenda lands as a
+   `pin_questions` gloss; the model app serves it as a queue; a
+   one-gesture approval writes the HUMAN slot under the pinner's
+   name through the app's pin door; answered questions leave by
+   derivation. Owed still: a real onboarding run driving it, and the
+   F6 half (recipe-correction approvals need their proposal shape).
 2. **Judged negatives per witnessed aspect** (F2; ruled 2026-08-12:
    per-aspect explicit values — each witnessed aspect that can fail
    to apply declares `none` with grounds, the dimensions pattern; a

@@ -431,8 +431,34 @@ document or source, and which numbers shift when it arrives ("every
 stock level moves by its opening values"). The ask is a document,
 not a decision — keep it out of the pinning questions.
 
-The user's answer lands as your re-gloss: supersede your own slot
-with the pinned choice and set the assumption's basis to
-`engineer-pinned <date>`. (You cannot write the human slot — actor
-rides the connection.) Until then, your report says which
-definitions stand on your judgment alone.
+**In a workspace with apps, gloss the agenda too** — the model app
+serves it as a queue of one-gesture approvals (the pin loop, ruled
+2026-08-12). The convention is `pin_questions`, a FACT gloss on the
+dataset, flat: one entry per option, each carrying the **full body**
+its approval would write (for a `definitions` pin that is the whole
+map — supersession is whole-body):
+
+```glossql
+DECLARE ASPECT pin_questions WITH $${"type": "object"}$$ AS FACT ON DATASET;
+GLOSS pin_questions ON fin AS $${"questions": [
+  {"subject": "fin", "aspect": "definitions",
+   "question": "gross_profit: which family?",
+   "option": "revenue minus COGS (textbook)",
+   "body": {"definitions": {"gross_profit": {"meaning": "revenue minus COGS"}}},
+   "chosen": true, "grounds": "COGS accounts exist and reconcile", "confidence": 0.7},
+  {"subject": "fin", "aspect": "definitions",
+   "question": "gross_profit: which family?",
+   "option": "revenue minus all expenses",
+   "body": {"definitions": {"gross_profit": {"meaning": "revenue minus all expenses"}}},
+   "chosen": false, "confidence": 0.7}
+]}$$;
+```
+
+The approval writes the HUMAN slot directly — it outranks your slot
+at every read, and the question leaves the queue because the answer
+exists, never by dismissal. Read the human slots back at the start
+of your next session. Without an app surface, the fallback is the
+relay: the user answers in prose, you supersede your own slot with
+the pinned choice and basis `engineer-pinned <date>`. Either way,
+until an answer lands your report says which definitions stand on
+your judgment alone.

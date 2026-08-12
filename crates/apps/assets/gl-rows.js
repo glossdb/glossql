@@ -90,6 +90,9 @@
           out.push(foot);
         }
         this.replaceChildren(template, ...out);
+        // Rows arrive after htmx's initial pass; hand it the inserted
+        // tree so hx-* attributes in row templates (the pin forms) work.
+        if (window.htmx) window.htmx.process(this);
       } catch (e) {
         this.replaceChildren(template, glStore.errorBox(e.message || String(e)));
       } finally {

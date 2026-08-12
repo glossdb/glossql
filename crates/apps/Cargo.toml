@@ -10,6 +10,7 @@ datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
 axum = { workspace = true }
 futures = "0.3"
+serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 tera = { version = "1", default-features = false }
 tokio = { workspace = true }
