@@ -116,11 +116,11 @@ Design owed before building:
    generated DDL is glossql's recipe, authored instead); on the
    relational path it declined value verification with a stated
    rationale that holds here too, and its SQLite weak-typing
-   handling is dead code. The 2026-08-07 ruling stands. Open for the
-   lead: (a) ship a format-detection measurement (recall; the agent
-   judges, the recipe stays authored), (b) a role-vs-type detector
-   (glossed `timestamp`, landed text — nobody computes that flag
-   today).
+   handling is dead code. CLOSED 2026-08-12 (the lead, on the
+   report): "it could be solved in the recipe as cast — it is
+   VARCHAR or Parquet temporal and the agent could cast that. So ok
+   not to fix it." Nothing to build; the two detector-shaped ideas
+   from the report stay unsequenced observations.
 
 Sequenced later (2026-08-12): **the full deletion cascade** — after
 onboarding, the company-level glossary, and the storage integration
