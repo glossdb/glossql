@@ -1,13 +1,17 @@
 # The resolve surface — one queue, one verb (Leg D proposal)
 
-Status: proposal for ruling, 2026-08-12. Ruling inputs already given
-by the lead, taken as fixed: **one UX** — "needs judgement" and "pin"
-merge; **pin is the verb** ("good, a bit coarse" — kept, refined by
-copy, cheap to rename later since it is labels, not grammar); **login
-simulation** — a button that sets a JWT cookie, no real login, for
-current tests; **alpine.js** for the client interactivity the current
-surface lacks; the frontend-design pass applies at build. Nothing
-below touches grammar or the store.
+Status: proposal for ruling, 2026-08-12; §§1–4 accepted same day
+(the lead: unification confirmed — every resolution is a human
+writing; login sim "keep it simple"; alpine **only where client-side
+transitions need it**; the retiring card "accurately describing what
+we do"). Open: the loop's third leg (§ below) and the unjudged/open
+surfacing ("must surface too — not yet there"). Ruling inputs taken
+as fixed: **one UX** — "needs judgement" and "pin" merge; **pin is
+the verb** ("good, a bit coarse" — kept, refined by copy, cheap to
+rename later since it is labels, not grammar); **login simulation**
+— a button that sets a JWT cookie, no real login, for current tests;
+the frontend-design pass applies at build. Nothing below touches
+grammar or the store.
 
 ## The unification, stated once
 
@@ -114,6 +118,67 @@ skill §9 extended (agenda covers loose assumptions), apps skill
 updated; door tests for session/cookie pins and the merged frame;
 the builtin registry updated. No grammar, no store change, no new
 door power.
+
+## The loop's third leg — agent → user → agent
+
+The lead's question (2026-08-12): once a pin lands, how does the
+agent pick it up — and how does the user know an agent session must
+close the loop? His three flows, plus two the enumeration was
+missing:
+
+- (a) **agent asks in the conversation** — sends the link (or an
+  iframe), the user pins, tells the agent to go on. Synchronous; the
+  kick is free because the conversation is already open.
+- (b) **agent parks an ambiguity in the UI** — the user resolves
+  later, then tells an agent.
+- (c) **undefined territory** — both sides can see it; the user
+  points, the agent defines, takes it into account.
+- (d) *missing:* **the user-initiated correction** — nobody asked;
+  the user contests or supersedes a standing claim of their own
+  volition. Today this is the copy-the-statement relay; under one
+  UX it is the same pin gesture on a claim's dossier, and it is the
+  flow that most needs the third leg (dependents must re-ground).
+- (e) *missing:* **the signal-initiated flow** — a band breach or a
+  red validation starts the loop with no human and no agent asking;
+  whoever sees it first (usually the surface) routes it: the agent
+  investigates, the human rules.
+
+The closure design rests on one honest distinction the *system*
+makes and the user never has to:
+
+1. **Most pins close themselves.** A pinned definition, formula, or
+   assumption needs no agent act — the human slot outranks at every
+   read the moment it lands. `read.dso()` serves the pinned formula
+   on the next query. The card retires to "pinned · governs every
+   read now". No third leg exists for these, and saying so on the
+   card is the difference between a loop and a chore.
+2. **Some pins owe an agent act**: a `recipe_change` approval (the
+   re-declare must run), a contest (dependents must be re-judged),
+   an answered round that suggests round n+1. These rows retire to
+   a visibly different rest state — "pinned · waiting on the agent"
+   — and the page's one standing indicator counts them ("2 pins
+   waiting on an agent session"). The state is derivable from data:
+   approvals without their executed act, human slots newer than the
+   agent's last writing on dependents.
+3. **The agent has one entrypoint.** Session-open discipline, taught
+   not built: every agent session begins with one read that sweeps
+   what changed since it last wrote — new human slots, unexecuted
+   approvals, contested slots, red bands, the open agenda. One
+   query the skills carry; no daemon, no notification machinery.
+4. **The kick stays human for now** — "go on" in the conversation
+   they already have, prompted by the waiting indicator. A later
+   phase can automate the kick (a worker session on a trigger);
+   nothing in this design blocks that, and nothing here builds it.
+
+One button, then: the user has one gesture (pin) and one thing to
+know (the waiting count tells you when to poke your agent); the
+agent has one entrypoint (the session-open read). Everything else is
+state made visible.
+
+Open beside this: the unjudged/open-topic surfacing across the
+*whole* workspace — the app binds one dataset, so open topics on a
+second dataset (`fin_ap` today) are invisible from the model app.
+Named, not designed here.
 
 ## Held for after this lands
 
