@@ -83,10 +83,17 @@ impl ServerHandler for GlossqlMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult {
+        let mut result = ListToolsResult {
             tools: vec![self.tool()],
             ..Default::default()
-        })
+        };
+        // SEP-2322 makes `resultType` mandatory for 2026-07-28 peers, and
+        // the spec's own compatibility rule makes an absent field read as
+        // "complete" by every client. Claude Code (observed 2026-08-12)
+        // declares 2026-07-28 yet rejects the field on tools/list — omit
+        // it: absent is the one shape old and new clients both parse.
+        result.result_type = None;
+        Ok(result)
     }
 
     async fn call_tool(
@@ -149,7 +156,7 @@ impl ServerHandler for GlossqlMcp {
             },
             Err(e) => Err(e.to_string()),
         };
-        Ok(match rendered {
+        let mut result = match rendered {
             Ok(body) => CallToolResult::success(vec![ContentBlock::text(body.to_string())]),
             // A failed statement is the agent's business, not the
             // transport's: an error result, never a protocol error.
@@ -157,7 +164,9 @@ impl ServerHandler for GlossqlMcp {
                 println!("glossql !! {id}: {e}");
                 CallToolResult::error(vec![ContentBlock::text(e)])
             }
-        }
-        .into())
+        };
+        // Same interop posture as list_tools: absent reads as "complete".
+        result.result_type = None;
+        Ok(result.into())
     }
 }

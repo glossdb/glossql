@@ -149,14 +149,39 @@ every built-in frame end to end against seeded shapes and refuses
 view types in any frame schema — plus regression tests for the
 winner-dedupe and the rounds.
 
-Two deeper observations, not fixed today:
+## The second round, and two more fixes (same day)
 
-- **`metric_bands` ACCEPTS the whole glossary**, so any gloss write —
-  including a pin — sweeps its cache, and the trajectory tile is
-  empty in any workspace where an agent is working (measured: one
-  unrelated meaning gloss emptied it). Semantically consistent,
-  operationally wrong-grained; the whatif cache's scenario-scoped
-  keying is the finer pattern to follow when this is taken up.
+Round 2 worked end to end: the re-composed agenda (the revenue
+question alone, both bodies on top of the pinned map) served through
+the timestamp-bounded derivation, and the lead pinned the proposed
+option — all three definitional choices are now human-held, the
+queue empties honestly, and the whole loop record stands: agenda →
+queue → pins → HUMAN slots → re-composed round → pin.
+
+The trajectory tile came back empty a second time, and the root
+cause was measured, not guessed: **the `glossary` ACCEPTS edge swept
+`metric_bands` on every gloss write — the pin itself emptied the
+walk it was standing next to.** Scoped same day (store): the edge
+now fires on grounding (QUERY) writes only, which is what both of
+its shipped consumers (`metric_bands`,
+`detect_grounding_collisions`) actually read; a fact gloss — a pin
+included — leaves their caches standing. Regression test in the
+store suite; the strike path keeps its blunt full sweep (rare, and
+over-invalidation there is safe). The finer per-metric keying (the
+whatif pattern) remains open if this proves still too coarse.
+
+The `/mcp` reconnect failure root-caused the same way: Claude Code
+now declares protocol `2026-07-28`, so the shim (rmcp, spec-MUST)
+began including SEP-2322's `resultType: "complete"` on every result
+— and Claude Code's own validator rejects the field. The spec's
+compatibility rule makes an absent field read as `"complete"` by
+every client, and rmcp models it as an `Option`, so the shim now
+omits it on tools/list and tools/call — the one shape old and new
+clients both parse. Pinned in the doors suite; rmcp bumped 3.1.0 →
+3.1.2 along the way (no behavior change in the bump itself).
+
+One more observation, carried not fixed:
+
 - **The stateless-client actor gap**: tool calls without a real
   initialize land under the transport's default name (this run's
   agent slots say `rmcp`). Real MCP clients are unaffected; the

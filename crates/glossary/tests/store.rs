@@ -1303,3 +1303,60 @@ async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
         "{rows:?}"
     );
 }
+
+// -- the glossary edge is grounding-scoped (2026-08-12) ---------------------
+
+#[tokio::test]
+async fn the_glossary_edge_fires_on_grounding_writes_only() {
+    // Functions that ACCEPTS (glossary) read groundings — metric_bands
+    // walks them, detect_grounding_collisions buckets them — so a fact
+    // gloss (an app pin included) must leave their caches standing,
+    // while a QUERY write must sweep them. The unscoped edge emptied
+    // the band walk after every pin (found live by the first pinner).
+    let s = store().await;
+    let Declaration::Aspect(revenue) = decl(
+        r#"DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&revenue).await.unwrap();
+    let Declaration::Function(f) =
+        decl(r#"DECLARE FUNCTION bands FOR GLOBAL FROM 'bands.rhai' ACCEPTS (glossary);"#)
+    else {
+        unreachable!()
+    };
+    s.declare_function(&f).await.unwrap();
+    s.cache_put("fin", "fin", "bands", None, "{}", None)
+        .await
+        .unwrap();
+
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.cache_get("fin", "fin", "bands", None)
+            .await
+            .unwrap()
+            .is_some(),
+        "a fact gloss must not sweep the grounding readers"
+    );
+
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT 1"}$$;"#,
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.cache_get("fin", "fin", "bands", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "a grounding write must sweep the grounding readers"
+    );
+}

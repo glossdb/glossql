@@ -201,6 +201,14 @@ async fn the_mcp_door_initializes_and_lists_the_one_tool() {
     let tools = body["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0]["name"], "glossql");
+    // Interop pin (2026-08-12): SEP-2322's `resultType` is omitted on
+    // every result — absent reads as "complete" per the spec's own
+    // compatibility rule, and a shipping client that declares
+    // 2026-07-28 still rejects the field when present.
+    assert!(
+        body["result"].get("resultType").is_none(),
+        "tools/list must not carry resultType: {body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -219,6 +227,11 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
 
     let body = expect_ok(mcp(app.clone(), call("SELECT 41 + 1 AS answer")).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    // The same interop pin as tools/list: no resultType on call results.
+    assert!(
+        body["result"].get("resultType").is_none(),
+        "tools/call must not carry resultType: {body}"
+    );
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
     assert_eq!(outcomes[0]["rows"][0]["answer"], json!(42));
