@@ -1187,11 +1187,11 @@ impl Store {
         // The detectors' verdicts, per subject: (band, score, threshold),
         // each verdict beside its own witness's threshold — a score is
         // never compared against a neighbour witness's threshold (found
-        // 2026-08-12). Whether plural witnesses per aspect survive is a
-        // language ruling still owed; until it lands the slot is contested
-        // when ANY witness's verdict crosses that witness's own threshold —
-        // conservative withholding. Witness name order (the query's ORDER
-        // BY) keeps the list deterministic.
+        // 2026-08-12). Plural witnesses per aspect are allowed (ruled
+        // 2026-08-12); the slot is contested when ANY witness's verdict
+        // crosses that witness's own threshold — conservative
+        // withholding. Witness name order (the query's ORDER BY) keeps
+        // the list deterministic.
         #[allow(clippy::type_complexity)]
         let mut verdicts: std::collections::HashMap<
             (String, String),

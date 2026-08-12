@@ -45,15 +45,40 @@ half is an extract (§3) or a formula over siblings (§4):
 
 ```glossql
 DECLARE ASPECT revenue WITH $${
-  "title": "Revenue", "x-kind": "measure", "x-unit": "currency"
+  "title": "Revenue", "x-kind": "measure"
 }$$ AS QUERY ON DATASET;
 DECLARE ASPECT dso WITH $${
-  "title": "Days Sales Outstanding", "x-kind": "metric", "x-unit": "days"
+  "title": "Days Sales Outstanding", "x-kind": "metric"
 }$$ AS QUERY ON DATASET;
 DECLARE ASPECT formulas WITH $${
   "type": "object", "properties": {"formulas": {"type": "object"}}
 }$$ AS FACT ON DATASET;
+DECLARE ASPECT definitions WITH $${
+  "type": "object", "properties": {"definitions": {"type": "object"}}
+}$$ AS FACT ON DATASET;
 ```
+
+**The aspect blob is thin — definitions live in glosses** (ruled
+2026-08-12). Declarations have no supersession: whatever sits in the
+`WITH` blob cannot be revised, contested, or outranked, so anything
+the company might change — the meaning prose, the unit, the owner,
+the source document — belongs in the `definitions` FACT gloss, where
+an engineer's correction supersedes with actor and timestamp:
+
+```glossql
+GLOSS definitions ON fin AS $${"definitions": {
+  "revenue": {"meaning": "invoiced amounts less credit notes; recognized at invoice date",
+              "unit": "currency", "owner": "Finance", "source": "KPI handbook v3 §2"},
+  "dso": {"meaning": "receivables outstanding expressed in days of revenue",
+          "unit": "days", "owner": "Finance", "source": "KPI handbook v3 §2"}
+}}$$;
+```
+
+A field lives in exactly one place, never both: the blob keeps the
+schema, the `title` display label, and `x-kind` (a tooling flag) —
+duplicating the unit or the meaning there would let the copies
+disagree, which is exactly the staleness this convention exists to
+prevent.
 
 ## 3. Ground concepts as grain-free extracts
 

@@ -94,7 +94,9 @@ Storage and deployment:
   store relations; writes are appends, supersession stays a read
   rule; the cache becomes in-memory only; deployment binds a REST
   catalog through the one-builder seam. Concrete catalog service,
-  container, and otel are parked.
+  container, and otel are parked. Until this lands, the cache and
+  catalog-metadata handling stays deliberately straightforward
+  (project lead, 2026-08-12) — no partial moves.
 - **Cloud kernel serving** (trigger: first deployment target): Metal
   is Apple-only, so cloud means candle CUDA or capped-CPU sizing —
   neither measured.

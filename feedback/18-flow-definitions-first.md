@@ -22,31 +22,48 @@ The target, quoted:
 ## 1. The vocabulary declares before any source
 
 Nothing in the grammar orders vocabulary after data. The concepts
-declare as QUERY aspects on the dataset (fixture 16's shape), the
-handbook prose riding the aspect's `WITH` — authored, opaque, the
-definition of record:
+declare as QUERY aspects on the dataset (fixture 16's shape) — thin:
+schema, display label, tooling flag. The handbook content itself —
+meaning, unit, owner, source — is a FACT gloss, because declarations
+have no supersession and a handbook revision must land where actor,
+timestamp, and contest live (ruled 2026-08-12; the glos run's stale
+`x-unit` was the specimen — this section's first form put the
+definition of record in the `WITH` blob, and the evaluation rejected
+that home, see §4 below):
 
 ```glossql
 USE co;
 
 DECLARE ASPECT net_revenue WITH $${
-  "title": "Net Revenue",
-  "description": "Invoiced amounts less credit notes and rebates; recognized at invoice date. Owner: Finance. Source: KPI Handbook v3 §2.",
-  "x-kind": "measure", "x-unit": "currency"
+  "title": "Net Revenue", "x-kind": "measure"
 }$$ AS QUERY ON DATASET;
 
 DECLARE ASPECT active_customers WITH $${
-  "title": "Active Customers",
-  "description": "Customers with at least one paid invoice in the trailing 12 months. Owner: Finance. Source: KPI Handbook v3 §2.",
-  "x-kind": "measure", "x-unit": "count"
+  "title": "Active Customers", "x-kind": "measure"
 }$$ AS QUERY ON DATASET;
 
 DECLARE ASPECT churn_rate WITH $${
-  "title": "Churn Rate",
-  "description": "Active customers lost in period / active customers at period start. Owner: Finance. Source: KPI Handbook v3 §2.",
-  "x-kind": "metric", "x-unit": "ratio"
+  "title": "Churn Rate", "x-kind": "metric"
 }$$ AS QUERY ON DATASET;
+
+DECLARE ASPECT definitions WITH $${
+  "type": "object", "properties": {"definitions": {"type": "object"}}
+}$$ AS FACT ON DATASET;
+
+GLOSS definitions ON co AS $${"definitions": {
+  "net_revenue": {"meaning": "Invoiced amounts less credit notes and rebates; recognized at invoice date.",
+                  "unit": "currency", "owner": "Finance", "source": "KPI Handbook v3 §2"},
+  "active_customers": {"meaning": "Customers with at least one paid invoice in the trailing 12 months.",
+                       "unit": "count", "owner": "Finance", "source": "KPI Handbook v3 §2"},
+  "churn_rate": {"meaning": "Active customers lost in period / active customers at period start.",
+                 "unit": "ratio", "owner": "Finance", "source": "KPI Handbook v3 §2"}
+}}$$;
 ```
+
+Handbook v4 is now a re-gloss — superseding, actor-stamped,
+contestable — and no blob goes stale, because no field lives in two
+places: the blob keeps what admission needs, the gloss keeps what
+the company revises.
 
 The formula DAG is handbook content too — a FACT gloss (fixture 16
 §4), written before any table could evaluate it:
@@ -160,10 +177,12 @@ replay is the honest answer, and its losses are named above.
 - **The onboarding backlog is the `unassessed` read** (§2): declared +
   witnessed + unspoken = a visible row. Progress is a count walking to
   zero, served by the collapse that already exists.
-- **Provenance rides the existing blob**: the handbook citation is an
-  assumption `basis` (groundings) and `description` prose (aspects).
-  Authored prose is opaque by design, so the citation is for readers,
-  not machinery — accepted.
+- **Definitions live in glosses, not blobs** (superseding this
+  fixture's first form; rejected by the glos evaluation, ruled
+  2026-08-12): the definition of record is the `definitions` FACT
+  gloss (§1), where supersession, actor rank, and contest apply; the
+  handbook citation in a grounding stays an assumption `basis` — for
+  readers, not machinery.
 - **The deviation duty inverts the pinning agenda** (§3): data-first
   flows end by asking the user to pin choices; definitions-first flows
   end by disclosing every deviation from the received definition, with

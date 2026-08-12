@@ -210,14 +210,25 @@ DECLARE ASPECT role WITH $${
 }$$ AS FACT ON COLUMN;
 DECLARE ASPECT behavior WITH $${
   "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow"]}}
+  "properties": {"value": {"enum": ["stock", "flow", "none"]},
+                 "grounds": {"type": "string"}}
 }$$ AS FACT ON COLUMN;
 DECLARE ASPECT unit WITH $${
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
                  "source_column": {"type": "string"}}
 }$$ AS FACT ON COLUMN;
+```
 
+A witnessed aspect that can fail to apply declares its **judged
+negative** — `none` beside the real values, with `grounds` (ruled
+2026-08-12; the dimension aspect's pattern). "Examined, does not
+apply" and "nobody judged yet" are different facts: the first is a
+`none` gloss, the second an `unassessed` row, and only that split
+lets the backlog read walk to zero. Free-string aspects (`unit`)
+carry the same convention as the value `none` plus grounds.
+
+```glossql
 DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
 DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
 DECLARE WITNESS role_w ON role BY (AGENT, HUMAN)
@@ -297,9 +308,10 @@ then speak to each aspect on every landed column:
   either way — a "trial balance" column can carry period turnover (a
   flow) rather than balances; the measurement reads the data, not the
   label. Unsure? Don't gloss: absence shows as an honest `unassessed`
-  row; a guess does not. (Only the `dimension` aspect has a judged
-  negative today; for these aspects an `unassessed` row covers both
-  "not yet judged" and "does not apply".)
+  row; a guess does not. But "does not apply" is not "unsure" — a
+  text column has no stock/flow verdict, and that judgment lands as
+  `{"value": "none", "grounds": "…"}` (§5), never as a permanent
+  unassessed row.
 - **unit** — where a magnitude has one: currency, quantity unit,
   percentage. `source_column` names the column carrying the unit when
   it rides beside the value.

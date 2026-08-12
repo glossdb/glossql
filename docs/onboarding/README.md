@@ -60,18 +60,19 @@ Approved — the build items:
    the UX is triage"); the human's answer is a one-gesture approval
    that writes the HUMAN slot. Recipe-borne semantic corrections (F6)
    ride the same approval surface.
-2. **Judged negatives per witnessed aspect** (F2). "Not yet judged"
-   and "never applicable" share the `unassessed` row, so the backlog
-   read never converges (permanent 276-row floor at 47-column scale).
-   The dimensions plane has the local solution (`none` with grounds).
-   Ruling owed on the general shape before skills teach it (see the
-   rulings list below).
-3. **Definitions-in-glosses convention** (F1). Anything a company
-   revises must live where supersession lives, and today that is only
-   the gloss plane — aspect `WITH` blobs have no supersession story
-   and go stale (the `x-unit: "pieces"` specimen). Convention: thin
-   aspects, definition of record in gloss bodies. Fixture 18 §1 edit
-   plus skill teaching, pending the lead's confirmation.
+2. **Judged negatives per witnessed aspect** (F2; ruled 2026-08-12:
+   per-aspect explicit values — each witnessed aspect that can fail
+   to apply declares `none` with grounds, the dimensions pattern; a
+   generic body was rejected as hard to read on `GLOSSARY()`). Taught
+   in the add-source skill same day; agents must remember to declare
+   it when framing a vocabulary.
+3. **Definitions-in-glosses convention** (F1; confirmed 2026-08-12).
+   The definition of record — meaning, unit, owner, source — lives in
+   a `definitions` FACT gloss where supersession and actor rank
+   apply; the aspect `WITH` blob keeps schema, display label, and
+   tooling flags only. The guard against contradicting the aspect
+   later: a field lives in exactly one place, never both. Fixture
+   edit and skill teaching landed same day.
 
 Design owed before building:
 
@@ -83,10 +84,12 @@ Design owed before building:
    design: how the deposit persists in Iceberg for reuse across
    datasets, and how a dataset-local finding is promoted into it.
 5. **Definition-dependency read** (F4). A definition change's blast
-   radius is traced by hand today. Free-text `basis` matching was the
-   first idea and the lead flagged it as unreliable (generated
-   strings vary); the design likely needs a structured basis
-   reference before any detector. Design owed.
+   radius is traced by hand today. Free-text `basis` matching is
+   unreliable on generated strings — unless the strings are known:
+   the lead's direction (2026-08-12) is a seeded basis vocabulary,
+   an ASPECT defining the admissible basis strings, shipped the way
+   the function library's declarations ship. Needs modelling; design
+   owed.
 6. **Temporal typing and cast accounting on the relational path**
    (run 8, findings 1 and 4; interest confirmed 2026-08-12). Dates
    cannot land as a date type from a dialect-less source, and the
@@ -106,18 +109,16 @@ answer a bare `Not Found` (client re-init plus `USE` replay).
 
 ## Rulings owed (project lead; not to be decided in passing)
 
-- **The judged-negative shape** (item 2): per-aspect explicit values
-  (the dimensions pattern — each enum gains a judged "none") vs one
-  uniform not-applicable body convention admitted on any witnessed
-  aspect. Corpus-first against the glos workspace's 276-row floor.
-- **Definitions-in-glosses** (item 3): confirm the convention; then
-  fixture 18 §1 and the skills carry it.
-- **Plural witnesses on one aspect**: the 2026-08-12 review fix pairs
-  each verdict with its own witness's threshold and withholds when
-  any crosses (interim); whether a second witness per aspect should
-  be refused outright is a language question.
 - **Per-source deposit shape** (item 4): design proposal first, then
   the ruling.
+- **Basis vocabulary modelling** (item 5): same — proposal, then
+  ruling.
+
+Ruled 2026-08-12 and folded into the build line above: the
+judged-negative shape (per-aspect `none`), definitions-in-glosses
+(confirmed), and plural witnesses per aspect (allowed — the review
+fix's semantics stand: each verdict against its own witness's
+threshold, any crossing withholds).
 
 ## Open questions a run left with the engineer
 
