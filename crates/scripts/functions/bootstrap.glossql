@@ -185,7 +185,7 @@ DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL FROM 'functions/groundin
 DECLARE FUNCTION slot_entropy FOR GLOBAL FROM 'functions/slot_entropy.rhai';
 
 DECLARE FUNCTION metric_bands FOR GLOBAL FROM 'functions/metric_bands.rhai'
-  ACCEPTS (glossary)
+  ACCEPTS (glossary, imports)
   RETURNS metric_bands;
 
 DECLARE FUNCTION band_breach FOR GLOBAL FROM 'functions/band_breach.rhai';

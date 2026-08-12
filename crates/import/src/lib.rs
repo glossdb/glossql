@@ -124,10 +124,41 @@ pub struct Landed {
     pub schema: SchemaRef,
     pub batches: Vec<RecordBatch>,
     pub source_rows: u64,
+    /// Each scan the recipe made, in scan order: the `read_*` path it
+    /// named and the rows that relation held. `source_rows` is their
+    /// sum — one number that only means "what was read" when a single
+    /// relation was scanned. Relational sources scan nothing here: the
+    /// source computed the SQL itself.
+    pub source_scans: Vec<(String, u64)>,
     /// What the landing knows about its casts (`accounting` module): a
     /// failed `try_*` is a kept row with a NULL cell, invisible in the
     /// row counts above.
     pub casts: CastAccounting,
+}
+
+impl Landed {
+    /// The outcome's row accounting, sized to what the counts can
+    /// honestly say. One relation scanned: the difference against the
+    /// landed count is the dropped-row count. More than one (a join or
+    /// union): a single difference misleads — a join reads more source
+    /// rows than any one relation holds — so each scan reports its own
+    /// count (found 2026-08-12).
+    pub fn row_summary(&self, landed_rows: usize) -> String {
+        if self.source_scans.len() > 1 {
+            let scans = self
+                .source_scans
+                .iter()
+                .map(|(name, rows)| format!("{name} {rows} rows"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{landed_rows} rows landed; sources scanned: {scans}")
+        } else {
+            format!(
+                "{landed_rows} rows landed, {} dropped",
+                self.source_rows.saturating_sub(landed_rows as u64)
+            )
+        }
+    }
 }
 
 /// Run a recipe against its source and return the batches that will land
@@ -148,6 +179,7 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
             schema,
             batches,
             source_rows: rows,
+            source_scans: Vec::new(),
             casts: CastAccounting::Unchecked(
                 "the recipe ran at the source — its dialect owns the casts".into(),
             ),
@@ -178,9 +210,12 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
     let batches = df.collect().await?;
 
     let mut source_rows = 0u64;
+    let mut source_scans = Vec::new();
     let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
-    for provider in scanned {
-        source_rows += ctx.read_table(provider)?.count().await? as u64;
+    for (name, provider) in scanned {
+        let rows = ctx.read_table(provider)?.count().await? as u64;
+        source_rows += rows;
+        source_scans.push((name, rows));
     }
 
     // The landing succeeded; the accounting is best effort on top of it —
@@ -205,6 +240,7 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
         schema,
         batches,
         source_rows,
+        source_scans,
         casts,
     })
 }
@@ -349,8 +385,10 @@ fn canonical_root(spec: &SourceSpec) -> Result<PathBuf> {
     })
 }
 
-/// Providers a recipe run scanned, recorded so source rows can be counted.
-type Scanned = Arc<Mutex<Vec<Arc<dyn TableProvider>>>>;
+/// Providers a recipe run scanned — the `read_*` path each was called
+/// with and the provider — recorded so source rows can be counted per
+/// scan.
+type Scanned = Arc<Mutex<Vec<(String, Arc<dyn TableProvider>)>>>;
 
 /// `read_parquet('…') | read_csv('…') | read_json('…')` — one file format,
 /// rooted at the source's location. CSV reads with an all-Utf8 schema so
@@ -444,7 +482,9 @@ impl TableFunctionImpl for ReadFiles {
             .with_schema(schema);
         let provider: Arc<dyn TableProvider> = Arc::new(ListingTable::try_new(config)?);
         if let Some(seen) = &self.seen {
-            seen.lock().expect("seen").push(Arc::clone(&provider));
+            seen.lock()
+                .expect("seen")
+                .push((rel.clone(), Arc::clone(&provider)));
         }
         Ok(provider)
     }

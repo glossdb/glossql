@@ -3,13 +3,19 @@
 // or attribute values takes the row's value, formatted like a table
 // cell. Display logic — glyphs, classes, links — belongs to the
 // frame's SQL; the template stays dumb and substitution is literal,
-// so a frame that feeds an href emits a URL-ready value. An empty
+// so a frame that feeds an href emits a URL-ready value — with one
+// guard: a substituted href/src carrying a script-capable scheme
+// (javascript:, data:, vbscript:) becomes '#'. An empty
 // frame states itself through `empty`; a capped one gets the same
 // honest footer a table gets.
 (function () {
   'use strict';
 
   const FIELD = /\{([A-Za-z0-9_]+)\}/g;
+  // A substituted URL attribute must stay a navigation target: a raw
+  // data column can carry a script-capable scheme into href/src.
+  const URL_ATTR = /^(href|src|xlink:href)$/i;
+  const BAD_SCHEME = /^(javascript|data|vbscript):/;
 
   function text(value) {
     if (value == null) return '';
@@ -34,7 +40,10 @@
         if (n.nodeValue.includes('{')) n.nodeValue = sub(n.nodeValue);
       } else if (n.attributes) {
         for (const a of n.attributes) {
-          if (a.value.includes('{')) a.value = sub(a.value);
+          if (!a.value.includes('{')) continue;
+          const v = sub(a.value);
+          a.value =
+            URL_ATTR.test(a.name) && BAD_SCHEME.test(v.trim().toLowerCase()) ? '#' : v;
         }
       }
     }

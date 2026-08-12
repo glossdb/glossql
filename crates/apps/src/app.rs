@@ -87,6 +87,16 @@ impl AppDef {
                 source: Source::Dir(dir),
             }));
         }
+        // A workspace directory without a manifest is an authored app
+        // that cannot serve — never a silent fall-through to a built-in
+        // it half-shadows (found 2026-08-12).
+        if dir.is_dir() {
+            return Err(format!(
+                "{} exists but has no app.toml — the workspace directory shadows \
+                 any built-in `{name}` whole; add the manifest or remove the directory",
+                dir.display()
+            ));
+        }
         let Some(app) = builtin::builtin(name) else {
             return Ok(None);
         };

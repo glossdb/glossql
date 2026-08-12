@@ -144,3 +144,76 @@ async fn a_landed_table_reads_across_channels() {
         .unwrap();
     assert_eq!(single_value(&qualified), "120.4");
 }
+
+/// One channel's re-land must stale every channel's collapsed reads,
+/// not only the writer's (found 2026-08-12: each channel pinned its own
+/// snapshot view forever, so serve-and-mark lied to concurrent readers).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_re_land_stales_other_channels_reads_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let erp_root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&erp_root).unwrap();
+    parquet_fixture(&erp_root).await;
+    let plane = plane(dir.path()).await;
+
+    plane
+        .execute(
+            agent("engineer"),
+            &format!(
+                "DECLARE DATASET fin SET (purpose: 'p');\n\
+                 USE fin;\n\
+                 DECLARE SOURCE erp_export SET (type: parquet, location: '{}');\n\
+                 DECLARE RECIPE orders ON fin FROM erp_export AS $$\
+                   SELECT order_id, try_cast(amount AS DOUBLE) AS amount \
+                   FROM read_parquet('orders/*.parquet')$$;",
+                erp_root.display()
+            ),
+        )
+        .await
+        .unwrap();
+
+    // A second channel glosses the landed table and reads back current —
+    // populating that channel's own snapshot view.
+    plane
+        .execute(
+            agent("analyst"),
+            r#"USE fin;
+               DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+               GLOSS note ON orders AS $${"value": "landed"}$$;"#,
+        )
+        .await
+        .unwrap();
+    // No USE on the reads below: `USE` clears the session's own cache,
+    // which would mask exactly the defect this test pins. The actor's
+    // channel pointer persists across calls.
+    let before = plane
+        .execute(
+            agent("analyst"),
+            "SELECT state FROM GLOSSARY(orders) WHERE aspect = 'note';",
+        )
+        .await
+        .unwrap();
+    assert_eq!(single_value(&before), "current");
+
+    // The first channel supersedes the recipe — a fresh landing, a new
+    // snapshot. The analyst channel's next read must mark the gloss
+    // stale.
+    plane
+        .execute(
+            agent("engineer"),
+            "USE fin;\n\
+             DECLARE RECIPE orders ON fin FROM erp_export AS $$\
+               SELECT order_id, try_cast(amount AS DOUBLE) AS amount \
+               FROM read_parquet('orders/*.parquet') WHERE order_id > 0$$;",
+        )
+        .await
+        .unwrap();
+    let after = plane
+        .execute(
+            agent("analyst"),
+            "SELECT state FROM GLOSSARY(orders) WHERE aspect = 'note';",
+        )
+        .await
+        .unwrap();
+    assert_eq!(single_value(&after), "stale");
+}

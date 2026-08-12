@@ -885,3 +885,302 @@ async fn an_aspect_with_cached_values_under_it_does_not_re_declare() {
     let e = s.declare_aspect(&stricter).await.unwrap_err();
     assert!(matches!(e, Error::AspectValued { .. }), "{e}");
 }
+
+// -- what the adversarial review found (2026-08-12) ------------------------
+
+#[tokio::test]
+async fn a_glossary_delete_invalidates_accepting_functions_like_a_write() {
+    let s = store().await;
+    // `conv` RETURNS so its cache rows are values, not detector verdicts —
+    // only the ACCEPTS edge can strike them here.
+    let Declaration::Aspect(converted) =
+        decl(r#"DECLARE ASPECT converted WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&converted).await.unwrap();
+    let Declaration::Function(f) =
+        decl("DECLARE FUNCTION conv FOR GLOBAL FROM 'conv.rhai' ACCEPTS (unit) RETURNS converted;")
+    else {
+        unreachable!()
+    };
+    s.declare_function(&f).await.unwrap();
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
+    )
+    .await
+    .unwrap();
+    s.cache_put("fin", "orders.amount", "conv", None, "{}", None)
+        .await
+        .unwrap();
+    // `whatif` rows are ordinary cache rows outside the functions table;
+    // their reads replay QUERY groundings, so a glossary strike stales them.
+    s.cache_put("fin", "fin", "whatif", None, r#"{"bands": []}"#, None)
+        .await
+        .unwrap();
+    s.cache_put("crm", "leads.score", "conv", None, "{}", None)
+        .await
+        .unwrap();
+    s.cache_put("crm", "crm", "whatif", None, r#"{"bands": []}"#, None)
+        .await
+        .unwrap();
+
+    s.forward_delete("glossary", "DELETE FROM glossary WHERE aspect = 'unit'")
+        .await
+        .unwrap();
+    assert!(
+        s.cache_get("fin", "orders.amount", "conv", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "the dependent evidence died with the strike, as it would with a write"
+    );
+    assert!(
+        s.cache_get("fin", "fin", "whatif", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "whatif reads replay what the delete just changed"
+    );
+    assert!(
+        s.cache_get("crm", "leads.score", "conv", None)
+            .await
+            .unwrap()
+            .is_some(),
+        "the sweep is keyed by the doomed rows' dataset, not the world"
+    );
+    assert!(
+        s.cache_get("crm", "crm", "whatif", None)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn an_unextractable_delete_predicate_sweeps_the_cache_blunt() {
+    let s = store().await;
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
+    )
+    .await
+    .unwrap();
+    s.cache_put("crm", "leads.score", "profile", None, "{}", None)
+        .await
+        .unwrap();
+    // A LIMIT anywhere outside a literal — even in a subquery, where the
+    // predicate would still be exact — hides which rows die; correctness
+    // over precision, the whole cache goes.
+    s.forward_delete(
+        "glossary",
+        "DELETE FROM glossary WHERE id IN (SELECT id FROM glossary LIMIT 1)",
+    )
+    .await
+    .unwrap();
+    assert!(
+        s.cache_get("crm", "leads.score", "profile", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "unknown targets sweep everything"
+    );
+}
+
+#[tokio::test]
+async fn a_cache_delete_of_a_voice_drops_the_verdicts_over_its_aspect() {
+    let s = store().await;
+    // A voice into `unit` (RETURNS), a detector, and the witness pairing
+    // them.
+    let Declaration::Function(voice) =
+        decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
+    else {
+        unreachable!()
+    };
+    s.declare_function(&voice).await.unwrap();
+    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin FROM 'e.rhai';") else {
+        unreachable!()
+    };
+    s.declare_function(&det).await.unwrap();
+    let Declaration::Witness(w) =
+        decl("DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN) DETECTOR entropy THRESHOLD 0.5;")
+    else {
+        unreachable!()
+    };
+    s.declare_witness(&w).await.unwrap();
+
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "vibes",
+        None,
+        r#"{"value": "EUR"}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "entropy",
+        Some("unit_w"),
+        r#"{"band": "red", "score": 0.9}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    s.cache_put(
+        "fin",
+        "invoices.total",
+        "entropy",
+        Some("unit_w"),
+        r#"{"band": "green", "score": 0.1}"#,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Striking the disputed voice makes the slot set older, never newer —
+    // a cached contested verdict would pass the freshness check and keep
+    // withholding a value the dispute no longer touches.
+    s.forward_delete("cache", "DELETE FROM cache WHERE function = 'vibes'")
+        .await
+        .unwrap();
+    assert!(
+        s.cache_get("fin", "orders.amount", "entropy", Some("unit_w"))
+            .await
+            .unwrap()
+            .is_none(),
+        "the verdict over the struck voice's slot recomputes at the next read"
+    );
+    assert!(
+        s.cache_get("fin", "invoices.total", "entropy", Some("unit_w"))
+            .await
+            .unwrap()
+            .is_some(),
+        "verdicts on untouched subjects stand"
+    );
+}
+
+#[tokio::test]
+async fn each_verdict_is_judged_against_its_own_witness_threshold() {
+    let s = store().await;
+    let ctx = ReadContext::default();
+    // Two witnesses on one aspect: cross-wiring compared w_b's score
+    // against w_a's threshold, so a crossing verdict never contested.
+    for f in [
+        "DECLARE FUNCTION det_a FOR fin FROM 'a.rhai';",
+        "DECLARE FUNCTION det_b FOR fin FROM 'b.rhai';",
+    ] {
+        let Declaration::Function(d) = decl(f) else {
+            unreachable!()
+        };
+        s.declare_function(&d).await.unwrap();
+    }
+    for w in [
+        "DECLARE WITNESS w_a ON unit BY (AGENT, HUMAN) DETECTOR det_a THRESHOLD 0.9;",
+        "DECLARE WITNESS w_b ON unit BY (AGENT, HUMAN) DETECTOR det_b THRESHOLD 0.5;",
+    ] {
+        let Declaration::Witness(d) = decl(w) else {
+            unreachable!()
+        };
+        s.declare_witness(&d).await.unwrap();
+    }
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
+    )
+    .await
+    .unwrap();
+    // w_b's 0.7 crosses its own 0.5 but not w_a's 0.9 — contested: any
+    // witness's own-threshold crossing withholds (interim; the plural-
+    // witness ruling is still owed).
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "det_a",
+        Some("w_a"),
+        r#"{"band": "green", "score": 0.2}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    s.cache_put(
+        "fin",
+        "orders.amount",
+        "det_b",
+        Some("w_b"),
+        r#"{"band": "red", "score": 0.7}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    let rows = s
+        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
+    assert!(rows[0].value.is_none());
+    assert_eq!(
+        rows[0].score,
+        Some(0.7),
+        "the crossing verdict rides the row"
+    );
+
+    // 0.6 crosses the neighbour's 0.5 but nobody's own threshold — served.
+    let g = gloss(r#"GLOSS unit ON invoices.total AS $${"value": "USD"}$$;"#);
+    s.gloss("fin", &agent(), "unit", "invoices.total", &g.body, None)
+        .await
+        .unwrap();
+    s.cache_put(
+        "fin",
+        "invoices.total",
+        "det_a",
+        Some("w_a"),
+        r#"{"band": "yellow", "score": 0.6}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    s.cache_put(
+        "fin",
+        "invoices.total",
+        "det_b",
+        Some("w_b"),
+        r#"{"band": "green", "score": 0.3}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    let rows = s
+        .collapsed_read("fin", &Scope::Subject("invoices.total".into()), None, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, "current", "{:?}", rows[0]);
+    assert!(rows[0].value.as_deref().unwrap().contains("USD"));
+    assert_eq!(
+        rows[0].score,
+        Some(0.6),
+        "uncontested, the first witness's verdict (name order) rides the row"
+    );
+}
+
+#[tokio::test]
+async fn imports_relation_serves_unknown_not_negative_on_fan_out() {
+    let s = store().await;
+    // A fan-out join lands more rows than the source scan counted; the
+    // statement outcome saturates to 0, and the relation must not answer
+    // with a negative count — the difference is unknown.
+    s.import_put("fin", "orders", 10, 25, "{}").await.unwrap();
+    s.import_put("fin", "orders", 10, 7, "{}").await.unwrap();
+    let rows = s.relation_rows("imports").await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][4], None, "landed > source: unknown, not -15");
+    assert_eq!(rows[1][4].as_deref(), Some("3"));
+}

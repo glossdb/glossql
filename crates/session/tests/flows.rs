@@ -726,8 +726,11 @@ async fn the_serve_door_runs_the_current_grounding() {
         .execute("SELECT * FROM read.looping();")
         .await
         .unwrap_err();
+    // Keys are door-prefixed since the guard covers whatif./misfit.
+    // too (2026-08-12) — a mixed cycle names each door on the path.
     assert!(
-        e.to_string().contains("read cycle: looping -> looping"),
+        e.to_string()
+            .contains("read cycle: read.looping -> read.looping"),
         "{e}"
     );
 
@@ -857,6 +860,50 @@ async fn select_into_is_not_a_way_to_make_a_table() {
             "nothing was created: {made}"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn select_into_is_refused_on_the_streaming_path_too() {
+    // The streaming door repeated the execute path's variant check but
+    // not its `selects_into` guard, so the same spelling minted a table
+    // there and materialized the whole source before the row cap
+    // applied (found 2026-08-12).
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    let e = session
+        .query_stream("SELECT 1 AS a INTO scratch_stream;")
+        .await
+        .err()
+        .expect("refused");
+    assert!(e.to_string().contains("SELECT INTO"), "{e}");
+    assert!(
+        session
+            .execute("SELECT * FROM scratch_stream;")
+            .await
+            .is_err(),
+        "nothing was created"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_self_referential_frame_errors_instead_of_recursing() {
+    // The `read.` door has guarded expansion cycles since it landed; the
+    // `whatif.` and `misfit.` doors re-enter the planner through the SQL
+    // they replay and had no guard, so a self-referential body recursed
+    // to stack overflow (found 2026-08-12).
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT selfframe WITH $${"type": "object"}$$ AS QUERY ON DATASET;
+           GLOSS selfframe ON fin AS $${"sql": "SELECT * FROM misfit.selfframe()", "assumptions": []}$$;"#,
+    )
+    .await;
+    let e = session
+        .execute("SELECT * FROM misfit.selfframe();")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("read cycle"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

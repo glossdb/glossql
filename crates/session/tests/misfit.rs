@@ -64,6 +64,27 @@ impl FunctionRuntime for MeanKernel {
     }
 }
 
+/// A kernel that hands back a non-finite score — the door must refuse,
+/// never serve NaN rows (finding 11, 2026-08-12).
+#[derive(Debug, Default)]
+struct NanKernel;
+
+impl FunctionRuntime for NanKernel {
+    fn invoke(
+        &self,
+        function: &FunctionRow,
+        _: &str,
+        _: &Value,
+        _: Arc<dyn SqlDoor>,
+    ) -> Result<Value, String> {
+        Err(format!("no scripts in this test (`{}`)", function.name))
+    }
+
+    fn misfit_scores(&self, _: &[f64], rows: usize, _: usize) -> Result<Vec<f64>, String> {
+        Ok(vec![f64::NAN; rows])
+    }
+}
+
 async fn session_with_kernel() -> (Session, Arc<MeanKernel>) {
     let store = Store::open_memory().await.unwrap();
     let kernel = Arc::new(MeanKernel::default());
@@ -283,6 +304,35 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
         e.to_string().contains("already carries a `misfit` column"),
         "{e}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_non_finite_score_refuses_the_read() {
+    let store = Store::open_memory().await.unwrap();
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
+    .expect("session builds")
+    .with_runtime(Arc::new(NanKernel));
+    let (schema, batch) = orders_table();
+    session
+        .register_table(
+            "orders",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .unwrap();
+    run(&session, SETUP).await;
+
+    let e = session
+        .execute("SELECT * FROM misfit.suspects();")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("non-finite"), "{e}");
+    assert!(e.to_string().contains("null patterns"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

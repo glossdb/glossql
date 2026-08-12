@@ -39,6 +39,11 @@ pub struct Lake {
     /// [`IcebergCatalogProvider`] freezes); table lookups inside a
     /// namespace go to the catalog live and need no rebuild.
     provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
+    /// Monotonic counter over data-plane changes (namespace created,
+    /// table landed or dropped). Sessions tag their read context with
+    /// it, so one channel's landing stales every channel's snapshot
+    /// view — not only the writer's (found 2026-08-12).
+    data_version: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Lake {
@@ -75,7 +80,22 @@ impl Lake {
             catalog: Arc::new(catalog),
             warehouse,
             provider: Arc::new(std::sync::RwLock::new(None)),
+            data_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
+    }
+
+    /// The current data-plane version; changes whenever a namespace,
+    /// table, or snapshot may have (see `bump_data_version`).
+    pub fn data_version(&self) -> u64 {
+        self.data_version.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Writers call this after any data-plane change a cached read
+    /// context could go stale on: materialization, `DROP TABLE`.
+    /// Namespace creation bumps internally.
+    pub fn bump_data_version(&self) {
+        self.data_version
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn catalog(&self) -> Arc<dyn Catalog> {
@@ -96,6 +116,7 @@ impl Lake {
         }
         self.catalog.create_namespace(&ns, HashMap::new()).await?;
         self.invalidate_provider();
+        self.bump_data_version();
         Ok(true)
     }
 

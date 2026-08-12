@@ -108,27 +108,51 @@ async fn table(session: &Session, sql: &str) -> String {
 /// 1000, exactly linear in a price factor. `line_amount` is the stored
 /// total: a grounding reading it never sees a `unit_price` override.
 fn sales_table() -> (Arc<Schema>, RecordBatch) {
+    sales_batch(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>())
+}
+
+/// The sales shape over arbitrary months: one row per `(unit_price,
+/// year)`, months cycling Jan..Dec in order, 10 units each,
+/// `line_amount` the stored total.
+fn sales_batch(rows: &[(f64, i32)]) -> (Arc<Schema>, RecordBatch) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("order_date", DataType::Date32, false),
         Field::new("units", DataType::Float64, false),
         Field::new("unit_price", DataType::Float64, false),
         Field::new("line_amount", DataType::Float64, false),
     ]));
-    // 2026-01-01 is day 20454 since epoch; the 15th of each month.
-    let offsets = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-    let dates: Vec<i32> = offsets.iter().map(|o| 20454 + o + 14).collect();
-    let n = dates.len();
+    let dates: Vec<i32> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (_, year))| mid_month(*year, (i % 12) as i32 + 1))
+        .collect();
+    let prices: Vec<f64> = rows.iter().map(|(p, _)| *p).collect();
+    let n = rows.len();
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
             Arc::new(Date32Array::from(dates)),
             Arc::new(Float64Array::from(vec![10.0; n])),
-            Arc::new(Float64Array::from(vec![100.0; n])),
-            Arc::new(Float64Array::from(vec![1000.0; n])),
+            Arc::new(Float64Array::from(prices.clone())),
+            Arc::new(Float64Array::from(
+                prices.iter().map(|p| 10.0 * p).collect::<Vec<_>>(),
+            )),
         ],
     )
     .unwrap();
     (schema, batch)
+}
+
+/// Days since epoch for the 15th of (year, month) — the civil-calendar
+/// arithmetic, so tables can span more than one year.
+fn mid_month(year: i32, month: i32) -> i32 {
+    let y = i64::from(if month <= 2 { year - 1 } else { year });
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = i64::from(month);
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + 14;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146_097 + doe - 719_468) as i32
 }
 
 const SETUP: &str = r##"
@@ -278,4 +302,198 @@ async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
         rows.contains("starts after the recorded history ends"),
         "{rows}"
     );
+}
+
+async fn session_with_sales(rows: &[(f64, i32)]) -> (Session, Arc<LinearKernel>) {
+    let (session, kernel) = session_with_kernel().await;
+    let (schema, batch) = sales_batch(rows);
+    session
+        .register_table(
+            "sales",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .unwrap();
+    (session, kernel)
+}
+
+/// One QUERY concept whose grounding the tests gloss per case, plus the
+/// scenario aspect.
+const GATED_SETUP: &str = r##"
+DECLARE DATASET fin SET (purpose: 'scenario flows');
+USE fin;
+DECLARE ASPECT gated WITH $${"title": "Gated"}$$ AS QUERY ON DATASET;
+DECLARE ASPECT price_hike WITH $${"type": "object", "required": ["overrides"]}$$ AS FACT ON DATASET;
+"##;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superseding_a_concept_grounding_recomputes_the_cached_read() {
+    let (session, kernel) = scenario_session().await;
+
+    run(&session, "SELECT * FROM whatif.price_hike();").await;
+    let fits = kernel.fits.load(Ordering::SeqCst);
+    run(&session, "SELECT * FROM whatif.price_hike();").await;
+    assert_eq!(kernel.fits.load(Ordering::SeqCst), fits, "cache served");
+
+    // Superseding a concept's QUERY grounding — not the scenario —
+    // stales the cache: the computation replayed that grounding
+    // (finding 4, 2026-08-12).
+    run(
+        &session,
+        r##"GLOSS revenue ON fin AS $${"sql": "SELECT order_date, units * unit_price + 1000 AS value FROM sales"}$$;"##,
+    )
+    .await;
+    let revenue = table(
+        &session,
+        "SELECT replay FROM whatif.price_hike() WHERE concept = 'revenue' \
+         AND month = '2026-08';",
+    )
+    .await;
+    assert!(
+        kernel.fits.load(Ordering::SeqCst) > fits,
+        "a superseded grounding recomputes"
+    );
+    assert!(revenue.contains("2150.0"), "{revenue}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scenario_from_the_last_recorded_month_serves_the_one_month() {
+    // One post month (finding 1's trigger): the month-index feature is
+    // constant over the frame — the kernel seam drops it, the door
+    // serves the month, never a dead read.
+    let (session, _) =
+        session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
+    run(&session, SETUP).await;
+    run(
+        &session,
+        r##"GLOSS price_hike ON fin AS $${"overrides": [
+          {"column": "sales.unit_price", "factor": 1.15, "from": "2026-12",
+           "basis": "the last recorded month"}]}$$;"##,
+    )
+    .await;
+    let revenue = table(
+        &session,
+        "SELECT month, replay, p50, basis FROM whatif.price_hike() WHERE concept = 'revenue';",
+    )
+    .await;
+    assert!(revenue.contains("2026-12"), "{revenue}");
+    assert!(revenue.contains("1150.0"), "{revenue}");
+    assert!(revenue.contains("worlds x 1 months"), "{revenue}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replay_past_the_kernel_cap_is_refused_with_the_number() {
+    // 6 worlds x 350 post months = 2100 training rows — past the bound
+    // the misfit door measured; refused with the number and the fix
+    // before any world replays (finding 8, 2026-08-12).
+    let rows: Vec<(f64, i32)> = (0..350).map(|i| (100.0, 2000 + i / 12)).collect();
+    let (session, kernel) = session_with_sales(&rows).await;
+    run(&session, SETUP).await;
+    run(
+        &session,
+        r##"GLOSS price_hike ON fin AS $${"overrides": [
+          {"column": "sales.unit_price", "factor": 1.15, "from": "2000-01",
+           "basis": "the whole history"}]}$$;"##,
+    )
+    .await;
+    let served = table(
+        &session,
+        "SELECT basis FROM whatif.price_hike() WHERE concept = 'revenue';",
+    )
+    .await;
+    assert!(served.contains("2100 rows"), "{served}");
+    assert!(served.contains("past the kernel cap (2000)"), "{served}");
+    assert!(
+        served.contains("narrow the scenario's date range"),
+        "{served}"
+    );
+    assert_eq!(
+        kernel.fits.load(Ordering::SeqCst),
+        0,
+        "the kernel never ran"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_basis_counts_the_worlds_that_actually_contributed() {
+    // A grounding gated to unit_price in [99, 121]: the 0.90 and 1.30
+    // worlds push every post month out of the window, their rosters
+    // change, and they are skipped — the served basis says 4 of 6 and
+    // names them, never the full grid (finding 8, 2026-08-12).
+    let (session, _) =
+        session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
+    run(&session, GATED_SETUP).await;
+    run(
+        &session,
+        r##"GLOSS gated ON fin AS $${"sql": "SELECT order_date, CASE WHEN unit_price BETWEEN 99 AND 121 THEN units * unit_price END AS value FROM sales"}$$;"##,
+    )
+    .await;
+    run(&session, SCENARIO).await;
+    let served = table(
+        &session,
+        "SELECT month, p50, basis FROM whatif.price_hike() \
+         WHERE concept = 'gated' AND month = '2026-08';",
+    )
+    .await;
+    assert!(served.contains("4 of 6 worlds"), "{served}");
+    assert!(
+        served.contains("skipped x[0.90, 1.30]: roster changed"),
+        "{served}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn baseline_only_support_is_refused() {
+    // The window admits only the baseline price and the declared 1.15:
+    // every bracketed world's roster changes, so bands would rest on
+    // baseline alone — refused, never served with a false support
+    // claim (finding 8, 2026-08-12).
+    let (session, kernel) =
+        session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
+    run(&session, GATED_SETUP).await;
+    run(
+        &session,
+        r##"GLOSS gated ON fin AS $${"sql": "SELECT order_date, CASE WHEN unit_price BETWEEN 99 AND 101 OR unit_price BETWEEN 114 AND 116 THEN units * unit_price END AS value FROM sales"}$$;"##,
+    )
+    .await;
+    run(&session, SCENARIO).await;
+    let served = table(
+        &session,
+        "SELECT basis FROM whatif.price_hike() WHERE concept = 'gated';",
+    )
+    .await;
+    assert!(
+        served.contains("every bracketed world changed the month roster"),
+        "{served}"
+    );
+    assert!(served.contains("5 of 6 worlds skipped"), "{served}");
+    assert_eq!(
+        kernel.fits.load(Ordering::SeqCst),
+        0,
+        "the kernel never ran"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_roster_swap_of_equal_length_is_refused() {
+    // September priced out of the window at baseline, October priced
+    // out under the declared factor: the joint roster keeps its length
+    // but swaps a month — caught by value, not count (finding 8,
+    // 2026-08-12).
+    let mut rows: Vec<(f64, i32)> = (0..12).map(|_| (100.0, 2026)).collect();
+    rows[8].0 = 90.0; // Sep: out at baseline (< 95), in at x1.15 (103.5)
+    rows[9].0 = 105.0; // Oct: in at baseline, out at x1.15 (120.75)
+    let (session, _) = session_with_sales(&rows).await;
+    run(&session, GATED_SETUP).await;
+    run(
+        &session,
+        r##"GLOSS gated ON fin AS $${"sql": "SELECT order_date, CASE WHEN unit_price BETWEEN 95 AND 116 THEN units * unit_price END AS value FROM sales"}$$;"##,
+    )
+    .await;
+    run(&session, SCENARIO).await;
+    let served = table(
+        &session,
+        "SELECT basis FROM whatif.price_hike() WHERE concept = 'gated';",
+    )
+    .await;
+    assert!(served.contains("changed the month roster"), "{served}");
 }

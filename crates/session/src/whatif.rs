@@ -19,8 +19,9 @@
 //! half — beside the model's bands, so both halves stay visible.
 //!
 //! Cache: extract semantics (SPEC.md §6) under function name `whatif`,
-//! witness = the scenario aspect — recomputed when the scenario gloss is
-//! newer than the cached read, forced by `DELETE FROM cache` like any
+//! witness = the scenario aspect — recomputed when any slot the
+//! computation reads (the scenario's, or any QUERY aspect's) is newer
+//! than the cached read, forced by `DELETE FROM cache` like any
 //! function value. Data landing after the cache was cut is the reader's
 //! delete until snapshot stamping joins (same posture as extraction).
 
@@ -111,7 +112,7 @@ pub(crate) async fn whatif_batch(
     }
 
     // The scenario's collapsed current body, witness-gated and judged
-    // like any read; its newest write stamps cache freshness.
+    // like any read.
     let scope = Scope::Subject(dataset.clone());
     ensure_verdicts(shared, &dataset, &scope, Some(scenario)).await?;
     let collapsed = shared
@@ -139,11 +140,15 @@ pub(crate) async fn whatif_batch(
         .and_then(|v| serde_json::from_str(v).ok())
         .ok_or_else(|| bad("the scenario body is not JSON".into()))?;
     let overrides = decode_overrides(&body).map_err(bad)?;
+    // Freshness spans every slot the computation reads: the scenario's
+    // and each QUERY aspect's — a superseded concept grounding stales
+    // the cache exactly as a revised scenario does (2026-08-12).
     let newest = shared
         .store
-        .raw_read(&dataset, &scope, Some(scenario))
+        .raw_read(&dataset, &scope, None)
         .await?
         .into_iter()
+        .filter(|r| r.aspect == scenario || r.kind == "query")
         .map(|r| r.written_at)
         .max()
         .unwrap_or_default();
@@ -411,12 +416,27 @@ async fn concept_rows(
         )));
     }
 
+    // The kernel cap, the misfit door's measured bound: the training
+    // frame is worlds x post months, and each world is a full replay
+    // query — refused before any of that work starts.
+    let train_rows = worlds.len() * post.len();
+    if train_rows > crate::misfit::ROW_CAP {
+        return Err(refuse(format!(
+            "not served: the replay would train on {train_rows} rows ({} worlds x {} \
+             months) — past the kernel cap ({}); narrow the scenario's date range or \
+             reduce its overrides",
+            worlds.len(),
+            post.len(),
+            crate::misfit::ROW_CAP
+        )));
+    }
+
     // The mechanical half: the exact recomputation at the declared
     // factors. Identical to baseline on every post month = the
     // overrides never reach this grounding — refused, never served
     // as a silently unchanged number.
     let joint = run_series(ctx, &series_sql, Some((overrides, declared))).await?;
-    if joint.len() != base.len() {
+    if !same_roster(&joint, &base) {
         return Err(refuse(
             "not served: the replay changed the month roster — the grounding is not \
              stable under the override"
@@ -445,6 +465,8 @@ async fn concept_rows(
     // factors — inside the bracket by construction.
     let mut train_x = Vec::new();
     let mut train_y = Vec::new();
+    let mut contributed: Vec<&Vec<f64>> = Vec::new();
+    let mut skipped: Vec<&Vec<f64>> = Vec::new();
     for w in worlds {
         let owned;
         let s = if w.iter().all(|f| (*f - 1.0).abs() < 1e-9) {
@@ -453,14 +475,26 @@ async fn concept_rows(
             owned = run_series(ctx, &series_sql, Some((overrides, w))).await?;
             &owned
         };
-        if s.len() != base.len() {
+        if !same_roster(s, &base) {
+            skipped.push(w);
             continue;
         }
+        contributed.push(w);
         for &i in &post {
             train_x.extend(w.iter().copied());
             train_x.push(i as f64);
             train_y.push(s[i].1);
         }
+    }
+    // Bands over baseline alone would claim support the grid never
+    // gave — refused with the count instead.
+    if contributed.len() < 2 {
+        return Err(refuse(format!(
+            "not served: every bracketed world changed the month roster under replay \
+             ({} of {} worlds skipped) — no support beyond baseline to band on",
+            skipped.len(),
+            worlds.len()
+        )));
     }
     let cols = declared.len() + 1;
     let rows = train_y.len();
@@ -481,21 +515,34 @@ async fn concept_rows(
         )));
     }
 
-    let grid: Vec<String> = worlds
-        .iter()
-        .skip(1)
-        .map(|w| {
-            w.iter()
-                .filter(|s| (**s - 1.0).abs() > 1e-9)
-                .map(|s| format!("{s:.2}"))
+    // The support claim is what actually trained: contributed worlds
+    // by strength, skipped worlds named with the reason.
+    let strengths = |w: &Vec<f64>| {
+        w.iter()
+            .filter(|s| (**s - 1.0).abs() > 1e-9)
+            .map(|s| format!("{s:.2}"))
+            .collect::<Vec<_>>()
+            .join("*")
+    };
+    let grid: Vec<String> = contributed.iter().skip(1).map(|w| strengths(w)).collect();
+    let skipped_note = if skipped.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; skipped x[{}]: roster changed",
+            skipped
+                .iter()
+                .map(|w| strengths(w))
                 .collect::<Vec<_>>()
-                .join("*")
-        })
-        .collect();
+                .join(", ")
+        )
+    };
     let asked: Vec<String> = declared.iter().map(|f| format!("{f:.2}")).collect();
     let basis = format!(
-        "replayed x[{}] on {named_columns}; {} worlds x {} months; asked ({}) in support",
+        "replayed x[{}] on {named_columns}; {} of {} worlds x {} months{skipped_note}; \
+         asked ({}) in support",
         grid.join(", "),
+        contributed.len(),
         worlds.len(),
         post.len(),
         asked.join(", "),
@@ -640,6 +687,12 @@ fn apply_overrides(
         Ok(Transformed::yes(rebuilt))
     })
     .map(|t| t.data)
+}
+
+/// Roster identity by month value — equal counts of different months
+/// must not compare positionally (2026-08-12).
+fn same_roster(a: &[(String, f64)], b: &[(String, f64)]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0 == y.0)
 }
 
 /// The first date-typed column, the same discovery every reader does.

@@ -201,3 +201,26 @@ async fn the_door_refuses_what_it_should() {
     let escape = get(&app, "/app/perf/frames/..%2Fapp.toml").await;
     assert_eq!(escape.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
+    let (app, dir) = workspace().await;
+
+    // `model` ships in the binary; a workspace directory of the same
+    // name holding pages but no app.toml must not silently lose them
+    // to the built-in (found 2026-08-12).
+    let shadow = dir.path().join("apps/model");
+    std::fs::create_dir_all(&shadow).unwrap();
+    std::fs::write(shadow.join("index.html"), "the author's page").unwrap();
+    let page = get(&app, "/app/model").await;
+    assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let page = text(page).await;
+    assert!(page.contains("app.toml"), "{page}");
+
+    // A directory naming no built-in refuses the same way — the app
+    // exists in the workspace, it just cannot serve.
+    std::fs::create_dir_all(dir.path().join("apps/draft")).unwrap();
+    let draft = get(&app, "/app/draft").await;
+    assert_eq!(draft.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(text(draft).await.contains("app.toml"));
+}

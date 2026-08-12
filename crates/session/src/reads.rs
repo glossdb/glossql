@@ -41,8 +41,10 @@ pub(crate) struct Shared {
     pub lake: RwLock<Option<Lake>>,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
     /// The read context is rebuilt from Iceberg metadata only when the data
-    /// plane changed — materialization and `USE` clear it; reads reuse it.
-    pub read_cache: RwLock<Option<ReadContext>>,
+    /// plane changed — tagged with the lake's data version, so another
+    /// channel's landing stales it too, not only this session's own
+    /// writes (found 2026-08-12); `USE` still clears it directly.
+    pub read_cache: RwLock<Option<(u64, ReadContext)>>,
     /// The session's own context, set right after construction (the planner
     /// is built before the context exists). The metric bind plans each
     /// grounding through it as its own statement — `statement_to_plan`
@@ -74,7 +76,13 @@ impl Shared {
     /// snapshot. The disclosure grid and the staleness comparison ride on
     /// this.
     pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
-        if let Some(cached) = self.read_cache.read().expect("read cache").clone() {
+        // The version is read before building: a landing that races the
+        // build tags the cache stale and the next read rebuilds.
+        let version = self.lake().map(|l| l.data_version()).unwrap_or(0);
+        if let Some((cached_version, cached)) =
+            self.read_cache.read().expect("read cache").clone()
+            && cached_version == version
+        {
             return Ok(cached);
         }
         let mut ctx = ReadContext::default();
@@ -93,9 +101,40 @@ impl Shared {
             }
             ctx.universe.push(table);
         }
-        *self.read_cache.write().expect("read cache") = Some(ctx.clone());
+        *self.read_cache.write().expect("read cache") = Some((version, ctx.clone()));
         Ok(ctx)
     }
+}
+
+thread_local! {
+    /// The doors' expansion stack. `read.` groundings nest by design;
+    /// `whatif.` and `misfit.` re-enter the planner through the
+    /// groundings they replay — all three guard here so a body that
+    /// reaches its own door errors instead of recursing (the two newer
+    /// doors lacked the guard; found 2026-08-12).
+    static EXPANDING: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Refuse re-entry of an already-expanding door, else push it.
+fn enter_expansion(key: &str) -> DFResult<()> {
+    EXPANDING.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.iter().any(|k| k == key) {
+            return Err(DataFusionError::Plan(format!(
+                "read cycle: {} -> {key}",
+                s.join(" -> ")
+            )));
+        }
+        s.push(key.to_string());
+        Ok(())
+    })
+}
+
+fn leave_expansion() {
+    EXPANDING.with(|s| {
+        s.borrow_mut().pop();
+    });
 }
 
 /// What a detector gets instead of a SQL door: a refusal (SPEC.md §7.1 — a
@@ -279,7 +318,10 @@ impl RelationPlanner for GlossqlReads {
                      overrides (fixture 19)"
                 )));
             }
-            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario))?;
+            enter_expansion(&format!("whatif.{scenario}"))?;
+            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario));
+            leave_expansion();
+            let batch = batch?;
             let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
             let plan = LogicalPlanBuilder::scan(
                 format!("whatif.{scenario}()"),
@@ -312,7 +354,10 @@ impl RelationPlanner for GlossqlReads {
                      grounding (fixture 20)"
                 )));
             }
-            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame))?;
+            enter_expansion(&format!("misfit.{frame}"))?;
+            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame));
+            leave_expansion();
+            let batch = batch?;
             let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
             let plan = LogicalPlanBuilder::scan(
                 format!("misfit.{frame}()"),
@@ -378,25 +423,9 @@ impl GlossqlReads {
     /// evaluation may compose `FROM read.revenue()`), so a stack guards
     /// against a grounding that reaches itself.
     fn plan_serve(&self, aspect: &str, alias: Option<TableAlias>) -> DFResult<RelationPlanning> {
-        thread_local! {
-            static EXPANDING: std::cell::RefCell<Vec<String>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
-        EXPANDING.with(|s| {
-            let mut s = s.borrow_mut();
-            if s.iter().any(|a| a == aspect) {
-                return Err(DataFusionError::Plan(format!(
-                    "read cycle: {} -> {aspect}",
-                    s.join(" -> ")
-                )));
-            }
-            s.push(aspect.to_string());
-            Ok(())
-        })?;
+        enter_expansion(&format!("read.{aspect}"))?;
         let planned = self.plan_serve_expansion(aspect, alias);
-        EXPANDING.with(|s| {
-            s.borrow_mut().pop();
-        });
+        leave_expansion();
         planned
     }
 

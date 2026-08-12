@@ -33,7 +33,8 @@ use crate::session::SessionError;
 /// sampled down in the frame SQL, never streamed through the model.
 /// 2000 is the measured bound (2026-08-12: 3.7s at 2048 on Metal with
 /// the parallel chain rule; the CPU-era cap was the whole problem).
-const ROW_CAP: usize = 2000;
+/// The `whatif.` door mirrors this cap on its replay frame.
+pub(crate) const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(
@@ -188,6 +189,22 @@ pub(crate) async fn misfit_batch(
         return Err(SessionError::Runtime(format!(
             "the misfit kernel returned {} scores for {rows} rows",
             scores.len()
+        )));
+    }
+    // Complementary null patterns can make a conditioning column's
+    // impute mean NaN inside the kernel, and NaN survives its unique
+    // filter — a non-finite score carries no ranking, so the read
+    // refuses (the refuse-or-abstain contract) instead of serving NaN.
+    if scores.iter().any(|s| !s.is_finite()) {
+        return Err(bad(format!(
+            "the density read came back non-finite over [{}] — the columns' null \
+             patterns leave no common support; narrow the frame to columns that are \
+             filled together",
+            included
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )));
     }
 

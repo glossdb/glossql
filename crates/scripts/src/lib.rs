@@ -86,7 +86,10 @@ fn compute_pool() -> &'static rayon::ThreadPool {
     POOL.get_or_init(|| {
         let n = std::env::var("GLOSSQL_CANDLE_THREADS")
             .ok()
-            .and_then(|v| v.parse().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+            // rayon reads 0 as "all logical CPUs" — the opposite of the
+            // cap's point; 0 and an unparseable value both fall back.
+            .filter(|n| *n > 0)
             .unwrap_or(4);
         rayon::ThreadPoolBuilder::new()
             .num_threads(n)
@@ -116,11 +119,11 @@ impl BandModel {
                 && d.join("tabicl-regressor.config.json").exists()
         };
         let mut candidates = vec![self.dir.clone()];
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("weights"));
-                candidates.push(dir.join("../weights"));
-            }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            candidates.push(dir.join("weights"));
+            candidates.push(dir.join("../weights"));
         }
         candidates
             .iter()
@@ -787,8 +790,34 @@ impl FunctionRuntime for RhaiRuntime {
                 test_x.len()
             ));
         }
+        // The kernel's preprocessor imputes NaN to the column mean and
+        // then drops constant columns, and the ensemble asserts each
+        // member's shuffle against the kept count — members generated
+        // over the raw count would kill the read on a pool thread
+        // whenever a feature is constant (one post month, a lever whose
+        // bracketed worlds were all skipped). Mirror the filter exactly
+        // (tabicl-candle regressor.rs; an all-NaN column stays, since
+        // NaN != NaN) and generate over the kept count.
+        let kept = (0..cols)
+            .filter(|&c| {
+                let column = || train_x.iter().skip(c).step_by(cols).copied();
+                let (sum, n) = column()
+                    .filter(|v| !v.is_nan())
+                    .fold((0.0, 0usize), |(s, n), v| (s + v, n + 1));
+                let mean = sum / n as f64;
+                let impute = move |v: f64| if v.is_nan() { mean } else { v };
+                column().map(impute).any(|v| v != impute(train_x[c]))
+            })
+            .count();
+        if kept == 0 {
+            return Err(
+                "band_grid: every feature column is constant over the training rows — \
+                 nothing varies to band on"
+                    .into(),
+            );
+        }
         let model = self.band_model.get()?;
-        let members = tabicl_candle::ensemble::EnsembleMember::generate(cols, 8, 0);
+        let members = tabicl_candle::ensemble::EnsembleMember::generate(kept, 8, 0);
         compute_pool()
             .install(|| {
                 let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
@@ -1540,4 +1569,85 @@ fn sql_type(spelling: &str) -> Option<DataType> {
         "INTERVAL" => DataType::Interval(datafusion::arrow::datatypes::IntervalUnit::MonthDayNano),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod band_grid_filter {
+    //! The constant-column mirror in `band_grid` (finding 1,
+    //! 2026-08-12): the door mechanics live in glossql-session's
+    //! suites; here the seam itself — refuse cleanly when nothing
+    //! varies, and survive the single-post-month frame whose constant
+    //! month index used to fire the kernel's shuffle assert.
+
+    use super::*;
+
+    #[test]
+    fn band_grid_refuses_when_no_feature_varies() {
+        // Both columns constant over the training rows: refused before
+        // the model would load, so no weights are needed here.
+        let rt = RhaiRuntime::new("no-workspace-here");
+        let train_x = vec![1.0, 3.0, 1.0, 3.0, 1.0, 3.0];
+        let train_y = vec![10.0, 11.0, 12.0];
+        let e = rt
+            .band_grid(&train_x, 3, 2, &train_y, &[1.0, 3.0], 1, &[0.5])
+            .unwrap_err();
+        assert!(e.contains("constant"), "{e}");
+    }
+
+    #[test]
+    fn band_grid_survives_a_constant_month_index() {
+        // Finding 1's live trigger: one post month leaves the month
+        // index constant, the preprocessor drops it, and members must
+        // span the kept column alone. Panicked before the mirror.
+        let sibling = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tabicl-candle"
+        ));
+        if !sibling
+            .join("weights/tabicl-regressor.safetensors")
+            .exists()
+        {
+            eprintln!("skipping: no converted weights in the sibling checkout");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let weights = dir.path().join("weights");
+        std::fs::create_dir_all(&weights).unwrap();
+        for (from, to) in [
+            (
+                "weights/tabicl-regressor.safetensors",
+                "tabicl-regressor.safetensors",
+            ),
+            (
+                "weights/tabicl-regressor.config.json",
+                "tabicl-regressor.config.json",
+            ),
+            ("fixtures/DIGESTS", "DIGESTS"),
+        ] {
+            std::os::unix::fs::symlink(sibling.join(from), weights.join(to)).unwrap();
+        }
+        let rt = RhaiRuntime::new(dir.path());
+
+        let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
+        let mut train_x = Vec::new();
+        let mut train_y = Vec::new();
+        for f in factors {
+            train_x.extend([f, 11.0]);
+            train_y.push(1000.0 * f);
+        }
+        let alphas = [0.05, 0.50, 0.95];
+        let q = rt
+            .band_grid(
+                &train_x,
+                factors.len(),
+                2,
+                &train_y,
+                &[1.15, 11.0],
+                1,
+                &alphas,
+            )
+            .unwrap();
+        assert_eq!(q.len(), alphas.len());
+        assert!(q[0] <= q[1] && q[1] <= q[2], "monotone quantiles: {q:?}");
+    }
 }

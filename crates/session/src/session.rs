@@ -18,7 +18,7 @@ use datafusion::sql::sqlparser::parser::ParserError;
 use futures::StreamExt as _;
 use serde_json::Value;
 
-use glossql_catalog::Lake;
+use glossql_catalog::{IcebergCatalogProvider, Lake};
 use glossql_glossary::{Actor, FunctionRow, RecipeAdmission, Store, schemas};
 use glossql_import::SourceSpec;
 use glossql_parser::{
@@ -244,6 +244,9 @@ pub struct Session {
     /// non-streaming paths ask the engine for; `usize::MAX` (the default)
     /// means the caller drains everything itself.
     row_cap: usize,
+    /// Which generation of the lake's shared provider this session
+    /// mounted — `mount_schema` re-registers when it changed.
+    mounted_provider: std::sync::Mutex<Option<std::sync::Weak<IcebergCatalogProvider>>>,
 }
 
 impl Session {
@@ -294,6 +297,7 @@ impl Session {
             shared,
             actor,
             row_cap: usize::MAX,
+            mounted_provider: std::sync::Mutex::new(None),
         })
     }
 
@@ -349,6 +353,7 @@ impl Session {
         &self,
         statements: Vec<Statement>,
     ) -> Result<Vec<Outcome>, SessionError> {
+        self.refresh_mount().await?;
         let mut outcomes = Vec::with_capacity(statements.len());
         for statement in statements {
             outcomes.push(match statement {
@@ -417,20 +422,22 @@ impl Session {
                                 .invalidate_table_evidence(dataset, table)
                                 .await?;
                         }
-                        let (rows, dropped, casts) =
+                        let (summary, casts) =
                             self.materialize(dataset, table, landed).await?;
                         store.put_recipe(d).await?;
                         // The counts arrive at the decision moment: whether
                         // the dropped rows — and the cells the casts nulled
                         // — are acceptable is the author's call, made now.
+                        // A multi-source recipe reports per-scan counts
+                        // instead of a misleading difference (found
+                        // 2026-08-12: the sum across providers read as one
+                        // source's drop count).
                         let verb = if replaced {
                             "superseded and re-landed: "
                         } else {
                             ""
                         };
-                        format!(
-                            "DECLARE RECIPE {table} ON {dataset} ({verb}{rows} rows landed, {dropped} dropped{casts})"
-                        )
+                        format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts})")
                     }
                 }
             }
@@ -512,7 +519,7 @@ impl Session {
         dataset: &str,
         table: &str,
         landed: glossql_import::Landed,
-    ) -> Result<(usize, u64, String), SessionError> {
+    ) -> Result<(String, String), SessionError> {
         // The doors cannot guarantee statement order (M3 report), so the
         // staged name is unique per materialization, never per session.
         static STAGED_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -522,7 +529,7 @@ impl Session {
         );
         let lake = self.lake().expect("caller holds a lake");
         let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
-        let dropped = landed.source_rows.saturating_sub(rows as u64);
+        let summary = landed.row_summary(rows);
 
         lake.ensure_namespace(dataset).await?;
         let mounted = self.mount_schema(dataset).await?;
@@ -559,8 +566,11 @@ impl Session {
                 &landed.casts.to_json().to_string(),
             )
             .await?;
+        // Every channel's read context, not only this session's: the
+        // snapshot comparison behind serve-and-mark rides it.
+        lake.bump_data_version();
         *self.shared.read_cache.write().expect("read cache") = None;
-        Ok((rows, dropped, cast_summary(&landed.casts)))
+        Ok((summary, cast_summary(&landed.casts)))
     }
 
     /// A probe (SPEC.md §3): the recipe rehearsal, executed at its source,
@@ -589,25 +599,58 @@ impl Session {
     /// — `fin.orders` resolves; after [`Session::bind`] it is also the
     /// default schema. The schema is an Arc clone of the lake's shared
     /// provider's, never a per-session build; a miss rebuilds the shared
-    /// provider once, in case it predates the namespace.
+    /// provider once, in case it predates the namespace. The mounted
+    /// generation is tracked: when a namespace create rebuilt the shared
+    /// provider, an already-mounted session re-registers from the current
+    /// generation instead of resolving through the frozen one forever
+    /// (found 2026-08-12 — a table landed on the new generation was
+    /// invisible to channels mounted before the invalidation).
     async fn mount_schema(&self, dataset: &str) -> Result<Arc<dyn SchemaProvider>, SessionError> {
+        let lake = self.lake().expect("caller holds a lake");
+        let current = lake.provider().await?;
         let default = self.ctx.catalog("datafusion").expect("default catalog");
-        if let Some(existing) = default.schema(dataset) {
+        let same_generation = self
+            .mounted_provider
+            .lock()
+            .expect("mount lock")
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .is_some_and(|mounted| Arc::ptr_eq(&mounted, &current));
+        if same_generation && let Some(existing) = default.schema(dataset) {
             return Ok(existing);
         }
-        let lake = self.lake().expect("caller holds a lake");
-        let mut schema = lake.provider().await?.schema(dataset);
-        if schema.is_none() {
-            lake.invalidate_provider();
-            schema = lake.provider().await?.schema(dataset);
-        }
-        let schema = schema.ok_or_else(|| {
-            SessionError::Lake(glossql_catalog::Error::Workspace(format!(
-                "namespace `{dataset}` is missing from the catalog"
-            )))
-        })?;
+        let (provider, schema) = match current.schema(dataset) {
+            Some(schema) => (current, schema),
+            None => {
+                lake.invalidate_provider();
+                let rebuilt = lake.provider().await?;
+                let schema = rebuilt.schema(dataset).ok_or_else(|| {
+                    SessionError::Lake(glossql_catalog::Error::Workspace(format!(
+                        "namespace `{dataset}` is missing from the catalog"
+                    )))
+                })?;
+                (rebuilt, schema)
+            }
+        };
         default.register_schema(dataset, Arc::clone(&schema))?;
+        // One provider serves every namespace, and a session is keyed to
+        // one dataset, so a single tracked generation suffices.
+        *self.mounted_provider.lock().expect("mount lock") = Some(Arc::downgrade(&provider));
         Ok(schema)
+    }
+
+    /// Re-mount the bound dataset when the lake's shared provider was
+    /// rebuilt since this session mounted. Cheap when nothing changed:
+    /// one lock read and an Arc pointer compare.
+    async fn refresh_mount(&self) -> Result<(), SessionError> {
+        if self.lake().is_none() {
+            return Ok(());
+        }
+        let dataset = self.shared.dataset.read().expect("state lock").clone();
+        if let Some(dataset) = dataset {
+            self.mount_schema(&dataset).await?;
+        }
+        Ok(())
     }
 
     /// The subject's table snapshot at write time — `None` for dataset-level
@@ -779,6 +822,17 @@ impl Session {
         let Some(Statement::Substrate(statement)) = statements.pop() else {
             unreachable!("just matched")
         };
+        // `SELECT … INTO t` is a Query to the parser and a `CREATE MEMORY
+        // TABLE` to the planner; the execute path refuses it and this path
+        // must too — planned here it would mint a table and materialize the
+        // whole source before the row cap applies (found 2026-08-12).
+        if let DFStatement::Statement(inner) = &*statement
+            && let SQLStatement::Query(q) = inner.as_ref()
+            && selects_into(q)
+        {
+            return Err(SessionError::SubstrateClosed("SELECT INTO".into()));
+        }
+        self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
         let mut plan = self.ctx.state().statement_to_plan(*statement).await?;
         if let Some(params) = params {
@@ -940,6 +994,7 @@ impl Session {
             .store
             .drop_table_records(&dataset, table)
             .await?;
+        lake.bump_data_version();
         *self.shared.read_cache.write().expect("read cache") = None;
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }

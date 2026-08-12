@@ -172,6 +172,57 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     );
 }
 
+// -- row accounting per scanned source (found 2026-08-12) ------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_multi_provider_recipe_accounts_each_source() {
+    // A join reads five source rows and lands three — "2 dropped" would
+    // mislead: no row was dropped, the sum just crossed two files. The
+    // scan keeps each provider's count under the path that named it.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("orders.csv"),
+        "id,customer\n1,a\n2,b\n3,a\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("customers.csv"), "customer,region\na,x\nb,y\n").unwrap();
+
+    let landed = run_recipe(
+        &spec("csv", dir.path()),
+        "SELECT o.id, c.region \
+         FROM read_csv('orders.csv') o \
+         JOIN read_csv('customers.csv') c ON o.customer = c.customer",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+        3
+    );
+    assert_eq!(landed.source_rows, 5, "the sum across both scans");
+    assert_eq!(
+        landed.source_scans,
+        vec![
+            ("orders.csv".to_string(), 3),
+            ("customers.csv".to_string(), 2)
+        ]
+    );
+    assert_eq!(
+        landed.row_summary(3),
+        "3 rows landed; sources scanned: orders.csv 3 rows, customers.csv 2 rows"
+    );
+
+    // One provider keeps the difference: it really is the dropped count.
+    let landed = run_recipe(
+        &spec("csv", dir.path()),
+        "SELECT id FROM read_csv('orders.csv') WHERE id > 1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(landed.source_scans, vec![("orders.csv".to_string(), 3)]);
+    assert_eq!(landed.row_summary(2), "2 rows landed, 1 dropped");
+}
+
 // -- cast accounting (cells, not rows — 2026-08-06) ------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

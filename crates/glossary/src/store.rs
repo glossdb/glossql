@@ -113,6 +113,69 @@ fn stray_statement_char(sql: &str) -> Option<char> {
     None
 }
 
+/// The row filter of a rendered `DELETE`, for re-aiming at a pre-select.
+enum DeleteFilter {
+    /// No `WHERE` — every row goes.
+    All,
+    /// The predicate text after `WHERE`.
+    Where(String),
+    /// The statement's shape hides which rows die — the caller goes blunt.
+    Unknown,
+}
+
+/// Lift the filter from the session's rendered delete (sqlparser Display:
+/// `DELETE FROM t [USING …] [WHERE pred] [RETURNING …] [ORDER BY …]
+/// [LIMIT n]`, keywords uppercase). Any of the non-WHERE clause keywords
+/// outside a literal — even inside a predicate's subquery — means the
+/// predicate alone may not describe the doomed rows (a `LIMIT`ed delete
+/// removes fewer than the predicate matches), so `Unknown`.
+fn delete_filter(sql: &str) -> DeleteFilter {
+    for kw in ["USING", "RETURNING", "ORDER", "LIMIT"] {
+        if unquoted_word(sql, kw).is_some() {
+            return DeleteFilter::Unknown;
+        }
+    }
+    match unquoted_word(sql, "WHERE") {
+        Some(i) => DeleteFilter::Where(sql[i + "WHERE".len()..].trim().to_string()),
+        None => DeleteFilter::All,
+    }
+}
+
+/// Byte offset of `word` as a standalone word outside single-quoted
+/// literals — the same quoting rules as [`stray_statement_char`]. A `"`
+/// counts as a word character, so a double-quoted identifier never matches.
+fn unquoted_word(sql: &str, word: &str) -> Option<usize> {
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '"';
+    let mut quoted = false;
+    let mut prev: Option<char> = None;
+    let mut chars = sql.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\'' if quoted => {
+                if chars.peek().map(|(_, c)| *c) == Some('\'') {
+                    chars.next();
+                } else {
+                    quoted = false;
+                }
+            }
+            '\'' => quoted = true,
+            _ if !quoted
+                && prev.is_none_or(|p| !is_word(p))
+                && sql[i..].starts_with(word)
+                && sql[i + word.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|n| !is_word(n)) =>
+            {
+                return Some(i);
+            }
+            _ => {}
+        }
+        prev = Some(c);
+    }
+    None
+}
+
 /// LIKE metacharacters in a literal subject, under `ESCAPE '\'`.
 fn like_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
@@ -258,9 +321,12 @@ pub const RELATIONS: &[Relation] = &[
             "cast_failures",
             "imported_at",
         ],
+        // A fan-out join lands more rows than the source scan counted;
+        // the difference is then unknown, never negative (2026-08-12).
         sql: "SELECT dataset, table_name, CAST(source_rows AS TEXT) AS source_rows, \
                      CAST(landed_rows AS TEXT) AS landed_rows, \
-                     CAST(source_rows - landed_rows AS TEXT) AS dropped_rows_count, \
+                     CASE WHEN landed_rows > source_rows THEN NULL \
+                          ELSE CAST(source_rows - landed_rows AS TEXT) END AS dropped_rows_count, \
                      cast_failures, imported_at \
               FROM imports ORDER BY id",
     },
@@ -1118,10 +1184,19 @@ impl Store {
         }
 
         let witnesses = self.witnesses_all().await?;
-        // The detector's verdicts, per subject: (band, score) from its
-        // latest cache rows.
-        let mut verdicts: std::collections::HashMap<(String, String), (String, f64)> =
-            std::collections::HashMap::new();
+        // The detectors' verdicts, per subject: (band, score, threshold),
+        // each verdict beside its own witness's threshold — a score is
+        // never compared against a neighbour witness's threshold (found
+        // 2026-08-12). Whether plural witnesses per aspect survive is a
+        // language ruling still owed; until it lands the slot is contested
+        // when ANY witness's verdict crosses that witness's own threshold —
+        // conservative withholding. Witness name order (the query's ORDER
+        // BY) keeps the list deterministic.
+        #[allow(clippy::type_complexity)]
+        let mut verdicts: std::collections::HashMap<
+            (String, String),
+            Vec<(String, f64, Option<f64>)>,
+        > = std::collections::HashMap::new();
         for w in &witnesses {
             if let Some(a) = aspect
                 && w.aspect != a
@@ -1141,29 +1216,27 @@ impl Store {
                     body.pointer("/band").and_then(Value::as_str),
                     body.pointer("/score").and_then(Value::as_f64),
                 ) {
-                    verdicts.insert((c.subject.clone(), w.aspect.clone()), (band.into(), score));
+                    verdicts
+                        .entry((c.subject.clone(), w.aspect.clone()))
+                        .or_default()
+                        .push((band.into(), score, w.threshold));
                 }
             }
         }
-        let threshold_of = |aspect: &str| {
-            witnesses
-                .iter()
-                .find(|w| w.aspect == aspect)
-                .and_then(|w| w.threshold)
-        };
 
         let mut rows = Vec::new();
         for ((subject, aspect), mut group) in grouped {
             let verdict = verdicts.get(&(subject.clone(), aspect.clone()));
-            let (band, score) = match verdict {
-                Some((b, s)) => (Some(b.clone()), Some(*s)),
+            let crossing =
+                verdict.and_then(|v| v.iter().find(|(_, s, t)| t.is_some_and(|t| *s > t)));
+            // The row carries one verdict: the crossing one when contested,
+            // the first in witness name order otherwise.
+            let shown = crossing.or_else(|| verdict.and_then(|v| v.first()));
+            let (band, score) = match shown {
+                Some((b, s, _)) => (Some(b.clone()), Some(*s)),
                 None => (None, None),
             };
-            let contested = matches!(
-                (verdict, threshold_of(&aspect)),
-                (Some((_, s)), Some(t)) if *s > t
-            );
-            if contested {
+            if crossing.is_some() {
                 rows.push(CollapsedRow {
                     subject,
                     aspect,
@@ -1397,12 +1470,12 @@ impl Store {
     /// (SPEC.md §5.2, §6). The session routes only these two relations here;
     /// the target is re-checked because this executes verbatim.
     ///
-    /// A glossary delete also drops every detector verdict (2026-08-05):
-    /// verdict freshness is a timestamp comparison against the newest slot,
-    /// and deletion makes the slot set smaller, never newer — without this a
-    /// contested verdict would keep withholding a value after the disputed
-    /// slot was struck. The SQL runs verbatim, so which subjects changed is
-    /// unknown here; verdicts recompute at the next read.
+    /// A delete invalidates like a write would (2026-08-05, closed on the
+    /// remaining edges 2026-08-12): the doomed rows are pre-selected with
+    /// the delete's own predicate, and after the removal the affected keys
+    /// run the same edges — ACCEPTS for a struck gloss, the verdict sweep
+    /// for a struck function voice. When the statement's shape hides which
+    /// rows die, the sweep goes blunt instead of thin.
     pub async fn forward_delete(&self, target: &str, sql: &str) -> Result<u64> {
         if target != "glossary" && target != "cache" {
             return Err(Error::ForwardRejected(target.into()));
@@ -1416,8 +1489,52 @@ impl Store {
         if let Some(stray) = stray_statement_char(sql) {
             return Err(Error::ForwardUnsafe { char: stray });
         }
+        let doomed_glossary = if target == "glossary" {
+            self.glossary_delete_targets(sql).await
+        } else {
+            None
+        };
+        let doomed_cache = if target == "cache" {
+            self.cache_delete_targets(sql).await
+        } else {
+            None
+        };
         let done = sqlx::raw_sql(sql).execute(&self.pool).await?;
-        if target == "glossary" && done.rows_affected() > 0 {
+        if done.rows_affected() == 0 {
+            return Ok(0);
+        }
+        if target == "glossary" {
+            match doomed_glossary {
+                Some(pairs) => {
+                    for (dataset, aspect) in &pairs {
+                        // The write-side ACCEPTS edge, applied on removal:
+                        // a struck gloss changes the aspect's collapsed
+                        // value as surely as a write does. The pre-select
+                        // keys (dataset, aspect) — subjects unknown at this
+                        // grain, so the sweep is dataset-wide.
+                        self.invalidate(dataset, aspect, dataset).await?;
+                    }
+                    // `whatif` rows sit outside the functions table but
+                    // replay the dataset's QUERY groundings, so any
+                    // glossary strike can change what they replayed.
+                    let datasets: std::collections::BTreeSet<&str> =
+                        pairs.iter().map(|(d, _)| d.as_str()).collect();
+                    for dataset in datasets {
+                        sqlx::query("DELETE FROM cache WHERE dataset = ? AND function = 'whatif'")
+                            .bind(dataset)
+                            .execute(&self.pool)
+                            .await?;
+                    }
+                }
+                // Blunt but correct: the delete's shape (USING / ORDER BY /
+                // LIMIT / RETURNING, or a failed pre-select) hides which
+                // (dataset, aspect) pairs died, so every cached value and
+                // verdict goes — under-invalidation would serve evidence
+                // computed from struck glosses.
+                None => {
+                    sqlx::query("DELETE FROM cache").execute(&self.pool).await?;
+                }
+            }
             sqlx::query(
                 "DELETE FROM cache WHERE function IN \
                  (SELECT name FROM functions WHERE returns IS NULL)",
@@ -1434,7 +1551,77 @@ impl Store {
                     .await?;
             }
         }
+        if target == "cache" {
+            match doomed_cache {
+                Some(triples) => {
+                    for (dataset, subject, function) in &triples {
+                        // A struck function voice makes the slot set older,
+                        // never newer, so a cached verdict would pass the
+                        // freshness check and keep withholding — the same
+                        // hazard the glossary side closed (2026-08-05),
+                        // applied to the cache target. The witnesses whose
+                        // aspect the function RETURNS lose their verdicts
+                        // for the struck subject.
+                        sqlx::query(
+                            "DELETE FROM cache WHERE dataset = ? AND subject = ? \
+                             AND witness IN (SELECT w.name FROM witnesses w \
+                               JOIN functions f ON f.returns = w.aspect WHERE f.name = ?)",
+                        )
+                        .bind(dataset)
+                        .bind(subject)
+                        .bind(function)
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                }
+                // Blunt but correct: which voices died is unknown, so every
+                // verdict goes and recomputes at the next read.
+                None => {
+                    sqlx::query("DELETE FROM cache WHERE witness IS NOT NULL")
+                        .execute(&self.pool)
+                        .await?;
+                }
+            }
+        }
         Ok(done.rows_affected())
+    }
+
+    /// The (dataset, aspect) pairs a forwarded glossary delete is about to
+    /// remove — the delete's own predicate re-aimed at the key columns.
+    /// `None` sends the caller blunt; any pre-select failure lands there
+    /// too, because over-invalidation is the safe direction.
+    async fn glossary_delete_targets(&self, sql: &str) -> Option<Vec<(String, String)>> {
+        let select = match delete_filter(sql) {
+            DeleteFilter::All => "SELECT DISTINCT dataset, aspect FROM glossary".into(),
+            DeleteFilter::Where(pred) => {
+                format!("SELECT DISTINCT dataset, aspect FROM glossary WHERE {pred}")
+            }
+            DeleteFilter::Unknown => return None,
+        };
+        let rows = sqlx::query(&select).fetch_all(&self.pool).await.ok()?;
+        Some(
+            rows.into_iter()
+                .map(|r| (r.get("dataset"), r.get("aspect")))
+                .collect(),
+        )
+    }
+
+    /// The (dataset, subject, function) triples a forwarded cache delete is
+    /// about to remove. Same contract as [`Store::glossary_delete_targets`].
+    async fn cache_delete_targets(&self, sql: &str) -> Option<Vec<(String, String, String)>> {
+        let select = match delete_filter(sql) {
+            DeleteFilter::All => "SELECT DISTINCT dataset, subject, function FROM cache".into(),
+            DeleteFilter::Where(pred) => {
+                format!("SELECT DISTINCT dataset, subject, function FROM cache WHERE {pred}")
+            }
+            DeleteFilter::Unknown => return None,
+        };
+        let rows = sqlx::query(&select).fetch_all(&self.pool).await.ok()?;
+        Some(
+            rows.into_iter()
+                .map(|r| (r.get("dataset"), r.get("subject"), r.get("function")))
+                .collect(),
+        )
     }
 
     /// Full relation dump for substrate `SELECT`s over the store's
