@@ -57,8 +57,16 @@ Approved — the build items:
    `pin_questions` gloss; the model app serves it as a queue; a
    one-gesture approval writes the HUMAN slot under the pinner's
    name through the app's pin door; answered questions leave by
-   derivation. Owed still: a real onboarding run driving it, and the
-   F6 half (recipe-correction approvals need their proposal shape).
+   derivation. The real run landed 2026-08-12
+   (`../../reports/2026-08-12-onboarding-run-pin-queue.md`): a fresh
+   workspace driven through every flow to a six-row queue on three
+   genuine definitional choices — the human gesture and its
+   read-back are the remaining half. Owed still: the F6 half
+   (recipe-correction approvals need their proposal shape), and the
+   multi-question-per-aspect rounds the run surfaced (one
+   definitions pin retires every question on that aspect; the
+   convention converges over sessions — teach it, and let F6's
+   proposal shape answer the same identity question).
 2. **Judged negatives per witnessed aspect** (F2; ruled 2026-08-12:
    per-aspect explicit values — each witnessed aspect that can fail
    to apply declares `none` with grounds, the dimensions pattern; a
@@ -80,11 +88,13 @@ Design owed before building:
    `AS FACT ON SOURCE` — source-grain slots read, supersede, and
    disclose across every dataset in the workspace; promotion is an
    ordinary re-speak at source grain; taught in the add-source
-   skill. Remaining: a real run (the next dataset from a known
-   system reading conventions before its first probe) before the
-   proposal fixture enters the corpus; the Iceberg persistence rides
-   the storage integration when it lands (a workspace-grain sibling
-   namespace — see the proposal §5).
+   skill. The deposit half ran for real 2026-08-12: the fresh-
+   workspace run banked seven confirmed conventions on `erp_export`
+   at source grain (same report as item 1). Remaining: the read
+   half — the next dataset from this system reading them before its
+   first probe — before the proposal fixture enters the corpus; the
+   Iceberg persistence rides the storage integration when it lands
+   (a workspace-grain sibling namespace — see the proposal §5).
 5. **Definition-dependency read** (F4). A definition change's blast
    radius is traced by hand today. Free-text `basis` matching is
    unreliable on generated strings — unless the strings are known:
