@@ -17,6 +17,14 @@ WITH a AS (
   CROSS JOIN generate_series(0, 19) AS i(i)
   WHERE g.kind = 'query' AND g.aspect = $metric
     AND i.i < json_length(g.body, 'assumptions')
+    -- the winning slot only: human outranks agent, one slot per actor
+    -- kind under the supersession key, so this anti-join is total
+    AND (EXISTS (SELECT 1 FROM glossary me
+                 WHERE me.subject = g.subject AND me.aspect = g.aspect
+                   AND me.actor_id = g.actor AND me.actor_kind = 'human')
+         OR NOT EXISTS (SELECT 1 FROM glossary h
+                        WHERE h.subject = g.subject AND h.aspect = g.aspect
+                          AND h.actor_kind = 'human'))
 )
 SELECT
   CASE WHEN conf >= 1.0 THEN '●' ELSE '◐' END AS glyph,

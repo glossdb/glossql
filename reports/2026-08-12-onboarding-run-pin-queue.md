@@ -107,14 +107,73 @@ holds; the report of the pin loop should teach the rounds explicitly
 (and the F6 proposal shape inherits the same question: per-question
 identity vs per-aspect supersession).
 
-## Left open, named
+## The human half (same day)
 
-- The human half: pins signed in the app, then the read-back
-  (HUMAN slots outranking at collapse) recorded here.
+The project lead signed two pins in the browser — "Philipp Suter" —
+and both landed exactly as designed: HUMAN slots on `formulas`
+(calendar days) and `definitions` (Trade Receivables numerator),
+both outranking the agent slot at collapse, both `current`. The
+predicted wrinkle bit for real: the numerator pin retired the
+revenue question unanswered. The loop mechanics held; the surface
+around them did not — five defects, all found by one person using
+the page once:
+
+1. **The pin button wore the chip class** — `.chip[title]` carries a
+   help cursor, so the one action on the page read as a tooltip.
+   Fixed: its own button style.
+2. **The rounds could not serve.** The queue's leave-by-derivation
+   matched on bare (subject, aspect), so once any human slot existed
+   the aspect was retired forever — a re-composed agenda could never
+   re-ask. Fixed: the derivation is timestamp-bounded (a human slot
+   answers only agendas glossed at or before it); round 2 (the
+   revenue question alone, both bodies composed on top of the pinned
+   map) is live.
+3. **The scenarios tile threw `Unrecognized type` on empty** — view-
+   typed columns (`||`, `substr`, `json_get_str`) reached the browser
+   reader. Fixed with classic casts; the empty state now states
+   itself.
+4. **The trajectory frame failed at plan time** — the substrate's
+   common-subexpression optimizer drops the base column when dynamic
+   json chains repeat across two unnest joins, and the measured
+   companion wart: a dynamic-index extraction nulls the moment it
+   crosses a projection boundary. bands.sql now unrolls the array
+   positions statically (16 metric slots × 6 points, the
+   measurement's own caps).
+5. **The dossier rendered the formula and materialization twice** —
+   the frames read `all => true` and a pin makes that two slots.
+   Fixed: the faces serve the winning slot only (human outranks,
+   total because supersession holds one slot per actor kind).
+
+Parse-only frame coverage let 3–5 ship; the door suite now executes
+every built-in frame end to end against seeded shapes and refuses
+view types in any frame schema — plus regression tests for the
+winner-dedupe and the rounds.
+
+Two deeper observations, not fixed today:
+
+- **`metric_bands` ACCEPTS the whole glossary**, so any gloss write —
+  including a pin — sweeps its cache, and the trajectory tile is
+  empty in any workspace where an agent is working (measured: one
+  unrelated meaning gloss emptied it). Semantically consistent,
+  operationally wrong-grained; the whatif cache's scenario-scoped
+  keying is the finer pattern to follow when this is taken up.
+- **The stateless-client actor gap**: tool calls without a real
+  initialize land under the transport's default name (this run's
+  agent slots say `rmcp`). Real MCP clients are unaffected; the
+  door-ergonomics list carries it.
+
+## Left open, named
 - The §5 validation pattern (journal_balanced expectation + check
   voice + detector) not exercised this run — proven in runs 5–9;
   the natural next leg on this workspace, with the balance-sheet
   reconciliation as the promoted invariant.
+- **One resolve surface** (the lead's direction after pinning): the
+  judgement queue and the pin queue should not read as two
+  taxonomies — "needs judgement" vs "pin this" overwhelms; a
+  judgement should be resolvable the way a pin is. Needs design,
+  together with the F6 proposal shape: the common move is the agent
+  pre-composing the body a resolution would write, whatever the
+  aspect. Keep the semantics lean.
 - The dimension judged-negative sweep covers the 12 judged axes,
   not all 68 columns; the backlog read shows the rest honestly.
 - MCP door ergonomics, again: a metadata read inside a multi-

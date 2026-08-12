@@ -237,6 +237,20 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .chip[title] { cursor: help; border-bottom-color: var(--faint); }
 
+/* The pin action: the one write a page carries — it must read as a
+   button, not as a provenance chip (chips carry help cursors). */
+button.pin-act {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+}
+button.pin-act:hover { filter: brightness(1.12); border-color: var(--faint); }
+
 .hint { font-size: 0.78rem; color: var(--faint); margin: -0.35rem 0 0.5rem; }
 
 .tile.prose p { margin: 0; color: var(--muted); font-size: 0.85rem; }

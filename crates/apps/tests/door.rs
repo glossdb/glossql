@@ -427,4 +427,173 @@ async fn the_pins_frame_serves_the_agenda_and_empties_on_answer() {
     let after = get(&app, "/app/model/frames/pins").await;
     assert_eq!(after.status(), StatusCode::OK);
     assert_eq!(row_count(after).await, 0);
+
+    // The rounds (found on the first real run, 2026-08-12): several
+    // questions on one aspect retire together on the first pin, so the
+    // agent's next agenda — glossed after the pin, re-composed on top
+    // of the human's map — must serve again. The frame's derivation is
+    // timestamp-bounded, not existence-bounded.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    agent
+        .execute(
+            r#"GLOSS pin_questions ON perf AS $${"questions": [
+                 {"subject": "perf", "aspect": "definitions",
+                  "question": "value: net or gross?", "option": "net of credits",
+                  "body": {"definitions": {"value": {"meaning": "per line, net of credits"}}},
+                  "chosen": true, "grounds": "credit rows exist", "confidence": 0.7},
+                 {"subject": "perf", "aspect": "definitions",
+                  "question": "value: net or gross?", "option": "gross",
+                  "body": {"definitions": {"value": {"meaning": "per line, gross"}}},
+                  "chosen": false, "confidence": 0.7}
+               ]}$$;"#,
+        )
+        .await
+        .unwrap();
+    let round_two = get(&app, "/app/model/frames/pins").await;
+    assert_eq!(round_two.status(), StatusCode::OK);
+    assert_eq!(row_count(round_two).await, 2);
+}
+
+/// Seed the shapes the model app's frames read: a grounded metric with
+/// assumptions, a formulas map, definitions, and a pin agenda.
+async fn seed_model_shapes(plane: &Arc<Plane>) {
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT definitions WITH $${"type": "object"}$$ AS FACT ON DATASET;
+               DECLARE ASPECT formulas WITH $${"type": "object"}$$ AS FACT ON DATASET;
+               DECLARE ASPECT pin_questions WITH $${"type": "object"}$$ AS FACT ON DATASET;
+               GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
+                 "assumptions": [
+                   {"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+                 ]}$$;
+               GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * days"}}$$;
+               GLOSS definitions ON perf AS $${"definitions": {"dso": {"meaning": "days outstanding"}}}$$;
+               GLOSS pin_questions ON perf AS $${"questions": [
+                 {"subject": "perf", "aspect": "definitions",
+                  "question": "q?", "option": "a",
+                  "body": {"definitions": {"dso": {"meaning": "days outstanding"}}},
+                  "chosen": true, "confidence": 0.7}
+               ]}$$;"#,
+        )
+        .await
+        .unwrap();
+}
+
+fn assert_classic(dt: &datafusion::arrow::datatypes::DataType, frame: &str, field: &str) {
+    use datafusion::arrow::datatypes::DataType;
+    match dt {
+        // The browser's arrow reader speaks only classic types — a view
+        // type in a frame schema renders as `Unrecognized type` in every
+        // tile bound to it (glossql-apps: cast view types back).
+        DataType::Utf8View | DataType::BinaryView => {
+            panic!("frame {frame} field {field} carries view type {dt}")
+        }
+        DataType::List(f) | DataType::LargeList(f) | DataType::FixedSizeList(f, _) => {
+            assert_classic(f.data_type(), frame, field)
+        }
+        DataType::Struct(fields) => {
+            for f in fields {
+                assert_classic(f.data_type(), frame, field)
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_builtin_frame_executes_and_serves_classic_types() {
+    // Parse-only coverage let two defects ship (found live 2026-08-12):
+    // an optimizer error that only fires at plan time, and view-typed
+    // columns the browser reader cannot decode. Every built-in frame
+    // must execute end to end and stream classic types — against a
+    // workspace carrying the shapes the frames read.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let model = glossql_apps::BUILTINS
+        .iter()
+        .find(|b| b.name == "model")
+        .unwrap();
+    for (path, _) in model.files {
+        let Some(stem) = path.strip_prefix("frames/").and_then(|p| p.strip_suffix(".sql"))
+        else {
+            continue;
+        };
+        // Extra params are ignored by frames that bind neither.
+        let uri = format!("/app/model/frames/{stem}?metric=dso&subject=ledger");
+        let response = get(&app, &uri).await;
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "frame {stem} refused: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let reader =
+            arrow_ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+                .unwrap();
+        for field in reader.schema().fields() {
+            assert_classic(field.data_type(), stem, field.name());
+        }
+        for batch in reader {
+            batch.unwrap();
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_metric_faces_serve_the_winning_slot_once() {
+    // Found live 2026-08-12: after a pin, `formulas` holds two slots
+    // (human and agent) and the dossier rendered the formula and the
+    // materialization twice. The faces read the winning slot only —
+    // human outranking agent, exactly like the collapsed read.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let before = get(&app, "/app/model/frames/metric?metric=dso").await;
+    assert_eq!(before.status(), StatusCode::OK);
+    assert_eq!(row_count(before).await, 1);
+
+    // A human pins the formula, then supersedes the metric gloss itself.
+    for (aspect, body) in [
+        ("formulas", "{\"formulas\": {\"dso\": \"ar / revenue * 360\"}}"),
+        (
+            "dso",
+            "{\"sql\": \"SELECT month, value FROM ledger\", \"assumptions\": [{\"dimension\": \"definition\", \"assumption\": \"pinned\", \"basis\": \"engineer\", \"confidence\": 1.0}]}",
+        ),
+    ] {
+        let pinned = post_form(
+            &app,
+            "/app/model/pin",
+            &[
+                ("subject", "perf"),
+                ("aspect", aspect),
+                ("body", body),
+                ("pinned_by", "philipp"),
+            ],
+        )
+        .await;
+        assert_eq!(pinned.status(), StatusCode::SEE_OTHER, "pin on {aspect}");
+    }
+
+    // Still one row per face, and it is the human's.
+    let metric = get(&app, "/app/model/frames/metric?metric=dso").await;
+    assert_eq!(row_count(metric).await, 1);
+    let assumptions = get(&app, "/app/model/frames/assumptions?metric=dso").await;
+    assert_eq!(
+        row_count(assumptions).await,
+        1,
+        "the human body carries one assumption; the agent's two must not show"
+    );
 }

@@ -60,13 +60,17 @@ Approved — the build items:
    derivation. The real run landed 2026-08-12
    (`../../reports/2026-08-12-onboarding-run-pin-queue.md`): a fresh
    workspace driven through every flow to a six-row queue on three
-   genuine definitional choices — the human gesture and its
-   read-back are the remaining half. Owed still: the F6 half
-   (recipe-correction approvals need their proposal shape), and the
-   multi-question-per-aspect rounds the run surfaced (one
-   definitions pin retires every question on that aspect; the
-   convention converges over sessions — teach it, and let F6's
-   proposal shape answer the same identity question).
+   genuine definitional choices; the human gesture landed same day —
+   two pins signed in the browser, HUMAN slots outranking at
+   collapse. The first use found five surface defects (all fixed
+   same day, execution-level frame tests added) and the rounds gap:
+   the queue's derivation is now timestamp-bounded so a re-composed
+   agenda re-asks what a whole-map pin retired. Owed still: the F6
+   half (recipe-correction approvals need their proposal shape),
+   designed together with **one resolve surface** — the lead's
+   direction 2026-08-12: judgements should resolve the way pins do,
+   one gesture over an agent-composed body, without "needs
+   judgement" vs "pin this" becoming two taxonomies.
 2. **Judged negatives per witnessed aspect** (F2; ruled 2026-08-12:
    per-aspect explicit values — each witnessed aspect that can fail
    to apply declares `none` with grounds, the dimensions pattern; a
