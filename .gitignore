@@ -30,3 +30,4 @@ __pycache__/
 
 # converted model weights (digest-verified at load; never in git)
 /weights/
+.claude/worktrees/

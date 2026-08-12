@@ -402,7 +402,7 @@ async fn the_pins_frame_serves_the_agenda_and_empties_on_answer() {
         .await
         .unwrap();
 
-    // The built-in model app binds the sole dataset; its pins frame
+    // The built-in model app binds the first dataset by name; its pins frame
     // serves one row per open option.
     let frame = get(&app, "/app/model/frames/pins").await;
     assert_eq!(frame.status(), StatusCode::OK);

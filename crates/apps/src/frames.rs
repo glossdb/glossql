@@ -72,8 +72,12 @@ pub async fn frame(
 }
 
 /// The app's dataset: the manifest's pin, or — for an app that pins
-/// none, like the built-in model app — the workspace's sole dataset,
-/// resolved per request so the binding follows the workspace.
+/// none, like the built-in model app — the first workspace dataset by
+/// name, resolved per request so the binding follows the workspace.
+/// Multi-dataset workspaces stay first-class (the lead, 2026-08-12:
+/// the one-container-one-dataset question is a deployment concern,
+/// held open) — an unpinned app shows the first and a selector is a
+/// later concern; pin `dataset` in app.toml to choose.
 pub(crate) async fn resolve_dataset(
     door: &crate::AppDoor,
     def: &AppDef,
@@ -81,22 +85,18 @@ pub(crate) async fn resolve_dataset(
     match &def.dataset {
         Some(dataset) => Ok(dataset.clone()),
         None => match door.plane.datasets().await {
-            Ok(names) => match names.len() {
-                1 => Ok(names.into_iter().next().expect("len checked")),
-                0 => Err(fail(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "no dataset in the workspace yet — the app binds to the sole \
-                     dataset once a source lands"
-                        .to_string(),
-                )),
-                n => Err(fail(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    format!(
-                        "{n} datasets in the workspace — pin one in app.toml \
-                         (a dataset selector is a later concern)"
-                    ),
-                )),
-            },
+            Ok(mut names) => {
+                names.sort();
+                match names.into_iter().next() {
+                    Some(first) => Ok(first),
+                    None => Err(fail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "no dataset in the workspace yet — the app binds once a \
+                         source lands"
+                            .to_string(),
+                    )),
+                }
+            }
             Err(e) => Err(fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
         },
     }

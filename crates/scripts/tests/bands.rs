@@ -340,7 +340,7 @@ fn misfit_timing_by_frame_size() {
     workspace(dir.path());
     let rt = RhaiRuntime::new(dir.path());
 
-    for rows in [128usize, 256, 512, 1024, 2048] {
+    for rows in [128usize, 256, 512, 1024, 2048, 4096, 8192, 16384] {
         let cols = 4usize;
         let mut x = Vec::with_capacity(rows * cols);
         for i in 0..rows {

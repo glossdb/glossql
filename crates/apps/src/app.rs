@@ -1,6 +1,6 @@
 //! An app is a directory: `apps/<name>/app.toml` names its title and
 //! may pin the dataset its frames read; without the pin, the app binds
-//! to the workspace's sole dataset at request time (the
+//! to the first workspace dataset by name at request time (the
 //! one-dataset-per-workspace binding, SPEC.md §1 — a selector becomes
 //! a concern only when a second dataset does). Everything else in the
 //! directory *is* the app — pages (`*.html`, tera), `frames/*.sql`,
