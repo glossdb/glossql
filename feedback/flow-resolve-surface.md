@@ -146,34 +146,49 @@ missing:
 The closure design rests on one honest distinction the *system*
 makes and the user never has to:
 
-1. **Most pins close themselves.** A pinned definition, formula, or
-   assumption needs no agent act — the human slot outranks at every
-   read the moment it lands. `read.dso()` serves the pinned formula
-   on the next query. The card retires to "pinned · governs every
-   read now". No third leg exists for these, and saying so on the
-   card is the difference between a loop and a chore.
-2. **Some pins owe an agent act**: a `recipe_change` approval (the
-   re-declare must run), a contest (dependents must be re-judged),
-   an answered round that suggests round n+1. These rows retire to
-   a visibly different rest state — "pinned · waiting on the agent"
-   — and the page's one standing indicator counts them ("2 pins
-   waiting on an agent session"). The state is derivable from data:
-   approvals without their executed act, human slots newer than the
-   agent's last writing on dependents.
-3. **The agent has one entrypoint.** Session-open discipline, taught
-   not built: every agent session begins with one read that sweeps
-   what changed since it last wrote — new human slots, unexecuted
-   approvals, contested slots, red bands, the open agenda. One
-   query the skills carry; no daemon, no notification machinery.
-4. **The kick stays human for now** — "go on" in the conversation
-   they already have, prompted by the waiting indicator. A later
-   phase can automate the kick (a worker session on a trigger);
-   nothing in this design blocks that, and nothing here builds it.
+1. **Many pins close themselves.** A pinned prose definition or a
+   pinned assumption body needs no agent act — the human slot
+   outranks at every read the moment it lands (an assumption pin's
+   signed body is the full re-grounded gloss, SQL included). The
+   card retires to "pinned · governs every read now".
+2. **Some pins owe an agent act** — and the lead's catch (same day)
+   put formula pins here: the formula gloss and the recorded
+   materialization are one definition in two forms, and a pin
+   rewrites only the text — `read.<metric>()` serves the recorded
+   SQL until an agent recomposes it. Also here: a `recipe_change`
+   approval (the re-declare must run), a contest (dependents
+   re-judged), an answered round implying round n+1. These retire
+   to a visibly different rest state — "pinned · waiting on the
+   agent".
 
-One button, then: the user has one gesture (pin) and one thing to
-know (the waiting count tells you when to poke your agent); the
-agent has one entrypoint (the session-open read). Everything else is
-state made visible.
+### The two briefs (the lead's shape, 2026-08-12)
+
+Each party gets a brief **on connecting** — one derivation, two
+renderings, future touchpoints (slack, email) ride the same reads:
+
+- **The human's brief is the app's front door**: what awaits their
+  pin (the queue, with the overrule always available — flow (d) is
+  the same gesture on any standing claim), then what they pinned
+  that was **not yet retriggered** — the waiting-on-agent list, one
+  standing count. That count is how a user knows to poke their
+  agent; the kick stays human for now ("go on", in the conversation
+  they already have). A later phase may automate the kick; nothing
+  here blocks it.
+- **The agent's brief arrives at connect**: the changes that expect
+  adaptation (human slots newer than the agent's last writing,
+  unexecuted approvals, contests), new signals from new data (red
+  bands, fresh imports), later long-run ops data. Delivery is the
+  door telling live state where it already tells — the MCP
+  initialize instructions gain one composed paragraph over the same
+  reads — plus the identical read taught in the skills as
+  session-open discipline, so a session that connected long ago
+  sweeps the same brief before acting. The serverd half (dynamic
+  instructions at initialize) is the one new door behavior in this
+  proposal and awaits the lead's nod.
+
+One button, then: the user has one gesture (pin) and one indicator
+(the waiting count); the agent has one entrypoint (the brief).
+Everything else is state made visible.
 
 Open beside this: the unjudged/open-topic surfacing across the
 *whole* workspace — the app binds one dataset, so open topics on a
