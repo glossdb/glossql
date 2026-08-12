@@ -6,6 +6,13 @@
 // script. Evaluated against generated ground truth before it shipped
 // (dataraum-tabicl README, stage 3; the E2.1 walk).
 //
+// The feature recipe and the fill tracked back to the graded protocol
+// on 2026-08-12 — three drifts had entered in the port (raw t-3 lag for
+// the trailing mean, a whole-series fill that was not point-in-time, a
+// fabricated month-0 training row). Change it only against
+// `../tfmeval/experiments/e2_1_bands.py`, which is what the coverage
+// figures in that repo's FINDINGS.md were measured on.
+//
 // Each walked point records its bands and its PIT — the quantile at
 // which the actual landed in the predicted distribution, 0..1 and
 // ordinal by construction (raw densities never leave the kernel). The
@@ -50,11 +57,24 @@ for i in 0..rows.num_rows() {
     };
 }
 
-fn median(values) {
-    if values.is_empty() { return 0.0; }
-    let s = values;
+// Median over the present values of one feature column; unit when the
+// column is absent throughout. Even counts average the two middles, as
+// the graded protocol's pandas median does.
+fn col_median(values) {
+    let s = values.filter(|x| x != ());
+    if s.is_empty() { return (); }
     s.sort();
-    s[s.len() / 2]
+    let k = s.len();
+    if k % 2 == 1 { s[k / 2] } else { (s[k / 2 - 1] + s[k / 2]) / 2.0 }
+}
+
+// Apply a step's fills to one feature row.
+fn filled(row, fills) {
+    let out = [];
+    for c in 0..row.len() {
+        out.push(if row[c] == () { fills[c] } else { row[c] });
+    }
+    out
 }
 
 let metrics = [];
@@ -95,37 +115,62 @@ for key in slots.keys() {
     };
     let v = series.col("value").floats();
     let n = v.len();
-    if n < min_train + 1 {
+    // Feature rows start at month 1 — month 0 has no lag of its own and
+    // the graded protocol builds no row for it — so a walk point at t
+    // trains on t-1 rows and the earliest walkable t is min_train + 1.
+    if n < min_train + 2 {
         metrics.push(#{ metric: slots[key].aspect, applicable: false,
-                        reason: `${n} months, need ${min_train + 1}` });
+                        reason: `${n} months, need ${min_train + 2}` });
         continue;
     }
-    let fill = median(v.filter(|x| x != ()));
 
     // The walk: for each recent month, train on everything before it.
-    // Features per month i: index, month-of-year, and the 1/3/12-month
-    // lags, absent lags filled with the series median.
+    // Features for month i (row i-1): index, month-of-year, the 1- and
+    // 12-month lags, and the trailing 3-month MEAN — `lag3m` in the
+    // graded protocol (tfmeval `experiments/e2_1_bands.py:71-77`), not
+    // the raw t-3 value. Absent features stay absent here; they fill
+    // per walk step from training rows only, below.
     let feats = [];
-    for i in 0..n {
+    let labels = [];
+    for i in 1..n {
         let period = series.col("period").value_at(i);
         let moy = period.sub_string(5, 2).parse_int();
-        let lag = |k| if i >= k && v[i - k] != () { v[i - k] } else { fill };
-        feats.push([i.to_float(), moy.to_float(), lag.call(1), lag.call(3), lag.call(12)]);
+        let lag1 = if v[i - 1] != () { v[i - 1] } else { () };
+        let lo = if i >= 3 { i - 3 } else { 0 };
+        let s3 = 0.0;
+        let c3 = 0;
+        for j in lo..i { if v[j] != () { s3 += v[j]; c3 += 1; } }
+        let lag3m = if c3 == 0 { () } else { s3 / c3.to_float() };
+        let lag12 = if i >= 12 && v[i - 12] != () { v[i - 12] } else { () };
+        feats.push([i.to_float(), moy.to_float(), lag1, lag3m, lag12]);
+        labels.push(v[i]);
     }
 
     let points = [];
-    let start = if n - max_walk > min_train { n - max_walk } else { min_train };
+    let floor = min_train + 1;
+    let start = if n - max_walk > floor { n - max_walk } else { floor };
     for t in start..n {
         if v[t] == () { continue; }
+        // Absent features fill from the training rows only, per feature,
+        // recomputed at this step — so the fit stays point-in-time. A
+        // feature absent throughout training fills 0.0, as the protocol
+        // does after an all-absent column's median.
+        let fills = [];
+        for c in 0..5 {
+            let col = [];
+            for r in 0..(t - 1) { col.push(feats[r][c]); }
+            let m = col_median(col);
+            fills.push(if m == () { 0.0 } else { m });
+        }
         let train_x = [];
         let train_y = [];
-        for i in 0..t {
-            if v[i] == () { continue; }
-            train_x.push(feats[i]);
-            train_y.push(v[i]);
+        for r in 0..(t - 1) {
+            if labels[r] == () { continue; }
+            train_x.push(filled(feats[r], fills));
+            train_y.push(labels[r]);
         }
         if train_y.len() < min_train { continue; }
-        let read = tabicl_bands(train_x, train_y, feats[t], alphas, v[t]);
+        let read = tabicl_bands(train_x, train_y, filled(feats[t - 1], fills), alphas, v[t]);
         points.push(#{
             period: series.col("period").value_at(t).sub_string(0, 7),
             actual: v[t],
