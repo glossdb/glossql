@@ -24,9 +24,10 @@ pub struct PinForm {
     /// The gloss body, as JSON. The form carries the full body the pin
     /// writes — the frame proposed it, the human approved it.
     pub body: String,
-    /// Who pins. Unauthenticated by design (the PoC has no auth); the
-    /// name is provenance, not permission — it lands as the HUMAN
-    /// actor id.
+    /// Who pins, when no sign-in cookie rides the request — a direct
+    /// post's fallback. The cookie's verified subject wins where both
+    /// exist; either way the name is provenance, not permission — it
+    /// lands as the HUMAN actor id.
     #[serde(default)]
     pub pinned_by: String,
     /// Where the browser returns after a plain form post. Local paths
@@ -85,19 +86,11 @@ pub async fn pin(
         Ok(dataset) => dataset,
         Err(response) => return response,
     };
-    let who = form.pinned_by.trim();
-    let ok_name = !who.is_empty()
-        && who.len() <= 64
-        && who
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || " ._@-".contains(c));
+    let who = crate::auth::subject(door.secret.as_ref(), &headers)
+        .or_else(|| crate::auth::actor_name(&form.pinned_by).map(str::to_string));
     let actor = Actor {
         kind: ActorKind::Human,
-        id: if ok_name {
-            who.to_string()
-        } else {
-            format!("app:{}", def.name)
-        },
+        id: who.unwrap_or_else(|| format!("app:{}", def.name)),
     };
     let session = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,

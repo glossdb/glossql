@@ -26,6 +26,18 @@
     {% for a in apps %}{% if not app or a.name != app.name %}<a href="/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
     <a{% if not app %} class="current"{% endif %} href="/app">Apps</a>
   </nav>
+  {# The sign-in simulation: a JWT cookie, no real login — who pins. #}
+  {% if who %}
+  <form class="who" method="post" action="/app/session/out">
+    <span class="who-name" title="pins land under this name">{{ who }}</span>
+    <button class="who-act" type="submit">sign out</button>
+  </form>
+  {% else %}
+  <form class="who" method="post" action="/app/session">
+    <input class="who-field" name="name" placeholder="your name" autocomplete="name" required>
+    <button class="who-act" type="submit">sign in</button>
+  </form>
+  {% endif %}
 </header>
 <div class="load-bar"></div>
 <main>

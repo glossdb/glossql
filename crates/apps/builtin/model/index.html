@@ -193,12 +193,11 @@ needs your judgement, loosest first, all of it.</p>
     <header><span class="eyebrow">Pin questions</span>
       <code class="chip" title="Definitional choices the flow left open — the agent's agenda, glossed under pin_questions with the full body each option would write. Approving one writes your HUMAN slot through the pin door; it outranks the agent slot at every read, and the question leaves the queue because the answer exists, never by dismissal.">pin_questions</code></header>
     <p class="hint">one gesture writes the HUMAN slot — the agent reads it back next session ·
-      sign it <input id="pinned-by" name="pinned_by" placeholder="your name" autocomplete="name"
-        style="width:9rem;background:transparent;border:none;border-bottom:1px solid var(--line);color:inherit;font:inherit"></p>
+      {% if who %}pinning as <strong>{{ who }}</strong>{% else %}sign in (top right) to pin under your name{% endif %}</p>
     <gl-rows frame="frames/pins" empty="no open pin questions — the flow's agenda is either answered or not yet glossed">
       <template>
         <form class="rrow" method="post" action="/app/{{ app.name }}/pin"
-              hx-post="/app/{{ app.name }}/pin" hx-include="#pinned-by"
+              hx-post="/app/{{ app.name }}/pin"
               style="grid-template-columns:1fr 6.5rem auto;align-items:center">
           <span class="r-what"><span class="r-subj">{question}</span><br>
             <span class="r-meta">{meta} · writes {aspect} on {subject}</span></span>

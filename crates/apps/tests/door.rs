@@ -239,20 +239,113 @@ fn enc(s: &str) -> String {
 }
 
 async fn post_form(app: &Router, uri: &str, pairs: &[(&str, &str)]) -> Response<Body> {
+    post_form_with(app, uri, pairs, None).await
+}
+
+async fn post_form_with(
+    app: &Router,
+    uri: &str,
+    pairs: &[(&str, &str)],
+    cookie: Option<&str>,
+) -> Response<Body> {
     let body: String = pairs
         .iter()
         .map(|(k, v)| format!("{k}={}", enc(v)))
         .collect::<Vec<_>>()
         .join("&");
+    let mut request = Request::post(uri)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+    if let Some(cookie) = cookie {
+        request = request.header(header::COOKIE, cookie);
+    }
     app.clone()
-        .oneshot(
-            Request::post(uri)
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from(body))
-                .unwrap(),
-        )
+        .oneshot(request.body(Body::from(body)).unwrap())
         .await
         .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sign_in_simulation_signs_pins() {
+    // The sign-in simulation (ruled 2026-08-12): POST /app/session sets
+    // a JWT cookie; the pin door prefers its verified subject over any
+    // form-carried name; a forged token verifies to nothing and the
+    // fallback applies.
+    let (app, plane, _dir) = workspace().await;
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;"#,
+        )
+        .await
+        .unwrap();
+
+    // Sign in; the cookie comes back Set-Cookie, HttpOnly, /app-scoped.
+    let signed = post_form(&app, "/app/session", &[("name", "Philipp Suter")]).await;
+    assert_eq!(signed.status(), StatusCode::SEE_OTHER);
+    let cookie = signed.headers()[header::SET_COOKIE].to_str().unwrap().to_string();
+    assert!(cookie.starts_with("gl_actor="), "{cookie}");
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+    let pair = cookie.split(';').next().unwrap().to_string();
+
+    // A bad name refuses readable.
+    let bad = post_form(&app, "/app/session", &[("name", "x; DROP TABLE")]).await;
+    assert_eq!(bad.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The cookie's subject outranks the form's pinned_by.
+    let pinned = post_form_with(
+        &app,
+        "/app/perf/pin",
+        &[
+            ("subject", "ledger"),
+            ("aspect", "note"),
+            ("body", "{\"value\": \"signed\"}"),
+            ("pinned_by", "impostor"),
+        ],
+        Some(&pair),
+    )
+    .await;
+    assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
+    let raw = agent
+        .execute("SELECT actor FROM GLOSSARY(ledger, all => true) WHERE aspect = 'note';")
+        .await
+        .unwrap();
+    let raw = format!("{raw:?}");
+    assert!(raw.contains("Philipp Suter"), "{raw}");
+    assert!(!raw.contains("impostor"), "{raw}");
+
+    // A forged token is no token: the form fallback names the actor.
+    let forged = post_form_with(
+        &app,
+        "/app/perf/pin",
+        &[
+            ("subject", "ledger"),
+            ("aspect", "note"),
+            ("body", "{\"value\": \"forged\"}"),
+            ("pinned_by", "fallback name"),
+        ],
+        Some("gl_actor=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb290In0.Zm9yZ2Vk"),
+    )
+    .await;
+    assert_eq!(forged.status(), StatusCode::SEE_OTHER);
+    let raw = agent
+        .execute("SELECT actor FROM GLOSSARY(ledger, all => true) WHERE aspect = 'note';")
+        .await
+        .unwrap();
+    let raw = format!("{raw:?}");
+    assert!(raw.contains("fallback name"), "{raw}");
+    assert!(!raw.contains("root"), "{raw}");
+
+    // Sign-out clears the cookie.
+    let out = post_form(&app, "/app/session/out", &[]).await;
+    let cleared = out.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cleared.contains("Max-Age=0"), "{cleared}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

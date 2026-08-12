@@ -9,8 +9,12 @@ glossql-session = { path = "../session" }
 datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
 axum = { workspace = true }
+base64 = "0.22"
 futures = "0.3"
+getrandom = "0.2"
+hmac = "0.12"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 serde_json = { workspace = true }
 tera = { version = "1", default-features = false }
 tokio = { workspace = true }
