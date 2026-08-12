@@ -100,13 +100,14 @@ Design owed before building:
    fixture's corpus gate is met; entry is the lead's call. The
    Iceberg persistence rides the storage integration when it lands
    (a workspace-grain sibling namespace — see the proposal §5).
-5. **Definition-dependency read** (F4). A definition change's blast
-   radius is traced by hand today. Free-text `basis` matching is
-   unreliable on generated strings — unless the strings are known:
-   the lead's direction (2026-08-12) is a seeded basis vocabulary,
-   an ASPECT defining the admissible basis strings, shipped the way
-   the function library's declarations ship. Needs modelling; design
-   owed.
+5. **Definition-dependency read** (F4). RULED IN PART 2026-08-12:
+   Fork A of `../../feedback/flow-basis-vocabulary.md` — the basis
+   becomes a structured reference validated by the grounding schema
+   (no new aspect, statement, or relation; the dependency read is
+   plain SQL). The kind vocabulary is deliberately unruled: its
+   names must come from the streamlined resolve surface, so the
+   build order is the temporal investigation (item 6), then the
+   resolve surface, then this schema change on the settled words.
 6. **Temporal typing and cast accounting on the relational path**
    (run 8, findings 1 and 4; interest confirmed 2026-08-12). Dates
    cannot land as a date type from a dialect-less source, and the

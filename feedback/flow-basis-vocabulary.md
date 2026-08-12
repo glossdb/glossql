@@ -1,10 +1,19 @@
 # The basis vocabulary — competing forms (F4: the definition-dependency read)
 
-Status: forks for ruling, 2026-08-12. The lead's direction (same day):
-free-text basis strings are unreliable keys — "not if we know them,
-eg. an ASPECT defines basis strings. We can seed a workspace with
-ASPECTS, we already do that for functions. Needs some modelling."
-This is that modelling. No SPEC edit until a fork survives.
+Status: **Fork A ruled in structurally (2026-08-12), the kind
+vocabulary deliberately unruled.** The lead's constraint: "pin" and
+"judgment" as named kinds import the pin-vs-judgement split the
+resolve surface exists to remove — the enum lands only after Leg D
+streamlines the verbs, and this fixture's kind names are
+placeholders, not vocabulary. Sequenced C → D → B (2026-08-12): the
+v0.3 temporal investigation first, the resolve surface second, this
+schema change last, on the streamlined words. No SPEC or schema edit
+until then.
+
+The original direction (same day): free-text basis strings are
+unreliable keys — "not if we know them, eg. an ASPECT defines basis
+strings. We can seed a workspace with ASPECTS, we already do that
+for functions. Needs some modelling." This is that modelling.
 
 ## The problem, from today's own workspace
 
