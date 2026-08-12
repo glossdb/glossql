@@ -182,9 +182,15 @@ renderings, future touchpoints (slack, email) ride the same reads:
   initialize instructions gain one composed paragraph over the same
   reads — plus the identical read taught in the skills as
   session-open discipline, so a session that connected long ago
-  sweeps the same brief before acting. The serverd half (dynamic
-  instructions at initialize) is the one new door behavior in this
-  proposal and awaits the lead's nod.
+  sweeps the same brief before acting. Delivery researched
+  2026-08-12 (`../reports/2026-08-12-brief-delivery-research.md`):
+  the lean is **the brief as a read through the one tool** — it
+  alone reaches already-connected agents ("a user changes something,
+  tells the agent, the agent collects it"), needs no new door
+  behavior, and respects the reversed-resources ruling; live
+  instructions at discover (spec-blessed since 2026-07-28) follow as
+  sugar over the same composition; `subscriptions/listen` push parks
+  with the touchpoints phase. Decision shared with the lead.
 
 One button, then: the user has one gesture (pin) and one indicator
 (the waiting count); the agent has one entrypoint (the brief).
