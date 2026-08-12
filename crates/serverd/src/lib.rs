@@ -63,12 +63,21 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     // Plain JSON answers; nothing here streams partial results.
     let mut config = StreamableHttpServerConfig::default();
     config.json_response = true;
+    // The connect-time brief: shared across handler instances, boot-
+    // filled, refreshed after every tool call (see mcp::refresh_brief).
+    let brief = Arc::new(std::sync::RwLock::new(String::new()));
+    {
+        let plane = Arc::clone(&plane);
+        let brief = Arc::clone(&brief);
+        tokio::spawn(async move { GlossqlMcp::refresh_brief(&plane, &brief).await });
+    }
     let mcp = StreamableHttpService::new(
         move || {
             Ok(GlossqlMcp::new(
                 Arc::clone(&mcp_plane),
                 agent.clone(),
                 row_cap,
+                Arc::clone(&brief),
             ))
         },
         Arc::new(LocalSessionManager::default()),

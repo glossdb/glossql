@@ -5,9 +5,15 @@
 > retire in place (alpine vendored for exactly that transition), the
 > waiting-on-agent derivation counted on the front door and taught as
 > the agent's session-open brief, the frontend-design pass against
-> the live workspace (responsive floor verified at 390px). D6 — the
-> connect-time brief at discover — remains, after which Leg B names
-> its basis kinds on this surface's words: pin, the brief, waiting.
+> the live workspace (responsive floor verified at 390px). Hardened
+> same day on the lead's 15-second findings: a pin is a signed act
+> (401 unsigned, modal not corner-field), the dossier faces survive
+> a second dataset ($dataset reserved param), the queue reads
+> winning slots only, and owed enum claims pin straight from their
+> schema — the overrule half. D6 shipped too: initialize serves
+> "Live now: …" composed over store counts, refreshed after every
+> tool call. Leg B next, naming its basis kinds on this surface's
+> words: pin, the brief, waiting.
 
 Status: proposal for ruling, 2026-08-12; §§1–4 accepted same day
 (the lead: unification confirmed — every resolution is a human

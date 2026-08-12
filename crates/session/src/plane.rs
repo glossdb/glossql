@@ -33,6 +33,12 @@ pub struct Plane {
 }
 
 impl Plane {
+    /// The store behind the plane — the doors compose the connect-time
+    /// brief from it (counts only, no session).
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
     pub fn new(store: Store, lake: Option<Lake>, runtime: Arc<dyn FunctionRuntime>) -> Self {
         Plane {
             store,

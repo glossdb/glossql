@@ -118,14 +118,60 @@ pub struct GlossqlMcp {
     /// stateless transport serves tool calls without one.
     fallback: String,
     row_cap: usize,
+    /// The connect-time brief (ruled 2026-08-12, delivery option B):
+    /// one composed line over live counts, appended to the
+    /// instructions every initialize/discover serves. Shared across
+    /// the per-session handler instances; refreshed after every tool
+    /// call, so a connect after activity reads current state.
+    brief: Arc<std::sync::RwLock<String>>,
 }
 
 impl GlossqlMcp {
-    pub fn new(plane: Arc<Plane>, fallback: String, row_cap: usize) -> Self {
+    pub fn new(
+        plane: Arc<Plane>,
+        fallback: String,
+        row_cap: usize,
+        brief: Arc<std::sync::RwLock<String>>,
+    ) -> Self {
         GlossqlMcp {
             plane,
             fallback,
             row_cap,
+            brief,
+        }
+    }
+
+    /// Recompose the brief from the store. Cheap (two counts), awaited
+    /// at the end of every tool call and once at boot.
+    pub async fn refresh_brief(plane: &Plane, brief: &std::sync::RwLock<String>) {
+        let line = match plane.store().brief_counts().await {
+            Ok(counts) => {
+                let mut line = format!(
+                    "Live now: {} human writing{} stand{}",
+                    counts.human_writings,
+                    if counts.human_writings == 1 { "" } else { "s" },
+                    match &counts.latest_human_at {
+                        Some(at) => format!(" (latest {at})"),
+                        None => String::new(),
+                    },
+                );
+                if counts.approvals_pending > 0 {
+                    line.push_str(&format!(
+                        "; {} approved recipe change{} await the re-declare",
+                        counts.approvals_pending,
+                        if counts.approvals_pending == 1 { "" } else { "s" },
+                    ));
+                }
+                line.push_str(
+                    ". Start with the brief the glossql skill teaches — human slots, \
+                     contested, red bands, the open agenda — before acting.",
+                );
+                line
+            }
+            Err(e) => format!("Live now: the brief could not be read ({e})."),
+        };
+        if let Ok(mut slot) = brief.write() {
+            *slot = line;
         }
     }
 
@@ -160,7 +206,12 @@ impl ServerHandler for GlossqlMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("glossql-serverd", env!("CARGO_PKG_VERSION"));
-        info.instructions = Some(INSTRUCTIONS.into());
+        let brief = self
+            .brief
+            .read()
+            .map(|line| line.clone())
+            .unwrap_or_default();
+        info.instructions = Some(format!("{INSTRUCTIONS}\n\n{brief}"));
         info
     }
 
@@ -235,6 +286,8 @@ impl ServerHandler for GlossqlMcp {
             },
             Err(e) => Err(e.to_string()),
         };
+        // The next connect's brief sees this call's writes.
+        Self::refresh_brief(&self.plane, &self.brief).await;
         Ok(match rendered {
             Ok(body) => CallToolResult::success(vec![ContentBlock::text(body.to_string())]),
             // A failed statement is the agent's business, not the

@@ -238,10 +238,17 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
 
     // A failed statement comes back as a tool error the agent can read,
     // never a protocol error.
-    let body = expect_ok(mcp(app, call("USE nothing")).await).await;
+    let body = expect_ok(mcp(app.clone(), call("USE nothing")).await).await;
     assert_eq!(body["result"]["isError"], json!(true), "{body}");
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("nothing"), "{text}");
+
+    // The connect-time brief (ruled 2026-08-12): every initialize after
+    // a call serves live counts in its instructions — an agent
+    // connecting now hears what stands before it acts.
+    let body = expect_ok(mcp(app, initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("Live now:"), "{instructions}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

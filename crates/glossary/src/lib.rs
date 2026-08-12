@@ -15,7 +15,8 @@ mod types;
 
 pub use schemas::{GROUNDING_SCHEMA, grounding_schema};
 pub use store::{
-    ReadContext, Relation, Scope, Store, accepts_relation, admit_grain, grain_of, relation_columns,
+    BriefCounts, ReadContext, Relation, Scope, Store, accepts_relation, admit_grain, grain_of,
+    relation_columns,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CacheRow, CollapsedRow, Error, FunctionRow, RawRow,

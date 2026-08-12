@@ -433,6 +433,15 @@ pub struct Store {
     pool: SqlitePool,
 }
 
+/// What the connect-time brief is composed from — see
+/// [`Store::brief_counts`].
+#[derive(Debug, Clone)]
+pub struct BriefCounts {
+    pub human_writings: i64,
+    pub latest_human_at: Option<String>,
+    pub approvals_pending: i64,
+}
+
 impl Store {
     pub async fn open(url: &str) -> Result<Self> {
         // WAL, so a read never waits behind the write of a gloss; a busy
@@ -456,6 +465,36 @@ impl Store {
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
         Ok(Store { pool })
+    }
+
+    /// The connect-time brief's raw counts (ruled 2026-08-12, delivery
+    /// option B): what an agent connecting right now should know exists
+    /// before it acts. Cheap by design — two queries, no collapse.
+    pub async fn brief_counts(&self) -> Result<BriefCounts> {
+        let humans = sqlx::query(
+            "SELECT count(*) AS n, max(written_at) AS latest \
+             FROM glossary WHERE actor_kind = 'human'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let approvals = sqlx::query(
+            "SELECT count(*) AS n FROM glossary h \
+             WHERE h.aspect = 'recipe_change' AND h.actor_kind = 'human' \
+               AND json_extract(h.body, '$.table') IS NOT NULL \
+               AND NOT EXISTS (SELECT 1 FROM glossary h2 \
+                               WHERE h2.subject = h.subject AND h2.aspect = h.aspect \
+                                 AND h2.actor_kind = 'human' AND h2.written_at > h.written_at) \
+               AND NOT EXISTS (SELECT 1 FROM imports i \
+                               WHERE i.table_name = json_extract(h.body, '$.table') \
+                                 AND i.imported_at >= h.written_at)",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(BriefCounts {
+            human_writings: humans.get::<i64, _>("n"),
+            latest_human_at: humans.get::<Option<String>, _>("latest"),
+            approvals_pending: approvals.get::<i64, _>("n"),
+        })
     }
 
     // -- declarations ----------------------------------------------------
