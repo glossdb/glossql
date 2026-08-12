@@ -76,7 +76,7 @@ is always current:
   withheld, and absence is a visible row.
 - `ATTEST(…)` — `(subject, aspect, witness, band, score, computed_at)`,
   band in green/yellow/orange/red.
-- ordinary SELECT over tables and views for the data itself.
+- ordinary SELECT over tables for the data itself.
 
 ## Measurements over-produce — you are the judge
 

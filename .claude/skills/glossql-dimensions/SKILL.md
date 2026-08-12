@@ -6,8 +6,8 @@ description: The dimensional read of a glossql dataset — score slice axes with
 # The dimensions deliverable
 
 Three parts, one judging discipline: which axes slice the data
-(inventory + relevance), how they nest (hierarchies), and the enriched
-view that puts judged dimensions beside each fact. Run it after the
+(inventory + relevance), how they nest (hierarchies), and the judged
+joins that put judged dimensions beside each fact. Run it after the
 add-source flow (roles glossed) and the relationships plane (edges
 declared). The workspace ships both measurements at boot.
 
@@ -26,10 +26,9 @@ DECLARE ASPECT dimension WITH $${
 DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
 ```
 
-`primary` and `supporting` are absolute labels — v0.3 retired an
-ordinal priority because rank 3 means nothing without knowing what it
-is 3 *of*, and unranked rows tied at the floor filled curated lists
-alphabetically. `none` is the **judged negative** — you examined the
+`primary` and `supporting` are absolute labels, not ranks — an
+ordinal priority means nothing without knowing what it is a rank *of*,
+and ties at the floor sort arbitrarily. `none` is the **judged negative** — you examined the
 axis and it is not one (a label, a sequence number, a join key);
 grounds say why. It is a different fact from an `unassessed` row,
 which only means nobody has judged yet — a reader planning slice work
@@ -51,7 +50,7 @@ one scale for every axis. How to read it:
 
 - **The number answers "is this axis usable, how much does it
   resolve" — interest is yours.** Which of an even 4-way `region` and
-  an even 800-way `account_id` a reader wants first is business
+  an even 800-way `product_id` a reader wants first is business
   judgment; the score never overrules it. Even distribution is not
   analytic interest either — a near-uniform sequence column (a round
   number, a line number) scores high and is still `none`. Gloss
@@ -77,8 +76,8 @@ the fraction of rows breaking `from → to`). Judge each:
 
 - **λ < 0.5 is the vacuous-skew signature.** A ≥98%-dominant dependent
   passes the FD screen vacuously — knowing `zip` "determines" a flag
-  that is almost always A predicts nothing. v0.3's pre-registered
-  floor killed 48 such false positives with zero truth lost. Treat a
+  that is almost always A predicts nothing. Measured: a pre-registered
+  λ floor killed 48 such false positives with zero truth lost. Treat a
   low-λ candidate as noise unless the data argues otherwise.
 - **A perfect 1:1 (`kind: alias`) is a relabeling or a coincidence,
   and only meaning separates them.** A code↔label bijection
@@ -119,8 +118,8 @@ SELECT count(*) FROM orders o JOIN customers c ON o.customer_id = c.id;
 ```
 
 Equal counts, exactly, or the join is not grain-preserving: a fan-out
-multiplies every downstream aggregate, and v0.3 failed the run rather
-than ship one. In a one-hop star the probes are independent — check
+multiplies every downstream aggregate — fail the flow rather than
+ship one. In a one-hop star the probes are independent — check
 each join alone. A fact-to-fact join that *drops* rows instead needs
 `LEFT JOIN` to keep the fact whole; say which in the gloss. Record
 the verdicts as prose on the relationship pairs (the grain-check

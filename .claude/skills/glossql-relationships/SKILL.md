@@ -1,6 +1,6 @@
 ---
 name: glossql-relationships
-description: Ground the join structure of a glossql dataset — run the shipped detect_relationships measurement, judge every candidate against the data, and declare only the survivors. Use after tables have landed, before views or cross-table analysis.
+description: Ground the join structure of a glossql dataset — run the shipped detect_relationships measurement, judge every candidate against the data, and declare only the survivors. Use after tables have landed, before cross-table analysis.
 ---
 
 # Declaring relationships
@@ -61,7 +61,8 @@ Before declaring anything, per candidate:
   collapse.
 - **Ground the verdict, not the story.** Declare or reject on what
   the joins measure. *Why* the data looks this way (a bad export, a
-  missing tenant set, a generator that never enforced the reference)
+  missing tenant set, an upstream system that never enforced the
+  reference)
   is a hypothesis — verify it before writing it down, or state it as
   a hypothesis. A correct rejection with a wrong causal story
   misleads everyone who reads the grounds later.
@@ -74,7 +75,7 @@ DECLARE RELATIONSHIP invoices.order_id <-> orders.id;
 ```
 
 `->` is a reference; `<->` when both sides resolve each other. A
-same-table candidate (`coa.parent_code -> coa.account_code`) is a
+same-table candidate (`staff.manager_id -> staff.employee_id`) is a
 hierarchy — declare it like any edge. A composite key declares as a
 tuple endpoint — the tuple is the key (never declare the anchor leg
 alone: unscoped it licenses the fan-out the composite exists to
@@ -114,9 +115,11 @@ that resolve to no row — exact, and it catches shapes no column
 statistic can, including a single repeated invented key), and
 `temporal` — for each date-column pair across the join, how often the
 child's date precedes the parent's. The temporal read is evidence, not
-a verdict: a payment before its invoice's *due* date is ordinary; a
-payment before the invoice *exists* is the trace a wrong pairing
-leaves. Read the pair's names before concluding anything. Re-run it
+a verdict: a child event before a related *deadline* is ordinary; a
+child event dated before its parent record *exists* is the trace a
+wrong pairing leaves (a payment preceding its invoice's creation, a
+confirmation preceding its order). Read the pair's names before
+concluding anything. Re-run it
 after new batches land — a rising orphan rate or a fresh
 precedes signal on a previously quiet pair is an admission question.
 

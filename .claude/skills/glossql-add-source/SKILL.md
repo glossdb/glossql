@@ -7,9 +7,10 @@ description: Drive the add-source flow in a glossql workspace end to end — pro
 
 The statement shapes below assume the `glossql` skill (the door, the
 outcome shape). A fresh workspace already holds the measurement
-library — `profile`, `outliers`, `temporal`, `slot_entropy` and their
-aspects arrive at boot; `SELECT * FROM functions` lists what is
-declared.
+library — `profile`, `outliers`, `temporal`, `behavior_evidence`,
+`slot_entropy` and the rest arrive at boot with their aspects;
+`SELECT * FROM functions` lists what is declared, and that read is
+the authority, not this sentence.
 
 ## 1. Dataset and source
 
@@ -164,6 +165,24 @@ its own once the dependency lands. A bare `{"applicable": false}` means
 the subject genuinely doesn't fit (a text column has no outliers); stop
 trying.
 
+One table-grain measurement joins the fan-out:
+
+```glossql
+SELECT detect_derivations() FROM orders;
+SELECT value FROM GLOSSARY(orders::derivation_candidates) WHERE state = 'current';
+```
+
+Row-grain arithmetic identities among the table's numeric columns —
+`total = units * unit_price`, `net = gross - tax` — with violation
+counts. Generous by design (it proposes identities that hold at ≥0.95
+over ≥20 rows); you judge which are real derivations rather than
+numeric coincidence, and a confirmed one is worth a `meaning` gloss on
+the derived column. It earns its keep after every later landing: a
+confirmed identity re-checked per batch separates "the pipeline broke"
+from "the business changed" — a corrupted slice violates the identity
+at exactly its row coverage while every marginal statistic reads the
+same change as a price move.
+
 ## 5. Frame the semantic vocabulary
 
 The workspace ships with measurements only. Declare the vocabulary
@@ -274,11 +293,13 @@ then speak to each aspect on every landed column:
   entity votes, agreement, both residuals, the runner-up
   conventions — and `abstain` is a complete answer, not a defect. The
   verdict is evidence for *your* judgment, never a ruling: you may
-  out-judge it by testing against the ledger yourself. Names lie
+  out-judge it by testing against the data yourself. Names lie
   either way — a "trial balance" column can carry period turnover (a
   flow) rather than balances; the measurement reads the data, not the
   label. Unsure? Don't gloss: absence shows as an honest `unassessed`
-  row; a guess does not.
+  row; a guess does not. (Only the `dimension` aspect has a judged
+  negative today; for these aspects an `unassessed` row covers both
+  "not yet judged" and "does not apply".)
 - **unit** — where a magnitude has one: currency, quantity unit,
   percentage. `source_column` names the column carrying the unit when
   it rides beside the value.

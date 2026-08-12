@@ -5,10 +5,12 @@ description: Author a server-rendered data app on the glossql app door — app.t
 
 # Authoring apps
 
-First sketch (2026-08-09). Two hand-written apps exist — cash (tiles
-over `read.billings()` / `read.dso()`) and model (tiles over
-`GLOSSARY()` itself) — and every rule below survived building them.
-Expect this to move as more apps are written.
+First sketch (2026-08-09), still moving as more apps are written.
+Two apps ground the rules — cash (tiles over `read.billings()` /
+`read.dso()`), hand-written in a workspace, and model (tiles over
+`GLOSSARY()` itself), which ships in the binary since 2026-08-11. A
+workspace `apps/<name>/` shadows a built-in of the same name, so
+forking the model app is copying its directory out.
 
 ## What an app is
 
@@ -70,7 +72,7 @@ chip is the tile's provenance — which surface the number comes from
 disclosed assumption, a composition rule, a stated cap. `hint` is the
 teaching line and carries the back-links.
 
-For row-shaped surfaces (queues, claim lists, ledgers) there is
+For row-shaped surfaces (queues, claim lists, worklists) there is
 `gl-rows`: give it a frame and a `<template>` child, and every
 `{field}` in the template's text or attributes takes the row's value.
 Display logic — glyphs, css classes, drill hrefs — is the frame's

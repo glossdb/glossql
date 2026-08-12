@@ -25,14 +25,17 @@ split into measures, units checked before cross-unit arithmetic. A
 grounding whose assumptions cannot name their bases is not ready to
 write.
 
-Where the data carries a sign convention (ledger-style bookings), the
-convention has measured evidence: a behavior_evidence anchor
-carries `sign` — voters re-judged against the negated convention. A
-mirror-heavy count says the store carries the negation of the anchor's
-named convention (ledger-signed); primary-heavy says the convention
-reads as named (natural balance); a split says the entities disagree
-and the P&L grounding must scope them. Cite it as the sign
-assumption's basis instead of asserting from column names.
+Where a signed column carries a convention (which direction is
+positive, whether the store negates it), the convention has measured
+evidence: a behavior_evidence anchor carries `sign` — voters re-judged
+against the negated convention. A mirror-heavy count says the store
+carries the negation of the anchor's named convention; primary-heavy
+says the convention reads as named; a split says the entities disagree
+and the grounding must scope them. Accounting is the familiar case
+(ledger-signed vs natural balance), but any signed measure —
+adjustments, deltas, returns — carries the same question. Cite the
+measurement as the sign assumption's basis instead of asserting from
+column names.
 
 ## 2. The vocabulary
 
@@ -117,13 +120,16 @@ FROM read.revenue() GROUP BY 1 ORDER BY 1;
 - **Flows sum** over any partition — time window or judged dimension.
 - **Stocks take the last period per window**, never a sum across.
 - **Ratios don't roll up**: compose them per the formula at the
-  window asked — `dso[w] = accounts_receivable[end of w] /
-  revenue[w] * days[w]`. The formula gloss is the pinned definition;
+  window asked — numerator and denominator each at the new scope,
+  never an average of finer ratios. A defect rate is defects[w] /
+  units[w] at whatever w is asked; `dso[w] = accounts_receivable[end
+  of w] / revenue[w] * days[w]` the same way. The formula gloss is
+  the pinned definition;
   it covers every window because it names none. Never regroup a
   ratio's output rows — re-compose at the new scope.
 
 **Record what a read proves.** A composed evaluation you verified
-(against the oracle, against the ledger) may land as the metric's own
+(against an oracle, against the source system) may land as the metric's own
 QUERY gloss — durable executable knowledge, superseding as
 definitions change, served by `read.<aspect>()` from then on.
 Record it composing `FROM read.revenue()` where you can: a
@@ -137,7 +143,9 @@ disclosed assumption. Recording a proven read is not pre-evaluation.
 
 The authored expectation is a FACT gloss; the check is a function
 **voice** on the same aspect; a detector bands across both slots;
-`ATTEST` is the verdict surface:
+`ATTEST` is the verdict surface. The pattern is domain-free —
+a double-entry balance, a known duplicate-booking rate, an orphan
+rate against a declared edge all wear the same shape:
 
 ```glossql
 DECLARE ASPECT journal_balanced WITH $${
@@ -292,7 +300,7 @@ refusals matter:
   the concept on the parts.
 - **"starts after the recorded history ends"** — replay works over
   recorded months; a scenario about a future with no rows needs its
-  start inside the books.
+  start inside the recorded history.
 - **"the grounding is contested/stale"** — the concept's own state,
   not the scenario's; fix the grounding first.
 
@@ -358,8 +366,9 @@ rows are the vocabulary nobody has spoken to yet.
 ## 9. The pinning agenda — end every framework with it
 
 A definition is a choice between formula families the data cannot
-arbitrate: both DSO variants compute, both gross-profit subtrahends
-compute, interest income sums in or out. Where evidence *can* decide
+arbitrate: both DSO variants compute, pieces count at unit or at
+batch grain, utilization divides by calendar or by staffed hours.
+Where evidence *can* decide
 (a stock never sums across periods), the measurements already did;
 what remains is convention, and convention is the user's to pin.
 Definitional risk is invisible from inside your own judgment — it
@@ -368,7 +377,7 @@ named, every time.
 
 Close the flow by presenting **every definitional choice you made**
 as a question to the user — one per definition, multiple choice,
-through the cockpit's question tool when it has one, numbered prose
+through a question surface when the client has one, numbered prose
 otherwise:
 
 > **gross_profit** — I used revenue − COGS (textbook). The other
@@ -380,19 +389,19 @@ What counts as definitional: any grounding assumption with
 measurement or an engineer pin — the **basis is the pin marker**,
 never the number. Calibrate `confidence` soberly: 1.0 is reserved
 for a measured fact; 0.9 is already very high — a well-argued
-convention choice tops out there. Keep data findings (a bank gap, a
-turnover-not-balance table) in a separate list: those are facts to
-explain, not choices to make.
+convention choice tops out there. Keep data findings (a
+reconciliation gap, a column whose name lies about its content) in a
+separate list: those are facts to explain, not choices to make.
 
 And a third list beside those two — **world-coverage wishes**. Some
 assumptions resolve neither by the user's choice nor by SQL, only by
-*more world*: an opening balance sheet that would anchor every
-cumulative level, a prior-year extract, the subledger a role gloss
-implies but no table carries, the fx policy document. A single
-confidence number flattens these — "no opening entries exist" is a
-fact at 1.0, "therefore the levels are the true levels" is a world
+*more world*: an opening position that would anchor every cumulative
+level, a prior-year extract, the master data a role gloss implies but
+no table carries, the policy document that names the convention. A
+single confidence number flattens these — "no opening rows exist" is
+a fact at 1.0, "therefore the levels are the true levels" is a world
 claim the data cannot settle (a negative opening month is evidence
-against it on a real book). Name each wish as a specific ask: which
+against it in real data). Name each wish as a specific ask: which
 document or source, and which numbers shift when it arrives ("every
 stock level moves by its opening values"). The ask is a document,
 not a decision — keep it out of the pinning questions.
