@@ -92,11 +92,12 @@ Design owed before building:
    `AS FACT ON SOURCE` — source-grain slots read, supersede, and
    disclose across every dataset in the workspace; promotion is an
    ordinary re-speak at source grain; taught in the add-source
-   skill. The deposit half ran for real 2026-08-12: the fresh-
-   workspace run banked seven confirmed conventions on `erp_export`
-   at source grain (same report as item 1). Remaining: the read
-   half — the next dataset from this system reading them before its
-   first probe — before the proposal fixture enters the corpus; the
+   skill. Both halves ran for real 2026-08-12: the fresh-workspace
+   run banked seven conventions on `erp_export` at source grain, and
+   the AP-lane run (`../../reports/2026-08-12-per-source-read-run.md`)
+   read them from a second dataset before its first probe — one
+   probe instead of six, supersession proven both directions. The
+   fixture's corpus gate is met; entry is the lead's call. The
    Iceberg persistence rides the storage integration when it lands
    (a workspace-grain sibling namespace — see the proposal §5).
 5. **Definition-dependency read** (F4). A definition change's blast
