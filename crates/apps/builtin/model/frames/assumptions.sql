@@ -11,9 +11,8 @@ WITH a AS (
     json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
     json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what,
     coalesce(json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'basis'), '') AS basis,
-    'GLOSS ' || g.aspect || ' ON ' || d.name || ' AS $$' || g.body || '$$;' AS statement
+    arrow_cast('GLOSS ' || g.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || g.body || '$$;', 'Utf8') AS statement
   FROM GLOSSARY(all => true) g
-  CROSS JOIN datasets d
   CROSS JOIN generate_series(0, 19) AS i(i)
   WHERE g.kind = 'query' AND g.aspect = $metric
     AND i.i < json_length(g.body, 'assumptions')

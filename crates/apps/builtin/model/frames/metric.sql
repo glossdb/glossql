@@ -14,10 +14,9 @@ SELECT q.aspect,
            'no pinned formula'), 'Utf8') AS formula,
   q.actor,
   arrow_cast(substr(q.written_at, 1, 10), 'Utf8') AS written,
-  'GLOSS ' || q.aspect || ' ON ' || d.name || ' AS $$' || q.body || '$$;' AS statement
+  arrow_cast('GLOSS ' || q.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || q.body || '$$;', 'Utf8') AS statement
 FROM GLOSSARY(all => true) q
 JOIN aspects a ON a.name = q.aspect
-CROSS JOIN datasets d
 LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
 WHERE q.kind = 'query' AND q.aspect = $metric
   AND (EXISTS (SELECT 1 FROM glossary me

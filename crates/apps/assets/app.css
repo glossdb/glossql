@@ -124,6 +124,43 @@ a { color: inherit; text-decoration: none; }
 }
 .shell-nav .who-act:hover { color: var(--ink); border-color: var(--faint); }
 
+/* The sign-in modal: the one gate the surface carries. */
+dialog.signin {
+  background: var(--bg1);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 1.1rem 1.25rem;
+  width: min(22rem, 90vw);
+}
+dialog.signin::backdrop { background: rgba(4, 8, 14, 0.72); }
+dialog.signin .who-field {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  padding: 0.25rem 0.1rem;
+  margin: 0.6rem 0 0.9rem;
+}
+dialog.signin .who-field:focus { outline: none; border-bottom-color: var(--amber); }
+dialog.signin .signin-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+dialog.signin .who-act {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+}
+
 /* The request indicator: a hairline of amber under the bar. */
 .load-bar {
   position: fixed;

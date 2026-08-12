@@ -58,10 +58,16 @@ pub async fn frame(
         Ok(session) => session,
         Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     };
-    let values: HashMap<String, ScalarValue> = params
+    let mut values: HashMap<String, ScalarValue> = params
         .into_iter()
         .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))
         .collect();
+    // The bound dataset, always available to frame SQL as `$dataset` —
+    // reserved, so a URL cannot override what the app is bound to.
+    // Frames must never scan the `datasets` relation for it: in a
+    // multi-dataset workspace that fans every joined row out (found
+    // live, 2026-08-12).
+    values.insert("dataset".into(), ScalarValue::Utf8(Some(dataset.clone())));
     match session
         .query_stream_with_params(&sql, Some(ParamValues::from(values)))
         .await

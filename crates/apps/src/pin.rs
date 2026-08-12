@@ -24,12 +24,6 @@ pub struct PinForm {
     /// The gloss body, as JSON. The form carries the full body the pin
     /// writes — the frame proposed it, the human approved it.
     pub body: String,
-    /// Who pins, when no sign-in cookie rides the request — a direct
-    /// post's fallback. The cookie's verified subject wins where both
-    /// exist; either way the name is provenance, not permission — it
-    /// lands as the HUMAN actor id.
-    #[serde(default)]
-    pub pinned_by: String,
     /// Where the browser returns after a plain form post. Local paths
     /// only.
     #[serde(default)]
@@ -62,6 +56,16 @@ pub async fn pin(
         Ok(None) => return refuse(format!("no app `{app}`")),
         Err(e) => return refuse(e),
     };
+    // A pin is a signed act — no session, no write. The sign-in
+    // simulation is the gate until real auth replaces it (the lead,
+    // 2026-08-12: not optional).
+    let Some(who) = crate::auth::subject(door.secret.as_ref(), &headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "sign in to pin — a pin is a signed act" })),
+        )
+            .into_response();
+    };
     if !ident_path(&form.subject, 3) {
         return refuse(format!(
             "`{}` is not a path subject (identifier segments, dots between)",
@@ -86,11 +90,9 @@ pub async fn pin(
         Ok(dataset) => dataset,
         Err(response) => return response,
     };
-    let who = crate::auth::subject(door.secret.as_ref(), &headers)
-        .or_else(|| crate::auth::actor_name(&form.pinned_by).map(str::to_string));
     let actor = Actor {
         kind: ActorKind::Human,
-        id: who.unwrap_or_else(|| format!("app:{}", def.name)),
+        id: who,
     };
     let session = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,

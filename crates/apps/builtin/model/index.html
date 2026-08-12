@@ -200,8 +200,14 @@ needs your judgement, loosest first, all of it.</p>
           <span class="q-act">
             <span class="q-rest" x-cloak x-show="mine" x-transition.opacity>pinned · governs every read now</span>
             <span class="q-rest" x-cloak x-show="done && !mine" x-transition.opacity>answered</span>
+            {% if who %}
             <button class="pin-act" type="submit" x-show="!done"
                     title="write this option as your HUMAN gloss">pin</button>
+            {% else %}
+            <button class="pin-act" type="button" x-show="!done"
+                    onclick="document.getElementById('gl-signin').showModal()"
+                    title="a pin is a signed act">sign in to pin</button>
+            {% endif %}
           </span>
         </form>
       </template>

@@ -27,19 +27,34 @@
     {% for a in apps %}{% if not app or a.name != app.name %}<a href="/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
     <a{% if not app %} class="current"{% endif %} href="/app">Apps</a>
   </nav>
-  {# The sign-in simulation: a JWT cookie, no real login — who pins. #}
+  {# The sign-in simulation: a JWT cookie, no real login — who pins.
+     Signing in is a modal, not a field in the corner; a pin without a
+     session is refused at the door. #}
   {% if who %}
   <form class="who" method="post" action="/app/session/out">
     <span class="who-name" title="pins land under this name">{{ who }}</span>
     <button class="who-act" type="submit">sign out</button>
   </form>
   {% else %}
-  <form class="who" method="post" action="/app/session">
-    <input class="who-field" name="name" placeholder="your name" autocomplete="name" required>
-    <button class="who-act" type="submit">sign in</button>
-  </form>
+  <button class="who-act who" onclick="document.getElementById('gl-signin').showModal()">sign in</button>
   {% endif %}
 </header>
+{% if not who %}
+<dialog id="gl-signin" class="signin">
+  <form method="post" action="/app/session">
+    <span class="eyebrow">Sign in</span>
+    <p class="hint">Pins land under your name — it is the provenance every
+      later reader sees. No password yet: this is the slot where real
+      sign-in arrives.</p>
+    <input class="who-field" name="name" placeholder="your name" autocomplete="name" required autofocus>
+    <div class="signin-actions">
+      <button class="who-act" type="button"
+              onclick="document.getElementById('gl-signin').close()">cancel</button>
+      <button class="pin-act" type="submit">sign in</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 <div class="load-bar"></div>
 <main>
 {% block main %}{% endblock %}

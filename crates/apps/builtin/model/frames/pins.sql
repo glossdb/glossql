@@ -26,12 +26,14 @@ WITH q AS (
   WHERE g.aspect = 'pin_questions'
     AND i.i < json_length(g.body, 'questions')
 )
+SELECT * FROM (
 SELECT q.question, q.subject, q.aspect, q.body,
        arrow_cast(q.opt || CASE WHEN q.grounds <> '' THEN ' — ' || q.grounds ELSE '' END,
                   'Utf8') AS meta,
        CASE WHEN q.chosen THEN 'proposed' ELSE 'alternative' END AS stance,
        CASE WHEN q.chosen THEN 'g-jud' ELSE 'g-una' END AS scls,
-       q.conf
+       q.conf,
+       q.ord
 FROM q
 WHERE q.subject IS NOT NULL
   AND NOT EXISTS (
@@ -39,4 +41,30 @@ WHERE q.subject IS NOT NULL
     WHERE h.subject = q.subject AND h.aspect = q.aspect
       AND h.actor_kind = 'human' AND h.written_at >= q.agenda_written
   )
-ORDER BY q.conf, q.question, q.ord
+UNION ALL
+-- Owed claims whose aspect admits an enumerable value: the schema is
+-- the composition — one card per admitted value, the human's word the
+-- basis (the overrule half of the surface, the lead's requirement).
+-- The card retires the way any unassessed row does: any writing on
+-- the slot answers it.
+SELECT arrow_cast(c.subject || ': ' || c.aspect || '?', 'Utf8') AS question,
+       c.subject, c.aspect,
+       arrow_cast('{"value": "'
+         || json_get_str(json_get(json_get(json_get(a.schema, 'properties'), 'value'), 'enum'), v.i)
+         || '"}', 'Utf8') AS body,
+       arrow_cast(json_get_str(json_get(json_get(json_get(a.schema, 'properties'), 'value'), 'enum'), v.i)
+         || ' — the aspect admits it; your word is the basis', 'Utf8') AS meta,
+       'admitted' AS stance,
+       'g-una' AS scls,
+       CAST(NULL AS DOUBLE) AS conf,
+       v.i AS ord
+FROM GLOSSARY() c
+JOIN (SELECT subject FROM GLOSSARY(all => true)
+      WHERE aspect = 'role' AND json_get_str(body, 'value') = 'measure') r
+  ON r.subject = c.subject
+JOIN aspects a ON a.name = c.aspect
+CROSS JOIN generate_series(0, 7) AS v(i)
+WHERE c.state = 'unassessed' AND c.aspect IN ('behavior', 'unit')
+  AND v.i < json_length(json_get(json_get(a.schema, 'properties'), 'value'), 'enum')
+)
+ORDER BY conf ASC NULLS LAST, question, ord

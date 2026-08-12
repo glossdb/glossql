@@ -28,6 +28,9 @@ open_q AS (
     )
 ),
 owed AS (
+  -- Owed claims whose aspect admits an enumerable value render as
+  -- pinnable cards (the pins frame composes them from the schema);
+  -- only the free-valued remainder stays an investigate row.
   SELECT '–' AS glyph, 'g-una' AS gcls,
          CAST(NULL AS DOUBLE) AS conf,
          c.subject AS subj, c.aspect AS asp,
@@ -39,7 +42,9 @@ owed AS (
   JOIN (SELECT subject FROM GLOSSARY(all => true)
         WHERE aspect = 'role' AND json_get_str(body, 'value') = 'measure') r
     ON r.subject = c.subject
+  JOIN aspects a ON a.name = c.aspect
   WHERE c.state = 'unassessed' AND c.aspect IN ('behavior', 'unit')
+    AND json_length(json_get(json_get(a.schema, 'properties'), 'value'), 'enum') IS NULL
 ),
 loose AS (
   SELECT '◐' AS glyph, 'g-jud' AS gcls,
@@ -53,6 +58,14 @@ loose AS (
   WHERE g.kind = 'query'
     AND i.i < json_length(g.body, 'assumptions')
     AND json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') < 1.0
+    -- the winning slot only: a pinned body's assumptions replace the
+    -- agent's at every read, so only the governing ones queue
+    AND (EXISTS (SELECT 1 FROM glossary me
+                 WHERE me.subject = g.subject AND me.aspect = g.aspect
+                   AND me.actor_id = g.actor AND me.actor_kind = 'human')
+         OR NOT EXISTS (SELECT 1 FROM glossary h
+                        WHERE h.subject = g.subject AND h.aspect = g.aspect
+                          AND h.actor_kind = 'human'))
     AND NOT EXISTS (SELECT 1 FROM open_q oq
                     WHERE oq.subject = g.subject AND oq.aspect = g.aspect)
 )

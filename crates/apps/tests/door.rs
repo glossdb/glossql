@@ -264,6 +264,18 @@ async fn post_form_with(
         .unwrap()
 }
 
+async fn sign_in_cookie(app: &Router, name: &str) -> String {
+    let signed = post_form(app, "/app/session", &[("name", name)]).await;
+    assert_eq!(signed.status(), StatusCode::SEE_OTHER);
+    signed.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_sign_in_simulation_signs_pins() {
     // The sign-in simulation (ruled 2026-08-12): POST /app/session sets
@@ -286,6 +298,25 @@ async fn the_sign_in_simulation_signs_pins() {
         .await
         .unwrap();
 
+    // No session, no write: an unsigned pin refuses outright.
+    let unsigned = post_form(
+        &app,
+        "/app/perf/pin",
+        &[("subject", "ledger"), ("aspect", "note"), ("body", "{\"value\": \"x\"}")],
+    )
+    .await;
+    assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+
+    // A forged token is no token — the same refusal, never a fallback.
+    let forged = post_form_with(
+        &app,
+        "/app/perf/pin",
+        &[("subject", "ledger"), ("aspect", "note"), ("body", "{\"value\": \"x\"}")],
+        Some("gl_actor=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb290In0.Zm9yZ2Vk"),
+    )
+    .await;
+    assert_eq!(forged.status(), StatusCode::UNAUTHORIZED);
+
     // Sign in; the cookie comes back Set-Cookie, HttpOnly, /app-scoped.
     let signed = post_form(&app, "/app/session", &[("name", "Philipp Suter")]).await;
     assert_eq!(signed.status(), StatusCode::SEE_OTHER);
@@ -298,7 +329,7 @@ async fn the_sign_in_simulation_signs_pins() {
     let bad = post_form(&app, "/app/session", &[("name", "x; DROP TABLE")]).await;
     assert_eq!(bad.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-    // The cookie's subject outranks the form's pinned_by.
+    // Signed, the pin lands under the cookie's verified subject.
     let pinned = post_form_with(
         &app,
         "/app/perf/pin",
@@ -306,7 +337,6 @@ async fn the_sign_in_simulation_signs_pins() {
             ("subject", "ledger"),
             ("aspect", "note"),
             ("body", "{\"value\": \"signed\"}"),
-            ("pinned_by", "impostor"),
         ],
         Some(&pair),
     )
@@ -318,29 +348,6 @@ async fn the_sign_in_simulation_signs_pins() {
         .unwrap();
     let raw = format!("{raw:?}");
     assert!(raw.contains("Philipp Suter"), "{raw}");
-    assert!(!raw.contains("impostor"), "{raw}");
-
-    // A forged token is no token: the form fallback names the actor.
-    let forged = post_form_with(
-        &app,
-        "/app/perf/pin",
-        &[
-            ("subject", "ledger"),
-            ("aspect", "note"),
-            ("body", "{\"value\": \"forged\"}"),
-            ("pinned_by", "fallback name"),
-        ],
-        Some("gl_actor=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb290In0.Zm9yZ2Vk"),
-    )
-    .await;
-    assert_eq!(forged.status(), StatusCode::SEE_OTHER);
-    let raw = agent
-        .execute("SELECT actor FROM GLOSSARY(ledger, all => true) WHERE aspect = 'note';")
-        .await
-        .unwrap();
-    let raw = format!("{raw:?}");
-    assert!(raw.contains("fallback name"), "{raw}");
-    assert!(!raw.contains("root"), "{raw}");
 
     // Sign-out clears the cookie.
     let out = post_form(&app, "/app/session/out", &[]).await;
@@ -371,25 +378,28 @@ async fn the_pin_door_writes_the_human_slot() {
         .await
         .unwrap();
 
+    let cookie = sign_in_cookie(&app, "philipp").await;
+
     // An undeclared aspect refuses readable — the store speaking.
-    let refused = post_form(
+    let refused = post_form_with(
         &app,
         "/app/perf/pin",
         &[("subject", "ledger"), ("aspect", "nope"), ("body", "{}")],
+        Some(&cookie),
     )
     .await;
     assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-    // The pin: a human approves a body, signed with their name.
-    let pinned = post_form(
+    // The pin: a human approves a body, signed by their session.
+    let pinned = post_form_with(
         &app,
         "/app/perf/pin",
         &[
             ("subject", "ledger"),
             ("aspect", "note"),
             ("body", "{\"value\": \"the engineer's answer\"}"),
-            ("pinned_by", "philipp"),
         ],
+        Some(&cookie),
     )
     .await;
     assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
@@ -414,28 +424,31 @@ async fn the_pin_door_writes_the_human_slot() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pin_door_refuses_what_could_smuggle() {
     let (app, _plane, _dir) = workspace().await;
+    let cookie = sign_in_cookie(&app, "philipp").await;
 
     // A subject that is not a path of identifiers.
-    let bad_subject = post_form(
+    let bad_subject = post_form_with(
         &app,
         "/app/perf/pin",
         &[("subject", "ledger; DROP TABLE ledger"), ("aspect", "note"), ("body", "{}")],
+        Some(&cookie),
     )
     .await;
     assert_eq!(bad_subject.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     // A body that is not JSON.
-    let bad_body = post_form(
+    let bad_body = post_form_with(
         &app,
         "/app/perf/pin",
         &[("subject", "ledger"), ("aspect", "note"), ("body", "not json")],
+        Some(&cookie),
     )
     .await;
     assert_eq!(bad_body.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     // A JSON body carrying the dollar-quote terminator: after it, text
     // would parse as further statements.
-    let smuggle = post_form(
+    let smuggle = post_form_with(
         &app,
         "/app/perf/pin",
         &[
@@ -443,6 +456,7 @@ async fn the_pin_door_refuses_what_could_smuggle() {
             ("aspect", "note"),
             ("body", "{\"value\": \"$$; DELETE FROM glossary; --\"}"),
         ],
+        Some(&cookie),
     )
     .await;
     assert_eq!(smuggle.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -501,16 +515,17 @@ async fn the_pins_frame_serves_the_agenda_and_empties_on_answer() {
     assert_eq!(frame.status(), StatusCode::OK);
     assert_eq!(row_count(frame).await, 2);
 
-    // Approve the chosen option.
-    let pinned = post_form(
+    // Approve the chosen option, signed.
+    let cookie = sign_in_cookie(&app, "philipp").await;
+    let pinned = post_form_with(
         &app,
         "/app/model/pin",
         &[
             ("subject", "perf"),
             ("aspect", "definitions"),
             ("body", "{\"definitions\": {\"value\": {\"meaning\": \"per line\"}}}"),
-            ("pinned_by", "philipp"),
         ],
+        Some(&cookie),
     )
     .await;
     assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
@@ -576,7 +591,8 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                   "question": "q?", "option": "a",
                   "body": {"definitions": {"dso": {"meaning": "days outstanding"}}},
                   "chosen": true, "confidence": 0.7}
-               ]}$$;"#,
+               ]}$$;
+               DECLARE DATASET second SET (purpose: 'multi-dataset guard');"#,
         )
         .await
         .unwrap();
@@ -646,6 +662,75 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn owed_enum_claims_serve_as_pinnable_cards() {
+    // The overrule half (the lead, 2026-08-12): an owed claim whose
+    // aspect admits an enumerable value is pinnable straight from the
+    // schema — one card per admitted value, the human's word the
+    // basis. Free-valued aspects stay investigate rows.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT role WITH $${"type": "object", "required": ["value"],
+                 "properties": {"value": {"enum": ["key", "measure"]}}}$$ AS FACT ON COLUMN;
+               DECLARE ASPECT behavior WITH $${"type": "object", "required": ["value"],
+                 "properties": {"value": {"enum": ["stock", "flow", "none"]}}}$$ AS FACT ON COLUMN;
+               DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN);
+               GLOSS role ON ledger.value AS $${"value": "measure"}$$;"#,
+        )
+        .await
+        .unwrap();
+
+    // The pins frame carries the agenda card plus three admitted-value
+    // cards for the owed behavior claim.
+    let pins = get(&app, "/app/model/frames/pins").await;
+    assert_eq!(pins.status(), StatusCode::OK);
+    assert_eq!(row_count(pins).await, 1 + 3);
+
+    // Pinning one admitted value answers the claim — the cards retire.
+    let cookie = sign_in_cookie(&app, "philipp").await;
+    let pinned = post_form_with(
+        &app,
+        "/app/model/pin",
+        &[
+            ("subject", "ledger.value"),
+            ("aspect", "behavior"),
+            ("body", "{\"value\": \"flow\"}"),
+        ],
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
+    let after = get(&app, "/app/model/frames/pins").await;
+    assert_eq!(row_count(after).await, 1, "only the agenda card remains");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_dossier_faces_survive_a_second_dataset() {
+    // Found live by the lead (2026-08-12): with two datasets in the
+    // workspace, frames that scanned the `datasets` relation fanned
+    // every joined row out — two formulas, two materializations. The
+    // bound dataset rides in as $dataset instead; one row per face.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await; // seeds a second dataset
+
+    let metric = get(&app, "/app/model/frames/metric?metric=dso").await;
+    assert_eq!(metric.status(), StatusCode::OK);
+    assert_eq!(row_count(metric).await, 1);
+    let assumptions = get(&app, "/app/model/frames/assumptions?metric=dso").await;
+    assert_eq!(assumptions.status(), StatusCode::OK);
+    assert_eq!(row_count(assumptions).await, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_queue_hides_assumptions_an_open_question_covers() {
     // The one queue (ruled 2026-08-12): a loose assumption renders as
     // an investigate row only while no open agenda question targets
@@ -702,15 +787,16 @@ async fn the_brief_counts_what_waits_on_the_agent() {
     assert_eq!(row_count(before).await, 0);
 
     // A human pins the formula: newer than the recorded dso gloss.
-    let pinned = post_form(
+    let cookie = sign_in_cookie(&app, "philipp").await;
+    let pinned = post_form_with(
         &app,
         "/app/model/pin",
         &[
             ("subject", "perf"),
             ("aspect", "formulas"),
             ("body", "{\"formulas\": {\"dso\": \"ar / revenue * 360\"}}"),
-            ("pinned_by", "philipp"),
         ],
+        Some(&cookie),
     )
     .await;
     assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
@@ -760,15 +846,12 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
             "{\"sql\": \"SELECT month, value FROM ledger\", \"assumptions\": [{\"dimension\": \"definition\", \"assumption\": \"pinned\", \"basis\": \"engineer\", \"confidence\": 1.0}]}",
         ),
     ] {
-        let pinned = post_form(
+        let cookie = sign_in_cookie(&app, "philipp").await;
+        let pinned = post_form_with(
             &app,
             "/app/model/pin",
-            &[
-                ("subject", "perf"),
-                ("aspect", aspect),
-                ("body", body),
-                ("pinned_by", "philipp"),
-            ],
+            &[("subject", "perf"), ("aspect", aspect), ("body", body)],
+            Some(&cookie),
         )
         .await;
         assert_eq!(pinned.status(), StatusCode::SEE_OTHER, "pin on {aspect}");
