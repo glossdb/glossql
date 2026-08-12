@@ -31,8 +31,9 @@ documents:
   acceptance suite) · `glossary` (sqlx store, supersession, admission,
   collapse states, ACCEPTS-invalidation, glossary-delete verdict
   invalidation — 2026-08-05, aspect grain — `ON DATASET|TABLE|COLUMN|
-  RELATIONSHIP` gates glosses and RETURNS and bounds `unassessed`
-  disclosure, ruled 2026-08-05 — imports counters) · `session`
+  RELATIONSHIP|SOURCE` gates glosses and RETURNS and bounds `unassessed`
+  disclosure, ruled 2026-08-05; SOURCE grain ruled 2026-08-12, its slots
+  read and supersede workspace-wide — imports counters) · `session`
   (SessionContext assembly, RelationPlanner reads, statement router with
   the substrate allowlist, recipe materialization, probe routing,
   DROP TABLE lifecycle, detector-at-read; the plane — channels keyed

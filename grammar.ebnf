@@ -103,7 +103,7 @@ pair_path         = rel_side, rel_op, rel_side ;
 
 aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind,
                     [ "ON", grain, { ",", grain } ] ;
-grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" ;
+grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                     (* the subject classes glosses may attach to;
                        absent = all *)
 aspect_kind       = "MEASUREMENT"            (* never glossed; value = bound

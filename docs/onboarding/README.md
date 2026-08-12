@@ -77,12 +77,15 @@ Approved — the build items:
 Design owed before building:
 
 4. **Per-source knowledge deposits** (F5, narrowed 2026-08-12:
-   company-wide vocabulary postponed; per-source is the interesting
-   half). Source-system conventions — export dialect warts,
-   placeholders, key spellings — deposited at SOURCE grain so the
-   next dataset from the same system reads before probing. Needs a
-   design: how the deposit persists in Iceberg for reuse across
-   datasets, and how a dataset-local finding is promoted into it.
+   company-wide vocabulary postponed). RULED AND BUILT 2026-08-12:
+   `AS FACT ON SOURCE` — source-grain slots read, supersede, and
+   disclose across every dataset in the workspace; promotion is an
+   ordinary re-speak at source grain; taught in the add-source
+   skill. Remaining: a real run (the next dataset from a known
+   system reading conventions before its first probe) before the
+   proposal fixture enters the corpus; the Iceberg persistence rides
+   the storage integration when it lands (a workspace-grain sibling
+   namespace — see the proposal §5).
 5. **Definition-dependency read** (F4). A definition change's blast
    radius is traced by hand today. Free-text `basis` matching is
    unreliable on generated strings — unless the strings are known:
@@ -109,16 +112,14 @@ answer a bare `Not Found` (client re-init plus `USE` replay).
 
 ## Rulings owed (project lead; not to be decided in passing)
 
-- **Per-source deposit shape** (item 4): design proposal first, then
-  the ruling.
-- **Basis vocabulary modelling** (item 5): same — proposal, then
-  ruling.
+- **Basis vocabulary modelling** (item 5): proposal, then ruling.
 
 Ruled 2026-08-12 and folded into the build line above: the
 judged-negative shape (per-aspect `none`), definitions-in-glosses
-(confirmed), and plural witnesses per aspect (allowed — the review
-fix's semantics stand: each verdict against its own witness's
-threshold, any crossing withholds).
+(confirmed), plural witnesses per aspect (allowed — each verdict
+against its own witness's threshold, any crossing withholds), and
+the per-source deposit (fork B, `AS FACT ON SOURCE`, built same
+day).
 
 ## Open questions a run left with the engineer
 

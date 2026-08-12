@@ -186,10 +186,18 @@ The kind fixes the aspect's role:
   cached JSON output (§6, §7), served by `GLOSSARY()` beside facts and
   groundings, from the `cache` relation (§6).
 
-The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP, …` list is the
-aspect's **grain**: the subject classes glosses (and a `RETURNS` binding)
-may attach to. Absent, the aspect speaks to all grains. Disclosure (§5.3)
-stays within it: absence shows only on subjects the aspect is declared for.
+The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
+is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
+binding) may attach to. Absent, the aspect speaks to all grains. Disclosure
+(§5.3) stays within it: absence shows only on subjects the aspect is
+declared for.
+
+`SOURCE` grain (ruled 2026-08-12): the subject is a declared source's name
+(§3) — no further formality; `DECLARE SOURCE` is the definition. Sources
+are workspace rows, so source-grain slots read, supersede, and disclose
+across every dataset — the deposit one onboarding makes is what the next
+dataset reads. Only aspects that declare `ON SOURCE` get this sweep; a
+grainless aspect on a bare name stays dataset-scoped.
 
 Multiplicity lives inside the blob — array-typed schemas — never in extra
 statements or slots.

@@ -82,29 +82,33 @@ trust history (actor and time reset at each replay) — the same three
 losses the run charged against replay for company vocabulary.
 Promotion is copy-paste into the file.
 
-## 4. Fork B — the source as a subject (grain growth)
+## 4. Fork B — the source as a subject (grain growth) — RULED IN, 2026-08-12
 
-The source already has a central name; let the glossary speak to it.
-The aspect grain vocabulary grows one word — this must not parse
-today (`grammar.ebnf:106` closes the grain list at RELATIONSHIP):
+The source already has a central name; the glossary speaks to it.
+The aspect grain vocabulary grew one word (grammar, parser, store,
+SPEC §5.1 — landed 2026-08-12; the gap block below parses now):
 
-```glossql-gap
+```glossql
 DECLARE ASPECT conventions WITH $${
   "type": "object"
 }$$ AS FACT ON SOURCE;
+
+GLOSS conventions ON glos_erp AS $${
+  "placeholder_date": "1900-01-01 stands for unset",
+  "key_spelling": "fact tables prefix cell keys with Z; master data omits it"
+}$$;
 ```
 
-The gloss itself would then spell as any gloss does, the source name
-in subject position (`GLOSS conventions ON glos_erp AS $$…$$`) —
-that string parses under today's grammar as a path subject and fails
-only at resolution, so the growth is one grain keyword plus subject
-resolution reaching the `sources` relation, not a new statement
-head. What it buys over Fork A, mechanically: the subject is the
-workspace-grain source row, so every dataset reads the same slots —
-identity by construction, supersession and contest intact, no
+No new statement head: the gloss spelling always parsed as a path
+subject; the growth is the grain keyword plus the store treating
+source-grain slots as workspace rows. What it buys over Fork A: the
+subject is the workspace-grain source row, so every dataset reads
+the same slots — identity by construction, supersession and contest
+intact (a slot spoken in one dataset supersedes across all), no
 replay. Promotion is an ordinary act: the actor who judged the
 finding re-speaks it at source grain; the local gloss cites it as
-`basis` from then on.
+`basis` from then on. `DECLARE SOURCE` is the whole definition of
+what a source is — no further formality (lead, 2026-08-12).
 
 The add-source flow's opening changes by one read:
 
@@ -113,7 +117,7 @@ SELECT value FROM GLOSSARY(glos_erp) WHERE aspect = 'conventions';
 ```
 
 — served before the first probe, in whichever dataset the new export
-lands. (This read parses today; it resolves only under the fork.)
+lands.
 
 ## 5. Persistence — where the slots live (rides the storage ruling)
 
@@ -131,17 +135,18 @@ lead has asked to keep the interim straightforward.)
 
 ## 6. Findings
 
-- **Per-source deposits TRANSCRIBE today only as replay** (Fork A),
-  which loses identity, version, and trust history — the honest
-  interim, not the answer.
-- **The source is already a workspace-grain name** — Fork B's grain
-  keyword is the smallest growth that makes the deposit central by
-  construction: one word in the grain list, subject resolution to
-  the `sources` relation, zero new statement heads.
-- **Promotion needs no machinery under Fork B** — it is a re-speak
-  at source grain by the actor who judged it, witnessed like any
-  gloss; the `basis` seam keeps local evidence local.
-- **FORK, open with the lead**: A (replay, no growth) vs B (SOURCE
-  grain). B's cost is a grammar-adjacent change and belongs to the
-  corpus-first process; this fixture is its proposal. Cross-workspace
-  identity stays out — postponed with the company grain.
+- **FORK CLOSED — B ruled in (2026-08-12)**: `AS FACT ON SOURCE`
+  landed same day (grammar, parser, store, SPEC §5.1, add-source
+  skill). Fork A stays what it was: the interim that existed before
+  the grain, kept here as the record of why it lost (identity,
+  version, trust history).
+- **The source is already a workspace-grain name** — the grain
+  keyword was the smallest growth that makes the deposit central by
+  construction: one word in the grain list, zero new statement heads.
+- **Promotion needs no machinery** — it is a re-speak at source
+  grain by the actor who judged it, witnessed like any gloss; the
+  `basis` seam keeps local evidence local.
+- **Owed before this enters the corpus**: a real run — the next
+  dataset from a known system reading conventions before its first
+  probe. Cross-workspace identity stays out — postponed with the
+  company grain.

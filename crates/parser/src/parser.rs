@@ -205,8 +205,13 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                         Grain::Column
                     } else if consume_word(p, "RELATIONSHIP") {
                         Grain::Relationship
+                    } else if consume_word(p, "SOURCE") {
+                        Grain::Source
                     } else {
-                        return expected("DATASET, TABLE, COLUMN, or RELATIONSHIP", &grain_token);
+                        return expected(
+                            "DATASET, TABLE, COLUMN, RELATIONSHIP, or SOURCE",
+                            &grain_token,
+                        );
                     };
                     grains.push(grain);
                     if !p.consume_token(&Token::Comma) {

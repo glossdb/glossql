@@ -1,0 +1,28 @@
+---
+source: crates/parser/tests/statements.rs
+assertion_line: 52
+expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT conventions WITH $${\"type\": \"object\"}$$ AS FACT ON SOURCE;\"#).expect(\"must parse\")"
+---
+[
+    Declare(
+        Aspect(
+            AspectDecl {
+                name: Ident {
+                    value: "conventions",
+                    quote_style: None,
+                    span: Span(Location(1,16)..Location(1,27)),
+                },
+                schema: JsonBody {
+                    value: Object {
+                        "type": String("object"),
+                    },
+                    raw: "{\"type\": \"object\"}",
+                },
+                kind: Fact,
+                grains: [
+                    Source,
+                ],
+            },
+        ),
+    ),
+]

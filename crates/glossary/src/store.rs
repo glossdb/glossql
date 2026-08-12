@@ -400,12 +400,24 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
 
 /// Grain admission (ruled 2026-08-05): an aspect declared `ON grain, …`
 /// only accepts subjects of those grains; `None` (no clause) admits all.
-pub fn admit_grain(aspect: &str, grains: Option<&str>, dataset: &str, subject: &str) -> Result<()> {
+/// A bare name is table-shaped; when it names a declared source it also
+/// satisfies SOURCE grain (ruled 2026-08-12) — `is_source` is the
+/// caller's lookup against the `sources` relation.
+pub fn admit_grain(
+    aspect: &str,
+    grains: Option<&str>,
+    dataset: &str,
+    subject: &str,
+    is_source: bool,
+) -> Result<()> {
     let Some(declared) = grains else {
         return Ok(());
     };
     let grain = grain_of(dataset, subject);
     if declared.split(',').any(|g| g == grain) {
+        return Ok(());
+    }
+    if is_source && grain == "table" && declared.split(',').any(|g| g == "source") {
         return Ok(());
     }
     Err(Error::GrainRefused {
@@ -815,7 +827,8 @@ impl Store {
                 "standard grounding".into(),
             )?,
         }
-        admit_grain(aspect, grains.as_deref(), dataset, subject)?;
+        let is_source = self.source_settings(subject).await?.is_some();
+        admit_grain(aspect, grains.as_deref(), dataset, subject, is_source)?;
         // Where a witness exists, its BY list is the speaker gate (§7.1).
         let witnesses = self.witnesses_on(aspect).await?;
         if !witnesses.is_empty() {
@@ -1041,22 +1054,36 @@ impl Store {
         } else {
             ""
         };
+        // A source-grain row: its subject names a declared source and its
+        // aspect opted into SOURCE grain. Such rows read and supersede
+        // workspace-wide (ruled 2026-08-12) — the deposit the next
+        // dataset reads — while every other row stays dataset-scoped.
+        // NULL grains (no ON clause) never qualify: the sweep is opt-in.
+        const SOURCE_GRAIN: &str = "(g.subject IN (SELECT name FROM sources) \
+             AND EXISTS (SELECT 1 FROM aspects a WHERE a.name = g.aspect \
+               AND (',' || a.grains || ',') LIKE '%,source,%'))";
         let sql = format!(
             "SELECT g.subject, g.aspect, g.actor_kind, g.actor_id, g.body, g.written_at, \
                     g.snapshot_id \
              FROM glossary g \
-             WHERE g.dataset = ? AND {pred} {aspect_clause}AND NOT EXISTS (\
-               SELECT 1 FROM glossary n \
-               WHERE n.dataset = g.dataset AND n.subject = g.subject \
-                 AND n.aspect = g.aspect AND n.actor_kind = g.actor_kind AND n.id > g.id)"
+             WHERE {pred} {aspect_clause}AND (\
+               (NOT {SOURCE_GRAIN} AND g.dataset = ? AND NOT EXISTS (\
+                 SELECT 1 FROM glossary n \
+                 WHERE n.dataset = g.dataset AND n.subject = g.subject \
+                   AND n.aspect = g.aspect AND n.actor_kind = g.actor_kind AND n.id > g.id)) \
+               OR ({SOURCE_GRAIN} AND NOT EXISTS (\
+                 SELECT 1 FROM glossary n \
+                 WHERE n.subject = g.subject \
+                   AND n.aspect = g.aspect AND n.actor_kind = g.actor_kind AND n.id > g.id)))"
         );
-        let mut q = sqlx::query(&sql).bind(dataset);
+        let mut q = sqlx::query(&sql);
         for b in &binds {
             q = q.bind(b);
         }
         if let Some(a) = aspect {
             q = q.bind(a);
         }
+        q = q.bind(dataset);
         let witnesses = self.witnesses_all().await?;
         let witness_on = |aspect: &str| {
             witnesses
@@ -1293,7 +1320,22 @@ impl Store {
             .iter()
             .map(|r| (r.subject.clone(), r.aspect.clone()))
             .collect();
-        for subject in &ctx.universe {
+        // Declared sources join the subject universe: a source-grain
+        // aspect nobody spoke to is owed on every declared source
+        // (ruled 2026-08-12), in whichever dataset the read runs.
+        let source_names: std::collections::BTreeSet<String> =
+            sqlx::query("SELECT name FROM sources")
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .map(|r| r.get("name"))
+                .collect();
+        let subjects: Vec<&String> = ctx
+            .universe
+            .iter()
+            .chain(source_names.iter().filter(|s| !ctx.universe.contains(s)))
+            .collect();
+        for subject in subjects {
             let in_scope = match scope {
                 Scope::Dataset => true,
                 Scope::Subject(s) => subject == s || subject.starts_with(&format!("{s}.")),
@@ -1304,7 +1346,10 @@ impl Store {
             for a in &witnessed {
                 let in_grain = match grain_map.get(a).and_then(|g| g.as_deref()) {
                     None => true,
-                    Some(declared) => declared.split(',').any(|g| g == grain_of(dataset, subject)),
+                    Some(declared) => declared.split(',').any(|g| {
+                        g == grain_of(dataset, subject)
+                            || (g == "source" && source_names.contains(subject))
+                    }),
                 };
                 if !in_grain {
                     continue;
@@ -1796,6 +1841,7 @@ fn grains_str(grains: &[Grain]) -> Option<String> {
         (Grain::Table, "table"),
         (Grain::Column, "column"),
         (Grain::Relationship, "relationship"),
+        (Grain::Source, "source"),
     ];
     Some(
         order

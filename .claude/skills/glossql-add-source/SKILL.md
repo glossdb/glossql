@@ -22,6 +22,31 @@ DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
 The location is a root directory. Globs and file paths belong in
 recipe SQL, resolving under that root.
 
+**Read the source's conventions before probing.** A source-grain
+aspect's slots serve in every dataset, so what an earlier onboarding
+learned about this system — placeholder dates, format warts, key
+spellings — is already readable:
+
+```glossql
+SELECT value FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
+```
+
+And deposit what *you* learn the same way once it is confirmed — a
+convention is a fact about the source system, not about this
+dataset:
+
+```glossql
+DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+GLOSS conventions ON erp_export AS $${
+  "placeholder_date": "1900-01-01 stands for unset",
+  "timestamp_format": "%b %e %Y %I:%M%p, month names mixed-language"
+}$$;
+```
+
+Dataset-local evidence (orphan populations, grain verdicts) stays in
+dataset glosses; only what the next export from the same system will
+also carry belongs at source grain.
+
 A relational source names a connection URI as its location and an ADBC
 driver. The `driver:` value is the ADBC driver index **slug** — the
 name the operator's install registered (`dbc install <slug>`) — or a

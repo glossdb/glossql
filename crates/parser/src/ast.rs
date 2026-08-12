@@ -117,6 +117,10 @@ pub enum Grain {
     Table,
     Column,
     Relationship,
+    /// A declared source's name as subject (ruled 2026-08-12): the
+    /// deposit the next dataset reads — source-grain slots collapse
+    /// workspace-wide.
+    Source,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

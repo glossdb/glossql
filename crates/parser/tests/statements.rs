@@ -50,6 +50,10 @@ snap!(
     r#"DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;"#
 );
 snap!(
+    aspect_decl_source_grain,
+    r#"DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;"#
+);
+snap!(
     gloss_fact,
     r#"GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;"#
 );

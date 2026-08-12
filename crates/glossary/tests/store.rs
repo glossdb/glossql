@@ -1184,3 +1184,122 @@ async fn imports_relation_serves_unknown_not_negative_on_fan_out() {
     assert_eq!(rows[0][4], None, "landed > source: unknown, not -15");
     assert_eq!(rows[1][4].as_deref(), Some("3"));
 }
+
+#[tokio::test]
+async fn source_grain_slots_read_and_supersede_workspace_wide() {
+    // Ruled 2026-08-12 (the source-conventions proposal, fork B): an
+    // aspect ON SOURCE speaks to declared source names, and its slots
+    // collapse across datasets — the deposit the next dataset reads.
+    let s = store().await;
+    for d in [
+        "DECLARE DATASET glos SET (purpose: 'p');",
+        "DECLARE DATASET fin2 SET (purpose: 'p');",
+    ] {
+        let Declaration::Dataset(ds) = decl(d) else {
+            unreachable!()
+        };
+        s.declare_dataset(&ds).await.unwrap();
+    }
+    let Declaration::Source(src) =
+        decl("DECLARE SOURCE glos_erp SET (type: parquet, location: 'lake');")
+    else {
+        unreachable!()
+    };
+    s.declare_source(&src).await.unwrap();
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+
+    let g = gloss(r#"GLOSS conventions ON glos_erp AS $${"placeholder_date": "1900-01-01"}$$;"#);
+    // A bare name that is not a declared source stays table-shaped and
+    // is refused at SOURCE grain.
+    let e = s
+        .gloss("glos", &agent(), "conventions", "orders", &g.body, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(e, Error::GrainRefused { .. }), "{e}");
+
+    // Spoken while glos was the dataset; served in fin2 unchanged.
+    s.gloss("glos", &agent(), "conventions", "glos_erp", &g.body, None)
+        .await
+        .unwrap();
+    let rows = s
+        .collapsed_read(
+            "fin2",
+            &Scope::Subject("glos_erp".into()),
+            None,
+            &ReadContext::default(),
+        )
+        .await
+        .unwrap();
+    let row = rows
+        .iter()
+        .find(|r| r.aspect == "conventions")
+        .expect("the deposit reads from the other dataset");
+    assert_eq!(row.state, "current");
+
+    // Superseded from fin2; the newest slot wins back in glos too —
+    // supersession over (subject, aspect, actor kind) ignores the
+    // dataset at source grain.
+    let g2 = gloss(r#"GLOSS conventions ON glos_erp AS $${"placeholder_date": "cured"}$$;"#);
+    s.gloss("fin2", &agent(), "conventions", "glos_erp", &g2.body, None)
+        .await
+        .unwrap();
+    let rows = s
+        .collapsed_read(
+            "glos",
+            &Scope::Subject("glos_erp".into()),
+            None,
+            &ReadContext::default(),
+        )
+        .await
+        .unwrap();
+    let row = rows.iter().find(|r| r.aspect == "conventions").unwrap();
+    assert!(
+        row.value.as_ref().unwrap().to_string().contains("cured"),
+        "{row:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
+    // Disclosure at SOURCE grain: a witnessed conventions aspect nobody
+    // spoke to shows as an unassessed row on the declared source, in
+    // whichever dataset the read runs (ruled 2026-08-12).
+    let s = store().await;
+    let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'p');") else {
+        unreachable!()
+    };
+    s.declare_dataset(&ds).await.unwrap();
+    let Declaration::Source(src) =
+        decl("DECLARE SOURCE glos_erp SET (type: parquet, location: 'lake');")
+    else {
+        unreachable!()
+    };
+    s.declare_source(&src).await.unwrap();
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+    let Declaration::Witness(w) = decl("DECLARE WITNESS conventions_w ON conventions BY (AGENT, HUMAN);")
+    else {
+        unreachable!()
+    };
+    s.declare_witness(&w).await.unwrap();
+
+    let rows = s
+        .collapsed_read("fin", &Scope::Dataset, None, &ReadContext::default())
+        .await
+        .unwrap();
+    assert!(
+        rows.iter().any(|r| r.subject == "glos_erp"
+            && r.aspect == "conventions"
+            && r.state == "unassessed"),
+        "{rows:?}"
+    );
+}

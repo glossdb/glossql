@@ -750,11 +750,16 @@ impl Session {
                     })?;
                     // RETURNS lands under the aspect too: the extraction
                     // subject must sit in the aspect's declared grain.
+                    let is_source = store
+                        .source_settings(&resolved.subject)
+                        .await?
+                        .is_some();
                     glossql_glossary::admit_grain(
                         &returns,
                         grains.as_deref(),
                         &resolved.dataset,
                         &resolved.subject,
+                        is_source,
                     )
                     .map_err(SessionError::Store)?;
                     schemas::validate_instance(&schema, &output).map_err(|detail| {

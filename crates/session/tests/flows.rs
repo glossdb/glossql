@@ -953,3 +953,36 @@ async fn a_forwarded_delete_carries_one_statement_only() {
         "{outcomes:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_conventions_gloss_reads_from_another_dataset() {
+    // `AS FACT ON SOURCE` (ruled 2026-08-12): a declared source's name
+    // is a subject, and its slots serve in every dataset — the deposit
+    // the next dataset reads before probing.
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    run(
+        &session,
+        r#"DECLARE SOURCE glos_erp SET (type: parquet, location: 'lake/erp');
+           DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+           GLOSS conventions ON glos_erp AS $${"placeholder_date": "1900-01-01"}$$;
+           DECLARE DATASET fin2 SET (purpose: 'second dataset, same workspace');
+           USE fin2;"#,
+    )
+    .await;
+    let served = table(
+        &session,
+        "SELECT subject, state, value FROM GLOSSARY(glos_erp) WHERE aspect = 'conventions';",
+    )
+    .await;
+    assert!(served.contains("current"), "{served}");
+    assert!(served.contains("1900-01-01"), "{served}");
+
+    // The grain gate holds: a table-shaped subject that names no source
+    // is refused.
+    let e = session
+        .execute(r#"GLOSS conventions ON orders AS $${"placeholder_date": "x"}$$;"#)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("ON SOURCE"), "{e}");
+}
