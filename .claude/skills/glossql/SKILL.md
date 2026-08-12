@@ -78,6 +78,34 @@ is always current:
   band in green/yellow/orange/red.
 - ordinary SELECT over tables for the data itself.
 
+## The brief — start every session with it
+
+Humans pin through the app while you are away; some pins govern
+immediately (the human slot outranks at every read), some owe you an
+act. Before acting on anything else, sweep what changed:
+
+```glossql
+SELECT subject, aspect, actor_id, written_at FROM glossary
+WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 20;
+SELECT subject, aspect FROM GLOSSARY(fin) WHERE state = 'contested';
+SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+```
+
+Then close what owes an act, in the same session:
+
+- **A formula pin newer than the metric's recorded gloss**: the two
+  are one definition in two forms — re-record the materialization to
+  match the pinned formula (or carry the difference as a disclosed
+  assumption). Until you do, `read.<metric>()` serves the old SQL and
+  the app shows the pin as waiting on you.
+- **An approved `recipe_change`** (a human-pinned gloss carrying
+  `{table, sql, reason}`): run the `DECLARE RECIPE` it approves — the
+  approval is data, the act is yours.
+- **A contested slot**: re-ground and re-judge as the contest section
+  below says.
+- **An answered agenda**: read the human map back, re-compose any
+  still-open questions on top of it, re-gloss the agenda (the rounds).
+
 ## Measurements over-produce — you are the judge
 
 Detection functions are tuned toward recall: they emit *candidates*

@@ -156,6 +156,9 @@ needs your judgement, loosest first, all of it.</p>
   {{ tiles::value(frame="frames/census", field="needs", label="Open questions", format="raw",
                   chip="the queue",
                   note="Pinnable questions, judged assumptions below full confidence, and claims the model's rules owe and nobody wrote. Empties by answers, never by dismissal.") }}
+  {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on agent", format="raw",
+                  chip="the brief",
+                  note="Pins that owe an agent act: approved recipe changes not yet re-declared, formula pins newer than their recorded materialization, contested slots. When this is above zero, tell your agent to go on — it reads the same brief at session open.") }}
   {{ tiles::value(frame="frames/census", field="facts", label="Fact claims", format="raw",
                   chip="GLOSSARY()", pop="pop-facts",
                   note="Live fact glosses — superseded writings are already gone from the relation.") }}
@@ -210,6 +213,20 @@ needs your judgement, loosest first, all of it.</p>
       </template>
     </gl-rows>
     </div>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Waiting on the agent</span>
+      <code class="chip" title="Answered, not yet retriggered: pins that owe an agent act. The agent sweeps this brief at session open — when rows sit here, tell it to go on.">the brief</code></header>
+    <gl-rows frame="frames/brief" empty="nothing waits on the agent — every pin governs already">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:1fr auto">
+          <span class="r-what"><span class="r-subj">{what}</span><br>
+            <span class="r-meta">{why}</span></span>
+          <span class="r-meta">{since}</span>
+        </a>
+      </template>
+    </gl-rows>
   </section>
 
   <section class="tile">

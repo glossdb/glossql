@@ -457,8 +457,25 @@ GLOSS pin_questions ON fin AS $${"questions": [
 The approval writes the HUMAN slot directly — it outranks your slot
 at every read, and the question leaves the queue because the answer
 exists, never by dismissal. Read the human slots back at the start
-of your next session. Without an app surface, the fallback is the
-relay: the user answers in prose, you supersede your own slot with
-the pinned choice and basis `engineer-pinned <date>`. Either way,
-until an answer lands your report says which definitions stand on
-your judgment alone.
+of your next session (the core skill's brief). Without an app
+surface, the fallback is the relay: the user answers in prose, you
+supersede your own slot with the pinned choice and basis
+`engineer-pinned <date>`. Either way, until an answer lands your
+report says which definitions stand on your judgment alone.
+
+The agenda covers more than definitions (one queue, ruled
+2026-08-12):
+
+- **Every loose assumption you can answer ships as an entry** whose
+  option body is the full re-grounded gloss — the assumption at 1.0
+  with the pin as its basis. The app then shows the question instead
+  of a bare investigate row, and one gesture closes it.
+- **A recipe correction ships as an entry targeting `recipe_change`**
+  — declare it once per workspace as a FACT aspect ON TABLE; the
+  entry's body is `{"table": …, "sql": …, "reason": …}`. The pin is
+  the approval; the re-declare is yours to run next session, and the
+  app lists the approval as waiting on you until an import of that
+  table lands.
+- **After any formula pin, re-record the metric's materialization in
+  the same act** — the formula gloss and the recorded evaluation are
+  one definition in two forms, and the app counts the drift.

@@ -41,6 +41,35 @@ owed AS (
         WHERE aspect = 'role' AND json_get_str(body, 'value') = 'measure') r
     ON r.subject = c.subject
   WHERE c.state = 'unassessed' AND c.aspect IN ('behavior', 'unit')
+),
+-- The waiting count mirrors frames/brief.sql: pins that owe an agent
+-- act (unexecuted recipe approvals, formula pins newer than their
+-- metric's recorded materialization, contested slots).
+approvals AS (
+  SELECT h.subject, h.written_at, json_get_str(h.body, 'table') AS tbl
+  FROM glossary h
+  WHERE h.aspect = 'recipe_change' AND h.actor_kind = 'human'
+),
+waiting AS (
+  SELECT
+    (SELECT count(*) FROM approvals a
+     WHERE a.tbl IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM imports i
+                       WHERE i.table_name = a.tbl AND i.imported_at >= a.written_at))
+  + (SELECT count(*) FROM glossary g
+     JOIN aspects a ON a.name = g.aspect AND a.kind = 'query'
+     JOIN glossary h ON h.subject = g.subject AND h.aspect = 'formulas'
+       AND h.actor_kind = 'human' AND h.written_at > g.written_at
+     WHERE g.actor_kind = 'agent'
+       -- the store keeps superseded writings; only live slots count
+       AND NOT EXISTS (SELECT 1 FROM glossary g2
+                       WHERE g2.subject = g.subject AND g2.aspect = g.aspect
+                         AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at)
+       AND NOT EXISTS (SELECT 1 FROM glossary h2
+                       WHERE h2.subject = h.subject AND h2.aspect = h.aspect
+                         AND h2.actor_kind = 'human' AND h2.written_at > h.written_at)
+       AND json_get_str(json_get(h.body, 'formulas'), g.aspect) IS NOT NULL)
+  + (SELECT count(*) FROM GLOSSARY() c WHERE c.state = 'contested') AS n
 )
 SELECT
   (SELECT count(*) FROM raw WHERE kind = 'fact') AS facts,
@@ -49,4 +78,5 @@ SELECT
   (SELECT count(*) FROM aspects WHERE kind = 'query') AS metrics,
   (SELECT count(*) FROM witnesses) AS witnesses,
   (SELECT count(*) FROM raw WHERE kind = 'measurement') AS measurements,
-  (SELECT count(*) FROM open_q) + (SELECT n FROM loose) + (SELECT n FROM owed) AS needs
+  (SELECT count(*) FROM open_q) + (SELECT n FROM loose) + (SELECT n FROM owed) AS needs,
+  (SELECT n FROM waiting) AS waiting

@@ -688,6 +688,58 @@ async fn the_queue_hides_assumptions_an_open_question_covers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_brief_counts_what_waits_on_the_agent() {
+    // The waiting derivation (ruled 2026-08-12): a formula pin newer
+    // than the metric's recorded materialization owes the agent a
+    // re-alignment — the two forms of one definition. The brief shows
+    // it until the agent re-records; nothing is a maintained flag.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    // Seeded state: agent formulas + agent dso gloss — nothing waits.
+    let before = get(&app, "/app/model/frames/brief").await;
+    assert_eq!(before.status(), StatusCode::OK);
+    assert_eq!(row_count(before).await, 0);
+
+    // A human pins the formula: newer than the recorded dso gloss.
+    let pinned = post_form(
+        &app,
+        "/app/model/pin",
+        &[
+            ("subject", "perf"),
+            ("aspect", "formulas"),
+            ("body", "{\"formulas\": {\"dso\": \"ar / revenue * 360\"}}"),
+            ("pinned_by", "philipp"),
+        ],
+    )
+    .await;
+    assert_eq!(pinned.status(), StatusCode::SEE_OTHER);
+    let after = get(&app, "/app/model/frames/brief").await;
+    assert_eq!(row_count(after).await, 1, "the formula pin waits on the agent");
+
+    // The agent re-records the materialization — the wait clears.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
+                 "assumptions": [{"dimension": "definition", "assumption": "360-day year",
+                                  "basis": "engineer-pinned formula", "confidence": 1.0}]}$$;"#,
+        )
+        .await
+        .unwrap();
+    let cleared = get(&app, "/app/model/frames/brief").await;
+    assert_eq!(row_count(cleared).await, 0, "re-recording clears the wait");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metric_faces_serve_the_winning_slot_once() {
     // Found live 2026-08-12: after a pin, `formulas` holds two slots
     // (human and agent) and the dossier rendered the formula and the
