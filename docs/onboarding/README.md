@@ -109,12 +109,18 @@ Design owed before building:
    build order is the temporal investigation (item 6), then the
    resolve surface, then this schema change on the settled words.
 6. **Temporal typing and cast accounting on the relational path**
-   (run 8, findings 1 and 4; interest confirmed 2026-08-12). Dates
-   cannot land as a date type from a dialect-less source, and the
-   cast safety net is absent over ADBC (`CastAccounting::Unchecked`).
-   v0.3 solved the timestamp half in part — investigate its approach
-   (`../dataraum-context`) before proposing; the 2026-08-07
-   no-landing-side-machinery ruling stands until then.
+   (run 8, findings 1 and 4). INVESTIGATED 2026-08-12
+   (`../../reports/2026-08-12-v03-temporal-investigation.md`): v0.3
+   solved format detection for untyped file sources (config-driven
+   value patterns, two-gate confidence, generated typed tables — its
+   generated DDL is glossql's recipe, authored instead); on the
+   relational path it declined value verification with a stated
+   rationale that holds here too, and its SQLite weak-typing
+   handling is dead code. The 2026-08-07 ruling stands. Open for the
+   lead: (a) ship a format-detection measurement (recall; the agent
+   judges, the recipe stays authored), (b) a role-vs-type detector
+   (glossed `timestamp`, landed text — nobody computes that flag
+   today).
 
 Sequenced later (2026-08-12): **the full deletion cascade** — after
 onboarding, the company-level glossary, and the storage integration
