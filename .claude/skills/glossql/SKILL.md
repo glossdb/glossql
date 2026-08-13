@@ -99,13 +99,14 @@ SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
 ```
 
 The connect-time brief the door serves counts what stands — human
-writings, approvals awaiting your re-declare, and **open questions**
-(owed claims and loose assumptions the door can ask the human about).
-While that count is above zero, trigger the round: a client with
-question forms serves one question per tool call, so keep calling
-until it stays quiet; a client without them gets nothing — relay the
-open questions in chat yourself, multiple choice with your grounds,
-and run the statement the answer names.
+writings, approvals awaiting your re-declare, and **judgment
+questions** (assumptions below full confidence — conventions and
+definitions the data cannot arbitrate). While that count is above
+zero, trigger the round: a client with question forms serves one
+question per tool call, so keep calling until it stays quiet; a
+client without them gets nothing — relay the open questions in chat
+yourself, multiple choice with your grounds, and run the statement
+the answer names.
 
 Then close what owes an act, in the same session:
 
@@ -130,6 +131,38 @@ Reading a measurement is a judging job — verify each candidate against
 the data itself, then declare or gloss only the survivors. The rejects
 stay in the measurement, visible and undeclared; never delete them to
 "clean up". Judgment lives in your reads, not in the function.
+
+## Never ask a human for a statistic
+
+Ruled 2026-08-13, from the first live run: a question the shipped
+functions can settle is *your* work, and asking the human for it —
+"is this a stock or a flow?" — is asking them to do statistics by
+hand. The round and your chat relays carry judgment only: definitions,
+conventions, business meaning, choices between readings. Before any
+question leaves the workspace, walk this map and run what answers it:
+
+| the question | what settles it |
+|---|---|
+| what values a column holds — range, nulls, distincts, top values | `profile()` |
+| outliers on a numeric column | `outliers()` (profile first) |
+| a date column's grain, span, gaps | `temporal()` |
+| **stock or flow — may it be summed** | `behavior_evidence()` over declared edges; its anchors carry the verdict, alternatives, and Wilson support |
+| **a sign convention** (ledger-signed vs natural) | the `sign` partition on a `behavior_evidence` anchor — primary/mirror counts, never column names |
+| which columns join, and how well | `detect_relationships()`, then your anti-join judging; standing health is `relationship_coherence()` |
+| whether a column derives from siblings (a = b × c) | `detect_derivations()` |
+| which axes are worth slicing | `dimension_relevance()` (profiles first) |
+| hierarchies inside dimensions | `detect_hierarchies()` |
+| two metrics accidentally identical | `detect_grounding_collisions()` |
+| whether a metric's month is surprising | `metric_bands()`, adjudicated by `band_breach` |
+| the app's series and slices | `metric_cube()`, served by `metric_series()` |
+| which rows look wrong, on a signal | `misfit.<frame>()` |
+| whether an authored expectation holds | a check function's voice + `rate_tolerance`, read via `ATTEST()` |
+
+What remains askable after the map is walked is exactly what the
+round serves: an assumption whose basis is your judgment, held below
+full confidence. When a measurement *abstains*, the abstention names
+why — relay that with your grounds as a judgment question if it stays
+load-bearing, never as a raw "which is it?".
 
 ## Confidence means the number
 

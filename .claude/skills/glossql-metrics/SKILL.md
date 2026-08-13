@@ -273,8 +273,31 @@ SELECT subject, band, score FROM ATTEST(fin::metric_bands);
   month; a grounding whose body carries `"behavior": "stock"` takes
   the last value per month instead. No marker reads as flow — mark
   your stocks (§3), or their walk sums levels and lies.
-- The model app's metric dossier renders the walk (the trajectory
-  tile); the score is ordinal (band displacement), never a probability.
+- The metrics app's dossier renders the walk (the corridor tile); the
+  score is ordinal (band displacement), never a probability.
+
+### The cube — run it beside the walk
+
+`metric_cube` is the walk's sibling and the business surface's fuel:
+one measurement caching, per grounded metric, the monthly total, the
+slices along its served dimension columns (2..24 members, at most two
+axes, the last 24 months — caps stated in the body), and the rival
+series where an assumption discloses `alternative_sql`. The built-in
+metrics app serves every face from it through `metric_series()` —
+long rows any SQL slices:
+
+```glossql
+SELECT metric_cube() FROM fin;
+SELECT period, member, value FROM metric_series()
+WHERE metric = 'revenue' AND dimension = 'cost_center';
+```
+
+Run it whenever you run the walk — a grounding write or a landed
+import stales both caches, and until the next run the app's tiles
+say honestly that the measurement has not run. A dimension the cube
+should slice must be a served column of the extract (§3): the cube
+admits axes from the grounding's own columns, never from the raw
+tables.
 
 ## 6. What-if — a scenario is declared, then read
 
@@ -393,14 +416,17 @@ what remains is convention, and convention is the user's to rule.
 
 That is a ladder, and you walk it before asking. For each loose
 assumption, first try to close it by measurement — run the check
-that would decide it, and record the result as the basis. If the
+that would decide it, and record the result as the basis (the core
+skill's function map names what settles what). If the
 question stays load-bearing after it closes (a reconciliation that
 must keep holding, a behavior new imports could break), declare a
 witness on that aspect (§5) so a standing check re-decides it on
 every import instead of anyone re-asking. Only what no measurement
-can arbitrate goes to the user. A question you ask that data could
-have answered costs the user's attention twice: once now, and once
-more when they learn to skim your questions.
+can arbitrate goes to the user — a **choice between readings**, never
+a statistic; "is this a stock or a flow" is `behavior_evidence`'s
+question, not the user's (ruled 2026-08-13). A question you ask that
+data could have answered costs the user's attention twice: once now,
+and once more when they learn to skim your questions.
 Definitional risk is invisible from inside your own judgment — it
 shows only against an alternative — so the alternative must be
 named, every time. Name it runnably where the choice bites: an
@@ -416,8 +442,10 @@ assumption entry may carry the strongest rival reading as SQL —
 
 — optional, one rival only. A runnable alternative is what lets
 anyone (you, the human, an app) compute what actually moves between
-the readings instead of arguing from prose. Start with the metric
-where the families diverge hardest, not everywhere.
+the readings instead of arguing from prose — the cube (§5) runs the
+rival monthly and the metrics app's story tile draws both lines, so
+the gap is a chart the human reads before ruling. Start with the
+metric where the families diverge hardest, not everywhere.
 
 Close the flow by presenting **every definitional choice you made**
 as a question to the user — one per definition, multiple choice,

@@ -29,7 +29,7 @@ waiting_formulas AS (
   SELECT 'formula answer on ' || g.aspect AS what,
          'the recorded materialization predates it' AS why,
          arrow_cast(replace(substr(h.written_at, 1, 16), 'T', ' '), 'Utf8') AS since,
-         '?metric=' || g.aspect AS link
+         '/app/metrics?metric=' || g.aspect AS link
   FROM glossary g
   JOIN aspects a ON a.name = g.aspect AND a.kind = 'query'
   JOIN glossary h ON h.subject = g.subject AND h.aspect = 'formulas'

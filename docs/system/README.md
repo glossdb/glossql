@@ -25,17 +25,19 @@ is SPEC.md's business; onboarding has `../onboarding/`, quality has
 - **Import** — file sources with cast accounting; the ADBC executor
   for relational sources (key harvest as judge evidence only);
   source-row counting.
-- **Scripts** — rhai runtime, zero-copy kernels, the 13-function
+- **Scripts** — rhai runtime, zero-copy kernels, the shipped
   measurement library declared at boot; `tabicl_bands` native kernel
   over the sibling `../tabicl-candle` port (Metal by default, CPU
   fallback, capped candle pool), `metric_bands` + `band_breach`;
-  abstentions name absent inputs.
+  `metric_cube` (the business surface's fuel, served by
+  `metric_series()`); abstentions name absent inputs.
 - **Doors** — `/mcp` (stateless, one tool, row cap bounds engine
   work), `/query` (streaming Arrow IPC), `/app` (directory apps:
   tera pages, frame SQL, vega-lite specs; URL params bind as typed
-  plan placeholders; gl-rows row surfaces; the model app ships in the
-  binary, workspace apps shadow it).
-- **Skills** — the eight in `.claude/skills/`, the one teaching layer.
+  plan placeholders; gl-rows row surfaces; two built-ins ship in the
+  binary — model, the verification surface, and metrics, the business
+  surface over `metric_series()` — workspace apps shadow them).
+- **Skills** — the nine in `.claude/skills/`, the one teaching layer.
 - **Bootstrap** — a fresh workspace receives the shipped system;
   declaration relations read as plain tables.
 - **Hardening** — the 2026-08-06 adversarial review's confirmed

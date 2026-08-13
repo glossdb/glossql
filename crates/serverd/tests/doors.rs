@@ -295,100 +295,15 @@ fn meta_elicit() -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_round_asks_an_owed_claim_and_the_retry_lands_it() {
-    // The question round, sessionless (SEP-2322 MRTR): an owed claim
-    // whose aspect admits an enumerable value becomes a choice form,
-    // options straight from the schema; the human's answer lands as
-    // the anonymous human gloss and the claim stops deriving.
-    let (app, dir) = lake_app().await;
-    let setup = format!(
-        r#"DECLARE DATASET fin SET (purpose: 'round test');
-           USE fin;
-           DECLARE SOURCE erp SET (type: csv, location: '{}');
-           DECLARE RECIPE ledger ON fin FROM erp AS $$SELECT CAST(month AS DATE) AS month, CAST(value AS DOUBLE) AS value FROM read_csv('ledger.csv')$$;
-           DECLARE ASPECT role WITH $${{"type": "object", "required": ["value"],
-             "properties": {{"value": {{"enum": ["key", "measure"]}}}}}}$$ AS FACT ON COLUMN;
-           DECLARE ASPECT behavior WITH $${{"type": "object", "required": ["value"],
-             "properties": {{"value": {{"enum": ["stock", "flow", "none"]}}}}}}$$ AS FACT ON COLUMN;
-           DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN);
-           GLOSS role ON ledger.value AS $${{"value": "measure"}}$$;"#,
-        dir.path().display()
-    );
-    // Seeding rides the plain stamp — no capability, no round.
-    let body = expect_ok(mcp(app.clone(), call_with(meta(), 50, &setup, None)).await).await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-
-    // The ask arrives instead of execution.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 51, "SELECT 1 AS ok", None)).await)
-            .await;
-    assert_eq!(
-        body["result"]["resultType"],
-        json!("input_required"),
-        "{body}"
-    );
-    let ask = &body["result"]["inputRequests"]["owed:ledger.value:behavior"];
-    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
-    let options = ask["params"]["requestedSchema"]["properties"]["value"]["enum"].to_string();
-    assert!(options.contains("flow"), "{body}");
-
-    // The retry lands the choice with human standing.
-    let answer = json!({"action": "accept", "content": {"value": "flow"}});
-    let body = expect_ok(
-        mcp(
-            app.clone(),
-            call_with(
-                meta_elicit(),
-                52,
-                "SELECT 1 AS ok",
-                Some(("owed:ledger.value:behavior", answer)),
-            ),
-        )
-        .await,
-    )
-    .await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    let notes = body["result"]["content"].to_string();
-    assert!(notes.contains("landed `behavior` on `ledger.value`"), "{notes}");
-
-    // The claim stops deriving — the next call just executes.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 53, "SELECT 1 AS ok", None)).await)
-            .await;
-    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
-
-    // The slot carries the anonymous human, never the calling agent.
-    let body = expect_ok(
-        mcp(
-            app,
-            call_with(
-                meta(),
-                54,
-                "SELECT actor_kind, actor_id, subject, aspect FROM glossary;",
-                None,
-            ),
-        )
-        .await,
-    )
-    .await;
-    let text = body["result"]["content"][0]["text"].as_str().unwrap();
-    let outcomes: Value = serde_json::from_str(text).unwrap();
-    let rows = outcomes[0]["rows"].as_array().unwrap();
-    assert!(
-        rows.iter().any(|row| row["actor_kind"] == json!("human")
-            && row["actor_id"] == json!("human")
-            && row["subject"] == json!("ledger.value")
-            && row["aspect"] == json!("behavior")),
-        "{rows:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_kit_arms_the_round_with_nothing_hand_declared() {
-    // The KPI kit ships the vocabulary at boot: a fresh workspace, one
-    // landed table, one role gloss — and the behavior question derives
-    // with no DECLARE ASPECT, no DECLARE WITNESS in the flow. The next
-    // connect's brief counts it.
+async fn the_round_never_asks_the_human_for_statistics() {
+    // Ruled 2026-08-13, from the first live run: an unassessed
+    // witnessed claim a measurement can settle (behavior, unit) is the
+    // AGENT's backlog — behavior_evidence computes it — and the door
+    // must not ask the human for it. The kit ships the vocabulary, a
+    // table lands, a role gloss marks the measure, the behavior claim
+    // stands owed — and the round stays silent; the brief counts no
+    // question. (Judgment questions — loose assumptions — still ask:
+    // the sibling test below.)
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("ledger.csv"),
@@ -424,26 +339,22 @@ async fn the_kit_arms_the_round_with_nothing_hand_declared() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 70, &setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
-    // The shipped behavior aspect asks its choice question, options
-    // straight from the kit's schema.
+    // The owed behavior claim derives in the store (unassessed row) —
+    // but the round asks nothing: no input_required, no form.
     let body =
         expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, "SELECT 1 AS ok", None)).await)
             .await;
-    assert_eq!(
+    assert_ne!(
         body["result"]["resultType"],
         json!("input_required"),
-        "{body}"
+        "the door asked the human for a statistic: {body}"
     );
-    let ask = &body["result"]["inputRequests"]["owed:ledger.value:behavior"];
-    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
-    let options = ask["params"]["requestedSchema"]["properties"]["value"]["enum"].to_string();
-    assert!(options.contains("stock"), "{body}");
 
-    // The next connect hears it: the brief counts the open question.
+    // And the brief counts no open question — the claim is agent work.
     let body = expect_ok(mcp(app, initialize()).await).await;
     let instructions = body["result"]["instructions"].as_str().unwrap();
     assert!(
-        instructions.contains("1 question stands open for the human"),
+        !instructions.contains("question"),
         "{instructions}"
     );
 }
@@ -815,4 +726,73 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
     assert_eq!(outcomes[0]["rows"].as_array().unwrap().len(), 3);
     assert_eq!(outcomes[0]["row_count"], json!(3));
     assert_eq!(outcomes[0]["truncated"], json!(true));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sequential_rulings_compose_instead_of_reverting() {
+    // Found live 2026-08-13: ruling a second assumption composed from
+    // the AGENT body, reverting the human's first ruling — which then
+    // derived and asked again, a loop. The ruling composes from the
+    // winning slot, so earlier rulings ride along.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'sequential rulings');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [
+            {"dimension": "convention", "assumption": "a flat 30-day month", "basis": "judgment", "confidence": 0.6},
+            {"dimension": "definition", "assumption": "total revenue in the denominator", "basis": "judgment", "confidence": 0.7}
+          ]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 80, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // Rule the first (lowest confidence asks first), then the second.
+    for key in ["loose:fin:dso:0", "loose:fin:dso:1"] {
+        let answer = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+        let body = expect_ok(
+            mcp(
+                app.clone(),
+                call_with(meta_elicit(), 81, "SELECT 1 AS ok", Some((key, answer))),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            body["result"]["content"].to_string().contains("landed `dso`"),
+            "{key}: {body}"
+        );
+    }
+
+    // Both rulings stand in the human body — the first did not revert.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                82,
+                "SELECT body FROM glossary WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 1;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
+    assert!(!human_body.contains("0.6"), "reverted: {human_body}");
+    assert!(!human_body.contains("0.7"), "reverted: {human_body}");
+    assert_eq!(
+        human_body.matches("human-ruled").count(),
+        2,
+        "{human_body}"
+    );
+
+    // And the round is quiet — nothing re-derives.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 83, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
 }

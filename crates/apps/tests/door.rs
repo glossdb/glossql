@@ -297,34 +297,38 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let model = glossql_apps::BUILTINS
-        .iter()
-        .find(|b| b.name == "model")
-        .unwrap();
-    for (path, _) in model.files {
-        let Some(stem) = path.strip_prefix("frames/").and_then(|p| p.strip_suffix(".sql"))
-        else {
-            continue;
-        };
-        // Extra params are ignored by frames that bind neither.
-        let uri = format!("/app/model/frames/{stem}?metric=dso&subject=ledger");
-        let response = get(&app, &uri).await;
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "frame {stem} refused: {}",
-            String::from_utf8_lossy(&bytes)
-        );
-        let reader =
-            arrow_ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
-                .unwrap();
-        for field in reader.schema().fields() {
-            assert_classic(field.data_type(), stem, field.name());
-        }
-        for batch in reader {
-            batch.unwrap();
+    for builtin in glossql_apps::BUILTINS {
+        for (path, _) in builtin.files {
+            let Some(stem) = path.strip_prefix("frames/").and_then(|p| p.strip_suffix(".sql"))
+            else {
+                continue;
+            };
+            // Extra params are ignored by frames that bind none of them.
+            let uri = format!(
+                "/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region",
+                builtin.name
+            );
+            let response = get(&app, &uri).await;
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "frame {}/{stem} refused: {}",
+                builtin.name,
+                String::from_utf8_lossy(&bytes)
+            );
+            let reader = arrow_ipc::reader::StreamReader::try_new(
+                std::io::Cursor::new(bytes.to_vec()),
+                None,
+            )
+            .unwrap();
+            for field in reader.schema().fields() {
+                assert_classic(field.data_type(), stem, field.name());
+            }
+            for batch in reader {
+                batch.unwrap();
+            }
         }
     }
 }
@@ -338,10 +342,10 @@ async fn the_dossier_faces_survive_a_second_dataset() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await; // seeds a second dataset
 
-    let metric = get(&app, "/app/model/frames/metric?metric=dso").await;
+    let metric = get(&app, "/app/metrics/frames/metric?metric=dso").await;
     assert_eq!(metric.status(), StatusCode::OK);
     assert_eq!(row_count(metric).await, 1);
-    let assumptions = get(&app, "/app/model/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
     assert_eq!(assumptions.status(), StatusCode::OK);
     assert_eq!(row_count(assumptions).await, 2);
 }
@@ -417,7 +421,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let before = get(&app, "/app/model/frames/metric?metric=dso").await;
+    let before = get(&app, "/app/metrics/frames/metric?metric=dso").await;
     assert_eq!(before.status(), StatusCode::OK);
     assert_eq!(row_count(before).await, 1);
 
@@ -444,12 +448,88 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
         .unwrap();
 
     // Still one row per face, and it is the human's.
-    let metric = get(&app, "/app/model/frames/metric?metric=dso").await;
+    let metric = get(&app, "/app/metrics/frames/metric?metric=dso").await;
     assert_eq!(row_count(metric).await, 1);
-    let assumptions = get(&app, "/app/model/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
     assert_eq!(
         row_count(assumptions).await,
         1,
         "the human body carries one assumption; the agent's two must not show"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_metrics_faces_serve_the_cached_cube() {
+    // The business surface end to end from the cube cache: the pulse
+    // carries the latest month and the admitted axes, the picker lists
+    // them, a picked slice serves its members, and the trend carries
+    // the disclosed rival beside the chosen reading. The script that
+    // builds this body is the scripts suite's business — here it is
+    // planted as the measurement would cache it.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let cube = serde_json::json!({
+        "applicable": true,
+        "caps": {"dims": 2, "members": 24, "months": 24},
+        "metrics": [{
+            "metric": "dso", "applicable": true, "behavior": "flow",
+            "dims": ["cohort"], "alternative": "days on billings",
+            "rows": [
+                ["", "", "2026-01", 12.5], ["", "", "2026-02", 4.0],
+                ["cohort", "a", "2026-01", 10.5], ["cohort", "a", "2026-02", 4.0],
+                ["cohort", "b", "2026-01", 2.0],
+                ["alternative", "days on billings", "2026-01", 11.0],
+                ["alternative", "days on billings", "2026-02", 5.0]
+            ]
+        }]
+    });
+    plane
+        .store()
+        .cache_put("perf", "perf", "metric_cube", None, &cube.to_string(), None)
+        .await
+        .unwrap();
+
+    let pulse = get(&app, "/app/metrics/frames/pulse").await;
+    assert_eq!(pulse.status(), StatusCode::OK);
+    assert_eq!(row_count(pulse).await, 1, "one declared surface, one row");
+
+    let dims = get(&app, "/app/metrics/frames/dims?metric=dso").await;
+    assert_eq!(row_count(dims).await, 1, "cohort is the one admitted axis");
+
+    let slices = get(&app, "/app/metrics/frames/slices?metric=dso&dim=cohort").await;
+    assert_eq!(row_count(slices).await, 3, "two members over two months, one sparse");
+
+    let trend = get(&app, "/app/metrics/frames/trend?metric=dso").await;
+    assert_eq!(
+        row_count(trend).await,
+        4,
+        "the chosen reading and the rival, two months each"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_metrics_pages_render_both_states() {
+    // The pulse and the dossier, as pages: the front renders the list
+    // and the front counts; a metric URL renders the dossier with the
+    // slice picker, and a picked dim adds the slice chart tile.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let front = get(&app, "/app/metrics").await;
+    assert_eq!(front.status(), StatusCode::OK);
+    let front = text(front).await;
+    assert!(front.contains("frames/pulse"), "{front}");
+    assert!(front.contains("frames/front"), "{front}");
+
+    let dossier = text(get(&app, "/app/metrics?metric=dso").await).await;
+    assert!(dossier.contains("frames/trend"), "{dossier}");
+    assert!(dossier.contains("frames/dims"), "{dossier}");
+    assert!(
+        !dossier.contains("frames/slices"),
+        "no dim picked — the slice tile must not render"
+    );
+
+    let sliced = text(get(&app, "/app/metrics?metric=dso&dim=cohort").await).await;
+    assert!(sliced.contains("frames/slices"), "{sliced}");
 }

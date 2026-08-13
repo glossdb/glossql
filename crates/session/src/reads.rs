@@ -380,6 +380,17 @@ impl RelationPlanner for GlossqlReads {
         let batch = match (fname.as_str(), args) {
             ("glossary", Some(a)) => self.run(glossary_read(&self.shared, &a.args))?,
             ("attest", Some(a)) => self.run(attest_read(&self.shared, &a.args))?,
+            // `metric_series()` — the cube read (2026-08-13): the cached
+            // `metric_cube` measurement flattened to long rows, so a
+            // static frame slices any metric with plain value filters.
+            ("metric_series", Some(a)) => {
+                if !a.args.is_empty() {
+                    return Err(DataFusionError::Plan(
+                        "metric_series() takes no arguments — filters ride WHERE".into(),
+                    ));
+                }
+                self.run(metric_series_read(&self.shared))?
+            }
             // The store's relations, readable as plain tables; snapshot at
             // plan time, like every other read here. Which names qualify
             // lives in one place: the store's RELATIONS table.
@@ -555,6 +566,79 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
                 .await?,
         ))
     }
+}
+
+/// The cube flattened: `(metric, dimension, member, period, value)`.
+/// Dimension `''` is the monthly total, `'alternative'` the disclosed
+/// rival reading, anything else a served dimension column with its
+/// member in `member`. Cached-only by design — an empty relation means
+/// the measurement has not run (`SELECT metric_cube() FROM <dataset>`),
+/// the same honesty the bands tile keeps; nothing computes at page
+/// load.
+async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let mut rows: Vec<(String, String, String, String, f64)> = Vec::new();
+    if let Some(cached) = shared
+        .store
+        .cache_get(&dataset, &dataset, "metric_cube", None)
+        .await?
+    {
+        let body: Value = serde_json::from_str(&cached.body).map_err(|e| {
+            SessionError::BadSubject(format!("metric_series(): the cached cube is not JSON: {e}"))
+        })?;
+        for m in body["metrics"].as_array().into_iter().flatten() {
+            let Some(metric) = m["metric"].as_str() else {
+                continue;
+            };
+            for r in m["rows"].as_array().into_iter().flatten() {
+                let (Some(dim), Some(member), Some(period), Some(value)) = (
+                    r[0].as_str(),
+                    r[1].as_str(),
+                    r[2].as_str(),
+                    r[3].as_f64(),
+                ) else {
+                    continue;
+                };
+                rows.push((
+                    metric.to_string(),
+                    dim.to_string(),
+                    member.to_string(),
+                    period.to_string(),
+                    value,
+                ));
+            }
+        }
+    }
+    let schema = Arc::new(Schema::new(vec![
+        utf8("metric"),
+        utf8("dimension"),
+        utf8("member"),
+        utf8("period"),
+        Field::new("value", DataType::Float64, false),
+    ]));
+    Ok(batch(
+        schema,
+        vec![
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.0.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.1.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.2.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.3.as_str()),
+            )),
+            Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.4))),
+        ],
+    ))
 }
 
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {

@@ -5,11 +5,14 @@ description: Author a server-rendered data app on the glossql app door — app.t
 
 # Authoring apps
 
-Still moving as more apps are written. Two apps ground the rules —
+Still moving as more apps are written. Three apps ground the rules —
 cash (tiles over `read.billings()` / `read.dso()`), hand-written in a
-workspace, and model (tiles over `GLOSSARY()` itself), which ships in
-the binary. A workspace `apps/<name>/` shadows a built-in of the same
-name, so forking the model app is copying its directory out.
+workspace, and two built-ins: model (tiles over `GLOSSARY()` itself,
+the verification surface) and metrics (the business surface — the
+metric dossiers, slices from the cached cube through
+`metric_series()`, the metric graph). A workspace `apps/<name>/`
+shadows a built-in of the same name, so forking one is copying its
+directory out.
 
 ## What an app is
 
@@ -44,6 +47,14 @@ read, the specs draw.
 - `GLOSSARY(all => true)` is an ordinary frame source — the model app
   is nothing but frames over it (census, ranking, dossier), joined and
   filtered with plain SQL, `json_get_*` reaching into gloss bodies.
+- `metric_series()` is the cube read: the cached `metric_cube`
+  measurement as long rows `(metric, dimension, member, period,
+  value)` — dimension `''` is the monthly total, `'alternative'` the
+  disclosed rival reading. A static frame cannot name a metric in
+  FROM (`read.<name>()` is per-name), so this is how a generic frame
+  slices any metric: plain value filters, `$metric` and `$dim` from
+  the URL. Empty until `SELECT metric_cube() FROM <dataset>` runs —
+  say so in the tile's empty text.
 
 ## Pages
 
@@ -93,8 +104,8 @@ A what-if scenario (a FACT aspect read through `whatif.<name>()` —
 the metrics skill teaches declaring one) charts through an authored
 tile: the scenario's name sits in the frame's FROM clause, which no
 built-in can know, so when you declare a scenario for a workspace
-with apps, author its tile in the same flow. The built-in model app
-lists scenarios generically; the chart is yours.
+with apps, author its tile in the same flow. The built-in apps list
+scenarios generically; the chart is yours.
 
 The frame picks one concept and serves the door's columns:
 
@@ -107,7 +118,7 @@ WHERE concept = 'revenue' ORDER BY month
 
 The spec is a band fan with the replay line over it — the model's
 uncertainty and the exact recomputation, visibly separate (follow the
-model app's `specs/bands.vl.json` shape: two area layers p05/p95 and
+metrics app's `specs/bands.vl.json` shape: two area layers p05/p95 and
 p10/p90, a dashed p50 line, a solid `replay` line). The chip is
 `whatif.price_hike()`; the `note` names the lever and its basis; the
 `hint` says what the bands are and that `basis` carries refusals.

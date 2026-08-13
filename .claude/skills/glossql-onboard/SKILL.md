@@ -28,20 +28,25 @@ in the stage skills, and there is no extra protocol beyond them.
 
 - **Open with the brief** (the core glossql skill teaches it). The
   door's connect-time brief counts human writings, approvals waiting
-  on your act, and questions standing open for the human — while
-  that last count is above zero, sweep the round or relay in chat.
-  Read the human slots back before new work —
+  on your act, and judgment questions standing open for the human —
+  while that last count is above zero, sweep the round or relay in
+  chat. Read the human slots back before new work —
   an answer from last session governs everything you do now, and
   acting on your own superseded slot instead is the one unforgivable
   onboarding error.
+- **Measure before anything is askable.** A statistic is never a
+  human question (ruled 2026-08-13): behavior, unit, join structure,
+  slicing axes are the shipped functions' work — the core skill's
+  function map names what settles what. What the human rules is
+  judgment: definitions, conventions, choices between readings.
 - **Gloss honestly, with confidence meant.** The assumptions array
   and sober confidence are what make questions derivable. An
   assumption you leave out is a question nobody is ever asked; a
   confidence you inflate empties the human's queue falsely.
-- **Let the door ask.** While loose assumptions or owed claims
-  stand, the door serves one question form per tool call to clients
-  that render them (verified in Claude Code; others as they support
-  question forms). The answer lands
+- **Let the door ask.** While judgment questions stand (assumptions
+  below full confidence), the door serves one question form per tool
+  call to clients that render them (verified in Claude Code; others
+  as they support question forms). The answer lands
   server-side as the human's own slot — it never travels through
   your mouth, and you never write it for them.
 - **Prose is the fallback.** No question surface: ask in chat,
@@ -54,10 +59,11 @@ in the stage skills, and there is no extra protocol beyond them.
 
 - **add-source**: source conventions before typing (fiscal calendar,
   sign conventions, what an export's nulls mean), and the closing
-  read-back of table meaning. For a witnessed enum fact you cannot
-  ground (a column's behavior or unit the data does not show): leave
-  the slot unwritten — an unwritten witnessed claim derives as the
-  door's choice question, while a guessed value silences it.
+  read-back of table meaning. A column's behavior or unit is never a
+  human stop — `behavior_evidence` and the profiles settle those
+  after the relationships stage; leave the slot unwritten until they
+  run, and relay only what the measurement abstains on, with its
+  reason, as a judgment question.
 - **relationships**: the judge pattern is yours — the measurement
   optimizes recall, you remove the false positives against the data.
   The human stop is semantics the data cannot show: two join paths

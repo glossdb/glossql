@@ -510,7 +510,11 @@ bracketing grid of strengths and reading across the replayed worlds;
 the grid, reach, and support guard are machinery, never statement
 syntax; `misfit.<frame>()` (ruled 2026-08-11, fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
-ordinary QUERY gloss, the density kernel and its caps machinery.
+ordinary QUERY gloss, the density kernel and its caps machinery;
+`metric_series()` (2026-08-13) serves the cached `metric_cube`
+measurement as long rows — metric names become data so a static frame
+(the built-in metrics app) slices any metric with plain value filters;
+cached-only, nothing computes at read.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

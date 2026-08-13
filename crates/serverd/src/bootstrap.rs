@@ -61,6 +61,10 @@ const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../../scripts/functions/metric_bands.rhai"),
     ),
     (
+        "metric_cube.rhai",
+        include_str!("../../scripts/functions/metric_cube.rhai"),
+    ),
+    (
         "band_breach.rhai",
         include_str!("../../scripts/functions/band_breach.rhai"),
     ),

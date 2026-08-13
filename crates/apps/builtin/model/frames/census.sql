@@ -1,7 +1,8 @@
 -- The standing counts, one row. `needs` is the one queue's honest
--- total: judged assumptions below full confidence plus fact aspects
--- the model owes and nobody wrote (state = 'unassessed',
--- grain-bounded by the read itself).
+-- total: judged assumptions below full confidence — judgment only
+-- (ruled 2026-08-13). Unassessed witnessed claims (behavior, unit)
+-- count under `waiting` instead: a claim a measurement can settle
+-- waits on the agent's functions, never on a human answer.
 WITH raw AS (SELECT * FROM GLOSSARY(all => true)),
 loose AS (
   SELECT count(*) AS n
@@ -62,5 +63,5 @@ SELECT
   (SELECT count(*) FROM aspects WHERE kind = 'query') AS metrics,
   (SELECT count(*) FROM witnesses) AS witnesses,
   (SELECT count(*) FROM raw WHERE kind = 'measurement') AS measurements,
-  (SELECT n FROM loose) + (SELECT n FROM owed) AS needs,
-  (SELECT n FROM waiting) AS waiting
+  (SELECT n FROM loose) AS needs,
+  (SELECT n FROM waiting) + (SELECT n FROM owed) AS waiting

@@ -49,6 +49,24 @@ impl FunctionRuntime for Fake {
                 "computed_at": "2026-08-06T00:00:00Z"
             }),
             "outliers" => json!({"rows": [1]}),
+            // A canned cube: one flow metric with a served dimension and
+            // a disclosed rival — the script's own logic is the scripts
+            // suite's business; here the contract is the serving read.
+            "metric_cube" => json!({
+                "applicable": true,
+                "caps": {"dims": 2, "members": 24, "months": 24},
+                "metrics": [{
+                    "metric": "revenue", "applicable": true, "behavior": "flow",
+                    "dims": ["region"], "alternative": "all invoiced",
+                    "rows": [
+                        ["", "", "2026-01", 100.0], ["", "", "2026-02", 130.0],
+                        ["region", "EMEA", "2026-01", 60.0], ["region", "EMEA", "2026-02", 70.0],
+                        ["region", "AMER", "2026-01", 40.0], ["region", "AMER", "2026-02", 60.0],
+                        ["alternative", "all invoiced", "2026-01", 90.0],
+                        ["alternative", "all invoiced", "2026-02", 95.0]
+                    ]
+                }]
+            }),
             // A detector that actually reads its context: one slot agrees
             // with itself, two disagree. What it answers therefore depends
             // on the witness it was called for — which is the point of the
@@ -985,4 +1003,63 @@ async fn a_source_conventions_gloss_reads_from_another_dataset() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("ON SOURCE"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metric_series_serves_the_cached_cube() {
+    let (session, _) = agent_session().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'metrics'); USE fin;",
+    )
+    .await;
+
+    // Before the measurement runs the relation is empty — honest, not
+    // an error; nothing computes at read.
+    let empty = table(&session, "SELECT count(*) AS n FROM metric_series();").await;
+    assert!(empty.contains("| 0"), "{empty}");
+
+    run(
+        &session,
+        r#"DECLARE ASPECT metric_cube WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
+           DECLARE FUNCTION metric_cube FOR GLOBAL FROM 'functions/metric_cube.rhai'
+             RETURNS metric_cube;
+           SELECT metric_cube() FROM fin;"#,
+    )
+    .await;
+
+    // The total series: dimension '' is the monthly total.
+    let totals = table(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'revenue' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    assert!(totals.contains("2026-01") && totals.contains("100.0"), "{totals}");
+
+    // Slices compose with plain SQL — the members sum back to the frame.
+    let sliced = table(
+        &session,
+        "SELECT member, sum(value) AS v FROM metric_series() \
+         WHERE metric = 'revenue' AND dimension = 'region' GROUP BY 1 ORDER BY 1;",
+    )
+    .await;
+    assert!(sliced.contains("AMER") && sliced.contains("100.0"), "{sliced}");
+    assert!(sliced.contains("EMEA") && sliced.contains("130.0"), "{sliced}");
+
+    // The disclosed rival rides as its own dimension, named.
+    let rival = table(
+        &session,
+        "SELECT member, value FROM metric_series() \
+         WHERE dimension = 'alternative' ORDER BY period;",
+    )
+    .await;
+    assert!(rival.contains("all invoiced") && rival.contains("95.0"), "{rival}");
+
+    // Arguments are refused — filters ride WHERE.
+    let e = session
+        .execute("SELECT * FROM metric_series('revenue');")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("no arguments"), "{e}");
 }

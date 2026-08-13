@@ -16,8 +16,11 @@
 -- backlog read walk to zero).
 
 -- Column vocabulary. role classes every column; behavior and unit are
--- the witnessed enum/valued claims on measures — unwritten, each one
--- derives as an owed question at the door.
+-- the witnessed enum/valued claims on measures. Unwritten, each one
+-- is the AGENT's measurement backlog (behavior_evidence settles
+-- behavior; profiles and currency columns settle unit) — never a
+-- human question. The door's round asks judgment only (ruled
+-- 2026-08-13).
 
 DECLARE ASPECT meaning WITH $${
   "type": "object", "required": ["value"],

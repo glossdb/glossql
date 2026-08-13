@@ -193,8 +193,10 @@ impl GlossqlMcp {
                 }
                 if questions > 0 {
                     line.push_str(&format!(
-                        "; {} question{} stand{} open for the human — sweep the round \
-                         (call the tool until it stays quiet) or relay them in chat",
+                        "; {} judgment question{} stand{} open for the human (assumptions \
+                         below full confidence — conventions and definitions, never \
+                         statistics) — sweep the round (call the tool until it stays \
+                         quiet) or relay them in chat",
                         questions,
                         if questions == 1 { "" } else { "s" },
                         if questions == 1 { "s" } else { "" },
@@ -213,59 +215,16 @@ impl GlossqlMcp {
         }
     }
 
-    /// The admitted values of an enum aspect, from its own schema.
-    async fn enum_options(&self, session: &Session, aspect: &str) -> Option<Vec<String>> {
-        if !ident_path(aspect, 1) {
-            return None;
-        }
-        let rows = read_rows(
-            session,
-            &format!("SELECT schema FROM aspects WHERE name = '{aspect}'"),
-        )
-        .await
-        .ok()?;
-        let schema: serde_json::Value =
-            serde_json::from_str(rows.first()?.get("schema")?.as_str()?).ok()?;
-        let options: Vec<String> = schema["properties"]["value"]["enum"]
-            .as_array()?
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-        (!options.is_empty()).then_some(options)
-    }
-
-    /// The next open question the workspace derives — owed claims
-    /// whose aspect admits an enumerable value first, then judged
-    /// assumptions below full confidence on the winning slot. A
-    /// workspace with no dataset bound (or nothing open) derives
-    /// nothing, and the round stays silent.
+    /// The next open question the workspace derives — judged
+    /// assumptions below full confidence on the winning slot, lowest
+    /// confidence first. Judgment only, never statistics (ruled
+    /// 2026-08-13): a claim a measurement can settle — behavior, unit,
+    /// role — is the agent's work through the shipped functions, and
+    /// the door never asks the human for it. A workspace with no
+    /// dataset bound (or nothing open) derives nothing, and the round
+    /// stays silent.
     async fn derive_question(&self, session: &Session, skip_deferred: bool) -> Option<Question> {
         let deferred = self.deferred.lock().expect("deferred lock").clone();
-        let owed = read_rows(session, OWED_SQL).await;
-        if let Err(e) = &owed {
-            // A failed derivation is silence to the human — say why.
-            println!("glossql ?? question-round: the owed derivation failed: {e}");
-        }
-        if let Ok(rows) = owed {
-            for row in rows {
-                let (Some(subject), Some(aspect)) =
-                    (row["subject"].as_str(), row["aspect"].as_str())
-                else {
-                    continue;
-                };
-                let key = format!("owed:{subject}:{aspect}");
-                if skip_deferred && deferred.contains(&key) {
-                    continue;
-                }
-                if let Some(options) = self.enum_options(session, aspect).await {
-                    return Some(Question::Owed {
-                        subject: subject.into(),
-                        aspect: aspect.into(),
-                        options,
-                    });
-                }
-            }
-        }
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
             println!("glossql ?? question-round: the loose derivation failed: {e}");
@@ -310,21 +269,6 @@ impl GlossqlMcp {
 
     async fn derive_all(&self, session: &Session) -> Vec<Question> {
         let mut all = Vec::new();
-        if let Ok(rows) = read_rows(session, OWED_SQL).await {
-            for row in rows {
-                if let (Some(subject), Some(aspect)) =
-                    (row["subject"].as_str(), row["aspect"].as_str())
-                {
-                    if let Some(options) = self.enum_options(session, aspect).await {
-                        all.push(Question::Owed {
-                            subject: subject.into(),
-                            aspect: aspect.into(),
-                            options,
-                        });
-                    }
-                }
-            }
-        }
         if let Ok(rows) = read_rows(session, LOOSE_SQL).await {
             for row in rows {
                 let fields = (
@@ -365,28 +309,6 @@ impl GlossqlMcp {
             return "question-round: the question no longer stands — nothing landed".into();
         };
         match question {
-            Question::Owed {
-                subject,
-                aspect,
-                options,
-            } => {
-                let Some(value) = content.get("value").and_then(|v| v.as_str()) else {
-                    return "question-round: the answer names no value".into();
-                };
-                if !options.iter().any(|o| o == value) {
-                    return format!(
-                        "question-round: `{value}` is not a value the aspect admits"
-                    );
-                }
-                let body = serde_json::json!({ "value": value }).to_string();
-                match self
-                    .land_human_answer(session.dataset(), &subject, &aspect, &body)
-                    .await
-                {
-                    Ok(note) => note,
-                    Err(e) => format!("question-round: refused: {e}"),
-                }
-            }
             Question::Loose {
                 subject,
                 aspect,
@@ -418,10 +340,13 @@ impl GlossqlMcp {
         }
     }
 
-    /// The human confirms an assumption: the winning agent body lands
-    /// as the human slot with that assumption at full confidence and
-    /// the ruling as its basis. Composition only — nothing else in
-    /// the body moves.
+    /// The human confirms an assumption: the WINNING body — their own
+    /// standing slot if one exists, else the agent's — lands as the
+    /// human slot with that assumption at full confidence and the
+    /// ruling as its basis. Composition only — nothing else in the
+    /// body moves. Composing from the agent slot unconditionally was
+    /// the first live run's loop (found 2026-08-13): a second ruling
+    /// reverted the first, which then derived and asked again.
     async fn rule_assumption(
         &self,
         session: &Session,
@@ -434,8 +359,10 @@ impl GlossqlMcp {
         }
         let sql = format!(
             "SELECT body FROM glossary \
-             WHERE subject = '{subject}' AND aspect = '{aspect}' AND actor_kind = 'agent' \
-             ORDER BY written_at DESC LIMIT 1"
+             WHERE subject = '{subject}' AND aspect = '{aspect}' \
+               AND actor_kind IN ('human', 'agent') \
+             ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, \
+                      written_at DESC LIMIT 1"
         );
         let rows = match read_rows(session, &sql).await {
             Ok(rows) => rows,
@@ -562,31 +489,18 @@ async fn open_question_count(plane: &Plane) -> Option<usize> {
         id: crate::HUMAN.into(),
     };
     let session = plane.channel(actor, Some(&dataset)).await.ok()?;
-    let owed = read_rows(&session, OWED_SQL).await.ok()?.len();
-    let loose = read_rows(&session, LOOSE_SQL).await.ok()?.len();
-    Some(owed + loose)
+    Some(read_rows(&session, LOOSE_SQL).await.ok()?.len())
 }
 
 /// The round's opaque state tag, echoed by MRTR retries. Untrusted —
 /// landing rests on re-derivation, never on the echo.
 const ROUND_STATE: &str = "question-round:v1";
 
-/// The door-side twin of the model app's queue derivation (the same
-/// derivation, two faces — one shows, one asks). Owed claims whose
-/// aspect admits an enumerable value; the choice form composes from
-/// the schema.
-const OWED_SQL: &str = "SELECT c.subject, c.aspect \
-    FROM GLOSSARY() c \
-    JOIN (SELECT subject FROM GLOSSARY(all => true) \
-          WHERE aspect = 'role' AND json_get_str(body, 'value') = 'measure') r \
-      ON r.subject = c.subject \
-    JOIN aspects a ON a.name = c.aspect \
-    WHERE c.state = 'unassessed' AND c.aspect IN ('behavior', 'unit') \
-      AND json_length(json_get(json_get(a.schema, 'properties'), 'value'), 'enum') IS NOT NULL \
-    ORDER BY c.subject, c.aspect";
-
 /// Judged assumptions below full confidence, winning slot only (the
-/// same guard as the app's queue frame).
+/// same guard as the app's queue frame). This is the round's ONLY
+/// derivation: unassessed witnessed claims (behavior, unit, role) are
+/// the agent's measurement backlog, never human questions — the
+/// shipped functions settle them (ruled 2026-08-13).
 const LOOSE_SQL: &str = "SELECT g.subject, g.aspect, i.i AS idx, \
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension, \
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption, \
@@ -607,12 +521,6 @@ const LOOSE_SQL: &str = "SELECT g.subject, g.aspect, i.i AS idx, \
 /// One open question, derived — never stored. The key names it in
 /// the MRTR map; the form is composed from it.
 enum Question {
-    /// An owed claim whose aspect admits an enumerable value.
-    Owed {
-        subject: String,
-        aspect: String,
-        options: Vec<String>,
-    },
     /// A judged assumption below full confidence.
     Loose {
         subject: String,
@@ -627,7 +535,6 @@ enum Question {
 impl Question {
     fn key(&self) -> String {
         match self {
-            Question::Owed { subject, aspect, .. } => format!("owed:{subject}:{aspect}"),
             Question::Loose {
                 subject,
                 aspect,
@@ -639,24 +546,6 @@ impl Question {
 
     fn params(&self) -> Result<ElicitRequestParams, String> {
         match self {
-            Question::Owed {
-                subject,
-                aspect,
-                options,
-            } => {
-                let schema = ElicitationSchema::builder()
-                    .required_enum_schema("value", EnumSchema::builder(options.clone()).build())
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                Ok(ElicitRequestParams::FormElicitationParams {
-                    meta: None,
-                    message: format!(
-                        "Which {aspect} stands for {subject}? The aspect admits these \
-                         values; your word is the basis. Decline to defer."
-                    ),
-                    requested_schema: schema,
-                })
-            }
             Question::Loose {
                 subject,
                 aspect,

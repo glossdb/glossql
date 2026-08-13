@@ -45,7 +45,7 @@ SELECT
     WHEN r.at IS NOT NULL THEN 'ok'
     WHEN q.aspect IS NULL THEN 'warn'
     ELSE 'ok' END AS scls,
-  arrow_cast('?metric=' || a.name, 'Utf8') AS link
+  arrow_cast('/app/metrics?metric=' || a.name, 'Utf8') AS link
 FROM aspects a
 LEFT JOIN (SELECT DISTINCT aspect FROM GLOSSARY(all => true) WHERE kind = 'query') q
   ON q.aspect = a.name

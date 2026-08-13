@@ -3,87 +3,8 @@
 
 {% block main %}
 {% set subject = state.subject | default(value="") %}
-{% set metric = state.metric | default(value="") %}
 
-{% if metric %}
-{# ---- the metric dossier: one subject, two faces ------------------- #}
-<nav class="crumbs"><a href="?">standing</a><span>›</span><span class="here">{{ metric }}</span></nav>
-<div class="tiles">
-  <div class="half">
-  <section class="tile">
-    <header><span class="eyebrow">The formula · {{ metric }}</span>
-      <code class="chip" title="The standing definition from the workspace's formulas gloss — it names no window, so it covers every window.">formulas</code></header>
-    <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
-      <template>
-        <div class="rrow" style="grid-template-columns:1fr">
-          <span class="r-subj" style="font-size:1rem">{formula}</span>
-          <span class="r-meta">{meta}</span>
-        </div>
-      </template>
-    </gl-rows>
-  </section>
-  </div>
-  <div class="half">
-  <section class="tile">
-    <header><span class="eyebrow">The materialization</span>
-      <code class="chip" title="The recorded read this metric expands to — it must keep matching the formula.">GLOSSARY()</code></header>
-    <gl-rows frame="frames/metric">
-      <template>
-        <pre class="statement" style="border-color:var(--line)">{sql}</pre>
-        <p class="r-meta" style="margin:.5rem 0 0">written by {actor} · {written}</p>
-        <details class="contest"><summary>contest</summary><pre class="statement">{statement}</pre></details>
-      </template>
-    </gl-rows>
-  </section>
-  </div>
-
-  <div class="half">
-  <section class="tile">
-    <header><span class="eyebrow">Your judgement · {{ metric }}</span>
-      <code class="chip" title="The judgements only you can make: assumptions below full confidence on the winning slot. Your agent asks exactly these as question forms; an answer lands as your human definition and the card stops deriving.">the round</code></header>
-    <p class="hint">answer in chat, or let your agent's question form ask you — either way your word supersedes the agent's at every read.</p>
-    <gl-rows frame="frames/metric_questions" empty="nothing open — every assumption stands ruled or measured">
-      <template>
-        <div class="qcard">
-          <span class="q-conf">{conf}</span>
-          <span class="q-body">
-            <span class="r-subj asp">{dim}</span>
-            <span class="q-what">{what}</span>
-            <span class="r-meta">basis: {basis}</span>
-          </span>
-        </div>
-      </template>
-    </gl-rows>
-  </section>
-  </div>
-
-  <div class="half">
-  <section class="tile">
-    <header><span class="eyebrow">Assumptions</span>
-      <code class="chip" title="Every dimension of the claim with its basis. Full confidence renders fixed, less renders loose — the loose ones are the round's questions.">assumptions</code></header>
-    <p class="hint">● fixed at 1.00 · ◐ loose — to fix one, rule it in your own session: the agent rewrites the metric gloss with the assumption at full confidence and your ruling as its basis, and the round entry disappears.</p>
-    <gl-rows frame="frames/assumptions" empty="this metric discloses no assumptions — the convention wants them recorded">
-      <template>
-        <div class="rrow" style="grid-template-columns:1.2rem 3rem 7.5rem 1fr">
-          <span class="g {gcls}">{glyph}</span>
-          <span class="r-conf">{conf}</span>
-          <span class="r-subj asp">{dim}</span>
-          <span class="r-what">{what}<br><span class="r-meta">{basis}</span>
-            <details class="contest"><summary>contest</summary><p class="r-meta" style="margin:.3rem 0">the gloss is the unit of writing — edit this assumption inside the body (its confidence, or the claim itself); the rest rides along unchanged</p><pre class="statement">{statement}</pre></details>
-          </span>
-        </div>
-      </template>
-    </gl-rows>
-  </section>
-  </div>
-
-  {{ tiles::chart(frame="frames/bands", spec="specs/bands.vl.json",
-       title="The corridor · " ~ metric, chip="metric_bands",
-       note="The TabICL walk: each recent month against the range everything before it predicted, trained only on what came before. PIT is where the actual landed — 0.5 is the median, past 0.9 or 0.1 the point marks red.",
-       hint="shaded: the 80 and 90 ranges · dashed: the median it expected · line: the actual. Each point is a month that already happened, scored against what a model trained only on earlier months expected. An empty tile means the measurement has not run — <code>SELECT metric_bands() FROM</code> the dataset.") }}
-</div>
-
-{% elif subject %}
+{% if subject %}
 {# ---- the subject dossier: claims, verdicts, measurements ---------- #}
 <nav class="crumbs"><a href="?">standing</a><span>›</span><span class="here">{{ subject }}</span></nav>
 <div class="tiles">
@@ -178,10 +99,10 @@ holds what needs your judgement, loosest first, all of it.</p>
 <div class="tiles">
   {{ tiles::value(frame="frames/census", field="needs", label="Open questions", format="raw",
                   chip="the queue",
-                  note="Judged assumptions below full confidence, and claims the model's rules owe and nobody wrote. Empties by answers, never by dismissal.") }}
+                  note="Judged assumptions below full confidence — judgment only: conventions and definitions the data cannot arbitrate. Claims a measurement can settle never queue here. Empties by answers, never by dismissal.") }}
   {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on agent", format="raw",
                   chip="the brief",
-                  note="Human writings that owe an agent act: approved recipe changes not yet re-declared, formula answers newer than their recorded materialization, contested slots. When this is above zero, tell your agent to go on — it reads the same brief at session open.") }}
+                  note="What waits on the agent: approved recipe changes not yet re-declared, formula answers newer than their recorded materialization, contested slots, and unassessed witnessed claims its measurements settle (behavior, unit). When this is above zero, tell your agent to go on — it reads the same brief at session open.") }}
   {{ tiles::value(frame="frames/census", field="facts", label="Fact claims", format="raw",
                   chip="GLOSSARY()", pop="pop-facts",
                   note="Live fact glosses — superseded writings are already gone from the relation.") }}
@@ -200,9 +121,9 @@ holds what needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Open questions</span>
-      <code class="chip" title="The one queue: judged assumptions below full confidence and claims the model's rules owe. Answers travel through your agent's session and land as your HUMAN slot; the queue empties by answers, never by dismissal.">the queue</code></header>
+      <code class="chip" title="The one queue, judgment only: assumptions below full confidence on the winning slot. Statistics are never asked — the agent's measurements settle those. Answers travel through your agent's session and land as your HUMAN slot; the queue empties by answers, never by dismissal.">the queue</code></header>
     <p class="hint">an answer governs every read from the moment it lands; the agent reads it back next session ·
-      ◐ judged, below full confidence · – owed and unwritten — every row opens its dossier.</p>
+      ◐ judged, below full confidence — every row opens its metric's dossier.</p>
     <div class="scroll">
     <gl-rows frame="frames/queue" empty="nothing waits on your judgement">
       <template>

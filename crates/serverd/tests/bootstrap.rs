@@ -52,15 +52,16 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         "coherence.rhai",
         "slot_entropy.rhai",
         "metric_bands.rhai",
+        "metric_cube.rhai",
         "band_breach.rhai",
         "rate_tolerance.rhai",
     ] {
         assert!(dir.path().join("functions").join(name).exists(), "{name}");
     }
 
-    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "14");
+    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");
     // 11 measurement contracts + the KPI kit's 10 semantic aspects.
-    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "21");
+    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "22");
     // The functions without RETURNS are the detectors.
     assert_eq!(
         count(

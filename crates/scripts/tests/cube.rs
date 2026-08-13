@@ -1,0 +1,239 @@
+//! The shipped metric_cube.rhai over a query-routing fake door: two
+//! grounded metrics (a flow with served dimension columns and a
+//! disclosed rival, a marked stock with none), asserting dimension
+//! admission and ranking, the month window, the rival series, and the
+//! stock verb. No model, no weights — the cube is plain SQL policy.
+
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use datafusion::arrow::array::{Float64Array, Int64Array, RecordBatch, StringArray};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use glossql_glossary::FunctionRow;
+use glossql_scripts::RhaiRuntime;
+use glossql_session::{FunctionRuntime, SqlDoor};
+use serde_json::{Value, json};
+
+const MONTHS: usize = 30;
+
+fn period(i: usize) -> String {
+    format!("20{:02}-{:02}-01T00:00:00", 24 + i / 12, 1 + i % 12)
+}
+
+/// Routes every query the cube sends and keeps what it saw.
+struct CubeDoor(Mutex<Vec<String>>);
+
+fn utf8_f64(periods: Vec<String>, values: Vec<f64>) -> Vec<RecordBatch> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("period", DataType::Utf8, false),
+        Field::new("value", DataType::Float64, false),
+    ]));
+    vec![
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(periods)),
+                Arc::new(Float64Array::from(values)),
+            ],
+        )
+        .unwrap(),
+    ]
+}
+
+impl SqlDoor for CubeDoor {
+    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
+        self.0.lock().unwrap().push(query.to_string());
+        if query.contains("FROM glossary") {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("subject", DataType::Utf8, false),
+                Field::new("aspect", DataType::Utf8, false),
+                Field::new("actor_kind", DataType::Utf8, false),
+                Field::new("body", DataType::Utf8, false),
+            ]));
+            let revenue = json!({
+                "sql": "SELECT date, value, region, channel, note FROM lines",
+                "assumptions": [
+                    {"dimension": "definition",
+                     "assumption": "revenue = invoiced less credit notes",
+                     "alternative": "all invoiced",
+                     "alternative_sql": "SELECT date, value FROM alt",
+                     "confidence": 0.7}
+                ]
+            });
+            let inventory = json!({
+                "sql": "SELECT date, value FROM levels",
+                "behavior": "stock"
+            });
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(vec!["fin", "fin"])),
+                        Arc::new(StringArray::from(vec!["revenue", "inventory"])),
+                        Arc::new(StringArray::from(vec!["agent", "agent"])),
+                        Arc::new(StringArray::from(vec![
+                            revenue.to_string(),
+                            inventory.to_string(),
+                        ])),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        if query.contains("count(DISTINCT") {
+            let n: i64 = if query.contains("\"region\"") {
+                3
+            } else if query.contains("\"channel\"") {
+                5
+            } else {
+                40 // note — past the member cap, rejected
+            };
+            let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int64, false)]));
+            return Ok(vec![
+                RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(vec![n]))]).unwrap(),
+            ]);
+        }
+        if query.contains("AS member") {
+            // a flow member series: every member, every month
+            let members: &[&str] = if query.contains("\"region\"") {
+                &["r1", "r2", "r3"]
+            } else {
+                &["c1", "c2", "c3", "c4", "c5"]
+            };
+            let (mut ps, mut ms, mut vs) = (Vec::new(), Vec::new(), Vec::new());
+            for i in 0..MONTHS {
+                for m in members {
+                    ps.push(period(i));
+                    ms.push(m.to_string());
+                    vs.push(10.0 + i as f64);
+                }
+            }
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("period", DataType::Utf8, false),
+                Field::new("member", DataType::Utf8, false),
+                Field::new("value", DataType::Float64, false),
+            ]));
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(ps)),
+                        Arc::new(StringArray::from(ms)),
+                        Arc::new(Float64Array::from(vs)),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        if query.contains("date_trunc") {
+            // total series: the stock walks 18 rising levels, the flow
+            // and its rival 30 months apiece
+            if query.contains("FROM levels") {
+                let periods = (0..18).map(period).collect();
+                let values = (0..18).map(|i| 1000.0 + 5.0 * i as f64).collect();
+                return Ok(utf8_f64(periods, values));
+            }
+            let base = if query.contains("FROM alt") { 90.0 } else { 100.0 };
+            let periods = (0..MONTHS).map(period).collect();
+            let values = (0..MONTHS).map(|i| base + 3.0 * i as f64).collect();
+            return Ok(utf8_f64(periods, values));
+        }
+        // the probes: one row of each extract, date-typed time axis
+        let mut fields = vec![
+            Field::new("date", DataType::Date32, false),
+            Field::new("value", DataType::Float64, false),
+        ];
+        let mut cols: Vec<datafusion::arrow::array::ArrayRef> = vec![
+            Arc::new(datafusion::arrow::array::Date32Array::from(vec![19000])),
+            Arc::new(Float64Array::from(vec![1.0])),
+        ];
+        if query.contains("FROM lines") {
+            for name in ["region", "channel", "note"] {
+                fields.push(Field::new(name, DataType::Utf8, false));
+                cols.push(Arc::new(StringArray::from(vec!["x"])));
+            }
+        }
+        Ok(vec![
+            RecordBatch::try_new(Arc::new(Schema::new(fields)), cols).unwrap(),
+        ])
+    }
+}
+
+fn invoke(dir: &Path, door: Arc<CubeDoor>) -> Value {
+    let functions = dir.join("functions");
+    std::fs::create_dir_all(&functions).unwrap();
+    let shipped = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/functions"));
+    std::fs::copy(
+        shipped.join("metric_cube.rhai"),
+        functions.join("metric_cube.rhai"),
+    )
+    .unwrap();
+    let rt = RhaiRuntime::new(dir);
+    rt.invoke(
+        &FunctionRow {
+            name: "metric_cube".into(),
+            scope_dataset: None,
+            script: "functions/metric_cube.rhai".into(),
+            accepts: vec![],
+            returns: None,
+        },
+        "fin",
+        &json!({}),
+        door,
+    )
+    .unwrap()
+}
+
+fn rows_of<'v>(metric: &'v Value, dimension: &str) -> Vec<&'v Value> {
+    metric["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r[0] == dimension)
+        .collect()
+}
+
+#[test]
+fn the_cube_slices_windows_and_carries_the_rival() {
+    let dir = tempfile::tempdir().unwrap();
+    let door = Arc::new(CubeDoor(Mutex::new(Vec::new())));
+    let out = invoke(dir.path(), door.clone());
+
+    assert_eq!(out["applicable"], json!(true));
+    assert_eq!(out["caps"]["months"], json!(24));
+    let metrics = out["metrics"].as_array().unwrap();
+    assert_eq!(metrics.len(), 2);
+
+    let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
+    // admission by member count, fewest first; the 40-member column is out
+    assert_eq!(revenue["dims"], json!(["region", "channel"]));
+    assert_eq!(revenue["behavior"], json!("flow"));
+    assert_eq!(revenue["alternative"], json!("all invoiced"));
+
+    // the window: 30 generated months serve as the last 24
+    let total = rows_of(revenue, "");
+    assert_eq!(total.len(), 24);
+    assert_eq!(total[0][2], json!("2024-07"));
+    assert_eq!(rows_of(revenue, "region").len(), 3 * 24);
+    assert_eq!(rows_of(revenue, "channel").len(), 5 * 24);
+    let rival = rows_of(revenue, "alternative");
+    assert_eq!(rival.len(), 24);
+    assert_eq!(rival[0][1], json!("all invoiced"));
+
+    // the stock: no served dimensions, the last-per-month verb
+    let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();
+    assert_eq!(inventory["behavior"], json!("stock"));
+    assert_eq!(inventory["dims"], json!([]));
+    assert_eq!(rows_of(inventory, "").len(), 18);
+    let seen = door.0.lock().unwrap();
+    assert!(
+        seen.iter()
+            .any(|q| q.contains("FROM levels") && q.contains("row_number")),
+        "the stock series must take last-per-month, never a sum"
+    );
+    assert!(
+        seen.iter()
+            .any(|q| q.contains("FROM lines") && q.contains("sum(value)")),
+        "the flow series must sum per month"
+    );
+}

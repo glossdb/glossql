@@ -215,7 +215,7 @@ The workspace boots with the KPI kit already declared: `meaning`,
 Don't redeclare them — read them back and gloss:
 
 ```glossql
-SELECT name, kind, grain FROM aspects;
+SELECT name, kind, grains FROM aspects;
 SELECT name, aspect, speakers, detector FROM witnesses;
 ```
 
@@ -325,9 +325,13 @@ SELECT subject, band, score FROM ATTEST(fin::behavior) WHERE band = 'red';
 
 Witnessed aspects nobody spoke to appear as rows — absence is visible,
 not an omission. Red bands are where a human must close what you could
-not, and an unwritten witnessed enum claim on a measure (`behavior`)
-derives as the door's own choice question — leave a slot you cannot
-ground unwritten rather than guessed.
+not. An unwritten witnessed claim on a measure (`behavior`, `unit`) is
+*your* measurement backlog, never a human question (ruled 2026-08-13):
+run `behavior_evidence` and gloss from its verdict; read units from
+profiles and currency columns. The door asks the human judgment only.
+Leave a slot unwritten rather than guessed when the measurement
+abstains and nothing else grounds it — and say so in the read-back
+with the abstention's reason.
 
 Close with a read-back the human can judge at its real size. The
 load-bearing verdicts — entity, behavior, unit, anything a wrong value

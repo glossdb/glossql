@@ -28,6 +28,11 @@ let entries = [];
 for i in 0..rels.num_rows() {
     let left = rels.col("left_path").value_at(i);
     let right = rels.col("right_path").value_at(i);
+    // Composite (tuple) endpoints are skipped, as behavior_evidence
+    // skips them — a tuple splits into two segments and would pass the
+    // length guard, then quote as one impossible column name (found
+    // live 2026-08-13).
+    if left.contains("(") || right.contains("(") { continue; }
     let lp = left.split(".");
     let rp = right.split(".");
     if lp.len() != 2 || rp.len() != 2 { continue; }

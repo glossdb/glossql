@@ -216,6 +216,26 @@ Design owed before building:
     the kit's conventions already left add-source/dimensions/metrics
     prose; the remaining pass trims each skill against the shipped
     system.
+16. **Apps on metrics** — built (fork B ruled and accepted
+    2026-08-13): the derived business surface. `metric_cube` (one
+    measurement: per grounded metric the monthly total, slices along
+    served dimension columns, and the rival series where an
+    assumption discloses `alternative_sql`; caps stated in the body)
+    serves through the `metric_series()` relation — metric names
+    become data, which is what lets a static built-in frame slice any
+    metric. The built-in metrics app renders it: pulse (latest month,
+    move, axes, validation chip), dossier (story with the rival line,
+    slice picker, formula, materialization, judgement, assumptions,
+    corridor, the composes/feeds graph — the v0.3 metrics-as-graph
+    idea, derived from the formulas registry and read.-mentions). The
+    metric dossier left the model app — model verifies, metrics
+    tells; queue/brief/surfaces link across. Grounded against
+    Mosaic's architecture lesson (pre-aggregate, then interact);
+    client-side arrow-js slicing and the transformers.js ask-box are
+    the parked next steps if the URL round-trip feels slow. Fork A
+    (the co-design protocol for bespoke apps) and gloss-carried
+    artifacts (the wire-authoring gap) sequenced behind it, ruled
+    same day.
 
 Sequenced later (2026-08-12): **the full deletion cascade** — after
 onboarding, the company-level glossary, and the storage integration
