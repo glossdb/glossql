@@ -12,7 +12,7 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">The formula · {{ metric }}</span>
-      <code class="chip" title="The pinned definition from the workspace's formulas gloss — it names no window, so it covers every window.">formulas</code></header>
+      <code class="chip" title="The standing definition from the workspace's formulas gloss — it names no window, so it covers every window.">formulas</code></header>
     <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
       <template>
         <div class="rrow" style="grid-template-columns:1fr">
@@ -45,7 +45,7 @@
   <section class="tile">
     <header><span class="eyebrow">Assumptions</span>
       <code class="chip" title="Every dimension of the claim with its basis. Full confidence renders fixed, less renders loose — the loose ones are the queue's entries.">assumptions</code></header>
-    <p class="hint">● fixed at 1.00 · ◐ loose — to pin one, rule it in your own session: the agent rewrites the metric gloss with the assumption at full confidence and your ruling as its basis, and the queue entry disappears.</p>
+    <p class="hint">● fixed at 1.00 · ◐ loose — to fix one, rule it in your own session: the agent rewrites the metric gloss with the assumption at full confidence and your ruling as its basis, and the queue entry disappears.</p>
     <gl-rows frame="frames/assumptions" empty="this metric discloses no assumptions — the convention wants them recorded">
       <template>
         <div class="rrow" style="grid-template-columns:1.2rem 3rem 7.5rem 1fr">
@@ -150,15 +150,16 @@
 {% else %}
 {# ---- the standing view: the queue is the front door --------------- #}
 <p class="lede">The model, not the data: every row below is a claim with an
-author. Pin what you know, contest what is wrong — the queue holds what
-needs your judgement, loosest first, all of it.</p>
+author. This surface informs — answers travel through your agent's session,
+and land as your human slot, outranking the agent at every read. The queue
+holds what needs your judgement, loosest first, all of it.</p>
 <div class="tiles">
   {{ tiles::value(frame="frames/census", field="needs", label="Open questions", format="raw",
                   chip="the queue",
-                  note="Pinnable questions, judged assumptions below full confidence, and claims the model's rules owe and nobody wrote. Empties by answers, never by dismissal.") }}
+                  note="Judged assumptions below full confidence, and claims the model's rules owe and nobody wrote. Empties by answers, never by dismissal.") }}
   {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on agent", format="raw",
                   chip="the brief",
-                  note="Pins that owe an agent act: approved recipe changes not yet re-declared, formula pins newer than their recorded materialization, contested slots. When this is above zero, tell your agent to go on — it reads the same brief at session open.") }}
+                  note="Human writings that owe an agent act: approved recipe changes not yet re-declared, formula answers newer than their recorded materialization, contested slots. When this is above zero, tell your agent to go on — it reads the same brief at session open.") }}
   {{ tiles::value(frame="frames/census", field="facts", label="Fact claims", format="raw",
                   chip="GLOSSARY()", pop="pop-facts",
                   note="Live fact glosses — superseded writings are already gone from the relation.") }}
@@ -177,42 +178,11 @@ needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Open questions</span>
-      <code class="chip" title="The one queue: questions the agent composed an answer for pin in one gesture — the option's full body lands as your HUMAN slot, outranking the agent at every read. Rows without a pin action are owed or loose knowledge nobody composed yet; their affordance is the dossier. The queue empties by answers, never by dismissal.">the queue</code></header>
-    <p class="hint">{% if who %}pinning as <strong>{{ who }}</strong>{% else %}sign in (top right) to pin under your name{% endif %} ·
-      a pinned answer governs every read from that moment; the agent reads it back next session ·
-      ◐ judged, no answer composed · – owed and unwritten — those rows open their dossier.</p>
+      <code class="chip" title="The one queue: judged assumptions below full confidence and claims the model's rules owe. Answers travel through your agent's session and land as your HUMAN slot; the queue empties by answers, never by dismissal.">the queue</code></header>
+    <p class="hint">an answer governs every read from the moment it lands; the agent reads it back next session ·
+      ◐ judged, below full confidence · – owed and unwritten — every row opens its dossier.</p>
     <div class="scroll">
-    <gl-rows frame="frames/pins" empty="no pinnable questions — the agenda is answered or not yet glossed">
-      <template>
-        <form class="qrow" method="post" action="/app/{{ app.name }}/pin"
-              hx-post="/app/{{ app.name }}/pin"
-              x-data="{ done: false, mine: false }"
-              x-on:htmx:after-request.camel="if ($event.detail.successful) { mine = true; $dispatch('gl-pinned', '{subject}.{aspect}') }"
-              x-on:gl-pinned.window="if ($event.detail === '{subject}.{aspect}') done = true"
-              x-bind:class="{ 'q-done': done, 'q-mine': mine }">
-          <span class="r-what"><span class="r-subj">{question}</span><br>
-            <span class="r-meta">{meta} · writes {aspect} on {subject}</span></span>
-          <span class="q-stance"><span class="r-conf">{conf}</span>
-            <code class="chip {scls}">{stance}</code></span>
-          <input type="hidden" name="subject" value="{subject}">
-          <input type="hidden" name="aspect" value="{aspect}">
-          <input type="hidden" name="body" value="{body}">
-          <span class="q-act">
-            <span class="q-rest" x-cloak x-show="mine" x-transition.opacity>pinned · governs every read now</span>
-            <span class="q-rest" x-cloak x-show="done && !mine" x-transition.opacity>answered</span>
-            {% if who %}
-            <button class="pin-act" type="submit" x-show="!done"
-                    title="write this option as your HUMAN gloss">pin</button>
-            {% else %}
-            <button class="pin-act" type="button" x-show="!done"
-                    onclick="document.getElementById('gl-signin').showModal()"
-                    title="a pin is a signed act">sign in to pin</button>
-            {% endif %}
-          </span>
-        </form>
-      </template>
-    </gl-rows>
-    <gl-rows frame="frames/queue" empty="nothing else waits on your judgement">
+    <gl-rows frame="frames/queue" empty="nothing waits on your judgement">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:1.2rem 3rem 1fr">
           <span class="g {gcls}">{glyph}</span>
@@ -226,8 +196,8 @@ needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Waiting on the agent</span>
-      <code class="chip" title="Answered, not yet retriggered: pins that owe an agent act. The agent sweeps this brief at session open — when rows sit here, tell it to go on.">the brief</code></header>
-    <gl-rows frame="frames/brief" empty="nothing waits on the agent — every pin governs already">
+      <code class="chip" title="Answered, not yet retriggered: human writings that owe an agent act. The agent sweeps this brief at session open — when rows sit here, tell it to go on.">the brief</code></header>
+    <gl-rows frame="frames/brief" empty="nothing waits on the agent — every answer governs already">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:1fr auto">
           <span class="r-what"><span class="r-subj">{what}</span><br>
@@ -240,7 +210,7 @@ needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Metric surfaces</span>
-      <code class="chip" title="Declared QUERY aspects with the pinned formula where one exists. A surface with nothing recorded is vocabulary that cannot serve a read yet.">aspects</code></header>
+      <code class="chip" title="Declared QUERY aspects with the recorded formula where one exists. A surface with nothing recorded is vocabulary that cannot serve a read yet.">aspects</code></header>
     <gl-rows frame="frames/surfaces" empty="no metric surfaces declared yet">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 5rem 8rem">

@@ -11,6 +11,17 @@ edition = "2024"
 # note, nothing actionable; every crate opts in via [lints] workspace.
 linker_messages = "allow"
 
+# Each integration-test binary statically links datafusion + candle; with
+# default full debug info that was ~0.5GB per binary × ~25 test targets ×
+# every stale hashed copy — a target/ in the hundreds of GB and an AV scan
+# per link. Line tables keep workspace backtraces (file:line); dependencies
+# carry none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.dependencies]
 # 53.1 is the newest datafusion supported by iceberg-datafusion (0.10.1 pins
 # ^53.1); the whole workspace moves in lockstep or trait impls stop lining up.
@@ -29,7 +40,7 @@ serde_json = "1"
 arrow-ipc = "58.4"
 arrow-json = "58.4"
 axum = "0.8"
-rmcp = { version = "3.1", features = ["transport-streamable-http-server"] }
+rmcp = { version = "3.1", features = ["transport-streamable-http-server", "elicitation"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "any"] }
 # The TabICL port rides as a sibling link (ruled 2026-08-11) — the repo
 # stays its own publishable unit; weights are never in git and load

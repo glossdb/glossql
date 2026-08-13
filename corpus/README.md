@@ -42,3 +42,4 @@ simplified language (see `reports/2026-08-03-simplification.md`).
 | 19 | what-if scenario (evaluation runs, 2026-08-11) | TRANSCRIBES (scenario = FACT aspect per scenario; `whatif.` door; replay grid is machinery) |
 | 20 | misfit sample frame (evaluation runs, 2026-08-11) | TRANSCRIBES (frame = QUERY aspect + `x-kind`; `misfit.` door; self-fit density is machinery) |
 | 21 | source conventions (both halves run 2026-08-12) | TRANSCRIBES (`AS FACT ON SOURCE`; deposit → read-before-probe → workspace-wide supersede) |
+| 22 | question loop (pin-queue run 2026-08-12 + elicitation spike 2026-08-13) | RULED 2026-08-13: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |

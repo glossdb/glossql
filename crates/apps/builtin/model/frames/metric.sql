@@ -1,4 +1,4 @@
--- One metric surface, both faces: the pinned formula from the
+-- One metric surface, both faces: the standing formula from the
 -- workspace's formulas gloss, and the recorded materialization that
 -- must keep matching it. One row per metric: the winning slot only —
 -- a human writing outranks the agent slot (the supersession key holds
@@ -11,7 +11,7 @@ SELECT q.aspect,
   coalesce(json_get_str(a.schema, 'x-kind'), '') AS mkind,
   json_get_str(q.body, 'sql') AS sql,
   arrow_cast(coalesce(json_get_str(json_get(f.value, 'formulas'), CAST($metric AS VARCHAR)),
-           'no pinned formula'), 'Utf8') AS formula,
+           'no recorded formula'), 'Utf8') AS formula,
   q.actor,
   arrow_cast(substr(q.written_at, 1, 10), 'Utf8') AS written,
   arrow_cast('GLOSS ' || q.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || q.body || '$$;', 'Utf8') AS statement

@@ -901,8 +901,8 @@ impl Store {
         // its cache dataset-wide. Scoped 2026-08-12: the edge fires on
         // grounding (QUERY) writes only — what the edge's consumers
         // (metric_bands, detect_grounding_collisions) actually read —
-        // because the unscoped edge made every fact gloss, a pin from
-        // the app included, empty the band walk until an agent re-ran it.
+        // because the unscoped edge made every fact gloss, a human
+        // answer included, empty the band walk until an agent re-ran it.
         if kind == "query" {
             self.invalidate(dataset, "glossary", dataset).await?;
         }

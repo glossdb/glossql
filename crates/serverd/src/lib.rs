@@ -24,24 +24,31 @@ use axum::routing::post;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
+/// The one anonymous human actor every door speaks for (ruled
+/// 2026-08-13): human standing is unsigned for now — human > agent >
+/// function holds, and how to identify *which* human is found out
+/// later, not faked by a flag.
+pub const HUMAN: &str = "human";
+
 /// Who the doors speak as, and how much an agent sees at once.
 #[derive(Clone)]
 pub struct DoorConfig {
     /// Fallback agent actor id for MCP calls no initialize named.
     pub agent: String,
-    /// The human actor id behind `/query` — the UI door speaks as one
-    /// person until governance opens (held open, SPEC.md §9).
-    pub human: String,
     /// Rows an MCP tool result ships before declaring `truncated`.
     pub row_cap: usize,
+    /// The elicitation spike (2026-08-13): every MCP tool call first
+    /// asks the client one form question; an accepted dictation lands
+    /// as a HUMAN gloss. Off outside spike runs and their tests.
+    pub elicit_probe: bool,
 }
 
 impl Default for DoorConfig {
     fn default() -> Self {
         DoorConfig {
             agent: "agent".into(),
-            human: "cockpit".into(),
             row_cap: DEFAULT_ROW_CAP,
+            elicit_probe: false,
         }
     }
 }
@@ -49,7 +56,6 @@ impl Default for DoorConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub plane: Arc<Plane>,
-    pub human: String,
     pub row_cap: usize,
 }
 
@@ -58,9 +64,9 @@ pub struct AppState {
 pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
-    let agent = doors.agent;
-    let row_cap = doors.row_cap;
-    // Plain JSON answers; nothing here streams partial results.
+    let mcp_doors = doors.clone();
+    // Plain JSON answers; a mid-call elicitation still falls back to an
+    // SSE answer on that POST.
     let mut config = StreamableHttpServerConfig::default();
     config.json_response = true;
     // The connect-time brief: shared across handler instances, boot-
@@ -75,8 +81,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
         move || {
             Ok(GlossqlMcp::new(
                 Arc::clone(&mcp_plane),
-                agent.clone(),
-                row_cap,
+                mcp_doors.clone(),
                 Arc::clone(&brief),
             ))
         },
@@ -92,7 +97,6 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
         .route("/query", post(query::query))
         .with_state(AppState {
             plane,
-            human: doors.human,
             row_cap: doors.row_cap,
         })
         .nest("/app", glossql_apps::router(app_plane, workspace))

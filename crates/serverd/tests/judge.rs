@@ -28,7 +28,7 @@ async fn app() -> (Router, tempfile::TempDir) {
         dir.path(),
         Actor {
             kind: ActorKind::Human,
-            id: "cockpit".into(),
+            id: glossql_serverd::HUMAN.into(),
         },
     )
     .await

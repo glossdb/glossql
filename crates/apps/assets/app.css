@@ -85,82 +85,6 @@ a { color: inherit; text-decoration: none; }
 .shell-nav nav a { color: var(--muted); }
 .shell-nav nav a:hover, .shell-nav nav a.current { color: var(--ink); }
 
-/* The sign-in simulation: who pins, in the corner where identity
-   belongs. The name is provenance — amber like the brand, because a
-   signed pin is the surface's whole point. */
-.shell-nav .who {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-left: 1.1rem;
-  padding-left: 0.9rem;
-  border-left: 1px solid var(--line);
-}
-.shell-nav .who-name {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--amber);
-}
-.shell-nav .who-field {
-  width: 8.5rem;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 0.1rem 0.15rem;
-}
-.shell-nav .who-field:focus { outline: none; border-bottom-color: var(--amber); }
-.shell-nav .who-act {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--muted);
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0.15rem 0.55rem;
-  cursor: pointer;
-}
-.shell-nav .who-act:hover { color: var(--ink); border-color: var(--faint); }
-
-/* The sign-in modal: the one gate the surface carries. */
-dialog.signin {
-  background: var(--bg1);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 1.1rem 1.25rem;
-  width: min(22rem, 90vw);
-}
-dialog.signin::backdrop { background: rgba(4, 8, 14, 0.72); }
-dialog.signin .who-field {
-  width: 100%;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  font: inherit;
-  padding: 0.25rem 0.1rem;
-  margin: 0.6rem 0 0.9rem;
-}
-dialog.signin .who-field:focus { outline: none; border-bottom-color: var(--amber); }
-dialog.signin .signin-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
-}
-dialog.signin .who-act {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--muted);
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0.2rem 0.7rem;
-  cursor: pointer;
-}
-
 /* The request indicator: a hairline of amber under the bar. */
 .load-bar {
   position: fixed;
@@ -317,48 +241,6 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .chip[title] { cursor: help; border-bottom-color: var(--faint); }
 
-/* The question card: the one queue's signable rows. A card that is
-   answered retires in place — the rest state says where the answer
-   went, and the row leaves by derivation on the next navigation. */
-[x-cloak] { display: none !important; }
-.qrow {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.45rem 0.2rem 0.45rem 0.6rem;
-  border-left: 2px solid var(--amber);
-  border-bottom: 1px solid var(--line-soft);
-  transition: opacity 0.45s ease;
-}
-.q-stance { display: flex; align-items: center; gap: 0.5rem; }
-.q-act { justify-self: end; }
-.qrow.q-done { opacity: 0.55; }
-.qrow.q-done .r-subj { text-decoration: none; }
-.q-rest {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--amber);
-  white-space: nowrap;
-}
-.qrow.q-done:not(.q-mine) .q-rest { color: var(--faint); }
-@media (prefers-reduced-motion: reduce) {
-  .qrow, .qrow * { transition: none !important; }
-}
-
-/* The pin action: the one write a page carries — it must read as a
-   button, not as a provenance chip (chips carry help cursors). */
-button.pin-act {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--ink);
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0.2rem 0.7rem;
-  cursor: pointer;
-}
-button.pin-act:hover { filter: brightness(1.12); border-color: var(--faint); }
 
 .hint { font-size: 0.78rem; color: var(--faint); margin: -0.35rem 0 0.5rem; }
 
@@ -470,7 +352,7 @@ gl-table tr:hover td { background: var(--bg2); }
    its reserved meanings — amber only where a human's judgement is
    wanted, red only where the model owes a claim it doesn't have. */
 .g { font-family: var(--mono); width: 1.2rem; text-align: center; flex-shrink: 0; }
-.g-pin { color: var(--amber); }
+.g-fix { color: var(--amber); }
 .g-jud { color: var(--ink); }
 .g-mea { color: var(--cyan); }
 .g-abs { color: var(--faint); }

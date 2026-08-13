@@ -1,9 +1,9 @@
--- The waiting half of the human's brief (ruled 2026-08-12): pins that
--- owe an agent act, derived from data — never a status flag anyone
+-- The waiting half of the human's brief (ruled 2026-08-12): human
+-- writings that owe an agent act, derived from data — never a status flag anyone
 -- maintains. Three sources:
 --   1. recipe_change approvals with no import of the named table
 --      since the approval (the re-declare has not run);
---   2. formula pins newer than a metric's recorded materialization
+--   2. formula answers newer than a metric's recorded materialization
 --      (the two forms of one definition have not been re-aligned —
 --      the lead's catch: read.<metric>() serves the recorded SQL
 --      until an agent recomposes it);
@@ -26,7 +26,7 @@ waiting_recipes AS (
                     WHERE i.table_name = a.tbl AND i.imported_at >= a.written_at)
 ),
 waiting_formulas AS (
-  SELECT 'formula pin on ' || g.aspect AS what,
+  SELECT 'formula answer on ' || g.aspect AS what,
          'the recorded materialization predates it' AS why,
          arrow_cast(replace(substr(h.written_at, 1, 16), 'T', ' '), 'Utf8') AS since,
          '?metric=' || g.aspect AS link

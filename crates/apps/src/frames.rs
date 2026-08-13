@@ -84,7 +84,7 @@ pub async fn frame(
 /// the one-container-one-dataset question is a deployment concern,
 /// held open) — an unpinned app shows the first and a selector is a
 /// later concern; pin `dataset` in app.toml to choose.
-pub(crate) async fn resolve_dataset(
+async fn resolve_dataset(
     door: &crate::AppDoor,
     def: &AppDef,
 ) -> Result<String, Response> {

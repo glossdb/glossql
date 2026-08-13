@@ -3,9 +3,10 @@
 //! query-routing fake door, and the band_breach detector over
 //! fabricated slots. The kernel's model loads from a weights directory
 //! symlinked from the sibling port checkout — tests that need it skip
-//! with a message when the sibling has no converted weights. The
-//! numeric fidelity of the forward itself is the sibling repo's suite;
-//! here the contract is shape, ordering, and policy.
+//! with a message when the sibling has no converted weights, and cost
+//! ~3s each on Metal (measured 2026-08-13). The numeric fidelity of
+//! the forward itself is the sibling repo's suite; here the contract
+//! is shape, ordering, and policy.
 
 use std::path::Path;
 use std::sync::Arc;

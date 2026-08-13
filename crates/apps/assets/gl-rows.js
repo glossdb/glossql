@@ -90,11 +90,9 @@
           out.push(foot);
         }
         this.replaceChildren(template, ...out);
-        // Rows arrive after htmx's and alpine's initial passes; hand
-        // both the inserted tree so hx-* attributes (the pin posts)
-        // and x-* state (the cards' rest states) work.
+        // Rows arrive after htmx's initial pass; hand it the inserted
+        // tree so boosted row links keep the shell's navigation.
         if (window.htmx) window.htmx.process(this);
-        if (window.Alpine) window.Alpine.initTree(this);
       } catch (e) {
         this.replaceChildren(template, glStore.errorBox(e.message || String(e)));
       } finally {

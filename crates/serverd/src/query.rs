@@ -24,7 +24,7 @@ pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 pub async fn query(State(state): State<AppState>, body: String) -> Response {
     let actor = Actor {
         kind: ActorKind::Human,
-        id: state.human.clone(),
+        id: crate::HUMAN.into(),
     };
     let session = match state.plane.session(actor.clone()).await {
         Ok(session) => session,

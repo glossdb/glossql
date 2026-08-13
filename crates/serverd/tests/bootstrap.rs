@@ -8,15 +8,15 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_serverd::{Plane, bootstrap};
 use glossql_session::{NoRuntime, Outcome};
 
-fn cockpit() -> Actor {
+fn human() -> Actor {
     Actor {
         kind: ActorKind::Human,
-        id: "cockpit".into(),
+        id: glossql_serverd::HUMAN.into(),
     }
 }
 
 async fn count(plane: &Plane, sql: &str) -> String {
-    let session = plane.session(cockpit()).await.unwrap();
+    let session = plane.session(human()).await.unwrap();
     let outcomes = session.execute(sql).await.unwrap();
     let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
         panic!("`{sql}` produced no rows");
@@ -31,11 +31,11 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
     let store = Store::open_memory().await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
 
-    bootstrap(&store, &plane, dir.path(), cockpit())
+    bootstrap(&store, &plane, dir.path(), human())
         .await
         .unwrap();
     // Every boot calls it; the second changes nothing.
-    bootstrap(&store, &plane, dir.path(), cockpit())
+    bootstrap(&store, &plane, dir.path(), human())
         .await
         .unwrap();
 

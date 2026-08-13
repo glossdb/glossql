@@ -2948,18 +2948,14 @@ version = "0.1.0"
 dependencies = [
  "arrow-ipc",
  "axum",
- "base64 0.22.1",
  "datafusion",
  "futures",
- "getrandom 0.2.17",
  "glossql-catalog",
  "glossql-glossary",
  "glossql-parser",
  "glossql-session",
- "hmac",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "tera",
  "tokio",
@@ -5168,6 +5164,7 @@ dependencies = [
  "tokio-util",
  "tower-service",
  "tracing",
+ "url",
  "uuid",
 ]
 

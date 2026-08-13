@@ -27,7 +27,7 @@ WITH a AS (
 )
 SELECT
   CASE WHEN conf >= 1.0 THEN '●' ELSE '◐' END AS glyph,
-  CASE WHEN conf >= 1.0 THEN 'g-pin' ELSE 'g-jud' END AS gcls,
+  CASE WHEN conf >= 1.0 THEN 'g-fix' ELSE 'g-jud' END AS gcls,
   conf, dim, what, basis, statement
 FROM a
 ORDER BY conf, dim

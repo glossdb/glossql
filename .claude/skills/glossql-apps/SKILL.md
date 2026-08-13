@@ -117,18 +117,17 @@ unmoved concept's refusal row doesn't feed the chart, and consider a
 `gl-rows` tile beside the chart listing `DISTINCT concept, basis` so
 refusals stay visible instead of filtered away.
 
-## The pin door — the one write an app carries
+## Apps carry no write (ruled 2026-08-13)
 
-`POST /app/<name>/pin` with `subject`, `aspect`, `body` (JSON) and
-`pinned_by` writes the body as a HUMAN gloss for whoever signed it —
-through the ordinary gloss path, so schema validation, grain gating,
-and the witness speaker gate all apply and refusals come back
-readable. The built-in model app serves the `pin_questions` agenda
-(the metrics skill teaches glossing it) as a queue of one-gesture
-approvals; an answered question leaves the queue by derivation — a
-human slot exists on its (subject, aspect) — never by mutation.
-Frames stay read-only; the pin door is the single, narrow exception,
-and it writes nothing the statement language could not.
+Every frame reads; there is no write route on the app door. Answers
+travel through a session — the human tells their agent (or answers
+the door's question form when the client renders one), and the
+statement lands on the human channel with human standing. An open
+row leaves a queue by derivation — a human slot exists on its
+(subject, aspect) — never by mutation, and never by an app-side
+gesture. If a page seems to need a write, it is describing a
+statement; show the statement (the contest pattern) and let the
+session run it.
 
 ## The misfit read stays out of frames
 

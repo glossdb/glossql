@@ -107,7 +107,7 @@ never a sum), and an unmarked grounding reads as a flow.
 
 The assumptions array is a contract, not commentary: every metric
 writing carries `assumptions: [{dimension, assumption, basis,
-confidence}]`, and confidence means it — 1.0 only for what is pinned
+confidence}]`, and confidence means it — 1.0 only for what is ruled
 or proven, less for judgment however common. The world-model surface
 reads exactly this shape to build its judgement queue, so an
 assumption you leave out is invisible to the humans who would have
@@ -132,7 +132,7 @@ gloss write, so a re-read after new groundings recomputes.
 Grain is the reader's: the app defaults to month, another reader asks
 by day, the same definitions answer both. Evaluate through
 `read.<aspect>()` — the current grounding served as an ordinary
-relation (human slot outranking agent, so a pinned definition is what
+relation (human slot outranking agent, so a human answer is what
 runs); windows and filters ride your SQL. The prefix is `read.` for
 every QUERY gloss — metrics, suspect lists, any declared aggregation —
 one serving door, whatever `x-kind` names:
@@ -149,7 +149,7 @@ FROM read.revenue() GROUP BY 1 ORDER BY 1;
   never an average of finer ratios. A defect rate is defects[w] /
   units[w] at whatever w is asked; `dso[w] = accounts_receivable[end
   of w] / revenue[w] * days[w]` the same way. The formula gloss is
-  the pinned definition;
+  the ruled definition;
   it covers every window because it names none. Never regroup a
   ratio's output rows — re-compose at the new scope.
 
@@ -158,7 +158,7 @@ FROM read.revenue() GROUP BY 1 ORDER BY 1;
 QUERY gloss — durable executable knowledge, superseding as
 definitions change, served by `read.<aspect>()` from then on.
 Record it composing `FROM read.revenue()` where you can: a
-re-pinned component then propagates through every metric built on it
+re-ruled component then propagates through every metric built on it
 (a self-reference is refused as a cycle). The formula gloss and the
 recorded evaluation are one definition in two forms: change one,
 update the other in the same act — or carry the difference as a
@@ -388,14 +388,14 @@ SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 Red bands are where a human closes what you could not; unassessed
 rows are the vocabulary nobody has spoken to yet.
 
-## 9. The pinning agenda — end every framework with it
+## 9. The question round — end every framework with it
 
 A definition is a choice between formula families the data cannot
 arbitrate: both DSO variants compute, pieces count at unit or at
 batch grain, utilization divides by calendar or by staffed hours.
 Where evidence *can* decide
 (a stock never sums across periods), the measurements already did;
-what remains is convention, and convention is the user's to pin.
+what remains is convention, and convention is the user's to rule.
 Definitional risk is invisible from inside your own judgment — it
 shows only against an alternative — so the alternative must be
 named, every time.
@@ -411,8 +411,8 @@ otherwise:
 
 What counts as definitional: any grounding assumption with
 `dimension: "definition"` whose basis is your judgment rather than a
-measurement or an engineer pin — the **basis is the pin marker**,
-never the number. Calibrate `confidence` soberly: 1.0 is reserved
+measurement or a human ruling — the **basis is the marker**, never
+the number. Calibrate `confidence` soberly: 1.0 is reserved
 for a measured fact; 0.9 is already very high — a well-argued
 convention choice tops out there. Keep data findings (a
 reconciliation gap, a column whose name lies about its content) in a
@@ -429,53 +429,32 @@ claim the data cannot settle (a negative opening month is evidence
 against it in real data). Name each wish as a specific ask: which
 document or source, and which numbers shift when it arrives ("every
 stock level moves by its opening values"). The ask is a document,
-not a decision — keep it out of the pinning questions.
+not a decision — keep it out of the questions.
 
-**In a workspace with apps, gloss the agenda too** — the model app
-serves it as a queue of one-gesture approvals (the pin loop, ruled
-2026-08-12). The convention is `pin_questions`, a FACT gloss on the
-dataset, flat: one entry per option, each carrying the **full body**
-its approval would write (for a `definitions` pin that is the whole
-map — supersession is whole-body):
+**The questions themselves are ephemeral — never gloss them** (ruled
+2026-08-13: no ledger for questions or answers; that a `GLOSS` was
+logged as `human` is the entire record of an answer). Ask through the
+client's question surface when it has one, numbered prose otherwise;
+the user's choice lands as the human gloss on the very (subject,
+aspect) the choice governs, and it outranks your slot at every read.
+When the user answers in prose instead, run the statement their
+answer names — the write still travels through a session, and until
+a human slot exists your report says which definitions stand on your
+judgment alone. Read the human slots back at the start of your next
+session (the core skill's brief).
 
-```glossql
-DECLARE ASPECT pin_questions WITH $${"type": "object"}$$ AS FACT ON DATASET;
-GLOSS pin_questions ON fin AS $${"questions": [
-  {"subject": "fin", "aspect": "definitions",
-   "question": "gross_profit: which family?",
-   "option": "revenue minus COGS (textbook)",
-   "body": {"definitions": {"gross_profit": {"meaning": "revenue minus COGS"}}},
-   "chosen": true, "grounds": "COGS accounts exist and reconcile", "confidence": 0.7},
-  {"subject": "fin", "aspect": "definitions",
-   "question": "gross_profit: which family?",
-   "option": "revenue minus all expenses",
-   "body": {"definitions": {"gross_profit": {"meaning": "revenue minus all expenses"}}},
-   "chosen": false, "confidence": 0.7}
-]}$$;
-```
+The round covers more than definitions:
 
-The approval writes the HUMAN slot directly — it outranks your slot
-at every read, and the question leaves the queue because the answer
-exists, never by dismissal. Read the human slots back at the start
-of your next session (the core skill's brief). Without an app
-surface, the fallback is the relay: the user answers in prose, you
-supersede your own slot with the pinned choice and basis
-`engineer-pinned <date>`. Either way, until an answer lands your
-report says which definitions stand on your judgment alone.
-
-The agenda covers more than definitions (one queue, ruled
-2026-08-12):
-
-- **Every loose assumption you can answer ships as an entry** whose
-  option body is the full re-grounded gloss — the assumption at 1.0
-  with the pin as its basis. The app then shows the question instead
-  of a bare investigate row, and one gesture closes it.
-- **A recipe correction ships as an entry targeting `recipe_change`**
-  — declare it once per workspace as a FACT aspect ON TABLE; the
-  entry's body is `{"table": …, "sql": …, "reason": …}`. The pin is
-  the approval; the re-declare is yours to run next session, and the
-  app lists the approval as waiting on you until an import of that
-  table lands.
-- **After any formula pin, re-record the metric's materialization in
-  the same act** — the formula gloss and the recorded evaluation are
-  one definition in two forms, and the app counts the drift.
+- **Every loose assumption you can compose an answer for is a
+  question** — the answer is the full re-grounded gloss, the
+  assumption at 1.0 with the human's ruling as its basis.
+- **A recipe correction is a question targeting `recipe_change`** —
+  declare it once per workspace as a FACT aspect ON TABLE; the
+  answer's body is `{"table": …, "sql": …, "reason": …}`. The human
+  gloss is the approval; the re-declare is yours to run next
+  session, and the app lists the approval as waiting on you until an
+  import of that table lands.
+- **After any human formula answer, re-record the metric's
+  materialization in the same act** — the formula gloss and the
+  recorded evaluation are one definition in two forms, and the app
+  counts the drift.

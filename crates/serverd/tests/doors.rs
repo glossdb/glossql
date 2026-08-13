@@ -251,6 +251,336 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(instructions.contains("Live now:"), "{instructions}");
 }
 
+/// The elicitation round-trip needs the session-carrying lifecycle:
+/// 2025-11-25 is the newest version that has one — SEP-2567 serves
+/// 2026-07-28+ statelessly, and there a client's posted answer has no
+/// route back to the waiting handler (rmcp 3.1.2).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_elicited_answer_lands_with_human_standing() {
+    use futures::StreamExt;
+
+    let app = app_with(DoorConfig {
+        elicit_probe: true,
+        ..Default::default()
+    })
+    .await;
+    let call = |id: u64, statements: &str| {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {
+                "_meta": meta(),
+                "name": "glossql",
+                "arguments": {"statements": statements}
+            }
+        })
+    };
+
+    // Seed through the sessionless path — `meta()` advertises no
+    // elicitation capability, so the probe skips instead of asking.
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'elicit test');
+        USE fin;
+        DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT;
+        GLOSS unit ON t.a AS $${"value": "EUR"}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call(30, setup)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let session_request = |session: Option<&str>, payload: String| {
+        let mut request = Request::post("/mcp")
+            .header(header::HOST, "127.0.0.1")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream");
+        if let Some(id) = session {
+            request = request
+                .header("mcp-session-id", id)
+                .header("mcp-protocol-version", "2025-11-25");
+        }
+        request.body(Body::from(payload)).unwrap()
+    };
+
+    // A session-carrying initialize, elicitation advertised.
+    let init = json!({
+        "jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"elicitation": {}},
+            "clientInfo": {"name": "doors-test", "version": "0"}
+        }
+    });
+    let response = app
+        .clone()
+        .oneshot(session_request(None, init.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let sid = response
+        .headers()
+        .get("mcp-session-id")
+        .expect("a session id")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let posted = app
+        .clone()
+        .oneshot(session_request(
+            Some(&sid),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    assert!(posted.status().is_success(), "{}", posted.status());
+
+    // The tool call: the probe's question must ride this POST's own
+    // SSE stream.
+    let asked = json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "glossql", "arguments": {"statements": "SELECT 1 AS ok"}}
+    });
+    let response = app
+        .clone()
+        .oneshot(session_request(Some(&sid), asked.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    let mut buffer = String::new();
+
+    // Read SSE data lines until the elicitation request appears.
+    let elicit_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let chunk = stream.next().await.expect("stream open").expect("chunk");
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(end) = buffer.find('\n') {
+                let line = buffer.drain(..=end).collect::<String>();
+                if let Some(data) = line.trim().strip_prefix("data: ") {
+                    let event: Value = serde_json::from_str(data).expect(data);
+                    if event["method"] == json!("elicitation/create") {
+                        return event["id"].clone();
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .expect("the elicitation request must reach this stream");
+
+    // The human answers: a dictated gloss, posted as the JSON-RPC
+    // response through the session.
+    let answer = json!({
+        "jsonrpc": "2.0", "id": elicit_id,
+        "result": {
+            "action": "accept",
+            "content": {
+                "subject": "t.b",
+                "aspect": "unit",
+                "body": "{\"value\": \"CHF\"}",
+                "stance": "land it"
+            }
+        }
+    });
+    let posted = app
+        .clone()
+        .oneshot(session_request(Some(&sid), answer.to_string()))
+        .await
+        .unwrap();
+    assert!(posted.status().is_success(), "{}", posted.status());
+
+    // The handler unblocks and the tool result closes the stream.
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            while let Some(end) = buffer.find('\n') {
+                let line = buffer.drain(..=end).collect::<String>();
+                if let Some(data) = line.trim().strip_prefix("data: ") {
+                    let event: Value = serde_json::from_str(data).expect(data);
+                    if event["id"] == json!(2) {
+                        return event;
+                    }
+                }
+            }
+            let chunk = stream.next().await.expect("stream open").expect("chunk");
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    })
+    .await
+    .expect("the tool result must arrive after the answer");
+    assert_ne!(done["result"]["isError"], json!(true), "{done}");
+    let notes: Vec<&str> = done["result"]["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert!(
+        notes.iter().any(|text| text.contains("landed `unit` on `t.b`")),
+        "{notes:?}"
+    );
+
+    // The landed slot carries human standing — the workspace's human,
+    // never the calling agent.
+    let body = expect_ok(
+        mcp(
+            app,
+            call(31, "SELECT actor_kind, actor_id, subject FROM glossary;"),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let rows = outcomes[0]["rows"].as_array().unwrap();
+    assert!(
+        rows.iter().any(|row| row["actor_kind"] == json!("human")
+            && row["actor_id"] == json!("human")
+            && row["subject"] == json!("t.b")),
+        "{rows:?}"
+    );
+}
+
+/// The sessionless mechanism (SEP-2322, MRTR): on 2026-07-28 the ask
+/// is an `input_required` result and the answer arrives on the
+/// client's retry of the same call — no transport session needed.
+/// This is the lifecycle Claude Code speaks (measured 2026-08-13).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_mrtr_retry_lands_with_human_standing() {
+    let app = app_with(DoorConfig {
+        elicit_probe: true,
+        ..Default::default()
+    })
+    .await;
+
+    // The sessionless stamp, elicitation advertised.
+    let meta_elicit = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
+        "io.modelcontextprotocol/clientInfo": {"name": "doors-test", "version": "0"}
+    });
+    let call = |id: u64, statements: &str, retry: Option<Value>| {
+        let mut params = json!({
+            "_meta": meta_elicit.clone(),
+            "name": "glossql",
+            "arguments": {"statements": statements}
+        });
+        if let Some(responses) = retry {
+            params["inputResponses"] = responses;
+            params["requestState"] = json!("elicit-probe:v1");
+        }
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
+    };
+
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'mrtr test');
+        USE fin;
+        DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT;
+    "#;
+
+    // Round 1: the ask arrives instead of execution.
+    let body = expect_ok(mcp(app.clone(), call(40, setup, None)).await).await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+    let ask = &body["result"]["inputRequests"]["elicit-probe"];
+    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
+    assert_eq!(ask["params"]["mode"], json!("form"), "{body}");
+    assert_eq!(body["result"]["requestState"], json!("elicit-probe:v1"));
+
+    // Round 2: the same call retried with the answer riding along — a
+    // skip, so the statements just run.
+    let skip = json!({"elicit-probe": {"action": "accept", "content": {
+        "subject": "x", "aspect": "x", "body": "{}", "stance": "skip it"}}});
+    let body = expect_ok(mcp(app.clone(), call(41, setup, Some(skip))).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // A plain read asks again...
+    let body = expect_ok(mcp(app.clone(), call(42, "SELECT 1 AS ok", None)).await).await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+
+    // ...and the dictation on its retry lands with human standing
+    // before the read runs.
+    let land = json!({"elicit-probe": {"action": "accept", "content": {
+        "subject": "t.b", "aspect": "unit", "body": "{\"value\": \"CHF\"}", "stance": "land it"}}});
+    let body = expect_ok(mcp(app.clone(), call(43, "SELECT 1 AS ok", Some(land))).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let notes: Vec<&str> = body["result"]["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert!(
+        notes.iter().any(|text| text.contains("landed `unit` on `t.b`")),
+        "{notes:?}"
+    );
+
+    // The landed slot: the workspace's human, not the calling agent.
+    let verify = json!({
+        "jsonrpc": "2.0", "id": 44, "method": "tools/call",
+        "params": {
+            "_meta": meta(),
+            "name": "glossql",
+            "arguments": {"statements": "SELECT actor_kind, actor_id, subject FROM glossary;"}
+        }
+    });
+    let body = expect_ok(mcp(app, verify).await).await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let rows = outcomes[0]["rows"].as_array().unwrap();
+    assert!(
+        rows.iter().any(|row| row["actor_kind"] == json!("human")
+            && row["actor_id"] == json!("human")
+            && row["subject"] == json!("t.b")),
+        "{rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_actor_id_is_the_clients_name_not_the_transports() {
+    let app = app().await;
+    let call = |id: u64, statements: &str| {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {
+                "_meta": meta(),
+                "name": "glossql",
+                "arguments": {"statements": statements}
+            }
+        })
+    };
+
+    // The sessionless lifecycle synthesizes a transport-level peer
+    // identity ("rmcp"); the actor must come from the request's own
+    // `_meta` clientInfo stamp — the plane keys channels by it.
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'actor test');
+        USE fin;
+        DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT;
+        GLOSS unit ON t.a AS $${"value": "EUR"}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call(20, setup)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let body =
+        expect_ok(mcp(app, call(21, "SELECT actor_kind, actor_id FROM glossary;")).await).await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(
+        outcomes[0]["rows"][0]["actor_kind"],
+        json!("agent"),
+        "{outcomes}"
+    );
+    assert_eq!(
+        outcomes[0]["rows"][0]["actor_id"],
+        json!("doors-test"),
+        "{outcomes}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
     let app = app_with(DoorConfig {

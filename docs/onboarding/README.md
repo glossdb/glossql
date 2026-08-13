@@ -65,12 +65,17 @@ Approved — the build items:
    collapse. The first use found five surface defects (all fixed
    same day, execution-level frame tests added) and the rounds gap:
    the queue's derivation is now timestamp-bounded so a re-composed
-   agenda re-asks what a whole-map pin retired. Owed still: the F6
-   half (recipe-correction approvals need their proposal shape),
-   designed together with **one resolve surface** — the lead's
-   direction 2026-08-12: judgements should resolve the way pins do,
-   one gesture over an agent-composed body, without "needs
-   judgement" vs "pin this" becoming two taxonomies.
+   agenda re-asks what a whole-map pin retired. **RETIRED
+   2026-08-13** (`../../reports/2026-08-13-pin-retirement.md`): the
+   pin door, sign-in, `pin_questions`, and the app's write
+   affordances are removed. The **one resolve surface** the lead
+   asked for (2026-08-12) resolved as the elicitation loop
+   (`../../reports/2026-08-13-elicitation-spike.md`): the door asks
+   through the client's question form (MRTR on the sessionless
+   lifecycle, proven live in Claude Code), the answer lands as the
+   human gloss, and the queue retires it by the same derivation.
+   Questions are ephemeral — no ledger; a human `GLOSS` is the whole
+   record (corpus fixture 22).
 2. **Judged negatives per witnessed aspect** (F2; ruled 2026-08-12:
    per-aspect explicit values — each witnessed aspect that can fail
    to apply declares `none` with grounds, the dimensions pattern; a

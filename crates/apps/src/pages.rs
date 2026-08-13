@@ -75,39 +75,34 @@ fn apps_json(workspace: &std::path::Path) -> Value {
 
 pub async fn home(
     State(door): State<AppDoor>,
-    headers: axum::http::HeaderMap,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
     let mut ctx = tera::Context::new();
     ctx.insert("apps", &apps_json(&door.workspace));
     ctx.insert("state", &state_map(params));
-    ctx.insert("who", &crate::auth::subject(door.secret.as_ref(), &headers));
     render("home.html", ctx, base_tera())
 }
 
 pub async fn index(
     State(door): State<AppDoor>,
     Path(app): Path<String>,
-    headers: axum::http::HeaderMap,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, "index", &headers, params)
+    page_response(&door, &app, "index", params)
 }
 
 pub async fn page(
     State(door): State<AppDoor>,
     Path((app, page)): Path<(String, String)>,
-    headers: axum::http::HeaderMap,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, &page, &headers, params)
+    page_response(&door, &app, &page, params)
 }
 
 fn page_response(
     door: &AppDoor,
     app: &str,
     page: &str,
-    headers: &axum::http::HeaderMap,
     params: Vec<(String, String)>,
 ) -> Response {
     let def = match AppDef::load(&door.workspace, app) {
@@ -139,8 +134,6 @@ fn page_response(
     );
     ctx.insert("apps", &apps_json(&door.workspace));
     ctx.insert("state", &state_map(params));
-    // The signed-in name (the sign-in simulation): pages show who pins.
-    ctx.insert("who", &crate::auth::subject(door.secret.as_ref(), headers));
     render(&format!("pages/{page}.html"), ctx, tera)
 }
 

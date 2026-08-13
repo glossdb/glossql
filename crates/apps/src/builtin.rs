@@ -37,7 +37,6 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         model!("frames/measured.sql"),
         model!("frames/measurements_list.sql"),
         model!("frames/metric.sql"),
-        model!("frames/pins.sql"),
         model!("frames/brief.sql"),
         model!("frames/queue.sql"),
         model!("frames/scenarios.sql"),

@@ -1,4 +1,4 @@
--- The declared metric surfaces: every QUERY aspect with its pinned
+-- The declared metric surfaces: every QUERY aspect with its standing
 -- formula where the formulas gloss names one, and whether a recorded
 -- materialization exists to serve reads. The list is the navigation —
 -- each row opens the metric's dossier.
