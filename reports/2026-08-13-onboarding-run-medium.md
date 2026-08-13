@@ -119,3 +119,66 @@ on the remaining 14 declared edges; the counterparty resolution.
   working the flows (forms fired on the agent's tool calls before
   the framework existed). Livable now that stats never ask, but the
   cadence of *when* the round engages the human may want a ruling.
+
+## Validation against the sealed truth (unsealed after commit b53a789)
+
+The generator planted **15 injections**. Scored: **7 clean catches**
+(debit sentinels · obscured `vid`/`pt` · payment date corruption ·
+the ORPHAN- references · `drift_formula` on trial_balance — caught
+by `behavior_evidence` as "turnover, the name lies" · the trial
+balance break · mutual-exclusivity showing as the 5,811 identity
+violations), **4 partials** (cost_center nulls seen but explained
+with an unverified story; the 10,000.0 credit spike flagged but not
+connected to revenue; bank round-number mass noted, no Benford
+check; the GL↔invoice match seen only as a rejected join candidate),
+**3 misses** (temporal drift in bank amounts · mixed units in 1% of
+invoice amounts · the payment↔bank match — whose join column
+`bank_transactions.payment_id` was never landed).
+
+**The landing miss that caused the relationship miss**: probe rows
+omit null fields, so three all-null-leading columns
+(`customers.churned_date`, `products.discontinued_date`,
+`bank_transactions.payment_id`) were invisible in LIMIT-3 probes and
+left out of the recipes. The add-source skill's LIMIT-0 schema
+rehearsal exists for exactly this and was skipped. 18 of the 19
+canonical edges were recovered; the 19th rode the unlanded column.
+
+**Semantics: 14 of 14 stock/flow truths match** the behavior
+verdicts, including both trial_balance columns (additive — the
+discriminator out-judged the name) and the judged `fx_rates.rate`
+point-in-time call. Entity and dimension verdicts consistent with
+`table_roles`/`bus_matrix` on spot inspection.
+
+**The rulings, decomposed** (the lead asked "were my rulings wrong"):
+
+- **revenue** — the ruled GL reading is *contaminated, not
+  mis-defined*: formula choice (canon credit-only vs ruled
+  credit−debit) moves ±60k/month, but the injected credit outliers
+  inflate the landed GL ~750k/month. The **disclosed rival (billed
+  order lines) matches canon to within that month's other income**
+  (Jan: 13,570,747 vs 13,573,300). The dossier's two-line story tile
+  is this finding, drawn.
+- **dso** — canon uses actual days (the disclosed rival), the ruling
+  took flat-30: a real divergence, but small next to —
+- **ar_balance** — the grounding (mine, confirmed by the ruling)
+  used 1210 only; canon includes 1220 Other Receivables, which is
+  the same size (Dec: 21.1M + 21.1M = canon's 42.2M exactly). Canon
+  DSO ends 2025 at 75.6 days vs the served 34.5 — **the AR scope is
+  the dominant error, and it was never disclosed as an assumption**,
+  so no question ever surfaced it.
+- **cogs** — the 5100-alone ruling matches canon scope; but my
+  grounding nets credits (debit−credit) where canon takes debit-only
+  (returns not netted): 420k/month divergence **never disclosed as
+  an assumption**, so never asked.
+- **cash_position, gross_profit, inventory_value** — match canon
+  (inventory via the ties-to-GL invariant).
+
+**The lesson with teeth**: every wrong number traces to an
+*undisclosed* assumption or an unlanded column — never to a wrongly
+answered question. The round worked; what it was shown was
+incomplete. An assumption you leave out is a question nobody is ever
+asked — measured here at 2× on DSO.
+
+Not built, deliberately (scope, not error): purchases, expenses,
+operating_income, margins, ap/dpo, dio, ccc, fcf, the db1 entity
+family.

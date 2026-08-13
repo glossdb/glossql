@@ -169,8 +169,14 @@ holds what needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Standing checks</span>
-      <code class="chip" title="Every declared witness beside what its detector currently holds. New imports invalidate the measurement — the next run recomputes; nothing here is maintained by hand.">ATTEST</code></header>
-    <gl-rows frame="frames/checks" empty="no witnesses declared — nothing stands watch yet">
+      <code class="chip" title="Witnesses with a verdict or a voice: what each detector currently holds. New imports invalidate the measurement — the next run recomputes; nothing here is maintained by hand. Witnessed slots nobody spoke to yet are not checks — they are owed, in Coverage.">ATTEST</code></header>
+    <gl-rows frame="frames/checks_backlog">
+      <template>
+        <p class="hint">{n} vocabulary slots unassessed — the agent's measurement backlog, counted in Coverage</p>
+      </template>
+    </gl-rows>
+    <div class="scroll">
+    <gl-rows frame="frames/checks" empty="no verdicts yet — witnesses stand, nothing has spoken">
       <template>
         <div class="rrow" style="grid-template-columns:10rem 1fr 12rem auto">
           <span class="r-subj">{checked}</span>
@@ -180,6 +186,7 @@ holds what needs your judgement, loosest first, all of it.</p>
         </div>
       </template>
     </gl-rows>
+    </div>
   </section>
 
   <section class="tile">

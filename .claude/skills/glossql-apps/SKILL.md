@@ -1,6 +1,6 @@
 ---
 name: glossql-apps
-description: Author a server-rendered data app on the glossql app door — app.toml, a tera page, SQL frames, vega-lite specs. Use when the target wants a monitoring or exploration surface over the workspace's metrics or its glossary, after the metric framework exists.
+description: Author a server-rendered data app on the glossql app door — shape it with the user in prose (the co-design loop), then app.toml, a tera page, SQL frames, vega-lite specs. Use when the target wants a monitoring or exploration surface over the workspace's metrics or its glossary, after the metric framework exists.
 ---
 
 # Authoring apps
@@ -13,6 +13,33 @@ metric dossiers, slices from the cached cube through
 `metric_series()`, the metric graph). A workspace `apps/<name>/`
 shadows a built-in of the same name, so forking one is copying its
 directory out.
+
+## The co-design loop
+
+An app is built *with* the human, in the conversation register the
+whole way — no forms anywhere in this flow. Four steps:
+
+1. **The job, in prose.** Who opens this page, and what one question
+   does it answer? An app has a topic exactly as a dataset does, and
+   every tile earns its place against that job or gets cut. This is
+   where "a monitoring dashboard" becomes "the Monday cash meeting
+   page".
+2. **The tile list, as a prose proposal.** Each tile named with its
+   read, its slice, its chip and cap — "DSO trend with the rival
+   line · by-region billings, top 8 · the open-questions count".
+   Propose from the glossary's own reads (the ranked axes, the
+   declared surfaces — the choosing section below); the user prunes
+   and extends in words.
+3. **Author, then preview as the conversation.** Write the
+   artifacts, hand over the URL. The rendered page is the proposal
+   made concrete — the facts on the table; the user reacts in prose
+   ("swap the trend for by-region", "wrong grain on that number")
+   and save-plus-reload iterates. How the human best gives feedback
+   on a live page is an open topic — for now it is words about what
+   they see.
+4. **The close, as a read-back.** What shipped, what was cut and
+   why, which tiles carry disclosed assumptions. Approval is the
+   human saying so, in chat — no approval machinery.
 
 ## What an app is
 

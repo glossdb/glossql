@@ -12,6 +12,15 @@ library — `profile`, `outliers`, `temporal`, `behavior_evidence`,
 `SELECT * FROM functions` lists what is declared, and that read is
 the authority, not this sentence.
 
+**This is not ETL.** Probe and recipe are the filter: a dataset is a
+curated working set for its topic (the onboard skill's stage 0),
+never a mirror of the export. Land the tables the agreed topic and
+cohort need; take only the columns the recipe's SELECT list earns;
+filter a wide table in the recipe's WHERE. A table or column left
+out costs one later `DECLARE RECIPE`; landing everything costs
+attention on every flow after — more slots to gloss, more owed
+claims, more noise between you and the questions that matter.
+
 ## 1. Dataset and source
 
 ```glossql
@@ -133,9 +142,15 @@ so `count("amount")` and `count(try_cast("amount" AS DOUBLE))` collide
 in one aggregate — the `AS` aliases arrive too late to separate them.
 
 A `LIMIT 0` probe's empty result still carries its schema — it
-rehearses exactly the identity the recipe will stamp. Taught format
-patterns (date spellings, decimal marks) are FACT glosses on the
-dataset — read them from the glossary before guessing formats.
+rehearses exactly the identity the recipe will stamp. **Run it per
+file before authoring any recipe; row probes cannot replace it**:
+probe rows omit null fields, so a column that is null in the rows
+you sampled is invisible there — the first validated run lost three
+columns this way, one of them a join key, and the missed
+relationship rode the missed column. The schema probe is where you
+see every column and *choose* which ones the topic earns. Taught
+format patterns (date spellings, decimal marks) are FACT glosses on
+the dataset — read them from the glossary before guessing formats.
 
 ## 3. Recipe — typing is authored
 

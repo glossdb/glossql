@@ -164,6 +164,16 @@ full confidence. When a measurement *abstains*, the abstention names
 why — relay that with your grounds as a judgment question if it stays
 load-bearing, never as a raw "which is it?".
 
+And the round is one of two registers, for one kind of interaction
+only. **Prose shapes the work; forms rule the record.** Anything
+that decides what the work *is* — the dataset's topic, which metrics
+to build, whether to widen the import — is conversation: stop,
+present the facts, propose in prose, interpret the human's prose.
+The round's forms carry only standing assumptions to confirm or
+correct — they work because confirming a stated judgment with the
+facts on the table is easy, and they fail as a substitute for
+conversation because there is nothing standing to confirm yet.
+
 ## Confidence means the number
 
 Wherever a writing carries `confidence` (grounding assumptions are

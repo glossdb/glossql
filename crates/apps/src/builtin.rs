@@ -37,6 +37,7 @@ pub const BUILTINS: &[BuiltinApp] = &[
             model!("frames/aspects_list.sql"),
             model!("frames/census.sql"),
             model!("frames/checks.sql"),
+            model!("frames/checks_backlog.sql"),
             model!("frames/claims.sql"),
             model!("frames/coverage.sql"),
             model!("frames/drivers.sql"),

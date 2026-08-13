@@ -15,6 +15,22 @@ The framework is domain-neutral: a metric is whatever the target asks
 — throughput, defect rate, utilization, revenue. The worked examples
 below come from our finance test runs.
 
+**The cohort is agreed before anything declares.** The metric set
+comes out of the onboard skill's stage-0 conversation — proposed in
+prose, shaped by the user, aimed at the business's real KPIs
+including the heavy ones — never invented mid-flow. That
+conversation is where scope questions surface cheaply ("DSO over
+which receivables?"); a scope nobody discussed becomes an
+undisclosed assumption, and an assumption you leave out is a
+question nobody is ever asked. If no cohort was agreed, stop and
+have the conversation first.
+
+**A cohort KPI the data cannot ground is a finding.** Never force
+it and never silently drop it: name what is missing (the table, the
+opening balance, the master data) and which numbers it would close.
+That gap surfacing is the product working — it goes in the closing
+read-back beside the grounded metrics.
+
 ## 1. Read the floor first
 
 Every grounding cites the judged knowledge underneath it. Before
@@ -403,7 +419,11 @@ SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
 ```
 
 Red bands are where a human closes what you could not; unassessed
-rows are the vocabulary nobody has spoken to yet.
+rows are the vocabulary nobody has spoken to yet. And the read-back
+covers the whole agreed cohort, not just what grounded: every KPI
+that did not ground gets named with what would close it — a missing
+table, an opening position, master data — as a learning, never a
+silent omission.
 
 ## 9. The question round — end every framework with it
 
@@ -446,6 +466,11 @@ the readings instead of arguing from prose — the cube (§5) runs the
 rival monthly and the metrics app's story tile draws both lines, so
 the gap is a chart the human reads before ruling. Start with the
 metric where the families diverge hardest, not everywhere.
+
+The round is the *ruling* register, not the *shaping* one (the
+onboard skill's two-registers rule): what the cohort is, what the
+topic means — that was conversation, settled in stage 0. The round
+carries only standing assumptions to confirm or correct.
 
 Close the flow by presenting **every definitional choice you made**
 as a question to the user — one per definition, multiple choice,
