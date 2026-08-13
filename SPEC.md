@@ -20,9 +20,12 @@ Ground rules:
 - **Context stays folded.** Everything that is context — even structured
   context — is a JSON document validated by a [JSON Schema](https://json-schema.org).
   Rendering conventions ride the schema. Authored prose is opaque.
-- **The actor rides the connection.** Every connection carries an actor
-  (agent_id or human_id), DuckDB-style. There is no BY clause anywhere; the
-  engine stamps writer and actor kind on every statement.
+- **The actor rides the transport.** Every connection carries an actor
+  (agent_id or human_id), DuckDB-style. An answer the door elicits from
+  the human mid-call is server-witnessed and lands with human standing —
+  the same rule; the transport is just not always a connection (fixture
+  22, ruled 2026-08-13). There is no BY clause anywhere; the engine
+  stamps writer and actor kind on every statement.
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
   key is (subject, aspect, actor kind).
@@ -491,7 +494,9 @@ experiment). Closes by running the agent experiment, not by argument.
 
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
-the same guarantee · actor transport rides the connection, DuckDB-style ·
+the same guarantee · the actor rides the transport — the connection,
+DuckDB-style, or a door-elicited answer, server-witnessed with human
+standing ·
 value-at-read, ruled 2026-08-06, bound 2026-08-07: a QUERY aspect's
 value materializes as a namespaced table function — `FROM read.dso()`
 expands the collapsed current grounding at plan time, nesting allowed

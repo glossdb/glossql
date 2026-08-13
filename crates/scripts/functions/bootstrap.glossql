@@ -1,7 +1,9 @@
 -- The shipped system: the global measurement library, declared into a
 -- fresh workspace by serverd at boot (the reference scripts land beside
--- it under functions/). The vertical — semantic aspects, their
--- witnesses — is deliberately absent: framing it is the agent's work.
+-- it under functions/). The semantic vocabulary — aspects, witnesses —
+-- ships too, as the KPI kit (kpi_kit.glossql), run right after this
+-- file; what stays the agent's work is the company's own vocabulary:
+-- metrics, validations, scenarios.
 
 DECLARE ASPECT column_profile WITH $${
   "type": "object",
@@ -189,3 +191,5 @@ DECLARE FUNCTION metric_bands FOR GLOBAL FROM 'functions/metric_bands.rhai'
   RETURNS metric_bands;
 
 DECLARE FUNCTION band_breach FOR GLOBAL FROM 'functions/band_breach.rhai';
+
+DECLARE FUNCTION rate_tolerance FOR GLOBAL FROM 'functions/rate_tolerance.rhai';

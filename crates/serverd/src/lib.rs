@@ -37,10 +37,6 @@ pub struct DoorConfig {
     pub agent: String,
     /// Rows an MCP tool result ships before declaring `truncated`.
     pub row_cap: usize,
-    /// The elicitation spike (2026-08-13): every MCP tool call first
-    /// asks the client one form question; an accepted dictation lands
-    /// as a HUMAN gloss. Off outside spike runs and their tests.
-    pub elicit_probe: bool,
 }
 
 impl Default for DoorConfig {
@@ -48,7 +44,6 @@ impl Default for DoorConfig {
         DoorConfig {
             agent: "agent".into(),
             row_cap: DEFAULT_ROW_CAP,
-            elicit_probe: false,
         }
     }
 }
@@ -77,12 +72,16 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
         let brief = Arc::clone(&brief);
         tokio::spawn(async move { GlossqlMcp::refresh_brief(&plane, &brief).await });
     }
+    // Declined questions defer for the server run — transport state,
+    // shared across the per-request handler instances.
+    let deferred = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
     let mcp = StreamableHttpService::new(
         move || {
             Ok(GlossqlMcp::new(
                 Arc::clone(&mcp_plane),
                 mcp_doors.clone(),
                 Arc::clone(&brief),
+                Arc::clone(&deferred),
             ))
         },
         Arc::new(LocalSessionManager::default()),

@@ -11,20 +11,11 @@ joins that put judged dimensions beside each fact. Run it after the
 add-source flow (roles glossed) and the relationships plane (edges
 declared). The workspace ships both measurements at boot.
 
-## 1. Frame the vocabulary
+## 1. The vocabulary ships
 
-The verdict aspect is yours to declare, like `entity`:
-
-```glossql
-DECLARE ASPECT dimension WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {
-    "value": {"type": "string", "enum": ["primary", "supporting", "none"]},
-    "grounds": {"type": "string"}
-  }
-}$$ AS FACT ON COLUMN;
-DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
-```
+The verdict aspect and its witness boot with the KPI kit — `dimension`
+on columns, values `primary | supporting | none` plus `grounds`.
+Nothing to declare; gloss straight into it.
 
 `primary` and `supporting` are absolute labels, not ranks — an
 ordinal priority means nothing without knowing what it is a rank *of*,
@@ -102,11 +93,9 @@ GLOSS meaning ON orders.zip -> orders.city AS $${"value": "postal drill-down; g3
 
 ## 4. The enriched read
 
-The substrate does not persist views — `CREATE VIEW` is refused, and
-that is the ruling, not a gap (project lead, confirmed 2026-08-06:
-grain-checked joins are the construct, in the spirit of the language;
-the one flow that once needed a view — the composite cure — was
-retired by the tuple ruling). The deliverable is the *judged join*:
+The substrate does not persist views — `CREATE VIEW` is refused by
+design: grain-checked joins are the construct, in the spirit of the
+language. The deliverable is the *judged join*:
 which joins extend a fact without corrupting it, recorded so every
 later query can use them. Before trusting any join, run the
 grain check — the cheapest verification of the most consequential

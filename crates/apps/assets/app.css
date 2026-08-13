@@ -381,6 +381,42 @@ gl-rows > .rrow:first-of-type, gl-rows > template + .rrow { border-top: 0; }
 .chip.ok { color: var(--pos); border-bottom-color: rgba(109, 189, 141, 0.4); }
 .chip.warn { color: var(--amber); border-bottom-color: rgba(226, 163, 63, 0.4); }
 
+/* The round, rendered where the metric lives: each open question is
+   a card. Amber is the hue of wanted judgement, so this is the one
+   place the page spends it — the confidence is the anchor, how loose
+   the claim stands until a human rules it. */
+.qcard {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  margin: 0.5rem 0;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--amber);
+  border-radius: 7px;
+}
+.qcard .q-conf {
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--amber);
+  min-width: 2.6rem;
+}
+.qcard .q-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.qcard .q-what { font-size: 0.85rem; color: var(--ink); overflow-wrap: anywhere; }
+
+/* A check line reads expectation → measured: the declared half stays
+   faint, the measured half holds the ink. */
+.arr { color: var(--faint); }
+.r-meta .mea { color: var(--ink); }
+
 /* A measured bar: the template sets the width from the frame. */
 .meter { height: 7px; border-radius: 4px; background: var(--bg2); overflow: hidden; }
 .meter i { display: block; height: 100%; border-radius: 4px; background: var(--cyan); }
@@ -403,7 +439,6 @@ gl-rows > .rrow:first-of-type, gl-rows > template + .rrow { border-top: 0; }
 /* Where a claim travels: node chain, plain text arrows. */
 .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; font-family: var(--mono); font-size: 0.78rem; }
 .chain .node { background: var(--bg2); border: 1px solid var(--line); border-radius: 5px; padding: 0.24rem 0.55rem; }
-.chain .arr { color: var(--faint); }
 
 /* Contest folds closed; the statement is one click of intent away. */
 details.contest summary {

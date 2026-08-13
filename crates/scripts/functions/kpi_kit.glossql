@@ -1,0 +1,105 @@
+-- The KPI kit: the semantic vocabulary a workspace starts with,
+-- declared at boot beside the measurement library. The line it draws:
+-- this file ships the questions — what a column means, how a number
+-- behaves, its unit, which axes slice, what a table is, where
+-- definitions and formulas live, how a recipe correction travels.
+-- The answers — the company's own metrics, validations, scenarios —
+-- stay authored in the flows. Adapting glossdb for a customer starts
+-- here: the kit is statements, so a fork is an edit.
+--
+-- Names machinery reads, recorded here because this is the one file
+-- that ships them: `recipe_change` (the agent brief counts pending
+-- approvals by that aspect name), `x-kind` / `x-unit` / `title` in
+-- QUERY-aspect blobs (the model app's frames), and `none` as the
+-- judged negative in enum aspects ("examined, does not apply" — a
+-- different fact from an unassessed row, and the one that lets the
+-- backlog read walk to zero).
+
+-- Column vocabulary. role classes every column; behavior and unit are
+-- the witnessed enum/valued claims on measures — unwritten, each one
+-- derives as an owed question at the door.
+
+DECLARE ASPECT meaning WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"type": "string"}, "term": {"type": "string"}}
+}$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;
+
+DECLARE ASPECT role WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"enum": ["key", "measure", "dimension",
+                                    "timestamp", "attribute"]}}
+}$$ AS FACT ON COLUMN;
+
+DECLARE ASPECT behavior WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"enum": ["stock", "flow", "none"]},
+                 "grounds": {"type": "string"}}
+}$$ AS FACT ON COLUMN;
+
+DECLARE ASPECT unit WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"type": "string"},
+                 "source_column": {"type": "string"}}
+}$$ AS FACT ON COLUMN;
+
+DECLARE ASPECT dimension WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {
+    "value": {"type": "string", "enum": ["primary", "supporting", "none"]},
+    "grounds": {"type": "string"}
+  }
+}$$ AS FACT ON COLUMN;
+
+-- Table identity — the entity verdict every aggregate stands on.
+
+DECLARE ASPECT entity WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"type": "string"},
+                 "role": {"enum": ["fact", "dimension"]},
+                 "grain": {"type": "array", "items": {"type": "string"}},
+                 "time_axis": {"type": "string"},
+                 "identity_columns": {"type": "array", "items": {"type": "string"}}}
+}$$ AS FACT ON TABLE;
+
+-- Source conventions — fiscal calendar, sign conventions, what an
+-- export's nulls mean; read and superseded workspace-wide.
+
+DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+
+-- Dataset registries. The aspect blob of a metric stays thin (title,
+-- x-kind); everything the company might revise — meaning, unit,
+-- owner, source — lives in definitions glosses, where a correction
+-- supersedes with actor and timestamp.
+
+DECLARE ASPECT formulas WITH $${
+  "type": "object", "properties": {"formulas": {"type": "object"}}
+}$$ AS FACT ON DATASET;
+
+DECLARE ASPECT definitions WITH $${
+  "type": "object", "properties": {"definitions": {"type": "object"}}
+}$$ AS FACT ON DATASET;
+
+-- The recipe-correction channel: the human gloss is the approval, the
+-- re-declare is the agent's next act, and the brief counts approvals
+-- still waiting on an import of the named table.
+
+DECLARE ASPECT recipe_change WITH $${
+  "type": "object", "required": ["table", "sql", "reason"],
+  "properties": {"table": {"type": "string"}, "sql": {"type": "string"},
+                 "reason": {"type": "string"}}
+}$$ AS FACT ON TABLE;
+
+-- Witnesses: who may speak, and which claims the door owes a question
+-- for while they stand unwritten. slot_entropy adjudicates the
+-- low-entropy enums; bands adjudicate through band_breach.
+
+DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
+DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
+DECLARE WITNESS role_w ON role BY (AGENT, HUMAN)
+  DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
+  DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN)
+  DETECTOR slot_entropy THRESHOLD 0.7;
+DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
+DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;

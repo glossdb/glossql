@@ -15,6 +15,8 @@ the one closest to your task before writing:
 - `outliers.rhai` — a measurement chained on another through `ACCEPTS`.
 - `temporal.rhai` — a measurement built from `db.query` SQL.
 - `slot_entropy.rhai` — a detector.
+- `rate_tolerance.rhai` — a detector over slot voices (authored
+  expectation vs check voice), the usual validation shape.
 
 ## Declaration
 
@@ -85,7 +87,7 @@ NULL. Read numbers you will loop over with `floats()`, never
 strings, and a hot loop through it is interpreter-bound. A score reads
 exact scalars (`entropy()`, `distinct()`), never `top_k` buckets —
 top_k is a display cap, and a display cap must not become a statistics
-cap (the f1 relevance lesson, 2026-08-06).
+cap.
 
 Statistical kernels — the compute-heavy halves of measurements live
 here, in Rust; a script that finds itself nesting loops over rows or

@@ -5,10 +5,9 @@ description: Write exceptional window and aggregation SQL over glossed data — 
 
 # Windows over slices
 
-First writing (2026-08-10). Every syntax claim below is verified
-against the pinned substrate — DataFusion 53.1, sqlparser 0.61,
-postgres dialect — not against the docs of latest, which show
-several things this pin does not parse.
+Every syntax claim below is verified against the pinned substrate —
+DataFusion 53.1, sqlparser 0.61, postgres dialect — not against the
+docs of latest, which show several things this pin does not parse.
 
 The habit this skill exists to break: agents write postgres-shaped
 SQL — a self-join per comparison, a subquery per rank, `date_trunc`

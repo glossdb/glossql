@@ -10,6 +10,12 @@ SELECT q.aspect,
   coalesce(json_get_str(a.schema, 'x-unit'), '') AS unit,
   coalesce(json_get_str(a.schema, 'x-kind'), '') AS mkind,
   json_get_str(q.body, 'sql') AS sql,
+  -- the meta line, separators only between present parts — an unset
+  -- unit must not leave a dangling dot in the tile
+  arrow_cast(concat_ws(' · ',
+    coalesce(json_get_str(a.schema, 'title'), q.aspect),
+    nullif(coalesce(json_get_str(a.schema, 'x-kind'), ''), ''),
+    nullif(coalesce(json_get_str(a.schema, 'x-unit'), ''), '')), 'Utf8') AS meta,
   arrow_cast(coalesce(json_get_str(json_get(f.value, 'formulas'), CAST($metric AS VARCHAR)),
            'no recorded formula'), 'Utf8') AS formula,
   q.actor,

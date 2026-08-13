@@ -1,6 +1,6 @@
 ---
 name: glossql-add-source
-description: Drive the add-source flow in a glossql workspace end to end — probe a declared source, author the typing recipe, land the table, run the measurement plane, frame the semantic vocabulary, and gloss every column. Use when connecting a new data source or landing a new table.
+description: Drive the add-source flow in a glossql workspace end to end — probe a declared source, author the typing recipe, land the table, run the measurement plane, and gloss every table and column into the shipped vocabulary. Use when connecting a new data source or landing a new table.
 ---
 
 # Adding a source
@@ -36,7 +36,6 @@ convention is a fact about the source system, not about this
 dataset:
 
 ```glossql
-DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 GLOSS conventions ON erp_export AS $${
   "placeholder_date": "1900-01-01 stands for unset",
   "timestamp_format": "%b %e %Y %I:%M%p, month names mixed-language"
@@ -80,7 +79,7 @@ cannot express a type cannot land it:
   functions (`date(x)` to ISO text, `unixepoch(x)` to integer
   seconds) — but never `CAST … AS DATE` there: DATE takes NUMERIC
   affinity, so `CAST(date(x) AS DATE)` silently lands `2010` for
-  `'2010-12-27'` (an int64 on the wire — measured 2026-08-07). The
+  `'2010-12-27'` (an int64 on the wire — measured, not theorized). The
   honest spellings land untyped because the wire has no temporal
   type; the typed read is `CAST(col AS DATE)` at read time, and that
   gap belongs in the column's `meaning` gloss so no reader has to
@@ -208,61 +207,30 @@ from "the business changed" — a corrupted slice violates the identity
 at exactly its row coverage while every marginal statistic reads the
 same change as a price move.
 
-## 5. Frame the semantic vocabulary
+## 5. The semantic vocabulary ships — read it back
 
-The workspace ships with measurements only. Declare the vocabulary
-before glossing — send once, verbatim. The `ON` list is each aspect's
-grain: glosses outside it are refused, and the `unassessed` grid stays
-within it.
+The workspace boots with the KPI kit already declared: `meaning`,
+`entity`, `role`, `behavior`, `unit`, `dimension`, `conventions`,
+`formulas`, `definitions`, `recipe_change`, each with its witness.
+Don't redeclare them — read them back and gloss:
 
 ```glossql
-DECLARE ASPECT meaning WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {"value": {"type": "string"}, "term": {"type": "string"}}
-}$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;
-DECLARE ASPECT entity WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {"value": {"type": "string"},
-                 "role": {"enum": ["fact", "dimension"]},
-                 "grain": {"type": "array", "items": {"type": "string"}},
-                 "time_axis": {"type": "string"},
-                 "identity_columns": {"type": "array", "items": {"type": "string"}}}
-}$$ AS FACT ON TABLE;
-DECLARE ASPECT role WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["key", "measure", "dimension",
-                                    "timestamp", "attribute"]}}
-}$$ AS FACT ON COLUMN;
-DECLARE ASPECT behavior WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {"value": {"enum": ["stock", "flow", "none"]},
-                 "grounds": {"type": "string"}}
-}$$ AS FACT ON COLUMN;
-DECLARE ASPECT unit WITH $${
-  "type": "object", "required": ["value"],
-  "properties": {"value": {"type": "string"},
-                 "source_column": {"type": "string"}}
-}$$ AS FACT ON COLUMN;
+SELECT name, kind, grain FROM aspects;
+SELECT name, aspect, speakers, detector FROM witnesses;
 ```
+
+The `ON` grain in each declaration is the contract: glosses outside
+it are refused, and the `unassessed` grid stays within it. Declare a
+new aspect only for what your source genuinely adds that the kit
+doesn't name.
 
 A witnessed aspect that can fail to apply declares its **judged
-negative** — `none` beside the real values, with `grounds` (ruled
-2026-08-12; the dimension aspect's pattern). "Examined, does not
-apply" and "nobody judged yet" are different facts: the first is a
-`none` gloss, the second an `unassessed` row, and only that split
-lets the backlog read walk to zero. Free-string aspects (`unit`)
-carry the same convention as the value `none` plus grounds.
-
-```glossql
-DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
-DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
-DECLARE WITNESS role_w ON role BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-```
+negative** — `none` beside the real values, with `grounds`.
+"Examined, does not apply" and "nobody judged yet" are different
+facts: the first is a `none` gloss, the second an `unassessed` row,
+and only that split lets the backlog read walk to zero. Free-string
+aspects (`unit`) carry the same convention as the value `none` plus
+grounds.
 
 ## 6. Gloss every table — the entity verdict
 
@@ -357,4 +325,14 @@ SELECT subject, band, score FROM ATTEST(fin::behavior) WHERE band = 'red';
 
 Witnessed aspects nobody spoke to appear as rows — absence is visible,
 not an omission. Red bands are where a human must close what you could
-not.
+not, and an unwritten witnessed enum claim on a measure (`behavior`)
+derives as the door's own choice question — leave a slot you cannot
+ground unwritten rather than guessed.
+
+Close with a read-back the human can judge at its real size. The
+load-bearing verdicts — entity, behavior, unit, anything a wrong value
+silently corrupts downstream — get named one by one. For the
+descriptive long tail (a hundred `meaning` glosses), exhaustive review
+is theater: show the distribution and a spot-check sample — "111
+column meanings, 78 cite measured evidence; here are five at random" —
+and treat a failed spot-check as the batch's problem, not the row's.

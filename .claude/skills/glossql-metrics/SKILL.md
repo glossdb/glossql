@@ -50,16 +50,14 @@ DECLARE ASPECT revenue WITH $${
 DECLARE ASPECT dso WITH $${
   "title": "Days Sales Outstanding", "x-kind": "metric"
 }$$ AS QUERY ON DATASET;
-DECLARE ASPECT formulas WITH $${
-  "type": "object", "properties": {"formulas": {"type": "object"}}
-}$$ AS FACT ON DATASET;
-DECLARE ASPECT definitions WITH $${
-  "type": "object", "properties": {"definitions": {"type": "object"}}
-}$$ AS FACT ON DATASET;
 ```
 
-**The aspect blob is thin — definitions live in glosses** (ruled
-2026-08-12). Declarations have no supersession: whatever sits in the
+The registries beside them — `formulas` and `definitions`, FACT on
+the dataset — ship with the KPI kit; gloss into them, never
+redeclare.
+
+**The aspect blob is thin — definitions live in glosses.**
+Declarations have no supersession: whatever sits in the
 `WITH` blob cannot be revised, contested, or outranked, so anything
 the company might change — the meaning prose, the unit, the owner,
 the source document — belongs in the `definitions` FACT gloss, where
@@ -89,7 +87,7 @@ judged dimensions as columns. Every assumption names its basis:
 
 ```glossql
 GLOSS revenue ON fin AS $${
-  "sql": "SELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
+  "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts, entry date as the time axis\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
   "assumptions": [
     {"dimension": "sign", "assumption": "revenue accounts carry credit balances", "basis": "conventions gloss", "confidence": 0.95},
     {"dimension": "grain", "assumption": "joins are grain-preserving", "basis": "relationship glosses", "confidence": 1.0},
@@ -97,6 +95,16 @@ GLOSS revenue ON fin AS $${
   ]
 }$$;
 ```
+
+**Say the mechanics inside the SQL as comments** — a line like the
+example's above the expression it explains. The recorded SQL is what
+the validation surface shows a human beside the formula, and a
+comment inside the query cannot drift from the query the way a
+separate description can. The split is clean: comments carry
+mechanics (how this computes), the assumptions array carries
+judgment (what was chosen, on what basis, how firmly). This holds
+for every recorded QUERY gloss — groundings and recorded
+materializations alike.
 
 A stock's extract is bounded by its **source grain** (a table of
 period balances speaks per period; no read can answer finer) — serve
@@ -107,11 +115,12 @@ never a sum), and an unmarked grounding reads as a flow.
 
 The assumptions array is a contract, not commentary: every metric
 writing carries `assumptions: [{dimension, assumption, basis,
-confidence}]`, and confidence means it — 1.0 only for what is ruled
-or proven, less for judgment however common. The world-model surface
-reads exactly this shape to build its judgement queue, so an
-assumption you leave out is invisible to the humans who would have
-caught it, and a confidence you inflate empties their queue falsely.
+confidence}]`, and confidence means it — the core skill's calibration
+scale governs the number (1.0 only for what is ruled or proven). The
+world-model surface reads exactly this shape to build its judgement
+queue, so an assumption you leave out is invisible to the humans who
+would have caught it, and a confidence you inflate empties their
+queue falsely.
 
 **After grounding, run the collision read.** Two concepts grounding to
 the same extract make every ratio between them compute 1.0, silently:
@@ -176,6 +185,7 @@ rate against a declared edge all wear the same shape:
 DECLARE ASPECT journal_balanced WITH $${
   "type": "object", "required": ["outcome"],
   "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
+                 "rate": {"type": "number"},
                  "severity": {"enum": ["critical", "warning", "info"]}}
 }$$ AS FACT ON TABLE;
 GLOSS journal_balanced ON journal_lines AS $${
@@ -184,9 +194,8 @@ GLOSS journal_balanced ON journal_lines AS $${
 }$$;
 DECLARE FUNCTION journal_check FOR fin FROM 'functions/journal_check.rhai'
   ACCEPTS (imports) RETURNS journal_balanced;
-DECLARE FUNCTION framework_bands FOR fin FROM 'functions/framework_bands.rhai';
 DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
-  DETECTOR framework_bands THRESHOLD 0.5;
+  DETECTOR rate_tolerance THRESHOLD 0.0;
 SELECT journal_check() FROM journal_lines;
 ```
 
@@ -202,34 +211,19 @@ SELECT journal_check() FROM journal_lines;
   convention that reconciled at ~0 residual (a balance equal to the
   sum of its movement rows) is a standing invariant — turn it into a
   check.
-- Checks and detectors are workspace-authored (`FOR` the dataset,
-  not GLOBAL) — write them per the glossql-functions skill. The
-  usual detector is twenty lines; copy this shape and adapt the
-  red-line to your expectation (one-sided here; a known-dirt source
-  expects its own rate and goes red on *both* sides — overcleaning
-  is also a failure):
-
-  ```rhai
-  // rate-vs-tolerance detector: reads the authored expectation and
-  // the check voice from the slots; sees no table data.
-  let tolerance = if context.threshold != () { context.threshold } else { 0.0 };
-  let rate = 0.0;
-  let found = false;
-  for s in context.slots {
-      if s.body == () || type_of(s.body) != "map" { continue; }
-      if "tolerance" in s.body { tolerance = s.body.tolerance; }
-      if "rate" in s.body { rate = s.body.rate; found = true; }
-  }
-  let band = if !found { "yellow" }
-      else if rate <= tolerance { "green" }
-      else { "red" };
-  #{ subject: context.subject, aspect: context.aspect,
-     witness: context.witness, band: band, score: rate, computed_at: "" }
-  ```
-
-  The `tolerance` and `rate` keys are your aspect's schema, not a
-  library convention — declare them there, and the one validated
-  contract covers every speaker.
+- Checks are workspace-authored (`FOR` the dataset, not GLOBAL) —
+  write them per the glossql-functions skill. The usual detector
+  ships: `rate_tolerance` reads the authored expectation
+  (`tolerance`) and the check voice (`rate`) from the slots, sees no
+  table data, and goes green/red one-sided —
+  `DECLARE WITNESS my_check_w ON my_aspect DETECTOR rate_tolerance
+  THRESHOLD 0.02;`. The `tolerance` and `rate` keys are your aspect's
+  schema, not a library convention — declare them there, and the one
+  validated contract covers every speaker. Write your own detector
+  only when the shape differs (a known-dirt source expects its own
+  rate and goes red on *both* sides — overcleaning is also a
+  failure); `functions/rate_tolerance.rhai` in the workspace is the
+  twenty-line template to copy.
 
 ### Expected ranges — the band walk
 
@@ -254,10 +248,10 @@ and how decisively? Green — every metric's recent months continue
 their story. Red — one broke pattern; the score says how far outside
 (0.98 is beyond the 99th percentile of expectation), and the
 measurement's cached body names the metric and the month. The
-vertical wiring is yours:
+witness (`bands_w`, threshold 0.98) ships with the KPI kit — run the
+walk and read the verdict:
 
 ```glossql
-DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
 SELECT metric_bands() FROM fin;
 SELECT subject, band, score FROM ATTEST(fin::metric_bands);
 ```
@@ -396,9 +390,34 @@ batch grain, utilization divides by calendar or by staffed hours.
 Where evidence *can* decide
 (a stock never sums across periods), the measurements already did;
 what remains is convention, and convention is the user's to rule.
+
+That is a ladder, and you walk it before asking. For each loose
+assumption, first try to close it by measurement — run the check
+that would decide it, and record the result as the basis. If the
+question stays load-bearing after it closes (a reconciliation that
+must keep holding, a behavior new imports could break), declare a
+witness on that aspect (§5) so a standing check re-decides it on
+every import instead of anyone re-asking. Only what no measurement
+can arbitrate goes to the user. A question you ask that data could
+have answered costs the user's attention twice: once now, and once
+more when they learn to skim your questions.
 Definitional risk is invisible from inside your own judgment — it
 shows only against an alternative — so the alternative must be
-named, every time.
+named, every time. Name it runnably where the choice bites: an
+assumption entry may carry the strongest rival reading as SQL —
+
+```json
+{"dimension": "definition",
+ "assumption": "gross_profit = revenue - COGS",
+ "alternative": "revenue - all expenses",
+ "alternative_sql": "SELECT e.date, ... FROM ...",
+ "basis": "textbook convention", "confidence": 0.7}
+```
+
+— optional, one rival only. A runnable alternative is what lets
+anyone (you, the human, an app) compute what actually moves between
+the readings instead of arguing from prose. Start with the metric
+where the families diverge hardest, not everywhere.
 
 Close the flow by presenting **every definitional choice you made**
 as a question to the user — one per definition, multiple choice,
@@ -431,9 +450,9 @@ document or source, and which numbers shift when it arrives ("every
 stock level moves by its opening values"). The ask is a document,
 not a decision — keep it out of the questions.
 
-**The questions themselves are ephemeral — never gloss them** (ruled
-2026-08-13: no ledger for questions or answers; that a `GLOSS` was
-logged as `human` is the entire record of an answer). Ask through the
+**The questions themselves are ephemeral — never gloss them**: there
+is no ledger for questions or answers; that a `GLOSS` was logged as
+`human` is the entire record of an answer. Ask through the
 client's question surface when it has one, numbered prose otherwise;
 the user's choice lands as the human gloss on the very (subject,
 aspect) the choice governs, and it outranks your slot at every read.
@@ -449,11 +468,11 @@ The round covers more than definitions:
   question** — the answer is the full re-grounded gloss, the
   assumption at 1.0 with the human's ruling as its basis.
 - **A recipe correction is a question targeting `recipe_change`** —
-  declare it once per workspace as a FACT aspect ON TABLE; the
-  answer's body is `{"table": …, "sql": …, "reason": …}`. The human
-  gloss is the approval; the re-declare is yours to run next
-  session, and the app lists the approval as waiting on you until an
-  import of that table lands.
+  shipped with the KPI kit as a FACT aspect ON TABLE; the answer's
+  body is `{"table": …, "sql": …, "reason": …}`. The human gloss is
+  the approval; the re-declare is yours to run next session, and the
+  app lists the approval as waiting on you until an import of that
+  table lands.
 - **After any human formula answer, re-record the metric's
   materialization in the same act** — the formula gloss and the
   recorded evaluation are one definition in two forms, and the app

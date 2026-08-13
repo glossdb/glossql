@@ -10,8 +10,8 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Int64Array;
-use glossql_glossary::Store;
-use glossql_serverd::{ARROW_STREAM, DoorConfig, Plane, router};
+use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_serverd::{ARROW_STREAM, DoorConfig, HUMAN, Plane, bootstrap, router};
 use glossql_session::NoRuntime;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -251,39 +251,331 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(instructions.contains("Live now:"), "{instructions}");
 }
 
-/// The elicitation round-trip needs the session-carrying lifecycle:
-/// 2025-11-25 is the newest version that has one — SEP-2567 serves
-/// 2026-07-28+ statelessly, and there a client's posted answer has no
-/// route back to the waiting handler (rmcp 3.1.2).
+/// A lake-backed door: owed claims derive from the read universe, so
+/// the round's choice questions need a landed table.
+async fn lake_app() -> (Router, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("ledger.csv"),
+        "month,value\n2026-01-01,10.5\n2026-02-01,4.0\n",
+    )
+    .unwrap();
+    let store = Store::open_memory().await.unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let plane = Arc::new(Plane::new(store, Some(lake), Arc::new(NoRuntime)));
+    let router = router(plane, DoorConfig::default(), dir.path().to_path_buf());
+    (router, dir)
+}
+
+fn call_with(meta_value: Value, id: u64, statements: &str, retry: Option<(&str, Value)>) -> Value {
+    let mut params = json!({
+        "_meta": meta_value,
+        "name": "glossql",
+        "arguments": {"statements": statements}
+    });
+    if let Some((key, answer)) = retry {
+        params["inputResponses"] = json!({ key: answer });
+        params["requestState"] = json!("question-round:v1");
+    }
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
+}
+
+/// The sessionless stamp with the elicitation capability advertised.
+fn meta_elicit() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
+        "io.modelcontextprotocol/clientInfo": {"name": "doors-test", "version": "0"}
+    })
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn an_elicited_answer_lands_with_human_standing() {
+async fn the_round_asks_an_owed_claim_and_the_retry_lands_it() {
+    // The question round, sessionless (SEP-2322 MRTR): an owed claim
+    // whose aspect admits an enumerable value becomes a choice form,
+    // options straight from the schema; the human's answer lands as
+    // the anonymous human gloss and the claim stops deriving.
+    let (app, dir) = lake_app().await;
+    let setup = format!(
+        r#"DECLARE DATASET fin SET (purpose: 'round test');
+           USE fin;
+           DECLARE SOURCE erp SET (type: csv, location: '{}');
+           DECLARE RECIPE ledger ON fin FROM erp AS $$SELECT CAST(month AS DATE) AS month, CAST(value AS DOUBLE) AS value FROM read_csv('ledger.csv')$$;
+           DECLARE ASPECT role WITH $${{"type": "object", "required": ["value"],
+             "properties": {{"value": {{"enum": ["key", "measure"]}}}}}}$$ AS FACT ON COLUMN;
+           DECLARE ASPECT behavior WITH $${{"type": "object", "required": ["value"],
+             "properties": {{"value": {{"enum": ["stock", "flow", "none"]}}}}}}$$ AS FACT ON COLUMN;
+           DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN);
+           GLOSS role ON ledger.value AS $${{"value": "measure"}}$$;"#,
+        dir.path().display()
+    );
+    // Seeding rides the plain stamp — no capability, no round.
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 50, &setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // The ask arrives instead of execution.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 51, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+    let ask = &body["result"]["inputRequests"]["owed:ledger.value:behavior"];
+    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
+    let options = ask["params"]["requestedSchema"]["properties"]["value"]["enum"].to_string();
+    assert!(options.contains("flow"), "{body}");
+
+    // The retry lands the choice with human standing.
+    let answer = json!({"action": "accept", "content": {"value": "flow"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                52,
+                "SELECT 1 AS ok",
+                Some(("owed:ledger.value:behavior", answer)),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let notes = body["result"]["content"].to_string();
+    assert!(notes.contains("landed `behavior` on `ledger.value`"), "{notes}");
+
+    // The claim stops deriving — the next call just executes.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 53, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+
+    // The slot carries the anonymous human, never the calling agent.
+    let body = expect_ok(
+        mcp(
+            app,
+            call_with(
+                meta(),
+                54,
+                "SELECT actor_kind, actor_id, subject, aspect FROM glossary;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let rows = outcomes[0]["rows"].as_array().unwrap();
+    assert!(
+        rows.iter().any(|row| row["actor_kind"] == json!("human")
+            && row["actor_id"] == json!("human")
+            && row["subject"] == json!("ledger.value")
+            && row["aspect"] == json!("behavior")),
+        "{rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_kit_arms_the_round_with_nothing_hand_declared() {
+    // The KPI kit ships the vocabulary at boot: a fresh workspace, one
+    // landed table, one role gloss — and the behavior question derives
+    // with no DECLARE ASPECT, no DECLARE WITNESS in the flow. The next
+    // connect's brief counts it.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("ledger.csv"),
+        "month,value\n2026-01-01,10.5\n2026-02-01,4.0\n",
+    )
+    .unwrap();
+    let store = Store::open_memory().await.unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    // The kit's witnesses carry detectors (slot_entropy), and reads
+    // adjudicate — this test needs the real script runtime.
+    let runtime = Arc::new(glossql_scripts::RhaiRuntime::new(dir.path().to_path_buf()));
+    let plane = Arc::new(Plane::new(store.clone(), Some(lake), runtime));
+    let human = Actor {
+        kind: ActorKind::Human,
+        id: HUMAN.into(),
+    };
+    bootstrap(&store, &plane, dir.path(), human).await.unwrap();
+    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf());
+
+    let setup = format!(
+        r#"DECLARE DATASET perf SET (purpose: 'kit test');
+           USE perf;
+           DECLARE SOURCE erp SET (type: csv, location: '{}');
+           DECLARE RECIPE ledger ON perf FROM erp AS $$SELECT CAST(month AS DATE) AS month, CAST(value AS DOUBLE) AS value FROM read_csv('ledger.csv')$$;
+           GLOSS role ON ledger.value AS $${{"value": "measure"}}$$;"#,
+        dir.path().display()
+    );
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 70, &setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // The shipped behavior aspect asks its choice question, options
+    // straight from the kit's schema.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+    let ask = &body["result"]["inputRequests"]["owed:ledger.value:behavior"];
+    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
+    let options = ask["params"]["requestedSchema"]["properties"]["value"]["enum"].to_string();
+    assert!(options.contains("stock"), "{body}");
+
+    // The next connect hears it: the brief counts the open question.
+    let body = expect_ok(mcp(app, initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("1 question stands open for the human"),
+        "{instructions}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_round_rules_a_loose_assumption_on_retry() {
+    // A judged assumption below full confidence becomes a
+    // confirm/correct form; "stands as stated" lands the winning agent
+    // body as the human slot with that assumption at 1.0 and the
+    // ruling as its basis. Composition only — the rest rides along.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'loose test');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [
+            {"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
+            {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+          ]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 60, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 61, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+    let ask = &body["result"]["inputRequests"]["loose:fin:dso:0"];
+    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
+    assert!(ask["params"]["message"].to_string().contains("per line"), "{body}");
+
+    let answer = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 62, "SELECT 1 AS ok", Some(("loose:fin:dso:0", answer))),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        body["result"]["content"].to_string().contains("landed `dso` on `fin`"),
+        "{body}"
+    );
+
+    // The human body carries the ruling; the grain assumption rode
+    // along untouched, and nothing derives any more.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                63,
+                "SELECT body FROM glossary WHERE actor_kind = 'human';",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
+    assert!(human_body.contains("human-ruled"), "{human_body}");
+    assert!(human_body.contains("grain-preserving"), "{human_body}");
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 64, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_declined_question_defers_for_the_run() {
+    // Decline is defer: transport state for this server run, never the
+    // store — the app still shows the open row, and the next run asks
+    // again.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'defer test');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 70, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
+
+    let declined = json!({"action": "decline"});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 72, "SELECT 1 AS ok", Some(("loose:fin:dso:0", declined))),
+        )
+        .await,
+    )
+    .await;
+    assert!(body["result"]["content"].to_string().contains("deferred"), "{body}");
+    let body =
+        expect_ok(mcp(app, call_with(meta_elicit(), 73, "SELECT 1 AS ok", None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+}
+
+/// The session-carrying lifecycle (≤ 2025-11-25) gets the same round
+/// as a server→client request on the call's own stream.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_round_rides_a_transport_session_too() {
     use futures::StreamExt;
 
-    let app = app_with(DoorConfig {
-        elicit_probe: true,
-        ..Default::default()
-    })
-    .await;
-    let call = |id: u64, statements: &str| {
-        json!({
-            "jsonrpc": "2.0", "id": id, "method": "tools/call",
-            "params": {
-                "_meta": meta(),
-                "name": "glossql",
-                "arguments": {"statements": statements}
-            }
-        })
-    };
-
-    // Seed through the sessionless path — `meta()` advertises no
-    // elicitation capability, so the probe skips instead of asking.
+    let app = app().await;
     let setup = r#"
-        DECLARE DATASET fin SET (purpose: 'elicit test');
+        DECLARE DATASET fin SET (purpose: 'session round');
         USE fin;
-        DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT;
-        GLOSS unit ON t.a AS $${"value": "EUR"}$$;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
     "#;
-    let body = expect_ok(mcp(app.clone(), call(30, setup)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 80, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     let session_request = |session: Option<&str>, payload: String| {
@@ -298,8 +590,6 @@ async fn an_elicited_answer_lands_with_human_standing() {
         }
         request.body(Body::from(payload)).unwrap()
     };
-
-    // A session-carrying initialize, elicitation advertised.
     let init = json!({
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {
@@ -331,8 +621,6 @@ async fn an_elicited_answer_lands_with_human_standing() {
         .unwrap();
     assert!(posted.status().is_success(), "{}", posted.status());
 
-    // The tool call: the probe's question must ride this POST's own
-    // SSE stream.
     let asked = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
         "params": {"name": "glossql", "arguments": {"statements": "SELECT 1 AS ok"}}
@@ -346,7 +634,6 @@ async fn an_elicited_answer_lands_with_human_standing() {
     let mut stream = response.into_body().into_data_stream();
     let mut buffer = String::new();
 
-    // Read SSE data lines until the elicitation request appears.
     let elicit_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let chunk = stream.next().await.expect("stream open").expect("chunk");
@@ -363,21 +650,11 @@ async fn an_elicited_answer_lands_with_human_standing() {
         }
     })
     .await
-    .expect("the elicitation request must reach this stream");
+    .expect("the round must reach this stream");
 
-    // The human answers: a dictated gloss, posted as the JSON-RPC
-    // response through the session.
     let answer = json!({
         "jsonrpc": "2.0", "id": elicit_id,
-        "result": {
-            "action": "accept",
-            "content": {
-                "subject": "t.b",
-                "aspect": "unit",
-                "body": "{\"value\": \"CHF\"}",
-                "stance": "land it"
-            }
-        }
+        "result": {"action": "accept", "content": {"stance": "stands as stated"}}
     });
     let posted = app
         .clone()
@@ -386,7 +663,6 @@ async fn an_elicited_answer_lands_with_human_standing() {
         .unwrap();
     assert!(posted.status().is_success(), "{}", posted.status());
 
-    // The handler unblocks and the tool result closes the stream.
     let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             while let Some(end) = buffer.find('\n') {
@@ -405,137 +681,9 @@ async fn an_elicited_answer_lands_with_human_standing() {
     .await
     .expect("the tool result must arrive after the answer");
     assert_ne!(done["result"]["isError"], json!(true), "{done}");
-    let notes: Vec<&str> = done["result"]["content"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|block| block["text"].as_str())
-        .collect();
     assert!(
-        notes.iter().any(|text| text.contains("landed `unit` on `t.b`")),
-        "{notes:?}"
-    );
-
-    // The landed slot carries human standing — the workspace's human,
-    // never the calling agent.
-    let body = expect_ok(
-        mcp(
-            app,
-            call(31, "SELECT actor_kind, actor_id, subject FROM glossary;"),
-        )
-        .await,
-    )
-    .await;
-    let text = body["result"]["content"][0]["text"].as_str().unwrap();
-    let outcomes: Value = serde_json::from_str(text).unwrap();
-    let rows = outcomes[0]["rows"].as_array().unwrap();
-    assert!(
-        rows.iter().any(|row| row["actor_kind"] == json!("human")
-            && row["actor_id"] == json!("human")
-            && row["subject"] == json!("t.b")),
-        "{rows:?}"
-    );
-}
-
-/// The sessionless mechanism (SEP-2322, MRTR): on 2026-07-28 the ask
-/// is an `input_required` result and the answer arrives on the
-/// client's retry of the same call — no transport session needed.
-/// This is the lifecycle Claude Code speaks (measured 2026-08-13).
-#[tokio::test(flavor = "multi_thread")]
-async fn an_mrtr_retry_lands_with_human_standing() {
-    let app = app_with(DoorConfig {
-        elicit_probe: true,
-        ..Default::default()
-    })
-    .await;
-
-    // The sessionless stamp, elicitation advertised.
-    let meta_elicit = json!({
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
-        "io.modelcontextprotocol/clientInfo": {"name": "doors-test", "version": "0"}
-    });
-    let call = |id: u64, statements: &str, retry: Option<Value>| {
-        let mut params = json!({
-            "_meta": meta_elicit.clone(),
-            "name": "glossql",
-            "arguments": {"statements": statements}
-        });
-        if let Some(responses) = retry {
-            params["inputResponses"] = responses;
-            params["requestState"] = json!("elicit-probe:v1");
-        }
-        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
-    };
-
-    let setup = r#"
-        DECLARE DATASET fin SET (purpose: 'mrtr test');
-        USE fin;
-        DECLARE ASPECT unit WITH $${"type": "object"}$$ AS FACT;
-    "#;
-
-    // Round 1: the ask arrives instead of execution.
-    let body = expect_ok(mcp(app.clone(), call(40, setup, None)).await).await;
-    assert_eq!(
-        body["result"]["resultType"],
-        json!("input_required"),
-        "{body}"
-    );
-    let ask = &body["result"]["inputRequests"]["elicit-probe"];
-    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
-    assert_eq!(ask["params"]["mode"], json!("form"), "{body}");
-    assert_eq!(body["result"]["requestState"], json!("elicit-probe:v1"));
-
-    // Round 2: the same call retried with the answer riding along — a
-    // skip, so the statements just run.
-    let skip = json!({"elicit-probe": {"action": "accept", "content": {
-        "subject": "x", "aspect": "x", "body": "{}", "stance": "skip it"}}});
-    let body = expect_ok(mcp(app.clone(), call(41, setup, Some(skip))).await).await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-
-    // A plain read asks again...
-    let body = expect_ok(mcp(app.clone(), call(42, "SELECT 1 AS ok", None)).await).await;
-    assert_eq!(
-        body["result"]["resultType"],
-        json!("input_required"),
-        "{body}"
-    );
-
-    // ...and the dictation on its retry lands with human standing
-    // before the read runs.
-    let land = json!({"elicit-probe": {"action": "accept", "content": {
-        "subject": "t.b", "aspect": "unit", "body": "{\"value\": \"CHF\"}", "stance": "land it"}}});
-    let body = expect_ok(mcp(app.clone(), call(43, "SELECT 1 AS ok", Some(land))).await).await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    let notes: Vec<&str> = body["result"]["content"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|block| block["text"].as_str())
-        .collect();
-    assert!(
-        notes.iter().any(|text| text.contains("landed `unit` on `t.b`")),
-        "{notes:?}"
-    );
-
-    // The landed slot: the workspace's human, not the calling agent.
-    let verify = json!({
-        "jsonrpc": "2.0", "id": 44, "method": "tools/call",
-        "params": {
-            "_meta": meta(),
-            "name": "glossql",
-            "arguments": {"statements": "SELECT actor_kind, actor_id, subject FROM glossary;"}
-        }
-    });
-    let body = expect_ok(mcp(app, verify).await).await;
-    let text = body["result"]["content"][0]["text"].as_str().unwrap();
-    let outcomes: Value = serde_json::from_str(text).unwrap();
-    let rows = outcomes[0]["rows"].as_array().unwrap();
-    assert!(
-        rows.iter().any(|row| row["actor_kind"] == json!("human")
-            && row["actor_id"] == json!("human")
-            && row["subject"] == json!("t.b")),
-        "{rows:?}"
+        done["result"]["content"].to_string().contains("landed `dso` on `fin`"),
+        "{done}"
     );
 }
 

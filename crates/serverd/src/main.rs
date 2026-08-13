@@ -9,7 +9,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
-[--addr <ip:port>] [--agent <id>] [--row-cap <n>] [--elicit-probe]";
+[--addr <ip:port>] [--agent <id>] [--row-cap <n>]";
 
 struct Args {
     workspace: PathBuf,
@@ -31,7 +31,6 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
             "--row-cap" => {
                 doors.row_cap = value()?.parse().map_err(|e| format!("--row-cap: {e}"))?;
             }
-            "--elicit-probe" => doors.elicit_probe = true,
             other => return Err(format!("unknown flag {other}")),
         }
     }

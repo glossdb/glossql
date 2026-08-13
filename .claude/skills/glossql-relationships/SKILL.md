@@ -91,9 +91,9 @@ and judged.
 
 ## 4. Record the grounds
 
-Declared edges accept glosses on the pair path. If the workspace has a
-prose aspect (`meaning`), say why the edge holds and what the orphans
-are:
+Declared edges accept glosses on the pair path — the KPI kit ships
+`meaning` with relationship grain for exactly this. Say why the edge
+holds and what the orphans are:
 
 ```glossql
 GLOSS meaning ON orders.customer_id -> customers.id AS

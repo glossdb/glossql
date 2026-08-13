@@ -66,11 +66,17 @@ as a tuple, never cured through a view.
 ## Reading live state
 
 Never guess at workspace state — read it through the language, where it
-is always current:
+is always current. A fresh workspace is not empty: the measurement
+library and the KPI kit (the semantic vocabulary — `meaning`, `role`,
+`behavior`, `unit`, `dimension`, `entity`, and the rest — with their
+witnesses) are declared at boot; read them back before declaring
+anything.
 
-- `SELECT * FROM glossary` / `cache` / `imports` / `relationships` —
-  the store's relations as plain tables (who said what; what is
-  computed; source rows vs landed rows; the declared join edges).
+- `SELECT * FROM glossary` / `aspects` / `witnesses` / `functions` /
+  `cache` / `imports` / `relationships` — the store's relations as
+  plain tables (who said what; the declared vocabulary and its
+  speaker gates; what is computed; source rows vs landed rows; the
+  declared join edges).
 - `GLOSSARY(subject)` — collapsed values with `state`
   (`current | stale | contested | unassessed`); a contested value is
   withheld, and absence is a visible row.
@@ -91,6 +97,15 @@ WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 20;
 SELECT subject, aspect FROM GLOSSARY(fin) WHERE state = 'contested';
 SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
 ```
+
+The connect-time brief the door serves counts what stands — human
+writings, approvals awaiting your re-declare, and **open questions**
+(owed claims and loose assumptions the door can ask the human about).
+While that count is above zero, trigger the round: a client with
+question forms serves one question per tool call, so keep calling
+until it stays quiet; a client without them gets nothing — relay the
+open questions in chat yourself, multiple choice with your grounds,
+and run the statement the answer names.
 
 Then close what owes an act, in the same session:
 
@@ -115,6 +130,33 @@ Reading a measurement is a judging job — verify each candidate against
 the data itself, then declare or gloss only the survivors. The rejects
 stay in the measurement, visible and undeclared; never delete them to
 "clean up". Judgment lives in your reads, not in the function.
+
+## Confidence means the number
+
+Wherever a writing carries `confidence` (grounding assumptions are
+the main carrier), one scale governs, anchored to the evidence
+behind the number:
+
+- **1.0** — ruled by a human, or verified by a named measurement or
+  check. Nothing else.
+- **~0.9** — independent evidence converges: a measurement plus a
+  conventions gloss plus the data's own shape. A well-argued
+  convention choice tops out here.
+- **~0.7** — one source: a single measurement, or your reading of
+  names and values.
+- **0.5 and below** — a default you adopted to proceed. Exactly what
+  the question round exists to surface.
+
+Confidence is evidence, never a gate: nothing routes on it
+mechanically — the round orders by it (lowest first) and every
+assumption below 1.0 stays askable. An inflated number empties the
+human's queue falsely; a deflated one wastes their attention.
+
+State ambiguity plainly. The reader is a capable engineer: when a
+verdict is ambiguous, name the readings you saw, which you took, and
+why — in the report's front matter, not softened or buried. An
+honest "two readings survive, I took A because B breaks the grain
+check" is worth more than fluent certainty.
 
 ## When a slot contests
 

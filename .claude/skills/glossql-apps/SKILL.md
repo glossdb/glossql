@@ -5,12 +5,11 @@ description: Author a server-rendered data app on the glossql app door — app.t
 
 # Authoring apps
 
-First sketch (2026-08-09), still moving as more apps are written.
-Two apps ground the rules — cash (tiles over `read.billings()` /
-`read.dso()`), hand-written in a workspace, and model (tiles over
-`GLOSSARY()` itself), which ships in the binary since 2026-08-11. A
-workspace `apps/<name>/` shadows a built-in of the same name, so
-forking the model app is copying its directory out.
+Still moving as more apps are written. Two apps ground the rules —
+cash (tiles over `read.billings()` / `read.dso()`), hand-written in a
+workspace, and model (tiles over `GLOSSARY()` itself), which ships in
+the binary. A workspace `apps/<name>/` shadows a built-in of the same
+name, so forking the model app is copying its directory out.
 
 ## What an app is
 
@@ -117,7 +116,7 @@ unmoved concept's refusal row doesn't feed the chart, and consider a
 `gl-rows` tile beside the chart listing `DISTINCT concept, basis` so
 refusals stay visible instead of filtered away.
 
-## Apps carry no write (ruled 2026-08-13)
+## Apps carry no write
 
 Every frame reads; there is no write route on the app door. Answers
 travel through a session — the human tells their agent (or answers

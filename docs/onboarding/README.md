@@ -127,11 +127,111 @@ Design owed before building:
    not to fix it." Nothing to build; the two detector-shaped ideas
    from the report stay unsequenced observations.
 
+7. **The question derivation, two faces** (approved 2026-08-13, one
+   backlog with the validation surface — the lead, on the
+   Metrik-Validierung sketch: everything maps, redesign free). One
+   derivation — owed claims, loose assumptions, contested — rendered
+   twice: (a) **the door's question round**: the MCP door serves
+   derivable questions as MRTR forms between calls — an owed claim
+   whose aspect schema carries an enum becomes a choice form
+   (options straight from the schema), a loose assumption becomes
+   confirm/correct — one question per tool call while open items
+   exist; the spike's `--elicit-probe` dictation retires with it.
+   (b) **the metric-validation surface** on the model app, adapted
+   from the sketch: per-metric cards — status chip (open n / human-
+   confirmed with date / measurement-closed), meaning with
+   provenance, the commented query face, the grounding fold-out,
+   live result tables, open questions, standing checks over
+   `ATTEST()` — every string frame-derived, nothing authored on the
+   page (the staleness risk resolves by construction). New design
+   blessed; the rest of the model app adapts to it later.
+   **Built 2026-08-13**, both faces: the round in the MCP door
+   (owed → choice form, loose → confirm/correct, decline defers for
+   the run; doors suite) and the validation surface (the chip
+   ladder on metric surfaces, the standing-checks table, the
+   question card on the dossier — amber spent only where judgement
+   is wanted; apps suite). Verified end to end against a live door:
+   seed → the round asks → answers land as the anonymous human
+   gloss → chips flip to human-ruled, questions stop deriving. The
+   run also caught a frame defect: the ruled-chip derivation read
+   the workspace-wide glossary table and could claim another
+   dataset's ruling — now scoped to `$dataset`.
+8. **Metric queries carry their calculation** (guidance 2026-08-13):
+   mechanics as SQL comments inside the recorded grounding/
+   materialization SQL (a comment in the query cannot drift from
+   it), judgment stays the assumptions array; plus the closure
+   ladder the sketch demonstrated — a question data can decide is
+   closed by measurement and watched by a standing check, and only
+   what data cannot arbitrate goes to the human. Both taught in the
+   metrics skill. **Built 2026-08-13**: §3 teaches comments-carry-
+   mechanics / assumptions-carry-judgment (the example grounding
+   leads with its comment line), §9 teaches the ladder — measure,
+   then witness what must keep holding, ask only what survives.
+9. **The `glossql-onboard` umbrella skill** — sequences add-source →
+   relationships → dimensions → metrics and names the per-stage
+   points where the agent stops for the human: brief → gloss
+   honestly with confidence → the door asks → read the human slots
+   back. Thin by ruling: no agenda convention exists to teach.
+   **Built 2026-08-13** (`.claude/skills/glossql-onboard/`). Open
+   gap it exposed, for a ruling: no flow declares the behavior/unit
+   witnesses, and owed questions derive only where a witness stands
+   — whether add-source's framing stage should declare them is a
+   design call, not a skill's to make.
+10. **The SPEC.md diff for "actor rides the transport"** — the one
+    sentence owed from the 2026-08-13 rulings: an elicited answer is
+    server-witnessed and lands with human standing (fixture 22
+    records the verdict). Proposed for the lead's review.
+    **Proposed 2026-08-13**: the principle bullet generalizes
+    connection → transport (two sentences added), the PoC note
+    aligned; awaiting the lead's review, parser suite green.
+11. **The fresh-user run** — claude in a scratch folder outside the
+    repo, MCP config only, full onboarding through the question
+    round; the run report is the verification and the answer to
+    "where do users start claude". After item 7a.
+12. **Claude Desktop measurement** — the elicitation loop is proven
+    in Claude Code only; whether Desktop renders the form and drives
+    the MRTR retry is unverified. Ten minutes with the probe door
+    when Desktop is handy; the prose relay covers it either way.
+13. **Apps on top of metrics — ideation round** (the lead,
+    2026-08-13): how data-app creation, charting, and drill become
+    an interactive experience over defined metrics — the agent
+    authoring app artifacts, the human steering. Ideation before
+    prose: competing forks against a real metric set, presented for
+    ruling; the parked URL-mode elicitation is one candidate
+    mechanism.
+14. **The KPI kit** — built (accepted 2026-08-13):
+    `crates/scripts/functions/kpi_kit.glossql` ships the semantic
+    vocabulary at boot beside the measurement library — ten aspects
+    (`meaning`, `entity`, `role`, `behavior`, `unit`, `dimension`,
+    `conventions`, `formulas`, `definitions`, `recipe_change`) and
+    seven witnesses, so owed questions derive from the first landed
+    table with nothing hand-declared; `rate_tolerance` moved from
+    metrics-skill prose into the shipped library. The agent brief
+    counts open questions (owed + loose, the round's own derivation)
+    and the core skill teaches the sweep. The doors test
+    `the_kit_arms_the_round_with_nothing_hand_declared` is the
+    acceptance.
+15. **Skills cleanup, after the KPI kit** (the lead, 2026-08-13):
+    streamline the skills to what the system really offers and does —
+    the kit's conventions already left add-source/dimensions/metrics
+    prose; the remaining pass trims each skill against the shipped
+    system.
+
 Sequenced later (2026-08-12): **the full deletion cascade** — after
 onboarding, the company-level glossary, and the storage integration
-land; `DROP TABLE` refusal stays the stand-in. Dropped from this
+land; `DROP TABLE` refusal stays the stand-in. Approval decay folds
+in here (the lead, 2026-08-13): a human slot is not more durable than
+the reality under it, and once the glossary itself moves to Iceberg,
+"evidence moved under an approved slot" becomes snapshot lineage —
+a join, not machinery. Dropped from this
 list: light auth and the Iceberg branch/fast-forward tracking (both
-were options, not needs).
+were options, not needs). Parked 2026-08-13: URL-mode elicitation
+(the form is replaced by an approvable app page — the lead's noted
+use: designing UI elements and data apps interactively, the agent
+authoring artifacts and the human approving the rendered page;
+revisit once form mode carries real onboarding questions); signed
+human identity (the anonymous `human` actor stands until
+identification is a need).
 
 Small door ergonomics, unsequenced: MCP sessions reaped between calls
 answer a bare `Not Found` (client re-init plus `USE` replay).

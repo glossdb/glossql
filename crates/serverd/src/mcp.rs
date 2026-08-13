@@ -21,10 +21,9 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler};
 
 use glossql_glossary::{Actor, ActorKind};
-use glossql_session::SessionError;
+use glossql_session::{Plane, Session, SessionError};
 
 use crate::wire;
-use glossql_session::Plane;
 
 const INSTRUCTIONS: &str = "glossql workspace server. One tool: `glossql` executes \
 statements — declarations, USE, GLOSS, extraction, probes, and plain SQL. Live state \
@@ -139,8 +138,8 @@ pub async fn amend_tools_list(request: Request, next: Next) -> Response {
 pub struct GlossqlMcp {
     plane: Arc<Plane>,
     /// The door's knobs: the fallback agent id for calls no handshake
-    /// named, the row cap, the probe flag. Human writes land as
-    /// [`crate::HUMAN`] — anonymous by ruling (2026-08-13).
+    /// named, the row cap. Human writes land as [`crate::HUMAN`] —
+    /// anonymous by ruling (2026-08-13).
     doors: crate::DoorConfig,
     /// The connect-time brief (ruled 2026-08-12, delivery option B):
     /// one composed line over live counts, appended to the
@@ -148,6 +147,10 @@ pub struct GlossqlMcp {
     /// the per-session handler instances; refreshed after every tool
     /// call, so a connect after activity reads current state.
     brief: Arc<std::sync::RwLock<String>>,
+    /// Questions the human declined this server run — transport
+    /// state, never the store (no ledger, ruled 2026-08-13). A
+    /// landing clears nothing here: a landed slot stops deriving.
+    deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl GlossqlMcp {
@@ -155,13 +158,21 @@ impl GlossqlMcp {
         plane: Arc<Plane>,
         doors: crate::DoorConfig,
         brief: Arc<std::sync::RwLock<String>>,
+        deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     ) -> Self {
-        GlossqlMcp { plane, doors, brief }
+        GlossqlMcp {
+            plane,
+            doors,
+            brief,
+            deferred,
+        }
     }
 
-    /// Recompose the brief from the store. Cheap (two counts), awaited
-    /// at the end of every tool call and once at boot.
+    /// Recompose the brief from the store and the question derivation.
+    /// Cheap (four bounded reads), awaited at the end of every tool
+    /// call and once at boot.
     pub async fn refresh_brief(plane: &Plane, brief: &std::sync::RwLock<String>) {
+        let questions = open_question_count(plane).await.unwrap_or(0);
         let line = match plane.store().brief_counts().await {
             Ok(counts) => {
                 let mut line = format!(
@@ -180,6 +191,15 @@ impl GlossqlMcp {
                         if counts.approvals_pending == 1 { "" } else { "s" },
                     ));
                 }
+                if questions > 0 {
+                    line.push_str(&format!(
+                        "; {} question{} stand{} open for the human — sweep the round \
+                         (call the tool until it stays quiet) or relay them in chat",
+                        questions,
+                        if questions == 1 { "" } else { "s" },
+                        if questions == 1 { "s" } else { "" },
+                    ));
+                }
                 line.push_str(
                     ". Start with the brief the glossql skill teaches — human slots, \
                      contested, red bands, the open queue — before acting.",
@@ -193,74 +213,255 @@ impl GlossqlMcp {
         }
     }
 
-    /// The probe's one question, shared by both mechanisms: a dictated
-    /// (subject, aspect, body) with a land-it/skip-it stance.
-    fn probe_params() -> Result<ElicitRequestParams, String> {
-        let schema = ElicitationSchema::builder()
-            .required_string("subject")
-            .required_string("aspect")
-            .required_string("body")
-            .required_enum_schema(
-                "stance",
-                EnumSchema::builder(vec!["land it".into(), "skip it".into()]).build(),
-            )
-            .build()
-            .map_err(|e| e.to_string())?;
-        Ok(ElicitRequestParams::FormElicitationParams {
-            meta: None,
-            message: "elicit-probe: dictate one gloss to land with human standing \
-                      — subject, aspect, JSON body — or skip it."
-                .into(),
-            requested_schema: schema,
-        })
+    /// The admitted values of an enum aspect, from its own schema.
+    async fn enum_options(&self, session: &Session, aspect: &str) -> Option<Vec<String>> {
+        if !ident_path(aspect, 1) {
+            return None;
+        }
+        let rows = read_rows(
+            session,
+            &format!("SELECT schema FROM aspects WHERE name = '{aspect}'"),
+        )
+        .await
+        .ok()?;
+        let schema: serde_json::Value =
+            serde_json::from_str(rows.first()?.get("schema")?.as_str()?).ok()?;
+        let options: Vec<String> = schema["properties"]["value"]["enum"]
+            .as_array()?
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        (!options.is_empty()).then_some(options)
     }
 
-    /// What the human said, landed or noted — shared by both
-    /// mechanisms. An accepting dictation lands; everything else is
-    /// witnessed in the monitor note only.
-    async fn digest_answer(&self, answer: ElicitResult, dataset: Option<String>) -> String {
+    /// The next open question the workspace derives — owed claims
+    /// whose aspect admits an enumerable value first, then judged
+    /// assumptions below full confidence on the winning slot. A
+    /// workspace with no dataset bound (or nothing open) derives
+    /// nothing, and the round stays silent.
+    async fn derive_question(&self, session: &Session, skip_deferred: bool) -> Option<Question> {
+        let deferred = self.deferred.lock().expect("deferred lock").clone();
+        let owed = read_rows(session, OWED_SQL).await;
+        if let Err(e) = &owed {
+            // A failed derivation is silence to the human — say why.
+            println!("glossql ?? question-round: the owed derivation failed: {e}");
+        }
+        if let Ok(rows) = owed {
+            for row in rows {
+                let (Some(subject), Some(aspect)) =
+                    (row["subject"].as_str(), row["aspect"].as_str())
+                else {
+                    continue;
+                };
+                let key = format!("owed:{subject}:{aspect}");
+                if skip_deferred && deferred.contains(&key) {
+                    continue;
+                }
+                if let Some(options) = self.enum_options(session, aspect).await {
+                    return Some(Question::Owed {
+                        subject: subject.into(),
+                        aspect: aspect.into(),
+                        options,
+                    });
+                }
+            }
+        }
+        let loose = read_rows(session, LOOSE_SQL).await;
+        if let Err(e) = &loose {
+            println!("glossql ?? question-round: the loose derivation failed: {e}");
+        }
+        if let Ok(rows) = loose {
+            for row in rows {
+                let fields = (
+                    row["subject"].as_str(),
+                    row["aspect"].as_str(),
+                    row["idx"].as_u64(),
+                    row["assumption"].as_str(),
+                );
+                let (Some(subject), Some(aspect), Some(idx), Some(assumption)) = fields else {
+                    continue;
+                };
+                let key = format!("loose:{subject}:{aspect}:{idx}");
+                if skip_deferred && deferred.contains(&key) {
+                    continue;
+                }
+                return Some(Question::Loose {
+                    subject: subject.into(),
+                    aspect: aspect.into(),
+                    idx,
+                    dimension: row["dimension"].as_str().unwrap_or("-").into(),
+                    assumption: assumption.into(),
+                    confidence: row["conf"].as_f64().unwrap_or(0.0),
+                });
+            }
+        }
+        None
+    }
+
+    /// The retry is stateless, so re-derivation is the only trust: an
+    /// answer lands only if its question still derives.
+    async fn question_for_key(&self, session: &Session, key: &str) -> Option<Question> {
+        // Walk the live derivation for the key rather than trusting
+        // the echoed shape.
+        let mut probe = self.derive_all(session).await;
+        probe.retain(|q| q.key() == key);
+        probe.pop()
+    }
+
+    async fn derive_all(&self, session: &Session) -> Vec<Question> {
+        let mut all = Vec::new();
+        if let Ok(rows) = read_rows(session, OWED_SQL).await {
+            for row in rows {
+                if let (Some(subject), Some(aspect)) =
+                    (row["subject"].as_str(), row["aspect"].as_str())
+                {
+                    if let Some(options) = self.enum_options(session, aspect).await {
+                        all.push(Question::Owed {
+                            subject: subject.into(),
+                            aspect: aspect.into(),
+                            options,
+                        });
+                    }
+                }
+            }
+        }
+        if let Ok(rows) = read_rows(session, LOOSE_SQL).await {
+            for row in rows {
+                let fields = (
+                    row["subject"].as_str(),
+                    row["aspect"].as_str(),
+                    row["idx"].as_u64(),
+                    row["assumption"].as_str(),
+                );
+                if let (Some(subject), Some(aspect), Some(idx), Some(assumption)) = fields {
+                    all.push(Question::Loose {
+                        subject: subject.into(),
+                        aspect: aspect.into(),
+                        idx,
+                        dimension: row["dimension"].as_str().unwrap_or("-").into(),
+                        assumption: assumption.into(),
+                        confidence: row["conf"].as_f64().unwrap_or(0.0),
+                    });
+                }
+            }
+        }
+        all
+    }
+
+    /// Land what the human said — or defer, or hand a correction to
+    /// the agent. The monitor note is the whole account.
+    async fn digest_round(&self, key: &str, answer: ElicitResult, session: &Session) -> String {
         if answer.action != ElicitationAction::Accept {
-            return format!("elicit-probe: the human chose {:?}", answer.action);
+            self.deferred
+                .lock()
+                .expect("deferred lock")
+                .insert(key.to_string());
+            return format!("question-round: deferred ({:?})", answer.action);
         }
         let Some(content) = answer.content else {
-            return "elicit-probe: accepted without content".into();
+            return "question-round: accepted without content".into();
         };
-        if content.get("stance").and_then(|v| v.as_str()) != Some("land it") {
-            return "elicit-probe: answered, nothing landed".into();
-        }
-        let fields = (
-            content.get("subject").and_then(|v| v.as_str()),
-            content.get("aspect").and_then(|v| v.as_str()),
-            content.get("body").and_then(|v| v.as_str()),
-        );
-        let (Some(subject), Some(aspect), Some(body)) = fields else {
-            return "elicit-probe: the answer misses subject/aspect/body".into();
+        let Some(question) = self.question_for_key(session, key).await else {
+            return "question-round: the question no longer stands — nothing landed".into();
         };
-        match self.land_human_answer(dataset, subject, aspect, body).await {
-            Ok(note) => note,
-            Err(e) => format!("elicit-probe: refused: {e}"),
+        match question {
+            Question::Owed {
+                subject,
+                aspect,
+                options,
+            } => {
+                let Some(value) = content.get("value").and_then(|v| v.as_str()) else {
+                    return "question-round: the answer names no value".into();
+                };
+                if !options.iter().any(|o| o == value) {
+                    return format!(
+                        "question-round: `{value}` is not a value the aspect admits"
+                    );
+                }
+                let body = serde_json::json!({ "value": value }).to_string();
+                match self
+                    .land_human_answer(session.dataset(), &subject, &aspect, &body)
+                    .await
+                {
+                    Ok(note) => note,
+                    Err(e) => format!("question-round: refused: {e}"),
+                }
+            }
+            Question::Loose {
+                subject,
+                aspect,
+                idx,
+                ..
+            } => match content.get("stance").and_then(|v| v.as_str()) {
+                Some("stands as stated") => {
+                    self.rule_assumption(session, &subject, &aspect, idx).await
+                }
+                Some("wrong") => {
+                    // The door composes, never re-grounds: the
+                    // correction is the agent's work, so it rides the
+                    // tool result and the key defers while they act.
+                    self.deferred
+                        .lock()
+                        .expect("deferred lock")
+                        .insert(key.to_string());
+                    let correction = content
+                        .get("correction")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no correction text)");
+                    format!(
+                        "question-round: the human says the `{aspect}` assumption is wrong — \
+                         re-ground it: {correction}"
+                    )
+                }
+                _ => "question-round: the answer names no stance".into(),
+            },
         }
     }
 
-    /// The session-lifecycle mechanism (≤ 2025-11-25): a server→client
-    /// `elicitation/create` on this call's own stream, the answer
-    /// routed back through the transport session.
-    async fn elicit_peer(
+    /// The human confirms an assumption: the winning agent body lands
+    /// as the human slot with that assumption at full confidence and
+    /// the ruling as its basis. Composition only — nothing else in
+    /// the body moves.
+    async fn rule_assumption(
         &self,
-        context: &RequestContext<RoleServer>,
-        dataset: Option<String>,
+        session: &Session,
+        subject: &str,
+        aspect: &str,
+        idx: u64,
     ) -> String {
-        let params = match Self::probe_params() {
-            Ok(params) => params,
-            Err(e) => return format!("elicit-probe: schema refused: {e}"),
+        if !ident_path(subject, 3) || !ident_path(aspect, 1) {
+            return "question-round: refused: not an identifier path".into();
+        }
+        let sql = format!(
+            "SELECT body FROM glossary \
+             WHERE subject = '{subject}' AND aspect = '{aspect}' AND actor_kind = 'agent' \
+             ORDER BY written_at DESC LIMIT 1"
+        );
+        let rows = match read_rows(session, &sql).await {
+            Ok(rows) => rows,
+            Err(e) => return format!("question-round: the slot read failed: {e}"),
         };
-        let asked = context
-            .peer
-            .create_elicitation_with_timeout(params, Some(std::time::Duration::from_secs(120)))
-            .await;
-        match asked {
-            Ok(answer) => self.digest_answer(answer, dataset).await,
-            Err(e) => format!("elicit-probe: no round-trip: {e}"),
+        let Some(body_text) = rows.first().and_then(|r| r["body"].as_str()) else {
+            return "question-round: the agent slot is gone — nothing landed".into();
+        };
+        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body_text) else {
+            return "question-round: the slot body is not JSON".into();
+        };
+        let Some(entry) = body
+            .get_mut("assumptions")
+            .and_then(|a| a.get_mut(idx as usize))
+            .and_then(|e| e.as_object_mut())
+        else {
+            return "question-round: the assumption is gone — nothing landed".into();
+        };
+        entry.insert("confidence".into(), serde_json::json!(1.0));
+        entry.insert("basis".into(), serde_json::json!("human-ruled"));
+        match self
+            .land_human_answer(session.dataset(), subject, aspect, &body.to_string())
+            .await
+        {
+            Ok(note) => note,
+            Err(e) => format!("question-round: refused: {e}"),
         }
     }
 
@@ -340,10 +541,155 @@ impl GlossqlMcp {
     }
 }
 
-/// The probe's key in the MRTR `inputRequests` map, and the opaque
-/// state the client must echo on its retry.
-const PROBE_KEY: &str = "elicit-probe";
-const PROBE_STATE: &str = "elicit-probe:v1";
+/// One read, rows as JSON — the round's derivations run through
+/// the session exactly as frames do.
+async fn read_rows(session: &Session, sql: &str) -> Result<Vec<serde_json::Value>, String> {
+    let query = session.query_stream(sql).await.map_err(|e| e.to_string())?;
+    let out = wire::stream_json(query.stream, usize::MAX).await?;
+    Ok(out["rows"].as_array().cloned().unwrap_or_default())
+}
+
+/// How many questions the round would serve right now — the same two
+/// derivations, counted on the human's channel of the first dataset
+/// (the binding an unpinned app uses). No dataset, no count: a
+/// workspace before its first landing has nothing to ask.
+async fn open_question_count(plane: &Plane) -> Option<usize> {
+    let mut names = plane.datasets().await.ok()?;
+    names.sort();
+    let dataset = names.into_iter().next()?;
+    let actor = Actor {
+        kind: ActorKind::Human,
+        id: crate::HUMAN.into(),
+    };
+    let session = plane.channel(actor, Some(&dataset)).await.ok()?;
+    let owed = read_rows(&session, OWED_SQL).await.ok()?.len();
+    let loose = read_rows(&session, LOOSE_SQL).await.ok()?.len();
+    Some(owed + loose)
+}
+
+/// The round's opaque state tag, echoed by MRTR retries. Untrusted —
+/// landing rests on re-derivation, never on the echo.
+const ROUND_STATE: &str = "question-round:v1";
+
+/// The door-side twin of the model app's queue derivation (the same
+/// derivation, two faces — one shows, one asks). Owed claims whose
+/// aspect admits an enumerable value; the choice form composes from
+/// the schema.
+const OWED_SQL: &str = "SELECT c.subject, c.aspect \
+    FROM GLOSSARY() c \
+    JOIN (SELECT subject FROM GLOSSARY(all => true) \
+          WHERE aspect = 'role' AND json_get_str(body, 'value') = 'measure') r \
+      ON r.subject = c.subject \
+    JOIN aspects a ON a.name = c.aspect \
+    WHERE c.state = 'unassessed' AND c.aspect IN ('behavior', 'unit') \
+      AND json_length(json_get(json_get(a.schema, 'properties'), 'value'), 'enum') IS NOT NULL \
+    ORDER BY c.subject, c.aspect";
+
+/// Judged assumptions below full confidence, winning slot only (the
+/// same guard as the app's queue frame).
+const LOOSE_SQL: &str = "SELECT g.subject, g.aspect, i.i AS idx, \
+       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension, \
+       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption, \
+       json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf \
+    FROM GLOSSARY(all => true) g \
+    CROSS JOIN generate_series(0, 19) AS i(i) \
+    WHERE g.kind = 'query' \
+      AND i.i < json_length(g.body, 'assumptions') \
+      AND json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') < 1.0 \
+      AND (EXISTS (SELECT 1 FROM glossary me \
+                   WHERE me.subject = g.subject AND me.aspect = g.aspect \
+                     AND me.actor_id = g.actor AND me.actor_kind = 'human') \
+           OR NOT EXISTS (SELECT 1 FROM glossary h \
+                          WHERE h.subject = g.subject AND h.aspect = g.aspect \
+                            AND h.actor_kind = 'human')) \
+    ORDER BY conf ASC, g.subject, g.aspect, i.i";
+
+/// One open question, derived — never stored. The key names it in
+/// the MRTR map; the form is composed from it.
+enum Question {
+    /// An owed claim whose aspect admits an enumerable value.
+    Owed {
+        subject: String,
+        aspect: String,
+        options: Vec<String>,
+    },
+    /// A judged assumption below full confidence.
+    Loose {
+        subject: String,
+        aspect: String,
+        idx: u64,
+        dimension: String,
+        assumption: String,
+        confidence: f64,
+    },
+}
+
+impl Question {
+    fn key(&self) -> String {
+        match self {
+            Question::Owed { subject, aspect, .. } => format!("owed:{subject}:{aspect}"),
+            Question::Loose {
+                subject,
+                aspect,
+                idx,
+                ..
+            } => format!("loose:{subject}:{aspect}:{idx}"),
+        }
+    }
+
+    fn params(&self) -> Result<ElicitRequestParams, String> {
+        match self {
+            Question::Owed {
+                subject,
+                aspect,
+                options,
+            } => {
+                let schema = ElicitationSchema::builder()
+                    .required_enum_schema("value", EnumSchema::builder(options.clone()).build())
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                Ok(ElicitRequestParams::FormElicitationParams {
+                    meta: None,
+                    message: format!(
+                        "Which {aspect} stands for {subject}? The aspect admits these \
+                         values; your word is the basis. Decline to defer."
+                    ),
+                    requested_schema: schema,
+                })
+            }
+            Question::Loose {
+                subject,
+                aspect,
+                dimension,
+                assumption,
+                confidence,
+                ..
+            } => {
+                let schema = ElicitationSchema::builder()
+                    .required_enum_schema(
+                        "stance",
+                        EnumSchema::builder(vec![
+                            "stands as stated".into(),
+                            "wrong".into(),
+                        ])
+                        .build(),
+                    )
+                    .optional_string("correction")
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                Ok(ElicitRequestParams::FormElicitationParams {
+                    meta: None,
+                    message: format!(
+                        "{subject} · {aspect} — {dimension}: \"{assumption}\" \
+                         (confidence {confidence}). Does this stand? If wrong, say \
+                         what is right. Decline to defer."
+                    ),
+                    requested_schema: schema,
+                })
+            }
+        }
+    }
+}
 
 /// Path subjects only: 1–3 identifier segments (`fin`, `orders`,
 /// `orders.amount`). Mirrors the pin door's gate until that door
@@ -424,69 +770,78 @@ impl ServerHandler for GlossqlMcp {
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        // The elicitation spike rides ahead of execution, by the
+        // The question round rides ahead of execution, by the
         // mechanism the negotiated lifecycle carries. 2026-07-28+ is
         // sessionless: the ask is an MRTR `input_required` result
         // (SEP-2322) and the answer arrives on the client's retry of
         // this same call. Session lifecycles get the server→client
-        // request on this call's own stream instead.
+        // request on this call's own stream instead. One question per
+        // call, only while the workspace derives open items; the
+        // capability must come from the request's own stamp — the
+        // transport's peer_info is synthetic on the sessionless path.
         let mut probed = None;
-        if self.doors.elicit_probe {
-            if let Some(responses) = &request.input_responses {
-                // The retry round: `requestState` is untrusted — ours
-                // is a version tag, checked, never parsed.
-                let note = if request.request_state.as_deref() != Some(PROBE_STATE) {
-                    "elicit-probe: a retry without the echoed state".to_string()
-                } else {
-                    match responses.get(PROBE_KEY).cloned() {
-                        Some(raw) => match serde_json::from_value::<ElicitResult>(raw) {
-                            Ok(answer) => self.digest_answer(answer, session.dataset()).await,
-                            Err(e) => format!("elicit-probe: the answer does not parse: {e}"),
-                        },
-                        None => "elicit-probe: the retry carries no answer".into(),
-                    }
-                };
-                println!("glossql ?? {id}: {note}");
-                probed = Some(note);
-            } else if context
-                .client_capabilities()
-                .and_then(|caps| caps.elicitation)
-                .is_none()
-            {
-                // The capability must come from the request's own stamp
-                // — the transport's peer_info is synthetic on the
-                // sessionless path.
-                let note = "elicit-probe: the client does not advertise elicitation";
-                println!("glossql ?? {id}: {note}");
-                probed = Some(note.into());
-            } else if context
-                .protocol_version()
-                .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
-            {
-                match Self::probe_params() {
+        if let Some(responses) = &request.input_responses {
+            let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
+                "question-round: a retry without the echoed state".to_string()
+            } else if let Some((key, raw)) = responses.iter().next() {
+                match serde_json::from_value::<ElicitResult>(raw.clone()) {
+                    Ok(answer) => self.digest_round(key, answer, &session).await,
+                    Err(e) => format!("question-round: the answer does not parse: {e}"),
+                }
+            } else {
+                "question-round: the retry carries no answer".into()
+            };
+            println!("glossql ?? {id}: {note}");
+            probed = Some(note);
+        } else if context
+            .client_capabilities()
+            .and_then(|caps| caps.elicitation)
+            .is_some()
+        {
+            if let Some(question) = self.derive_question(&session, true).await {
+                match question.params() {
                     Ok(params) => {
-                        let mut asks = InputRequests::new();
-                        asks.insert(
-                            PROBE_KEY.into(),
-                            InputRequest::Elicitation(ElicitRequest::new(params)),
-                        );
-                        println!("glossql ?? {id}: elicit-probe: asking (input_required round)");
-                        return Ok(InputRequiredResult::new(
-                            Some(asks),
-                            Some(PROBE_STATE.into()),
-                        )
-                        .into());
+                        if context
+                            .protocol_version()
+                            .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
+                        {
+                            let mut asks = InputRequests::new();
+                            asks.insert(
+                                question.key(),
+                                InputRequest::Elicitation(ElicitRequest::new(params)),
+                            );
+                            println!("glossql ?? {id}: question-round: asking {}", question.key());
+                            return Ok(InputRequiredResult::new(
+                                Some(asks),
+                                Some(ROUND_STATE.into()),
+                            )
+                            .into());
+                        }
+                        // Session lifecycle: the ask rides this call's
+                        // own stream, the answer routes back through
+                        // the transport session.
+                        let asked = context
+                            .peer
+                            .create_elicitation_with_timeout(
+                                params,
+                                Some(std::time::Duration::from_secs(120)),
+                            )
+                            .await;
+                        let note = match asked {
+                            Ok(answer) => {
+                                self.digest_round(&question.key(), answer, &session).await
+                            }
+                            Err(e) => format!("question-round: no round-trip: {e}"),
+                        };
+                        println!("glossql ?? {id}: {note}");
+                        probed = Some(note);
                     }
                     Err(e) => {
-                        let note = format!("elicit-probe: schema refused: {e}");
+                        let note = format!("question-round: form refused: {e}");
                         println!("glossql ?? {id}: {note}");
                         probed = Some(note);
                     }
                 }
-            } else {
-                let note = self.elicit_peer(&context, session.dataset()).await;
-                println!("glossql ?? {id}: {note}");
-                probed = Some(note);
             }
         }
 

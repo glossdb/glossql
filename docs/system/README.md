@@ -101,7 +101,15 @@ Storage and deployment:
   is Apple-only, so cloud means candle CUDA or capped-CPU sizing —
   neither measured.
 - **Flight SQL door** (future; pyarrow reads the HTTP stream today).
-- **Upstream-dependent**: Iceberg row deletes (physical cleanup of
+- **Upstream-dependent**: groundings as Iceberg views — a metric
+  grounding is a view body, and compiling groundings to spec views
+  would make the derived layer readable by any engine (tables
+  already are); blocked on catalog view operations in
+  apache/iceberg-rust (#55, open since 2023; the spec types shipped
+  in 0.10.1, the `Catalog` trait carries no view methods — verified
+  2026-08-13). Ruled the same day: track, don't build; a contribution
+  upstream is a separate, later task, and no crate switch. Also:
+  Iceberg row deletes (physical cleanup of
   struck rows), multi-table transactions, `update_namespace`. The
   branch/WAP publication seam (session-as-branch, publish =
   fast-forward, apache/iceberg-rust PR 2709) has been post-PoC since

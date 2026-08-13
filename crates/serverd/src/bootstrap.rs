@@ -1,8 +1,9 @@
 //! The shipped system, embedded at compile time — the same lockstep as
 //! the teaching resources: what this build ships is what this build
 //! declares. A fresh workspace receives the global measurement library
-//! before any agent connects; the vertical (semantic aspects, their
-//! witnesses) is deliberately not here — framing it is the agent's work.
+//! and the KPI kit (the semantic vocabulary and its witnesses) before
+//! any agent connects; what stays the agent's work is the company's
+//! own vocabulary — metrics, validations, scenarios.
 
 use std::path::Path;
 
@@ -63,10 +64,17 @@ const SCRIPTS: &[(&str, &str)] = &[
         "band_breach.rhai",
         include_str!("../../scripts/functions/band_breach.rhai"),
     ),
+    (
+        "rate_tolerance.rhai",
+        include_str!("../../scripts/functions/rate_tolerance.rhai"),
+    ),
 ];
 
 /// The measurement library's declarations.
 const BOOTSTRAP: &str = include_str!("../../scripts/functions/bootstrap.glossql");
+
+/// The KPI kit — the semantic vocabulary and its witnesses.
+const KIT: &str = include_str!("../../scripts/functions/kpi_kit.glossql");
 
 /// Materialize the shipped system into a workspace: the reference
 /// scripts land under `functions/` when absent (an operator's edit is
@@ -87,7 +95,9 @@ pub async fn bootstrap(
         }
     }
     if store.relation_rows("functions").await?.is_empty() {
-        plane.session(actor).await?.execute(BOOTSTRAP).await?;
+        let session = plane.session(actor).await?;
+        session.execute(BOOTSTRAP).await?;
+        session.execute(KIT).await?;
     }
     Ok(())
 }

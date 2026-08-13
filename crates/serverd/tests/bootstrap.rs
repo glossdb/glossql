@@ -1,6 +1,6 @@
 //! A fresh workspace receives the shipped system: reference scripts
-//! under functions/, the measurement library declared — and the second
-//! boot changes nothing.
+//! under functions/, the measurement library and the KPI kit declared
+//! — and the second boot changes nothing.
 
 use std::sync::Arc;
 
@@ -53,17 +53,30 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         "slot_entropy.rhai",
         "metric_bands.rhai",
         "band_breach.rhai",
+        "rate_tolerance.rhai",
     ] {
         assert!(dir.path().join("functions").join(name).exists(), "{name}");
     }
 
-    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "13");
-    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "11");
+    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "14");
+    // 11 measurement contracts + the KPI kit's 10 semantic aspects.
+    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "21");
     // The functions without RETURNS are the detectors.
     assert_eq!(
         count(
             &plane,
             "SELECT count(*) FROM functions WHERE returns IS NULL;"
+        )
+        .await,
+        "3"
+    );
+    // The kit's witnesses: the semantic six plus bands_w.
+    assert_eq!(count(&plane, "SELECT count(*) FROM witnesses;").await, "7");
+    // Owed questions stand on these from boot — nothing hand-declared.
+    assert_eq!(
+        count(
+            &plane,
+            "SELECT count(*) FROM witnesses WHERE aspect IN ('behavior', 'unit');"
         )
         .await,
         "2"
