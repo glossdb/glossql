@@ -279,8 +279,8 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                DECLARE ASPECT formulas WITH $${"type": "object"}$$ AS FACT ON DATASET;
                GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
                  "assumptions": [
-                   {"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
-                   {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+                   {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
                  ]}$$;
                GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * days"}}$$;
                GLOSS definitions ON perf AS $${"definitions": {"dso": {"meaning": "days outstanding"}}}$$;
@@ -468,8 +468,9 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
         .execute(
             r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * 360"}}$$;
                GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
-                 "assumptions": [{"dimension": "definition", "assumption": "ruled",
-                                  "basis": "engineer", "confidence": 1.0}]}$$;"#,
+                 "assumptions": [{"dimension": "definition", "key": "per-line",
+                                  "assumption": "ruled", "basis": "engineer",
+                                  "confidence": 1.0}]}$$;"#,
         )
         .await
         .unwrap();
@@ -490,7 +491,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
     // Ruled 2026-08-14: a human ruling is its own record — the queue
-    // holds the ruled question closed by content match, and the
+    // holds the ruled question closed by its declared key, and the
     // assumptions ledger shows the judgment beside the assumption it
     // rules ("the rulings that lead to the agreed facts").
     let (app, plane, _dir) = workspace().await;
@@ -517,7 +518,7 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
             r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
                  "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
                GLOSS ruling ON perf AS $${"rulings": [
-                 {"aspect": "dso", "dimension": "definition",
+                 {"aspect": "dso", "dimension": "definition", "key": "per-line",
                   "assumption": "per line", "stance": "confirmed"}]}$$;"#,
         )
         .await

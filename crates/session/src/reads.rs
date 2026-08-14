@@ -931,6 +931,20 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
 
 /// What an extraction statement returns: one row per call, served from the
 /// cache (whether this run computed it or a previous one did).
+/// Extraction serves the function-authored `summary` when the body
+/// carries one (ruled 2026-08-14: metric_cube's 54 KB body was
+/// write-only through the door, and 65 profiles pushed their whole
+/// bodies through the agent while warming). The full body stays in
+/// the cache, read back uncapped via `GLOSSARY(subject::aspect)`.
+fn served_body(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("summary").cloned())
+        .filter(|s| s.is_object())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| body.to_string())
+}
+
 pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::CacheRow>) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         utf8("function"),
@@ -938,6 +952,7 @@ pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::CacheRow>) -> RecordB
         utf8("body"),
         utf8("computed_at"),
     ]));
+    let bodies: Vec<String> = rows.iter().map(|r| served_body(&r.body)).collect();
     batch(
         schema,
         vec![
@@ -948,7 +963,7 @@ pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::CacheRow>) -> RecordB
                 rows.iter().map(|r| r.subject.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.body.as_str()),
+                bodies.iter().map(|b| b.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.computed_at.as_str()),

@@ -56,7 +56,7 @@ calls: the server keeps one session per actor.
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
 | `DECLARE FUNCTION f FOR fin\|GLOBAL FROM 'f.rhai' [ACCEPTS (…)] [RETURNS aspect];` | register a script (see the glossql-functions skill) | §6 |
-| `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache | §6 |
+| `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
 | `DELETE FROM cache WHERE …;` | force recomputation at the WHERE clause's grain | §6 |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication | §7.1 |
 | `SELECT … FROM ATTEST(subject \| fin::aspect);` | bands and scores; sweeps are WHERE clauses | §7.2 |
@@ -82,9 +82,15 @@ anything.
   plain tables (who said what; the declared vocabulary and its
   speaker gates; what is computed; source rows vs landed rows; the
   declared join edges).
-- `GLOSSARY(subject)` — collapsed values with `state`
-  (`current | stale | contested | unassessed`); a contested value is
-  withheld, and absence is a visible row.
+- `GLOSSARY(subject)` — the collapsed read, columns
+  `(subject, aspect, value, band, score, state)` with `state` in
+  `current | stale | contested | unassessed`; a contested value is
+  withheld, and absence is a visible row. **`all => true` is a
+  different shape**: the raw slots,
+  `(subject, aspect, kind, witness, actor, body, written_at)` — no
+  `value`, no `state`; the winning voice is yours to read off the
+  slots. Don't mix the two column sets: `value` belongs to the
+  collapse, `body` to the slots.
 - `ATTEST(…)` — `(subject, aspect, witness, band, score, computed_at)`,
   band in green/yellow/orange/red.
 - ordinary SELECT over tables for the data itself.
@@ -103,10 +109,14 @@ SELECT subject, aspect FROM GLOSSARY(fin) WHERE state = 'contested';
 SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
 ```
 
-The connect-time brief the door serves counts what stands — human
+The brief the door serves at connect counts what stands — human
 writings, approvals awaiting your re-declare, rulings awaiting your
 fold-in, and **judgment questions** (assumptions below full
 confidence — conventions and definitions the data cannot arbitrate).
+It also rides any tool result whose call moved it, as a
+`brief: Live now: …` block — so mid-session changes reach you
+without reconnecting; a call that carries no brief block changed
+nothing.
 While that count is above zero, sweep the round. Forms ride record
 reads (the cadence ruling, 2026-08-14): a call that reads the
 glossary — `GLOSSARY()`, `ATTEST()`, the store relations — and
@@ -115,7 +125,7 @@ data reads run uninterrupted. So the sweep is exactly the brief's
 own reads, repeated until the round stays quiet.
 
 An answer lands as a **ruling** (ruled 2026-08-14): the judgment
-alone — confirmed or corrected, with the assumption it rules — in
+alone — confirmed or corrected, naming the claim by its `key` — in
 the human's `ruling` slot on the subject, never a copy of your body.
 A ruling holds its question closed and the round moves on; your
 grounding stays yours. Questions derive from *your current body*, so
@@ -126,14 +136,44 @@ without question forms gets nothing — relay the open questions in
 chat yourself, multiple choice with your grounds, and run the
 statement the answer names.
 
+**Every disclosed assumption carries a `key`** — a short slug you
+write at disclosure (`goods-only`, `full-payment-settles`). The key
+is the claim's identity and the only thing the record joins on:
+rulings, question closure, and the fold-in debt all match
+`(aspect, key)`. Assumption prose is what the human reads, never what
+the system compares — no wording is ever matched against wording
+anywhere in this system, and none ever will be. What that costs you,
+stated plainly:
+
+- **An assumption without a key is never asked.** It cannot be held
+  closed, so the round would re-ask it forever; it is skipped
+  instead. Your record shows it, no human is ever served it.
+- **The same claim under two different keys reads as two claims.**
+  Nothing detects it. If you disclose one decision on two aspects,
+  use one key for it — or better, compose both from a shared concept
+  so the decision lives in one place (the honest cure: run 2 did
+  exactly this, declaring `supplier_invoices` and re-composing `dpo`
+  from it).
+- **Dropping a key from your body clears its debt.** The claim is no
+  longer disclosed, so nothing stands below full confidence. Drop a
+  key only when you truly no longer rest on the claim.
+
 Then close what owes an act, in the same session:
 
 - **A ruling awaiting its fold-in** (the brief counts these):
-  re-record the ruled grounding — the confirmed assumption at
-  confidence 1.0 with `basis: "human-ruled"`, or re-grounded per the
-  correction note in the ruling. The debt clears the moment your
-  current body carries it; until then the ruling keeps the question
-  closed for you both.
+  re-record the ruled grounding — the ruled assumption **under the
+  same key**, at confidence 1.0 with `basis: "human-ruled"`, or
+  re-grounded per the correction note in the ruling. The debt clears
+  the moment your current body carries that key at full confidence;
+  until then the ruling keeps the question closed for you both. Keep
+  the key and rewrite the prose as freely as the correction requires
+  — the join is on the key alone. **Fold in every standing ruling
+  before re-reading the cube or the walk** — each grounding write
+  stales both derived caches, so one batch of fold-ins then one
+  recompute, never a recompute per ruling. Read the ruling notes as
+  you fold: a note naming a sibling aspect ("differs from … by
+  design", or a slip re-ruled) is the human's cross-aspect judgment —
+  carry it into the grounding's assumption text.
 - **A human formula answer newer than the metric's recorded gloss**:
   the two are one definition in two forms — re-record the
   materialization to match (or carry the difference as a disclosed

@@ -396,8 +396,8 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [
-            {"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
-            {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+            {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
+            {"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
           ]}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 60, setup, None)).await).await;
@@ -416,7 +416,7 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
         json!("input_required"),
         "{body}"
     );
-    let ask = &body["result"]["inputRequests"]["loose:fin:dso:0"];
+    let ask = &body["result"]["inputRequests"]["loose:fin:dso:per-line"];
     assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
     assert!(ask["params"]["message"].to_string().contains("per line"), "{body}");
 
@@ -428,7 +428,7 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
                 meta_elicit(),
                 62,
                 "SELECT subject, aspect FROM glossary LIMIT 5",
-                Some(("loose:fin:dso:0", answer)),
+                Some(("loose:fin:dso:per-line", answer)),
             ),
         )
         .await,
@@ -488,8 +488,8 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     );
     let fold_in = r#"GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
         "assumptions": [
-          {"dimension": "definition", "assumption": "per line", "basis": "human-ruled", "confidence": 1.0},
-          {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+          {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "human-ruled", "confidence": 1.0},
+          {"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
         ]}$$;"#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 65, fold_in, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -516,7 +516,7 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
           "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
-          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 70, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -534,7 +534,7 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 72, review, Some(("loose:fin:dso:0", declined))),
+            call_with(meta_elicit(), 72, review, Some(("loose:fin:dso:per-line", declined))),
         )
         .await,
     )
@@ -583,7 +583,7 @@ async fn the_round_never_interrupts_a_working_call() {
           "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
-          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 90, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -641,7 +641,7 @@ async fn the_round_rides_a_transport_session_too() {
           "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
-          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 80, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -901,15 +901,18 @@ async fn sequential_rulings_compose_instead_of_reverting() {
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [
-            {"dimension": "convention", "assumption": "a flat 30-day month", "basis": "judgment", "confidence": 0.6},
-            {"dimension": "definition", "assumption": "total revenue in the denominator", "basis": "judgment", "confidence": 0.7}
+            {"dimension": "convention", "key": "flat-30-day-month", "assumption": "a flat 30-day month", "basis": "judgment", "confidence": 0.6},
+            {"dimension": "definition", "key": "total-revenue-denominator", "assumption": "total revenue in the denominator", "basis": "judgment", "confidence": 0.7}
           ]}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 80, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     // Rule the first (lowest confidence asks first), then the second.
-    for key in ["loose:fin:dso:0", "loose:fin:dso:1"] {
+    for key in [
+        "loose:fin:dso:flat-30-day-month",
+        "loose:fin:dso:total-revenue-denominator",
+    ] {
         let answer = json!({"action": "accept", "content": {"stance": "stands as stated"}});
         let body = expect_ok(
             mcp(
@@ -964,4 +967,261 @@ async fn sequential_rulings_compose_instead_of_reverting() {
     )
     .await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn contradicting_rulings_ask_before_anything_else() {
+    // Ruled 2026-08-14 (the live case was a mis-click): two standing
+    // rulings on one KEY with different stances derive a resolution
+    // form ahead of the loose queue. The two groundings word the same
+    // claim differently on purpose — pairing rests on the declared
+    // key, never on the prose (STRING EQUALITY ON NON-KEYS IS
+    // FORBIDDEN, ruled 2026-08-14). On the way there, the second loose
+    // form carries the (b) inform — the sibling ruling named in the
+    // message. "Deliberate" stamps the newer entry's note with the
+    // sibling's name and the question retires; "a slip" would flip the
+    // stance instead.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'contradiction test');
+        USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
+        DECLARE ASPECT purchases WITH $${"title": "P", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        DECLARE ASPECT dpo WITH $${"title": "D", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS purchases ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "scope", "key": "goods-only", "assumption": "goods suppliers only", "basis": "judgment", "confidence": 0.7}]}$$;
+        GLOSS dpo ON fin AS $${"sql": "SELECT 2 AS v",
+          "assumptions": [{"dimension": "scope", "key": "goods-only", "assumption": "restricted to invoices for goods, excluding services", "basis": "judgment", "confidence": 0.7}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 100, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let review = "SELECT subject, aspect FROM glossary LIMIT 5";
+    // dpo asks first (aspect order); the human corrects it.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 101, review, None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
+    assert!(
+        body["result"]["inputRequests"]["loose:fin:dpo:goods-only"].is_object(),
+        "{body}"
+    );
+    let corrected = json!({"action": "accept",
+        "content": {"stance": "wrong", "correction": "all suppliers, not goods only"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 102, review, Some(("loose:fin:dpo:goods-only", corrected))),
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        body["result"]["content"].to_string().contains("ruled (corrected)"),
+        "{body}"
+    );
+
+    // purchases asks next — and its form carries the sibling inform.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 103, review, None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
+    let ask = &body["result"]["inputRequests"]["loose:fin:purchases:goods-only"];
+    assert!(
+        ask["params"]["message"]
+            .to_string()
+            .contains("you ruled this same claim corrected on dpo"),
+        "{body}"
+    );
+    let confirmed = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                104,
+                review,
+                Some(("loose:fin:purchases:goods-only", confirmed)),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        body["result"]["content"].to_string().contains("ruled (confirmed)"),
+        "{body}"
+    );
+
+    // The contradiction now stands and asks ahead of everything.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 105, review, None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
+    let ask = &body["result"]["inputRequests"]["contra:fin:purchases:goods-only"];
+    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
+    assert!(
+        ask["params"]["message"].to_string().contains("deliberate"),
+        "{body}"
+    );
+
+    // "Deliberate" stamps the note; the question retires and the
+    // round is quiet.
+    let deliberate =
+        json!({"action": "accept", "content": {"resolution": "deliberate — both stand as ruled"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                106,
+                review,
+                Some(("contra:fin:purchases:goods-only", deliberate)),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 107, review, None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                108,
+                "SELECT body FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human' \
+                 ORDER BY written_at DESC LIMIT 1;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
+    let ruled: Value = serde_json::from_str(human_body).unwrap();
+    let purchases = ruled["rulings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["aspect"] == json!("purchases"))
+        .unwrap_or_else(|| panic!("{human_body}"));
+    // What retires the pair is the STRUCTURAL field — an aspect name
+    // in a list. The note beside it is for the human faces; nothing
+    // reads it back (no phrase is ever searched inside a sentence).
+    assert_eq!(purchases["settles_with"], json!(["dpo"]), "{human_body}");
+    assert_eq!(
+        purchases["note"],
+        json!("differs from dpo by design"),
+        "{human_body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_brief_rides_the_call_that_moved_it() {
+    // Run 2's friction 11: initialize instructions are fetched once
+    // per connection, so a long-lived session never saw the counts
+    // move. The brief now also rides any tool result whose call
+    // changed it — and stays off the quiet ones.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'brief delivery');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 120, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let blocks = body["result"]["content"].as_array().unwrap();
+    let brief = blocks
+        .iter()
+        .find(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: ")));
+    let brief = brief.unwrap_or_else(|| panic!("the landing moved the brief: {body}"));
+    assert!(
+        brief["text"].as_str().unwrap().contains("judgment question"),
+        "{body}"
+    );
+
+    // A quiet read moves nothing and carries nothing.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta(), 121, "SELECT 1 AS ok", None)).await).await;
+    let blocks = body["result"]["content"].as_array().unwrap();
+    assert!(
+        !blocks
+            .iter()
+            .any(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: "))),
+        "{body}"
+    );
+
+    // Delivery is per audience: a SECOND agent, which changed nothing,
+    // still hears what the first one moved — on its own first call.
+    // With one shared baseline only the mover was ever told.
+    let other = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {"name": "second-agent", "version": "0"}
+    });
+    let body =
+        expect_ok(mcp(app.clone(), call_with(other.clone(), 122, "SELECT 1 AS ok", None)).await)
+            .await;
+    let blocks = body["result"]["content"].as_array().unwrap();
+    assert!(
+        blocks
+            .iter()
+            .any(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: "))),
+        "the second agent hears the first one's move: {body}"
+    );
+    // And only once — its next quiet call is quiet again.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(other, 123, "SELECT 1 AS ok", None)).await).await;
+    let blocks = body["result"]["content"].as_array().unwrap();
+    assert!(
+        !blocks
+            .iter()
+            .any(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: "))),
+        "told once, not every call: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unkeyed_assumption_is_never_asked() {
+    // A KNOWN, ACCEPTED GAP (ruled 2026-08-14). Identity is the
+    // declared `key`; an assumption disclosed without one cannot be
+    // held closed by a ruling, so the round would re-ask it forever.
+    // It is therefore never asked at all — the record still shows it,
+    // and the skills make the key part of the disclosure shape. The
+    // alternative — pairing on the prose — is forbidden.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'unkeyed assumptions');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 130, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let review = "SELECT subject, aspect FROM glossary LIMIT 5";
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 131, review, None)).await).await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("complete"),
+        "an unkeyed assumption is not askable: {body}"
+    );
+
+    // The same claim, keyed, does ask.
+    let keyed = r#"GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+        "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;"#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 132, keyed, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 133, review, None)).await).await;
+    assert!(
+        body["result"]["inputRequests"]["loose:fin:dso:per-line"].is_object(),
+        "{body}"
+    );
 }

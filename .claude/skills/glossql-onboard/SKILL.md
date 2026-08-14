@@ -113,7 +113,13 @@ to assumptions nobody surfaced.
   through your mouth, and it never copies your body. The ruling
   holds its question closed; you owe the fold-in (re-record the
   grounding citing it), and the brief counts that debt until your
-  current body carries the ruled assumption at full confidence.
+  current body carries the ruled claim at full confidence.
+  Every assumption you disclose carries a **`key`** — the claim's
+  identity, and the only thing rulings and closure join on. One
+  decision spanning two aspects gets one key, or better a shared
+  concept both compose from; prose is never matched against prose
+  (the core glossql skill carries the mechanics and what the rule
+  costs).
 - **Prose is the fallback.** No question surface: ask in chat,
   multiple choice with your grounds and confidence, then run the
   statement the answer names — the write still travels through a

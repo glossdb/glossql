@@ -51,4 +51,14 @@ if mean != () {
     };
 }
 
+// Extraction serves this alone (ruled 2026-08-14: 65 columns of full
+// bodies through the door was the fan-out tax) — the judge reads the
+// cached body via GLOSSARY when judging, not while warming.
+profile.summary = #{
+    total: n,
+    null_ratio: profile.null_ratio,
+    distinct: distinct,
+    note: "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+};
+
 profile

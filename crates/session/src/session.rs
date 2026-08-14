@@ -30,7 +30,7 @@ use crate::subject::{Resolved, pair_subject, resolve_endpoint, resolve_path};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
-    #[error("parse: {0}")]
+    #[error("parse: {0} — parsing precedes execution: nothing ran")]
     Parse(#[from] ParserError),
     #[error(transparent)]
     Store(#[from] glossql_glossary::Error),

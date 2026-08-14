@@ -155,3 +155,12 @@ Pulled-when-a-target-demands (predecessor remainder, 2026-08-06 rulings):
   Benford (audit target).
 - Sign partition + ΔBIC tiebreak in the reconcile kernel (ruled in
   2026-08-06; land when behavior evidence next moves).
+- **In-language authoring for MCP-only installations** (postponed
+  2026-08-14, integration work): function bodies today require a
+  `.rhai` file in the workspace, so an MCP-only agent cannot author
+  the check half of a validation — and the same wall stands in front
+  of app creation (tera pages, frame SQL are workspace files). The
+  fork when it opens: an inline-body grammar form (corpus-first), or
+  a door-side artifact write. Applies to checks and the app-creation
+  flow together; both runs shipped expectation-only validations
+  because of it.

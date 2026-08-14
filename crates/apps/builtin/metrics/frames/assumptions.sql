@@ -2,7 +2,8 @@
 -- its basis and confidence, read from the AGENT's current grounding —
 -- the one record that moves as the work moves (ruled 2026-08-14: the
 -- human slot carries rulings, never a body copy). Each assumption
--- joins its standing ruling by content, so the row shows the judgment
+-- joins its standing ruling on its declared `key` — prose is display,
+-- never a join column (ruled 2026-08-14) — so the row shows the judgment
 -- that led to the agreed fact — and, while the assumption still sits
 -- below full confidence, that the fold-in is owed. Full confidence
 -- renders fixed (●), less renders loose (◐). Each row carries the
@@ -12,7 +13,7 @@
 WITH ruled AS (
   SELECT r.subject AS subject,
          json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect,
-         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key,
          json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'stance') AS stance,
          coalesce(json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'note'), '') AS note
   FROM glossary r
@@ -28,6 +29,7 @@ a AS (
     g.subject AS subject,
     json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dim,
     json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
+    json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key,
     json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what,
     coalesce(json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'basis'), '') AS basis,
     arrow_cast('GLOSS ' || g.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || g.body || '$$;', 'Utf8') AS statement
@@ -54,5 +56,5 @@ SELECT
   a.statement
 FROM a
 LEFT JOIN ruled r
-  ON r.subject = a.subject AND r.aspect = $metric AND r.assumption = a.what
+  ON r.subject = a.subject AND r.aspect = $metric AND r.key = a.key
 ORDER BY a.conf, a.dim

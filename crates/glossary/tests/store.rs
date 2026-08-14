@@ -1229,9 +1229,14 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     )
     .await
     .unwrap();
-    // w_b's 0.7 crosses its own 0.5 but not w_a's 0.9 — contested: any
-    // witness's own-threshold crossing withholds (interim; the plural-
-    // witness ruling is still owed).
+    // w_b's 0.7 crosses its own 0.5 but not w_a's 0.9 — the crossing
+    // is judged against the RIGHT threshold (the cross-wiring
+    // regression this test exists for). With one voice it shows as a
+    // red band beside the served value (ruled 2026-08-14: contested
+    // needs voices that can differ — a single-speaker crossing that
+    // withheld the value hid the body at its most interesting
+    // moment); a second voice below turns the same crossing into a
+    // contest.
     s.cache_put(
         "fin",
         "orders.amount",
@@ -1257,13 +1262,30 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
-    assert!(rows[0].value.is_none());
+    assert_eq!(rows[0].state, "current", "{:?}", rows[0]);
+    assert_eq!(rows[0].band.as_deref(), Some("red"), "{:?}", rows[0]);
+    assert!(rows[0].value.is_some(), "one voice serves, crossing or not");
     assert_eq!(
         rows[0].score,
         Some(0.7),
         "the crossing verdict rides the row"
     );
+
+    // A second voice on the same slot: now the crossing contests and
+    // the value is withheld.
+    write(
+        &s,
+        &human(),
+        r#"GLOSS unit ON orders.amount AS $${"value": "CHF"}$$;"#,
+    )
+    .await
+    .unwrap();
+    let rows = s
+        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
+    assert!(rows[0].value.is_none());
 
     // 0.6 crosses the neighbour's 0.5 but nobody's own threshold — served.
     let g = gloss(r#"GLOSS unit ON invoices.total AS $${"value": "USD"}$$;"#);

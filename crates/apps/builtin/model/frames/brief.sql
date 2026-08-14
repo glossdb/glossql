@@ -8,7 +8,7 @@
 --      the lead's catch: read.<metric>() serves the recorded SQL
 --      until an agent recomposes it);
 --   3. contested slots (dependents await re-judging);
---   4. rulings whose assumption still stands below full confidence in
+--   4. rulings whose ruled key still stands below full confidence in
 --      the agent's current body — the fold-in has not run (ruled
 --      2026-08-14).
 -- Static json paths project through CTEs; the one dynamic path
@@ -58,7 +58,7 @@ contested AS (
 ruled AS (
   SELECT r.subject AS subject,
          json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect,
-         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key,
          json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'stance') AS stance
   FROM glossary r
   CROSS JOIN generate_series(0, 199) AS rj(j)
@@ -70,7 +70,7 @@ ruled AS (
 ),
 still_loose AS (
   SELECT g.subject AS subject, g.aspect AS aspect,
-         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what
+         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key
   FROM glossary g
   CROSS JOIN generate_series(0, 19) AS i(i)
   WHERE g.actor_kind = 'agent'
@@ -88,7 +88,7 @@ waiting_rulings AS (
   FROM ruled r
   WHERE EXISTS (SELECT 1 FROM still_loose l
                 WHERE l.subject = r.subject AND l.aspect = r.aspect
-                  AND l.what = r.assumption)
+                  AND l.key = r.key)
 )
 SELECT arrow_cast(what, 'Utf8') AS what,
        arrow_cast(why, 'Utf8') AS why,

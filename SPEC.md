@@ -383,7 +383,12 @@ SELECT profile_min_max() FROM orders;
 SELECT outliers() FROM orders.amount;
 ```
 
-The first run computes and caches; later selects read the cache. The cache
+The first run computes and caches; later selects read the cache. A body
+that carries a top-level `summary` object serves the summary at
+extraction — the full body stays cached and reads back through
+`GLOSSARY(subject::aspect)` (ruled 2026-08-14: a large measurement's
+extraction result was effectively write-only at the door; the summary is
+the function's own authorship, never a truncation). The cache
 is an ordinary relation, like the glossary, named `cache`: one row per
 (subject, function, witness) —
 `(subject, function, witness, body, computed_at, snapshot_id)`, the

@@ -224,8 +224,20 @@ for key in slots.keys() {
     metrics.push(entry);
 }
 
+let metric_names = [];
+let total_rows = 0;
+for m in metrics { metric_names.push(m.metric); total_rows += m.rows.len(); }
+
 #{
     applicable: metrics.len() > 0,
     caps: #{ dims: dims_cap, members: members_cap, months: months_cap },
     metrics: metrics,
+    // Extraction serves this alone (ruled 2026-08-14: the 54 KB body
+    // was write-only through the door) — the full cube is the cache's
+    // business: metric_series() slices it, GLOSSARY reads it whole.
+    summary: #{
+        metrics: metric_names,
+        rows: total_rows,
+        note: "cached — slice with metric_series(); the whole cube reads back via GLOSSARY(<dataset>::metric_cube)",
+    },
 }

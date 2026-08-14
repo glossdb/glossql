@@ -66,7 +66,8 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     config.json_response = true;
     // The connect-time brief: shared across handler instances, boot-
     // filled, refreshed after every tool call (see mcp::refresh_brief).
-    let brief = Arc::new(std::sync::RwLock::new(String::new()));
+    // It carries its own facts and per-actor delivery state.
+    let brief = Arc::new(mcp::Brief::default());
     {
         let plane = Arc::clone(&plane);
         let brief = Arc::clone(&brief);

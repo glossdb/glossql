@@ -68,6 +68,19 @@ shipped as code:
 - **Interaction what-ifs composed from single observations** — the
   interaction is not in the data; compose additively and label it, or
   observe a joint scenario. (2026-08-10)
+- **Any matching of one written text against another** — equality or
+  similarity (token overlap, BM25, embeddings), anywhere in the
+  system. Agents do not phrase a claim the same way twice and humans
+  phrase it differently again, so a text match passes its tests and
+  then produces wrong joins, invisible side effects, and undebuggable
+  behavior in production. Identity is an explicit key the author
+  writes; where no key exists, the feature does less and says so.
+  This retired the ruling round's prose matching in favour of the
+  assumption `key` — with three gaps kept open deliberately rather
+  than closed by a matcher: an unkeyed assumption is never asked; the
+  same claim under two keys reads as two claims and nothing detects
+  it; a key dropped from the agent's body clears its fold-in debt.
+  (2026-08-14)
 
 ## Not covered yet — the backlog
 

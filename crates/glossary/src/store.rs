@@ -445,13 +445,16 @@ pub struct Store {
 }
 
 /// What the connect-time brief is composed from — see
-/// [`Store::brief_counts`].
-#[derive(Debug, Clone)]
+/// [`Store::brief_counts`]. `PartialEq` is load-bearing: the door
+/// decides "did the brief move" by comparing these counts, never by
+/// comparing rendered lines (string equality on non-keys is
+/// forbidden, ruled 2026-08-14).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BriefCounts {
     pub human_writings: i64,
     pub latest_human_at: Option<String>,
     pub approvals_pending: i64,
-    /// Ruling entries whose assumption still stands below full
+    /// Ruling entries whose ruled key still stands below full
     /// confidence in the agent's current body — the fold-in debt.
     pub rulings_owed: i64,
 }
@@ -504,10 +507,12 @@ impl Store {
         )
         .fetch_one(&self.pool)
         .await?;
-        // A ruling awaits its fold-in while the ruled assumption still
-        // stands below full confidence in the agent's current body —
-        // the same content match that holds the question round closed.
-        // The agent's re-record clears both at once (ruled 2026-08-14).
+        // A ruling awaits its fold-in while the assumption it rules —
+        // named by its `key`, the agent-declared identity that survives
+        // rephrasing (ruled 2026-08-14: prose is never a join column) —
+        // still stands below full confidence in the agent's current
+        // body. The agent's re-record clears the debt and the round's
+        // question at once.
         let rulings = sqlx::query(
             "SELECT count(*) AS n FROM glossary r, json_each(r.body, '$.rulings') jr \
              WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
@@ -522,8 +527,9 @@ impl Store {
                                    WHERE a2.subject = a.subject AND a2.aspect = a.aspect \
                                      AND a2.actor_kind = 'agent' \
                                      AND a2.written_at > a.written_at) \
-                   AND json_extract(ja.value, '$.assumption') \
-                         = json_extract(jr.value, '$.assumption') \
+                   AND json_extract(ja.value, '$.key') IS NOT NULL \
+                   AND json_extract(ja.value, '$.key') \
+                         = json_extract(jr.value, '$.key') \
                    AND coalesce(json_extract(ja.value, '$.confidence'), 0.0) < 1.0)",
         )
         .fetch_one(&self.pool)
@@ -1396,7 +1402,12 @@ impl Store {
                 Some((b, s, _)) => (Some(b.clone()), Some(*s)),
                 None => (None, None),
             };
-            if crossing.is_some() {
+            // Contested needs voices that can differ (2026-08-14, found
+            // live: a single-speaker measurement whose detector crossed
+            // read as `contested`, and the withholding hid the body at
+            // its most interesting moment). One slot cannot contest —
+            // the crossing still shows as its band, beside the value.
+            if crossing.is_some() && group.len() >= 2 {
                 rows.push(CollapsedRow {
                     subject,
                     aspect,

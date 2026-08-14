@@ -48,6 +48,16 @@ pub async fn resolve_path(
                     dataset: one.clone(),
                     subject: one.clone(),
                 })
+            } else if use_dataset.is_none() && store.source_settings(one).await?.is_some() {
+                // A declared source resolves workspace-wide — SOURCE-grain
+                // slots serve in every dataset (ruled 2026-08-12), and
+                // `DECLARE SOURCE` and `PROBE` run datasetless, so the
+                // conventions read must too (found 2026-08-14: the one
+                // read meant to be dataset-independent demanded a USE).
+                Ok(Resolved {
+                    dataset: one.clone(),
+                    subject: one.clone(),
+                })
             } else {
                 relative(one.clone())
             }

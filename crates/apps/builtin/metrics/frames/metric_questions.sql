@@ -5,12 +5,13 @@
 -- derive from the agent's live grounding, never a frozen human copy;
 -- skip the dimensions the function map owns (behavior, sign, grain —
 -- statistics are agent work); and a standing ruling holds a question
--- closed by content match until the agent's fold-in rewrites the body.
+-- closed — matched on the assumption's declared `key`, never its prose
+-- (ruled 2026-08-14) — until the fold-in raises that key to 1.0.
 -- Answered rows stop deriving; nothing is stored or dismissed.
 WITH ruled AS (
   SELECT r.subject AS subject,
          json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect,
-         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key
   FROM glossary r
   CROSS JOIN generate_series(0, 199) AS rj(j)
   WHERE r.aspect = 'ruling' AND r.actor_kind = 'human'
@@ -23,6 +24,7 @@ open_assumptions AS (
   SELECT g.subject AS subject,
          json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
          json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dim,
+         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key,
          json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what,
          json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'basis') AS basis
   FROM glossary g
@@ -38,9 +40,9 @@ SELECT o.conf,
        arrow_cast(o.what, 'Utf8') AS what,
        arrow_cast(coalesce(o.basis, 'unstated'), 'Utf8') AS basis
 FROM open_assumptions o
-WHERE o.conf < 1.0
+WHERE o.conf < 1.0 AND o.key IS NOT NULL
   AND coalesce(o.dim, '-') NOT IN ('behavior', 'sign', 'grain')
   AND NOT EXISTS (SELECT 1 FROM ruled r
                   WHERE r.subject = o.subject AND r.aspect = $metric
-                    AND r.assumption = o.what)
+                    AND r.key = o.key)
 ORDER BY o.conf ASC

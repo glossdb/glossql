@@ -227,7 +227,10 @@ the cast sees rows the guard "excluded", and inside a join subquery
 the guard simply does not guard; only `try_cast` is safe on dirty
 text) · aliasing a projection to its own qualified source name
 (`round(j.x, 2) AS x` — "qualified field j.x and unqualified x would
-be ambiguous"; pick a different alias, and keep ORDER BY on aliases).
+be ambiguous"; pick a different alias, and keep ORDER BY on aliases) ·
+a scalar subquery beside an aggregate in one projection ("Projections
+require unique expression names" even when both are aliased — compute
+the scalar in a CTE and cross join it instead).
 
 Frames follow glossql-apps on top of this — casting view types,
 stated caps, params. This skill is the SQL inside them.

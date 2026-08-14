@@ -319,7 +319,11 @@ then speak to each aspect on every landed column:
   either way — a "trial balance" column can carry period turnover (a
   flow) rather than balances; the measurement reads the data, not the
   label. When it starves on a column — every anchor abstains, no
-  entity persists across periods — the ladder is: your own data test,
+  entity persists across periods — the ladder is: **land the missing
+  dimension** (an AP side whose vendor has no table starves only for
+  lack of a declared edge — `SELECT DISTINCT vendor_id FROM …` is a
+  legitimate recipe, and once its edges are declared the borrowed
+  entity fires); then your own data test,
   cited as the basis (a mirror table, the GL, a hand reconciliation);
   and, as the last rung on an installation where a whole family of
   columns needs it, **author a workspace-scoped function**

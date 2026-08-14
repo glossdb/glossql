@@ -105,9 +105,10 @@ judged dimensions as columns. Every assumption names its basis:
 GLOSS revenue ON fin AS $${
   "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts, entry date as the time axis\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
   "assumptions": [
-    {"dimension": "sign", "assumption": "revenue accounts carry credit balances", "basis": "behavior_evidence sign partition + conventions gloss", "confidence": 1.0},
-    {"dimension": "grain", "assumption": "joins are grain-preserving", "basis": "relationship glosses", "confidence": 1.0},
-    {"dimension": "behavior", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 1.0}
+    {"dimension": "scope", "key": "revenue-accounts-only", "assumption": "revenue-typed accounts only, service lines included", "basis": "chart_of_accounts + judgment", "confidence": 0.7},
+    {"dimension": "sign", "key": "revenue-credit-positive", "assumption": "revenue accounts carry credit balances", "basis": "behavior_evidence sign partition + conventions gloss", "confidence": 1.0},
+    {"dimension": "grain", "key": "grain-preserving-joins", "assumption": "joins are grain-preserving", "basis": "relationship glosses", "confidence": 1.0},
+    {"dimension": "behavior", "key": "revenue-is-a-flow", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 1.0}
   ]
 }$$;
 ```
@@ -140,13 +141,31 @@ library's readers follow the marker (a stock takes last-per-window,
 never a sum), and an unmarked grounding reads as a flow.
 
 The assumptions array is a contract, not commentary: every metric
-writing carries `assumptions: [{dimension, assumption, basis,
+writing carries `assumptions: [{dimension, key, assumption, basis,
 confidence}]`, and confidence means it — the core skill's calibration
 scale governs the number (1.0 only for what is ruled or proven). The
 world-model surface reads exactly this shape to build its judgement
 queue, so an assumption you leave out is invisible to the humans who
 would have caught it, and a confidence you inflate empties their
 queue falsely.
+
+**`key` is the claim's identity — write it deliberately.** It is a
+short slug (`goods-only`, `full-payment-settles`) and it is the only
+thing the system joins on: a human ruling names `(aspect, key)`, the
+question stays closed on that key, and the fold-in debt clears on it.
+Nothing ever matches your prose — rephrase the assumption text freely
+between re-records, the ruling still holds. Two rules follow:
+
+- **Keep a key stable while the claim is the same.** Changing the
+  key means "this is a different claim": the standing ruling stops
+  applying and the question re-opens. That is the correct move when
+  the claim genuinely changed, and a mistake otherwise.
+- **Reuse one key when one claim spans aspects.** If `dpo` and
+  `purchases` both rest on the same scope decision, both disclose it
+  under the same key — that is what lets the door catch a human
+  ruling it one way here and the other way there. Better still, if
+  one claim really governs both, compose them from a shared concept
+  instead of disclosing it twice.
 
 **After grounding, run the collision read.** Two concepts grounding to
 the same extract make every ratio between them compute 1.0, silently:
@@ -414,7 +433,7 @@ DECLARE ASPECT payment_pairs WITH $${
 
 GLOSS payment_pairs ON fin AS $${
   "sql": "SELECT p.amount, i.amount AS invoiced, p.paid_date - i.invoice_date AS day_delta, i.terms_days FROM payments p JOIN invoices i ON p.invoice_id = i.invoice_id WHERE p.paid_date >= DATE '2025-09-01'",
-  "assumptions": [{"assumption": "joined surface: the suspicion is the pairing"}]}$$;
+  "assumptions": [{"key": "joined-surface", "assumption": "joined surface: the suspicion is the pairing"}]}$$;
 
 SELECT * FROM misfit.payment_pairs() ORDER BY misfit DESC LIMIT 20;
 ```

@@ -96,23 +96,32 @@ DECLARE ASPECT recipe_change WITH $${
 }$$ AS FACT ON TABLE;
 
 -- The ruling channel (ruled 2026-08-14): the question round lands each
--- human judgment here — the assumption it rules, confirmed or corrected
--- — and the ruled aspect's slots stay agent-authored. The agent owes
+-- human judgment here — the claim it rules, confirmed or corrected —
+-- and the ruled aspect's slots stay agent-authored. The agent owes
 -- the fold-in (re-record the grounding citing the ruling); the brief
 -- counts the debt until the agent's current body carries the ruled
--- assumption at full confidence. Witness-free on purpose: actor kind
+-- claim at full confidence. Witness-free on purpose: actor kind
 -- stamps the writer, and a witness would put an unassessed `ruling`
 -- row on every subject.
+--
+-- The claim is named by `key` — the slug the agent declared on the
+-- assumption it disclosed. The key is the ONLY thing joined on:
+-- closure, the fold-in debt, and the contradiction check all match
+-- (aspect, key). `assumption` rides along as the prose the human
+-- actually read, a snapshot for the record — never a match column
+-- (string equality on non-keys is forbidden, ruled 2026-08-14).
 
 DECLARE ASPECT ruling WITH $${
   "type": "object", "required": ["rulings"],
   "properties": {"rulings": {"type": "array", "items": {
-    "type": "object", "required": ["aspect", "assumption", "stance"],
+    "type": "object", "required": ["aspect", "key", "stance"],
     "properties": {"aspect": {"type": "string"},
                    "dimension": {"type": "string"},
+                   "key": {"type": "string"},
                    "assumption": {"type": "string"},
                    "stance": {"enum": ["confirmed", "corrected"]},
-                   "note": {"type": "string"}}}}}
+                   "note": {"type": "string"},
+                   "settles_with": {"type": "array", "items": {"type": "string"}}}}}}
 }$$ AS FACT;
 
 -- Witnesses: who may speak, and which claims the door owes a question
