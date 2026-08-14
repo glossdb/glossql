@@ -31,7 +31,8 @@ pub async fn frame(
     Path((app, frame)): Path<(String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let def = match AppDef::load(&door.workspace, &app) {
+    let glossed = crate::glossed::parts(&door).await;
+    let def = match AppDef::load(&door.workspace, &app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return fail(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),

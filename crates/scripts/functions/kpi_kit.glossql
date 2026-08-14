@@ -123,6 +123,37 @@ DECLARE ASPECT ruling WITH $${
                    "note": {"type": "string"}}}}}
 }$$ AS FACT;
 
+-- Apps as glosses (ruled 2026-08-15). An app was a directory read from
+-- disk, which is why an agent connected over MCP could not author one:
+-- it has statements, not a filesystem. Each part is its own gloss —
+-- the aspect says what kind of file it is, the subject says where it
+-- goes (`app_frame` ON `docket.open` is `frames/open.sql`). One gloss
+-- per part, so an author edits one frame without rewriting the app,
+-- and supersession versions each part on its own.
+--
+-- Grainless and witness-free on purpose: an app part is not a claim
+-- about the data, so it owes no verdict and belongs on no backlog.
+
+DECLARE ASPECT app WITH $${
+  "type": "object", "required": ["title"],
+  "properties": {"title": {"type": "string"}, "dataset": {"type": "string"}}
+}$$ AS FACT;
+
+DECLARE ASPECT app_page WITH $${
+  "type": "object", "required": ["html"],
+  "properties": {"html": {"type": "string"}}
+}$$ AS FACT;
+
+DECLARE ASPECT app_frame WITH $${
+  "type": "object", "required": ["sql"],
+  "properties": {"sql": {"type": "string"}}
+}$$ AS FACT;
+
+DECLARE ASPECT app_spec WITH $${
+  "type": "object", "required": ["spec"],
+  "properties": {"spec": {"type": "string"}}
+}$$ AS FACT;
+
 -- Witnesses: who may speak, and which claims the door owes a question
 -- for while they stand unwritten. slot_entropy adjudicates the
 -- low-entropy enums; bands adjudicate through band_breach.

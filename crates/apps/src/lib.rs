@@ -12,6 +12,7 @@ mod app;
 mod assets;
 mod builtin;
 mod frames;
+pub mod glossed;
 mod pages;
 
 pub use app::AppDef;

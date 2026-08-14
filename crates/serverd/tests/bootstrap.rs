@@ -61,8 +61,9 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
 
     assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");
     // 11 measurement contracts + the KPI kit's 10 semantic aspects
-    // + the ruling channel (2026-08-14).
-    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "23");
+    // + the ruling channel (2026-08-14) + the four app parts an agent
+    // authors a surface with (2026-08-15).
+    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "27");
     // The functions without RETURNS are the detectors.
     assert_eq!(
         count(

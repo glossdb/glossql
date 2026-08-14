@@ -58,9 +58,9 @@ fn state_map(params: Vec<(String, String)>) -> Value {
     Value::Object(map)
 }
 
-fn apps_json(workspace: &std::path::Path) -> Value {
+fn apps_json(workspace: &std::path::Path, glossed: &[crate::glossed::Part]) -> Value {
     Value::Array(
-        AppDef::list(workspace)
+        AppDef::list(workspace, glossed)
             .iter()
             .map(|a| {
                 json!({
@@ -77,8 +77,9 @@ pub async fn home(
     State(door): State<AppDoor>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
+    let glossed = crate::glossed::parts(&door).await;
     let mut ctx = tera::Context::new();
-    ctx.insert("apps", &apps_json(&door.workspace));
+    ctx.insert("apps", &apps_json(&door.workspace, &glossed));
     ctx.insert("state", &state_map(params));
     render("home.html", ctx, base_tera())
 }
@@ -88,7 +89,7 @@ pub async fn index(
     Path(app): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, "index", params)
+    page_response(&door, &app, "index", params).await
 }
 
 pub async fn page(
@@ -96,16 +97,17 @@ pub async fn page(
     Path((app, page)): Path<(String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, &page, params)
+    page_response(&door, &app, &page, params).await
 }
 
-fn page_response(
+async fn page_response(
     door: &AppDoor,
     app: &str,
     page: &str,
     params: Vec<(String, String)>,
 ) -> Response {
-    let def = match AppDef::load(&door.workspace, app) {
+    let glossed = crate::glossed::parts(door).await;
+    let def = match AppDef::load(&door.workspace, app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -132,7 +134,7 @@ fn page_response(
             "dataset": def.dataset.clone().unwrap_or_default(),
         }),
     );
-    ctx.insert("apps", &apps_json(&door.workspace));
+    ctx.insert("apps", &apps_json(&door.workspace, &glossed));
     ctx.insert("state", &state_map(params));
     render(&format!("pages/{page}.html"), ctx, tera)
 }
@@ -142,7 +144,8 @@ pub async fn spec(
     State(door): State<AppDoor>,
     Path((app, spec)): Path<(String, String)>,
 ) -> Response {
-    let def = match AppDef::load(&door.workspace, &app) {
+    let glossed = crate::glossed::parts(&door).await;
+    let def = match AppDef::load(&door.workspace, &app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),

@@ -1295,3 +1295,68 @@ async fn the_open_questions_read_composes_like_a_table() {
         "the least confident row is asked first: {body}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_authors_an_app_over_the_tool() {
+    // Ruled 2026-08-15: an app is glosses, one per part. Before this an
+    // app was a directory read from disk, so the one thing an agent
+    // connected over MCP could not build was the surface a human looks
+    // at — it has statements, not a filesystem. Nothing new carries it:
+    // the parts travel as glosses, supersession versions each one, and
+    // actor kind records whose hand shaped it.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'an agent authors an app');
+        USE fin;
+        DECLARE ASPECT app WITH $${"type": "object", "required": ["title"],
+          "properties": {"title": {"type": "string"}, "dataset": {"type": "string"}}}$$ AS FACT;
+        DECLARE ASPECT app_page WITH $${"type": "object", "required": ["html"],
+          "properties": {"html": {"type": "string"}}}$$ AS FACT;
+        DECLARE ASPECT app_frame WITH $${"type": "object", "required": ["sql"],
+          "properties": {"sql": {"type": "string"}}}$$ AS FACT;
+        GLOSS app ON docket AS $${"title": "The docket", "dataset": "fin"}$$;
+        GLOSS app_page ON docket.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>What stands open</h1>{% endblock %}"}$$;
+        GLOSS app_frame ON docket.open AS $${"sql": "SELECT count(*) AS owed FROM open_questions"}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 150, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // The page the agent wrote is served by the app door.
+    let response = app
+        .clone()
+        .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(html.contains("What stands open"), "{html}");
+    assert!(html.contains("The docket"), "the manifest names it: {html}");
+
+    // And its frame runs, over a shipped read, as Arrow IPC.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/app/docket/frames/open")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], ARROW_STREAM);
+
+    // A re-gloss supersedes that one part; the rest of the app stands.
+    let edit = r#"USE fin;
+        GLOSS app_page ON docket.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>Open work</h1>{% endblock %}"}$$;"#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 151, edit, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let response = app
+        .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(html.contains("Open work"), "{html}");
+    assert!(!html.contains("What stands open"), "superseded: {html}");
+}
