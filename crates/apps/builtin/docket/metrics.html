@@ -1,0 +1,112 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{% set metric = state.metric | default(value="") %}
+{% set dim = state.dim | default(value="") %}
+
+{% if metric %}
+{# ---- one metric: the number, then its reasons -------------------- #}
+<nav class="crumbs">
+  <a href="/app/docket">Open</a><span>·</span>
+  <a href="?">Metrics</a><span>›</span><span class="here">{{ metric }}</span>
+</nav>
+<div class="tiles">
+  {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
+       title="The story · " ~ metric, chip="metric_series()",
+       note="The cached cube's total series at the grounding's own verb, and the disclosed rival beside it where the grounding names one.") }}
+
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">The formula · {{ metric }}</span>
+      <code class="chip" title="The standing definition from the workspace's formulas gloss.">formulas</code></header>
+    <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
+      <template>
+        <div class="rrow" style="grid-template-columns:1fr">
+          <span class="r-subj" style="font-size:1rem">{formula}</span>
+          <span class="r-meta">{meta}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+
+  <div class="half">
+  <section class="tile">
+    <header><span class="eyebrow">Slice</span>
+      <code class="chip" title="The axes the cube admitted: served dimension columns with 2–24 members.">metric_series()</code></header>
+    <p class="hint">pick an axis — the slice rides the URL, so what you look at is shareable and re-derivable.</p>
+    <gl-rows frame="frames/dims" empty="no axes admitted — the grounding serves no dimension column with 2–24 members, or the cube has not run">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:1fr auto">
+          <span class="r-subj">{dimension}</span>
+          <span class="r-num">{members} members</span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+  </div>
+
+  {% if dim %}
+  {{ tiles::chart(frame="frames/slices", spec="specs/series.vl.json",
+       title="By " ~ dim, chip="metric_series()",
+       note="One admitted dimension's members over the cube's months, at the grounding's own verb.") }}
+  {% endif %}
+
+  <section class="tile">
+    <header><span class="eyebrow">The assumptions behind it</span>
+      <code class="chip" title="The agent's current grounding, one row per disclosed assumption, each joined to its standing ruling on the declared key.">agent_assumptions</code></header>
+    <p class="hint">● fixed · ◐ still loose. To rule one, say so in your agent client — the ruling lands as the judgment alone and the agent owes the re-record.</p>
+    <div class="scroll">
+    <gl-rows frame="frames/assumptions" empty="this grounding discloses no assumptions">
+      <template>
+        <div class="rrow" style="grid-template-columns:1.2rem 8rem 1fr">
+          <span class="g {gcls}">{glyph}</span>
+          <span class="r-subj asp">{dim}</span>
+          <span class="r-what">{what}<br>
+            <span class="r-meta">basis: {basis} · {ruling}</span>
+            <details class="contest"><summary>the writing</summary><pre class="statement">{statement}</pre></details>
+          </span>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">The materialization</span>
+      <code class="chip" title="The recorded read this metric expands to — it must keep matching the formula.">GLOSSARY()</code></header>
+    <gl-rows frame="frames/metric">
+      <template>
+        <pre class="statement">{sql}</pre>
+      </template>
+    </gl-rows>
+  </section>
+</div>
+
+{% else %}
+{# ---- the surfaces list ------------------------------------------- #}
+<nav class="crumbs">
+  <a href="/app/docket">Open</a><span>·</span>
+  <span class="here">Metrics</span><span>·</span>
+  <a href="/app/docket/p/record">Record</a>
+</nav>
+<div class="tiles">
+  <section class="tile">
+    <header><span class="eyebrow">Metric surfaces</span>
+      <code class="chip" title="Every declared QUERY aspect with its latest cube month, the move into it, the admitted axes, and where its judgment stands. The open count is the docket's own.">metric_surfaces</code></header>
+    <gl-rows frame="frames/pulse" empty="no metric surfaces declared yet">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 8rem">
+          <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+          <span class="r-num">{latest}<br><span class="r-meta">{unit} {period}</span></span>
+          <span class="r-num">{delta}</span>
+          <span class="r-meta">{axes}</span>
+          <code class="chip {scls}">{status}</code>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+</div>
+{% endif %}
+{% endblock main %}

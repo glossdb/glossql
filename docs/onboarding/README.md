@@ -54,7 +54,7 @@ Approved — the build items:
 1. **The pin loop through the app** (F3 + the question surface;
    approved and BUILT 2026-08-12 —
    `../../reports/2026-08-12-pin-loop.md`). The agenda lands as a
-   `pin_questions` gloss; the model app serves it as a queue; a
+   `pin_questions` gloss; the docket serves it as a queue; a
    one-gesture approval writes the HUMAN slot under the pinner's
    name through the app's pin door; answered questions leave by
    derivation. The real run landed 2026-08-12
@@ -137,14 +137,14 @@ Design owed before building:
    (options straight from the schema), a loose assumption becomes
    confirm/correct — one question per tool call while open items
    exist; the spike's `--elicit-probe` dictation retires with it.
-   (b) **the metric-validation surface** on the model app, adapted
+   (b) **the metric-validation surface** on the docket, adapted
    from the sketch: per-metric cards — status chip (open n / human-
    confirmed with date / measurement-closed), meaning with
    provenance, the commented query face, the grounding fold-out,
    live result tables, open questions, standing checks over
    `ATTEST()` — every string frame-derived, nothing authored on the
    page (the staleness risk resolves by construction). New design
-   blessed; the rest of the model app adapts to it later.
+   blessed; the rest of the docket adapts to it later.
    **Built 2026-08-13**, both faces: the round in the MCP door
    (owed → choice form, loose → confirm/correct, decline defers for
    the run; doors suite) and the validation surface (the chip
@@ -223,13 +223,13 @@ Design owed before building:
     assumption discloses `alternative_sql`; caps stated in the body)
     serves through the `metric_series()` relation — metric names
     become data, which is what lets a static built-in frame slice any
-    metric. The built-in metrics app renders it: pulse (latest month,
+    metric. The built-in docket renders it: pulse (latest month,
     move, axes, validation chip), dossier (story with the rival line,
     slice picker, formula, materialization, judgement, assumptions,
     corridor, the composes/feeds graph — the predecessor's
     metrics-as-graph idea, derived from the formulas registry and
     read.-mentions). The
-    metric dossier left the model app — model verifies, metrics
+    metric dossier left the docket — model verifies, metrics
     tells; queue/brief/surfaces link across. Grounded against
     Mosaic's architecture lesson (pre-aggregate, then interact);
     client-side arrow-js slicing and the transformers.js ask-box are

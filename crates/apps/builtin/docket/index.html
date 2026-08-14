@@ -1,0 +1,86 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# The docket: what stands open, what has been settled, what waits on
+   an act. The page carries no write — a ruling lands where the
+   conversation happens, through the agent's own session. #}
+<nav class="crumbs">
+  <span class="here">Open</span><span>·</span>
+  <a href="/app/docket/p/metrics">Metrics</a><span>·</span>
+  <a href="/app/docket/p/record">Record</a>
+</nav>
+
+<div class="tiles">
+  {{ tiles::value(frame="frames/front", field="open", label="Open questions",
+       chip="open_questions",
+       note="Judged assumptions the agent still holds below full confidence — conventions and definitions, never statistics. The same rows the door asks as forms.") }}
+  {{ tiles::value(frame="frames/front", field="surfaces", label="Metric surfaces",
+       chip="aspects") }}
+  {{ tiles::value(frame="frames/front", field="corridor", label="Corridor",
+       format="text", chip="ATTEST()",
+       note="The dataset-wide band verdict from the bands witness. 'not run' is honest absence, not green.") }}
+
+  <section class="tile">
+    <header><span class="eyebrow">Waiting on your judgment</span>
+      <code class="chip" title="Derived, never stored: an assumption drops off this list when the agent raises it to full confidence or a ruling closes it.">open_questions</code></header>
+    <p class="hint">Answer these in your agent client — this page never writes. The rail's fill is the confidence the agent holds.</p>
+    <gl-rows frame="frames/open" empty="nothing stands open — every disclosed assumption is at full confidence or ruled">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:3rem 11rem 1fr">
+          <span class="r-num">{conf}</span>
+          <span class="r-subj">{subj}<br><span class="r-meta">{asp}</span></span>
+          <span class="r-what">{what}<br>
+            <span class="r-meta">basis: {basis} {sibling}</span>
+          </span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Settled</span>
+      <code class="chip" title="The judgment alone, in the human's own words — never a copy of the agent's grounding. The fold-in state is derived from whether the agent still holds that key below full confidence.">ruling_entries</code></header>
+    <gl-rows frame="frames/settled" empty="nothing ruled yet">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 9rem">
+          <span class="r-subj">{subj}<br><span class="r-meta">{asp}</span></span>
+          <span class="r-what">{what}<br>
+            <span class="r-meta">{stance} — {note}</span>
+          </span>
+          <span class="r-num"><code class="chip {scls}">{state}</code><br>
+            <span class="r-meta">{at}</span></span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Waiting on an act</span>
+      <code class="chip" title="Four derivations: an approved recipe change with no import since, a formula answer newer than its materialization, a contested slot, and a ruling whose fold-in has not run.">owed</code></header>
+    <gl-rows frame="frames/owed" empty="nothing waits on an act">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:1fr 9rem">
+          <span class="r-what">{what}<br><span class="r-meta">{why}</span></span>
+          <span class="r-meta">{since}</span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">One claim ruled two ways</span>
+      <code class="chip" title="The same declared key confirmed on one aspect and corrected on another. Nothing resolves it here — the agent reconciles in its own groundings.">ruling_conflicts</code></header>
+    <gl-rows frame="frames/conflicts" empty="no claim is ruled two ways">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:9rem 1fr 9rem 9rem">
+          <span class="r-subj">{claim}</span>
+          <span class="r-what">{what}</span>
+          <span class="r-meta">{newer}</span>
+          <span class="r-meta">{older}</span>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+</div>
+{% endblock main %}

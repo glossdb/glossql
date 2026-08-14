@@ -1,0 +1,57 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# What the workspace knows, and how well it is held. #}
+<nav class="crumbs">
+  <a href="/app/docket">Open</a><span>·</span>
+  <a href="/app/docket/p/metrics">Metrics</a><span>·</span>
+  <span class="here">Record</span>
+</nav>
+
+<div class="tiles">
+  {{ tiles::value(frame="frames/census", field="subjects", label="Subjects", chip="GLOSSARY()") }}
+  {{ tiles::value(frame="frames/census", field="facts", label="Facts standing", chip="GLOSSARY()") }}
+  {{ tiles::value(frame="frames/census", field="measurements", label="Measurements", chip="GLOSSARY()") }}
+  {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on an act",
+       good="down", chip="owed",
+       note="Human writings that owe an agent act, plus witnessed measure claims no function has spoken to yet.") }}
+
+  <section class="tile">
+    <header><span class="eyebrow">Column coverage</span>
+      <code class="chip" title="Denominators from the model's own rules: behavior and unit are owed only where role = measure. A table with no measures shows a dash — not applicable, not a gap.">GLOSSARY(all =&gt; true)</code></header>
+    <div class="scroll">
+    <gl-rows frame="frames/coverage" empty="no column claims yet">
+      <template>
+        <div class="rrow" style="grid-template-columns:12rem 4rem 6rem 5rem 5rem 4rem">
+          <span class="r-subj">{t}</span>
+          <span class="r-num">{cols}</span>
+          <span class="r-num">{meaning} named</span>
+          <span class="r-num {bcls}">{btxt}</span>
+          <span class="r-num {ucls}">{utxt}</span>
+          <span class="r-num">{dims}</span>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Standing checks</span>
+      <code class="chip" title="Each row is a witness's live verdict: the expectation is the witness's own declaration, measured and band come from ATTEST(). A new import invalidates the measurement, so the next read recomputes.">ATTEST()</code></header>
+    <div class="scroll">
+    <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked">
+      <template>
+        <div class="rrow" style="grid-template-columns:10rem 1fr 10rem 6rem 5rem">
+          <span class="r-subj">{checked}</span>
+          <span class="r-what">{what}</span>
+          <span class="r-meta">{expectation}</span>
+          <span class="r-num">{measured}</span>
+          <code class="chip {bcls}">{band}</code>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+</div>
+{% endblock main %}

@@ -79,7 +79,7 @@ pub async fn frame(
 }
 
 /// The app's dataset: the manifest's pin, or — for an app that pins
-/// none, like the built-in model app — the first workspace dataset by
+/// none, like the built-in docket app — the first workspace dataset by
 /// name, resolved per request so the binding follows the workspace.
 /// Multi-dataset workspaces stay first-class (the lead, 2026-08-12:
 /// the one-container-one-dataset question is a deployment concern,

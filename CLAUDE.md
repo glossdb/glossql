@@ -36,7 +36,12 @@ documents:
   read and supersede workspace-wide — imports counters) · `session`
   (SessionContext assembly, RelationPlanner reads, statement router with
   the substrate allowlist, recipe materialization, probe routing,
-  DROP TABLE lifecycle, detector-at-read; the plane — channels keyed
+  DROP TABLE lifecycle, detector-at-read; the READ LIBRARY under
+  `crates/session/reads/` — a shipped `.sql` read is a bare relation
+  planned through the same expansion `read.<aspect>()` uses, so one
+  file serves the door, an app frame and a skill example alike; the
+  names are reserved and shadow both a table and a CTE, so the set
+  stays small (ruled 2026-08-14); the plane — channels keyed
   (actor, dataset), `USE` selects the channel and never rebinds a
   session, bare names resolve through the substrate's default-schema
   config, ruled 2026-08-07) · `catalog` (the workspace Lake:
@@ -66,10 +71,11 @@ documents:
   JS), the URL is the only state, drill is navigation; authors write
   declarative artifacts, never code — stack ruled 2026-08-07; gl-rows
   renders row surfaces through author templates, display logic computed
-  in frame SQL — 2026-08-10, built for the world-model app, the
-  verification surface over the glossary: judgement queue, dossiers,
-  contest-as-statement. The model app ships in the binary
-  (`crates/apps/builtin/model/`, ruled 2026-08-11): a workspace
+  in frame SQL — 2026-08-10. One app ships in the binary, the docket
+  (`crates/apps/builtin/docket/`, ruled 2026-08-15, replacing the
+  separate model and metrics apps): what stands open for a human to
+  judge, what has been settled, what waits on an act, with the metric
+  surfaces and the record behind it. A workspace
   `apps/<name>/` shadows the built-in — forking is copying the
   directory out — and an app.toml without a `dataset` pin binds to the
   workspace's sole dataset at request time; every built-in frame
@@ -88,7 +94,7 @@ documents:
   rules, glossql-functions, glossql-relationships, glossql-metrics —
   the operating-model deliverable, 2026-08-06 — glossql-apps,
   the app-authoring conventions, first sketch 2026-08-09 from the
-  hand-written cash and model apps — and glossql-windows, the
+  hand-written cash and docket apps — and glossql-windows, the
   window/aggregation SQL layer over glossed data, verified against
   the pinned substrate, 2026-08-10), the one teaching
   layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never

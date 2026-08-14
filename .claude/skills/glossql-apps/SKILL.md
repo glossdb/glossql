@@ -71,7 +71,7 @@ read, the specs draw.
   data.
 - A stated cap, never a silent one: `LIMIT` in the frame, the number
   on the tile's note.
-- `GLOSSARY(all => true)` is an ordinary frame source — the model app
+- `GLOSSARY(all => true)` is an ordinary frame source — the docket
   is nothing but frames over it (census, ranking, dossier), joined and
   filtered with plain SQL, `json_get_*` reaching into gloss bodies.
 - `metric_series()` is the cube read: the cached `metric_cube`
@@ -116,7 +116,7 @@ Display logic — glyphs, css classes, drill hrefs — is the frame's
 job, computed as SQL columns; the template stays dumb. An `empty`
 attribute states what a zero-row frame means (absence is a claim);
 a cap over `rows` gets the same honest footer a table gets. The
-world model app is the reference use.
+docket app is the reference use.
 
 ## Specs
 
@@ -144,9 +144,8 @@ WHERE concept = 'revenue' ORDER BY month
 ```
 
 The spec is a band fan with the replay line over it — the model's
-uncertainty and the exact recomputation, visibly separate (follow the
-metrics app's `specs/bands.vl.json` shape: two area layers p05/p95 and
-p10/p90, a dashed p50 line, a solid `replay` line). The chip is
+uncertainty and the exact recomputation, visibly separate: two area
+layers p05/p95 and p10/p90, a dashed p50 line, a solid `replay` line. The chip is
 `whatif.price_hike()`; the `note` names the lever and its basis; the
 `hint` says what the bands are and that `basis` carries refusals.
 Refusal rows have NULL months — keep the `WHERE concept = …` so an

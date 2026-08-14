@@ -206,13 +206,13 @@ async fn the_door_refuses_what_it_should() {
 async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
     let (app, _plane, dir) = workspace().await;
 
-    // `model` ships in the binary; a workspace directory of the same
+    // `docket` ships in the binary; a workspace directory of the same
     // name holding pages but no app.toml must not silently lose them
     // to the built-in (found 2026-08-12).
-    let shadow = dir.path().join("apps/model");
+    let shadow = dir.path().join("apps/docket");
     std::fs::create_dir_all(&shadow).unwrap();
     std::fs::write(shadow.join("index.html"), "the author's page").unwrap();
-    let page = get(&app, "/app/model").await;
+    let page = get(&app, "/app/docket").await;
     assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let page = text(page).await;
     assert!(page.contains("app.toml"), "{page}");
@@ -261,7 +261,7 @@ async fn body_text(response: Response<Body>) -> String {
     out
 }
 
-/// Seed the shapes the model app's frames read: a grounded metric with
+/// Seed the shapes the docket's frames read: a grounded metric with
 /// assumptions, a formulas map, and definitions.
 async fn seed_model_shapes(plane: &Arc<Plane>) {
     let agent = plane
@@ -366,10 +366,10 @@ async fn the_dossier_faces_survive_a_second_dataset() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await; // seeds a second dataset
 
-    let metric = get(&app, "/app/metrics/frames/metric?metric=dso").await;
+    let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
     assert_eq!(metric.status(), StatusCode::OK);
     assert_eq!(row_count(metric).await, 1);
-    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(assumptions.status(), StatusCode::OK);
     assert_eq!(row_count(assumptions).await, 2);
 }
@@ -386,7 +386,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
     seed_model_shapes(&plane).await;
 
     // Seeded state: agent formulas + agent dso gloss — nothing waits.
-    let before = get(&app, "/app/model/frames/brief").await;
+    let before = get(&app, "/app/docket/frames/owed").await;
     assert_eq!(before.status(), StatusCode::OK);
     assert_eq!(row_count(before).await, 0);
 
@@ -407,7 +407,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
         .execute(r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * 360"}}$$;"#)
         .await
         .unwrap();
-    let after = get(&app, "/app/model/frames/brief").await;
+    let after = get(&app, "/app/docket/frames/owed").await;
     assert_eq!(
         row_count(after).await,
         1,
@@ -432,7 +432,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
         )
         .await
         .unwrap();
-    let cleared = get(&app, "/app/model/frames/brief").await;
+    let cleared = get(&app, "/app/docket/frames/owed").await;
     assert_eq!(row_count(cleared).await, 0, "re-recording clears the wait");
 }
 
@@ -448,7 +448,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let before = get(&app, "/app/metrics/frames/metric?metric=dso").await;
+    let before = get(&app, "/app/docket/frames/metric?metric=dso").await;
     assert_eq!(before.status(), StatusCode::OK);
     assert_eq!(row_count(before).await, 1);
 
@@ -478,9 +478,9 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     // Still one row on the metric face, and it is the human's; the
     // assumptions ledger keeps serving the agent's working record —
     // its two disclosed assumptions — never a blend of the two bodies.
-    let metric = get(&app, "/app/metrics/frames/metric?metric=dso").await;
+    let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
     assert_eq!(row_count(metric).await, 1);
-    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(
         row_count(assumptions).await,
         2,
@@ -498,7 +498,7 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
     seed_model_shapes(&plane).await;
 
     // The seed's loose `per line` assumption queues.
-    let queue = get(&app, "/app/model/frames/queue").await;
+    let queue = get(&app, "/app/docket/frames/open").await;
     assert_eq!(row_count(queue).await, 1, "the loose assumption queues");
 
     // The human's ruling lands (the door writes it in production; a
@@ -526,9 +526,9 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
 
     // The queue holds the question closed; the ledger shows the ruling
     // beside its assumption, still awaiting the fold-in.
-    let queue = get(&app, "/app/model/frames/queue").await;
+    let queue = get(&app, "/app/docket/frames/open").await;
     assert_eq!(row_count(queue).await, 0, "the ruling closes the question");
-    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
     let text = body_text(assumptions).await;
     assert!(text.contains("ruled: confirmed"), "{text}");
     assert!(text.contains("awaiting the fold-in"), "{text}");
@@ -575,7 +575,7 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
         .await
         .unwrap();
 
-    let checks = get(&app, "/app/model/frames/checks").await;
+    let checks = get(&app, "/app/docket/frames/checks").await;
     assert_eq!(checks.status(), StatusCode::OK);
     assert_eq!(
         row_count(checks).await,
@@ -616,17 +616,17 @@ async fn the_metrics_faces_serve_the_cached_cube() {
         .await
         .unwrap();
 
-    let pulse = get(&app, "/app/metrics/frames/pulse").await;
+    let pulse = get(&app, "/app/docket/frames/pulse").await;
     assert_eq!(pulse.status(), StatusCode::OK);
     assert_eq!(row_count(pulse).await, 1, "one declared surface, one row");
 
-    let dims = get(&app, "/app/metrics/frames/dims?metric=dso").await;
+    let dims = get(&app, "/app/docket/frames/dims?metric=dso").await;
     assert_eq!(row_count(dims).await, 1, "cohort is the one admitted axis");
 
-    let slices = get(&app, "/app/metrics/frames/slices?metric=dso&dim=cohort").await;
+    let slices = get(&app, "/app/docket/frames/slices?metric=dso&dim=cohort").await;
     assert_eq!(row_count(slices).await, 3, "two members over two months, one sparse");
 
-    let trend = get(&app, "/app/metrics/frames/trend?metric=dso").await;
+    let trend = get(&app, "/app/docket/frames/trend?metric=dso").await;
     assert_eq!(
         row_count(trend).await,
         4,
@@ -642,13 +642,18 @@ async fn the_metrics_pages_render_both_states() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let front = get(&app, "/app/metrics").await;
+    let front = get(&app, "/app/docket/p/metrics").await;
     assert_eq!(front.status(), StatusCode::OK);
     let front = text(front).await;
     assert!(front.contains("frames/pulse"), "{front}");
-    assert!(front.contains("frames/front"), "{front}");
 
-    let dossier = text(get(&app, "/app/metrics?metric=dso").await).await;
+    // the front counts live on the docket itself, not the metric list
+    let open = text(get(&app, "/app/docket").await).await;
+    assert!(open.contains("frames/front"), "{open}");
+    assert!(open.contains("frames/open"), "{open}");
+    assert!(open.contains("frames/settled"), "{open}");
+
+    let dossier = text(get(&app, "/app/docket/p/metrics?metric=dso").await).await;
     assert!(dossier.contains("frames/trend"), "{dossier}");
     assert!(dossier.contains("frames/dims"), "{dossier}");
     assert!(
@@ -656,6 +661,6 @@ async fn the_metrics_pages_render_both_states() {
         "no dim picked — the slice tile must not render"
     );
 
-    let sliced = text(get(&app, "/app/metrics?metric=dso&dim=cohort").await).await;
+    let sliced = text(get(&app, "/app/docket/p/metrics?metric=dso&dim=cohort").await).await;
     assert!(sliced.contains("frames/slices"), "{sliced}");
 }

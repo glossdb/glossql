@@ -521,7 +521,7 @@ declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
 `metric_series()` (2026-08-13) serves the cached `metric_cube`
 measurement as long rows — metric names become data so a static frame
-(the built-in metrics app) slices any metric with plain value filters;
+(the built-in docket app) slices any metric with plain value filters;
 cached-only, nothing computes at read.
 
 Deferred, not under discussion: access rights · portability · persistence

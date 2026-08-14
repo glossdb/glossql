@@ -333,7 +333,7 @@ SELECT subject, band, score FROM ATTEST(fin::metric_bands);
   month; a grounding whose body carries `"behavior": "stock"` takes
   the last value per month instead. No marker reads as flow — mark
   your stocks (§3), or their walk sums levels and lies.
-- The metrics app's dossier renders the walk (the corridor tile); the
+- The docket's metric page renders the walk (the corridor tile); the
   score is ordinal (band displacement), never a probability.
 
 ### The cube — run it beside the walk
@@ -343,7 +343,7 @@ one measurement caching, per grounded metric, the monthly total, the
 slices along its served dimension columns (2..24 members, at most two
 axes, the last 24 months — caps stated in the body), and the rival
 series where an assumption discloses `alternative_sql`. The built-in
-metrics app serves every face from it through `metric_series()` —
+docket serves every face from it through `metric_series()` —
 long rows any SQL slices:
 
 ```glossql
@@ -411,7 +411,7 @@ cache` forces it. One scenario = one factor set — a different
 strength is a new gloss (re-gloss to revise) or a sibling aspect.
 In a workspace with apps, a scenario ships with its authored chart
 tile (glossql-apps: "A scenario ships with its tile"); the built-in
-model app lists scenarios without it.
+docket app lists scenarios without it.
 
 ## 7. Misfit — rank a frame when a signal fires
 
@@ -507,7 +507,7 @@ assumption entry may carry the strongest rival reading as SQL —
 — optional, one rival only. A runnable alternative is what lets
 anyone (you, the human, an app) compute what actually moves between
 the readings instead of arguing from prose — the cube (§5) runs the
-rival monthly and the metrics app's story tile draws both lines, so
+rival monthly and the docket's story tile draws both lines, so
 the gap is a chart the human reads before ruling. Start with the
 metric where the families diverge hardest, not everywhere.
 

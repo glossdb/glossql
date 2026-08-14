@@ -83,8 +83,10 @@ One listener, three doors:
   human ride the same channel when the client supports them.
 - **`/query`** — Arrow IPC streaming for programmatic reads.
 - **`/app`** — server-rendered data apps (htmx + vega-lite, URL as the
-  only state). A built-in model app ships in the binary: the
-  verification surface over the glossary.
+  only state). A built-in docket app ships in the binary: what stands
+  open for a human to judge, what has been settled, and the metric
+  surfaces and record behind it. A workspace can author its own — as a
+  directory, or as glosses, which is the shape an agent can write.
 
 The door tells, skills teach: everything an agent must *learn* ships
 as skills (`.claude/skills/`); everything *live* is read through the
