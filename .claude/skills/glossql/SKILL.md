@@ -136,6 +136,18 @@ without question forms gets nothing — relay the open questions in
 chat yourself, multiple choice with your grounds, and run the
 statement the answer names.
 
+What stands open is a read, and you can see it yourself:
+
+```sql
+SELECT aspect, dimension, key, assumption, conf
+FROM open_questions ORDER BY conf ASC;
+```
+
+`open_questions` is the derivation itself, not a summary of it — the
+same rows the forms serve and the app's queue renders. Filter it like
+any table (`WHERE aspect = 'dso'`); order it where you read it, since
+a read carries no ordering of its own.
+
 **Every disclosed assumption carries a `key`** — a short slug you
 write at disclosure (`goods-only`, `full-payment-settles`). The key
 is the claim's identity and the only thing the record joins on:

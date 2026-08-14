@@ -401,6 +401,25 @@ impl RelationPlanner for GlossqlReads {
                     Ok(relation_batch(&table, rows))
                 })?
             }
+            // A shipped read (`crates/session/reads/*.sql`): a bare
+            // relation whose body is SQL, expanded through the same
+            // path a served grounding takes. Checked last, and a name
+            // we do not ship falls through untouched — but a name we
+            // do ship shadows a workspace table of that name, exactly
+            // as the store's relations already do. The shipped names
+            // are the reserved surface; keep them few and specific.
+            (name, None) => match crate::library::read_sql(name) {
+                Some(sql) => {
+                    let alias = alias.clone();
+                    return self.plan_sql(
+                        &format!("read:{fname}"),
+                        &format!("the shipped read `{fname}`"),
+                        sql,
+                        alias,
+                    );
+                }
+                None => return Ok(RelationPlanning::Original(Box::new(relation))),
+            },
             _ => return Ok(RelationPlanning::Original(Box::new(relation))),
         };
 
@@ -434,34 +453,56 @@ impl GlossqlReads {
     /// evaluation may compose `FROM read.revenue()`), so a stack guards
     /// against a grounding that reaches itself.
     fn plan_serve(&self, aspect: &str, alias: Option<TableAlias>) -> DFResult<RelationPlanning> {
-        enter_expansion(&format!("read.{aspect}"))?;
-        let planned = self.plan_serve_expansion(aspect, alias);
-        leave_expansion();
-        planned
-    }
-
-    fn plan_serve_expansion(
-        &self,
-        aspect: &str,
-        alias: Option<TableAlias>,
-    ) -> DFResult<RelationPlanning> {
         let sql = tokio::task::block_in_place(|| {
             self.shared
                 .handle
                 .block_on(served_grounding(&self.shared, aspect))
         })
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        // Query-shaped or refused — the grounding schema admits any string.
+        self.plan_sql(
+            &format!("read.{aspect}"),
+            &format!("the grounding for `{aspect}` (read.{aspect}())"),
+            &sql,
+            alias,
+        )
+    }
+
+    /// Plan SQL text as a derived relation: the one expansion path.
+    /// `key` guards the cycle stack, `what` names the source in errors.
+    ///
+    /// Both callers hand SQL that came from somewhere else — a QUERY
+    /// gloss the workspace authored, or a read the binary ships — and
+    /// both want the same thing: the body planned as its own statement
+    /// so the full pipeline composes around it. Planning it as its own
+    /// statement is what makes that work: `statement_to_plan` collects
+    /// table references per statement, so the body's tables resolve even
+    /// when the outer statement never names them, and a nested read
+    /// re-enters this planner through the same pipeline.
+    fn plan_sql(
+        &self,
+        key: &str,
+        what: &str,
+        sql: &str,
+        alias: Option<TableAlias>,
+    ) -> DFResult<RelationPlanning> {
+        enter_expansion(key)?;
+        let planned = self.plan_sql_expansion(what, sql, alias);
+        leave_expansion();
+        planned
+    }
+
+    fn plan_sql_expansion(
+        &self,
+        what: &str,
+        sql: &str,
+        alias: Option<TableAlias>,
+    ) -> DFResult<RelationPlanning> {
+        // Query-shaped or refused — a grounding's schema admits any
+        // string, and a shipped read is only checked at build time.
         let query = Parser::new(&PostgreSqlDialect {})
-            .try_with_sql(&sql)
+            .try_with_sql(sql)
             .and_then(|mut p| p.parse_query())
-            .map_err(|e| {
-                DataFusionError::Plan(format!("the grounding for `{aspect}` does not parse: {e}"))
-            })?;
-        // Planned as its own statement: `statement_to_plan` collects table
-        // references per statement, so the grounding's tables resolve even
-        // when the outer statement never names them — and a nested
-        // `read.` re-enters this planner through the same pipeline.
+            .map_err(|e| DataFusionError::Plan(format!("{what} does not parse: {e}")))?;
         let ctx = self
             .shared
             .ctx
@@ -476,11 +517,7 @@ impl GlossqlReads {
                 .handle
                 .block_on(async { ctx.state().statement_to_plan(statement).await })
         })
-        .map_err(|e| {
-            e.context(format!(
-                "running the grounding for `{aspect}` (read.{aspect}())"
-            ))
-        })?;
+        .map_err(|e| e.context(format!("running {what}")))?;
         Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
             plan, alias,
         ))))

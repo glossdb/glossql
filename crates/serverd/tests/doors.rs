@@ -1225,3 +1225,102 @@ async fn an_unkeyed_assumption_is_never_asked() {
         "{body}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_open_questions_read_composes_like_a_table() {
+    // The point of the read library: the round's derivation is a
+    // relation anyone can select from, so the door, the app's queue and
+    // any ad-hoc query share one file instead of three copies. Filters
+    // ride WHERE — the same posture `read.<aspect>()` and
+    // `metric_series()` take.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'the read library');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        DECLARE ASPECT dpo WITH $${"title": "DPO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;
+        GLOSS dpo ON fin AS $${"sql": "SELECT 2 AS v",
+          "assumptions": [{"dimension": "definition", "key": "goods-only", "assumption": "goods suppliers only", "basis": "judgment", "confidence": 0.4},
+                          {"dimension": "grain", "key": "monthly", "assumption": "month grain", "basis": "judgment", "confidence": 0.3}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 140, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let rows = |body: &Value| -> Value {
+        let text = body["result"]["content"][0]["text"].as_str().unwrap();
+        let outcomes: Value = serde_json::from_str(text).unwrap();
+        outcomes[0].clone()
+    };
+
+    // The whole read: two askable rows. `grain` is the function map's
+    // dimension, so the read drops it — the gate lives in the file now,
+    // not in the door.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta(), 141, "SELECT * FROM open_questions;", None),
+        )
+        .await,
+    )
+    .await;
+    let out = rows(&body);
+    assert_eq!(out["row_count"], json!(2), "{out}");
+
+    // A filter narrows it, a projection reshapes it, an aggregate closes
+    // over it: it is a relation, not a door-shaped special case.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                142,
+                "SELECT aspect, key FROM open_questions WHERE aspect = 'dpo';",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let out = rows(&body);
+    assert_eq!(out["row_count"], json!(1), "{out}");
+    assert_eq!(out["rows"][0]["key"], json!("goods-only"), "{out}");
+
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                143,
+                "SELECT count(*) AS owed FROM open_questions;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let out = rows(&body);
+    assert_eq!(out["rows"][0]["owed"], json!(2), "{out}");
+
+    // And the round serves exactly what the read holds.
+    let body = expect_ok(
+        mcp(
+            app,
+            call_with(
+                meta_elicit(),
+                144,
+                "SELECT subject, aspect FROM glossary LIMIT 5;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let asked = body["result"]["inputRequests"].as_object().unwrap();
+    assert_eq!(asked.len(), 1, "one question at a time: {body}");
+    assert!(
+        asked.contains_key("loose:fin:dpo:goods-only"),
+        "the least confident row is asked first: {body}"
+    );
+}

@@ -761,51 +761,15 @@ const CONTRA_SQL: &str = "WITH entries AS ( \
                         AND s.key = a.key AND s.other = b.aspect) \
     ORDER BY a.subject, a.aspect";
 
-/// Open questions derive from the agent's CURRENT body — never a
-/// frozen copy (the 2026-08-14 run: deriving from the winning human
-/// slot re-asked every answered question, because the human copy kept
-/// the stale confidences). Four gates beyond "below full confidence":
-/// the aspect is a grounding (query kind); the assumption carries a
-/// `key` (its declared identity — an unkeyed assumption cannot be
-/// closed, so it is never asked; known and accepted); the dimension is
-/// not one the function map owns (`behavior`, `sign`, `grain` are
-/// statistics — ruled 2026-08-13, enforced, not just taught); and no
-/// standing ruling entry names the same (aspect, key) — a ruling holds
-/// the question closed until the agent's fold-in raises that key to
-/// full confidence, at which point the row drops out on its own.
-const LOOSE_SQL: &str = "WITH ruled AS ( \
-        SELECT r.subject AS subject, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key \
-        FROM glossary r \
-        CROSS JOIN generate_series(0, 199) AS rj(j) \
-        WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
-          AND NOT EXISTS (SELECT 1 FROM glossary r2 \
-                          WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
-                            AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
-          AND rj.j < json_length(r.body, 'rulings')), \
-    open_assumptions AS ( \
-        SELECT g.subject, g.aspect, i.i AS idx, \
-               json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension, \
-               json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key, \
-               json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption, \
-               json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf \
-        FROM glossary g \
-        JOIN aspects a ON a.name = g.aspect AND a.kind = 'query' \
-        CROSS JOIN generate_series(0, 19) AS i(i) \
-        WHERE g.actor_kind = 'agent' \
-          AND NOT EXISTS (SELECT 1 FROM glossary g2 \
-                          WHERE g2.subject = g.subject AND g2.aspect = g.aspect \
-                            AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at) \
-          AND i.i < json_length(g.body, 'assumptions')) \
-    SELECT o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.conf \
-    FROM open_assumptions o \
-    WHERE o.conf < 1.0 AND o.key IS NOT NULL \
-      AND coalesce(o.dimension, '-') NOT IN ('behavior', 'sign', 'grain') \
-      AND NOT EXISTS (SELECT 1 FROM ruled r \
-                      WHERE r.subject = o.subject AND r.aspect = o.aspect \
-                        AND r.key = o.key) \
-    ORDER BY o.conf ASC, o.subject, o.aspect, o.idx";
+/// What still stands open for a human to judge. The derivation is the
+/// shipped read — `crates/session/reads/open_questions.sql`, which
+/// carries the gates and the reasons — and the door only orders and
+/// serves it. The app's queue renders the same read; the skills name
+/// it. One file, three consumers. Least-confident first, and the
+/// ordering rides here because an inner ORDER BY does not survive a
+/// derived relation.
+const LOOSE_SQL: &str =
+    "SELECT * FROM open_questions ORDER BY conf ASC, subject, aspect, idx";
 
 fn loose_from(row: &serde_json::Value) -> Option<Question> {
     Some(Question::Loose {

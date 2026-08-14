@@ -16,6 +16,7 @@
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 
+mod library;
 mod misfit;
 mod plane;
 mod reads;
