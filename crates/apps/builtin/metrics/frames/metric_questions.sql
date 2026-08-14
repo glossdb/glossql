@@ -9,5 +9,5 @@ SELECT o.conf,
        arrow_cast(o.assumption, 'Utf8') AS what,
        arrow_cast(coalesce(o.basis, 'unstated'), 'Utf8') AS basis
 FROM open_questions o
-WHERE o.aspect = $metric
+WHERE o.aspect = $metric AND o.dataset = CAST($dataset AS VARCHAR)
 ORDER BY o.conf ASC

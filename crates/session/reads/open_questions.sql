@@ -32,7 +32,7 @@
 -- an inner ordering does not survive planning — measured, not assumed:
 -- the door's round served the wrong question first until it ordered at
 -- the call site. Order where you consume.
-SELECT o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis, o.conf,
+SELECT o.dataset, o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis, o.conf,
        max(s.stance || ' on ' || s.aspect) AS sibling
 FROM agent_assumptions o
 JOIN aspects a ON a.name = o.aspect AND a.kind = 'query'
@@ -43,4 +43,4 @@ WHERE o.conf < 1.0 AND o.key IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM ruling_entries r
                   WHERE r.subject = o.subject AND r.aspect = o.aspect
                     AND r.key = o.key)
-GROUP BY o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis, o.conf
+GROUP BY o.dataset, o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis, o.conf

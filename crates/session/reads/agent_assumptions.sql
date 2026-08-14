@@ -7,17 +7,27 @@
 -- whether a ruling has been folded in. Both used to unnest this
 -- themselves.
 --
+-- `dataset` rides along because the plain `glossary` relation is
+-- workspace-wide: a consumer bound to one dataset must say so.
+--
+-- `body` rides along as the whole writing the assumption sits inside,
+-- so a caller can show it or re-issue it as a statement. Read the
+-- columns above rather than reaching into it: json accessors applied
+-- to a body that arrived through a read hit the rewrite problem below.
+--
 -- Flat, with the json accessors in the same SELECT as the scan:
 -- datafusion-functions-json's rewrite does not survive a CTE that
 -- projects the body column.
-SELECT g.subject AS subject,
+SELECT g.dataset AS dataset,
+       g.subject AS subject,
        g.aspect AS aspect,
        i.i AS idx,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'basis') AS basis,
-       json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf
+       json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
+       g.body AS body
 FROM glossary g
 CROSS JOIN generate_series(0, 19) AS i(i)
 WHERE g.actor_kind = 'agent'
