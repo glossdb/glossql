@@ -237,6 +237,30 @@ async fn row_count(response: Response<Body>) -> usize {
     reader.map(|b| b.unwrap().num_rows()).sum()
 }
 
+/// Every cell of the frame, flattened to one string — for asserting a
+/// rendered value is present without caring which column carries it.
+async fn body_text(response: Response<Body>) -> String {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let reader =
+        arrow_ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+            .unwrap();
+    let mut out = String::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        for column in batch.columns() {
+            for i in 0..batch.num_rows() {
+                if let Ok(v) =
+                    datafusion::arrow::util::display::array_value_to_string(column, i)
+                {
+                    out.push_str(&v);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Seed the shapes the model app's frames read: a grounded metric with
 /// assumptions, a formulas map, and definitions.
 async fn seed_model_shapes(plane: &Arc<Plane>) {
@@ -416,8 +440,11 @@ async fn the_brief_counts_what_waits_on_the_agent() {
 async fn the_metric_faces_serve_the_winning_slot_once() {
     // Found live 2026-08-12: with two slots on `formulas` (human and
     // agent) the dossier rendered the formula and the materialization
-    // twice. The faces read the winning slot only — human outranking
-    // agent, exactly like the collapsed read.
+    // twice. The metric face reads the winning slot only — human
+    // outranking agent, exactly like the collapsed read. The
+    // assumptions ledger is different since the 2026-08-14 ruling: it
+    // is the AGENT's working record (rulings annotate it, and a human
+    // supersede of the metric governs reads without replacing it).
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
@@ -447,15 +474,63 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
         .await
         .unwrap();
 
-    // Still one row per face, and it is the human's.
+    // Still one row on the metric face, and it is the human's; the
+    // assumptions ledger keeps serving the agent's working record —
+    // its two disclosed assumptions — never a blend of the two bodies.
     let metric = get(&app, "/app/metrics/frames/metric?metric=dso").await;
     assert_eq!(row_count(metric).await, 1);
     let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
     assert_eq!(
         row_count(assumptions).await,
-        1,
-        "the human body carries one assumption; the agent's two must not show"
+        2,
+        "the ledger is the agent's record — the human supersede must not replace it"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
+    // Ruled 2026-08-14: a human ruling is its own record — the queue
+    // holds the ruled question closed by content match, and the
+    // assumptions ledger shows the judgment beside the assumption it
+    // rules ("the rulings that lead to the agreed facts").
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    // The seed's loose `per line` assumption queues.
+    let queue = get(&app, "/app/model/frames/queue").await;
+    assert_eq!(row_count(queue).await, 1, "the loose assumption queues");
+
+    // The human's ruling lands (the door writes it in production; a
+    // session write is the same statement).
+    let human = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    human
+        .execute(
+            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
+               GLOSS ruling ON perf AS $${"rulings": [
+                 {"aspect": "dso", "dimension": "definition",
+                  "assumption": "per line", "stance": "confirmed"}]}$$;"#,
+        )
+        .await
+        .unwrap();
+
+    // The queue holds the question closed; the ledger shows the ruling
+    // beside its assumption, still awaiting the fold-in.
+    let queue = get(&app, "/app/model/frames/queue").await;
+    assert_eq!(row_count(queue).await, 0, "the ruling closes the question");
+    let assumptions = get(&app, "/app/metrics/frames/assumptions?metric=dso").await;
+    let text = body_text(assumptions).await;
+    assert!(text.contains("ruled: confirmed"), "{text}");
+    assert!(text.contains("awaiting the fold-in"), "{text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

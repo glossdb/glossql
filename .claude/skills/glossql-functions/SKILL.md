@@ -18,6 +18,14 @@ the one closest to your task before writing:
 - `rate_tolerance.rhai` — a detector over slot voices (authored
   expectation vs check voice), the usual validation shape.
 
+A workspace-scoped function (`FOR <dataset>`) is also the honest home
+for **installation-specific method**: when a shipped measurement
+starves on this dataset's shape (behavior_evidence on a schema whose
+only edges are document-keyed, say), a bespoke function that encodes
+how behavior is decided *here* beats a pile of hand judgments — it is
+the installation's recorded thinking, versioned and re-runnable, and
+its abstentions stay honest like the library's.
+
 ## Declaration
 
 ```glossql

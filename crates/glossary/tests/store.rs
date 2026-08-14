@@ -1437,6 +1437,67 @@ async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
     );
 }
 
+#[tokio::test]
+async fn a_source_subject_is_refused_outside_source_grain() {
+    // The 2026-08-14 run: `GLOSS entity ON erp` — a table-grain aspect,
+    // a source subject — was accepted, and the unassessed grid carried
+    // rows that could never legitimately be filled. A source name is
+    // SOURCE grain, never table grain: table-grain writes refuse it and
+    // the backlog stays clean.
+    let s = store().await;
+    let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'p');") else {
+        unreachable!()
+    };
+    s.declare_dataset(&ds).await.unwrap();
+    let Declaration::Source(src) =
+        decl("DECLARE SOURCE erp SET (type: parquet, location: 'lake');")
+    else {
+        unreachable!()
+    };
+    s.declare_source(&src).await.unwrap();
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+    let Declaration::Witness(w) = decl("DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);")
+    else {
+        unreachable!()
+    };
+    s.declare_witness(&w).await.unwrap();
+
+    let g = gloss(r#"GLOSS entity ON erp AS $${"value": "not a table"}$$;"#);
+    let e = s
+        .gloss("fin", &agent(), "entity", "erp", &g.body, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(e, Error::GrainRefused { grain: "source", .. }),
+        "{e}"
+    );
+
+    // And the disclosure agrees: the table owes an entity row, the
+    // source never does.
+    let ctx = ReadContext {
+        universe: vec!["orders".into()],
+        snapshots: Default::default(),
+    };
+    let rows = s
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .await
+        .unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r.subject == "orders" && r.aspect == "entity" && r.state == "unassessed"),
+        "{rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.subject == "erp" && r.aspect == "entity"),
+        "{rows:?}"
+    );
+}
+
 // -- the glossary edge is grounding-scoped (2026-08-12) ---------------------
 
 #[tokio::test]

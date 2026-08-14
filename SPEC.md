@@ -3,8 +3,9 @@
 Status: **working draft**, 2026-08-04. This is the simplified language; it
 supersedes the 2026-07 draft (git history holds it; the pivot record is
 `reports/2026-08-03-simplification.md`). SPEC.md is the only normative prose.
-`grammar.ebnf` is the source of truth for syntax; `corpus/` holds the evidence
-that every construct transcribes a real `../dataraum-context` artifact.
+`grammar.ebnf` is the source of truth for syntax; the corpus
+(`crates/parser/tests/corpus/`) holds the evidence that every construct
+transcribes a real artifact.
 
 ## 1. Overview
 
@@ -35,25 +36,16 @@ Ground rules:
   metric. Metrics are concepts: QUERY aspects, run as their SQL (§5.1).
   Analytical logic does not live in the grammar.
 
-## 2. Map
+## 2. Origins
 
-Every construct is backed by a transcription of a real artifact from the
-running v0.3 system (`../dataraum-context`). If the system and this map
-disagree, verify in code, then fix the map.
-
-| dataraum-context artifact | construct | fixture |
-|---|---|---|
-| ontology concepts (`ontology.yaml`) | QUERY aspects | 01 |
-| conventions (+ `targets`, `concept_groups`) | FACT aspect, in-blob | 02 |
-| metrics (`dso.yaml`, `metrics` tables) | QUERY aspect, grounded in SQL | 03 |
-| validations (`validations` table) | aspect + witness + ATTEST | 04 |
-| cycles (`cycles.yaml`) | FACT aspects, in-blob | 05 |
-| claim witnesses + reliabilities | witness slots + detector | 06 |
-| groundings (`sql_snippets`) | QUERY glosses | 07 |
-| teach payloads (8 types) | re-gloss on a human connection | 08 |
-| answer-agent served context | dropped — reads + agent skills | 09 |
-| catalog annotations, statistics, sources | FACT/MEASUREMENT glosses, SOURCE/RECIPE | 10 |
-| typing + null-value config (`typing.yaml`, `null_values.yaml`, overlay teaches) | FACT aspects, whole-body re-gloss | 13 |
+The vocabulary was not invented here: every construct began as a
+transcription of a real artifact from the predecessor production system.
+Corpus fixtures 01–13 quote those artifacts inline beside their glossql
+forms, each carrying a transcription verdict (the corpus README indexes
+them); from fixture 14 on, the fixtures transcribe this system's own runs
+and rulings. The artifact-by-artifact map that used to sit here retired
+2026-08-14 — the fixtures are the record, and the predecessor is no
+longer a live reference.
 
 ## 3. Sources and datasets
 
@@ -490,8 +482,8 @@ Agents use the language through skills; agents are not part of the grammar.
 The door tells, skills teach (ruled 2026-08-04): the server's one surface
 takes statements and returns outcomes, and everything an agent must *learn*
 ships as skills sourced from this repository's artifacts — the language
-(this document, `grammar.ebnf`), the flows (`corpus/11-flow-add-source.md`,
-`corpus/12-flow-begin-session.md`), and function authoring (the reference
+(this document, `grammar.ebnf`), the flows (corpus fixtures 11 and 12),
+and function authoring (the reference
 scripts and their kernels). Everything *live* — declared functions, the
 glossary, the tables — is read through the language, never taught.
 

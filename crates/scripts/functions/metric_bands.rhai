@@ -94,18 +94,21 @@ for key in slots.keys() {
     }
     if tcol == "" { continue; }
 
-    // Flows sum per month; a marked stock takes its last value per
-    // month — a level summed across a partition is not a level.
+    // Flows sum per month; a marked stock sums the rows standing at the
+    // month's LATEST observed date (metric_cube's verb) — one arbitrary
+    // last row read a 480-row inventory as 94k against a true 12.4M
+    // (the 2026-08-14 run). Entities absent from the latest date are
+    // not carried forward — the cube's disclosed limit, shared.
     let is_stock = "behavior" in body && body.behavior == "stock";
     let series = if is_stock {
         db.query(`
-            SELECT period, value FROM (
+            SELECT period, sum(value) AS value FROM (
                 SELECT date_trunc('month', "${tcol}") AS period, value,
-                       row_number() OVER (
+                       rank() OVER (
                            PARTITION BY date_trunc('month', "${tcol}")
-                           ORDER BY "${tcol}" DESC) AS rn
+                           ORDER BY "${tcol}" DESC) AS rk
                 FROM (${body.sql})
-            ) WHERE rn = 1 ORDER BY period
+            ) WHERE rk = 1 GROUP BY period ORDER BY period
         `)
     } else {
         db.query(`
@@ -181,7 +184,7 @@ for key in slots.keys() {
     }
     metrics.push(#{
         metric: slots[key].aspect, applicable: true, grain: "month",
-        aggregation: if is_stock { "last" } else { "sum" },
+        aggregation: if is_stock { "latest-sum" } else { "sum" },
         trained_on: n, points: points,
     });
 }

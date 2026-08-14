@@ -406,9 +406,12 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
 
 /// Grain admission (ruled 2026-08-05): an aspect declared `ON grain, …`
 /// only accepts subjects of those grains; `None` (no clause) admits all.
-/// A bare name is table-shaped; when it names a declared source it also
-/// satisfies SOURCE grain (ruled 2026-08-12) — `is_source` is the
-/// caller's lookup against the `sources` relation.
+/// A bare name is table-shaped unless it names a declared source — then
+/// it is SOURCE grain, satisfying `source` and only `source`: the
+/// 2026-08-12 ruling admitted it there, and the 2026-08-14 run showed
+/// the other half — a table-grain aspect accepting `GLOSS entity ON erp`
+/// put unfillable rows in the backlog. `is_source` is the caller's
+/// lookup against the `sources` relation.
 pub fn admit_grain(
     aspect: &str,
     grains: Option<&str>,
@@ -420,16 +423,18 @@ pub fn admit_grain(
         return Ok(());
     };
     let grain = grain_of(dataset, subject);
-    if declared.split(',').any(|g| g == grain) {
-        return Ok(());
-    }
-    if is_source && grain == "table" && declared.split(',').any(|g| g == "source") {
+    let effective = if is_source && grain == "table" {
+        "source"
+    } else {
+        grain
+    };
+    if declared.split(',').any(|g| g == effective) {
         return Ok(());
     }
     Err(Error::GrainRefused {
         aspect: aspect.into(),
         subject: subject.into(),
-        grain,
+        grain: effective,
         declared: declared.to_uppercase().replace(',', ", "),
     })
 }
@@ -446,6 +451,9 @@ pub struct BriefCounts {
     pub human_writings: i64,
     pub latest_human_at: Option<String>,
     pub approvals_pending: i64,
+    /// Ruling entries whose assumption still stands below full
+    /// confidence in the agent's current body — the fold-in debt.
+    pub rulings_owed: i64,
 }
 
 impl Store {
@@ -496,10 +504,35 @@ impl Store {
         )
         .fetch_one(&self.pool)
         .await?;
+        // A ruling awaits its fold-in while the ruled assumption still
+        // stands below full confidence in the agent's current body —
+        // the same content match that holds the question round closed.
+        // The agent's re-record clears both at once (ruled 2026-08-14).
+        let rulings = sqlx::query(
+            "SELECT count(*) AS n FROM glossary r, json_each(r.body, '$.rulings') jr \
+             WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
+               AND NOT EXISTS (SELECT 1 FROM glossary r2 \
+                               WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
+                                 AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
+               AND EXISTS ( \
+                 SELECT 1 FROM glossary a, json_each(a.body, '$.assumptions') ja \
+                 WHERE a.subject = r.subject AND a.actor_kind = 'agent' \
+                   AND a.aspect = json_extract(jr.value, '$.aspect') \
+                   AND NOT EXISTS (SELECT 1 FROM glossary a2 \
+                                   WHERE a2.subject = a.subject AND a2.aspect = a.aspect \
+                                     AND a2.actor_kind = 'agent' \
+                                     AND a2.written_at > a.written_at) \
+                   AND json_extract(ja.value, '$.assumption') \
+                         = json_extract(jr.value, '$.assumption') \
+                   AND coalesce(json_extract(ja.value, '$.confidence'), 0.0) < 1.0)",
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(BriefCounts {
             human_writings: humans.get::<i64, _>("n"),
             latest_human_at: humans.get::<Option<String>, _>("latest"),
             approvals_pending: approvals.get::<i64, _>("n"),
+            rulings_owed: rulings.get::<i64, _>("n"),
         })
     }
 
@@ -1492,10 +1525,17 @@ impl Store {
             for a in &witnessed {
                 let in_grain = match grain_map.get(a).and_then(|g| g.as_deref()) {
                     None => true,
-                    Some(declared) => declared.split(',').any(|g| {
-                        g == grain_of(dataset, subject)
-                            || (g == "source" && source_names.contains(subject))
-                    }),
+                    // A source name is SOURCE grain, never table grain —
+                    // the admission rule above, mirrored so the backlog
+                    // never carries rows admission would refuse.
+                    Some(declared) => {
+                        let effective = if source_names.contains(subject) {
+                            "source"
+                        } else {
+                            grain_of(dataset, subject)
+                        };
+                        declared.split(',').any(|g| g == effective)
+                    }
                 };
                 if !in_grain {
                     continue;

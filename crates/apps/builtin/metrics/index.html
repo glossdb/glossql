@@ -89,8 +89,8 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Your judgement · {{ metric }}</span>
-      <code class="chip" title="The judgements only you can make: assumptions below full confidence on the winning slot. Your agent asks exactly these as question forms; an answer lands as your human definition and the card stops deriving.">the round</code></header>
-    <p class="hint">answer in chat, or let your agent's question form ask you — either way your word supersedes the agent's at every read.</p>
+      <code class="chip" title="The judgements only you can make: assumptions below full confidence in the agent's current grounding. Your agent asks exactly these as question forms; an answer lands as your RULING — the judgment alone — and holds the card closed while the agent folds it into the grounding.">the round</code></header>
+    <p class="hint">answer in chat, or let your agent's question form ask you — your ruling is its own record, and the agent owes the fold-in.</p>
     <gl-rows frame="frames/metric_questions" empty="nothing open — every assumption stands ruled or measured">
       <template>
         <div class="qcard">
@@ -108,15 +108,15 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Assumptions</span>
-      <code class="chip" title="Every dimension of the claim with its basis. Full confidence renders fixed, less renders loose — the loose ones are the round's questions.">assumptions</code></header>
-    <p class="hint">● fixed at 1.00 · ◐ loose — to fix one, rule it in your own session: the agent rewrites the metric gloss with the assumption at full confidence and your ruling as its basis, and the round entry disappears.</p>
+      <code class="chip" title="Every dimension of the claim with its basis, and the ruling that led to it where one stands — the judgments behind the agreed facts.">assumptions</code></header>
+    <p class="hint">● fixed at 1.00 · ◐ loose — a ruled row shows your judgment; while it reads "awaiting the fold-in", the agent still owes the re-record that fixes it.</p>
     <gl-rows frame="frames/assumptions" empty="this metric discloses no assumptions — the convention wants them recorded">
       <template>
         <div class="rrow" style="grid-template-columns:1.2rem 3rem 7.5rem 1fr">
           <span class="g {gcls}">{glyph}</span>
           <span class="r-conf">{conf}</span>
           <span class="r-subj asp">{dim}</span>
-          <span class="r-what">{what}<br><span class="r-meta">{basis}</span>
+          <span class="r-what">{what}<br><span class="r-meta">{basis}</span><span class="r-meta">{ruling}</span>
             <details class="contest"><summary>contest</summary><p class="r-meta" style="margin:.3rem 0">the gloss is the unit of writing — edit this assumption inside the body (its confidence, or the claim itself); the rest rides along unchanged</p><pre class="statement">{statement}</pre></details>
           </span>
         </div>

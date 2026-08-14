@@ -221,7 +221,13 @@ window inheritance (off) · `information_schema` (off — the glossary
 is the discovery surface, and it is richer) · `lag` as "previous
 period" (previous *row*) · window `last_value` as "partition's last"
 (frame-relative) · weekly `date_bin` on Monday (Thursday without an
-origin) · ROLLUP NULLs as real NULLs (`grouping()`).
+origin) · ROLLUP NULLs as real NULLs (`grouping()`) ·
+a `LIKE` guard before a `CAST` in the same WHERE (conjuncts reorder —
+the cast sees rows the guard "excluded", and inside a join subquery
+the guard simply does not guard; only `try_cast` is safe on dirty
+text) · aliasing a projection to its own qualified source name
+(`round(j.x, 2) AS x` — "qualified field j.x and unqualified x would
+be ambiguous"; pick a different alias, and keep ORDER BY on aliases).
 
 Frames follow glossql-apps on top of this — casting view types,
 stated caps, params. This skill is the SQL inside them.

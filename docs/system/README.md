@@ -144,7 +144,7 @@ Model track (each with its ruled trigger):
   stability in real installations.
 - Frame-limit machinery (thresholds from the width/cost curves).
 
-Pulled-when-a-target-demands (v0.3 remainder, 2026-08-06 rulings):
+Pulled-when-a-target-demands (predecessor remainder, 2026-08-06 rulings):
 
 - UI drill-down set: drivers, composition layer, drill-axis ordering,
   additivity classifier.

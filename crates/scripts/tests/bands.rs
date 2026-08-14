@@ -91,7 +91,7 @@ impl SqlDoor for MetricDoor {
         // rising level whose last month collapses — a lower breach.
         let months = 18usize;
         let (mut periods, mut values) = (Vec::new(), Vec::new());
-        let stock = query.contains("row_number");
+        let stock = query.contains("rank()");
         for i in 0..months {
             periods.push(format!(
                 "20{:02}-{:02}-01T00:00:00",
@@ -178,7 +178,7 @@ fn metric_bands_walks_and_reads_the_breach() {
             .clone()
     };
 
-    for (name, aggregation) in [("revenue", "sum"), ("inventory", "last")] {
+    for (name, aggregation) in [("revenue", "sum"), ("inventory", "latest-sum")] {
         let metric = by_name(name);
         assert_eq!(metric["grain"], json!("month"));
         assert_eq!(metric["aggregation"], json!(aggregation), "{name}");
@@ -210,6 +210,133 @@ fn metric_bands_walks_and_reads_the_breach() {
     assert!(flow_last > 0.95, "flow breach month, pit {flow_last}");
     let stock_last = by_name("inventory")["points"][5]["pit"].as_f64().unwrap();
     assert!(stock_last < 0.05, "stock breach month, pit {stock_last}");
+}
+
+/// Real execution over multi-row months: routes the glossary read to a
+/// canned inventory grounding and everything else to DataFusion.
+struct LiveDoor {
+    rt: tokio::runtime::Runtime,
+    ctx: datafusion::prelude::SessionContext,
+}
+
+impl SqlDoor for LiveDoor {
+    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
+        if query.contains("FROM glossary") {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("subject", DataType::Utf8, false),
+                Field::new("aspect", DataType::Utf8, false),
+                Field::new("actor_kind", DataType::Utf8, false),
+                Field::new("body", DataType::Utf8, false),
+            ]));
+            let inventory = json!({
+                "sql": "SELECT date, value FROM levels",
+                "behavior": "stock"
+            });
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(vec!["fin"])),
+                        Arc::new(StringArray::from(vec!["inventory"])),
+                        Arc::new(StringArray::from(vec!["agent"])),
+                        Arc::new(StringArray::from(vec![inventory.to_string()])),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        self.rt.block_on(async {
+            self.ctx
+                .sql(query)
+                .await
+                .map_err(|e| e.to_string())?
+                .collect()
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+}
+
+/// The 2026-08-14 regression: a multi-row stock's walk actuals must be
+/// the month's latest-date SUM, not one arbitrary row. Three product
+/// rows stand at each month's day 25 (sum 1750 + 30·m); a day-5 decoy
+/// snapshot per month must be excluded by the latest-date rank.
+#[test]
+fn the_stock_walk_sums_the_months_latest_snapshot() {
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    workspace(dir.path());
+
+    let months = 18usize;
+    // Date32 days since epoch for each month's first day; 19723 =
+    // 2024-01-01 (leap year), 2025 starts at +366.
+    let firsts: [i32; 18] = [
+        0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366, 397, 425, 456, 486, 517,
+    ];
+    let (mut dates, mut values) = (Vec::new(), Vec::new());
+    for m in 0..months {
+        let month_start = 19723 + firsts[m];
+        for v in [1000.0, 500.0, 250.0] {
+            dates.push(month_start + 24);
+            values.push(v + 10.0 * m as f64);
+        }
+        dates.push(month_start + 4);
+        values.push(9_000_000.0);
+    }
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("date", DataType::Date32, false),
+        Field::new("value", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(datafusion::arrow::array::Date32Array::from(dates)),
+            Arc::new(Float64Array::from(values)),
+        ],
+    )
+    .unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let ctx = datafusion::prelude::SessionContext::new();
+    ctx.register_batch("levels", batch).unwrap();
+
+    let runtime = RhaiRuntime::new(dir.path());
+    let out = runtime
+        .invoke(
+            &FunctionRow {
+                name: "metric_bands".into(),
+                scope_dataset: None,
+                script: "functions/metric_bands.rhai".into(),
+                accepts: vec![],
+                returns: None,
+            },
+            "fin",
+            &json!({}),
+            Arc::new(LiveDoor { rt, ctx }),
+        )
+        .unwrap();
+
+    let metric = out["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["metric"] == json!("inventory"))
+        .expect("inventory walked")
+        .clone();
+    assert_eq!(metric["aggregation"], json!("latest-sum"));
+    let points = metric["points"].as_array().unwrap();
+    assert_eq!(points.len(), 6, "the walk covers the last six months");
+    for (i, p) in points.iter().enumerate() {
+        let m = (months - 6 + i) as f64;
+        let expected = 1750.0 + 30.0 * m;
+        let actual = p["actual"].as_f64().unwrap();
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "month index {m}: actual {actual}, expected the day-25 sum {expected}"
+        );
+    }
 }
 
 #[test]

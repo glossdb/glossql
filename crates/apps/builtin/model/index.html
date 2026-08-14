@@ -93,9 +93,10 @@
 {% else %}
 {# ---- the standing view: the queue is the front door --------------- #}
 <p class="lede">The model, not the data: every row below is a claim with an
-author. This surface informs — answers travel through your agent's session,
-and land as your human slot, outranking the agent at every read. The queue
-holds what needs your judgement, loosest first, all of it.</p>
+author. This surface informs — answers travel through your agent's session
+and land as your rulings: the judgment alone, held beside the agent's
+grounding, which the agent then folds in. The queue holds what needs your
+judgement, loosest first, all of it.</p>
 <div class="tiles">
   {{ tiles::value(frame="frames/census", field="needs", label="Open questions", format="raw",
                   chip="the queue",
@@ -121,8 +122,8 @@ holds what needs your judgement, loosest first, all of it.</p>
 
   <section class="tile">
     <header><span class="eyebrow">Open questions</span>
-      <code class="chip" title="The one queue, judgment only: assumptions below full confidence on the winning slot. Statistics are never asked — the agent's measurements settle those. Answers travel through your agent's session and land as your HUMAN slot; the queue empties by answers, never by dismissal.">the queue</code></header>
-    <p class="hint">an answer governs every read from the moment it lands; the agent reads it back next session ·
+      <code class="chip" title="The one queue, judgment only: assumptions below full confidence in the agent's current grounding. Statistics are never asked — the agent's measurements settle those. An answer lands as your RULING and holds its question closed; the agent owes the fold-in, and the brief counts that debt. The queue empties by answers, never by dismissal.">the queue</code></header>
+    <p class="hint">a ruling closes its question the moment it lands; the agent folds it into the grounding next ·
       ◐ judged, below full confidence — every row opens its metric's dossier.</p>
     <div class="scroll">
     <gl-rows frame="frames/queue" empty="nothing waits on your judgement">

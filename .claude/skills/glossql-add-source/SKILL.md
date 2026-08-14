@@ -141,8 +141,11 @@ the parsed column: the engine names a cast after its inner expression,
 so `count("amount")` and `count(try_cast("amount" AS DOUBLE))` collide
 in one aggregate — the `AS` aliases arrive too late to separate them.
 
-A `LIMIT 0` probe's empty result still carries its schema — it
-rehearses exactly the identity the recipe will stamp. **Run it per
+A `LIMIT 0` probe's empty result still carries its schema — the
+outcome's `columns` field lists every (name, type) even at zero rows
+(fixed 2026-08-14; a run before that had to land a rehearsal recipe
+just to `DESCRIBE` it) — so it rehearses exactly the identity the
+recipe will stamp. **Run it per
 file before authoring any recipe; row probes cannot replace it**:
 probe rows omit null fields, so a column that is null in the rows
 you sampled is invisible there — the first validated run lost three
@@ -315,8 +318,18 @@ then speak to each aspect on every landed column:
   out-judge it by testing against the data yourself. Names lie
   either way — a "trial balance" column can carry period turnover (a
   flow) rather than balances; the measurement reads the data, not the
-  label. Unsure? Don't gloss: absence shows as an honest `unassessed`
-  row; a guess does not. Relevance is conditional (ruled 2026-08-14):
+  label. When it starves on a column — every anchor abstains, no
+  entity persists across periods — the ladder is: your own data test,
+  cited as the basis (a mirror table, the GL, a hand reconciliation);
+  and, as the last rung on an installation where a whole family of
+  columns needs it, **author a workspace-scoped function**
+  (`FOR <dataset>`, per the glossql-functions skill — needs workspace
+  filesystem access) that evaluates behavior the way *this* dataset
+  demands. That function then IS the installation's recorded thinking
+  about its own behaviors — versioned, re-runnable, and honest about
+  its method in a way a one-off judgment never is. Unsure and
+  unwilling to climb the ladder? Don't gloss: absence shows as an
+  honest `unassessed` row; a guess does not. Relevance is conditional (ruled 2026-08-14):
   a column owes `behavior` and `unit` only once its `role` says
   `measure`, and `dimension` only on `role = 'dimension'` — so gloss
   role first and the rest of the backlog derives from it. "Does not

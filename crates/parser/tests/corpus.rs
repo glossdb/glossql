@@ -1,6 +1,6 @@
 //! The corpus is the acceptance suite — the standing invariant: every
-//! ```glossql block in corpus/*.md parses, every ```glossql-gap block fails
-//! to parse (one that parses means the gap closed — flip its tag), and
+//! ```glossql block in tests/corpus/*.md parses, every ```glossql-gap block
+//! fails to parse (one that parses means the gap closed — flip its tag), and
 //! every ```sql block in SPEC.md parses. Other fences (yaml, corpus-quoted
 //! sql, json) quote source artifacts and are skipped.
 
@@ -65,17 +65,18 @@ fn blocks(path: &Path, rel: &str, tags: &[(&str, Expect)]) -> Vec<Block> {
 
 #[test]
 fn corpus_and_spec_behave_as_tagged() {
-    let root = repo_root();
-    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("corpus"))
-        .expect("corpus/ directory")
+    let corpus_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&corpus_dir)
+        .expect("tests/corpus/ directory")
         .map(|e| e.expect("corpus entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "md"))
         .collect();
     files.sort();
 
+    let root = repo_root();
     let mut all = Vec::new();
     for file in &files {
-        let rel = format!("corpus/{}", file.file_name().unwrap().to_string_lossy());
+        let rel = format!("tests/corpus/{}", file.file_name().unwrap().to_string_lossy());
         all.extend(blocks(
             file,
             &rel,

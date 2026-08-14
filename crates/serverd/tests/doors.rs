@@ -235,6 +235,24 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert_eq!(outcomes[0]["rows"][0]["answer"], json!(42));
     assert_eq!(outcomes[0]["row_count"], json!(1));
     assert_eq!(outcomes[0]["truncated"], json!(false));
+    // Every read carries its shape as (name, type) — and the shape
+    // survives an empty result: the LIMIT 0 rehearsal's whole point
+    // (ruled 2026-08-14; the run's workaround was landing a rehearsal
+    // recipe just to DESCRIBE it).
+    assert_eq!(
+        outcomes[0]["columns"],
+        json!([{"name": "answer", "type": "Int64"}]),
+        "{outcomes}"
+    );
+    let body = expect_ok(mcp(app.clone(), call("SELECT 41 + 1 AS answer LIMIT 0")).await).await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["row_count"], json!(0), "{outcomes}");
+    assert_eq!(
+        outcomes[0]["columns"],
+        json!([{"name": "answer", "type": "Int64"}]),
+        "{outcomes}"
+    );
 
     // A failed statement comes back as a tool error the agent can read,
     // never a protocol error.
@@ -242,6 +260,23 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert_eq!(body["result"]["isError"], json!(true), "{body}");
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("nothing"), "{text}");
+
+    // A refusal mid-sequence names its place, what landed, and what
+    // never ran — the 2026-08-14 run had to read `imports` to learn
+    // what stood after a silent abort.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call("SELECT 1 AS a; USE nothing; SELECT 2 AS b"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["result"]["isError"], json!(true), "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("statement 2 of 3 refused"), "{text}");
+    assert!(text.contains("statement 1 landed"), "{text}");
+    assert!(text.contains("statement 3 not run"), "{text}");
 
     // The connect-time brief (ruled 2026-08-12): every initialize after
     // a call serves live counts in its instructions — an agent
@@ -347,13 +382,17 @@ async fn the_round_never_asks_the_human_for_statistics() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_round_rules_a_loose_assumption_on_retry() {
     // A judged assumption below full confidence becomes a
-    // confirm/correct form; "stands as stated" lands the winning agent
-    // body as the human slot with that assumption at 1.0 and the
-    // ruling as its basis. Composition only — the rest rides along.
+    // confirm/correct form; "stands as stated" lands a RULING entry —
+    // the judgment alone, never a copy of the agent's body (ruled
+    // 2026-08-14: the frozen copy outranked every later correction).
+    // The ruling holds the question closed, the brief counts the
+    // fold-in debt, and the agent's re-record clears it.
     let app = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'loose test');
         USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [
@@ -397,19 +436,19 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     assert!(
-        body["result"]["content"].to_string().contains("landed `dso` on `fin`"),
+        body["result"]["content"].to_string().contains("ruled (confirmed)"),
         "{body}"
     );
 
-    // The human body carries the ruling; the grain assumption rode
-    // along untouched, and nothing derives any more.
+    // The human slot is the ruling record alone — the judgment, never
+    // the agent's grounding; the dso aspect stays agent-authored.
     let body = expect_ok(
         mcp(
             app.clone(),
             call_with(
                 meta(),
                 63,
-                "SELECT body FROM glossary WHERE actor_kind = 'human';",
+                "SELECT aspect, body FROM glossary WHERE actor_kind = 'human';",
                 None,
             ),
         )
@@ -418,9 +457,17 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     .await;
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["row_count"], json!(1), "{outcomes}");
+    assert_eq!(outcomes[0]["rows"][0]["aspect"], json!("ruling"), "{outcomes}");
     let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
-    assert!(human_body.contains("human-ruled"), "{human_body}");
-    assert!(human_body.contains("grain-preserving"), "{human_body}");
+    assert!(human_body.contains("per line"), "{human_body}");
+    assert!(human_body.contains("confirmed"), "{human_body}");
+    assert!(
+        !human_body.contains("sql"),
+        "the ruling froze a body copy: {human_body}"
+    );
+
+    // The ruling holds the question closed on the next review…
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -430,6 +477,28 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     )
     .await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+
+    // …and the brief counts the fold-in debt until the agent
+    // re-records the grounding at full confidence, citing the ruling.
+    let body = expect_ok(mcp(app.clone(), initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("1 ruling awaits the fold-in"),
+        "{instructions}"
+    );
+    let fold_in = r#"GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+        "assumptions": [
+          {"dimension": "definition", "assumption": "per line", "basis": "human-ruled", "confidence": 1.0},
+          {"dimension": "grain", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
+        ]}$$;"#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 65, fold_in, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let body = expect_ok(mcp(app.clone(), initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(
+        !instructions.contains("fold-in"),
+        "the debt must clear on the re-record: {instructions}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -443,6 +512,8 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'defer test');
         USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
@@ -508,6 +579,8 @@ async fn the_round_never_interrupts_a_working_call() {
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'cadence test');
         USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
@@ -564,6 +637,8 @@ async fn the_round_rides_a_transport_session_too() {
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'session round');
         USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
@@ -676,7 +751,7 @@ async fn the_round_rides_a_transport_session_too() {
     .expect("the tool result must arrive after the answer");
     assert_ne!(done["result"]["isError"], json!(true), "{done}");
     assert!(
-        done["result"]["content"].to_string().contains("landed `dso` on `fin`"),
+        done["result"]["content"].to_string().contains("ruled (confirmed)"),
         "{done}"
     );
 }
@@ -813,14 +888,16 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sequential_rulings_compose_instead_of_reverting() {
-    // Found live 2026-08-13: ruling a second assumption composed from
-    // the AGENT body, reverting the human's first ruling — which then
-    // derived and asked again, a loop. The ruling composes from the
-    // winning slot, so earlier rulings ride along.
+    // Found live 2026-08-13: ruling a second assumption reverted the
+    // first (a loop). Rulings now accumulate as entries in the human's
+    // one ruling slot — each append carries the earlier entries along,
+    // and no ruling ever touches the agent's body (ruled 2026-08-14).
     let app = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'sequential rulings');
         USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [
@@ -843,19 +920,21 @@ async fn sequential_rulings_compose_instead_of_reverting() {
         )
         .await;
         assert!(
-            body["result"]["content"].to_string().contains("landed `dso`"),
+            body["result"]["content"].to_string().contains("ruled (confirmed)"),
             "{key}: {body}"
         );
     }
 
-    // Both rulings stand in the human body — the first did not revert.
+    // Both rulings stand as entries in the one ruling slot — the first
+    // did not revert — and the agent's dso body is untouched.
     let body = expect_ok(
         mcp(
             app.clone(),
             call_with(
                 meta(),
                 82,
-                "SELECT body FROM glossary WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 1;",
+                "SELECT body FROM glossary WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 1;
+                 SELECT body FROM glossary WHERE actor_kind = 'agent' AND aspect = 'dso';",
                 None,
             ),
         )
@@ -865,13 +944,15 @@ async fn sequential_rulings_compose_instead_of_reverting() {
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
     let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
-    assert!(!human_body.contains("0.6"), "reverted: {human_body}");
-    assert!(!human_body.contains("0.7"), "reverted: {human_body}");
-    assert_eq!(
-        human_body.matches("human-ruled").count(),
-        2,
+    assert!(human_body.contains("a flat 30-day month"), "{human_body}");
+    assert!(
+        human_body.contains("total revenue in the denominator"),
         "{human_body}"
     );
+    assert_eq!(human_body.matches("confirmed").count(), 2, "{human_body}");
+    let agent_body = outcomes[1]["rows"][0]["body"].as_str().unwrap();
+    assert!(agent_body.contains("0.6"), "the agent body moved: {agent_body}");
+    assert!(agent_body.contains("0.7"), "the agent body moved: {agent_body}");
 
     // And the round is quiet — nothing re-derives.
     let body = expect_ok(

@@ -43,6 +43,13 @@
 //   (year > quarter > month > day): a monthly snapshot against a daily
 //   ledger reconciles monthly, two daily tables reconcile daily — a
 //   race-day standings row against that race's points, exactly.
+// - Two additions from the medium run's starvation (2026-08-14),
+//   both recall-first with the gates deciding: a day-native alignment
+//   also serves a month variant (document-keyed pairs share too few
+//   (entity, day) cells), and a measure table whose only edges are
+//   document-keyed borrows its entity one hop through the document
+//   (payments → ar_invoices → customers) — the same move as the
+//   borrowed time axis.
 // - An alignment where fewer than two entities carry 4+ periods
 //   abstains on one HAVING probe, before either side is scanned wide.
 //
@@ -249,10 +256,36 @@ if parts.len() == 2 {
                             }
                         }
                     }
+                    // Borrowed entity (2026-08-14, the medium run's
+                    // starvation): a measure table whose only edges are
+                    // document-keyed (payments → ar_invoices) reaches a
+                    // persistent dimension one hop away — the same move
+                    // the borrowed time axis makes. The measure side
+                    // joins the document table and keys on ITS dimension
+                    // column; the event side must carry the key on a
+                    // direct edge of its own.
+                    // The via table may BE the event table — receipts
+                    // that carry only the invoice reference borrow the
+                    // customer from ar_invoices and reconcile against
+                    // ar_invoices' own amounts.
+                    for p1 in pointers {
+                        if p1.src_t != table || p1.dst_t == table { continue; }
+                        for p2 in pointers {
+                            if p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == ev { continue; }
+                            for q in pointers {
+                                if q.src_t == ev && q.dst_t == p2.dst_t && q.dst_c == p2.dst_c {
+                                    aligns.push(#{ m_col: p2.src_c, e_col: q.src_c,
+                                                   via_t: p1.dst_t, via_fk: p1.src_c,
+                                                   via_key: p1.dst_c });
+                                }
+                            }
+                        }
+                    }
                     let seen = [];
                     let deduped = [];
                     for a in aligns {
-                        let k = `${a.m_col}=${a.e_col}`;
+                        let via = if "via_t" in a { `${a.via_t}>` } else { "" };
+                        let k = `${via}${a.m_col}=${a.e_col}`;
                         if !(k in seen) { seen.push(k); deduped.push(a); }
                     }
                     if deduped.len() == 0 { continue; }
@@ -315,7 +348,18 @@ if parts.len() == 2 {
                             }
                             let e_native = cache[eg_key];
                             if e_native == "empty" { continue; }
-                            let grain = coarser(m_native, e_native);
+                            // A day-native alignment also serves a month
+                            // variant (2026-08-14): document-keyed pairs
+                            // and sparse dimension pairings share too few
+                            // (entity, day) cells — per-month cells pair
+                            // densely, and the viability probe and the
+                            // wrong-anchor gates keep whichever grain
+                            // reconciles. Native first, so the first
+                            // anchor per event keeps its old meaning.
+                            let native = coarser(m_native, e_native);
+                            let grains = [native];
+                            if native == "day" { grains.push("month"); }
+                            for grain in grains {
 
                             // A cumulative that RESETS — season
                             // standings, year-to-date balances — is a
@@ -329,10 +373,24 @@ if parts.len() == 2 {
                             // of standings abstained at driver grain,
                             // reconcile exactly at driver-season grain).
                             for scope in if grain == "year" { ["none"] } else { ["none", "year"] } {
-                            let m_e = `s."${al.m_col}"`;
+                            // Borrowed entity: the measure side joins the
+                            // document table and keys on ITS dimension
+                            // column; `dd` never collides with the
+                            // borrowed-time alias `tt`.
+                            let am_from = m_from;
+                            let am_base = `s."${al.m_col}"`;
+                            let alabel = al.m_col;
+                            let align_label = `${table}.${al.m_col} = ${ev}.${al.e_col}`;
+                            if "via_t" in al {
+                                am_from += ` JOIN "${al.via_t}" dd ON s."${al.via_fk}" = dd."${al.via_key}"`;
+                                am_base = `dd."${al.m_col}"`;
+                                alabel = `${al.via_t}>${al.m_col}`;
+                                align_label = `${table} via ${al.via_t}.${al.m_col} = ${ev}.${al.e_col}`;
+                            }
+                            let m_e = am_base;
                             let e_e = `s."${al.e_col}"`;
                             if scope == "year" {
-                                m_e = `CAST(s."${al.m_col}" AS VARCHAR) || '@' || CAST(extract(year FROM ${m_ts}) AS VARCHAR)`;
+                                m_e = `CAST(${am_base} AS VARCHAR) || '@' || CAST(extract(year FROM ${m_ts}) AS VARCHAR)`;
                                 e_e = `CAST(s."${al.e_col}" AS VARCHAR) || '@' || CAST(extract(year FROM ${e_ts}) AS VARCHAR)`;
                             }
 
@@ -341,11 +399,11 @@ if parts.len() == 2 {
                             // voting floor — the raceId-style alignment
                             // (one bucket per entity) dies here before
                             // either side is scanned wide.
-                            let vkey = `viable|${maxis.label}|${al.m_col}|${grain}|${scope}`;
+                            let vkey = `viable|${maxis.label}|${alabel}|${grain}|${scope}`;
                             if !(vkey in cache) {
                                 let vq = db.query(`SELECT count(*) AS v FROM
-                                    (SELECT ${m_e} AS e FROM ${m_from}
-                                     WHERE s."${al.m_col}" IS NOT NULL AND ${m_texpr} IS NOT NULL
+                                    (SELECT ${m_e} AS e FROM ${am_from}
+                                     WHERE ${am_base} IS NOT NULL AND ${m_texpr} IS NOT NULL
                                        AND s."${column}" IS NOT NULL
                                      GROUP BY 1
                                      HAVING count(DISTINCT date_trunc('${grain}', ${m_ts})) >= 4) AS g`);
@@ -354,7 +412,7 @@ if parts.len() == 2 {
                             }
                             if cache[vkey] < 2 {
                                 anchors.push(#{ event: ev,
-                                    align: `${table}.${al.m_col} = ${ev}.${al.e_col}`,
+                                    align: align_label,
                                     measure_time: maxis.label,
                                     event_time: eaxis.label,
                                     grain: grain,
@@ -369,13 +427,13 @@ if parts.len() == 2 {
                             // Measure-side series, cached per (axis,
                             // entity column, grain, scope) — the kernel
                             // consumes the grouped result directly.
-                            let ykey = `${maxis.label}|${al.m_col}|${grain}|${scope}`;
+                            let ykey = `${maxis.label}|${alabel}|${grain}|${scope}`;
                             if !(ykey in cache) {
                                 cache[ykey] = db.query(`SELECT ${m_e} AS e,
                                     date_trunc('${grain}', ${m_ts}) AS b,
                                     SUM(CAST(s."${column}" AS DOUBLE)) AS yv
-                                    FROM ${m_from}
-                                    WHERE s."${al.m_col}" IS NOT NULL AND ${m_texpr} IS NOT NULL
+                                    FROM ${am_from}
+                                    WHERE ${am_base} IS NOT NULL AND ${m_texpr} IS NOT NULL
                                       AND s."${column}" IS NOT NULL
                                     GROUP BY 1, 2 ORDER BY 1, 2`);
                             }
@@ -451,7 +509,7 @@ if parts.len() == 2 {
                             }
 
                             let anchor = #{ event: ev,
-                                            align: `${table}.${al.m_col} = ${ev}.${al.e_col}`,
+                                            align: align_label,
                                             measure_time: maxis.label,
                                             event_time: eaxis.label,
                                             grain: grain,
@@ -487,7 +545,8 @@ if parts.len() == 2 {
                                 };
                             }
                             anchors.push(anchor);
-                            }
+                            } // for scope (flat-indented, like its body)
+                            } // for grain in grains
                         }
                     }
                 }

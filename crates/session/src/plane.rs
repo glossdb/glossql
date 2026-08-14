@@ -124,17 +124,42 @@ impl Plane {
     /// the sequence, as it does inside a session.
     pub async fn execute(&self, actor: Actor, sql: &str) -> Result<Vec<Outcome>, SessionError> {
         let statements = GlossqlParser::parse_sql(sql)?;
-        let mut outcomes = Vec::with_capacity(statements.len());
+        let total = statements.len();
+        // A refusal names its GLOBAL place in the call: runs between
+        // `USE`s report local indices, rebased here on the outcomes
+        // already standing — one outcome per completed statement.
+        let rebase = |e: SessionError, base: usize| -> SessionError {
+            if total <= 1 {
+                return e;
+            }
+            let (local, source) = match e {
+                SessionError::Sequence { index, source, .. } => (index, source),
+                other => (1, Box::new(other)),
+            };
+            let index = base + local;
+            SessionError::Sequence {
+                index,
+                total,
+                context: crate::session::sequence_context(index, total),
+                source,
+            }
+        };
+        let mut outcomes = Vec::with_capacity(total);
         let mut run: Vec<Statement> = Vec::new();
         for statement in statements {
             if let Statement::Use(u) = statement {
                 if !run.is_empty() {
+                    let base = outcomes.len();
                     let session = self.session(actor.clone()).await?;
-                    outcomes
-                        .append(&mut session.execute_statements(std::mem::take(&mut run)).await?);
+                    match session.execute_statements(std::mem::take(&mut run)).await {
+                        Ok(mut o) => outcomes.append(&mut o),
+                        Err(e) => return Err(rebase(e, base)),
+                    }
                 }
                 let name = u.dataset.value;
-                self.channel(actor.clone(), Some(&name)).await?;
+                if let Err(e) = self.channel(actor.clone(), Some(&name)).await {
+                    return Err(rebase(e, outcomes.len()));
+                }
                 self.current
                     .write()
                     .await
@@ -145,8 +170,12 @@ impl Plane {
             }
         }
         if !run.is_empty() {
+            let base = outcomes.len();
             let session = self.session(actor).await?;
-            outcomes.append(&mut session.execute_statements(run).await?);
+            match session.execute_statements(run).await {
+                Ok(mut o) => outcomes.append(&mut o),
+                Err(e) => return Err(rebase(e, base)),
+            }
         }
         Ok(outcomes)
     }

@@ -17,8 +17,8 @@ Four non-prose artifacts are first-class — fixtures and machinery, not
 documents:
 
 - `grammar.ebnf` — the machine-readable grammar; the source of truth for syntax.
-- `corpus/` — transcriptions of **real** artifacts: `../dataraum-context`'s,
-  and — from fixture 14 on — our own test runs
+- `crates/parser/tests/corpus/` — transcriptions of **real** artifacts:
+  the predecessor system's, and — from fixture 14 on — our own test runs
   (` ```glossql ` must parse; ` ```glossql-gap ` documents a gap and must
   fail). Fixtures 11–12 model the system's operational flows as statement
   sequences; fixture 14 records the composite ruling (2026-08-05: a
@@ -91,8 +91,8 @@ documents:
   hand-written cash and model apps — and glossql-windows, the
   window/aggregation SQL layer over glossed data, verified against
   the pinned substrate, 2026-08-10), the one teaching
-  layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never v0.3
-  phase names (ruled 2026-08-05); the judge pattern — measurements
+  layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never
+  predecessor phase names (ruled 2026-08-05); the judge pattern — measurements
   optimize recall, the agent judge removes false positives —
   is taught in the core glossql skill; its planes so far (all ported
   2026-08-05, each oracle-tested against the finance generator):
@@ -104,7 +104,9 @@ documents:
   excluded; the declaration relations (functions, aspects, witnesses,
   sources, relationships) read as plain tables. Flight SQL cut from
   M5: a future door, pyarrow reads the HTTP stream).
-- `reports/` — pivot records, review verdicts, and evaluation records.
+- `reports/` — pivot records, review verdicts, and evaluation records;
+  `reports/notes/` holds draft flow notes (the old `feedback/` folder,
+  merged 2026-08-14).
 - `docs/` — coverage inventories (built / not-built per concern; the
   not-built half is the lightweight backlog — `docs/quality/` first).
   Operational only, never normative language prose.
@@ -124,16 +126,10 @@ question closes only by a transcription verdict, never by argument.
 
 ## Grounding
 
-- `../dataraum-context` (sibling repo) is the running v0.3 system and the
-  empirical source of the statement vocabulary. When a coverage or semantics
-  question arises, grep that repo rather than reasoning from memory — engine
-  metadata models: `packages/engine/src/dataraum/`; generated schemas:
-  `packages/engine/schema*.sql`; agent context assembly:
-  `packages/cockpit/src/tools/query-context.ts`; config plane:
-  `packages/dataraum-config/`. Read its `CLAUDE.md` before working in it.
-- SPEC.md §2 is the map from that system's artifacts to grammar constructs.
-  Keep it truthful: if the system and the map disagree, verify in code, then
-  fix the map.
+The predecessor production system retired as a reference 2026-08-14: the
+corpus fixtures are the empirical record of the vocabulary's origins, and
+coverage or semantics questions are settled against this repo's own code
+and runs.
 
 ## Decided so far — work in progress, not settled
 

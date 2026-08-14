@@ -1,13 +1,16 @@
 -- The waiting half of the human's brief (ruled 2026-08-12): human
 -- writings that owe an agent act, derived from data — never a status flag anyone
--- maintains. Three sources:
+-- maintains. Four sources:
 --   1. recipe_change approvals with no import of the named table
 --      since the approval (the re-declare has not run);
 --   2. formula answers newer than a metric's recorded materialization
 --      (the two forms of one definition have not been re-aligned —
 --      the lead's catch: read.<metric>() serves the recorded SQL
 --      until an agent recomposes it);
---   3. contested slots (dependents await re-judging).
+--   3. contested slots (dependents await re-judging);
+--   4. rulings whose assumption still stands below full confidence in
+--      the agent's current body — the fold-in has not run (ruled
+--      2026-08-14).
 -- Static json paths project through CTEs; the one dynamic path
 -- (which metric a formulas map names) stays in place at its base.
 WITH approvals AS (
@@ -51,6 +54,41 @@ contested AS (
          '?subject=' || c.subject AS link
   FROM GLOSSARY() c
   WHERE c.state = 'contested'
+),
+ruled AS (
+  SELECT r.subject AS subject,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'stance') AS stance
+  FROM glossary r
+  CROSS JOIN generate_series(0, 199) AS rj(j)
+  WHERE r.aspect = 'ruling' AND r.actor_kind = 'human'
+    AND NOT EXISTS (SELECT 1 FROM glossary r2
+                    WHERE r2.subject = r.subject AND r2.aspect = 'ruling'
+                      AND r2.actor_kind = 'human' AND r2.written_at > r.written_at)
+    AND rj.j < json_length(r.body, 'rulings')
+),
+still_loose AS (
+  SELECT g.subject AS subject, g.aspect AS aspect,
+         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what
+  FROM glossary g
+  CROSS JOIN generate_series(0, 19) AS i(i)
+  WHERE g.actor_kind = 'agent'
+    AND NOT EXISTS (SELECT 1 FROM glossary g2
+                    WHERE g2.subject = g.subject AND g2.aspect = g.aspect
+                      AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at)
+    AND i.i < json_length(g.body, 'assumptions')
+    AND json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') < 1.0
+),
+waiting_rulings AS (
+  SELECT 'ruling on ' || r.aspect AS what,
+         'ruled (' || r.stance || ') — the fold-in has not run' AS why,
+         '' AS since,
+         '/app/metrics?metric=' || r.aspect AS link
+  FROM ruled r
+  WHERE EXISTS (SELECT 1 FROM still_loose l
+                WHERE l.subject = r.subject AND l.aspect = r.aspect
+                  AND l.what = r.assumption)
 )
 SELECT arrow_cast(what, 'Utf8') AS what,
        arrow_cast(why, 'Utf8') AS why,
@@ -58,5 +96,6 @@ SELECT arrow_cast(what, 'Utf8') AS what,
        arrow_cast(link, 'Utf8') AS link
 FROM (SELECT * FROM waiting_recipes
       UNION ALL SELECT * FROM waiting_formulas
-      UNION ALL SELECT * FROM contested)
+      UNION ALL SELECT * FROM contested
+      UNION ALL SELECT * FROM waiting_rulings)
 ORDER BY since DESC, what

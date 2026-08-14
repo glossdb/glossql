@@ -110,3 +110,112 @@ async fn concepts_sharing_an_extract_collide_and_spelling_does_not_hide_it() {
     assert_eq!(v["collisions"].as_array().unwrap().len(), 0, "{v}");
     assert_eq!(v["groundings"], 3);
 }
+
+/// Real execution for the served-series pass: routes the glossary read
+/// to canned slots and everything else to DataFusion.
+struct SeriesDoor {
+    rt: tokio::runtime::Runtime,
+    ctx: datafusion::prelude::SessionContext,
+}
+
+impl glossql_session::SqlDoor for SeriesDoor {
+    fn sql(
+        &self,
+        query: &str,
+    ) -> Result<Vec<datafusion::arrow::array::RecordBatch>, String> {
+        use datafusion::arrow::array::{RecordBatch, StringArray};
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+        if query.contains("FROM glossary") {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("subject", DataType::Utf8, false),
+                Field::new("aspect", DataType::Utf8, false),
+                Field::new("actor_kind", DataType::Utf8, false),
+                Field::new("body", DataType::Utf8, false),
+            ]));
+            let bodies = [
+                r#"{"sql": "SELECT date, value FROM lines"}"#,
+                r#"{"sql": "SELECT date, value FROM lines WHERE value IS NOT NULL"}"#,
+                r#"{"sql": "SELECT date, value FROM lines WHERE value > 250"}"#,
+            ];
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(vec!["fin", "fin", "fin"])),
+                        Arc::new(StringArray::from(vec![
+                            "revenue",
+                            "open_items",
+                            "costs",
+                        ])),
+                        Arc::new(StringArray::from(vec!["agent", "agent", "agent"])),
+                        Arc::new(StringArray::from(bodies.to_vec())),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        self.rt.block_on(async {
+            self.ctx
+                .sql(query)
+                .await
+                .map_err(|e| e.to_string())?
+                .collect()
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+}
+
+#[test]
+fn identical_served_series_collide_even_when_the_sql_differs() {
+    // The 2026-08-14 miss: revenue and ar_open_items served the same
+    // monthly totals in every month from different SQL, and the
+    // canonical buckets saw nothing. The series pass fingerprints the
+    // served numbers; the third grounding's filtered series stays in
+    // its own bucket.
+    use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("date", DataType::Date32, false),
+        Field::new("value", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Date32Array::from(vec![19737, 19742, 19763, 19787])),
+            Arc::new(Float64Array::from(vec![100.0, 200.0, 300.0, 400.0])),
+        ],
+    )
+    .unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let ctx = datafusion::prelude::SessionContext::new();
+    ctx.register_batch("lines", batch).unwrap();
+
+    let runtime = RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"));
+    let out = glossql_session::FunctionRuntime::invoke(
+        &runtime,
+        &glossql_glossary::FunctionRow {
+            name: "detect_grounding_collisions".into(),
+            scope_dataset: None,
+            script: "functions/grounding_collisions.rhai".into(),
+            accepts: vec![],
+            returns: None,
+        },
+        "fin",
+        &serde_json::json!({}),
+        Arc::new(SeriesDoor { rt, ctx }),
+    )
+    .unwrap();
+
+    assert_eq!(out["applicable"], serde_json::json!(true), "{out}");
+    let collisions = out["collisions"].as_array().unwrap();
+    assert_eq!(collisions.len(), 1, "{out}");
+    assert_eq!(collisions[0]["kind"], "served_series", "{out}");
+    assert_eq!(
+        collisions[0]["aspects"],
+        serde_json::json!(["open_items", "revenue"]),
+        "{out}"
+    );
+    assert_eq!(collisions[0]["months"], serde_json::json!(3), "{out}");
+}

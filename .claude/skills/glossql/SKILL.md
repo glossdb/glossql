@@ -10,8 +10,8 @@ context. Data lands in tables; context is JSON attached to subjects
 (`table` or `table.column`) under declared aspects. Two artifacts are
 normative — read them, don't reconstruct them:
 
-- `SPEC.md` — the language specification. §2 maps constructs to the
-  system they transcribe; §3 sources, recipes, tables; §4 subjects and
+- `SPEC.md` — the language specification. §2 records the vocabulary's
+  origins; §3 sources, recipes, tables; §4 subjects and
   relationships; §5 the glossary (aspects, glosses, reading); §6 the
   function library; §7 witnesses and attestation.
 - `grammar.ebnf` — the machine-readable syntax.
@@ -22,15 +22,20 @@ One MCP tool, `glossql`. Its `statements` argument takes a statement or
 a semicolon-separated sequence; the result is a JSON array, one outcome
 per statement:
 
-- a read — `{"rows": [...], "row_count": n, "truncated": bool}`. Data
-  rows are capped at the server's `--row-cap`; `truncated: true` means
-  the result held more than shown — refine (aggregate, WHERE, LIMIT)
-  instead of reading a capped result as complete. Metadata reads —
-  `GLOSSARY()`, `ATTEST()`, and the store relations — sent as their
-  own single statement are uncapped: the map arrives whole.
+- a read — `{"columns": [{"name", "type"}, …], "rows": [...],
+  "row_count": n, "truncated": bool}`. `columns` is the result's
+  shape with engine types, present even when zero rows come back — a
+  `LIMIT 0` rehearsal returns the schema, which is its whole point.
+  Data rows are capped at the server's `--row-cap`; `truncated: true`
+  means the result held more than shown — refine (aggregate, WHERE,
+  LIMIT) instead of reading a capped result as complete. Metadata
+  reads — `GLOSSARY()`, `ATTEST()`, and the store relations — sent as
+  their own single statement are uncapped: the map arrives whole.
 - a write — `{"affected": n}` or `{"done": true}`.
 - a refused statement — a tool error whose text is the refusal. Read
-  it; it names what was wrong.
+  it; it names what was wrong, and in a sequence it names its place:
+  `statement 2 of 7 refused: … — statement 1 landed; 3–7 not run`.
+  What landed stayed landed; the rest was never attempted.
 
 Who you are (agent or human) rides the connection — there is no BY
 clause. `USE <dataset>;` picks the dataset and survives between tool
@@ -99,22 +104,36 @@ SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
 ```
 
 The connect-time brief the door serves counts what stands — human
-writings, approvals awaiting your re-declare, and **judgment
-questions** (assumptions below full confidence — conventions and
-definitions the data cannot arbitrate). While that count is above
-zero, sweep the round. Forms ride record reads (the cadence ruling,
-2026-08-14): a call that reads the glossary — `GLOSSARY()`,
-`ATTEST()`, the store relations — and writes nothing carries one
-question form; landing calls and plain data reads run uninterrupted.
-So the sweep is exactly the brief's own reads, repeated until the
-round stays quiet. A human's decline rests only while the workspace
-holds still — your next write re-opens it for the next review. A
-client without question forms gets nothing — relay the open questions
-in chat yourself, multiple choice with your grounds, and run the
+writings, approvals awaiting your re-declare, rulings awaiting your
+fold-in, and **judgment questions** (assumptions below full
+confidence — conventions and definitions the data cannot arbitrate).
+While that count is above zero, sweep the round. Forms ride record
+reads (the cadence ruling, 2026-08-14): a call that reads the
+glossary — `GLOSSARY()`, `ATTEST()`, the store relations — and
+writes nothing carries one question form; landing calls and plain
+data reads run uninterrupted. So the sweep is exactly the brief's
+own reads, repeated until the round stays quiet.
+
+An answer lands as a **ruling** (ruled 2026-08-14): the judgment
+alone — confirmed or corrected, with the assumption it rules — in
+the human's `ruling` slot on the subject, never a copy of your body.
+A ruling holds its question closed and the round moves on; your
+grounding stays yours. Questions derive from *your current body*, so
+raising a confidence with a measurement basis closes its question on
+its own. A human's decline rests only while the workspace holds
+still — your next write re-opens it for the next review. A client
+without question forms gets nothing — relay the open questions in
+chat yourself, multiple choice with your grounds, and run the
 statement the answer names.
 
 Then close what owes an act, in the same session:
 
+- **A ruling awaiting its fold-in** (the brief counts these):
+  re-record the ruled grounding — the confirmed assumption at
+  confidence 1.0 with `basis: "human-ruled"`, or re-grounded per the
+  correction note in the ruling. The debt clears the moment your
+  current body carries it; until then the ruling keeps the question
+  closed for you both.
 - **A human formula answer newer than the metric's recorded gloss**:
   the two are one definition in two forms — re-record the
   materialization to match (or carry the difference as a disclosed
@@ -165,9 +184,14 @@ question leaves the workspace, walk this map and run what answers it:
 
 What remains askable after the map is walked is exactly what the
 round serves: an assumption whose basis is your judgment, held below
-full confidence. When a measurement *abstains*, the abstention names
-why — relay that with your grounds as a judgment question if it stays
-load-bearing, never as a raw "which is it?".
+full confidence. The round enforces the boundary (2026-08-14): it
+never serves an assumption whose `dimension` is `behavior`, `sign`,
+or `grain` — those are the functions' work, so record them at 1.0
+citing the measurement. When a measurement *abstains*, the
+abstention names why — close the claim on your strongest remaining
+ground (a mirror table, the GL, the data's own shape) and cite it;
+relay it as a judgment question only if it stays load-bearing, never
+as a raw "which is it?".
 
 And the round is one of two registers, for one kind of interaction
 only. **Prose shapes the work; forms rule the record.** Anything

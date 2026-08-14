@@ -1,29 +1,52 @@
 -- The one queue (informative since 2026-08-13: the app carries no
--- write — answers travel through a session and land as human slots):
--- judgment only. Judged metric assumptions below full confidence —
--- conventions and definitions the data cannot arbitrate. Unassessed
--- witnessed claims (behavior, unit) are NOT here (ruled 2026-08-13):
--- a claim a measurement can settle is the agent's backlog — the
--- coverage tile counts it — and no human is ever asked for a
--- statistic. Glyphs and links are the frame's job; the template
--- stays dumb. No cap — the queue is the whole of what is owed.
+-- write — answers travel through a session and land as RULINGS, ruled
+-- 2026-08-14): judgment only. Judged metric assumptions below full
+-- confidence in the AGENT's current body — conventions and definitions
+-- the data cannot arbitrate. Never a frozen human copy (the freeze
+-- re-asked every answered question), never a dimension the function
+-- map owns (behavior, sign, grain — statistics are agent work), and a
+-- standing ruling holds its question closed by content match until the
+-- agent's fold-in rewrites the body. Unassessed witnessed claims are
+-- NOT here: the coverage tile counts the agent's backlog, and no human
+-- is ever asked for a statistic. Glyphs and links are the frame's job;
+-- the template stays dumb. No cap — the queue is the whole of what is
+-- owed.
+WITH ruled AS (
+  SELECT r.subject AS subject,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect,
+         json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption
+  FROM glossary r
+  CROSS JOIN generate_series(0, 199) AS rj(j)
+  WHERE r.aspect = 'ruling' AND r.actor_kind = 'human'
+    AND NOT EXISTS (SELECT 1 FROM glossary r2
+                    WHERE r2.subject = r.subject AND r2.aspect = 'ruling'
+                      AND r2.actor_kind = 'human' AND r2.written_at > r.written_at)
+    AND rj.j < json_length(r.body, 'rulings')
+),
+open_assumptions AS (
+  SELECT g.subject AS subject, g.aspect AS aspect,
+         json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
+         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dim,
+         json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what
+  FROM glossary g
+  JOIN aspects a ON a.name = g.aspect AND a.kind = 'query'
+  CROSS JOIN generate_series(0, 19) AS i(i)
+  WHERE g.actor_kind = 'agent'
+    AND NOT EXISTS (SELECT 1 FROM glossary g2
+                    WHERE g2.subject = g.subject AND g2.aspect = g.aspect
+                      AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at)
+    AND i.i < json_length(g.body, 'assumptions')
+)
 SELECT '◐' AS glyph, 'g-jud' AS gcls,
-       json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
-       g.aspect AS subj,
-       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS asp,
-       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS what,
-       arrow_cast('/app/metrics?metric=' || g.aspect, 'Utf8') AS link
-FROM GLOSSARY(all => true) g
-CROSS JOIN generate_series(0, 19) AS i(i)
-WHERE g.kind = 'query'
-  AND i.i < json_length(g.body, 'assumptions')
-  AND json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') < 1.0
-  -- the winning slot only: a human body's assumptions replace the
-  -- agent's at every read, so only the governing ones queue
-  AND (EXISTS (SELECT 1 FROM glossary me
-               WHERE me.subject = g.subject AND me.aspect = g.aspect
-                 AND me.actor_id = g.actor AND me.actor_kind = 'human')
-       OR NOT EXISTS (SELECT 1 FROM glossary h
-                      WHERE h.subject = g.subject AND h.aspect = g.aspect
-                        AND h.actor_kind = 'human'))
-ORDER BY conf ASC, subj, asp
+       o.conf,
+       o.aspect AS subj,
+       o.dim AS asp,
+       o.what,
+       arrow_cast('/app/metrics?metric=' || o.aspect, 'Utf8') AS link
+FROM open_assumptions o
+WHERE o.conf < 1.0
+  AND coalesce(o.dim, '-') NOT IN ('behavior', 'sign', 'grain')
+  AND NOT EXISTS (SELECT 1 FROM ruled r
+                  WHERE r.subject = o.subject AND r.aspect = o.aspect
+                    AND r.assumption = o.what)
+ORDER BY o.conf ASC, subj, asp

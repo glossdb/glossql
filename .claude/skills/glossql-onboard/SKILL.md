@@ -108,8 +108,12 @@ to assumptions nobody surfaced.
   nothing — to clients that render them (verified in Claude Code;
   others as they support question forms). Your landings and judging
   queries run uninterrupted; the stage read-back is where the forms
-  engage. The answer lands server-side as the human's own slot — it
-  never travels through your mouth, and you never write it for them.
+  engage. The answer lands server-side as a **ruling** — the
+  judgment alone, in the human's `ruling` slot — it never travels
+  through your mouth, and it never copies your body. The ruling
+  holds its question closed; you owe the fold-in (re-record the
+  grounding citing it), and the brief counts that debt until your
+  current body carries the ruled assumption at full confidence.
 - **Prose is the fallback.** No question surface: ask in chat,
   multiple choice with your grounds and confidence, then run the
   statement the answer names — the write still travels through a

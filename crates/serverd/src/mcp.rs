@@ -193,6 +193,15 @@ impl GlossqlMcp {
                         if counts.approvals_pending == 1 { "" } else { "s" },
                     ));
                 }
+                if counts.rulings_owed > 0 {
+                    line.push_str(&format!(
+                        "; {} ruling{} await{} the fold-in — re-record each ruled \
+                         grounding citing its ruling",
+                        counts.rulings_owed,
+                        if counts.rulings_owed == 1 { "" } else { "s" },
+                        if counts.rulings_owed == 1 { "s" } else { "" },
+                    ));
+                }
                 if questions > 0 {
                     line.push_str(&format!(
                         "; {} judgment question{} stand{} open for the human (assumptions \
@@ -315,82 +324,111 @@ impl GlossqlMcp {
             Question::Loose {
                 subject,
                 aspect,
-                idx,
+                dimension,
+                assumption,
                 ..
             } => match content.get("stance").and_then(|v| v.as_str()) {
                 Some("stands as stated") => {
-                    self.rule_assumption(session, &subject, &aspect, idx).await
+                    self.land_ruling(
+                        session,
+                        &subject,
+                        &aspect,
+                        &dimension,
+                        &assumption,
+                        "confirmed",
+                        None,
+                    )
+                    .await
                 }
                 Some("wrong") => {
-                    // The door composes, never re-grounds: the
-                    // correction is the agent's work, so it rides the
-                    // tool result and the key defers while they act.
-                    self.deferred
-                        .lock()
-                        .expect("deferred lock")
-                        .insert(key.to_string());
                     let correction = content
                         .get("correction")
                         .and_then(|v| v.as_str())
                         .unwrap_or("(no correction text)");
-                    format!(
-                        "question-round: the human says the `{aspect}` assumption is wrong — \
-                         re-ground it: {correction}"
-                    )
+                    // The correction writes its own record — a message
+                    // alone left the question deriving forever (the
+                    // 2026-08-14 run). The re-grounding stays the
+                    // agent's work; the ruling holds the question
+                    // closed while they do it.
+                    let note = self
+                        .land_ruling(
+                            session,
+                            &subject,
+                            &aspect,
+                            &dimension,
+                            &assumption,
+                            "corrected",
+                            Some(correction),
+                        )
+                        .await;
+                    format!("{note} — the human's correction: {correction}")
                 }
                 _ => "question-round: the answer names no stance".into(),
             },
         }
     }
 
-    /// The human confirms an assumption: the WINNING body — their own
-    /// standing slot if one exists, else the agent's — lands as the
-    /// human slot with that assumption at full confidence and the
-    /// ruling as its basis. Composition only — nothing else in the
-    /// body moves. Composing from the agent slot unconditionally was
-    /// the first live run's loop (found 2026-08-13): a second ruling
-    /// reverted the first, which then derived and asked again.
-    async fn rule_assumption(
+    /// The human rules an assumption: the ruling lands as ITS OWN
+    /// record — an entry appended to the human's `ruling` slot on the
+    /// subject — and the ruled aspect's slots stay agent-authored.
+    /// The agent owes the fold-in (re-record the grounding citing the
+    /// ruling); until then the brief counts the debt and the round
+    /// holds the question closed by content match. Ruled 2026-08-14:
+    /// the earlier shape copied the winning body into the human slot,
+    /// and the frozen copy outranked every later correction — the
+    /// human slot now carries only what the human actually said.
+    #[allow(clippy::too_many_arguments)]
+    async fn land_ruling(
         &self,
         session: &Session,
         subject: &str,
         aspect: &str,
-        idx: u64,
+        dimension: &str,
+        assumption: &str,
+        stance: &str,
+        note: Option<&str>,
     ) -> String {
         if !ident_path(subject, 3) || !ident_path(aspect, 1) {
             return "question-round: refused: not an identifier path".into();
         }
         let sql = format!(
             "SELECT body FROM glossary \
-             WHERE subject = '{subject}' AND aspect = '{aspect}' \
-               AND actor_kind IN ('human', 'agent') \
-             ORDER BY CASE actor_kind WHEN 'human' THEN 0 ELSE 1 END, \
-                      written_at DESC LIMIT 1"
+             WHERE subject = '{subject}' AND aspect = 'ruling' \
+               AND actor_kind = 'human' \
+             ORDER BY written_at DESC LIMIT 1"
         );
-        let rows = match read_rows(session, &sql).await {
-            Ok(rows) => rows,
-            Err(e) => return format!("question-round: the slot read failed: {e}"),
+        let mut body = match read_rows(session, &sql).await {
+            Ok(rows) => rows
+                .first()
+                .and_then(|r| r["body"].as_str())
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+                .unwrap_or_else(|| serde_json::json!({ "rulings": [] })),
+            Err(e) => return format!("question-round: the ruling slot read failed: {e}"),
         };
-        let Some(body_text) = rows.first().and_then(|r| r["body"].as_str()) else {
-            return "question-round: the agent slot is gone — nothing landed".into();
+        let Some(rulings) = body.get_mut("rulings").and_then(|r| r.as_array_mut()) else {
+            return "question-round: the standing ruling slot is not a ruling body".into();
         };
-        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body_text) else {
-            return "question-round: the slot body is not JSON".into();
-        };
-        let Some(entry) = body
-            .get_mut("assumptions")
-            .and_then(|a| a.get_mut(idx as usize))
-            .and_then(|e| e.as_object_mut())
-        else {
-            return "question-round: the assumption is gone — nothing landed".into();
-        };
-        entry.insert("confidence".into(), serde_json::json!(1.0));
-        entry.insert("basis".into(), serde_json::json!("human-ruled"));
+        // A re-ruling on the same assumption replaces its entry — the
+        // slot is the standing judgment, not a transcript.
+        rulings.retain(|r| !(r["aspect"] == *aspect && r["assumption"] == *assumption));
+        let mut entry = serde_json::json!({
+            "aspect": aspect,
+            "dimension": dimension,
+            "assumption": assumption,
+            "stance": stance,
+        });
+        if let Some(note) = note {
+            entry["note"] = serde_json::json!(note);
+        }
+        rulings.push(entry);
         match self
-            .land_human_answer(session.dataset(), subject, aspect, &body.to_string())
+            .land_human_answer(session.dataset(), subject, "ruling", &body.to_string())
             .await
         {
-            Ok(note) => note,
+            Ok(_) => format!(
+                "question-round: ruled ({stance}) — the fold-in is yours: \
+                 re-record `{aspect}` citing the ruling"
+            ),
             Err(e) => format!("question-round: refused: {e}"),
         }
     }
@@ -504,22 +542,48 @@ const ROUND_STATE: &str = "question-round:v1";
 /// derivation: unassessed witnessed claims (behavior, unit, role) are
 /// the agent's measurement backlog, never human questions — the
 /// shipped functions settle them (ruled 2026-08-13).
-const LOOSE_SQL: &str = "SELECT g.subject, g.aspect, i.i AS idx, \
-       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension, \
-       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption, \
-       json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf \
-    FROM GLOSSARY(all => true) g \
-    CROSS JOIN generate_series(0, 19) AS i(i) \
-    WHERE g.kind = 'query' \
-      AND i.i < json_length(g.body, 'assumptions') \
-      AND json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') < 1.0 \
-      AND (EXISTS (SELECT 1 FROM glossary me \
-                   WHERE me.subject = g.subject AND me.aspect = g.aspect \
-                     AND me.actor_id = g.actor AND me.actor_kind = 'human') \
-           OR NOT EXISTS (SELECT 1 FROM glossary h \
-                          WHERE h.subject = g.subject AND h.aspect = g.aspect \
-                            AND h.actor_kind = 'human')) \
-    ORDER BY conf ASC, g.subject, g.aspect, i.i";
+/// Open questions derive from the agent's CURRENT body — never a
+/// frozen copy (the 2026-08-14 run: deriving from the winning human
+/// slot re-asked every answered question, because the human copy kept
+/// the stale confidences). Three gates beyond "below full confidence":
+/// the aspect is a grounding (query kind); the dimension is not one
+/// the function map owns (`behavior`, `sign`, `grain` are statistics —
+/// ruled 2026-08-13, now enforced, not just taught); and no standing
+/// ruling entry matches the assumption by content — a ruling holds the
+/// question closed until the agent's fold-in rewrites the body, at
+/// which point the match clears on its own.
+const LOOSE_SQL: &str = "WITH ruled AS ( \
+        SELECT r.subject AS subject, \
+               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect, \
+               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption') AS assumption \
+        FROM glossary r \
+        CROSS JOIN generate_series(0, 199) AS rj(j) \
+        WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
+          AND NOT EXISTS (SELECT 1 FROM glossary r2 \
+                          WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
+                            AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
+          AND rj.j < json_length(r.body, 'rulings')), \
+    open_assumptions AS ( \
+        SELECT g.subject, g.aspect, i.i AS idx, \
+               json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'dimension') AS dimension, \
+               json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption, \
+               json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf \
+        FROM glossary g \
+        JOIN aspects a ON a.name = g.aspect AND a.kind = 'query' \
+        CROSS JOIN generate_series(0, 19) AS i(i) \
+        WHERE g.actor_kind = 'agent' \
+          AND NOT EXISTS (SELECT 1 FROM glossary g2 \
+                          WHERE g2.subject = g.subject AND g2.aspect = g.aspect \
+                            AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at) \
+          AND i.i < json_length(g.body, 'assumptions')) \
+    SELECT o.subject, o.aspect, o.idx, o.dimension, o.assumption, o.conf \
+    FROM open_assumptions o \
+    WHERE o.conf < 1.0 \
+      AND coalesce(o.dimension, '-') NOT IN ('behavior', 'sign', 'grain') \
+      AND NOT EXISTS (SELECT 1 FROM ruled r \
+                      WHERE r.subject = o.subject AND r.aspect = o.aspect \
+                        AND r.assumption = o.assumption) \
+    ORDER BY o.conf ASC, o.subject, o.aspect, o.idx";
 
 /// One open question, derived — never stored. The key names it in
 /// the MRTR map; the form is composed from it.

@@ -5,7 +5,7 @@ working glossed workspace: add-source → relationships → dimensions →
 metrics, an agent driving the flows through the doors, a human
 answering the questions only a human can. Evidence for every claim:
 `../../reports/` (runs 5–9, the scorecard run, the monitoring
-evaluation) and `../../feedback/2026-08-11-onboarding-run-glos.md` —
+evaluation) and `../../reports/2026-08-11-onboarding-run-glos.md` —
 the first run against external company data (three MSSQL-style
 parquet exports, 47 columns, ~50 door calls, one engineer answering
 mid-run).
@@ -106,7 +106,7 @@ Design owed before building:
    Iceberg persistence rides the storage integration when it lands
    (a workspace-grain sibling namespace — see the proposal §5).
 5. **Definition-dependency read** (F4). RULED IN PART 2026-08-12:
-   Fork A of `../../feedback/flow-basis-vocabulary.md` — the basis
+   Fork A of `../../reports/notes/flow-basis-vocabulary.md` — the basis
    becomes a structured reference validated by the grounding schema
    (no new aspect, statement, or relation; the dependency read is
    plain SQL). The kind vocabulary is deliberately unruled: its
@@ -115,8 +115,8 @@ Design owed before building:
    resolve surface, then this schema change on the settled words.
 6. **Temporal typing and cast accounting on the relational path**
    (run 8, findings 1 and 4). INVESTIGATED 2026-08-12
-   (`../../reports/2026-08-12-v03-temporal-investigation.md`): v0.3
-   solved format detection for untyped file sources (config-driven
+   (`../../reports/2026-08-12-v03-temporal-investigation.md`): the
+   predecessor solved format detection for untyped file sources (config-driven
    value patterns, two-gate confidence, generated typed tables — its
    generated DDL is glossql's recipe, authored instead); on the
    relational path it declined value verification with a stated
@@ -226,8 +226,9 @@ Design owed before building:
     metric. The built-in metrics app renders it: pulse (latest month,
     move, axes, validation chip), dossier (story with the rival line,
     slice picker, formula, materialization, judgement, assumptions,
-    corridor, the composes/feeds graph — the v0.3 metrics-as-graph
-    idea, derived from the formulas registry and read.-mentions). The
+    corridor, the composes/feeds graph — the predecessor's
+    metrics-as-graph idea, derived from the formulas registry and
+    read.-mentions). The
     metric dossier left the model app — model verifies, metrics
     tells; queue/brief/surfaces link across. Grounded against
     Mosaic's architecture lesson (pre-aggregate, then interact);
@@ -278,7 +279,7 @@ day).
 - **Landing-side temporal machinery for dialect-less sources**
   (2026-08-07): dialect teaching carries it; SQLite is a test rig,
   not a product target. Reopened for investigation 2026-08-12 (build
-  line item 6) — the ruling stands until the v0.3 investigation
+  line item 6) — the ruling stands until the temporal investigation
   reports.
 - **Sentinel lists** (2026-08-06): none may exist; cast accounting
   surfaces candidates, closure is an authored recipe amendment.

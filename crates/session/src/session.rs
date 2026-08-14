@@ -64,6 +64,35 @@ pub enum SessionError {
     DropRefused { table: String, reason: String },
     #[error("streaming takes exactly one query — everything else answers through execute")]
     NotOneRead,
+    #[error("statement {index} of {total} refused: {source} — {context}")]
+    Sequence {
+        index: usize,
+        total: usize,
+        /// What landed and what never ran — "statements 1–2 landed;
+        /// 4–7 not run". A mid-sequence refusal without this cost the
+        /// 2026-08-14 run a read of `imports` to learn what stood.
+        context: String,
+        source: Box<SessionError>,
+    },
+}
+
+/// What landed and what never ran, for a refusal at `index` (1-based)
+/// of `total` — one outcome stands per completed statement, so the
+/// caller's outcome count is the base.
+pub(crate) fn sequence_context(index: usize, total: usize) -> String {
+    let landed = match index {
+        1 => "nothing landed before it".to_string(),
+        2 => "statement 1 landed".to_string(),
+        _ => format!("statements 1–{} landed", index - 1),
+    };
+    let tail = if index == total {
+        String::new()
+    } else if index + 1 == total {
+        format!("; statement {total} not run")
+    } else {
+        format!("; statements {}–{} not run", index + 1, total)
+    };
+    format!("{landed}{tail}")
 }
 
 /// What one statement produced. `Rows` for anything that reads, `Affected`
@@ -354,16 +383,32 @@ impl Session {
         statements: Vec<Statement>,
     ) -> Result<Vec<Outcome>, SessionError> {
         self.refresh_mount().await?;
-        let mut outcomes = Vec::with_capacity(statements.len());
-        for statement in statements {
-            outcomes.push(match statement {
-                Statement::Declare(d) => self.declare(*d).await?,
-                Statement::Use(u) => self.use_dataset(&u.dataset.value).await?,
-                Statement::Gloss(g) => self.gloss(g).await?,
-                Statement::Extract(e) => self.extract(e).await?,
-                Statement::Probe(p) => self.probe(p).await?,
-                Statement::Substrate(s) => self.substrate(*s).await?,
-            });
+        let total = statements.len();
+        let mut outcomes = Vec::with_capacity(total);
+        for (idx, statement) in statements.into_iter().enumerate() {
+            let result = match statement {
+                Statement::Declare(d) => self.declare(*d).await,
+                Statement::Use(u) => self.use_dataset(&u.dataset.value).await,
+                Statement::Gloss(g) => self.gloss(g).await,
+                Statement::Extract(e) => self.extract(e).await,
+                Statement::Probe(p) => self.probe(p).await,
+                Statement::Substrate(s) => self.substrate(*s).await,
+            };
+            match result {
+                Ok(outcome) => outcomes.push(outcome),
+                // A refusal in a sequence names its place, what landed
+                // before it, and what never ran — the statements after
+                // it are skipped, never attempted.
+                Err(e) if total > 1 => {
+                    return Err(SessionError::Sequence {
+                        index: idx + 1,
+                        total,
+                        context: sequence_context(idx + 1, total),
+                        source: Box::new(e),
+                    });
+                }
+                Err(e) => return Err(e),
+            }
         }
         Ok(outcomes)
     }
@@ -927,6 +972,7 @@ impl Session {
         // knows the answer was truncated (found 2026-08-06: this path used
         // to collect the whole result and trim it at render).
         let mut stream = frame.execute_stream().await?;
+        let schema = stream.schema();
         let mut batches = Vec::new();
         let mut rows = 0usize;
         while let Some(batch) = stream.next().await {
@@ -936,6 +982,11 @@ impl Session {
             if rows > self.row_cap {
                 break;
             }
+        }
+        if batches.is_empty() {
+            // An empty result still carries the shape — the door serves
+            // (name, type) columns from it, the LIMIT 0 rehearsal's point.
+            batches.push(RecordBatch::new_empty(schema));
         }
         Ok(Outcome::Rows(batches))
     }

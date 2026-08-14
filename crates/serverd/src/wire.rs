@@ -40,7 +40,8 @@ fn rows_json(batches: &[RecordBatch], cap: usize) -> Result<Value, String> {
             kept.push(batch.slice(0, take));
         }
     }
-    render(&kept, total.min(cap), total > cap)
+    let schema = batches.first().map(|b| b.schema());
+    render(schema, &kept, total.min(cap), total > cap)
 }
 
 /// Pull batches until the cap is met, then drop the stream — what the
@@ -49,6 +50,7 @@ pub async fn stream_json(
     mut stream: SendableRecordBatchStream,
     cap: usize,
 ) -> Result<Value, String> {
+    let schema = stream.schema();
     let mut kept: Vec<RecordBatch> = Vec::new();
     let mut shipped = 0usize;
     let mut truncated = false;
@@ -66,10 +68,15 @@ pub async fn stream_json(
         shipped += batch.num_rows();
         kept.push(batch);
     }
-    render(&kept, shipped, truncated)
+    render(Some(schema), &kept, shipped, truncated)
 }
 
-fn render(kept: &[RecordBatch], shipped: usize, truncated: bool) -> Result<Value, String> {
+fn render(
+    schema: Option<datafusion::arrow::datatypes::SchemaRef>,
+    kept: &[RecordBatch],
+    shipped: usize,
+    truncated: bool,
+) -> Result<Value, String> {
     let rows = if kept.is_empty() {
         json!([])
     } else {
@@ -79,5 +86,21 @@ fn render(kept: &[RecordBatch], shipped: usize, truncated: bool) -> Result<Value
         writer.finish().map_err(|e| e.to_string())?;
         serde_json::from_slice(&writer.into_inner()).map_err(|e| e.to_string())?
     };
-    Ok(json!({ "rows": rows, "row_count": shipped, "truncated": truncated }))
+    // The shape survives an empty result — (name, type) is what a
+    // LIMIT 0 rehearsal exists to learn, and types matter to agents on
+    // every read (ruled 2026-08-14).
+    let columns: Value = match schema {
+        Some(s) => s
+            .fields()
+            .iter()
+            .map(|f| json!({ "name": f.name(), "type": f.data_type().to_string() }))
+            .collect(),
+        None => json!([]),
+    };
+    Ok(json!({
+        "columns": columns,
+        "rows": rows,
+        "row_count": shipped,
+        "truncated": truncated
+    }))
 }

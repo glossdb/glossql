@@ -1,8 +1,9 @@
 # glossql transcription corpus
 
-Each file pairs a **real artifact** from `../dataraum-context` (quoted, with path)
-with its glossql transcription per SPEC.md. These are test fixtures — the §9.1
-evidence base — not design docs.
+Each file pairs a **real artifact** — the predecessor production system's
+(quoted inline, with its original path) or, from fixture 14 on, this
+system's own runs — with its glossql transcription per SPEC.md. These are
+test fixtures, not design docs.
 
 Block tags, enforced by the corpus suite in `crates/parser`
 (`cargo test -p glossql-parser`):

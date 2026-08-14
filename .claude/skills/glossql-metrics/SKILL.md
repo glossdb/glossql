@@ -105,12 +105,22 @@ judged dimensions as columns. Every assumption names its basis:
 GLOSS revenue ON fin AS $${
   "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts, entry date as the time axis\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
   "assumptions": [
-    {"dimension": "sign", "assumption": "revenue accounts carry credit balances", "basis": "conventions gloss", "confidence": 0.95},
+    {"dimension": "sign", "assumption": "revenue accounts carry credit balances", "basis": "behavior_evidence sign partition + conventions gloss", "confidence": 1.0},
     {"dimension": "grain", "assumption": "joins are grain-preserving", "basis": "relationship glosses", "confidence": 1.0},
-    {"dimension": "behavior", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 0.95}
+    {"dimension": "behavior", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 1.0}
   ]
 }$$;
 ```
+
+**`behavior`, `sign`, and `grain` assumptions carry 1.0, always.**
+The round never serves them to a human (enforced 2026-08-14) —
+statistics are your work through the shipped functions — so a
+measurable assumption below 1.0 is a question nobody will ever be
+asked. Settle it before recording: the measurement's verdict, or —
+when it abstains — your own test against the data (a mirror table,
+the GL, a reconciliation by hand), cited as the basis. Below-1.0
+confidence is for *judgment* dimensions only (definition, scope,
+convention) — those the round exists to serve.
 
 **Say the mechanics inside the SQL as comments** — a line like the
 example's above the expression it explains. The recorded SQL is what
@@ -201,9 +211,9 @@ rate against a declared edge all wear the same shape:
 DECLARE ASPECT journal_balanced WITH $${
   "type": "object", "required": ["outcome"],
   "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
-                 "rate": {"type": "number"},
+                 "breach_rate": {"type": "number"},
                  "severity": {"enum": ["critical", "warning", "info"]}}
-}$$ AS FACT ON TABLE;
+}$$ AS FACT ON TABLE WHEN entity = 'journal line';
 GLOSS journal_balanced ON journal_lines AS $${
   "outcome": "Total debits equal total credits, exactly.",
   "tolerance": 0.0, "severity": "critical"
@@ -215,9 +225,20 @@ DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
 SELECT journal_check() FROM journal_lines;
 ```
 
+- **Scope the check with `WHEN`.** A check aspect declared bare
+  `ON TABLE` owes an unassessed row on *every* table — three checks
+  on a 14-table workspace put 39 unfillable rows in the backlog
+  (the 2026-08-14 run). `WHEN entity = '…'` bounds it to the tables
+  whose `entity` gloss carries that value — the one table it means,
+  usually.
+- **`breach_rate` is the violation share** — 0.0 means fully
+  passing, and it is compared against `tolerance` upward. Never
+  report a pass rate under this key: a 100%-passing check reported
+  as `1.0` bands red.
 - **The expectation is authored, never assumed zero.** A source with
-  known dirt expects its own rate (`"expected_rate": 0.895`) — a
-  check reporting 1.0 there has overcleaned, itself a failure.
+  known dirt expects its own breach rate (`"tolerance": 0.105` for a
+  source known ~10% dirty) — a check reporting 0.0 there has
+  overcleaned, itself a failure.
 - **The check speaks the aspect's schema**: its output carries
   `outcome` like any slot, with the measurement beside it. One
   schema, every speaker.
@@ -228,18 +249,22 @@ SELECT journal_check() FROM journal_lines;
   sum of its movement rows) is a standing invariant — turn it into a
   check.
 - Checks are workspace-authored (`FOR` the dataset, not GLOBAL) —
-  write them per the glossql-functions skill. The usual detector
-  ships: `rate_tolerance` reads the authored expectation
-  (`tolerance`) and the check voice (`rate`) from the slots, sees no
-  table data, and goes green/red one-sided —
+  write them per the glossql-functions skill, **which requires a
+  `.rhai` file in the workspace directory**: an agent working the
+  MCP door alone cannot author the check half today — say so in the
+  read-back and record the expectation gloss anyway, rather than
+  shipping a self-measured snapshot as if it were a standing check.
+  The usual detector ships: `rate_tolerance` reads the authored
+  expectation (`tolerance`) and the check voice (`breach_rate`) from
+  the slots, sees no table data, and goes green/red one-sided —
   `DECLARE WITNESS my_check_w ON my_aspect DETECTOR rate_tolerance
-  THRESHOLD 0.02;`. The `tolerance` and `rate` keys are your aspect's
-  schema, not a library convention — declare them there, and the one
-  validated contract covers every speaker. Write your own detector
-  only when the shape differs (a known-dirt source expects its own
-  rate and goes red on *both* sides — overcleaning is also a
-  failure); `functions/rate_tolerance.rhai` in the workspace is the
-  twenty-line template to copy.
+  THRESHOLD 0.02;`. The `tolerance` and `breach_rate` keys are your
+  aspect's schema, not a library convention — declare them there,
+  and the one validated contract covers every speaker. Write your
+  own detector only when the shape differs (a known-dirt source
+  expects its own rate and goes red on *both* sides — overcleaning
+  is also a failure); `functions/rate_tolerance.rhai` in the
+  workspace is the twenty-line template to copy.
 
 ### Expected ranges — the band walk
 

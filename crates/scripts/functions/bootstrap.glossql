@@ -197,7 +197,7 @@ DECLARE FUNCTION relationship_coherence FOR GLOBAL FROM 'functions/coherence.rha
   RETURNS relationship_coherence;
 
 DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL FROM 'functions/grounding_collisions.rhai'
-  ACCEPTS (glossary)
+  ACCEPTS (glossary, imports)
   RETURNS grounding_collisions;
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL FROM 'functions/slot_entropy.rhai';
