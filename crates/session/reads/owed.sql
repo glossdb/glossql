@@ -17,6 +17,12 @@
 -- `subject` names what the act is about, so a caller can link to it;
 -- glyphs, links and ordering stay the caller's business.
 --
+-- Scoping is mixed, as it was before this read existed: `contest`
+-- comes through GLOSSARY(), which serves the session's dataset, while
+-- the other three read the workspace-wide glossary relation. One
+-- dataset per workspace makes the difference invisible; a second one
+-- would make the three over-report.
+--
 -- The one dynamic json path — which metric a formulas map names —
 -- stays at its base, where the column it indexes by is in scope.
 WITH approvals AS (
