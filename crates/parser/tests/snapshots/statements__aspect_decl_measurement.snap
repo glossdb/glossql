@@ -1,6 +1,5 @@
 ---
 source: crates/parser/tests/statements.rs
-assertion_line: 44
 expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT min_max WITH $${\"type\": \"object\", \"properties\": {\"min\": {}, \"max\": {}}}$$ AS MEASUREMENT;\"#).expect(\"must parse\")"
 ---
 [
@@ -24,6 +23,7 @@ expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT min_max WITH $${\"ty
                 },
                 kind: Measurement,
                 grains: [],
+                condition: None,
             },
         ),
     ),

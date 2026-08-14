@@ -194,6 +194,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                 return expected("MEASUREMENT, FACT, or QUERY", &kind_token);
             };
             let mut grains = Vec::new();
+            let mut condition = None;
             if consume_word(p, "ON") {
                 loop {
                     let grain_token = p.peek_token();
@@ -218,12 +219,22 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                         break;
                     }
                 }
+                if consume_word(p, "WHEN") {
+                    let aspect = p.parse_identifier()?;
+                    let eq_token = p.peek_token();
+                    if !p.consume_token(&Token::Eq) {
+                        return expected("`=`", &eq_token);
+                    }
+                    let value = parse_string(p, "a quoted value")?;
+                    condition = Some((aspect, value));
+                }
             }
             Ok(Declaration::Aspect(AspectDecl {
                 name,
                 schema,
                 kind,
                 grains,
+                condition,
             }))
         }
         "FUNCTION" => {

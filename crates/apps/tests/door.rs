@@ -459,6 +459,56 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
+    // Rebuilt 2026-08-14: a standing check is an ATTEST row — a
+    // detector's live verdict beside its witness's expectation. A
+    // witness without a detector is a speaker gate; its spoken slots
+    // never render as checks (the old frame showed them with the
+    // band column reading `current`).
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let agent = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap();
+    agent
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+               DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
+               GLOSS meaning ON ledger.value AS $${"value": "the money"}$$;
+               DECLARE FUNCTION probe_check FOR GLOBAL FROM 'probe_check.rhai';
+               DECLARE WITNESS dso_w ON dso DETECTOR probe_check THRESHOLD 0.9;"#,
+        )
+        .await
+        .unwrap();
+    // The verdict, planted fresh as the detector would cache it.
+    plane
+        .store()
+        .cache_put(
+            "perf",
+            "perf",
+            "probe_check",
+            Some("dso_w"),
+            r#"{"band": "orange", "score": 0.42}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let checks = get(&app, "/app/model/frames/checks").await;
+    assert_eq!(checks.status(), StatusCode::OK);
+    assert_eq!(
+        row_count(checks).await,
+        1,
+        "one detector verdict, and the meaning voice is not a check"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metrics_faces_serve_the_cached_cube() {
     // The business surface end to end from the cube cache: the pulse
     // carries the latest month and the admitted axes, the picker lists

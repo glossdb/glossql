@@ -20,7 +20,10 @@
 -- is the AGENT's measurement backlog (behavior_evidence settles
 -- behavior; profiles and currency columns settle unit) — never a
 -- human question. The door's round asks judgment only (ruled
--- 2026-08-13).
+-- 2026-08-13). Relevance is conditional (ruled 2026-08-14): WHEN
+-- narrows what a column owes to what its role makes meaningful — a
+-- role-less column owes only role, and the backlog counts what is
+-- real instead of columns × vocabulary.
 
 DECLARE ASPECT meaning WITH $${
   "type": "object", "required": ["value"],
@@ -37,13 +40,13 @@ DECLARE ASPECT behavior WITH $${
   "type": "object", "required": ["value"],
   "properties": {"value": {"enum": ["stock", "flow", "none"]},
                  "grounds": {"type": "string"}}
-}$$ AS FACT ON COLUMN;
+}$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT unit WITH $${
   "type": "object", "required": ["value"],
   "properties": {"value": {"type": "string"},
                  "source_column": {"type": "string"}}
-}$$ AS FACT ON COLUMN;
+}$$ AS FACT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT dimension WITH $${
   "type": "object", "required": ["value"],
@@ -51,7 +54,7 @@ DECLARE ASPECT dimension WITH $${
     "value": {"type": "string", "enum": ["primary", "supporting", "none"]},
     "grounds": {"type": "string"}
   }
-}$$ AS FACT ON COLUMN;
+}$$ AS FACT ON COLUMN WHEN role = 'dimension';
 
 -- Table identity — the entity verdict every aggregate stands on.
 

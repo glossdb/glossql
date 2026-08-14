@@ -54,6 +54,10 @@ snap!(
     r#"DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;"#
 );
 snap!(
+    aspect_decl_conditional_relevance,
+    r#"DECLARE ASPECT behavior WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';"#
+);
+snap!(
     gloss_fact,
     r#"GLOSS unit ON orders.amount AS $${"value": "EUR", "source_column": "currency_code"}$$;"#
 );

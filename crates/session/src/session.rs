@@ -1121,6 +1121,53 @@ pub struct QueryStream {
 /// The store's RELATIONS table names the plain relations; `attest` is
 /// the one read construct beside them (`glossary()` shares its name
 /// with the relation).
+/// The shape of a whole tool call, classified without executing — the
+/// door's question-round cadence reads it (ruled 2026-08-14).
+/// `reviews` marks a call that reads the record: at least one metadata
+/// read and no write — the brief sweep and the stage read-backs.
+/// `writes` marks a call that moves the workspace: GLOSS, DECLARE,
+/// PROBE, extraction, substrate DDL and DELETE. Forms ride reviewing
+/// calls only, so a landing is never interrupted mid-flow; a plain
+/// data SELECT is neither — judging work, not a review.
+pub struct CallShape {
+    pub reviews: bool,
+    pub writes: bool,
+}
+
+/// A call that does not parse shapes as neither — the statement router
+/// names the refusal when it runs.
+pub fn call_shape(statements: &str) -> CallShape {
+    let Ok(parsed) = GlossqlParser::parse_sql(statements) else {
+        return CallShape {
+            reviews: false,
+            writes: false,
+        };
+    };
+    let mut reads_record = false;
+    let mut writes = false;
+    for statement in &parsed {
+        match statement {
+            Statement::Use(_) => {}
+            Statement::Substrate(df) => {
+                if reads_only_metadata(df) {
+                    reads_record = true;
+                } else if !matches!(
+                    df.as_ref(),
+                    DFStatement::Statement(inner)
+                        if matches!(inner.as_ref(), SQLStatement::Query(_))
+                ) {
+                    writes = true;
+                }
+            }
+            _ => writes = true,
+        }
+    }
+    CallShape {
+        reviews: reads_record && !writes,
+        writes,
+    }
+}
+
 fn reads_only_metadata(statement: &DFStatement) -> bool {
     let DFStatement::Statement(inner) = statement else {
         return false;

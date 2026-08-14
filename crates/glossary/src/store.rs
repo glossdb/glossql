@@ -213,7 +213,9 @@ CREATE TABLE IF NOT EXISTS aspects (
   name TEXT PRIMARY KEY,
   schema TEXT NOT NULL,
   kind TEXT NOT NULL,
-  grains TEXT
+  grains TEXT,
+  condition_aspect TEXT,
+  condition_value TEXT
 );
 CREATE TABLE IF NOT EXISTS functions (
   name TEXT PRIMARY KEY,
@@ -339,8 +341,12 @@ pub const RELATIONS: &[Relation] = &[
     },
     Relation {
         name: "aspects",
-        columns: &["name", "kind", "grains", "schema"],
-        sql: "SELECT name, kind, grains, schema FROM aspects ORDER BY name",
+        columns: &["name", "kind", "grains", "condition", "schema"],
+        sql: "SELECT name, kind, grains, \
+                     CASE WHEN condition_aspect IS NULL THEN NULL \
+                          ELSE condition_aspect || ' = ''' || condition_value || '''' \
+                     END AS condition, \
+                     schema FROM aspects ORDER BY name",
     },
     Relation {
         name: "witnesses",
@@ -624,10 +630,56 @@ impl Store {
         }
         let name = decl.name.value.as_str();
         let declared_grains = grains_str(&decl.grains);
+        // Conditional relevance (ruled 2026-08-14): the referenced
+        // sibling aspect must exist, and when its schema pins `value`
+        // to an enum the literal must be a member — a condition nobody
+        // could ever satisfy is a typo, refused at the door.
+        let declared_condition = decl
+            .condition
+            .as_ref()
+            .map(|(a, v)| (a.value.clone(), v.clone()));
+        if let Some((cond_aspect, cond_value)) = &declared_condition {
+            let Some((cond_schema, _, _)) = self.aspect(cond_aspect).await? else {
+                return Err(Error::BadCondition {
+                    name: name.into(),
+                    detail: format!("WHEN references undeclared aspect `{cond_aspect}`"),
+                });
+            };
+            if let Some(allowed) = cond_schema
+                .pointer("/properties/value/enum")
+                .and_then(Value::as_array)
+                && !allowed
+                    .iter()
+                    .any(|v| v.as_str() == Some(cond_value.as_str()))
+            {
+                return Err(Error::BadCondition {
+                    name: name.into(),
+                    detail: format!(
+                        "'{cond_value}' is not among `{cond_aspect}`'s declared values {allowed:?}"
+                    ),
+                });
+            }
+        }
         if let Some((schema, kind, grains)) = self.aspect(name).await? {
+            let existing_condition: Option<(String, String)> = sqlx::query(
+                "SELECT condition_aspect, condition_value FROM aspects WHERE name = ?",
+            )
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|r| {
+                match (
+                    r.get::<Option<String>, _>("condition_aspect"),
+                    r.get::<Option<String>, _>("condition_value"),
+                ) {
+                    (Some(a), Some(v)) => Some((a, v)),
+                    _ => None,
+                }
+            });
             if schema == decl.schema.value
                 && kind == kind_str(decl.kind)
                 && grains == declared_grains
+                && existing_condition == declared_condition
             {
                 return Ok(());
             }
@@ -662,12 +714,16 @@ impl Store {
             }
         }
         sqlx::query(
-            "INSERT OR REPLACE INTO aspects (name, schema, kind, grains) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO aspects \
+             (name, schema, kind, grains, condition_aspect, condition_value) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(decl.name.value.as_str())
         .bind(decl.schema.raw.as_str())
         .bind(kind_str(decl.kind))
         .bind(declared_grains)
+        .bind(declared_condition.as_ref().map(|(a, _)| a.as_str()))
+        .bind(declared_condition.as_ref().map(|(_, v)| v.as_str()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1354,11 +1410,57 @@ impl Store {
         witnessed.extend(self.returning(aspect).await?.into_iter().map(|(_, a)| a));
         let mut grain_map: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
-        for row in sqlx::query("SELECT name, grains FROM aspects")
-            .fetch_all(&self.pool)
-            .await?
+        let mut condition_map: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        for row in sqlx::query(
+            "SELECT name, grains, condition_aspect, condition_value FROM aspects",
+        )
+        .fetch_all(&self.pool)
+        .await?
         {
-            grain_map.insert(row.get("name"), row.get("grains"));
+            let name: String = row.get("name");
+            grain_map.insert(name.clone(), row.get("grains"));
+            if let (Some(a), Some(v)) = (
+                row.get::<Option<String>, _>("condition_aspect"),
+                row.get::<Option<String>, _>("condition_value"),
+            ) {
+                condition_map.insert(name, (a, v));
+            }
+        }
+        // Conditional relevance (ruled 2026-08-14): a conditioned aspect
+        // is owed on a subject only while the named sibling aspect's
+        // winning slot carries the declared value — the human slot
+        // outranking the agent's, contest notwithstanding. Absence is
+        // decisive: no sibling slot spoken, nothing owed yet.
+        let mut sibling_values: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, String>,
+        > = std::collections::HashMap::new();
+        for a in &witnessed {
+            let Some((cond_aspect, _)) = condition_map.get(a) else {
+                continue;
+            };
+            if sibling_values.contains_key(cond_aspect) {
+                continue;
+            }
+            let mut winners: std::collections::HashMap<String, (u8, String)> =
+                std::collections::HashMap::new();
+            for slot in self.slots(dataset, scope, Some(cond_aspect)).await? {
+                let value = serde_json::from_str::<Value>(&slot.body)
+                    .ok()
+                    .and_then(|b| b.pointer("/value").and_then(|v| v.as_str().map(String::from)));
+                let Some(value) = value else { continue };
+                match winners.get(&slot.subject) {
+                    Some((rank, _)) if *rank <= slot.rank => {}
+                    _ => {
+                        winners.insert(slot.subject.clone(), (slot.rank, value));
+                    }
+                }
+            }
+            sibling_values.insert(
+                cond_aspect.clone(),
+                winners.into_iter().map(|(s, (_, v))| (s, v)).collect(),
+            );
         }
         let present: std::collections::HashSet<(String, String)> = rows
             .iter()
@@ -1397,6 +1499,15 @@ impl Store {
                 };
                 if !in_grain {
                     continue;
+                }
+                if let Some((cond_aspect, cond_value)) = condition_map.get(a) {
+                    let holds = sibling_values
+                        .get(cond_aspect)
+                        .and_then(|m| m.get(subject.as_str()))
+                        .is_some_and(|v| v == cond_value);
+                    if !holds {
+                        continue;
+                    }
                 }
                 if !present.contains(&(subject.clone(), a.clone())) {
                     rows.push(CollapsedRow {

@@ -14,6 +14,8 @@ pub enum Error {
     SpeakerNotAdmitted { aspect: String, kind: ActorKind },
     #[error("aspect `{name}`: WITH is not a usable JSON Schema: {detail}")]
     BadAspectSchema { name: String, detail: String },
+    #[error("aspect `{name}`: {detail}")]
+    BadCondition { name: String, detail: String },
     #[error(
         "aspect `{name}` has {glosses} gloss(es) — delete them before re-declaring it differently"
     )]

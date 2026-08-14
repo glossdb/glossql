@@ -37,10 +37,11 @@ them up wastes the human either way:
   chat fair. No forms, no schemas, no machinery. There is nothing to
   confirm yet, so confirmation surfaces don't fit.
 - **Rulings** (a standing assumption confirmed or corrected): the
-  question round. Derived from data, one form per tool call, the
-  answer landing server-side with human standing. These work because
-  confirming a stated judgment with the facts on the table is easy —
-  the human still decides, without authoring from nothing.
+  question round. Derived from data, served one form at a time on
+  calls that read the record — never mid-landing — the answer landing
+  server-side with human standing. These work because confirming a
+  stated judgment with the facts on the table is easy — the human
+  still decides, without authoring from nothing.
 
 ## Stage 0 — the topic, then the cohort
 
@@ -102,11 +103,13 @@ to assumptions nobody surfaced.
   first validated run paid 2× on DSO for an undisclosed scope — and
   a confidence you inflate empties the human's queue falsely.
 - **Let the door ask.** While judgment questions stand (assumptions
-  below full confidence), the door serves one question form per tool
-  call to clients that render them (verified in Claude Code; others
-  as they support question forms). The answer lands
-  server-side as the human's own slot — it never travels through
-  your mouth, and you never write it for them.
+  below full confidence), the door serves one question form per
+  record-reading call — a call that reads the glossary and writes
+  nothing — to clients that render them (verified in Claude Code;
+  others as they support question forms). Your landings and judging
+  queries run uninterrupted; the stage read-back is where the forms
+  engage. The answer lands server-side as the human's own slot — it
+  never travels through your mouth, and you never write it for them.
 - **Prose is the fallback.** No question surface: ask in chat,
   multiple choice with your grounds and confidence, then run the
   statement the answer names — the write still travels through a

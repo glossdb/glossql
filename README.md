@@ -31,6 +31,25 @@ SELECT * FROM ATTEST(subject.aspect)       -- adjudication read (band + score)
 
 Everything else — views, deletes, function extraction — is plain SQL.
 
+## Building
+
+A Rust workspace; `cargo build -p glossql-serverd` builds the server
+(`--release` to run it in earnest). The dependency tree is heavy —
+DataFusion, Iceberg, candle — and the parallel build is memory-hungry:
+measured cold on a 15-core machine, compiler memory peaks at ~6 GB for
+a dev build and ~9 GB for release, with single compile units up to
+~2.6 GB. If the build dies without a compiler error — the OOM killer,
+common in memory-capped containers — bound the parallelism to about
+one job per 2 GB of available memory:
+
+```
+cargo build --release -j4    # or CARGO_BUILD_JOBS=4
+```
+
+The dev profile already trims debug info workspace-wide (the workspace
+`Cargo.toml` records why); even a single job needs ~4 GB free for the
+largest units.
+
 ## Status
 
 - Working draft, 2026-08-03: a radical simplification of the 2026-07 draft

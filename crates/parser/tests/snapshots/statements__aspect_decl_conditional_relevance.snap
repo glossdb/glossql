@@ -1,0 +1,37 @@
+---
+source: crates/parser/tests/statements.rs
+expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT behavior WITH $${\"type\": \"object\"}$$ AS FACT ON COLUMN WHEN role = 'measure';\"#).expect(\"must parse\")"
+---
+[
+    Declare(
+        Aspect(
+            AspectDecl {
+                name: Ident {
+                    value: "behavior",
+                    quote_style: None,
+                    span: Span(Location(1,16)..Location(1,24)),
+                },
+                schema: JsonBody {
+                    value: Object {
+                        "type": String("object"),
+                    },
+                    raw: "{\"type\": \"object\"}",
+                },
+                kind: Fact,
+                grains: [
+                    Column,
+                ],
+                condition: Some(
+                    (
+                        Ident {
+                            value: "role",
+                            quote_style: None,
+                            span: Span(Location(1,76)..Location(1,80)),
+                        },
+                        "measure",
+                    ),
+                ),
+            },
+        ),
+    ),
+]

@@ -251,27 +251,6 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(instructions.contains("Live now:"), "{instructions}");
 }
 
-/// A lake-backed door: owed claims derive from the read universe, so
-/// the round's choice questions need a landed table.
-async fn lake_app() -> (Router, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("ledger.csv"),
-        "month,value\n2026-01-01,10.5\n2026-02-01,4.0\n",
-    )
-    .unwrap();
-    let store = Store::open_memory().await.unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.db"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let plane = Arc::new(Plane::new(store, Some(lake), Arc::new(NoRuntime)));
-    let router = router(plane, DoorConfig::default(), dir.path().to_path_buf());
-    (router, dir)
-}
-
 fn call_with(meta_value: Value, id: u64, statements: &str, retry: Option<(&str, Value)>) -> Value {
     let mut params = json!({
         "_meta": meta_value,
@@ -340,10 +319,16 @@ async fn the_round_never_asks_the_human_for_statistics() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     // The owed behavior claim derives in the store (unassessed row) —
-    // but the round asks nothing: no input_required, no form.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, "SELECT 1 AS ok", None)).await)
-            .await;
+    // but the round asks nothing, even on a review-shaped call: no
+    // input_required, no form.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 71, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+        )
+        .await,
+    )
+    .await;
     assert_ne!(
         body["result"]["resultType"],
         json!("input_required"),
@@ -379,9 +364,14 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 60, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 61, "SELECT 1 AS ok", None)).await)
-            .await;
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 61, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+        )
+        .await,
+    )
+    .await;
     assert_eq!(
         body["result"]["resultType"],
         json!("input_required"),
@@ -395,7 +385,12 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 62, "SELECT 1 AS ok", Some(("loose:fin:dso:0", answer))),
+            call_with(
+                meta_elicit(),
+                62,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                Some(("loose:fin:dso:0", answer)),
+            ),
         )
         .await,
     )
@@ -426,17 +421,24 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
     assert!(human_body.contains("human-ruled"), "{human_body}");
     assert!(human_body.contains("grain-preserving"), "{human_body}");
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 64, "SELECT 1 AS ok", None)).await)
-            .await;
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 64, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+        )
+        .await,
+    )
+    .await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_declined_question_defers_for_the_run() {
-    // Decline is defer: transport state for this server run, never the
-    // store — the app still shows the open row, and the next run asks
-    // again.
+async fn a_declined_question_rests_until_the_workspace_moves() {
+    // Decline is defer: transport state, never the store — the app
+    // still shows the open row. It rests only while the workspace
+    // holds still; a writing call clears the deferral, so the next
+    // review asks again (cadence ruling, 2026-08-14) — "not now"
+    // never hardens into "never".
     let app = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'defer test');
@@ -448,9 +450,9 @@ async fn a_declined_question_defers_for_the_run() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 70, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
+    let review = "SELECT subject, aspect FROM glossary LIMIT 5";
     let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, "SELECT 1 AS ok", None)).await)
-            .await;
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, review, None)).await).await;
     assert_eq!(
         body["result"]["resultType"],
         json!("input_required"),
@@ -461,15 +463,95 @@ async fn a_declined_question_defers_for_the_run() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 72, "SELECT 1 AS ok", Some(("loose:fin:dso:0", declined))),
+            call_with(meta_elicit(), 72, review, Some(("loose:fin:dso:0", declined))),
         )
         .await,
     )
     .await;
     assert!(body["result"]["content"].to_string().contains("deferred"), "{body}");
     let body =
-        expect_ok(mcp(app, call_with(meta_elicit(), 73, "SELECT 1 AS ok", None)).await).await;
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 73, review, None)).await).await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+
+    // The workspace moves — an unrelated declaration — and the same
+    // question stands again at the next review.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                74,
+                r#"DECLARE ASPECT note WITH $${"title": "note"}$$ AS FACT;"#,
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let body =
+        expect_ok(mcp(app, call_with(meta_elicit(), 75, review, None)).await).await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "declined question must re-derive after a write: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_round_never_interrupts_a_working_call() {
+    // Cadence (ruled 2026-08-14, from the first live run): forms ride
+    // only calls that read the record. A landing call and a plain data
+    // read run uninterrupted even while a question stands open; the
+    // review-shaped call carries the form.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'cadence test');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 90, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // A writing call: the question stands, the landing runs through.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                91,
+                r#"DECLARE ASPECT note WITH $${"title": "note"}$$ AS FACT;"#,
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["resultType"], json!("input_required"), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // A plain data read: judging work, not a review — no form either.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 92, "SELECT 1 AS ok", None)).await)
+            .await;
+    assert_ne!(body["result"]["resultType"], json!("input_required"), "{body}");
+
+    // The review-shaped call carries the form.
+    let body = expect_ok(
+        mcp(
+            app,
+            call_with(meta_elicit(), 93, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
 }
 
 /// The session-carrying lifecycle (≤ 2025-11-25) gets the same round
@@ -534,7 +616,8 @@ async fn the_round_rides_a_transport_session_too() {
 
     let asked = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "glossql", "arguments": {"statements": "SELECT 1 AS ok"}}
+        "params": {"name": "glossql",
+            "arguments": {"statements": "SELECT subject, aspect FROM glossary LIMIT 5"}}
     });
     let response = app
         .clone()
@@ -791,8 +874,13 @@ async fn sequential_rulings_compose_instead_of_reverting() {
     );
 
     // And the round is quiet — nothing re-derives.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 83, "SELECT 1 AS ok", None)).await)
-            .await;
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 83, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+        )
+        .await,
+    )
+    .await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
 }

@@ -316,8 +316,12 @@ then speak to each aspect on every landed column:
   either way — a "trial balance" column can carry period turnover (a
   flow) rather than balances; the measurement reads the data, not the
   label. Unsure? Don't gloss: absence shows as an honest `unassessed`
-  row; a guess does not. But "does not apply" is not "unsure" — a
-  text column has no stock/flow verdict, and that judgment lands as
+  row; a guess does not. Relevance is conditional (ruled 2026-08-14):
+  a column owes `behavior` and `unit` only once its `role` says
+  `measure`, and `dimension` only on `role = 'dimension'` — so gloss
+  role first and the rest of the backlog derives from it. "Does not
+  apply" *within* relevance is still a judgment, not "unsure": a
+  ratio is a measure with no stock/flow nature, and that lands as
   `{"value": "none", "grounds": "…"}` (§5), never as a permanent
   unassessed row.
 - **unit** — where a magnitude has one: currency, quantity unit,

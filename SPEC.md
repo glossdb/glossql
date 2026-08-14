@@ -195,6 +195,17 @@ binding) may attach to. Absent, the aspect speaks to all grains. Disclosure
 (§5.3) stays within it: absence shows only on subjects the aspect is
 declared for.
 
+A grain list may carry a **condition** (ruled 2026-08-14):
+`ON COLUMN WHEN role = 'measure'` names a sibling aspect and a value, and
+the aspect is owed on a subject only while that aspect's winning slot
+(human over agent, contest notwithstanding) carries `value` = the literal.
+The condition bounds `unassessed` disclosure and every count derived from
+it — never writes: glosses stay gated by grain alone, and a spoken slot
+outside its condition serves normally, so a later re-ruling of the sibling
+strands nothing. No sibling slot spoken means nothing owed yet. At
+`DECLARE`, the referenced aspect must exist, and when its schema pins
+`value` to an enum the literal must be a member.
+
 `SOURCE` grain (ruled 2026-08-12): the subject is a declared source's name
 (§3) — no further formality; `DECLARE SOURCE` is the definition. Sources
 are workspace rows, so source-grain slots read, supersede, and disclose

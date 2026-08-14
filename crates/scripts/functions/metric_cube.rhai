@@ -20,8 +20,14 @@
 // (glossary, imports): a grounding write or a landed import stales
 // this cache; fact glosses do not (the edge is QUERY-scoped in the
 // store). The monthly verb follows the grounding's authored behavior:
-// flows sum per month, a body carrying `"behavior": "stock"` takes
-// the last value per month — the same rule every reader follows.
+// flows sum per month; a body carrying `"behavior": "stock"` sums the
+// rows at the month's latest observed date — a one-row-per-period
+// balance serves unchanged, and a stock extract with many rows per
+// period (per product, per location) totals its final snapshot
+// instead of one arbitrary row. Disclosed limit: entities absent from
+// that latest date are not carried forward — a stock whose entities
+// report on different days undercounts; pre-aggregate in the
+// grounding SQL when observation dates are ragged.
 
 let dims_cap = 2;
 let members_cap = 24;
@@ -59,13 +65,13 @@ for i in 0..rows.num_rows() {
 fn monthly(door, sql, tcol, is_stock) {
     let series = if is_stock {
         door.query(`
-            SELECT period, value FROM (
+            SELECT period, sum(value) AS value FROM (
                 SELECT date_trunc('month', "${tcol}") AS period, value,
-                       row_number() OVER (
+                       rank() OVER (
                            PARTITION BY date_trunc('month', "${tcol}")
-                           ORDER BY "${tcol}" DESC) AS rn
+                           ORDER BY "${tcol}" DESC) AS rk
                 FROM (${sql})
-            ) WHERE rn = 1 ORDER BY period
+            ) WHERE rk = 1 GROUP BY period ORDER BY period
         `)
     } else {
         door.query(`
@@ -162,14 +168,14 @@ for key in slots.keys() {
     for dcol in dims {
         let series = if is_stock {
             db.query(`
-                SELECT period, member, value FROM (
+                SELECT period, member, sum(value) AS value FROM (
                     SELECT date_trunc('month', "${tcol}") AS period,
                            CAST("${dcol}" AS VARCHAR) AS member, value,
-                           row_number() OVER (
+                           rank() OVER (
                                PARTITION BY date_trunc('month', "${tcol}"), "${dcol}"
-                               ORDER BY "${tcol}" DESC) AS rn
+                               ORDER BY "${tcol}" DESC) AS rk
                     FROM (${body.sql}) WHERE "${dcol}" IS NOT NULL
-                ) WHERE rn = 1 ORDER BY period, member
+                ) WHERE rk = 1 GROUP BY period, member ORDER BY period, member
             `)
         } else {
             db.query(`

@@ -220,7 +220,7 @@ fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(rival.len(), 24);
     assert_eq!(rival[0][1], json!("all invoiced"));
 
-    // the stock: no served dimensions, the last-per-month verb
+    // the stock: no served dimensions, the sum-at-latest-date verb
     let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();
     assert_eq!(inventory["behavior"], json!("stock"));
     assert_eq!(inventory["dims"], json!([]));
@@ -228,12 +228,168 @@ fn the_cube_slices_windows_and_carries_the_rival() {
     let seen = door.0.lock().unwrap();
     assert!(
         seen.iter()
-            .any(|q| q.contains("FROM levels") && q.contains("row_number")),
-        "the stock series must take last-per-month, never a sum"
+            .any(|q| q.contains("FROM levels")
+                && q.contains("rank()")
+                && q.contains("sum(value)")),
+        "the stock series must sum the month's latest snapshot, never take one arbitrary row"
     );
     assert!(
         seen.iter()
             .any(|q| q.contains("FROM lines") && q.contains("sum(value)")),
         "the flow series must sum per month"
+    );
+}
+
+/// Routes the glossary read, executes everything else on a real
+/// DataFusion context — the stock verb's semantics, not its SQL shape.
+struct LiveDoor {
+    rt: tokio::runtime::Runtime,
+    ctx: datafusion::prelude::SessionContext,
+}
+
+impl SqlDoor for LiveDoor {
+    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
+        if query.contains("FROM glossary") {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("subject", DataType::Utf8, false),
+                Field::new("aspect", DataType::Utf8, false),
+                Field::new("actor_kind", DataType::Utf8, false),
+                Field::new("body", DataType::Utf8, false),
+            ]));
+            let inventory = json!({
+                "sql": "SELECT date, value, product FROM levels",
+                "behavior": "stock"
+            });
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(vec!["fin"])),
+                        Arc::new(StringArray::from(vec!["inventory"])),
+                        Arc::new(StringArray::from(vec!["agent"])),
+                        Arc::new(StringArray::from(vec![inventory.to_string()])),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        self.rt.block_on(async {
+            self.ctx
+                .sql(query)
+                .await
+                .map_err(|e| e.to_string())?
+                .collect()
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+}
+
+#[test]
+fn the_stock_total_sums_the_months_latest_snapshot() {
+    // Two products, snapshotted mid-month and again at month end:
+    // the mid-month rows are superseded observations, the month-end
+    // rows are the standing stock. January also proves the old
+    // defect: one arbitrary month-end row (100 or 200) is wrong,
+    // and summing everything (630) is wrong — the total is 300.
+    let days = vec![
+        ("2024-01-15", 10.0, "p1"),
+        ("2024-01-15", 20.0, "p2"),
+        ("2024-01-31", 100.0, "p1"),
+        ("2024-01-31", 200.0, "p2"),
+        ("2024-02-28", 110.0, "p1"),
+        ("2024-02-28", 210.0, "p2"),
+    ];
+    // Date32 days since epoch; 19723 = 2024-01-01, offsets pre-March.
+    let epoch = |d: &str| {
+        let parts: Vec<i32> = d.split('-').map(|p| p.parse().unwrap()).collect();
+        19723 + [0, 31][(parts[1] - 1) as usize] + parts[2] - 1
+    };
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("date", DataType::Date32, false),
+        Field::new("value", DataType::Float64, false),
+        Field::new("product", DataType::Utf8, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(datafusion::arrow::array::Date32Array::from(
+                days.iter().map(|(d, _, _)| epoch(d)).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(
+                days.iter().map(|(_, v, _)| *v).collect::<Vec<_>>(),
+            )),
+            Arc::new(StringArray::from(
+                days.iter().map(|(_, _, p)| *p).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .unwrap();
+    let ctx = datafusion::prelude::SessionContext::new();
+    ctx.register_batch("levels", batch).unwrap();
+    let door = Arc::new(LiveDoor {
+        rt: tokio::runtime::Runtime::new().unwrap(),
+        ctx,
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let functions = dir.path().join("functions");
+    std::fs::create_dir_all(&functions).unwrap();
+    let shipped = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/functions"));
+    std::fs::copy(
+        shipped.join("metric_cube.rhai"),
+        functions.join("metric_cube.rhai"),
+    )
+    .unwrap();
+    let rt = RhaiRuntime::new(dir.path());
+    let out = rt
+        .invoke(
+            &FunctionRow {
+                name: "metric_cube".into(),
+                scope_dataset: None,
+                script: "functions/metric_cube.rhai".into(),
+                accepts: vec![],
+                returns: None,
+            },
+            "fin",
+            &json!({}),
+            door,
+        )
+        .unwrap();
+
+    let metrics = out["metrics"].as_array().unwrap();
+    let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();
+    assert_eq!(inventory["behavior"], json!("stock"));
+    // product (2 members) is a served dimension on the real context
+    assert_eq!(inventory["dims"], json!(["product"]));
+
+    // the total: the month-end snapshot summed across products
+    let total = rows_of(inventory, "");
+    let by_period: Vec<(&str, f64)> = total
+        .iter()
+        .map(|r| (r[2].as_str().unwrap(), r[3].as_f64().unwrap()))
+        .collect();
+    assert_eq!(by_period, vec![("2024-01", 300.0), ("2024-02", 320.0)]);
+
+    // the member series: each product's own latest observation
+    let members = rows_of(inventory, "product");
+    let got: Vec<(&str, &str, f64)> = members
+        .iter()
+        .map(|r| {
+            (
+                r[1].as_str().unwrap(),
+                r[2].as_str().unwrap(),
+                r[3].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("p1", "2024-01", 100.0),
+            ("p2", "2024-01", 200.0),
+            ("p1", "2024-02", 110.0),
+            ("p2", "2024-02", 210.0),
+        ]
     );
 }

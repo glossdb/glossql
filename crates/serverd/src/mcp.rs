@@ -147,9 +147,11 @@ pub struct GlossqlMcp {
     /// the per-session handler instances; refreshed after every tool
     /// call, so a connect after activity reads current state.
     brief: Arc<std::sync::RwLock<String>>,
-    /// Questions the human declined this server run — transport
-    /// state, never the store (no ledger, ruled 2026-08-13). A
-    /// landing clears nothing here: a landed slot stops deriving.
+    /// Questions the human declined — transport state, never the
+    /// store (no ledger, ruled 2026-08-13). A decline rests only
+    /// until the workspace moves: any writing call clears the set,
+    /// so "not now" never hardens into "never" (cadence ruling,
+    /// 2026-08-14). A landed slot stops deriving on its own.
     deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
@@ -195,7 +197,8 @@ impl GlossqlMcp {
                     line.push_str(&format!(
                         "; {} judgment question{} stand{} open for the human (assumptions \
                          below full confidence — conventions and definitions, never \
-                         statistics) — sweep the round (call the tool until it stays \
+                         statistics) — sweep the round (forms ride record reads: call \
+                         with a glossary/GLOSSARY()/ATTEST() read until it stays \
                          quiet) or relay them in chat",
                         questions,
                         if questions == 1 { "" } else { "s" },
@@ -664,10 +667,19 @@ impl ServerHandler for GlossqlMcp {
         // sessionless: the ask is an MRTR `input_required` result
         // (SEP-2322) and the answer arrives on the client's retry of
         // this same call. Session lifecycles get the server→client
-        // request on this call's own stream instead. One question per
+        // request on this call's own stream instead. Cadence (ruled
+        // 2026-08-14, from the first live run): forms ride only calls
+        // that read the record — a metadata read, no writes — so the
+        // brief sweep and the stage read-backs carry the round while
+        // landings and judging queries run uninterrupted. A writing
+        // call re-opens what a decline deferred. One question per
         // call, only while the workspace derives open items; the
         // capability must come from the request's own stamp — the
         // transport's peer_info is synthetic on the sessionless path.
+        let shape = glossql_session::call_shape(statements);
+        if shape.writes {
+            self.deferred.lock().expect("deferred lock").clear();
+        }
         let mut probed = None;
         if let Some(responses) = &request.input_responses {
             let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
@@ -682,10 +694,11 @@ impl ServerHandler for GlossqlMcp {
             };
             println!("glossql ?? {id}: {note}");
             probed = Some(note);
-        } else if context
-            .client_capabilities()
-            .and_then(|caps| caps.elicitation)
-            .is_some()
+        } else if shape.reviews
+            && context
+                .client_capabilities()
+                .and_then(|caps| caps.elicitation)
+                .is_some()
         {
             if let Some(question) = self.derive_question(&session, true).await {
                 match question.params() {

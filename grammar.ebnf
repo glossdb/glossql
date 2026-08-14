@@ -102,10 +102,19 @@ pair_path         = rel_side, rel_op, rel_side ;
 (* -- glossary ----------------------------------------------------------- *)
 
 aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind,
-                    [ "ON", grain, { ",", grain } ] ;
+                    [ "ON", grain, { ",", grain },
+                      [ "WHEN", name, "=", string ] ] ;
 grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                     (* the subject classes glosses may attach to;
-                       absent = all *)
+                       absent = all. WHEN names a sibling aspect and a
+                       value (ruled 2026-08-14): the aspect is owed on a
+                       subject only while that aspect's collapsed body
+                       carries `value` = the literal — bounds
+                       `unassessed` disclosure and every count derived
+                       from it; writes stay gated by grain alone, and a
+                       spoken slot outside its condition serves
+                       normally. The literal is validated against the
+                       named aspect's `value` enum when it has one. *)
 aspect_kind       = "MEASUREMENT"            (* never glossed; value = bound
                                                 function's cached JSON output *)
                   | "FACT"                   (* authored assertion; WITH schema

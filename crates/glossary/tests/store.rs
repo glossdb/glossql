@@ -764,6 +764,139 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
     );
 }
 
+// -- conditional relevance (ruled 2026-08-14) ------------------------------
+
+#[tokio::test]
+async fn a_condition_narrows_what_a_subject_owes() {
+    let s = store().await;
+    let Declaration::Aspect(role) = decl(
+        r#"DECLARE ASPECT role WITH $${
+            "type": "object", "properties": {"value": {"enum": ["key", "measure"]}}
+        }$$ AS FACT ON COLUMN;"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&role).await.unwrap();
+    let Declaration::Aspect(behavior) = decl(
+        r#"DECLARE ASPECT behavior WITH $${
+            "type": "object", "properties": {"value": {"type": "string"}}
+        }$$ AS FACT ON COLUMN WHEN role = 'measure';"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&behavior).await.unwrap();
+    for statement in [
+        "DECLARE WITNESS role_w ON role BY (AGENT, HUMAN);",
+        "DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN);",
+    ] {
+        let Declaration::Witness(w) = decl(statement) else {
+            unreachable!()
+        };
+        s.declare_witness(&w).await.unwrap();
+    }
+    let ctx = ReadContext {
+        universe: vec!["orders.amount".into(), "orders.customer_id".into()],
+        ..Default::default()
+    };
+
+    // Before any role is spoken, no column owes behavior — role is the
+    // whole backlog.
+    let rows = s
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .await
+        .unwrap();
+    assert!(
+        !rows.iter().any(|r| r.aspect == "behavior"),
+        "{rows:?}"
+    );
+
+    // role lands — measure on amount, key on customer_id — and behavior
+    // is owed on the measure alone.
+    for (subject, body) in [
+        ("orders.amount", r#"GLOSS role ON orders.amount AS $${"value": "measure"}$$;"#),
+        (
+            "orders.customer_id",
+            r#"GLOSS role ON orders.customer_id AS $${"value": "key"}$$;"#,
+        ),
+    ] {
+        let g = gloss(body);
+        s.gloss("fin", &agent(), "role", subject, &g.body, None)
+            .await
+            .unwrap();
+    }
+    let rows = s
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .await
+        .unwrap();
+    let behavior_states: Vec<(String, String)> = rows
+        .iter()
+        .filter(|r| r.aspect == "behavior")
+        .map(|r| (r.subject.clone(), r.state.clone()))
+        .collect();
+    assert_eq!(
+        behavior_states,
+        vec![("orders.amount".into(), "unassessed".into())],
+        "{rows:?}"
+    );
+
+    // A spoken slot outside its condition still serves — the condition
+    // bounds disclosure, never writes.
+    let g = gloss(r#"GLOSS behavior ON orders.customer_id AS $${"value": "none"}$$;"#);
+    s.gloss("fin", &agent(), "behavior", "orders.customer_id", &g.body, None)
+        .await
+        .unwrap();
+    let rows = s
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .await
+        .unwrap();
+    assert!(
+        rows.iter().any(|r| r.aspect == "behavior"
+            && r.subject == "orders.customer_id"
+            && r.state == "current"),
+        "{rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_condition_is_validated_at_declare() {
+    let s = store().await;
+    // Referencing an undeclared aspect is refused.
+    let Declaration::Aspect(unanchored) = decl(
+        r#"DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';"#,
+    ) else {
+        unreachable!()
+    };
+    let e = s.declare_aspect(&unanchored).await.unwrap_err();
+    assert!(matches!(e, Error::BadCondition { .. }), "{e}");
+
+    // With role declared, a literal outside its enum is a typo, refused.
+    let Declaration::Aspect(role) = decl(
+        r#"DECLARE ASPECT role WITH $${
+            "type": "object", "properties": {"value": {"enum": ["key", "measure"]}}
+        }$$ AS FACT ON COLUMN;"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&role).await.unwrap();
+    let Declaration::Aspect(typo) = decl(
+        r#"DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measrue';"#,
+    ) else {
+        unreachable!()
+    };
+    let e = s.declare_aspect(&typo).await.unwrap_err();
+    assert!(matches!(e, Error::BadCondition { .. }), "{e}");
+
+    // The spelled-right condition lands; identical redeclaration stays
+    // a no-op.
+    let Declaration::Aspect(currency) = decl(
+        r#"DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&currency).await.unwrap();
+    s.declare_aspect(&currency).await.unwrap();
+}
+
 // -- what the adversarial review found (2026-08-06) ------------------------
 
 #[tokio::test]

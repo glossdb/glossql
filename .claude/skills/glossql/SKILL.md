@@ -47,7 +47,7 @@ calls: the server keeps one session per actor.
 | `DECLARE RECIPE orders ON fin FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table | §3 |
 | `DROP TABLE orders;` | remove a table — refused while it holds data | §3 |
 | `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple: `a.(x, y) -> b.(x, y)` | §4 |
-| `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, …];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; SOURCE-grain slots read and supersede across datasets | §5.1 |
+| `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets | §5.1 |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
 | `DECLARE FUNCTION f FOR fin\|GLOBAL FROM 'f.rhai' [ACCEPTS (…)] [RETURNS aspect];` | register a script (see the glossql-functions skill) | §6 |
@@ -102,11 +102,16 @@ The connect-time brief the door serves counts what stands — human
 writings, approvals awaiting your re-declare, and **judgment
 questions** (assumptions below full confidence — conventions and
 definitions the data cannot arbitrate). While that count is above
-zero, trigger the round: a client with question forms serves one
-question per tool call, so keep calling until it stays quiet; a
-client without them gets nothing — relay the open questions in chat
-yourself, multiple choice with your grounds, and run the statement
-the answer names.
+zero, sweep the round. Forms ride record reads (the cadence ruling,
+2026-08-14): a call that reads the glossary — `GLOSSARY()`,
+`ATTEST()`, the store relations — and writes nothing carries one
+question form; landing calls and plain data reads run uninterrupted.
+So the sweep is exactly the brief's own reads, repeated until the
+round stays quiet. A human's decline rests only while the workspace
+holds still — your next write re-opens it for the next review. A
+client without question forms gets nothing — relay the open questions
+in chat yourself, multiple choice with your grounds, and run the
+statement the answer names.
 
 Then close what owes an act, in the same session:
 

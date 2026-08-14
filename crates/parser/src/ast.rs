@@ -109,6 +109,12 @@ pub struct AspectDecl {
     /// `ON grain, …` — the subject classes glosses may attach to (ruled
     /// 2026-08-05); empty = all grains.
     pub grains: Vec<Grain>,
+    /// `WHEN aspect = 'value'` — conditional relevance (ruled
+    /// 2026-08-14): the aspect is owed on a subject only while the
+    /// named sibling aspect's collapsed body carries `value` = the
+    /// literal. Bounds `unassessed` disclosure only; writes stay gated
+    /// by grain, and a spoken slot outside its condition serves.
+    pub condition: Option<(Ident, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

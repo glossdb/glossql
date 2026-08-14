@@ -1,6 +1,5 @@
 ---
 source: crates/parser/tests/statements.rs
-assertion_line: 48
 expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT meaning WITH $${\"type\": \"object\"}$$ AS FACT ON TABLE, COLUMN, RELATIONSHIP;\"#).expect(\"must parse\")"
 ---
 [
@@ -24,6 +23,7 @@ expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT meaning WITH $${\"ty
                     Column,
                     Relationship,
                 ],
+                condition: None,
             },
         ),
     ),
