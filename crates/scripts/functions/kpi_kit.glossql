@@ -120,8 +120,7 @@ DECLARE ASPECT ruling WITH $${
                    "key": {"type": "string"},
                    "assumption": {"type": "string"},
                    "stance": {"enum": ["confirmed", "corrected"]},
-                   "note": {"type": "string"},
-                   "settles_with": {"type": "array", "items": {"type": "string"}}}}}}
+                   "note": {"type": "string"}}}}}
 }$$ AS FACT;
 
 -- Witnesses: who may speak, and which claims the door owes a question

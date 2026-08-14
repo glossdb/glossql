@@ -142,19 +142,19 @@ pub async fn amend_tools_list(request: Request, next: Next) -> Response {
 pub struct BriefFacts {
     counts: glossql_glossary::BriefCounts,
     questions: usize,
+    conflicts: usize,
 }
 
 /// The brief's shared state, one per door process: the composed line
-/// (served in the initialize instructions), the facts it renders, and
-/// what each actor was last told. Delivery is per audience — each
-/// agent hears about a move exactly once, on its own next call —
-/// because the counts are workspace-wide while the listeners are not
-/// (with one shared baseline, only the mover was ever told).
+/// (served in the initialize instructions) and the facts it renders.
+/// One shared baseline — the call that moved the facts carries the new
+/// line back. A second agent on the same workspace hears nothing until
+/// its own call moves something; that is a known gap, kept open rather
+/// than paid for with per-actor state no run has needed.
 #[derive(Default)]
 pub struct Brief {
     line: std::sync::RwLock<String>,
     facts: std::sync::RwLock<Option<BriefFacts>>,
-    told: std::sync::RwLock<std::collections::HashMap<String, BriefFacts>>,
 }
 
 impl Brief {
@@ -174,9 +174,9 @@ pub struct GlossqlMcp {
     /// 2026-08-14): one composed line over live counts, appended to
     /// the instructions every initialize/discover serves — and, since
     /// a client fetches those once per connection, ALSO appended as a
-    /// content block to any tool result whose call finds the facts
-    /// moved since this actor was last told. Shared across the
-    /// per-session handler instances; refreshed after every tool call.
+    /// content block to any tool result whose call moved the facts.
+    /// Shared across the per-session handler instances; refreshed after
+    /// every tool call.
     brief: Arc<Brief>,
     /// Questions the human declined — transport state, never the
     /// store (no ledger, ruled 2026-08-13). A decline rests only
@@ -217,6 +217,7 @@ impl GlossqlMcp {
     /// The facts and their rendering, in one read pass.
     async fn compose_brief(plane: &Plane) -> (Option<BriefFacts>, String) {
         let questions = open_question_count(plane).await.unwrap_or(0);
+        let conflicts = conflict_count(plane).await.unwrap_or(0);
         match plane.store().brief_counts().await {
             Ok(counts) => {
                 let mut line = format!(
@@ -256,11 +257,26 @@ impl GlossqlMcp {
                         if questions == 1 { "s" } else { "" },
                     ));
                 }
+                if conflicts > 0 {
+                    line.push_str(&format!(
+                        "; {} claim{} ruled two ways — read `ruling_conflicts` and \
+                         reconcile in your own groundings",
+                        conflicts,
+                        if conflicts == 1 { " is" } else { "s are" },
+                    ));
+                }
                 line.push_str(
                     ". Start with the brief the glossql skill teaches — human slots, \
                      contested, red bands, the open queue — before acting.",
                 );
-                (Some(BriefFacts { counts, questions }), line)
+                (
+                    Some(BriefFacts {
+                        counts,
+                        questions,
+                        conflicts,
+                    }),
+                    line,
+                )
             }
             // No facts on a failed read: the door says so in the line
             // and tells the next caller again rather than recording a
@@ -279,66 +295,17 @@ impl GlossqlMcp {
     /// stays silent.
     async fn derive_question(&self, session: &Session, skip_deferred: bool) -> Option<Question> {
         let deferred = self.deferred.lock().expect("deferred lock").clone();
-        // Contradicting rulings first: a mis-click should be caught
-        // before anything else piles on.
-        if let Ok(rows) = read_rows(session, CONTRA_SQL).await {
-            for row in rows {
-                let Some(q) = contradiction_from(&row) else {
-                    continue;
-                };
-                if skip_deferred && deferred.contains(&q.key()) {
-                    continue;
-                }
-                return Some(q);
-            }
-        }
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
             println!("glossql ?? question-round: the loose derivation failed: {e}");
         }
         if let Ok(rows) = loose {
             for row in rows {
-                let Some(mut q) = loose_from(&row) else {
+                let Some(q) = loose_from(&row) else {
                     continue;
                 };
-                if skip_deferred && deferred.contains(&q.key()) {
+                if skip_deferred && deferred.contains(&q.id()) {
                     continue;
-                }
-                // The (b) inform: the same KEY already ruled on a
-                // sibling aspect rides the form's message — one lookup
-                // for the one question actually served.
-                if let Question::Loose {
-                    subject,
-                    aspect,
-                    key,
-                    sibling,
-                    ..
-                } = &mut q
-                {
-                    let escaped = key.replace('\'', "''");
-                    let sql = format!(
-                        "WITH entries AS ( \
-                            SELECT r.subject AS subject, \
-                                   json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect, \
-                                   json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key, \
-                                   json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'stance') AS stance \
-                            FROM glossary r \
-                            CROSS JOIN generate_series(0, 199) AS rj(j) \
-                            WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
-                              AND NOT EXISTS (SELECT 1 FROM glossary r2 \
-                                              WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
-                                                AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
-                              AND rj.j < json_length(r.body, 'rulings')) \
-                        SELECT aspect, stance FROM entries \
-                        WHERE subject = '{subject}' AND key = '{escaped}' \
-                          AND aspect <> '{aspect}' LIMIT 1"
-                    );
-                    if let Ok(rows) = read_rows(session, &sql).await
-                        && let Some(r) = rows.first()
-                        && let (Some(a), Some(s)) = (r["aspect"].as_str(), r["stance"].as_str())
-                    {
-                        *sibling = Some(format!("{s} on {a}"));
-                    }
                 }
                 return Some(q);
             }
@@ -352,19 +319,15 @@ impl GlossqlMcp {
         // Walk the live derivation for the key rather than trusting
         // the echoed shape.
         let mut probe = self.derive_all(session).await;
-        probe.retain(|q| q.key() == key);
+        probe.retain(|q| q.id() == key);
         probe.pop()
     }
 
     async fn derive_all(&self, session: &Session) -> Vec<Question> {
-        let mut all = Vec::new();
-        if let Ok(rows) = read_rows(session, CONTRA_SQL).await {
-            all.extend(rows.iter().filter_map(contradiction_from));
+        match read_rows(session, LOOSE_SQL).await {
+            Ok(rows) => rows.iter().filter_map(loose_from).collect(),
+            Err(_) => Vec::new(),
         }
-        if let Ok(rows) = read_rows(session, LOOSE_SQL).await {
-            all.extend(rows.iter().filter_map(loose_from));
-        }
-        all
     }
 
     /// Land what the human said — or defer, or hand a correction to
@@ -383,107 +346,48 @@ impl GlossqlMcp {
         let Some(question) = self.question_for_key(session, key).await else {
             return "question-round: the question no longer stands — nothing landed".into();
         };
-        match question {
-            Question::Loose {
-                subject,
-                aspect,
-                key,
-                dimension,
-                assumption,
-                ..
-            } => {
-                let entry = RulingEntry {
-                    subject: &subject,
-                    aspect: &aspect,
-                    dimension: &dimension,
-                    key: &key,
-                    assumption: &assumption,
-                    stance: "confirmed",
-                    note: None,
-                    settles_with: None,
-                };
-                match content.get("stance").and_then(|v| v.as_str()) {
-                    Some("stands as stated") => self.land_ruling(session, entry).await,
-                    Some("wrong") => {
-                        let correction = content
-                            .get("correction")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("(no correction text)");
-                        // The correction writes its own record — a
-                        // message alone left the question deriving
-                        // forever (the 2026-08-14 run). The
-                        // re-grounding stays the agent's work; the
-                        // ruling holds the question closed while they
-                        // do it.
-                        let note = self
-                            .land_ruling(
-                                session,
-                                RulingEntry {
-                                    stance: "corrected",
-                                    note: Some(correction.to_string()),
-                                    ..entry
-                                },
-                            )
-                            .await;
-                        format!("{note} — the human's correction: {correction}")
-                    }
-                    _ => "question-round: the answer names no stance".into(),
-                }
+        let Question {
+            subject,
+            aspect,
+            key,
+            dimension,
+            assumption,
+            ..
+        } = question;
+        let entry = RulingEntry {
+            subject: &subject,
+            aspect: &aspect,
+            dimension: &dimension,
+            key: &key,
+            assumption: &assumption,
+            stance: "confirmed",
+            note: None,
+        };
+        match content.get("stance").and_then(|v| v.as_str()) {
+            Some("stands as stated") => self.land_ruling(session, entry).await,
+            Some("wrong") => {
+                let correction = content
+                    .get("correction")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(no correction text)");
+                // The correction writes its own record — a message
+                // alone left the question deriving forever (the
+                // 2026-08-14 run). The re-grounding stays the agent's
+                // work; the ruling holds the question closed while
+                // they do it.
+                let note = self
+                    .land_ruling(
+                        session,
+                        RulingEntry {
+                            stance: "corrected",
+                            note: Some(correction.to_string()),
+                            ..entry
+                        },
+                    )
+                    .await;
+                format!("{note} — the human's correction: {correction}")
             }
-            Question::Contradiction {
-                subject,
-                newer_aspect,
-                older_aspect,
-                dimension,
-                key,
-                assumption,
-                newer_stance,
-                older_stance,
-            } => {
-                let entry = RulingEntry {
-                    subject: &subject,
-                    aspect: &newer_aspect,
-                    dimension: &dimension,
-                    key: &key,
-                    assumption: &assumption,
-                    stance: &newer_stance,
-                    note: None,
-                    settles_with: None,
-                };
-                match content.get("resolution").and_then(|v| v.as_str()) {
-                    Some(r) if r.starts_with("a slip") => {
-                        self.land_ruling(
-                            session,
-                            RulingEntry {
-                                stance: &older_stance,
-                                note: Some(format!(
-                                    "re-ruled: the earlier {newer_stance} was a slip \
-                                     ({older_aspect} rules `{key}` too)"
-                                )),
-                                ..entry
-                            },
-                        )
-                        .await
-                    }
-                    // The pair is settled STRUCTURALLY — the sibling's
-                    // name joins this entry's `settles_with` list, and
-                    // the derivation excludes the pair by an aspect-name
-                    // match. The prose note is for the human faces and
-                    // is never read back.
-                    Some(r) if r.starts_with("deliberate") => {
-                        self.land_ruling(
-                            session,
-                            RulingEntry {
-                                note: Some(format!("differs from {older_aspect} by design")),
-                                settles_with: Some(&older_aspect),
-                                ..entry
-                            },
-                        )
-                        .await
-                    }
-                    _ => "question-round: the answer names no resolution".into(),
-                }
-            }
+            _ => "question-round: the answer names no stance".into(),
         }
     }
 
@@ -508,7 +412,6 @@ impl GlossqlMcp {
             assumption,
             stance,
             note,
-            settles_with,
         } = ruling;
         if !ident_path(subject, 3) || !ident_path(aspect, 1) {
             return "question-round: refused: not an identifier path".into();
@@ -531,16 +434,7 @@ impl GlossqlMcp {
             return "question-round: the standing ruling slot is not a ruling body".into();
         };
         // A re-ruling on the same (aspect, key) replaces its entry —
-        // the slot is the standing judgment, not a transcript. The
-        // pairs already settled as deliberate ride along: they are
-        // the human's word too, and losing them would re-ask a
-        // question they have answered.
-        let mut settled: Vec<serde_json::Value> = rulings
-            .iter()
-            .filter(|r| r["aspect"] == *aspect && r["key"] == *key)
-            .filter_map(|r| r["settles_with"].as_array().cloned())
-            .next()
-            .unwrap_or_default();
+        // the slot is the standing judgment, not a transcript.
         rulings.retain(|r| !(r["aspect"] == *aspect && r["key"] == *key));
         let mut entry = serde_json::json!({
             "aspect": aspect,
@@ -551,15 +445,6 @@ impl GlossqlMcp {
         });
         if let Some(note) = note {
             entry["note"] = serde_json::json!(note);
-        }
-        if let Some(other) = settles_with {
-            let other = serde_json::json!(other);
-            if !settled.contains(&other) {
-                settled.push(other);
-            }
-        }
-        if !settled.is_empty() {
-            entry["settles_with"] = serde_json::Value::Array(settled);
         }
         rulings.push(entry);
         match self
@@ -671,12 +556,27 @@ async fn open_question_count(plane: &Plane) -> Option<usize> {
         id: crate::HUMAN.into(),
     };
     let session = plane.channel(actor, Some(&dataset)).await.ok()?;
-    let loose = read_rows(&session, LOOSE_SQL).await.ok()?.len();
-    let contra = read_rows(&session, CONTRA_SQL)
-        .await
-        .map(|r| r.len())
-        .unwrap_or(0);
-    Some(loose + contra)
+    Some(read_rows(&session, LOOSE_SQL).await.ok()?.len())
+}
+
+/// Claims the human ruled two ways — a read, not a round. Counted for
+/// the brief so an agent hears about the tension; nothing asks about
+/// it, and reconciling is the agent's act in its own groundings.
+async fn conflict_count(plane: &Plane) -> Option<usize> {
+    let mut names = plane.datasets().await.ok()?;
+    names.sort();
+    let dataset = names.into_iter().next()?;
+    let actor = Actor {
+        kind: ActorKind::Human,
+        id: crate::HUMAN.into(),
+    };
+    let session = plane.channel(actor, Some(&dataset)).await.ok()?;
+    Some(
+        read_rows(&session, "SELECT * FROM ruling_conflicts")
+            .await
+            .ok()?
+            .len(),
+    )
 }
 
 /// The round's opaque state tag, echoed by MRTR retries. Untrusted —
@@ -686,10 +586,7 @@ const ROUND_STATE: &str = "question-round:v1";
 /// One entry of the human's `ruling` slot, as the door composes it.
 /// `key` names the claim (the join column); `assumption` is the prose
 /// the human read, kept for the record and never matched; `note` is
-/// display; `settles_with` names a sibling ASPECT whose differing
-/// stance on this key the human called deliberate — an identifier, so
-/// the derivation can exclude the pair by name instead of hunting for
-/// a phrase inside a sentence.
+/// display.
 struct RulingEntry<'a> {
     subject: &'a str,
     aspect: &'a str,
@@ -698,139 +595,46 @@ struct RulingEntry<'a> {
     assumption: &'a str,
     stance: &'a str,
     note: Option<String>,
-    settles_with: Option<&'a str>,
 }
 
-/// Judged assumptions below full confidence, winning slot only (the
-/// same guard as the app's queue frame). This is the round's ONLY
-/// derivation: unassessed witnessed claims (behavior, unit, role) are
-/// the agent's measurement backlog, never human questions — the
-/// shipped functions settle them (ruled 2026-08-13).
-/// Contradicting rulings, asked before anything else (ruled
-/// 2026-08-14): two standing entries on one subject rule THE SAME KEY
-/// to different stances on different aspects. The key is the agent's
-/// declared identity for the claim (`goods-only`), written at
-/// disclosure and stable across rephrasing — assumption prose is
-/// display and never a join column (STRING EQUALITY ON NON-KEYS IS
-/// FORBIDDEN, ruled 2026-08-14). The live case was a mis-click; the
-/// form catches it, or records the difference as deliberate — the
-/// sibling ASPECT's name joins the newer entry's `settles_with` list,
-/// and the `settled` anti-join then excludes that pair by name (an
-/// identifier match, not a phrase hunt inside a sentence). Either
-/// answer terminates. Known and accepted: the same claim disclosed
-/// under two DIFFERENT keys is not paired here, and nothing pairs it —
-/// the human's own reading of the ruling faces is the only net, by
-/// ruling.
-const CONTRA_SQL: &str = "WITH entries AS ( \
-        SELECT r.subject AS subject, rj.j AS j, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect, \
-               coalesce(json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'dimension'), '-') AS dimension, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key, \
-               coalesce(json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'assumption'), '') AS assumption, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'stance') AS stance \
-        FROM glossary r \
-        CROSS JOIN generate_series(0, 199) AS rj(j) \
-        WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
-          AND NOT EXISTS (SELECT 1 FROM glossary r2 \
-                          WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
-                            AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
-          AND rj.j < json_length(r.body, 'rulings')), \
-    settled AS ( \
-        SELECT r.subject AS subject, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'aspect') AS aspect, \
-               json_get_str(json_get(json_get(r.body, 'rulings'), rj.j), 'key') AS key, \
-               json_get_str(json_get(json_get(json_get(r.body, 'rulings'), rj.j), 'settles_with'), sk.k) AS other \
-        FROM glossary r \
-        CROSS JOIN generate_series(0, 199) AS rj(j) \
-        CROSS JOIN generate_series(0, 9) AS sk(k) \
-        WHERE r.aspect = 'ruling' AND r.actor_kind = 'human' \
-          AND NOT EXISTS (SELECT 1 FROM glossary r2 \
-                          WHERE r2.subject = r.subject AND r2.aspect = 'ruling' \
-                            AND r2.actor_kind = 'human' AND r2.written_at > r.written_at) \
-          AND rj.j < json_length(r.body, 'rulings') \
-          AND sk.k < coalesce(json_length(json_get(json_get(r.body, 'rulings'), rj.j), 'settles_with'), 0)) \
-    SELECT a.subject, a.aspect AS newer_aspect, b.aspect AS older_aspect, \
-           a.dimension, a.key, a.assumption, \
-           a.stance AS newer_stance, b.stance AS older_stance \
-    FROM entries a \
-    JOIN entries b ON a.subject = b.subject AND a.key = b.key \
-      AND a.aspect <> b.aspect AND a.stance <> b.stance AND a.j > b.j \
-    WHERE a.key IS NOT NULL \
-      AND NOT EXISTS (SELECT 1 FROM settled s \
-                      WHERE s.subject = a.subject AND s.aspect = a.aspect \
-                        AND s.key = a.key AND s.other = b.aspect) \
-    ORDER BY a.subject, a.aspect";
-
-/// What still stands open for a human to judge. The derivation is the
-/// shipped read — `crates/session/reads/open_questions.sql`, which
-/// carries the gates and the reasons — and the door only orders and
-/// serves it. The app's queue renders the same read; the skills name
-/// it. One file, three consumers. Least-confident first, and the
-/// ordering rides here because an inner ORDER BY does not survive a
-/// derived relation.
+/// What still stands open for a human to judge, and the round's ONLY
+/// derivation — unassessed witnessed claims (behavior, unit, role) are
+/// the agent's measurement backlog, never human questions, and the
+/// shipped functions settle them (ruled 2026-08-13). The derivation
+/// itself is `crates/session/reads/open_questions.sql`, which carries
+/// the gates and the reasons; the door only orders and serves it, and
+/// the app's docket renders the same read. Least-confident first, and
+/// the ordering rides here because an inner ORDER BY does not survive
+/// a derived relation.
 const LOOSE_SQL: &str =
     "SELECT * FROM open_questions ORDER BY conf ASC, subject, aspect, idx";
 
 fn loose_from(row: &serde_json::Value) -> Option<Question> {
-    Some(Question::Loose {
+    Some(Question {
         subject: row["subject"].as_str()?.into(),
         aspect: row["aspect"].as_str()?.into(),
         key: row["key"].as_str()?.into(),
         dimension: row["dimension"].as_str().unwrap_or("-").into(),
         assumption: row["assumption"].as_str().unwrap_or("").into(),
         confidence: row["conf"].as_f64().unwrap_or(0.0),
-        sibling: None,
+        sibling: row["sibling"].as_str().map(str::to_string),
     })
 }
 
-fn contradiction_from(row: &serde_json::Value) -> Option<Question> {
-    Some(Question::Contradiction {
-        subject: row["subject"].as_str()?.into(),
-        newer_aspect: row["newer_aspect"].as_str()?.into(),
-        older_aspect: row["older_aspect"].as_str()?.into(),
-        dimension: row["dimension"].as_str().unwrap_or("-").into(),
-        key: row["key"].as_str()?.into(),
-        assumption: row["assumption"].as_str().unwrap_or("").into(),
-        newer_stance: row["newer_stance"].as_str()?.into(),
-        older_stance: row["older_stance"].as_str()?.into(),
-    })
-}
-
-/// One open question, derived — never stored. The key names it in
-/// the MRTR map; the form is composed from it.
-enum Question {
-    /// A judged assumption below full confidence. `key` is the
-    /// agent's declared identity for the claim; `assumption` is the
-    /// prose the human reads — two aspects may word one claim
-    /// differently, and only the key pairs them. `sibling` carries the
-    /// (b) inform (ruled 2026-08-14): the same key already ruled on a
-    /// sibling aspect, named in the form so the human answers
-    /// knowingly.
-    Loose {
-        subject: String,
-        aspect: String,
-        key: String,
-        dimension: String,
-        assumption: String,
-        confidence: f64,
-        sibling: Option<String>,
-    },
-    /// Two standing rulings on one subject rule the same key to
-    /// different stances (ruled 2026-08-14 — the live case was a
-    /// mis-click: goods-only confirmed on purchases, corrected on
-    /// dpo). Asked before anything else; either answer terminates —
-    /// a realign flips the newer entry, a "deliberate" stamps its
-    /// note with the sibling's name, which the derivation excludes.
-    Contradiction {
-        subject: String,
-        newer_aspect: String,
-        older_aspect: String,
-        dimension: String,
-        key: String,
-        assumption: String,
-        newer_stance: String,
-        older_stance: String,
-    },
+/// One open question, derived — never stored. `key` is the agent's
+/// declared identity for the claim; `assumption` is the prose the
+/// human reads — two aspects may word one claim differently, and only
+/// the key pairs them. `sibling` is what the human already ruled on
+/// that same key under another aspect, carried by the read so the form
+/// can say so while asking.
+struct Question {
+    subject: String,
+    aspect: String,
+    key: String,
+    dimension: String,
+    assumption: String,
+    confidence: f64,
+    sibling: Option<String>,
 }
 
 impl Question {
@@ -838,93 +642,43 @@ impl Question {
     /// set's member. Built from identity (subject, aspect, the
     /// assumption's key), so it survives a re-record that reorders the
     /// assumptions array.
-    fn key(&self) -> String {
-        match self {
-            Question::Loose {
-                subject,
-                aspect,
-                key,
-                ..
-            } => format!("loose:{subject}:{aspect}:{key}"),
-            Question::Contradiction {
-                subject,
-                newer_aspect,
-                key,
-                ..
-            } => format!("contra:{subject}:{newer_aspect}:{key}"),
-        }
+    fn id(&self) -> String {
+        format!("loose:{}:{}:{}", self.subject, self.aspect, self.key)
     }
 
     fn params(&self) -> Result<ElicitRequestParams, String> {
-        match self {
-            Question::Loose {
-                subject,
-                aspect,
-                dimension,
-                assumption,
-                confidence,
-                sibling,
-                ..
-            } => {
-                let schema = ElicitationSchema::builder()
-                    .required_enum_schema(
-                        "stance",
-                        EnumSchema::builder(vec![
-                            "stands as stated".into(),
-                            "wrong".into(),
-                        ])
-                        .build(),
-                    )
-                    .optional_string("correction")
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                let pointer = match sibling {
-                    Some(s) => format!(" Note: you ruled this same claim {s}."),
-                    None => String::new(),
-                };
-                Ok(ElicitRequestParams::FormElicitationParams {
-                    meta: None,
-                    message: format!(
-                        "{subject} · {aspect} — {dimension}: \"{assumption}\" \
-                         (confidence {confidence}).{pointer} Does this stand? If wrong, \
-                         say what is right. Decline to defer."
-                    ),
-                    requested_schema: schema,
-                })
-            }
-            Question::Contradiction {
-                subject,
-                newer_aspect,
-                older_aspect,
-                key,
-                assumption,
-                newer_stance,
-                older_stance,
-                ..
-            } => {
-                let schema = ElicitationSchema::builder()
-                    .required_enum_schema(
-                        "resolution",
-                        EnumSchema::builder(vec![
-                            format!("a slip — {newer_aspect} should read {older_stance} too"),
-                            "deliberate — both stand as ruled".into(),
-                        ])
-                        .build(),
-                    )
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                Ok(ElicitRequestParams::FormElicitationParams {
-                    meta: None,
-                    message: format!(
-                        "{subject} · `{key}` — \"{assumption}\" — is ruled {older_stance} \
-                         on {older_aspect} but {newer_stance} on {newer_aspect}. One \
-                         claim, two stances: is the difference deliberate? Decline to \
-                         defer."
-                    ),
-                    requested_schema: schema,
-                })
-            }
-        }
+        let Question {
+            subject,
+            aspect,
+            dimension,
+            assumption,
+            confidence,
+            sibling,
+            ..
+        } = self;
+        let schema = ElicitationSchema::builder()
+            .required_enum_schema(
+                "stance",
+                EnumSchema::builder(vec!["stands as stated".into(), "wrong".into()]).build(),
+            )
+            .optional_string("correction")
+            .build()
+            .map_err(|e| e.to_string())?;
+        // What they already ruled on this same claim elsewhere rides
+        // the message, so the answer is given knowingly.
+        let pointer = match sibling {
+            Some(s) => format!(" Note: you ruled this same claim {s}."),
+            None => String::new(),
+        };
+        Ok(ElicitRequestParams::FormElicitationParams {
+            meta: None,
+            message: format!(
+                "{subject} · {aspect} — {dimension}: \"{assumption}\" \
+                 (confidence {confidence}).{pointer} Does this stand? If wrong, \
+                 say what is right. Decline to defer."
+            ),
+            requested_schema: schema,
+        })
     }
 }
 
@@ -1049,10 +803,10 @@ impl ServerHandler for GlossqlMcp {
                         {
                             let mut asks = InputRequests::new();
                             asks.insert(
-                                question.key(),
+                                question.id(),
                                 InputRequest::Elicitation(ElicitRequest::new(params)),
                             );
-                            println!("glossql ?? {id}: question-round: asking {}", question.key());
+                            println!("glossql ?? {id}: question-round: asking {}", question.id());
                             return Ok(InputRequiredResult::new(
                                 Some(asks),
                                 Some(ROUND_STATE.into()),
@@ -1071,7 +825,7 @@ impl ServerHandler for GlossqlMcp {
                             .await;
                         let note = match asked {
                             Ok(answer) => {
-                                self.digest_round(&question.key(), answer, &session).await
+                                self.digest_round(&question.id(), answer, &session).await
                             }
                             Err(e) => format!("question-round: no round-trip: {e}"),
                         };
@@ -1117,32 +871,16 @@ impl ServerHandler for GlossqlMcp {
         // saw the counts change). Two rules hold it honest:
         // movement is decided on the COUNTS, never on the rendered
         // line (a rendered string is display, not identity); and the
-        // baseline is per audience — what THIS actor was last told. A
-        // single shared baseline told only the mover, so a second
-        // agent never heard what the first one changed.
-        // An actor the door has not told yet is told: its first call
-        // repeats what its connect instructions already carried, once
-        // per actor per process. The alternative — assuming the
-        // handshake told it — is what left the second agent silent,
-        // and rmcp's `initialize` cannot be overridden to seed the
-        // baseline without re-implementing version negotiation.
+        // The baseline is the facts as they stood before this call.
+        // One shared baseline, so the mover hears it: a second agent
+        // watching the same workspace does not, and that is the known
+        // cost of not keeping per-actor state the run has never asked
+        // for.
+        let before = self.brief.facts.read().ok().and_then(|f| f.clone());
         Self::refresh_brief(&self.plane, &self.brief).await;
         let after = self.brief.facts.read().ok().and_then(|f| f.clone());
-        let brief_moved = after.and_then(|after| {
-            let told_before = self
-                .brief
-                .told
-                .read()
-                .ok()
-                .and_then(|told| told.get(&id).cloned());
-            if told_before.as_ref() == Some(&after) {
-                return None;
-            }
-            if let Ok(mut told) = self.brief.told.write() {
-                told.insert(id.clone(), after);
-            }
-            Some(format!("brief: {}", self.brief.line()))
-        });
+        let brief_moved = (after.is_some() && after != before)
+            .then(|| format!("brief: {}", self.brief.line()));
         Ok(match rendered {
             Ok(body) => {
                 let mut blocks = vec![ContentBlock::text(body.to_string())];

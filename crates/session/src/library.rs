@@ -14,11 +14,24 @@
 //! `read.<aspect>()` — same expansion, same call posture, different
 //! source of the SQL.
 
-/// Every shipped read, by the name it answers to in `FROM`.
-pub(crate) const LIBRARY: &[(&str, &str)] = &[(
-    "open_questions",
-    include_str!("../reads/open_questions.sql"),
-)];
+/// Every shipped read, by the name it answers to in `FROM`. Reads
+/// build on reads — `open_questions` and `ruling_conflicts` both read
+/// `ruling_entries` — which is the point of expanding them through the
+/// planner rather than executing them as strings.
+pub(crate) const LIBRARY: &[(&str, &str)] = &[
+    (
+        "ruling_entries",
+        include_str!("../reads/ruling_entries.sql"),
+    ),
+    (
+        "ruling_conflicts",
+        include_str!("../reads/ruling_conflicts.sql"),
+    ),
+    (
+        "open_questions",
+        include_str!("../reads/open_questions.sql"),
+    ),
+];
 
 /// The SQL behind a shipped read, or `None` for a name we do not ship —
 /// in which case the relation falls through to ordinary planning. A

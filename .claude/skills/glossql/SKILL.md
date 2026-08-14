@@ -144,9 +144,19 @@ FROM open_questions ORDER BY conf ASC;
 ```
 
 `open_questions` is the derivation itself, not a summary of it — the
-same rows the forms serve and the app's queue renders. Filter it like
+same rows the forms serve and the app's docket renders. Filter it like
 any table (`WHERE aspect = 'dso'`); order it where you read it, since
-a read carries no ordering of its own.
+a read carries no ordering of its own. `ruling_entries` is what the
+human has ruled; both build on it.
+
+**One key ruled two ways is yours to reconcile.** `ruling_conflicts`
+reports a claim confirmed on one aspect and corrected on another — it
+happened in a real run (`goods-only` confirmed on `purchases`,
+corrected on `dpo`). Nothing asks you about it and nothing resolves
+it: read the rows, decide whether the aspects genuinely differ, and
+record the reconciliation in the groundings themselves. Folding both
+in literally is how a ruled component ends up contradicting the metric
+that composes it.
 
 **Every disclosed assumption carries a `key`** — a short slug you
 write at disclosure (`goods-only`, `full-payment-settles`). The key

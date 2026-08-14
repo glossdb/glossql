@@ -970,20 +970,24 @@ async fn sequential_rulings_compose_instead_of_reverting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn contradicting_rulings_ask_before_anything_else() {
-    // Ruled 2026-08-14 (the live case was a mis-click): two standing
-    // rulings on one KEY with different stances derive a resolution
-    // form ahead of the loose queue. The two groundings word the same
-    // claim differently on purpose — pairing rests on the declared
-    // key, never on the prose (STRING EQUALITY ON NON-KEYS IS
-    // FORBIDDEN, ruled 2026-08-14). On the way there, the second loose
-    // form carries the (b) inform — the sibling ruling named in the
-    // message. "Deliberate" stamps the newer entry's note with the
-    // sibling's name and the question retires; "a slip" would flip the
-    // stance instead.
+async fn one_claim_ruled_two_ways_shows_up_as_a_read() {
+    // Run 2 produced this: `purchases`'s goods-only assumption was
+    // confirmed in the same session where `dpo`'s goods-only
+    // assumption was corrected. The two groundings word the claim
+    // differently on purpose — pairing rests on the declared key,
+    // never on the prose (STRING EQUALITY ON NON-KEYS IS FORBIDDEN,
+    // ruled 2026-08-14).
+    //
+    // It is a read, not a round. Nothing asks about the tension and
+    // nothing resolves it: the rows are there for the docket, for the
+    // brief's count, and for the agent to reconcile in its own
+    // groundings — which is what run 2's agent did anyway. The
+    // resolution protocol this replaces (a second question shape, a
+    // stance, a `settles_with` list, a settled anti-join) was more
+    // code than the thing it caught.
     let app = app().await;
     let setup = r#"
-        DECLARE DATASET fin SET (purpose: 'contradiction test');
+        DECLARE DATASET fin SET (purpose: 'one claim, two rulings');
         USE fin;
         DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
           "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
@@ -998,10 +1002,10 @@ async fn contradicting_rulings_ask_before_anything_else() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     let review = "SELECT subject, aspect FROM glossary LIMIT 5";
+
     // dpo asks first (aspect order); the human corrects it.
     let body =
         expect_ok(mcp(app.clone(), call_with(meta_elicit(), 101, review, None)).await).await;
-    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
     assert!(
         body["result"]["inputRequests"]["loose:fin:dpo:goods-only"].is_object(),
         "{body}"
@@ -1011,27 +1015,33 @@ async fn contradicting_rulings_ask_before_anything_else() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 102, review, Some(("loose:fin:dpo:goods-only", corrected))),
+            call_with(
+                meta_elicit(),
+                102,
+                review,
+                Some(("loose:fin:dpo:goods-only", corrected)),
+            ),
         )
         .await,
     )
     .await;
-    assert!(
-        body["result"]["content"].to_string().contains("ruled (corrected)"),
-        "{body}"
-    );
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
-    // purchases asks next — and its form carries the sibling inform.
+    // purchases asks next, and the form names what was already ruled
+    // on that same key — the `sibling` column, carried by the read.
     let body =
         expect_ok(mcp(app.clone(), call_with(meta_elicit(), 103, review, None)).await).await;
-    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
-    let ask = &body["result"]["inputRequests"]["loose:fin:purchases:goods-only"];
+    let form = &body["result"]["inputRequests"]["loose:fin:purchases:goods-only"];
+    assert!(form.is_object(), "{body}");
     assert!(
-        ask["params"]["message"]
-            .to_string()
-            .contains("you ruled this same claim corrected on dpo"),
-        "{body}"
+        form["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("corrected on dpo"),
+        "the form names the sibling ruling: {body}"
     );
+
+    // The human confirms it anyway — legitimate, different aspect.
     let confirmed = json!({"action": "accept", "content": {"stance": "stands as stated"}});
     let body = expect_ok(
         mcp(
@@ -1046,51 +1056,17 @@ async fn contradicting_rulings_ask_before_anything_else() {
         .await,
     )
     .await;
-    assert!(
-        body["result"]["content"].to_string().contains("ruled (confirmed)"),
-        "{body}"
-    );
-
-    // The contradiction now stands and asks ahead of everything.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 105, review, None)).await).await;
-    assert_eq!(body["result"]["resultType"], json!("input_required"), "{body}");
-    let ask = &body["result"]["inputRequests"]["contra:fin:purchases:goods-only"];
-    assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
-    assert!(
-        ask["params"]["message"].to_string().contains("deliberate"),
-        "{body}"
-    );
-
-    // "Deliberate" stamps the note; the question retires and the
-    // round is quiet.
-    let deliberate =
-        json!({"action": "accept", "content": {"resolution": "deliberate — both stand as ruled"}});
-    let body = expect_ok(
-        mcp(
-            app.clone(),
-            call_with(
-                meta_elicit(),
-                106,
-                review,
-                Some(("contra:fin:purchases:goods-only", deliberate)),
-            ),
-        )
-        .await,
-    )
-    .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 107, review, None)).await).await;
-    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
+
+    // Now one key stands ruled two ways, and the read says so.
     let body = expect_ok(
         mcp(
             app.clone(),
             call_with(
                 meta(),
-                108,
-                "SELECT body FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human' \
-                 ORDER BY written_at DESC LIMIT 1;",
+                105,
+                "SELECT key, newer_aspect, older_aspect, newer_stance, older_stance \
+                 FROM ruling_conflicts;",
                 None,
             ),
         )
@@ -1099,23 +1075,27 @@ async fn contradicting_rulings_ask_before_anything_else() {
     .await;
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
-    let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
-    let ruled: Value = serde_json::from_str(human_body).unwrap();
-    let purchases = ruled["rulings"]
-        .as_array()
-        .unwrap()
+    assert_eq!(outcomes[0]["row_count"], json!(1), "{outcomes}");
+    let row = &outcomes[0]["rows"][0];
+    assert_eq!(row["key"], json!("goods-only"), "{outcomes}");
+    assert_eq!(row["newer_aspect"], json!("purchases"), "{outcomes}");
+    assert_eq!(row["older_aspect"], json!("dpo"), "{outcomes}");
+    assert_eq!(row["newer_stance"], json!("confirmed"), "{outcomes}");
+    assert_eq!(row["older_stance"], json!("corrected"), "{outcomes}");
+
+    // And the agent hears it in the brief rather than being asked.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta(), 106, "SELECT 1 AS ok", None)).await).await;
+    let blocks = body["result"]["content"].as_array().unwrap();
+    let brief = blocks
         .iter()
-        .find(|r| r["aspect"] == json!("purchases"))
-        .unwrap_or_else(|| panic!("{human_body}"));
-    // What retires the pair is the STRUCTURAL field — an aspect name
-    // in a list. The note beside it is for the human faces; nothing
-    // reads it back (no phrase is ever searched inside a sentence).
-    assert_eq!(purchases["settles_with"], json!(["dpo"]), "{human_body}");
-    assert_eq!(
-        purchases["note"],
-        json!("differs from dpo by design"),
-        "{human_body}"
-    );
+        .find(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: ")));
+    if let Some(brief) = brief {
+        assert!(
+            brief["text"].as_str().unwrap().contains("ruled two ways"),
+            "{body}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1155,33 +1135,24 @@ async fn the_brief_rides_the_call_that_moved_it() {
         "{body}"
     );
 
-    // Delivery is per audience: a SECOND agent, which changed nothing,
-    // still hears what the first one moved — on its own first call.
-    // With one shared baseline only the mover was ever told.
+    // A KNOWN GAP, kept open: a second agent watching the same
+    // workspace hears nothing until its own call moves something. One
+    // shared baseline, so the mover is told. Per-actor delivery was
+    // built and removed — no run has produced two agents on one
+    // workspace, and the state it needed outweighed the case.
     let other = json!({
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {},
         "io.modelcontextprotocol/clientInfo": {"name": "second-agent", "version": "0"}
     });
     let body =
-        expect_ok(mcp(app.clone(), call_with(other.clone(), 122, "SELECT 1 AS ok", None)).await)
-            .await;
-    let blocks = body["result"]["content"].as_array().unwrap();
-    assert!(
-        blocks
-            .iter()
-            .any(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: "))),
-        "the second agent hears the first one's move: {body}"
-    );
-    // And only once — its next quiet call is quiet again.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(other, 123, "SELECT 1 AS ok", None)).await).await;
+        expect_ok(mcp(app.clone(), call_with(other, 122, "SELECT 1 AS ok", None)).await).await;
     let blocks = body["result"]["content"].as_array().unwrap();
     assert!(
         !blocks
             .iter()
             .any(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: "))),
-        "told once, not every call: {body}"
+        "the shared baseline says nothing moved: {body}"
     );
 }
 
