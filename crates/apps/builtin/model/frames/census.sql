@@ -19,7 +19,7 @@ loose AS (
                         WHERE h.subject = g.subject AND h.aspect = g.aspect
                           AND h.actor_kind = 'human'))
 ),
-owed AS (
+owed_here AS (
   SELECT count(*) AS n
   FROM GLOSSARY() c
   JOIN (SELECT subject FROM raw
@@ -64,4 +64,4 @@ SELECT
   (SELECT count(*) FROM witnesses) AS witnesses,
   (SELECT count(*) FROM raw WHERE kind = 'measurement') AS measurements,
   (SELECT n FROM loose) AS needs,
-  (SELECT n FROM waiting) + (SELECT n FROM owed) AS waiting
+  (SELECT n FROM waiting) + (SELECT n FROM owed_here) AS waiting

@@ -20,6 +20,11 @@
 /// planner rather than executing them as strings.
 pub(crate) const LIBRARY: &[(&str, &str)] = &[
     (
+        "agent_assumptions",
+        include_str!("../reads/agent_assumptions.sql"),
+    ),
+    ("owed", include_str!("../reads/owed.sql")),
+    (
         "ruling_entries",
         include_str!("../reads/ruling_entries.sql"),
     ),
@@ -35,9 +40,18 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
 ];
 
 /// The SQL behind a shipped read, or `None` for a name we do not ship —
-/// in which case the relation falls through to ordinary planning. A
-/// name we do ship is reserved: it shadows a workspace table called the
-/// same thing, as the store's relations already do.
+/// in which case the relation falls through to ordinary planning.
+///
+/// A name we do ship is RESERVED, and reserved harder than it looks: it
+/// shadows a workspace table of the same name, as the store's relations
+/// already do, and it also shadows a CTE an author declares in their own
+/// query. The planner seam sees the raw `TableFactor` before default
+/// planning and `RelationPlannerContext` (datafusion-expr-53.1.0
+/// planner.rs:400) exposes no CTE scope, so there is nothing to defer
+/// to — found the first time a shipped name met a frame's own
+/// `WITH owed AS (…)`. Keep the shipped set small and its names
+/// specific; a plain word like `owed` or `claims` is a name authors
+/// reach for.
 pub(crate) fn read_sql(name: &str) -> Option<&'static str> {
     LIBRARY
         .iter()
