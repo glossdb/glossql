@@ -497,3 +497,99 @@ async fn a_roster_swap_of_equal_length_is_refused() {
     .await;
     assert!(served.contains("changed the month roster"), "{served}");
 }
+
+/// Two rows a month, so a stock cannot be read off one of them and a
+/// ratio cannot be read as the sum of its parts.
+fn cells_table() -> (Arc<Schema>, RecordBatch) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("order_date", DataType::Date32, false),
+        Field::new("level", DataType::Float64, false),
+        Field::new("num", DataType::Float64, false),
+        Field::new("den", DataType::Float64, false),
+    ]));
+    let (mut dates, mut levels, mut nums, mut dens) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for month in 1..=12 {
+        for (level, num) in [(10.0, 100.0), (20.0, 300.0)] {
+            dates.push(mid_month(2026, month));
+            levels.push(level);
+            nums.push(num);
+            dens.push(1000.0);
+        }
+    }
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Date32Array::from(dates)),
+            Arc::new(Float64Array::from(levels)),
+            Arc::new(Float64Array::from(nums)),
+            Arc::new(Float64Array::from(dens)),
+        ],
+    )
+    .unwrap();
+    (schema, batch)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
+    // Both defects this door carried until 2026-08-15, each already
+    // fixed in metric_cube and metric_bands and never ported here.
+    //
+    // The stock verb kept ONE arbitrary row per month (row_number = 1),
+    // so a receivables grounding emitting a row per open invoice
+    // replayed as 4,325 against a true 42M in a live run. A ratio had
+    // no verb at all and took the flow path, so DSO — grounded across
+    // segment and region — replayed at 957 days against a true 76.
+    //
+    // Two rows a month: level 10 and 20, halves 100/1000 and 300/1000.
+    // A stock is 30, never 10 or 20. A ratio is 400/2000 = 0.2, never
+    // the 0.4 its two rows add up to.
+    let (session, _) = session_with_kernel().await;
+    let (schema, batch) = cells_table();
+    session
+        .register_table(
+            "cells",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .unwrap();
+    run(
+        &session,
+        r##"
+DECLARE DATASET fin SET (purpose: 'the stock and ratio verbs');
+USE fin;
+DECLARE ASPECT held WITH $${"title": "Held"}$$ AS QUERY ON DATASET;
+DECLARE ASPECT rate WITH $${"title": "Rate"}$$ AS QUERY ON DATASET;
+DECLARE ASPECT lever WITH $${"type": "object", "required": ["overrides"]}$$ AS FACT ON DATASET;
+GLOSS held ON fin AS $${"behavior": "stock",
+  "sql": "SELECT order_date, level AS value FROM cells"}$$;
+GLOSS rate ON fin AS $${
+  "sql": "SELECT order_date, num / den AS value, num, den FROM cells"}$$;
+GLOSS lever ON fin AS $${"overrides": [
+  {"column": "cells.level", "factor": 1.15, "from": "2026-07", "basis": "the lever"},
+  {"column": "cells.num", "factor": 1.15, "from": "2026-07", "basis": "the lever"}]}$$;
+"##,
+    )
+    .await;
+
+    let held = table(
+        &session,
+        "SELECT month, replay FROM whatif.lever() WHERE concept = 'held' ORDER BY month;",
+    )
+    .await;
+    assert!(held.contains("34.5"), "a stock sums its snapshot: {held}");
+    assert!(
+        !held.contains("11.5") && !held.contains("23.0"),
+        "neither single row is the stock: {held}"
+    );
+
+    let rate = table(
+        &session,
+        "SELECT month, replay FROM whatif.lever() WHERE concept = 'rate' ORDER BY month;",
+    )
+    .await;
+    assert!(rate.contains("0.23"), "a ratio divides its halves: {rate}");
+    assert!(
+        !rate.contains("0.46"),
+        "a ratio is never the sum of its rows: {rate}"
+    );
+}

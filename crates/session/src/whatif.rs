@@ -383,18 +383,39 @@ async fn concept_rows(
         ));
     };
 
-    // Flows sum per month; a marked stock takes its last value per month
-    // (the metric_bands convention — the marker is authored).
-    let is_stock = body["behavior"].as_str() == Some("stock");
-    let series_sql = if is_stock {
+    // The three verbs, the same ones metric_cube and metric_bands read
+    // (both fixed before this door was; a run on 2026-08-15 found this
+    // copy still carrying both of the defects they had shed).
+    //
+    // A RATIO declares itself by serving `num` and `den` beside `value`,
+    // and reads as sum(num)/sum(den). Summing it instead adds member
+    // ratios together: DSO replayed at 957 days against a true 76, its
+    // grounding serving segment x region.
+    //
+    // A marked STOCK sums the rows standing at the month's LATEST
+    // observed date. `row_number() = 1` kept ONE arbitrary row — a
+    // receivables grounding emitting one row per open invoice replayed
+    // as 4,325 against a true 42M, and inventory as 12k against 12.4M.
+    // That is the same defect the cube recorded shedding on 2026-08-14;
+    // this copy never got the correction.
+    let is_ratio = fields.iter().any(|f| f.name() == "num")
+        && fields.iter().any(|f| f.name() == "den");
+    let is_stock = !is_ratio && body["behavior"].as_str() == Some("stock");
+    let series_sql = if is_ratio {
         format!(
-            "SELECT period, value FROM ( \
+            "SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
+                    sum(num) / nullif(sum(den), 0) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+        )
+    } else if is_stock {
+        format!(
+            "SELECT period, sum(value) AS value FROM ( \
                SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
                       value, \
-                      row_number() OVER ( \
+                      rank() OVER ( \
                         PARTITION BY date_trunc('month', \"{tcol}\") \
-                        ORDER BY \"{tcol}\" DESC) AS rn \
-               FROM ({sql})) WHERE rn = 1 ORDER BY period"
+                        ORDER BY \"{tcol}\" DESC) AS rk \
+               FROM ({sql})) WHERE rk = 1 GROUP BY period ORDER BY period"
         )
     } else {
         format!(
