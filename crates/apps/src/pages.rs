@@ -168,7 +168,17 @@ pub async fn spec(
 fn render(name: &str, ctx: tera::Context, tera: Result<Tera, tera::Error>) -> Response {
     let rendered = tera.and_then(|tera| tera.render(name, &ctx));
     match rendered {
-        Ok(html) => Html(html).into_response(),
+        // Never cached. A page is a live view of a mutable record, and
+        // with no Cache-Control at all the browser applies heuristic
+        // freshness — so after a ruling POST redirected back here, the
+        // browser served the pre-ruling copy from cache and the change
+        // only appeared on a manual reload (project lead, 2026-08-15).
+        // The redirect was correct; the caching was the bug.
+        Ok(html) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            Html(html),
+        )
+            .into_response(),
         Err(e) => {
             let mut lines = vec![e.to_string()];
             let mut source = std::error::Error::source(&e);

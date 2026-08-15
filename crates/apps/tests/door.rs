@@ -818,3 +818,115 @@ async fn the_metrics_pages_render_both_states() {
     let sliced = text(get(&app, "/app/docket/p/metrics?metric=dso&dim=cohort").await).await;
     assert!(sliced.contains("frames/slices"), "{sliced}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ruling_returns_the_reader_to_the_page_they_ruled_from() {
+    // Two halves of one complaint (project lead, 2026-08-15): a write in
+    // the docket did not show until a manual reload. The redirect was
+    // always correct — the browser was serving the target from cache,
+    // because a page carried no Cache-Control at all and heuristic
+    // freshness applies. And the redirect went to the index, so ruling
+    // from a metric's page lost the reader's place as well.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap()
+        .execute(
+            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+        )
+        .await
+        .unwrap();
+    // One open question per case below: a ruling closes the question it
+    // answered, so re-posting the same key would be refused as stale
+    // and never reach the redirect at all.
+    plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap()
+        .execute(
+            r#"USE perf;
+               GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
+                 "assumptions": [
+                   {"dimension": "definition", "key": "k0", "assumption": "a", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "definition", "key": "k1", "assumption": "b", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "definition", "key": "k2", "assumption": "c", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "definition", "key": "k3", "assumption": "d", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "definition", "key": "k4", "assumption": "e", "basis": "judgment", "confidence": 0.7},
+                   {"dimension": "definition", "key": "k5", "assumption": "f", "basis": "judgment", "confidence": 0.7}
+                 ]}$$;"#,
+        )
+        .await
+        .unwrap();
+
+    // Pages are never cached: they are live views of a mutable record.
+    let page = get(&app, "/app/docket").await;
+    assert_eq!(
+        page.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store"),
+        "a docket page must not be cacheable"
+    );
+
+    let post = |key: &'static str, referer: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut request = Request::post("/app/docket/rule").header(
+                axum::http::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            );
+            if let Some(referer) = referer {
+                request = request.header(axum::http::header::REFERER, referer);
+            }
+            app.oneshot(
+                request
+                    .body(Body::from(format!(
+                        "subject=perf&aspect=dso&key={key}&stance=confirmed"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let location = |r: &Response<Body>| {
+        r.headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    // Ruled from a metric's page: the reader lands back on it, query and
+    // all, rather than on the index.
+    let response = post("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/app/docket/p/metrics?metric=dso");
+
+    // Everything that is not a path under this app falls back to the
+    // index — a forged Referer can never send a reader off the site.
+    for (key, forged) in [
+        ("k1", "http://evil.example/steal"),
+        ("k2", "//evil.example/steal"),
+        ("k3", "/app/other/p/metrics"),
+        ("k4", "not a url at all"),
+    ] {
+        let response = post(key, Some(forged)).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "referer {forged}");
+        assert_eq!(location(&response), "/app/docket", "referer {forged}");
+    }
+    let response = post("k5", None).await;
+    assert_eq!(location(&response), "/app/docket", "no referer at all");
+}

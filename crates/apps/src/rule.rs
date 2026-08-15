@@ -14,7 +14,7 @@
 
 use axum::Form;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::rulings::{self, Ruling};
@@ -37,9 +37,44 @@ pub struct Answer {
     note: String,
 }
 
+/// Where to send the browser back to: the page the form was posted
+/// from, or the app's index when that cannot be established.
+///
+/// Only the path and query of the Referer are ever used, and only when
+/// the path is under this app — so a forged header can redirect a user
+/// to another page of the same docket at worst, never off the site.
+/// Without this a ruling made on a metric's page bounced the reader to
+/// the index, which reads as the page losing their place.
+fn back_to(headers: &HeaderMap, app: &str) -> String {
+    let home = format!("/app/{app}");
+    headers
+        .get(header::REFERER)
+        .and_then(|r| r.to_str().ok())
+        .map(|r| {
+            // Drop scheme and authority if the Referer is absolute, and
+            // any fragment. What is left is path and query.
+            let rest = match r.split_once("://") {
+                Some((_, after)) => match after.find('/') {
+                    Some(slash) => &after[slash..],
+                    None => "/",
+                },
+                None => r,
+            };
+            rest.split('#').next().unwrap_or("/")
+        })
+        // The whole guard: whatever the header said, the redirect is a
+        // path under this app or it is the app's index. A protocol-
+        // relative `//host/…` fails this too, since it does not begin
+        // with `/app/<app>`.
+        .filter(|p| *p == home || p.starts_with(&format!("{home}/")))
+        .map(str::to_string)
+        .unwrap_or(home)
+}
+
 pub async fn rule(
     State(door): State<AppDoor>,
     Path(app): Path<String>,
+    headers: HeaderMap,
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = match answer.stance.as_str() {
@@ -108,7 +143,7 @@ pub async fn rule(
     )
     .await
     {
-        Ok(_) => Redirect::to(&format!("/app/{app}")).into_response(),
+        Ok(_) => Redirect::to(&back_to(&headers, &app)).into_response(),
         Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e),
     }
 }
