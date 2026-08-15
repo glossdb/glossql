@@ -8,8 +8,8 @@
 {% if metric %}
 {# ---- one metric: the number, then its reasons -------------------- #}
 <nav class="crumbs">
-  <a href="/app/docket">Open</a><span>·</span>
-  <a href="?">Metrics</a><span>›</span><span class="here">{{ metric }}</span>
+  <a href="/app/docket">Open</a>
+  <a href="?">Metrics</a><span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
   {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
@@ -87,8 +87,8 @@
 {% else %}
 {# ---- the surfaces list ------------------------------------------- #}
 <nav class="crumbs">
-  <a href="/app/docket">Open</a><span>·</span>
-  <span class="here">Metrics</span><span>·</span>
+  <a href="/app/docket">Open</a>
+  <span class="here">Metrics</span>
   <a href="/app/docket/p/record">Record</a>
 </nav>
 <div class="tiles">

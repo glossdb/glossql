@@ -4,18 +4,20 @@
 {% block main %}
 {# What the workspace knows, and how well it is held. #}
 <nav class="crumbs">
-  <a href="/app/docket">Open</a><span>·</span>
-  <a href="/app/docket/p/metrics">Metrics</a><span>·</span>
+  <a href="/app/docket">Open</a>
+  <a href="/app/docket/p/metrics">Metrics</a>
   <span class="here">Record</span>
 </nav>
 
 <div class="tiles">
-  {{ tiles::value(frame="frames/census", field="subjects", label="Subjects", chip="GLOSSARY()") }}
-  {{ tiles::value(frame="frames/census", field="facts", label="Facts standing", chip="GLOSSARY()") }}
-  {{ tiles::value(frame="frames/census", field="measurements", label="Measurements", chip="GLOSSARY()") }}
-  {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on an act",
-       good="down", chip="owed",
-       note="Human writings that owe an agent act, plus witnessed measure claims no function has spoken to yet.") }}
+  <div class="counts">
+    {{ tiles::value(frame="frames/census", field="subjects", label="Subjects", chip="GLOSSARY()") }}
+    {{ tiles::value(frame="frames/census", field="facts", label="Facts standing", chip="GLOSSARY()") }}
+    {{ tiles::value(frame="frames/census", field="measurements", label="Measurements", chip="GLOSSARY()") }}
+    {{ tiles::value(frame="frames/census", field="waiting", label="Waiting on an act",
+         good="down", chip="owed",
+         note="Human writings that owe an agent act, plus witnessed measure claims no function has spoken to yet.") }}
+  </div>
 
   <section class="tile">
     <header><span class="eyebrow">Column coverage</span>

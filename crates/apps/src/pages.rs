@@ -126,12 +126,16 @@ async fn page_response(
         Ok(tera)
     });
     let mut ctx = tera::Context::new();
+    // The bound dataset, not the manifest's pin: the docket pins none
+    // and binds to the workspace's sole dataset, and the bar names what
+    // the frames will actually read.
+    let bound = crate::frames::bound_dataset(door, &def).await;
     ctx.insert(
         "app",
         &json!({
             "name": def.name,
             "title": def.title,
-            "dataset": def.dataset.clone().unwrap_or_default(),
+            "dataset": bound.unwrap_or_default(),
         }),
     );
     ctx.insert("apps", &apps_json(&door.workspace, &glossed));

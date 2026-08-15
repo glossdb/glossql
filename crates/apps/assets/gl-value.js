@@ -12,6 +12,10 @@
       const d = value instanceof Date ? value : new Date(value);
       return d.toISOString().slice(0, 7);
     }
+    // A value that is already a word — a band, a verdict, a state. It
+    // reached the number formatter before this branch existed and the
+    // docket's corridor tile rendered NaN.
+    if (format === 'text') return String(value);
     if (format === 'days') return Number(value).toFixed(1);
     if (format === 'raw') return Number(value).toLocaleString();
     return new Intl.NumberFormat(undefined, {

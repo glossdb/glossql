@@ -1,43 +1,70 @@
-/* The wrapper's one stylesheet. A data app is an instrument, not a
-   report: committed dark, layered slate panels, mono for everything
-   that is data — numbers, axes, provenance. Hue is an encoding, not
-   decoration: amber marks flows, cyan marks ratios, red is reserved
-   for errors and breaches. */
+/* The wrapper's one stylesheet.
+
+   A data app here is a docket, not a dashboard: a page of matters,
+   each with what is claimed, who holds it, and where it stands. Three
+   decisions carry that, and everything below derives from them.
+
+   ONE ACCENT. Amber means "a person's judgement is wanted here" and
+   means nothing else — not a brand colour, not a highlight. Beside it
+   sit exactly two semantic hues, green for settled and red for
+   breached, which are verdicts rather than decoration. The old cyan
+   is retired; a chart that needs a second series gets it from the
+   chart's own scale, not from the page.
+
+   MONO IS THE VOICE. The page is a record, so it is set in mono
+   throughout with tabular figures — subjects, keys, counts, times,
+   provenance. Sans appears only where a human or an agent wrote a
+   sentence: a claim, a ruling's words, a note to the reader. That one
+   switch is how you can tell, at a glance and without reading, which
+   parts of a row are the system speaking and which are language
+   somebody authored.
+
+   BANDS, NOT CARDS. Sections are hairline-ruled bands over the page
+   ground rather than floating rounded panels. Rows are the unit; the
+   rules between them carry the structure, so nothing has to shout.
+
+   Committed dark. The ground is an instrument's ground, and the token
+   set below is the system of record for it. */
 
 :root {
-  --bg0: #10141a;
-  --bg1: #171d26;
-  --bg2: #202834;
-  --ink: #dde3ea;
-  --muted: #8b95a2;
-  --faint: #5c6675;
-  --line: #2a333f;
-  --line-soft: #222a35;
-  --amber: #e2a33f;
-  --cyan: #57b9cf;
-  --pos: #6dbd8d;
-  --neg: #d97561;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --ground: #0f1319;
+  --panel: #151a22;
+  --raised: #1c232d;
+  --rule: #242d39;
+  --rule-soft: #1d242e;
+  --ink: #dde4eb;
+  --muted: #8892a0;
+  --faint: #5d6775;
+  --open: #e2a33f;
+  --open-dim: #6a5326;
+  --settled: #6dbd8d;
+  --breach: #d97561;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", sans-serif;
+  /* The label size: eyebrows, provenance, timestamps, asides. One
+     step, used everywhere, so the page has two type sizes and not
+     nine. */
+  --step: 0.72rem;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 
-html { color-scheme: dark; }
-
 body {
   margin: 0;
-  background: var(--bg0);
+  background: var(--ground);
   color: var(--ink);
-  font: 14px/1.5 var(--sans);
+  font: 13px/1.55 var(--mono);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
 a { color: inherit; text-decoration: none; }
 
 ::selection { background: rgba(226, 163, 63, 0.25); }
 
-:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--open); outline-offset: 2px; }
 
 /* Swaps fade, quietly. */
 @media (prefers-reduced-motion: no-preference) {
@@ -46,89 +73,54 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
-/* ---- the confidence gutter ---------------------------------------- */
-
-/* One rail per matter, filled to the confidence its author holds:
-   hollow amber while it waits on a person, solid green once ruled and
-   folded back in. Read straight down the column it says how settled
-   the workspace is, which is the one thing a docket should say at a
-   glance. */
-
-.gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.rail {
-  width: 5px;
-  height: 2.4rem;
-  border-radius: 1px;
-  background: var(--bg2);
-  border: 1px solid rgba(226, 163, 63, 0.35);
-  display: flex;
-  align-items: flex-end;
-  overflow: hidden;
-}
-
-.rail i {
-  display: block;
-  width: 100%;
-  background: var(--amber);
-}
-
-.rail.settled { border-color: rgba(109, 189, 141, 0.45); }
-.rail.settled i { background: var(--pos); }
-
-/* ---- app bar ------------------------------------------------------ */
+/* ---- the workspace bar -------------------------------------------- */
 
 .shell-nav {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
+  background: var(--ground);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* The bar's contents ride the same column as the page. */
+.bar-in {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.9rem;
-  padding: 0 1.25rem;
-  min-height: 2.9rem;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--line);
+  gap: 1.25rem;
+  min-height: 3rem;
 }
 
-.shell-nav .brand {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--amber);
-  letter-spacing: 0.02em;
-}
+.brand { font-weight: 600; letter-spacing: 0.02em; }
+.brand .dot { color: var(--open); }
 
-.shell-nav .app-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-  padding-left: 0.9rem;
-  border-left: 1px solid var(--line);
-}
+.ws { color: var(--muted); }
+.ws b { color: var(--ink); font-weight: 600; }
 
 .shell-nav nav {
   margin-left: auto;
   display: flex;
   gap: 1.1rem;
-  font-size: 0.85rem;
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.shell-nav nav a { color: var(--muted); }
+.shell-nav nav a { color: var(--faint); }
 .shell-nav nav a:hover, .shell-nav nav a.current { color: var(--ink); }
 
 /* The request indicator: a hairline of amber under the bar. */
 .load-bar {
   position: fixed;
-  top: 2.9rem;
+  top: 3rem;
   left: 0;
   right: 0;
   height: 2px;
-  z-index: 11;
-  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  z-index: 21;
+  background: linear-gradient(90deg, transparent, var(--open), transparent);
   background-size: 40% 100%;
   background-repeat: no-repeat;
   opacity: 0;
@@ -143,196 +135,378 @@ a { color: inherit; text-decoration: none; }
   to { background-position: 140% 0; }
 }
 
-main { max-width: 84rem; margin: 0 auto; padding: 1.25rem 1.5rem 3rem; }
+main { max-width: 68rem; margin: 0 auto; padding: 0.25rem 1.5rem 5rem; }
 
-h1 { font-size: 1.15rem; margin: 0.4rem 0 1rem; }
-
-.empty { color: var(--muted); max-width: 40rem; }
-
-code { font-family: var(--mono); font-size: 0.9em; }
-
-/* ---- toolbar: segments and the range ------------------------------ */
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
-  margin: 0.25rem 0 1rem;
-}
-
-.seg-group {
-  display: inline-flex;
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 2px;
-}
-.seg {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--muted);
-  padding: 0.28rem 0.7rem;
-  border-radius: 5px;
-}
-.seg:hover { color: var(--ink); }
-.seg.active { background: var(--bg2); color: var(--ink); }
-
-.filters {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-.filters label {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-family: var(--mono);
-  font-size: 0.72rem;
+h1 {
+  font-size: var(--step);
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--faint);
+  margin: 2rem 0 0.9rem;
 }
-.filters input {
-  font: 0.82rem var(--mono);
-  color: var(--ink);
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.3rem 0.45rem;
-}
-.filters input:hover { border-color: var(--faint); }
-.filters button {
-  font: 600 0.82rem var(--sans);
-  color: var(--bg0);
-  background: var(--amber);
-  border: none;
-  border-radius: 6px;
-  padding: 0.36rem 0.85rem;
-  cursor: pointer;
-}
-.filters button:hover { filter: brightness(1.08); }
 
-/* ---- the grid and the tiles --------------------------------------- */
+.empty { font-family: var(--sans); color: var(--muted); max-width: 60ch; }
 
+code { font-family: var(--mono); font-size: 0.95em; }
+
+/* ---- views -------------------------------------------------------- */
+
+/* The app's own pages, as a tab row under the bar. Server-rendered
+   navigation, so the current one is marked rather than selected. */
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--rule);
+  margin: 0 0 0.4rem;
+}
+.crumbs a, .crumbs .here {
+  padding: 0.85rem 0.7rem 0.7rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.crumbs a { color: var(--faint); }
+.crumbs a:hover { color: var(--ink); }
+.crumbs .here { color: var(--ink); border-bottom-color: var(--open); }
+/* The separators the old crumb line carried are structure the tabs
+   now express; a stray one stays out of the way. */
+.crumbs > span:not(.here) { display: none; }
+
+/* ---- bands -------------------------------------------------------- */
+
+/* A band is a heading, a rule, and rows. `.tiles` keeps the 12-column
+   grid so a page can put two bands side by side; a band on its own
+   spans the width. */
 .tiles {
   display: grid;
-  gap: 0.9rem;
+  gap: 0 1.5rem;
   grid-template-columns: repeat(12, minmax(0, 1fr));
 }
 .tiles > * { grid-column: span 12; }
-@media (min-width: 760px) {
-  .tiles .third, .tiles .tile.kpi { grid-column: span 4; }
-  .tiles .two-thirds { grid-column: span 8; }
-  .tiles .half { grid-column: span 6; }
+@media (min-width: 860px) {
+  .tiles > .third { grid-column: span 4; }
+  .tiles > .two-thirds { grid-column: span 8; }
+  .tiles > .half { grid-column: span 6; }
 }
 
 .tile {
-  background: var(--bg1);
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
-  padding: 0.9rem 1rem 1rem;
+  padding: 1.9rem 0 0.4rem;
   min-width: 0;
-  /* Wide row grids (coverage, drivers) scroll inside their tile —
-     the page itself never scrolls horizontally. */
+  /* Wide row grids scroll inside their band — the page itself never
+     scrolls horizontally. */
   overflow-x: auto;
 }
 
 .tile header {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--rule);
 }
 
 .eyebrow {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: var(--step);
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--muted);
+  color: var(--ink);
 }
 
-/* A tile's own seg control: sits with the chip in the header and
-   swaps only its tile — smaller than the toolbar's. */
-.tile header .seg-group { margin-left: auto; padding: 1px; }
-.tile header .seg { font-size: 0.68rem; padding: 0.16rem 0.5rem; }
-.tile header .seg-group ~ .chip { margin-left: 0; }
+/* The count a band is about, when the band has one number. */
+.count { font-size: var(--step); color: var(--open); }
 
-/* The provenance chip: where this number comes from is part of the
-   instrument, not a footnote. Hover holds the disclosed assumption. */
+/* The provenance tag: which read this band comes from. Part of the
+   instrument, not a footnote — hover holds the derivation. */
 .chip {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: var(--step);
   color: var(--faint);
-  background: var(--bg2);
-  border: 1px solid var(--line-soft);
-  border-radius: 5px;
-  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.05rem 0.4rem;
   white-space: nowrap;
 }
-.chip[title] { cursor: help; border-bottom-color: var(--faint); }
+.chip[title] { cursor: help; }
+.chip.ok { color: var(--settled); border-color: rgba(109, 189, 141, 0.4); }
+.chip.warn { color: var(--open); border-color: rgba(226, 163, 63, 0.4); }
 
-
-.hint { font-size: 0.78rem; color: var(--faint); margin: -0.35rem 0 0.5rem; }
-
-.tile.prose p { margin: 0; color: var(--muted); font-size: 0.85rem; }
-
-/* ---- KPI values --------------------------------------------------- */
-
-gl-value { display: flex; align-items: baseline; gap: 0.6rem; min-height: 2.2rem; }
-.kpi-num {
-  font-family: var(--mono);
-  font-size: 1.7rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+/* A note to the reader — our own prose, so sans. */
+.hint {
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--faint);
+  max-width: 78ch;
+  margin: 0.7rem 0 0;
 }
-.kpi-unit { font-size: 0.8rem; font-weight: 400; color: var(--muted); margin-left: 0.3rem; }
-.kpi-delta { font-family: var(--mono); font-size: 0.8rem; }
-.kpi-delta.pos { color: var(--pos); }
-.kpi-delta.neg { color: var(--neg); }
+
+.tile.prose p {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* A band's own segmented control: sits in the head and swaps only its
+   band. */
+.tile header .seg-group { margin-left: auto; }
+.tile header .seg-group ~ .chip { margin-left: 0; }
+.seg-group { display: inline-flex; gap: 0.15rem; }
+.seg {
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-bottom: 2px solid transparent;
+  padding: 0.1rem 0.45rem 0.25rem;
+}
+.seg:hover { color: var(--ink); }
+.seg.active { color: var(--ink); border-bottom-color: var(--open); }
+
+/* ---- the confidence gutter ---------------------------------------- */
+
+/* One rail per matter, filled to the confidence its author holds:
+   hollow amber while it waits on a person, solid green once ruled and
+   folded back in. Read straight down the column it says how settled
+   the workspace is, which is the one thing a docket should say at a
+   glance. The page's signature — and the only place it spends its
+   accent at full strength. */
+
+.gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.rail {
+  width: 5px;
+  height: 2.5rem;
+  border-radius: 1px;
+  background: var(--raised);
+  border: 1px solid var(--open-dim);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+.rail i { display: block; width: 100%; background: var(--open); }
+.rail.settled { border-color: var(--settled); }
+.rail.settled i { background: var(--settled); }
+
+.gutter .r-meta { font-size: 0.68rem; color: var(--muted); }
+
+/* ---- matters ------------------------------------------------------ */
+
+/* A row is a matter: the template states its columns, these keep the
+   rhythm. The hairline between rows is the only separator. */
+.rrow {
+  display: grid;
+  gap: 0 1.1rem;
+  align-items: start;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.rrow > * { min-width: 0; }
+a.rrow:hover { background: var(--panel); }
+
+.r-subj { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.asp { color: var(--muted); font-weight: 400; }
+
+/* Authored language — the only sans on a row. */
+.r-what {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
+/* The system's own words about a row: keys, bases, times, states. */
+.r-meta {
+  font-family: var(--mono);
+  font-size: var(--step);
+  color: var(--faint);
+  line-height: 1.5;
+}
+.r-what .r-meta { display: inline-block; margin-top: 0.3rem; }
+
+.r-num { text-align: right; }
+.r-gap { color: var(--open); }
+.rows-empty {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--faint);
+  margin: 0.9rem 0 0;
+}
+
+/* The provenance glyphs. Shape encodes who holds a claim; amber only
+   where a person's judgement is still wanted. */
+.g { width: 1.2rem; text-align: center; flex-shrink: 0; }
+.g-fix { color: var(--open); }
+.g-jud { color: var(--ink); }
+
+/* A ruling, in the human's own words: sans, against the settled hue. */
+.ruling {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--ink);
+  border-left: 2px solid var(--settled);
+  padding-left: 0.6rem;
+}
+.ruling .who {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--settled);
+  margin-bottom: 0.2rem;
+}
+
+/* What a matter is waiting for, when it is waiting for a person. */
+.await {
+  color: var(--open);
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Where a matter stands: the ruling, then what became of it. */
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* ---- counts ------------------------------------------------------- */
+
+/* Standing counts sit in a hairline lattice above the bands: cells on
+   a rule, not floating cards. Deliberately not a hero — the docket's
+   subject is the matters, and these only say how many. */
+.counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1px;
+  background: var(--rule-soft);
+  border: 1px solid var(--rule-soft);
+  margin-top: 1.9rem;
+}
+
+.tile.kpi {
+  background: var(--ground);
+  padding: 0.95rem 1.1rem 1.05rem;
+  align-self: stretch;
+}
+.tile.kpi header { border-bottom: 0; padding-bottom: 0.35rem; gap: 0.6rem; }
+.tile.kpi .eyebrow { color: var(--faint); font-weight: 500; }
+.tile.kpi .hint { margin-top: 0.5rem; font-size: 0.78rem; }
+
+gl-value { display: flex; align-items: baseline; gap: 0.6rem; min-height: 2rem; }
+.kpi-num { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
+.kpi-unit { font-size: var(--step); font-weight: 400; color: var(--muted); margin-left: 0.3rem; }
+.kpi-delta { font-size: var(--step); }
+.kpi-delta.pos { color: var(--settled); }
+.kpi-delta.neg { color: var(--breach); }
 
 /* ---- charts and tables -------------------------------------------- */
 
 .chart-mount { width: 100%; }
-gl-chart { display: block; min-height: 5rem; }
+gl-chart { display: block; min-height: 5rem; margin-top: 1rem; }
 gl-chart canvas, gl-chart svg { max-width: 100%; }
 
 gl-table { display: block; overflow-x: auto; }
-gl-table table { border-collapse: collapse; width: 100%; font-size: 0.83rem; }
+gl-table table { border-collapse: collapse; width: 100%; }
 gl-table th {
   text-align: left;
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: var(--step);
   font-weight: 500;
-  text-transform: uppercase;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--faint);
-  border-bottom: 1px solid var(--line);
-  padding: 0.25rem 0.75rem 0.35rem 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0.6rem 0.8rem 0.6rem 0;
 }
 gl-table td {
-  border-bottom: 1px solid var(--line-soft);
-  padding: 0.3rem 0.75rem 0.3rem 0;
-  white-space: nowrap;
   color: var(--muted);
+  border-bottom: 1px solid var(--rule-soft);
+  padding: 0.62rem 0.8rem 0.62rem 0;
+  white-space: nowrap;
 }
-gl-table td.num {
-  text-align: right;
+gl-table td.num { text-align: right; color: var(--ink); }
+gl-table tr:hover td { background: var(--panel); }
+.table-foot { color: var(--faint); font-size: var(--step); margin: 0.7rem 0 0; }
+
+/* ---- statements and disclosure ------------------------------------ */
+
+/* Glossql as it would be run: quoted, never styled as chrome. */
+.statement {
+  background: var(--panel);
+  border-left: 2px solid var(--rule);
+  border-radius: 0;
+  padding: 0.7rem 0.9rem;
   font-family: var(--mono);
+  font-size: var(--step);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  margin: 0.9rem 0 0;
+}
+
+details.contest summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  list-style: none;
+  margin-top: 0.35rem;
+}
+details.contest summary:hover { color: var(--ink); }
+details.contest[open] summary { color: var(--muted); }
+
+/* Full lists scroll instead of truncating — depth over dismissal. */
+.scroll { max-height: 30rem; overflow-y: auto; scrollbar-width: thin; }
+
+/* A count opens the list behind it. Platform popover, no script. */
+.pop-open {
+  font: inherit;
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.05rem 0.4rem;
+  margin-left: auto;
+  cursor: pointer;
+}
+.pop-open:hover { color: var(--ink); border-color: var(--faint); }
+[popover].pop {
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 1.1rem 1.3rem;
+  width: min(48rem, 92vw);
+  max-height: 72vh;
+  overflow-y: auto;
   color: var(--ink);
 }
-gl-table tr:hover td { background: var(--bg2); }
-.table-foot { color: var(--faint); font-size: 0.75rem; margin: 0.5rem 0 0; font-family: var(--mono); }
+[popover].pop::backdrop { background: rgba(4, 8, 14, 0.6); }
+.pop .eyebrow { display: block; margin-bottom: 0.4rem; }
 
 /* ---- loading and errors ------------------------------------------- */
 
 [aria-busy="true"] {
-  border-radius: 6px;
-  background: linear-gradient(100deg, var(--bg1) 40%, var(--bg2) 50%, var(--bg1) 60%);
+  background: linear-gradient(100deg, var(--panel) 40%, var(--raised) 50%, var(--panel) 60%);
   background-size: 300% 100%;
   animation: shimmer 1.4s ease infinite;
   min-height: 3rem;
@@ -348,178 +522,46 @@ gl-table tr:hover td { background: var(--bg2); }
 
 .frame-error {
   background: rgba(217, 117, 97, 0.09);
-  border: 1px solid rgba(217, 117, 97, 0.35);
-  color: var(--neg);
-  border-radius: 6px;
+  border-left: 2px solid var(--breach);
+  color: var(--breach);
   padding: 0.7rem 0.9rem;
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--step);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  margin-top: 0.9rem;
 }
 
-/* ---- home cards --------------------------------------------------- */
+/* ---- the apps index ----------------------------------------------- */
 
 .cards {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
-  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 1px;
+  background: var(--rule-soft);
+  border: 1px solid var(--rule-soft);
 }
 .cards a {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 1rem;
-  background: var(--bg1);
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
+  gap: 0.35rem;
+  padding: 1.1rem 1.2rem;
+  background: var(--ground);
 }
-.cards a:hover { border-color: var(--amber); }
-.cards strong { font-size: 0.95rem; }
-.cards span { color: var(--faint); font-family: var(--mono); font-size: 0.78rem; }
+.cards a:hover { background: var(--panel); }
+.cards strong { font-weight: 600; }
+.cards span { color: var(--faint); font-size: var(--step); }
 
-/* ---- row surfaces (gl-rows) --------------------------------------- */
+/* ---- narrow ------------------------------------------------------- */
 
-/* The provenance glyphs. Shape encodes who holds a claim; hue keeps
-   its reserved meanings — amber only where a human's judgement is
-   wanted, red only where the model owes a claim it doesn't have. */
-.g { font-family: var(--mono); width: 1.2rem; text-align: center; flex-shrink: 0; }
-.g-fix { color: var(--amber); }
-.g-jud { color: var(--ink); }
-.g-mea { color: var(--cyan); }
-.g-abs { color: var(--faint); }
-.g-una { color: var(--neg); }
-
-/* A row list: the template states the grid, these keep the rhythm. */
-.rrow {
-  display: grid;
-  gap: 0.7rem;
-  align-items: baseline;
-  padding: 0.55rem 0.2rem;
-  border-top: 1px solid var(--line-soft);
+/* Rows keep their authored columns and the band scrolls, rather than
+   the columns collapsing into each other — the same rule the wide
+   tables follow. */
+@media (max-width: 760px) {
+  .rrow { min-width: 32rem; }
+  .bar-in { gap: 0.8rem; min-height: 2.8rem; }
+  main { padding-left: 1rem; padding-right: 1rem; }
 }
-gl-rows > .rrow:first-of-type, gl-rows > template + .rrow { border-top: 0; }
-.rrow > * { min-width: 0; }
-.r-conf { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
-.r-subj { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
-.r-subj .asp { color: var(--cyan); }
-.r-what { color: var(--muted); font-size: 0.82rem; max-width: 60ch; }
-.r-meta { font-family: var(--mono); font-size: 0.7rem; color: var(--faint); }
-.r-num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-.r-gap { color: var(--amber); }
-.rows-empty { color: var(--faint); font-size: 0.8rem; margin: 0.4rem 0; }
-
-/* Witness verdicts and states ride chips. */
-.chip.ok { color: var(--pos); border-bottom-color: rgba(109, 189, 141, 0.4); }
-.chip.warn { color: var(--amber); border-bottom-color: rgba(226, 163, 63, 0.4); }
-
-/* The round, rendered where the metric lives: each open question is
-   a card. Amber is the hue of wanted judgement, so this is the one
-   place the page spends it — the confidence is the anchor, how loose
-   the claim stands until a human rules it. */
-.qcard {
-  display: flex;
-  gap: 0.9rem;
-  align-items: flex-start;
-  margin: 0.5rem 0;
-  padding: 0.65rem 0.85rem;
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--amber);
-  border-radius: 7px;
-}
-.qcard .q-conf {
-  font-family: var(--mono);
-  font-size: 1.2rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--amber);
-  min-width: 2.6rem;
-}
-.qcard .q-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  min-width: 0;
-}
-.qcard .q-what { font-size: 0.85rem; color: var(--ink); overflow-wrap: anywhere; }
-
-/* A check line reads expectation → measured: the declared half stays
-   faint, the measured half holds the ink. */
-.arr { color: var(--faint); }
-.r-meta .mea { color: var(--ink); }
-
-/* A measured bar: the template sets the width from the frame. */
-.meter { height: 7px; border-radius: 4px; background: var(--bg2); overflow: hidden; }
-.meter i { display: block; height: 100%; border-radius: 4px; background: var(--cyan); }
-
-/* The statement block: contest rendered as the glossql to run. */
-.statement {
-  background: var(--bg0);
-  border: 1px solid rgba(226, 163, 63, 0.35);
-  border-radius: 6px;
-  padding: 0.7rem 0.9rem;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--ink);
-  margin: 0;
-}
-
-/* Where a claim travels: node chain, plain text arrows. */
-.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; font-family: var(--mono); font-size: 0.78rem; }
-.chain .node { background: var(--bg2); border: 1px solid var(--line); border-radius: 5px; padding: 0.24rem 0.55rem; }
-
-/* Contest folds closed; the statement is one click of intent away. */
-details.contest summary {
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  color: var(--muted);
-  list-style: none;
-}
-details.contest summary:hover { color: var(--amber); }
-details.contest[open] summary { color: var(--amber); margin-bottom: 0.4rem; }
-.r-what { overflow-wrap: break-word; min-width: 0; }
-
-/* ---- navigation and depth ------------------------------------------ */
-
-/* Crumbs: one line of where-am-I. The standing view is always one hop. */
-.crumbs {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-family: var(--mono); font-size: 0.75rem; color: var(--faint);
-  margin: 0 0 0.9rem;
-}
-.crumbs a { color: var(--muted); }
-.crumbs a:hover { color: var(--amber); }
-.crumbs .here { color: var(--ink); }
-
-/* Full lists scroll instead of truncating — depth over dismissal. */
-.scroll { max-height: 26rem; overflow-y: auto; scrollbar-width: thin; }
-
-/* The one-line lede: what this surface is for. */
-.lede { color: var(--muted); font-size: 0.85rem; max-width: 78ch; margin: 0 0 1.1rem; }
-
-/* Census drill: a count opens the list behind it. Platform popover,
-   no script — the page supplies the content beside the tile. */
-.pop-open {
-  font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
-  background: var(--bg2); border: 1px solid var(--line); border-radius: 5px;
-  padding: 0.14rem 0.5rem; cursor: pointer; margin-left: auto;
-}
-.pop-open:hover { color: var(--amber); border-color: var(--amber); }
-[popover].pop {
-  background: var(--bg1); border: 1px solid var(--line); border-radius: 10px;
-  padding: 1.1rem 1.3rem; width: min(48rem, 92vw); max-height: 72vh;
-  overflow-y: auto; color: var(--ink);
-}
-[popover].pop::backdrop { background: rgba(4, 8, 14, 0.55); }
-.pop .eyebrow { display: block; margin-bottom: 0.2rem; }
-
-/* A ruled-out axis stays visible, quietly. */
-.chip.off { color: var(--faint); }

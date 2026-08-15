@@ -8,7 +8,11 @@ SELECT arrow_cast(r.aspect, 'Utf8') AS subj,
        arrow_cast(coalesce(r.dimension, '-') || ' · ' || r.key, 'Utf8') AS asp,
        arrow_cast(r.assumption, 'Utf8') AS what,
        arrow_cast(r.stance, 'Utf8') AS stance,
-       arrow_cast(coalesce(r.note, ''), 'Utf8') AS note,
+       -- The human's own words, quoted as theirs. A confirmation with
+       -- no note stays empty rather than being given a sentence it
+       -- never said.
+       arrow_cast(CASE WHEN coalesce(r.note, '') = '' THEN ''
+                       ELSE '“' || r.note || '”' END, 'Utf8') AS note,
        arrow_cast(CASE WHEN r.folded_in THEN 'folded in'
                        ELSE 'awaiting the fold-in' END, 'Utf8') AS state,
        CASE WHEN r.folded_in THEN 'ok' ELSE 'warn' END AS scls,

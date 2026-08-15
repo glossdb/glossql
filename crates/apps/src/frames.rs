@@ -89,24 +89,31 @@ async fn resolve_dataset(
     door: &crate::AppDoor,
     def: &AppDef,
 ) -> Result<String, Response> {
-    match &def.dataset {
-        Some(dataset) => Ok(dataset.clone()),
-        None => match door.plane.datasets().await {
-            Ok(mut names) => {
-                names.sort();
-                match names.into_iter().next() {
-                    Some(first) => Ok(first),
-                    None => Err(fail(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "no dataset in the workspace yet — the app binds once a \
-                         source lands"
-                            .to_string(),
-                    )),
-                }
-            }
-            Err(e) => Err(fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
-        },
+    match bound_dataset(door, def).await {
+        Some(dataset) => Ok(dataset),
+        None => Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no dataset in the workspace yet — the app binds once a source \
+             lands"
+                .to_string(),
+        )),
     }
+}
+
+/// The same binding, for the page shell, which names the workspace an
+/// app is bound to in its bar. A page renders whether or not the
+/// binding resolves — its frames are what fail, and they say so — so
+/// this returns nothing rather than an error.
+pub(crate) async fn bound_dataset(
+    door: &crate::AppDoor,
+    def: &AppDef,
+) -> Option<String> {
+    if let Some(dataset) = &def.dataset {
+        return Some(dataset.clone());
+    }
+    let mut names = door.plane.datasets().await.ok()?;
+    names.sort();
+    names.into_iter().next()
 }
 
 /// Encode into a chunked body as batches arrive — the same shape as
