@@ -18,8 +18,9 @@ that matters:
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
 ```
 
-Nine surfaces, what each is extended through, what stands and what is
-open on it. It reports state, never an order — the judgment is yours.
+Every surface the system affords, what each is extended through, what
+stands and what is open on it. It reports state, never an order — the
+judgment is yours.
 The sections below are the craft for each surface, not stages to march
 through. Read the one you need.
 
@@ -373,6 +374,23 @@ Two things this is not: it is not a roll-up (each member's ratio is
 computed from its own numerator and denominator, never averaged), and
 it is not free — an axis you carry must exist on both sides, so pick
 the axes the question actually needs rather than every one available.
+
+**A ratio must serve `num` and `den` beside `value`.** They are how the
+cube and the bands walk total it — `sum(num)/sum(den)` at every grain,
+which is right for the headline and for every member. Without them a
+ratio takes the flow verb and is **summed**: a run on 2026-08-15
+grounded DSO across segment and region and the cube reported 928.3 days
+for a month whose true DSO was 75.6, because twelve member ratios were
+added together. Nothing infers this from the SQL — serve the columns.
+
+```glossql
+GLOSS dso ON fin AS $${"sql": "WITH ar AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS bal FROM read.accounts_receivable() GROUP BY 1, 2), rev AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS rev FROM read.revenue() GROUP BY 1, 2) SELECT CAST(ar.m AS DATE) AS date, ar.bal / nullif(rev.rev, 0) * date_part('day', ar.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, ar.bal AS num, rev.rev * (1.0 / date_part('day', ar.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, ar.segment FROM ar JOIN rev ON rev.m = ar.m AND rev.segment = ar.segment"}$$;
+```
+
+`value` stays each row's own ratio — that is what `read.dso()` serves
+and what a drill shows. `num` and `den` are the same division's halves,
+scaled so their quotient is the metric in its own unit: here the day
+factor rides the denominator, so `sum(num)/sum(den)` is days.
 
 **`behavior`, `sign` and `grain` assumptions carry 1.0, always.** The
 round never serves them to a human — statistics are your work — so a

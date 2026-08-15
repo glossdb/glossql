@@ -23,8 +23,9 @@
 // follows the grounding's authored behavior: flows sum per month; a
 // body carrying `"behavior": "stock"` takes the last value per month
 // instead — no marker reads as flow, so stocks must be marked (the
-// metrics skill teaches the marker). Months are taken as returned,
-// gap detection being temporal_profile's business.
+// metrics skill teaches the marker); a grounding serving `num` and
+// `den` is a ratio and reads as sum(num)/sum(den). Months are taken as
+// returned, gap detection being temporal_profile's business.
 
 let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
 let min_train = 5;
@@ -99,8 +100,20 @@ for key in slots.keys() {
     // last row read a 480-row inventory as 94k against a true 12.4M
     // (the 2026-08-14 run). Entities absent from the latest date are
     // not carried forward — the cube's disclosed limit, shared.
-    let is_stock = "behavior" in body && body.behavior == "stock";
-    let series = if is_stock {
+    // A ratio is neither, and summing it was wrong: it declares itself
+    // by serving `num` and `den` beside `value`, and the month reads as
+    // sum(num)/sum(den) — metric_cube's third verb, shared, because a
+    // walk over a summed ratio bands an artefact (2026-08-15).
+    let probe = db.query(`SELECT * FROM (${body.sql}) LIMIT 1`);
+    let is_ratio = probe.columns().contains("num") && probe.columns().contains("den");
+    let is_stock = !is_ratio && "behavior" in body && body.behavior == "stock";
+    let series = if is_ratio {
+        db.query(`
+            SELECT date_trunc('month', "${tcol}") AS period,
+                   sum(num) / nullif(sum(den), 0) AS value
+            FROM (${body.sql}) GROUP BY 1 ORDER BY 1
+        `)
+    } else if is_stock {
         db.query(`
             SELECT period, sum(value) AS value FROM (
                 SELECT date_trunc('month', "${tcol}") AS period, value,

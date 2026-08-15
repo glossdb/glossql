@@ -381,3 +381,168 @@ fn the_stock_total_sums_the_months_latest_snapshot() {
         ]
     );
 }
+
+/// A live door whose only grounding is a ratio serving both halves.
+struct RatioDoor {
+    rt: tokio::runtime::Runtime,
+    ctx: datafusion::prelude::SessionContext,
+}
+
+impl SqlDoor for RatioDoor {
+    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
+        if query.contains("FROM glossary") {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("subject", DataType::Utf8, false),
+                Field::new("aspect", DataType::Utf8, false),
+                Field::new("actor_kind", DataType::Utf8, false),
+                Field::new("body", DataType::Utf8, false),
+            ]));
+            let dso = json!({
+                "sql": "SELECT date, value, num, den, segment, region FROM cells"
+            });
+            return Ok(vec![
+                RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(vec!["fin"])),
+                        Arc::new(StringArray::from(vec!["dso"])),
+                        Arc::new(StringArray::from(vec!["agent"])),
+                        Arc::new(StringArray::from(vec![dso.to_string()])),
+                    ],
+                )
+                .unwrap(),
+            ]);
+        }
+        let df = self
+            .rt
+            .block_on(self.ctx.sql(query))
+            .map_err(|e| e.to_string())?;
+        self.rt.block_on(df.collect()).map_err(|e| e.to_string())
+    }
+}
+
+#[test]
+fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
+    // The defect this exists for (found 2026-08-15, in a run): a ratio
+    // is neither stock nor flow, so it took the flow path and every
+    // sliced ratio reported the SUM of its members. DSO for one month
+    // came back 928.3 days against a true 75.6 — the grounding served
+    // segment x region, so twelve member ratios were added together.
+    //
+    // Four cells a month, chosen so the right answer and the old wrong
+    // one cannot be confused: summing the per-row ratios gives 0.65,
+    // dividing the summed halves gives 1000/6000.
+    let cells = vec![
+        ("2024-01-31", 100.0, 1000.0, "A", "EMEA"),
+        ("2024-01-31", 200.0, 1000.0, "A", "APAC"),
+        ("2024-01-31", 300.0, 2000.0, "B", "EMEA"),
+        ("2024-01-31", 400.0, 2000.0, "B", "APAC"),
+        ("2024-02-29", 110.0, 1100.0, "A", "EMEA"),
+        ("2024-02-29", 210.0, 1100.0, "A", "APAC"),
+        ("2024-02-29", 310.0, 2100.0, "B", "EMEA"),
+        ("2024-02-29", 410.0, 2100.0, "B", "APAC"),
+    ];
+    let epoch = |d: &str| {
+        let parts: Vec<i32> = d.split('-').map(|p| p.parse().unwrap()).collect();
+        19723 + [0, 31][(parts[1] - 1) as usize] + parts[2] - 1
+    };
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("date", DataType::Date32, false),
+        Field::new("value", DataType::Float64, false),
+        Field::new("num", DataType::Float64, false),
+        Field::new("den", DataType::Float64, false),
+        Field::new("segment", DataType::Utf8, false),
+        Field::new("region", DataType::Utf8, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(datafusion::arrow::array::Date32Array::from(
+                cells.iter().map(|c| epoch(c.0)).collect::<Vec<_>>(),
+            )),
+            // `value` is each row's own ratio — what the old code summed.
+            Arc::new(Float64Array::from(
+                cells.iter().map(|c| c.1 / c.2).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(
+                cells.iter().map(|c| c.1).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(
+                cells.iter().map(|c| c.2).collect::<Vec<_>>(),
+            )),
+            Arc::new(StringArray::from(
+                cells.iter().map(|c| c.3).collect::<Vec<_>>(),
+            )),
+            Arc::new(StringArray::from(
+                cells.iter().map(|c| c.4).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .unwrap();
+    let ctx = datafusion::prelude::SessionContext::new();
+    ctx.register_batch("cells", batch).unwrap();
+    let door = Arc::new(RatioDoor {
+        rt: tokio::runtime::Runtime::new().unwrap(),
+        ctx,
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let rt = RhaiRuntime::new(dir.path());
+    let out = rt
+        .invoke(
+            &FunctionRow {
+                name: "metric_cube".into(),
+                scope_dataset: None,
+                script: glossql_scripts::library::script("metric_cube.rhai")
+                    .expect("shipped")
+                    .into(),
+                accepts: vec![],
+                returns: None,
+            },
+            "fin",
+            &json!({}),
+            door,
+        )
+        .unwrap();
+
+    let metrics = out["metrics"].as_array().unwrap();
+    let dso = metrics.iter().find(|m| m["metric"] == "dso").unwrap();
+    assert_eq!(dso["behavior"], json!("ratio"), "{dso}");
+
+    // The halves are measures, not axes: num/den must never be offered
+    // as dimensions to slice along.
+    let dims: Vec<&str> = dso["dims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    assert!(dims.contains(&"segment") && dims.contains(&"region"), "{dims:?}");
+    assert!(!dims.contains(&"num") && !dims.contains(&"den"), "{dims:?}");
+
+    let near = |got: f64, want: f64, what: &str| {
+        assert!((got - want).abs() < 1e-9, "{what}: got {got}, want {want}");
+    };
+    let at = |rows: &[&Value], member: &str, period: &str| -> f64 {
+        rows.iter()
+            .find(|r| r[1] == member && r[2] == period)
+            .unwrap_or_else(|| panic!("no {member}/{period}"))[3]
+            .as_f64()
+            .unwrap()
+    };
+
+    // The total: sum(num)/sum(den), never the 0.65 that adding the four
+    // per-row ratios would give.
+    let total = rows_of(dso, "");
+    near(at(&total, "", "2024-01"), 1000.0 / 6000.0, "january total");
+    near(at(&total, "", "2024-02"), 1040.0 / 6400.0, "february total");
+
+    // Each member likewise divides its own summed halves — segment A is
+    // 300/2000, not the 0.3 its two region rows add up to.
+    let by_segment = rows_of(dso, "segment");
+    near(at(&by_segment, "A", "2024-01"), 300.0 / 2000.0, "segment A");
+    near(at(&by_segment, "B", "2024-01"), 700.0 / 4000.0, "segment B");
+    let by_region = rows_of(dso, "region");
+    near(at(&by_region, "EMEA", "2024-01"), 400.0 / 3000.0, "region EMEA");
+    near(at(&by_region, "APAC", "2024-01"), 600.0 / 3000.0, "region APAC");
+}
