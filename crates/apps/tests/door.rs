@@ -225,6 +225,50 @@ async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
     assert!(text(draft).await.contains("app.toml"));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_glossed_part_may_not_take_a_builtin_name() {
+    let (app, plane, _dir) = workspace().await;
+
+    // Add an app, don't fork the built-in (ruled 2026-08-15). The
+    // directory branch has refused a half-shadow since 2026-08-12, but
+    // glossed parts reach the same hazard by the route an MCP-only
+    // agent actually takes — and they carry no manifest requirement, so
+    // one frame under the built-in's name would resolve the whole app
+    // to that single file and 404 every page the docket ships.
+    let session = plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "author".into(),
+        })
+        .await
+        .unwrap();
+    session
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT app_frame WITH $${"type": "object", "required": ["sql"],
+                 "properties": {"sql": {"type": "string"}}}$$ AS FACT;
+               GLOSS app_frame ON docket.mine AS $${"sql": "SELECT 1 AS v"}$$;"#,
+        )
+        .await
+        .unwrap();
+
+    let page = get(&app, "/app/docket").await;
+    assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let page = text(page).await;
+    assert!(page.contains("ships in the binary"), "{page}");
+
+    // The same part under its own name serves — including without a
+    // manifest, which binds to the workspace's sole dataset.
+    session
+        .execute(r#"GLOSS app_frame ON cash.mine AS $${"sql": "SELECT 1 AS v"}$$;"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        get(&app, "/app/cash/frames/mine").await.status(),
+        StatusCode::OK
+    );
+}
+
 async fn row_count(response: Response<Body>) -> usize {
     assert_eq!(
         response.headers()[header::CONTENT_TYPE],

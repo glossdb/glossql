@@ -93,7 +93,9 @@ documents:
   (ruled 2026-08-15): the docket's logic is tested against the
   built-in, the door serves as many apps as a workspace writes, and
   per-part overlay is deliberately not built until the docket has been
-  used enough to be worth forking)
+  used enough to be worth forking — the door refuses a glossed part
+  under a built-in's name, because one part resolves the whole app and
+  the built-in's other pages would stop serving)
   · `serverd` (the doors, M5: one axum listener — the MCP shim at `/mcp`,
   rmcp streamable HTTP, stateless per the 2026-07-28 revision, one
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end

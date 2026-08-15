@@ -1458,9 +1458,9 @@ async fn an_agent_authors_an_app_over_the_tool() {
           "properties": {"html": {"type": "string"}}}$$ AS FACT;
         DECLARE ASPECT app_frame WITH $${"type": "object", "required": ["sql"],
           "properties": {"sql": {"type": "string"}}}$$ AS FACT;
-        GLOSS app ON docket AS $${"title": "The docket", "dataset": "fin"}$$;
-        GLOSS app_page ON docket.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>What stands open</h1>{% endblock %}"}$$;
-        GLOSS app_frame ON docket.open AS $${"sql": "SELECT count(*) AS owed FROM open_questions"}$$;
+        GLOSS app ON cash AS $${"title": "Monday cash", "dataset": "fin"}$$;
+        GLOSS app_page ON cash.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>What stands open</h1>{% endblock %}"}$$;
+        GLOSS app_frame ON cash.open AS $${"sql": "SELECT count(*) AS owed FROM open_questions"}$$;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 150, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -1468,20 +1468,20 @@ async fn an_agent_authors_an_app_over_the_tool() {
     // The page the agent wrote is served by the app door.
     let response = app
         .clone()
-        .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/app/cash").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let html = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(html.contains("What stands open"), "{html}");
-    assert!(html.contains("The docket"), "the manifest names it: {html}");
+    assert!(html.contains("Monday cash"), "the manifest names it: {html}");
 
     // And its frame runs, over a shipped read, as Arrow IPC.
     let response = app
         .clone()
         .oneshot(
-            Request::get("/app/docket/frames/open")
+            Request::get("/app/cash/frames/open")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1492,11 +1492,11 @@ async fn an_agent_authors_an_app_over_the_tool() {
 
     // A re-gloss supersedes that one part; the rest of the app stands.
     let edit = r#"USE fin;
-        GLOSS app_page ON docket.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>Open work</h1>{% endblock %}"}$$;"#;
+        GLOSS app_page ON cash.index AS $${"html": "{% extends \"shell.html\" %}{% block main %}<h1>Open work</h1>{% endblock %}"}$$;"#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 151, edit, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let response = app
-        .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/app/cash").body(Body::empty()).unwrap())
         .await
         .unwrap();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();

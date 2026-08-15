@@ -22,6 +22,11 @@ door serves as many as you write, and yours does not inherit anyone
 else's assumptions. (Forking is a later question, once the docket has
 been used enough to be worth forking.)
 
+The door holds this: a part glossed under a built-in's name — `docket`
+— is refused, because a single part resolves the whole app and every
+other page the built-in ships would stop serving. Give yours its own
+name.
+
 ## Shape it with the user first, in prose
 
 No forms anywhere in this flow — this is the conversation register.

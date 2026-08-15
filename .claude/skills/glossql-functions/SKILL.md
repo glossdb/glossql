@@ -71,6 +71,15 @@ $$ ACCEPTS (imports) RETURNS ar_settles_in_full;
 - A re-declare supersedes and recompiles. The body cannot contain
   `$$` — it would close the statement early.
 
+The name is the key, workspace-wide: there is one row per name, and a
+re-declare **replaces** it and drops its cached results. Take a shipped
+name only on purpose: the store holds one body per name, and the
+library's own survives nowhere else in the workspace, so replacing
+`profile` costs the tested one until a rebuild lands it again.
+For a MEASUREMENT this is the only route (a second name
+returning the same aspect is refused); for anything else, use your own
+name.
+
 ## The script contract
 
 Three constants are in scope; the script's last expression is its
