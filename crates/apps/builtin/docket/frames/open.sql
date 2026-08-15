@@ -2,7 +2,11 @@
 -- straight from `open_questions` — the same rows the door asks as
 -- forms. Display only: the confidence, the link, the order. The
 -- verdict column stays empty here, which is what "open" looks like.
+-- `pct` fills the confidence rail: the gutter is the page's one
+-- signature, and read down the column it says how settled this
+-- workspace is.
 SELECT o.conf,
+       arrow_cast(CAST(CAST(round(o.conf * 100) AS INT) AS VARCHAR), 'Utf8') AS pct,
        arrow_cast(o.aspect, 'Utf8') AS subj,
        arrow_cast(coalesce(o.dimension, '-') || ' · ' || o.key, 'Utf8') AS asp,
        arrow_cast(o.assumption, 'Utf8') AS what,

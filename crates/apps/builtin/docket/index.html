@@ -27,8 +27,11 @@
     <p class="hint">Answer these in your agent client — this page never writes. The rail's fill is the confidence the agent holds.</p>
     <gl-rows frame="frames/open" empty="nothing stands open — every disclosed assumption is at full confidence or ruled">
       <template>
-        <a class="rrow" href="{link}" style="grid-template-columns:3rem 11rem 1fr">
-          <span class="r-num">{conf}</span>
+        <a class="rrow" href="{link}" style="grid-template-columns:2.6rem 11rem 1fr">
+          <span class="gutter">
+            <span class="rail"><i style="height:{pct}%"></i></span>
+            <span class="r-meta">{conf}</span>
+          </span>
           <span class="r-subj">{subj}<br><span class="r-meta">{asp}</span></span>
           <span class="r-what">{what}<br>
             <span class="r-meta">basis: {basis} {sibling}</span>
@@ -43,7 +46,10 @@
       <code class="chip" title="The judgment alone, in the human's own words — never a copy of the agent's grounding. The fold-in state is derived from whether the agent still holds that key below full confidence.">ruling_entries</code></header>
     <gl-rows frame="frames/settled" empty="nothing ruled yet">
       <template>
-        <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 9rem">
+        <a class="rrow" href="{link}" style="grid-template-columns:2.6rem 11rem 1fr 9rem">
+          <span class="gutter">
+            <span class="{rcls}"><i style="height:100%"></i></span>
+          </span>
           <span class="r-subj">{subj}<br><span class="r-meta">{asp}</span></span>
           <span class="r-what">{what}<br>
             <span class="r-meta">{stance} — {note}</span>

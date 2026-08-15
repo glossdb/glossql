@@ -4,6 +4,7 @@
 -- confidence, and clears when the re-record lands, so nothing here is
 -- marked done by hand.
 SELECT arrow_cast(r.aspect, 'Utf8') AS subj,
+       arrow_cast(CASE WHEN r.folded_in THEN 'rail settled' ELSE 'rail' END, 'Utf8') AS rcls,
        arrow_cast(coalesce(r.dimension, '-') || ' · ' || r.key, 'Utf8') AS asp,
        arrow_cast(r.assumption, 'Utf8') AS what,
        arrow_cast(r.stance, 'Utf8') AS stance,
