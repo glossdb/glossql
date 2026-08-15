@@ -282,8 +282,10 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                    {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
                    {"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
                  ]}$$;
-               GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * days"}}$$;
-               GLOSS definitions ON perf AS $${"definitions": {"dso": {"meaning": "days outstanding"}}}$$;
+               GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * days[w]"}}$$;
+               GLOSS definitions ON perf AS $${"definitions": {"dso": {
+                 "meaning": "receivables outstanding expressed in days of revenue",
+                 "unit": "days", "owner": "Finance", "source": "KPI handbook v3"}}}$$;
                DECLARE DATASET second SET (purpose: 'multi-dataset guard');"#,
         )
         .await
@@ -368,7 +370,30 @@ async fn the_dossier_faces_survive_a_second_dataset() {
 
     let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
     assert_eq!(metric.status(), StatusCode::OK);
-    assert_eq!(row_count(metric).await, 1);
+    let served = body_text(metric).await;
+    assert_eq!(served.lines().filter(|l| l.starts_with("dso")).count(), 1);
+    // The formula the seed wrote, not the empty-state prose. Counting
+    // rows alone is how the face came to render nothing in every real
+    // workspace: the fixture wrote a formulas map no skill ever taught
+    // an agent to write, so the join returned a row and the value was
+    // null everywhere but here (found 2026-08-15).
+    assert!(
+        served.contains("ar[end of w] / revenue[w] * days[w]"),
+        "the formula face served no formula:\n{served}"
+    );
+    // Unit and meaning come from the `definitions` registry, never the
+    // aspect blob — a declaration cannot be superseded, and the ruling
+    // (2026-08-12) was forced by exactly this field going stale there.
+    // The seed's blob carries no unit, so a face reading `x-unit` shows
+    // nothing and this fails.
+    assert!(
+        served.contains("receivables outstanding expressed in days of revenue"),
+        "the metric face served no meaning:\n{served}"
+    );
+    assert!(
+        served.contains("DSO · metric · days"),
+        "the meta line took its unit from the registry:\n{served}"
+    );
     let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(assumptions.status(), StatusCode::OK);
     assert_eq!(row_count(assumptions).await, 2);
@@ -404,7 +429,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
         .await
         .unwrap();
     human
-        .execute(r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * 360"}}$$;"#)
+        .execute(r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * 360"}}$$;"#)
         .await
         .unwrap();
     let after = get(&app, "/app/docket/frames/owed").await;
@@ -466,7 +491,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
         .unwrap();
     human
         .execute(
-            r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar / revenue * 360"}}$$;
+            r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * 360"}}$$;
                GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
                  "assumptions": [{"dimension": "definition", "key": "per-line",
                                   "assumption": "ruled", "basis": "engineer",
@@ -479,7 +504,12 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     // assumptions ledger keeps serving the agent's working record —
     // its two disclosed assumptions — never a blend of the two bodies.
     let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
-    assert_eq!(row_count(metric).await, 1);
+    let served = body_text(metric).await;
+    assert_eq!(served.lines().filter(|l| l.starts_with("dso")).count(), 1);
+    assert!(
+        served.contains("ar[end of w] / revenue[w] * 360"),
+        "the human's formula must outrank the agent's:\n{served}"
+    );
     let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(
         row_count(assumptions).await,

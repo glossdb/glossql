@@ -7,7 +7,16 @@
 -- in a CTE column comes back null (measured 2026-08-12).
 SELECT q.aspect,
   coalesce(json_get_str(a.schema, 'title'), q.aspect) AS title,
-  coalesce(json_get_str(a.schema, 'x-unit'), '') AS unit,
+  -- `unit` and `meaning` ride the `definitions` registry, never the
+  -- aspect blob: a declaration cannot be superseded, and both are the
+  -- company's to revise (ruled 2026-08-12, forced by a stale `x-unit`).
+  arrow_cast(coalesce(
+    json_get_str(json_get(json_get(d.value, 'definitions'), q.aspect), 'unit'),
+    ''), 'Utf8') AS unit,
+  arrow_cast(coalesce(
+    json_get_str(json_get(json_get(d.value, 'definitions'), q.aspect), 'meaning'),
+    'no meaning written — the definitions registry has no entry for this metric'),
+    'Utf8') AS meaning,
   coalesce(json_get_str(a.schema, 'x-kind'), '') AS mkind,
   json_get_str(q.body, 'sql') AS sql,
   -- the meta line, separators only between present parts — an unset
@@ -15,36 +24,17 @@ SELECT q.aspect,
   arrow_cast(concat_ws(' · ',
     coalesce(json_get_str(a.schema, 'title'), q.aspect),
     nullif(coalesce(json_get_str(a.schema, 'x-kind'), ''), ''),
-    nullif(coalesce(json_get_str(a.schema, 'x-unit'), ''), '')), 'Utf8') AS meta,
-  -- The formula, from the one place it is written: the grounding's own
-  -- opening comment. This used to read a `formulas` gloss — a kit
-  -- aspect neither skill teaches, so nothing ever wrote one and the
-  -- face was empty in every workspace that ever existed. The practice
-  -- skill already requires the mechanics to be said as comments inside
-  -- the SQL, where they cannot drift from the query; the first line is
-  -- the author's one-sentence statement of what this metric is.
-  -- The opening block, not just its first line: an author writes a
-  -- sentence and wraps it, so line one alone stops mid-clause. Five
-  -- lines is the bound — a formula that needs more than that is a
-  -- description, and the whole SQL is one tile down.
-  arrow_cast(coalesce(nullif(trim(concat_ws(' ',
-    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 1)), '--')
-         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 1)), '- ') END,
-    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 2)), '--')
-         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 2)), '- ') END,
-    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 3)), '--')
-         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 3)), '- ') END,
-    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 4)), '--')
-         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 4)), '- ') END,
-    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 5)), '--')
-         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 5)), '- ') END)), ''),
-    'the grounding opens with no comment — say what this metric is above its SQL'
-  ), 'Utf8') AS formula,
+    nullif(json_get_str(json_get(json_get(d.value, 'definitions'), q.aspect), 'unit'), '')),
+    'Utf8') AS meta,
+  arrow_cast(coalesce(json_get_str(json_get(f.value, 'formulas'), CAST($metric AS VARCHAR)),
+           'no recorded formula'), 'Utf8') AS formula,
   q.actor,
   arrow_cast(substr(q.written_at, 1, 10), 'Utf8') AS written,
   arrow_cast('GLOSS ' || q.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || q.body || '$$;', 'Utf8') AS statement
 FROM GLOSSARY(all => true) q
 JOIN aspects a ON a.name = q.aspect
+LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
+LEFT JOIN GLOSSARY() d ON d.aspect = 'definitions'
 WHERE q.kind = 'query' AND q.aspect = $metric
   AND (EXISTS (SELECT 1 FROM glossary me
                WHERE me.subject = q.subject AND me.aspect = q.aspect

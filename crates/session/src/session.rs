@@ -575,6 +575,17 @@ impl Session {
         let lake = self.lake().expect("caller holds a lake");
         let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
         let summary = landed.row_summary(rows);
+        // Both read the whole `Landed`, so both are taken before the
+        // batches move into the staging table below.
+        let dropped = landed.dropped_rows(rows).map(|d| d as i64);
+        let scans = serde_json::Value::Array(
+            landed
+                .source_scans
+                .iter()
+                .map(|(relation, held)| serde_json::json!({"relation": relation, "rows": held}))
+                .collect(),
+        )
+        .to_string();
 
         lake.ensure_namespace(dataset).await?;
         let mounted = self.mount_schema(dataset).await?;
@@ -606,8 +617,9 @@ impl Session {
             .import_put(
                 dataset,
                 table,
-                landed.source_rows as i64,
+                &scans,
                 rows as i64,
+                dropped,
                 &landed.casts.to_json().to_string(),
             )
             .await?;

@@ -119,22 +119,27 @@ impl SourceSpec {
     }
 }
 
-/// What a recipe run landed, plus what it read: `source_rows` is the row
-/// count of every source relation the recipe scanned, so the caller can
-/// record `source_rows - landed` as the dropped-row count (project lead,
-/// 2026-08-04 — which rows were dropped is the author's question, answered
-/// on the files).
+/// What a recipe run landed, plus what it read (project lead, 2026-08-04
+/// — which rows were dropped is the author's question, answered on the
+/// files; the engine keeps the count where it is honest).
 #[derive(Debug)]
 pub struct Landed {
     pub schema: SchemaRef,
     pub batches: Vec<RecordBatch>,
-    pub source_rows: u64,
     /// Each scan the recipe made, in scan order: the `read_*` path it
-    /// named and the rows that relation held. `source_rows` is their
-    /// sum — one number that only means "what was read" when a single
-    /// relation was scanned. Relational sources scan nothing here: the
-    /// source computed the SQL itself.
+    /// named and the rows that relation held. Relational sources scan
+    /// nothing here — the source computed the SQL itself. There is
+    /// deliberately no sum: adding the scans of a join produces a
+    /// number that looks like "what was read" and is not.
     pub source_scans: Vec<(String, u64)>,
+    /// Whether the recipe's shape maps source rows to landed rows one
+    /// for one — a flat SELECT does, an aggregate, DISTINCT, set
+    /// operation or CTE does not, and neither does a recipe whose SQL
+    /// did not re-parse. Read from the same shape analysis the cast
+    /// accounting plans against, but kept apart from it: a companion
+    /// query that fails leaves the casts unchecked without changing
+    /// what the row counts mean.
+    pub row_preserving: bool,
     /// What the landing knows about its casts (`accounting` module): a
     /// failed `try_*` is a kept row with a NULL cell, invisible in the
     /// row counts above.
@@ -142,27 +147,49 @@ pub struct Landed {
 }
 
 impl Landed {
-    /// The outcome's row accounting, sized to what the counts can
-    /// honestly say. One relation scanned: the difference against the
-    /// landed count is the dropped-row count. More than one (a join or
-    /// union): a single difference misleads — a join reads more source
-    /// rows than any one relation holds — so each scan reports its own
-    /// count (found 2026-08-12).
-    pub fn row_summary(&self, landed_rows: usize) -> String {
-        if self.source_scans.len() > 1 {
-            let scans = self
-                .source_scans
-                .iter()
-                .map(|(name, rows)| format!("{name} {rows} rows"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{landed_rows} rows landed; sources scanned: {scans}")
-        } else {
-            format!(
-                "{landed_rows} rows landed, {} dropped",
-                self.source_rows.saturating_sub(landed_rows as u64)
-            )
+    /// How many source rows the recipe dropped, or `None` where no
+    /// single number is true (found 2026-08-12, fixed 2026-08-15).
+    /// Three cases, and only the first has an answer:
+    ///
+    ///   * one relation scanned by a row-preserving recipe — the
+    ///     difference against the landed count is the dropped count;
+    ///   * more than one scan — a join reads more source rows than any
+    ///     one relation holds, so a difference against their sum is
+    ///     arithmetic on unrelated numbers;
+    ///   * a recipe that aggregates or de-duplicates — `vendors`
+    ///     collapsing 16,817 invoices to 120 distinct ids dropped
+    ///     nothing.
+    ///
+    /// A relational source is the fourth case and it is zero: the
+    /// source computed its own SQL, so what came back is both what was
+    /// read and what landed. Which rows its WHERE excluded is a
+    /// question for the source, not for this count.
+    pub fn dropped_rows(&self, landed_rows: usize) -> Option<u64> {
+        let [(_, scanned)] = self.source_scans[..] else {
+            return self.source_scans.is_empty().then_some(0);
+        };
+        if !self.row_preserving {
+            return None;
         }
+        scanned.checked_sub(landed_rows as u64)
+    }
+
+    /// The outcome's row accounting, sized to what the counts can
+    /// honestly say.
+    pub fn row_summary(&self, landed_rows: usize) -> String {
+        if let Some(dropped) = self.dropped_rows(landed_rows) {
+            return format!("{landed_rows} rows landed, {dropped} dropped");
+        }
+        let scans = self
+            .source_scans
+            .iter()
+            .map(|(name, rows)| format!("{name} {rows} rows"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if scans.is_empty() {
+            return format!("{landed_rows} rows landed");
+        }
+        format!("{landed_rows} rows landed; sources scanned: {scans}")
     }
 }
 
@@ -178,13 +205,12 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
         // what was read and what lands — dropped is structurally zero
         // here; which rows a WHERE excluded is the source's own answer.
         let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, usize::MAX))?;
-        let rows: u64 = read.batches.iter().map(|b| b.num_rows() as u64).sum();
         let (schema, batches) = normalize::compat(read.schema, read.batches)?;
         return Ok(Landed {
             schema,
             batches,
-            source_rows: rows,
             source_scans: Vec::new(),
+            row_preserving: true,
             casts: CastAccounting::Unchecked(
                 "the recipe ran at the source — its dialect owns the casts".into(),
             ),
@@ -214,18 +240,23 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
     let batches = df.collect().await?;
 
-    let mut source_rows = 0u64;
     let mut source_scans = Vec::new();
     let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
     for (name, provider) in scanned {
         let rows = ctx.read_table(provider)?.count().await? as u64;
-        source_rows += rows;
         source_scans.push((name, rows));
     }
 
+    // One shape analysis, two readers. A `Checked` plan means the recipe
+    // is a flat SELECT — the fact the row counts need — and that fact
+    // must survive a companion query failing below, which only makes the
+    // casts unchecked.
+    let plan = accounting::plan(sql);
+    let row_preserving = matches!(plan, accounting::Plan::Checked { .. });
+
     // The landing succeeded; the accounting is best effort on top of it —
     // a companion that errors becomes a disclosed note, never a failure.
-    let casts = match accounting::plan(sql) {
+    let casts = match plan {
         accounting::Plan::Unchecked(note) => CastAccounting::Unchecked(note),
         accounting::Plan::Checked { targets, .. } if targets.is_empty() => {
             CastAccounting::Checked(Vec::new())
@@ -244,8 +275,8 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
     Ok(Landed {
         schema,
         batches,
-        source_rows,
         source_scans,
+        row_preserving,
         casts,
     })
 }

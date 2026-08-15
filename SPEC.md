@@ -174,8 +174,11 @@ The kind fixes the aspect's role:
   Metrics are QUERY aspects: the value materializes by running the grounding
   SQL, never through a function. Glosses validate against the **standard
   grounding schema** (§5.2), not the `WITH` schema; the `WITH` schema
-  carries the ontology entry (description, indicators, unit, parameters,
-  rendering).
+  carries the ontology entry (description, indicators, parameters,
+  rendering). Anything the company revises — meaning, unit, owner, source —
+  belongs in a gloss instead, because a declaration cannot be re-declared
+  once anything is glossed on the aspect and so can never be superseded,
+  contested or outranked (ruled 2026-08-12).
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound function's
   cached JSON output (§6, §7), served by `GLOSSARY()` beside facts and

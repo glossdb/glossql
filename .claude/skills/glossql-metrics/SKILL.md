@@ -283,6 +283,57 @@ lives in exactly one place, never both.
 DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS QUERY ON DATASET;
 ```
 
+**Two registries ship with the kit — gloss into them, never redeclare.**
+Both are FACT on the dataset, both keyed by the concept's own name.
+
+`formulas` is a derived metric's **definition**: a window-generic
+expression over sibling concepts, with the window `w` as its one free
+variable. `[w]` reads the window as a flow, `[end of w]` as a stock,
+`[w-1]` is the previous one. It covers every window because it names
+none, and it is the ruled definition — the recorded SQL is one
+evaluation of it, not a replacement for it.
+
+```glossql
+GLOSS formulas ON fin AS $${"formulas": {
+  "dso": "accounts_receivable[end of w] / revenue[w] * days[w]",
+  "gross_profit": "revenue[w] - cogs[w]",
+  "revenue_growth": "(revenue[w] - revenue[w-1]) / revenue[w-1]"
+}}$$;
+```
+
+Operands name sibling concepts, plus window-derived constants like
+`days[w]`. Nothing validates them — a misspelled sibling is silent, so
+read your own operand names back against `SELECT name FROM aspects
+WHERE kind = 'query'`. A base concept that grounds as an extract has no
+formula and needs no entry.
+
+`definitions` is the **handbook content** — what the company revises:
+meaning, unit, owner, source. It lives here and not in the aspect blob
+because declarations have no supersession: whatever sits in a `WITH`
+blob cannot be corrected, contested or outranked once anything is
+glossed on the aspect. The blob keeps only the `title` display label
+and the `x-kind` tooling flag. A field lives in exactly one place,
+never both — a unit written in both copies goes stale in one.
+
+```glossql
+GLOSS definitions ON fin AS $${"definitions": {
+  "revenue": {"meaning": "invoiced amounts less credit notes; recognized at invoice date",
+              "unit": "currency", "owner": "Finance", "source": "KPI handbook v3 §2"},
+  "dso": {"meaning": "receivables outstanding expressed in days of revenue",
+          "unit": "days", "owner": "Finance", "source": "KPI handbook v3 §2"}
+}}$$;
+```
+
+Each registry is a single gloss, so a write replaces the whole map.
+Read what stands before adding to it — a second concept glossed blind
+drops the first one's entry:
+
+```sql
+SELECT aspect, body FROM glossary
+WHERE aspect IN ('formulas', 'definitions') AND actor_kind = 'agent'
+ORDER BY written_at DESC
+```
+
 **A grounding carries no grain** — no GROUP BY, no window. It is the
 semantic core: scoping, signs, grain-preserving joins composed inline,
 served as a row-grain relation with the time axis and the judged
@@ -306,9 +357,13 @@ the query the way a separate description can.
 cube slices on the dimension columns an extract *serves*, so a ratio
 that groups to `(date, value)` can never be sliced — run 4 grounded six
 composed metrics and every one of them reported "no axes admitted",
-which is the headline numbers being the only ones nobody can cut. Carry
-the axis through both halves and group by it, and the ratio recomposes
-per member exactly as the reader's grain rule demands:
+which is the headline numbers being the only ones nobody can cut.
+
+A ratio is never drilled from its output rows. Drilling DSO by segment
+means **re-scoping its components per the `formulas` gloss** — each
+operand evaluated at the new scope, then the formula applied per
+member. The recorded SQL below is that recomposition written down for
+one choice of axis; the formula is what it was written down from:
 
 ```glossql
 GLOSS dso ON fin AS $${"sql": "-- DSO by customer segment as well as in total.\nWITH ar AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS bal FROM read.accounts_receivable() GROUP BY date_trunc('month', date), segment), rev AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS rev FROM read.revenue() GROUP BY date_trunc('month', date), segment) SELECT CAST(ar.m AS DATE) AS date, ar.bal / nullif(rev.rev, 0) * 30.0 AS value, ar.segment FROM ar JOIN rev ON ar.m = rev.m AND ar.segment = rev.segment"}$$;
@@ -377,6 +432,110 @@ Percentiles and medians are level statistics — safe for both
 behaviors, which makes p50/p95 the honest summary when behavior is
 unglossed.
 
+### This is columnar, not postgres
+
+You know how to write windows; what you cannot know from memory is
+which ones exist *here*. The engine is DataFusion at a pinned version,
+and three of its strongest tools have no postgres equivalent, so
+nobody reaches for them by reflex. The habit to break is the
+postgres shape: a self-join per comparison, a subquery per rank.
+`glossql`'s **what will bite** section lists what is absent; this is
+what is present.
+
+**One scan, many answers.** Declare the window once and reuse it;
+`FILTER (WHERE …)` pivots a driver into a column without a self-join
+(it is not WHERE — WHERE removes rows from every aggregate, FILTER
+from one; an empty filter gives COUNT 0 but SUM/AVG NULL, so coalesce
+before dividing). Window *inheritance* does not parse at this pin —
+flat definitions only.
+
+```sql
+SELECT period, driver, value,
+  value - lag(value) OVER w                     AS delta,
+  sum(value) OVER (PARTITION BY period)         AS period_total,
+  value / sum(value) OVER (PARTITION BY period) AS share,
+  avg(value) OVER (w ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS ma3,
+  sum(value) FILTER (WHERE driver = 'EMEA') OVER (PARTITION BY period) AS emea
+FROM series
+WINDOW w AS (PARTITION BY driver ORDER BY period)
+```
+
+**`QUALIFY` filters on a window result** — top-N per period with no
+subquery. It runs after windows, before ORDER BY and LIMIT. Give the
+ORDER BY a full tiebreaker or `row_number` reshuffles on every
+refresh. `ntile` splits row *count*, not value mass — a revenue-decile
+question is cumulative share, `sum(value) OVER (ORDER BY value DESC) /
+sum(value) OVER ()`.
+
+```sql
+SELECT period, customer, value FROM billings
+QUALIFY rank() OVER (PARTITION BY period ORDER BY value DESC, customer) <= 10
+```
+
+**Densify before you lag.** `generate_series` works as a table
+function in FROM (not in the SELECT list) and includes its upper
+bound; `range` excludes it. The coalesce is the flow rule — a stock
+keeps its NULLs.
+
+```sql
+SELECT months.m AS period, coalesce(b.value, 0) AS value
+FROM generate_series(DATE '2025-01-01', DATE '2025-12-01', INTERVAL '1' MONTH) AS months(m)
+LEFT JOIN monthly b ON b.period = months.m
+```
+
+Or make the frame value-based — **RANGE accepts intervals here**,
+which is "the last three calendar months" regardless of holes:
+
+```sql
+SELECT period, avg(value) OVER (ORDER BY period
+  RANGE BETWEEN INTERVAL '2' MONTH PRECEDING AND CURRENT ROW) AS smoothed
+FROM monthly
+```
+
+Two frame defaults that bite: with an ORDER BY and no frame clause the
+frame is `UNBOUNDED PRECEDING AND CURRENT ROW` **with peers**, so tied
+ORDER BY values share a running total — order by the grain-unique
+column. And window `last_value` under that default returns the current
+row, not the partition's last; use the aggregate form from the stock
+rule above and skip the trap. For year-over-year on a sparse axis the
+self-join earns its place: `ON prev.period = cur.period - INTERVAL '1
+year'` cannot be fooled by a hole.
+
+**Never guess a GROUP BY — the judged reads hand you the axes.**
+Partition on `dimension` glosses, primary first, ranked by
+`dimension_relevance`: low *coverage* means a top-N over that axis
+speaks for a minority, low *evenness* means ranks and ntiles
+degenerate onto one dominant value. ROLLUP order comes from the
+declared hierarchy, coarse to fine — `ROLLUP(region, country, city)`;
+reversed, the subtotals are junk. Subtotal rows carry NULL in the
+rolled-up columns and a real NULL driver looks identical, so branch on
+`grouping(col)`, never on `IS NULL`. `GROUP BY ALL` is for probing;
+a recorded grounding spells its GROUP BY, because ALL silently
+re-groups when someone edits the select list.
+
+**Time mechanics.** `date_trunc` down to the metric's grain and no
+finer — truncating below grain fabricates resolution; `'week'` is ISO
+Monday. `date_bin(stride, d, origin)` for everything calendar months
+cannot say (fiscal periods, offset weeks) — the default origin is the
+epoch and 1970-01-01 was a Thursday, so weekly bins without an origin
+start on Thursday; the declared fiscal calendar goes in that argument.
+`date_part('month', d)` folds years together — the seasonality idiom;
+trends stay with `date_trunc`. `dow` is Sunday=0, `isodow` Monday=1.
+Shifts are `± INTERVAL` arithmetic.
+
+**Statistics that pay.** `percentile_cont(0.95) WITHIN GROUP (ORDER BY
+v)` is exact, `approx_percentile_cont` scales (t-digest — never diff
+approximate values across refreshes and call it a trend).
+`regr_slope(value, date_part('epoch', period))` per driver is a
+which-segments-are-declining detector in one aggregate: aggregate the
+flow to its grain first, y comes first, and swapping the arguments
+gives a wrong number rather than an error — slopes are per-second, so
+scale before showing. `stddev(value) / nullif(avg(value), 0)` ranks
+volatility; `approx_distinct` is active-count at scale; `corr` needs
+period-aligned series, so densify or join first or the number is
+noise; `array_agg(x ORDER BY period)` — unordered `array_agg` is
+nondeterministic and must never feed a sparkline.
+
 **Record what a read proves.** A composed evaluation you verified may
 land as the metric's own QUERY gloss — durable executable knowledge,
 served by `read.<aspect>()` from then on. Compose it `FROM
@@ -443,7 +602,7 @@ served column of the extract.
 Where every metric stands, in one read:
 
 ```sql
-SELECT metric, title, period, value, axes, formula
+SELECT metric, title, unit, meaning, period, value, axes, formula
 FROM metric_surfaces ORDER BY metric
 ```
 

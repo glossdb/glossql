@@ -437,7 +437,7 @@ async fn metric_metadata_reads_via_aspect_narrowing() {
     run(
         &session,
         r#"
-        DECLARE ASPECT dso WITH $${"title": "Days Sales Outstanding", "x-kind": "metric", "x-unit": "days"}$$ AS QUERY;
+        DECLARE ASPECT dso WITH $${"title": "Days Sales Outstanding", "x-kind": "metric"}$$ AS QUERY;
         GLOSS dso ON fin AS $${"sql": "SELECT (sum(ar) / sum(rev)) * 30 FROM monthly_balances"}$$;
         "#,
     )

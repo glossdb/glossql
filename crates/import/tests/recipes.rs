@@ -66,8 +66,9 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     )
     .await
     .unwrap();
+    assert_eq!(landed.source_scans, vec![("orders/*.parquet".to_string(), 2)]);
+    assert_eq!(landed.dropped_rows(2), Some(0), "SELECT * drops nothing");
     let (schema, batches) = (landed.schema, landed.batches);
-    assert_eq!(landed.source_rows, 2, "the recipe scanned two source rows");
 
     assert_eq!(schema.field(0).data_type(), &DataType::Int64);
     assert_eq!(
@@ -199,7 +200,13 @@ async fn a_multi_provider_recipe_accounts_each_source() {
         landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
         3
     );
-    assert_eq!(landed.source_rows, 5, "the sum across both scans");
+    // The bug this whole shape exists to prevent: 3 + 2 = 5 scanned
+    // against 3 landed reads as "2 dropped", and nothing was dropped.
+    assert_eq!(
+        landed.dropped_rows(3),
+        None,
+        "two scans: no single difference is true"
+    );
     assert_eq!(
         landed.source_scans,
         vec![
@@ -355,6 +362,11 @@ async fn accounting_discloses_what_it_cannot_account() {
         "{:?}",
         landed.casts
     );
+    // The same shape reading answers the row counts: two rows collapsed
+    // to one dropped nothing, and saying so is the whole point of
+    // keeping the reading apart from the cast verdict (2026-08-15).
+    assert!(!landed.row_preserving);
+    assert_eq!(landed.dropped_rows(1), None, "a GROUP BY drops no rows");
 
     // No casts: the account is complete and empty.
     let landed = run_recipe(&s, "SELECT * FROM read_csv('t.csv')")
@@ -484,9 +496,14 @@ async fn a_relational_recipe_lands_from_sqlite() {
         landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
         2
     );
+    assert!(
+        landed.source_scans.is_empty(),
+        "the source computed the SQL — this side scanned nothing"
+    );
     assert_eq!(
-        landed.source_rows, 2,
-        "the source computed the SQL — read and landed are the same count"
+        landed.dropped_rows(2),
+        Some(0),
+        "what came back is both what was read and what landed"
     );
     assert_eq!(landed.schema.field(0).name(), "order_id");
 

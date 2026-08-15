@@ -573,7 +573,16 @@ async fn declaration_relations_are_invalidation_edges() {
     )
     .await
     .unwrap();
-    s.import_put("fin", "payments", 10, 10, "{}").await.unwrap();
+    s.import_put(
+        "fin",
+        "payments",
+        r#"[{"relation":"payments.csv","rows":10}]"#,
+        10,
+        Some(0),
+        "{}",
+    )
+    .await
+    .unwrap();
     assert!(
         s.cache_get("fin", "orders.amount", "evidence", None)
             .await
@@ -1327,16 +1336,30 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
 }
 
 #[tokio::test]
-async fn imports_relation_serves_unknown_not_negative_on_fan_out() {
+async fn the_imports_relation_serves_an_unknown_dropped_count_as_null() {
     let s = store().await;
-    // A fan-out join lands more rows than the source scan counted; the
-    // statement outcome saturates to 0, and the relation must not answer
-    // with a negative count — the difference is unknown.
-    s.import_put("fin", "orders", 10, 25, "{}").await.unwrap();
-    s.import_put("fin", "orders", 10, 7, "{}").await.unwrap();
+    // The landing decides whether a dropped count is true — a join or an
+    // aggregate has none (fixed 2026-08-15). The store's job is to keep
+    // that verdict, including its absence, and to serve the scans it was
+    // decided from rather than a sum across them.
+    let joined = r#"[{"relation":"orders.csv","rows":3},{"relation":"customers.csv","rows":2}]"#;
+    s.import_put("fin", "orders", joined, 3, None, "{}")
+        .await
+        .unwrap();
+    s.import_put(
+        "fin",
+        "payments",
+        r#"[{"relation":"payments.csv","rows":10}]"#,
+        7,
+        Some(3),
+        "{}",
+    )
+    .await
+    .unwrap();
     let rows = s.relation_rows("imports").await.unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0][4], None, "landed > source: unknown, not -15");
+    assert_eq!(rows[0][2].as_deref(), Some(joined), "both scans, unsummed");
+    assert_eq!(rows[0][4], None, "a join has no dropped count");
     assert_eq!(rows[1][4].as_deref(), Some("3"));
 }
 

@@ -9,8 +9,9 @@
 --
 -- Names machinery reads, recorded here because this is the one file
 -- that ships them: `recipe_change` (the agent brief counts pending
--- approvals by that aspect name), `x-kind` / `x-unit` / `title` in
--- QUERY-aspect blobs (the model app's frames), and `none` as the
+-- approvals by that aspect name), `x-kind` / `title` in QUERY-aspect
+-- blobs and `unit` / `meaning` in a `definitions` entry (the docket's
+-- metric faces and `metric_surfaces`), and `none` as the
 -- judged negative in enum aspects ("examined, does not apply" — a
 -- different fact from an unassessed row, and the one that lets the
 -- backlog read walk to zero).
@@ -72,10 +73,24 @@ DECLARE ASPECT entity WITH $${
 
 DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
--- Dataset registries. The aspect blob of a metric stays thin (title,
--- x-kind); everything the company might revise — meaning, unit,
--- owner, source — lives in definitions glosses, where a correction
--- supersedes with actor and timestamp.
+-- Dataset registries, both keyed by the concept's own name.
+--
+-- `formulas` holds a derived metric's definition (fixture 16 §4, ruled
+-- 2026-08-06): a window-generic expression over sibling concepts, the
+-- window `w` its one free variable — `revenue[w] - expenses[w]`,
+-- `accounts_receivable[end of w] / revenue[w] * days[w]`. It covers
+-- every window because it names none, and it is what a drill
+-- re-scopes from: a ratio is never regrouped from its output rows.
+-- KNOWN GAP (ruled a gap 2026-08-15): nothing checks that the operands
+-- name declared concepts, so a typo is silent.
+--
+-- `definitions` holds the handbook content (ruled 2026-08-12): the
+-- aspect blob of a metric stays thin — the `title` display label and
+-- the `x-kind` tooling flag — because declarations have no
+-- supersession, and everything the company might revise (meaning,
+-- unit, owner, source) lives here, where a correction supersedes with
+-- actor and timestamp. The ruling was forced by a stale `x-unit`: a
+-- field lives in exactly one place, never both.
 
 DECLARE ASPECT formulas WITH $${
   "type": "object", "properties": {"formulas": {"type": "object"}}

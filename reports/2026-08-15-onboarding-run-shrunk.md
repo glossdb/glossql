@@ -190,10 +190,15 @@ read out of the accounting JSON properly; the dropped-row term is gone,
 since which rows a WHERE excluded is the author's question. The relation
 also stops reporting a dropped count for a recipe whose shape is not
 row-preserving (DISTINCT, aggregates, relational sources), which is the
-`vendors` case. **Still open:** a row-preserving recipe that scans two
-relations reports the difference against the sum of both scans;
-`source_rows` is `NOT NULL` in the schema, so making that honest is a
-schema change and a wipe — a ruling, not a patch. The `open`
+`vendors` case. The multi-scan half was closed the same day the project
+lead ruled the schema change free (the workspace is deleted and
+re-bootstrapped, so no migration exists to write): `imports` now stores
+`source_scans` — the JSON list of what each scan read, deliberately
+never summed — and a nullable `dropped_rows_count` decided at the
+landing by `Landed::dropped_rows`, where the recipe's shape is actually
+known. The old CASE proxied that shape off `cast_failures.unchecked`,
+which also fires when a companion query merely fails; the shape reading
+is now its own field. The `open`
 count for `tables` is `dropped_rows_count > 0 OR cast_failures > 0`, and
 `cast_failures` is a JSON *text* column — comparing it to 0 is true for every
 row, so 11 of 11 tables read as open with clean casts throughout. The
@@ -247,10 +252,82 @@ sliced.
 **F10. `gl-value` had no `text` format**, so the docket's Corridor tile
 rendered `NaN` for the band word `red`. **Fixed.**
 
-**F9 is the one left standing**, along with F5's multi-scan half. Neither
-is a defect to patch: carrying an axis through a composed ratio means
-grouping by it in both halves of the composition, and whether that should
-be the author's work or the library's is a design question.
+**F9 was the one left standing**, and it turned out not to be a code
+defect at all: the cube slices on served columns, so carrying an axis
+through a composed ratio is the author's work, and the practice skill
+now teaches it with a worked example.
+
+**An eleventh, found while fixing the tenth — and a lesson about how
+it was fixed.** The docket's formula face was empty in every workspace
+that has ever existed. The first patch made it scrape the grounding's
+opening SQL comment; the second replaced `formulas` with a "register"
+merging it into `definitions` and rewrote the formula as an English
+sentence. Both were wrong, and the second was worse than the bug. The
+project lead stopped it and sent me into the history, which settles it
+outright.
+
+**What a formula is** (fixture 16 §4, ruled 2026-08-06): a
+window-generic expression over sibling concepts, with the window `w`
+as its one free variable.
+
+```
+"gross_profit":       "revenue[w] - expenses[w]",
+"dso":                "accounts_receivable[end of w] / revenue[w] * days[w]",
+"revenue_growth_pct": "(revenue[w] - revenue[w-1]) / revenue[w-1]"
+```
+
+It covers *every* window because it names none. `[w]`, `[end of w]`,
+`[w-1]` carry the stock-vs-flow reading and the lag; the sibling names
+make it the definitional DAG the app draws (fixture 15 §4); and it is
+the rule for drilling — "a ratio cannot be re-scoped from its output
+rows: drilling DSO by country means re-scoping its components per the
+`formulas` gloss, not regrouping `read.dso()`" (§6). That last line is
+the real answer to F9 above, which the skill currently answers by hand
+instead.
+
+**What `definitions` is** (`reports/notes/flow-definitions-first.md`
+§1, ruled 2026-08-12): the handbook content — `meaning`, `unit`,
+`owner`, `source` per concept. It exists because declarations have no
+supersession and a handbook revision must land where actor, timestamp
+and contest live. The specimen that forced the ruling was **the glos
+run's stale `x-unit`** — the same freeze I "discovered" three days
+later and treated as new. The division was already principled and
+already written down: *the blob keeps what admission needs, the gloss
+keeps what the company revises.*
+
+**Why a metric is an aspect** (fixture 03, fixture 16 §1): a metric
+*is* a concept. Base concepts and derived metrics declare uniformly;
+the only difference is whether the SQL half is an extract or a formula
+over siblings. That uniformity is what makes `read.revenue()` and
+`read.dso()` the same door and what lets a formula name siblings at
+all. Proposing that metrics stop being aspects would have cut the DAG
+at its root.
+
+So the actual defect is the narrow one the first two patches walked
+past: **`formulas` is ruled, shipped, and taught nowhere.** No skill
+carries the expression language, so no agent has ever written one, and
+a row-count assertion over a fixture that seeds the value could not
+report it. Everything else here is reverted to the ruled design. The
+door tests now assert the served formula string, and the fixtures
+carry `ar[end of w] / revenue[w] * days[w]` instead of prose, so the
+face cannot silently empty again.
+
+**Two genuine inconsistencies survive, for the lead to rule** — both
+half-landed pieces of the 2026-08-12 ruling, not new design:
+
+1. `metric_surfaces` and the docket's metric frame read `unit` from
+   the aspect blob's `x-unit`, though that ruling moved unit's
+   definition of record into the `definitions` gloss. The stale
+   `x-unit` was the very specimen that caused it.
+2. `SPEC.md` §5.1 still describes the QUERY `WITH` schema as carrying
+   "description, indicators, unit, parameters, rendering" — it still
+   lists unit, against the same ruling.
+
+**On method.** Twice in one session I changed a ruled substrate because
+I had found a bug next to it, without reading why it was ruled. The
+corpus fixtures and `reports/notes/` are the record; they answered
+every one of these questions in text written before I started. Read
+them first.
 
 ## What worked
 

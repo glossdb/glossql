@@ -256,8 +256,9 @@ CREATE TABLE IF NOT EXISTS imports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   dataset TEXT NOT NULL,
   table_name TEXT NOT NULL,
-  source_rows INTEGER NOT NULL,
+  source_scans TEXT NOT NULL,
   landed_rows INTEGER NOT NULL,
+  dropped_rows_count INTEGER,
   cast_failures TEXT,
   imported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -317,33 +318,25 @@ pub const RELATIONS: &[Relation] = &[
         columns: &[
             "dataset",
             "table_name",
-            "source_rows",
+            "source_scans",
             "landed_rows",
             "dropped_rows_count",
             "cast_failures",
             "imported_at",
         ],
-        // A fan-out join lands more rows than the source scan counted;
-        // the difference is then unknown, never negative (2026-08-12).
-        // A recipe whose shape is not row-preserving — DISTINCT, an
-        // aggregate, a relational source that computed its own SQL —
-        // has no dropped-row count either: `vendors` collapsing 16,817
-        // invoices to 120 distinct ids did not drop 16,697 rows, and
-        // run 4 read exactly that number as work owed. The accounting
-        // already says which shape it was, so the difference is only
-        // taken where it means something.
-        //
-        // KNOWN GAP: a row-preserving recipe that scans two relations
-        // (a join) still reports the difference against the SUM of both
-        // scans. `source_rows` is that sum and cannot be NULL without a
-        // schema change; the outcome text lists each scan honestly, the
-        // stored counter does not.
-        sql: "SELECT dataset, table_name, CAST(source_rows AS TEXT) AS source_rows, \
+        // `dropped_rows_count` is decided at the landing and stored, not
+        // re-derived here: only the import knows the recipe's shape, and
+        // a NULL is the honest answer often enough to be a column value
+        // rather than a CASE. `source_scans` is the JSON list it was
+        // decided from — each relation the recipe read and the rows it
+        // held — deliberately not summed, because the sum across a join
+        // looks like "what was read" and is not (found 2026-08-12, when
+        // the sum reported 16,817 phantom dropped rows; fixed
+        // 2026-08-15 by giving the store the shape instead of a proxy
+        // for it).
+        sql: "SELECT dataset, table_name, source_scans, \
                      CAST(landed_rows AS TEXT) AS landed_rows, \
-                     CASE WHEN landed_rows > source_rows \
-                            OR json_extract(cast_failures, '$.unchecked') IS NOT NULL \
-                          THEN NULL \
-                          ELSE CAST(source_rows - landed_rows AS TEXT) END AS dropped_rows_count, \
+                     CAST(dropped_rows_count AS TEXT) AS dropped_rows_count, \
                      cast_failures, imported_at \
               FROM imports ORDER BY id",
     },
@@ -1052,22 +1045,27 @@ impl Store {
     /// One import, recorded (project lead, 2026-08-04): rows the recipe
     /// filtered away are the author's to judge, on the files — the engine
     /// keeps the counts, readable through the `imports` relation.
+    /// `dropped_rows` is `None` where the recipe's shape makes no single
+    /// count true; the caller decides that, because the caller ran it.
     pub async fn import_put(
         &self,
         dataset: &str,
         table: &str,
-        source_rows: i64,
+        source_scans: &str,
         landed_rows: i64,
+        dropped_rows: Option<i64>,
         cast_failures: &str,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO imports (dataset, table_name, source_rows, landed_rows, cast_failures) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO imports \
+               (dataset, table_name, source_scans, landed_rows, dropped_rows_count, cast_failures) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(dataset)
         .bind(table)
-        .bind(source_rows)
+        .bind(source_scans)
         .bind(landed_rows)
+        .bind(dropped_rows)
         .bind(cast_failures)
         .execute(&self.pool)
         .await?;

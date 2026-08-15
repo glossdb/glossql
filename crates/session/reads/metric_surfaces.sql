@@ -33,7 +33,12 @@ grounded AS (
 SELECT a.name AS metric,
        coalesce(json_get_str(a.schema, 'title'), a.name) AS title,
        coalesce(json_get_str(a.schema, 'x-kind'), '') AS kind,
-       coalesce(json_get_str(a.schema, 'x-unit'), '') AS unit,
+       arrow_cast(coalesce(
+         json_get_str(json_get(json_get(d.value, 'definitions'), a.name), 'unit'),
+         ''), 'Utf8') AS unit,
+       arrow_cast(coalesce(
+         json_get_str(json_get(json_get(d.value, 'definitions'), a.name), 'meaning'),
+         ''), 'Utf8') AS meaning,
        l.period AS period,
        l.value AS value,
        l.delta AS delta,
@@ -45,8 +50,16 @@ FROM aspects a
 LEFT JOIN latest l ON l.metric = a.name
 LEFT JOIN axes x ON x.metric = a.name
 LEFT JOIN grounded g ON g.aspect = a.name
--- the collapsed read: one winning formulas slot, human over agent. The
--- path is indexed by the metric's own name, so it stays here where
--- that column is in scope.
+-- The two dataset registries, each a collapsed read: one winning slot,
+-- human over agent. Both paths are indexed by the metric's own name, so
+-- they stay here where that column is in scope.
+--
+-- `title` and `kind` come from the aspect blob — the display label and
+-- the tooling flag, which is all the blob keeps. `unit` and `meaning`
+-- come from `definitions`, because a declaration cannot be superseded
+-- and the company revises both: the ruling (2026-08-12) was forced by a
+-- stale `x-unit`, and this read went on serving `x-unit` anyway until
+-- 2026-08-15. A field lives in exactly one place, never both.
 LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
+LEFT JOIN GLOSSARY() d ON d.aspect = 'definitions'
 WHERE a.kind = 'query'

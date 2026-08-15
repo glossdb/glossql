@@ -25,11 +25,12 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">The formula · {{ metric }}</span>
-      <code class="chip" title="The grounding's own opening comment — the one place the formula is written, where it cannot drift from the query it describes.">the grounding</code></header>
+      <code class="chip" title="The ruled definition: a window-generic expression over sibling concepts, with the window w as its one free variable. It covers every window because it names none — drilling this metric re-scopes its components per this formula, never regroups its output rows.">formulas</code></header>
     <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
       <template>
         <div class="rrow" style="grid-template-columns:1fr">
           <span class="r-subj" style="font-size:1rem">{formula}</span>
+          <span class="r-meta">{meaning}</span>
           <span class="r-meta">{meta}</span>
         </div>
       </template>
