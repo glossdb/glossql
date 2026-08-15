@@ -155,6 +155,16 @@ re-renders.
 them thin: encodings and marks. A spec that filters or aggregates is
 doing the frame's job in a place nobody can test.
 
+Read the vendored version out of `crates/apps/assets/vendor/README.md`
+and pin `$schema` to its major — a spec still claiming `v5` against a
+v6 library renders but logs a version warning on every load, which
+teaches readers to ignore the console. `{"data": {"name": "frame"}}` is
+how the spec names the frame the tile bound.
+
+A corridor is a `layer`: an `area` with `y`/`y2` under the lines, and
+`"color": {"datum": "as it happened"}` on each line to earn a legend
+entry without hard-coding a colour.
+
 ## An app you author carries no write
 
 The door takes exactly one write in the whole system — the docket's

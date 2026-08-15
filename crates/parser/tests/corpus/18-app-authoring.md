@@ -56,7 +56,7 @@ DECLARE PAGE index ON model AS $$
 $$;
 
 DECLARE SPEC bands ON model AS $$
-{ "$schema": "https://vega.github.io/schema/vega-lite/v5.json", … }
+{ "$schema": "https://vega.github.io/schema/vega-lite/v6.json", … }
 $$;
 
 PUBLISH APP model;

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "frame"},
   "height": 220,
   "mark": {"type": "line", "strokeWidth": 1.6, "point": {"size": 20}},
