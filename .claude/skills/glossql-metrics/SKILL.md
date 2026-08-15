@@ -655,14 +655,13 @@ short version: `ACCEPTS` is both the context and the invalidation
 edge, no `RETURNS` declares a detector, and a script abstains
 (`#{applicable: false}`) rather than throwing.
 
-**An app** when someone needs to look at this. Shape it with the user
-in prose first — what decision the surface serves — then write it as
-glosses: `app`, `app_page`, `app_frame`, `app_spec`, one gloss per
-part, so a frame can be edited without rewriting the app. Frames are
-SQL; display logic is computed in the frame, never in the template.
-Apps carry one write and one only — the docket's ruling form, which
-answers a question the workspace already derived. Anything an app you
-author needs to change, change with a statement.
+**An app** when someone needs to look at this — a standalone page at
+`/app/<name>` whose URL is its whole state, so a filtered view is a
+link somebody can send. **`glossql-apps` teaches it**: shape it with
+the user in prose first, then write it as glosses (`app`, `app_page`,
+`app_frame`, `app_spec`, one per part). Add an app beside the docket
+rather than forking it. Frames are SQL and display logic is computed
+there, never in a template; an app you author carries no write.
 
 ## Close with the question round
 

@@ -86,10 +86,14 @@ documents:
   separate model and metrics apps): what stands open for a human to
   judge, what has been settled, what waits on an act, with the metric
   surfaces and the record behind it. A workspace
-  `apps/<name>/` shadows the built-in — forking is copying the
+  `apps/<name>/` shadows the built-in whole — forking is copying the
   directory out — and an app.toml without a `dataset` pin binds to the
   workspace's sole dataset at request time; every built-in frame
-  parses under the test suite)
+  parses under the test suite. **Add an app, don't fork the built-in**
+  (ruled 2026-08-15): the docket's logic is tested against the
+  built-in, the door serves as many apps as a workspace writes, and
+  per-part overlay is deliberately not built until the docket has been
+  used enough to be worth forking)
   · `serverd` (the doors, M5: one axum listener — the MCP shim at `/mcp`,
   rmcp streamable HTTP, stateless per the 2026-07-28 revision, one
   `glossql` tool; the Arrow IPC query door at `/query`. Reads stream end
@@ -99,15 +103,20 @@ documents:
   rides the connection via initialize clientInfo with a boot-flag
   fallback. The door tells,
   skills teach — agent knowledge is statically written into
-  `.claude/skills/` — TWO skills since 2026-08-15, down from nine:
-  `glossql` (the language, the shipped reads, the outcome shape, the
-  substrate's sharp edges) and `glossql-metrics` (the work — land what
-  the topic needs, judge the structure, gloss the vocabulary, ground
-  the cohort, validate, close with the question round). The seven
-  flow-shaped skills went with the staged arc they encoded: order now
-  derives from the `workspace_next` read, so an agent asks the record
-  what this workspace affords instead of following a manual. Both are
-  under the standing invariant (`crates/serverd/tests/skills.rs`) —
+  `.claude/skills/` — FOUR skills: two carrying the work and two
+  carrying reference. `glossql` (the language, the shipped reads, the
+  outcome shape, the substrate's sharp edges) and `glossql-metrics`
+  (the judgment — land what the topic needs, judge the structure,
+  gloss the vocabulary, ground the cohort, validate, close with the
+  question round); `glossql-functions` and `glossql-apps` are the two
+  surfaces where an agent authors an artifact the server *runs* rather
+  than a claim it stores, linked from the moment each is needed. The
+  seven flow-shaped skills went with the staged arc they encoded on
+  2026-08-15: order derives from the `workspace_next` read, so an
+  agent asks the record what this workspace affords instead of
+  following a manual — but the two reference skills were swept up with
+  them and came back on 2026-08-15, because they encoded no ordering.
+  All four are under the standing invariant (`crates/serverd/tests/skills.rs`) —
   every fenced example parses, and every read example plans against a
   bootstrapped workspace, so a skill cannot teach a column that does
   not exist. The judge pattern — measurements optimize recall, the

@@ -108,7 +108,7 @@ the door, the app and these examples:
 | `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every declared metric with its latest cube month, move, axes and formula |
-| `app_parts` | apps authored as glosses, one row per file |
+| `app_parts` | apps authored as glosses, one row per file (`glossql-apps` teaches writing one) |
 
 A shipped name is reserved: it shadows a table *and* a CTE of the same
 name, so don't name a CTE after one.
