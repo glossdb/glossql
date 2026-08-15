@@ -53,7 +53,7 @@ documents:
   column kernels, the reference function library and its bootstrap
   declarations under `crates/scripts/functions/`; abstentions name absent
   ACCEPTS inputs — `missing_aspects`, ruled 2026-08-04; the kernel-mirror
-  test keeps the glossql-functions skill honest; the band plane, ruled
+  test keeps the kernel list in the glossql-metrics skill honest; the band plane, ruled
   2026-08-11 — `tabicl_bands` native kernel over the sibling-linked
   `../tabicl-candle` port, weights digest-verified from the
   workspace's `weights/`, `metric_bands` + `band_breach` in the
@@ -89,22 +89,20 @@ documents:
   rides the connection via initialize clientInfo with a boot-flag
   fallback. The door tells,
   skills teach — agent knowledge is statically written into
-  `.claude/skills/` (glossql, glossql-add-source with the framing block,
-  the table entity verdict — ported 2026-08-05 — and per-column glossing
-  rules, glossql-functions, glossql-relationships, glossql-metrics —
-  the operating-model deliverable, 2026-08-06 — glossql-apps,
-  the app-authoring conventions, first sketch 2026-08-09 from the
-  hand-written cash and docket apps — and glossql-windows, the
-  window/aggregation SQL layer over glossed data, verified against
-  the pinned substrate, 2026-08-10), the one teaching
-  layer (MCP resources tried and reversed 2026-08-04). Skills follow deliverables, never
-  predecessor phase names (ruled 2026-08-05); the judge pattern — measurements
-  optimize recall, the agent judge removes false positives —
-  is taught in the core glossql skill; its planes so far (all ported
-  2026-08-05, each oracle-tested against the finance generator):
-  detect_relationships, behavior_evidence (stock/flow
-  reconciliation), and the dimensions pair — dimension_relevance +
-  detect_hierarchies with glossql-dimensions. A fresh
+  `.claude/skills/` — TWO skills since 2026-08-15, down from nine:
+  `glossql` (the language, the shipped reads, the outcome shape, the
+  substrate's sharp edges) and `glossql-metrics` (the work — land what
+  the topic needs, judge the structure, gloss the vocabulary, ground
+  the cohort, validate, close with the question round). The seven
+  flow-shaped skills went with the staged arc they encoded: order now
+  derives from the `workspace_next` read, so an agent asks the record
+  what this workspace affords instead of following a manual. Both are
+  under the standing invariant (`crates/serverd/tests/skills.rs`) —
+  every fenced example parses, and every read example plans against a
+  bootstrapped workspace, so a skill cannot teach a column that does
+  not exist. The judge pattern — measurements optimize recall, the
+  agent judge removes false positives — is taught in the core skill.
+  A fresh
   workspace receives the shipped system at boot — embedded bootstrap:
   reference scripts + the measurement library's declarations, vertical
   excluded; the declaration relations (functions, aspects, witnesses,

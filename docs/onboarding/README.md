@@ -172,7 +172,10 @@ Design owed before building:
    points where the agent stops for the human: brief → gloss
    honestly with confidence → the door asks → read the human slots
    back. Thin by ruling: no agenda convention exists to teach.
-   **Built 2026-08-13** (`.claude/skills/glossql-onboard/`). Open
+   **Built 2026-08-13, retired 2026-08-15**: the staged arc it fixed
+   is now derived — the `workspace_next` read reports what the
+   workspace affords and where it stands, and the nine skills
+   collapsed to two (`glossql`, `glossql-metrics`). Open
    gap it exposed, for a ruling: no flow declares the behavior/unit
    witnesses, and owed questions derive only where a witness stands
    — whether add-source's framing stage should declare them is a

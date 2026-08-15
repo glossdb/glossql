@@ -1,576 +1,529 @@
 ---
 name: glossql-metrics
-description: Define the metric and validation framework on a glossed glossql workspace — concepts ground as grain-free extracts, derived metrics as formulas, validations as expectation + check voice + ATTEST. Use when the target asks for performance monitoring, after the add-source, relationships and dimensions flows.
+description: Take a glossql workspace from raw exports to metrics someone can trust — land what the topic needs, judge the structure, gloss the vocabulary, ground the cohort, stand up validations, and close with the question round. Use for any substantive work in a workspace: onboarding a source, declaring relationships, grounding a metric, authoring a check or a surface.
 ---
 
-# The metric framework
+# From files to numbers someone trusts
 
-The operating-model deliverable: metrics the business trusts and the
-validations that say why. Everything below rides existing constructs —
-QUERY aspects, glosses, functions, witnesses. The governing rule:
-**nothing is evaluated before a reader asks; everything a reader
-proves may be recorded.**
+The deliverable is metrics the business trusts and the validations
+that say why. The `glossql` skill teaches the language and the reads;
+this one is judgment — what to decide, what to measure, what to ask.
 
-The framework is domain-neutral: a metric is whatever the target asks
-— throughput, defect rate, utilization, revenue. The worked examples
-below come from our finance test runs.
+**There is no fixed order.** This is not a pipeline and the work is
+not a batch job: a person is talking to you while it happens. Ask the
+workspace what it affords and where it stands, then do the next thing
+that matters:
 
-**The cohort is agreed before anything declares.** The metric set
-comes out of the onboard skill's stage-0 conversation — proposed in
-prose, shaped by the user, aimed at the business's real KPIs
-including the heavy ones — never invented mid-flow. That
-conversation is where scope questions surface cheaply ("DSO over
-which receivables?"); a scope nobody discussed becomes an
-undisclosed assumption, and an assumption you leave out is a
-question nobody is ever asked. If no cohort was agreed, stop and
-have the conversation first.
-
-**A cohort KPI the data cannot ground is a finding.** Never force
-it and never silently drop it: name what is missing (the table, the
-opening balance, the master data) and which numbers it would close.
-That gap surfacing is the product working — it goes in the closing
-read-back beside the grounded metrics.
-
-## 1. Read the floor first
-
-Every grounding cites the judged knowledge underneath it. Before
-writing any SQL: no summed term without a `behavior` gloss under it
-(`behavior_evidence` first), no join without its grain-check gloss on
-the relationship, any sign convention stated before signed values
-split into measures, units checked before cross-unit arithmetic. A
-grounding whose assumptions cannot name their bases is not ready to
-write.
-
-Where a signed column carries a convention (which direction is
-positive, whether the store negates it), the convention has measured
-evidence: a behavior_evidence anchor carries `sign` — voters re-judged
-against the negated convention. A mirror-heavy count says the store
-carries the negation of the anchor's named convention; primary-heavy
-says the convention reads as named; a split says the entities disagree
-and the grounding must scope them. Accounting is the familiar case
-(ledger-signed vs natural balance), but any signed measure —
-adjustments, deltas, returns — carries the same question. Cite the
-measurement as the sign assumption's basis instead of asserting from
-column names.
-
-## 2. The vocabulary
-
-One QUERY aspect per concept, on the dataset. Base concepts and
-derived metrics declare uniformly — the difference is whether the SQL
-half is an extract (§3) or a formula over siblings (§4):
-
-```glossql
-DECLARE ASPECT revenue WITH $${
-  "title": "Revenue", "x-kind": "measure"
-}$$ AS QUERY ON DATASET;
-DECLARE ASPECT dso WITH $${
-  "title": "Days Sales Outstanding", "x-kind": "metric"
-}$$ AS QUERY ON DATASET;
+```sql
+SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
 ```
 
-The registries beside them — `formulas` and `definitions`, FACT on
-the dataset — ship with the KPI kit; gloss into them, never
-redeclare.
+Nine surfaces, what each is extended through, what stands and what is
+open on it. It reports state, never an order — the judgment is yours.
+The sections below are the craft for each surface, not stages to march
+through. Read the one you need.
 
-**The aspect blob is thin — definitions live in glosses.**
-Declarations have no supersession: whatever sits in the
-`WITH` blob cannot be revised, contested, or outranked, so anything
-the company might change — the meaning prose, the unit, the owner,
-the source document — belongs in the `definitions` FACT gloss, where
-an engineer's correction supersedes with actor and timestamp:
+## Agree the topic before anything lands
+
+A dataset has a topic — working capital, sales performance, cost
+control — and the topic is what makes every later choice decidable:
+which tables to land, which metrics to propose, which questions
+matter. Propose one in prose from what you can see, let the user shape
+it, then declare it:
 
 ```glossql
-GLOSS definitions ON fin AS $${"definitions": {
-  "revenue": {"meaning": "invoiced amounts less credit notes; recognized at invoice date",
-              "unit": "currency", "owner": "Finance", "source": "KPI handbook v3 §2"},
-  "dso": {"meaning": "receivables outstanding expressed in days of revenue",
-          "unit": "days", "owner": "Finance", "source": "KPI handbook v3 §2"}
-}}$$;
+DECLARE DATASET fin SET (purpose: 'working capital — where cash sits and how fast it moves');
 ```
 
-A field lives in exactly one place, never both: the blob keeps the
-schema, the `title` display label, and `x-kind` (a tooling flag) —
-duplicating the unit or the meaning there would let the copies
-disagree, which is exactly the staleness this convention exists to
-prevent.
+**Then propose the metric cohort** — what the topic implies, including
+the heavy ones (a cash conversion cycle, real margins), not just what
+looks easy to compute. The user prunes and extends in prose. That
+conversation is where scope questions surface while they are cheap:
+"DSO over which receivables?" costs one sentence now and a wrong
+dashboard later. Aim high deliberately — **a cohort metric the data
+cannot ground is a finding, not a failure.** Name what is missing and
+which tables would close it; surfacing that gap is the product
+working.
 
-## 3. Ground concepts as grain-free extracts
+This is conversation, not a form. **Prose shapes the work; forms rule
+the record.** Anything deciding what the work *is* — the topic, the
+cohort, whether to widen the import — is chat: present the facts,
+propose, interpret the answer. The question round carries only
+standing assumptions to confirm or correct, and it fails as a
+substitute for conversation because there is nothing standing yet.
 
-A grounding carries **no grain** — no GROUP BY, no window. It is the
-semantic core: scoping, signs, the grain-preserving joins composed
-inline, served as a row-grain relation with the time axis and the
-judged dimensions as columns. Every assumption names its basis:
+## Land what the topic needs — this is not ETL
+
+Probe and recipe are the filter. A dataset is a curated working set
+for its topic, never a mirror of the export: land the tables the
+cohort needs, take only the columns the recipe's SELECT list earns,
+filter wide tables in the recipe's WHERE. Leaving something out costs
+one later `DECLARE RECIPE`; landing everything costs attention on
+every read after — more slots to gloss, more owed claims, more noise
+between you and the questions that matter. The first live run measured
+it: the deep scope questions drowned in a 109-column long tail.
+
+**Read the source's conventions before probing.** Source-grain slots
+serve in every dataset, so what an earlier onboarding learned about
+this system — placeholder dates, format warts, key spellings — is
+already readable, and what you learn goes back the same way:
+
+```glossql
+GLOSS conventions ON erp_export AS $${
+  "placeholder_date": "1900-01-01 stands for unset",
+  "timestamp_format": "%b %e %Y %I:%M%p, month names mixed-language"
+}$$;
+```
+
+Only what the *next* export from that system will also carry belongs
+at source grain; dataset-local evidence stays in dataset glosses.
+
+**Rehearse the schema with `LIMIT 0`, per file, before authoring any
+recipe.** A zero-row probe still carries every `(name, type)`, which
+is its whole point. Row probes cannot replace it — probe rows omit
+null fields, so a column that is null in your sample is invisible
+there. The first validated run lost three columns that way, one of
+them a join key, and the missed relationship rode the missed column.
+
+```glossql
+PROBE erp_export AS $$SELECT order_id,
+       try_cast(amount AS DOUBLE) AS amount,
+       try_to_date(order_date, '%d.%m.%Y') AS order_date
+FROM read_parquet('orders/*.parquet') LIMIT 0$$;
+```
+
+**Typing is authored.** The recipe carries the casts and the column
+choices; there is no typing machinery behind it. A failed cast lands
+NULL — a kept row with a NULL cell, not a dropped row.
+
+```glossql
+DECLARE RECIPE orders ON fin FROM erp_export AS $$
+  SELECT order_id,
+         try_cast(amount AS DOUBLE) AS amount,
+         try_to_date(order_date, '%d.%m.%Y') AS order_date
+  FROM read_parquet('orders/*.parquet')$$;
+```
+
+The outcome carries the **cast account** at the decision moment: for
+every `try_*`, how many cells the cast nulled and the top such values.
+Those tokens came from the data, not a list — judge them. A repeated
+`\N` or `n/a` is a null marker: amend the recipe (`NULLIF` before the
+cast) and re-declare, which supersedes and re-lands. A scattered long
+tail may be genuinely bad data worth a `meaning` gloss. A re-landing
+keeps the glosses (their snapshot ids show their age) — re-run the
+measurements for columns the new recipe changed.
+
+For a relational source, probe and recipe SQL run **at the source** in
+its own dialect, and the wire decides what can land. SQLite has no
+date type: `CAST(date(x) AS DATE)` silently lands `2010` for
+`'2010-12-27'` because DATE takes NUMERIC affinity — measured, not
+theorized. Land it as text and cast at read time, and put that gap in
+the column's `meaning` so nobody rediscovers it. Read `DESCRIBE
+<table>` the moment a table lands: a numeric that landed as text shows
+up there instead of three reads later.
+
+## Say what each table is
+
+Before the columns. Every correct aggregate downstream depends on this
+verdict, and it is judged from the data, never from the name.
+
+- **value** — what one row is, in business words.
+- **role** — `fact` (events at volume, carrying numbers) or
+  `dimension` (descriptive, referenced by others), read from the
+  evidence: measures, an event date, row counts, who references whom.
+- **grain** — the columns identifying one row. **Verify, never
+  assert**: `COUNT(*)` against `COUNT(DISTINCT (col, …))` must agree.
+  A composite grain gets the composite; a table with no key gets none,
+  said plainly. Watch for document-header values repeated onto every
+  line — summing them at row grain multiplies by line count.
+- **time_axis** — the column recording when the row's event happened.
+  Attribute dates (due_date, hire_date) are not an axis; one at most.
+
+```glossql
+GLOSS entity ON orders AS $${"value": "sales order line", "role": "fact",
+  "grain": ["order_id", "line_no"], "time_axis": "order_date"}$$;
+```
+
+## Judge the join structure
+
+`detect_relationships` proposes at high recall — false positives
+included, you are the precision. Per candidate, before declaring:
+
+- **Anti-join both directions and *read* what doesn't resolve.** An
+  orphan count is a question, not a verdict: orphans that are exactly
+  a business population (the cancelled invoices, the pre-migration
+  accounts) confirm the edge; random misses argue against it.
+- **Distrust coincidence.** Two unique integer columns overlap
+  perfectly without meaning it — parallel row-number sequences are the
+  classic false positive. Names, values and business objects must all
+  agree.
+- **Judge a composite on all its legs.** Anti-join anchor *and* scope
+  together; the anchor alone fans out and over-counts, which is what
+  the composite exists to collapse. Declare it as a tuple, never the
+  anchor leg alone.
+- **Ground the verdict, not the story.** Why the data looks this way
+  is a hypothesis — verify it or label it. A correct rejection with a
+  wrong causal story misleads everyone reading the grounds later.
+
+```glossql
+DECLARE RELATIONSHIP orders.customer_id -> customers.id;
+DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, account_name);
+GLOSS meaning ON orders.customer_id -> customers.id AS
+  $${"value": "each order belongs to one customer; 140 orphans are the cancelled orders, never posted"}$$;
+```
+
+Rejected candidates stay in the measurement — visible and undeclared
+is the record that they were seen and judged. Once edges are declared,
+`relationship_coherence` watches them: orphan rate (exact, and it
+catches shapes no column statistic can, including a single repeated
+invented key) and the temporal read — a child event dated before its
+parent record *exists* is the trace a wrong pairing leaves, while a
+child event before a *deadline* is ordinary. Re-run after new batches.
+
+## Gloss the columns — role first
+
+Read the measurements before speaking. Relevance is conditional: a
+column owes `behavior` and `unit` only once its `role` says `measure`,
+and `dimension` only on `role = 'dimension'` — so gloss role first and
+the rest of the backlog derives from it.
+
+- **meaning** — one sentence, specific to the business, saying what
+  the column contains and how it is used; `term` is the name a report
+  would print. Never state summability here — that verdict has one
+  home.
+- **role** — `key` · `measure` · `dimension` · `timestamp` ·
+  `attribute`, judged from this table alone. Never call a column a
+  foreign key here; references are `DECLARE RELATIONSHIP`.
+- **behavior** — measures only. `stock` is a carried point-in-time
+  level that must not be summed across periods; `flow` accumulates. A
+  column's own trajectory cannot decide this — a trending flow and a
+  mean-reverting stock look alike — so run `behavior_evidence`, which
+  reconciles the column against period movements over *declared*
+  edges. Each anchor is served raw and year-scoped: a cumulative that
+  resets abstains at raw grain and reconciles as a stock on the year
+  anchor; read the pair together. Names lie either way — a "trial
+  balance" column can carry period turnover.
+- **unit** — where a magnitude has one; `source_column` names the
+  column carrying it when it rides beside the value.
+
+**When `behavior_evidence` starves** — every anchor abstains, no
+entity persists across periods — climb the ladder: land the missing
+dimension (an AP side whose vendor has no table starves only for lack
+of a declared edge; `SELECT DISTINCT vendor_id FROM …` is a legitimate
+recipe); then your own data test, cited as the basis; and last, on an
+installation where a whole family of columns needs it, author a
+workspace-scoped function that decides behavior the way *this* dataset
+demands. That function is the installation's recorded thinking —
+versioned, re-runnable, honest about its method in a way a one-off
+judgment never is. Unwilling to climb? Don't gloss: absence shows as
+an honest `unassessed` row, a guess does not.
+
+"Does not apply" *within* relevance is still a judgment: a ratio is a
+measure with no stock/flow nature, and that lands as
+`{"value": "none", "grounds": "…"}`, never as a permanent unassessed
+row.
+
+## Score the slice axes
+
+`dimension_relevance` scores `coverage × evenness` — zero free
+parameters, one scale for every axis. The number answers "is this axis
+usable, how much does it resolve"; **interest is yours**. A
+near-uniform sequence column scores high and is still `none`.
+Abstentions are gates, not defects: near-keys, null-dominated columns,
+constants.
+
+`detect_hierarchies` screens within-table dependencies at high recall.
+Judge each:
+
+- **λ < 0.5 is the vacuous-skew signature.** A ≥98%-dominant dependent
+  passes the screen vacuously. Measured: a λ floor killed 48 false
+  positives with zero truth lost.
+- **A perfect 1:1 is a relabeling or a coincidence, and only meaning
+  separates them.** A code↔label bijection collapses to one axis; an
+  entity key that happens to align with a timestamp must not.
+- **Same-family role columns stay apart**, however cleanly they align
+  — an origin and a destination, a bill-to and a pay-to. Merging them
+  corrupts every aggregation that crosses them.
+
+Record a surviving nest as a same-table relationship, finer → coarser.
+Then the judged join: **run the grain check before trusting any
+join** — `COUNT(*)` before and after must be equal, exactly, or the
+join is not grain-preserving and multiplies every downstream
+aggregate. Check each join alone in a one-hop star.
+
+## Ground the cohort
+
+One QUERY aspect per concept, on the dataset. The aspect blob is thin
+— declarations have no supersession, so anything the company might
+revise (meaning, unit, owner, source) belongs in the `definitions`
+gloss where a correction supersedes with actor and timestamp. A field
+lives in exactly one place, never both.
+
+```glossql
+DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS QUERY ON DATASET;
+```
+
+**A grounding carries no grain** — no GROUP BY, no window. It is the
+semantic core: scoping, signs, grain-preserving joins composed inline,
+served as a row-grain relation with the time axis and the judged
+dimensions as columns.
 
 ```glossql
 GLOSS revenue ON fin AS $${
-  "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts, entry date as the time axis\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
+  "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
   "assumptions": [
     {"dimension": "scope", "key": "revenue-accounts-only", "assumption": "revenue-typed accounts only, service lines included", "basis": "chart_of_accounts + judgment", "confidence": 0.7},
-    {"dimension": "sign", "key": "revenue-credit-positive", "assumption": "revenue accounts carry credit balances", "basis": "behavior_evidence sign partition + conventions gloss", "confidence": 1.0},
-    {"dimension": "grain", "key": "grain-preserving-joins", "assumption": "joins are grain-preserving", "basis": "relationship glosses", "confidence": 1.0},
     {"dimension": "behavior", "key": "revenue-is-a-flow", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 1.0}
   ]
 }$$;
 ```
 
-**`behavior`, `sign`, and `grain` assumptions carry 1.0, always.**
-The round never serves them to a human (enforced 2026-08-14) —
-statistics are your work through the shipped functions — so a
+**Say the mechanics inside the SQL as comments**; the assumptions
+array carries judgment. A comment inside the query cannot drift from
+the query the way a separate description can.
+
+**`behavior`, `sign` and `grain` assumptions carry 1.0, always.** The
+round never serves them to a human — statistics are your work — so a
 measurable assumption below 1.0 is a question nobody will ever be
-asked. Settle it before recording: the measurement's verdict, or —
-when it abstains — your own test against the data (a mirror table,
-the GL, a reconciliation by hand), cited as the basis. Below-1.0
-confidence is for *judgment* dimensions only (definition, scope,
-convention) — those the round exists to serve.
+asked. Settle it before recording. Below-1.0 confidence is for
+judgment dimensions only: definition, scope, convention.
 
-**Say the mechanics inside the SQL as comments** — a line like the
-example's above the expression it explains. The recorded SQL is what
-the validation surface shows a human beside the formula, and a
-comment inside the query cannot drift from the query the way a
-separate description can. The split is clean: comments carry
-mechanics (how this computes), the assumptions array carries
-judgment (what was chosen, on what basis, how firmly). This holds
-for every recorded QUERY gloss — groundings and recorded
-materializations alike.
+Mark a stock with `"behavior": "stock"` as a top-level key in the
+body. The library's readers follow the marker; an unmarked grounding
+reads as a flow and its walk sums levels and lies.
 
-A stock's extract is bounded by its **source grain** (a table of
-period balances speaks per period; no read can answer finer) — serve
-the grain column as-is and say so in the assumptions. Mark it too:
-`"behavior": "stock"` as a top-level key in the grounding body. The
-library's readers follow the marker (a stock takes last-per-window,
-never a sum), and an unmarked grounding reads as a flow.
+**After grounding, run `detect_grounding_collisions`.** Two concepts
+grounding to the same extract make every ratio between them compute
+1.0, silently. A reported pair is either a deliberate synonym — say so
+— or a definition error.
 
-The assumptions array is a contract, not commentary: every metric
-writing carries `assumptions: [{dimension, key, assumption, basis,
-confidence}]`, and confidence means it — the core skill's calibration
-scale governs the number (1.0 only for what is ruled or proven). The
-world-model surface reads exactly this shape to build its judgement
-queue, so an assumption you leave out is invisible to the humans who
-would have caught it, and a confidence you inflate empties their
-queue falsely.
-
-**`key` is the claim's identity — write it deliberately.** It is a
-short slug (`goods-only`, `full-payment-settles`) and it is the only
-thing the system joins on: a human ruling names `(aspect, key)`, the
-question stays closed on that key, and the fold-in debt clears on it.
-Nothing ever matches your prose — rephrase the assumption text freely
-between re-records, the ruling still holds. Two rules follow:
-
-- **Keep a key stable while the claim is the same.** Changing the
-  key means "this is a different claim": the standing ruling stops
-  applying and the question re-opens. That is the correct move when
-  the claim genuinely changed, and a mistake otherwise.
-- **Reuse one key when one claim spans aspects.** If `dpo` and
-  `purchases` both rest on the same scope decision, both disclose it
-  under the same key — that is what lets the door catch a human
-  ruling it one way here and the other way there. Better still, if
-  one claim really governs both, compose them from a shared concept
-  instead of disclosing it twice.
-
-**After grounding, run the collision read.** Two concepts grounding to
-the same extract make every ratio between them compute 1.0, silently:
-
-```glossql
-SELECT detect_grounding_collisions() FROM fin;
-SELECT value FROM GLOSSARY(fin::grounding_collisions);
-```
-
-It buckets current groundings by canonical SQL and reports shared
-buckets — recall, not judgment. A reported pair is either a deliberate
-synonym (say so: one concept, or a FACT gloss naming the alias) or a
-definition error (re-ground one of them). Its cache stales on any
-gloss write, so a re-read after new groundings recomputes.
-
-## 4. Evaluate at read — windows are read policy
-
-Grain is the reader's: the app defaults to month, another reader asks
-by day, the same definitions answer both. Evaluate through
-`read.<aspect>()` — the current grounding served as an ordinary
-relation (human slot outranking agent, so a human answer is what
-runs); windows and filters ride your SQL. The prefix is `read.` for
-every QUERY gloss — metrics, suspect lists, any declared aggregation —
-one serving door, whatever `x-kind` names:
-
-```glossql
-SELECT date_trunc('month', date) AS month, sum(value)
-FROM read.revenue() GROUP BY 1 ORDER BY 1;
-```
-
-- **Flows sum** over any partition — time window or judged dimension.
-- **Stocks take the last period per window**, never a sum across.
-- **Ratios don't roll up**: compose them per the formula at the
-  window asked — numerator and denominator each at the new scope,
-  never an average of finer ratios. A defect rate is defects[w] /
-  units[w] at whatever w is asked; `dso[w] = accounts_receivable[end
-  of w] / revenue[w] * days[w]` the same way. The formula gloss is
-  the ruled definition;
-  it covers every window because it names none. Never regroup a
-  ratio's output rows — re-compose at the new scope.
-
-**Record what a read proves.** A composed evaluation you verified
-(against an oracle, against the source system) may land as the metric's own
-QUERY gloss — durable executable knowledge, superseding as
-definitions change, served by `read.<aspect>()` from then on.
-Record it composing `FROM read.revenue()` where you can: a
-re-ruled component then propagates through every metric built on it
-(a self-reference is refused as a cycle). The formula gloss and the
-recorded evaluation are one definition in two forms: change one,
-update the other in the same act — or carry the difference as a
-disclosed assumption. Recording a proven read is not pre-evaluation.
-
-## 5. Validations — expectation beside check, ATTEST answers
-
-The authored expectation is a FACT gloss; the check is a function
-**voice** on the same aspect; a detector bands across both slots;
-`ATTEST` is the verdict surface. The pattern is domain-free —
-a double-entry balance, a known duplicate-booking rate, an orphan
-rate against a declared edge all wear the same shape:
-
-```glossql
-DECLARE ASPECT journal_balanced WITH $${
-  "type": "object", "required": ["outcome"],
-  "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
-                 "breach_rate": {"type": "number"},
-                 "severity": {"enum": ["critical", "warning", "info"]}}
-}$$ AS FACT ON TABLE WHEN entity = 'journal line';
-GLOSS journal_balanced ON journal_lines AS $${
-  "outcome": "Total debits equal total credits, exactly.",
-  "tolerance": 0.0, "severity": "critical"
-}$$;
-DECLARE FUNCTION journal_check FOR fin FROM 'functions/journal_check.rhai'
-  ACCEPTS (imports) RETURNS journal_balanced;
-DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
-  DETECTOR rate_tolerance THRESHOLD 0.0;
-SELECT journal_check() FROM journal_lines;
-```
-
-- **Scope the check with `WHEN`.** A check aspect declared bare
-  `ON TABLE` owes an unassessed row on *every* table — three checks
-  on a 14-table workspace put 39 unfillable rows in the backlog
-  (the 2026-08-14 run). `WHEN entity = '…'` bounds it to the tables
-  whose `entity` gloss carries that value — the one table it means,
-  usually.
-- **`breach_rate` is the violation share** — 0.0 means fully
-  passing, and it is compared against `tolerance` upward. Never
-  report a pass rate under this key: a 100%-passing check reported
-  as `1.0` bands red.
-- **The expectation is authored, never assumed zero.** A source with
-  known dirt expects its own breach rate (`"tolerance": 0.105` for a
-  source known ~10% dirty) — a check reporting 0.0 there has
-  overcleaned, itself a failure.
-- **The check speaks the aspect's schema**: its output carries
-  `outcome` like any slot, with the measurement beside it. One
-  schema, every speaker.
-- `ACCEPTS (imports)` keeps it honest: a new import invalidates the
-  voice, and the next read recomputes.
-- **Promote confirmed reconciliations.** A behavior_evidence
-  convention that reconciled at ~0 residual (a balance equal to the
-  sum of its movement rows) is a standing invariant — turn it into a
-  check.
-- Checks are workspace-authored (`FOR` the dataset, not GLOBAL) —
-  write them per the glossql-functions skill, **which requires a
-  `.rhai` file in the workspace directory**: an agent working the
-  MCP door alone cannot author the check half today — say so in the
-  read-back and record the expectation gloss anyway, rather than
-  shipping a self-measured snapshot as if it were a standing check.
-  The usual detector ships: `rate_tolerance` reads the authored
-  expectation (`tolerance`) and the check voice (`breach_rate`) from
-  the slots, sees no table data, and goes green/red one-sided —
-  `DECLARE WITNESS my_check_w ON my_aspect DETECTOR rate_tolerance
-  THRESHOLD 0.02;`. The `tolerance` and `breach_rate` keys are your
-  aspect's schema, not a library convention — declare them there,
-  and the one validated contract covers every speaker. Write your
-  own detector only when the shape differs (a known-dirt source
-  expects its own rate and goes red on *both* sides — overcleaning
-  is also a failure); `functions/rate_tolerance.rhai` in the
-  workspace is the twenty-line template to copy.
-
-### Expected ranges — the band walk
-
-The library ships a trajectory read (still finding out how well this
-works in practice). `metric_bands` answers, for each grounded metric
-and each of its recent months: **knowing only what came before, what
-would this month's number have had to be for nobody to be
-surprised?** Each walked point records that corridor (p05–p95, p50
-the single most expected value), the actual, and the PIT — where the
-actual landed in the corridor, 0..1. Read PIT in plain terms: 0.5,
-the month landed where the trajectory pointed; 0.9, it beat nine in
-ten plausible outcomes — high but explainable; past 0.95 or under
-0.05, the month is outside what the metric's own history can explain
-— something changed, the business or the data. Seasonality the walk
-has seen is inside the corridor: a strong December does not flag, a
-flat one might. Every point is honest — its fit saw only the months
-before it, so the corridor was drawn before looking at the answer.
-
-`band_breach` is the detector on top, the pager line: does any
-monitored metric currently have a month its history cannot explain,
-and how decisively? Green — every metric's recent months continue
-their story. Red — one broke pattern; the score says how far outside
-(0.98 is beyond the 99th percentile of expectation), and the
-measurement's cached body names the metric and the month. The
-witness (`bands_w`, threshold 0.98) ships with the KPI kit — run the
-walk and read the verdict:
-
-```glossql
-SELECT metric_bands() FROM fin;
-SELECT subject, band, score FROM ATTEST(fin::metric_bands);
-```
-
-- The model weights ride the build: `build.rs` stages safetensors,
-  config, and the pinned `DIGESTS` beside the binaries from the
-  tabicl-candle checkout, digest-verified at load. A workspace
-  `weights/` directory overrides the staged set; a build made without
-  the checkout's weights fails the extraction with every path it
-  tried.
-- **The read is recall, you are the judge**: a business shift and a
-  data defect breach identically — telling them apart is your work,
-  not the detector's. Read the body for which metric and month, look
-  at the rows underneath, and rule.
-- The corridor knows only the history it is shown: a short history
-  gives wide corridors and weak claims, and under about five months
-  the walk says nothing. The read sharpens as the workspace ages.
-- The read follows the grounding's authored behavior: flows sum per
-  month; a grounding whose body carries `"behavior": "stock"` takes
-  the last value per month instead. No marker reads as flow — mark
-  your stocks (§3), or their walk sums levels and lies.
-- The docket's metric page renders the walk (the corridor tile); the
-  score is ordinal (band displacement), never a probability.
-
-### The cube — run it beside the walk
-
-`metric_cube` is the walk's sibling and the business surface's fuel:
-one measurement caching, per grounded metric, the monthly total, the
-slices along its served dimension columns (2..24 members, at most two
-axes, the last 24 months — caps stated in the body), and the rival
-series where an assumption discloses `alternative_sql`. The built-in
-docket serves every face from it through `metric_series()` —
-long rows any SQL slices:
-
-```glossql
-SELECT metric_cube() FROM fin;
-SELECT period, member, value FROM metric_series()
-WHERE metric = 'revenue' AND dimension = 'cost_center';
-```
-
-Run it whenever you run the walk — a grounding write or a landed
-import stales both caches, and until the next run the app's tiles
-say honestly that the measurement has not run. A dimension the cube
-should slice must be a served column of the extract (§3): the cube
-admits axes from the grounding's own columns, never from the raw
-tables.
-
-## 6. What-if — a scenario is declared, then read
-
-A scenario is its own FACT aspect, exactly as a metric is its own
-QUERY aspect: declare it with `x-kind: "scenario"`, gloss the
-overrides, read it through the `whatif.` door. Never compute a
-scenario by hand-editing SQL — the declared form is versioned,
-witness-gated, and reproducible; an ad-hoc calculation is none of
-those.
-
-```glossql
-DECLARE ASPECT price_hike WITH $${
-  "title": "Price +15% from July", "x-kind": "scenario",
-  "type": "object", "required": ["overrides"]
-}$$ AS FACT ON DATASET;
-
-GLOSS price_hike ON fin AS $${"overrides": [
-  {"column": "sales_data.unit_price", "factor": 1.15, "from": "2026-07",
-   "basis": "the declared lever"}]}$$;
-
-SELECT month, replay, p50, p90, basis FROM whatif.price_hike()
-WHERE concept = 'revenue';
-```
-
-Each override names a **raw column on a landed table** (the table
-must carry a date column — the start month anchors there), a factor,
-and its basis. A behavioral response the history never saw — demand
-dropping when prices rise — is a second override with its basis
-saying it is assumed; undeclared, the read proceeds as if behavior
-holds, and says so.
-
-What comes back, per concept and month: `replay` is the exact
-recomputation of the grounding at the declared factors (the
-arithmetic half — trust it as arithmetic), `p05..p95` are the model's
-bands read across replayed support worlds around the declared point,
-and `basis` is the judgment. Read `basis` before the numbers. Three
-refusals matter:
-
-- **"unmoved by the overrides"** — the grounding reads a stored total
-  (`line_amount`) the overridden parts never reach. Run
-  `detect_derivations` on the table and gloss the identity, or ground
-  the concept on the parts.
-- **"starts after the recorded history ends"** — replay works over
-  recorded months; a scenario about a future with no rows needs its
-  start inside the recorded history.
-- **"the grounding is contested/stale"** — the concept's own state,
-  not the scenario's; fix the grounding first.
-
-Superseding the scenario gloss recomputes the read; `DELETE FROM
-cache` forces it. One scenario = one factor set — a different
-strength is a new gloss (re-gloss to revise) or a sibling aspect.
-In a workspace with apps, a scenario ships with its authored chart
-tile (glossql-apps: "A scenario ships with its tile"); the built-in
-docket app lists scenarios without it.
-
-## 7. Misfit — rank a frame when a signal fires
-
-When something breaks pattern — `band_breach` flags a month, a
-validation goes red, a user says these numbers look wrong — the next
-question is *which rows*. Author a sample frame: a QUERY aspect,
-`x-kind: "sample"`, glossed with one SELECT that holds history and
-suspects together. The `misfit.` door serves the frame's rows back
-with a `misfit` score — how badly each row fits the rest of the same
-frame — and the top of the ranking is where to look. This is the
-investigation step of the judge loop: the ranking optimizes recall,
-you remove the false positives, and what you conclude lands as a
-gloss. Run it on a signal, never as a routine sweep.
-
-```glossql
-DECLARE ASPECT payment_pairs WITH $${
-  "title": "Payments against their invoice, six months and March",
-  "x-kind": "sample"}$$ AS QUERY ON DATASET;
-
-GLOSS payment_pairs ON fin AS $${
-  "sql": "SELECT p.amount, i.amount AS invoiced, p.paid_date - i.invoice_date AS day_delta, i.terms_days FROM payments p JOIN invoices i ON p.invoice_id = i.invoice_id WHERE p.paid_date >= DATE '2025-09-01'",
-  "assumptions": [{"key": "joined-surface", "assumption": "joined surface: the suspicion is the pairing"}]}$$;
-
-SELECT * FROM misfit.payment_pairs() ORDER BY misfit DESC LIMIT 20;
-```
-
-Pick the surface to match the suspicion: a relationship suspicion
-needs the **join** in the frame — a single table is structurally
-blind to wrong pairings whose individual values are all legal. A
-value suspicion can frame the metric's own extract. The frame is
-also the model's context: the more known-good history it carries
-relative to suspects, the cleaner the ranking — when a clean stretch
-exists, put it in the frame (measured: heavy contamination costs
-ranking quality). `basis` names
-the columns ranked and every exclusion (text, constants, id-named
-columns); read it before trusting the ranking. The read refuses by
-name rather than serve noise: a frame past the row cap — the cap
-bounds the model's context, so sample a bigger population in the
-frame SQL (`ORDER BY random() LIMIT 2000`) or narrow with WHERE — or
-too little numeric surface: some frames cannot carry a density read,
-and the abstention is the honest answer. Nothing is cached; the
-durable record is your verdict, glossed.
-
-## 8. Read back
-
-```glossql
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
-SELECT count(*) FROM GLOSSARY(fin) WHERE state = 'unassessed';
-```
-
-Red bands are where a human closes what you could not; unassessed
-rows are the vocabulary nobody has spoken to yet. And the read-back
-covers the whole agreed cohort, not just what grounded: every KPI
-that did not ground gets named with what would close it — a missing
-table, an opening position, master data — as a learning, never a
-silent omission.
-
-## 9. The question round — end every framework with it
-
-A definition is a choice between formula families the data cannot
-arbitrate: both DSO variants compute, pieces count at unit or at
-batch grain, utilization divides by calendar or by staffed hours.
-Where evidence *can* decide
-(a stock never sums across periods), the measurements already did;
-what remains is convention, and convention is the user's to rule.
-
-That is a ladder, and you walk it before asking. For each loose
-assumption, first try to close it by measurement — run the check
-that would decide it, and record the result as the basis (the core
-skill's function map names what settles what). If the
-question stays load-bearing after it closes (a reconciliation that
-must keep holding, a behavior new imports could break), declare a
-witness on that aspect (§5) so a standing check re-decides it on
-every import instead of anyone re-asking. Only what no measurement
-can arbitrate goes to the user — a **choice between readings**, never
-a statistic; "is this a stock or a flow" is `behavior_evidence`'s
-question, not the user's (ruled 2026-08-13). A question you ask that
-data could have answered costs the user's attention twice: once now,
-and once more when they learn to skim your questions.
-Definitional risk is invisible from inside your own judgment — it
-shows only against an alternative — so the alternative must be
-named, every time. Name it runnably where the choice bites: an
-assumption entry may carry the strongest rival reading as SQL —
+**Name the strongest rival runnably.** Definitional risk is invisible
+from inside your own judgment; it shows only against an alternative.
+An assumption may carry one:
 
 ```json
-{"dimension": "definition",
+{"dimension": "definition", "key": "gross-profit-basis",
  "assumption": "gross_profit = revenue - COGS",
  "alternative": "revenue - all expenses",
  "alternative_sql": "SELECT e.date, ... FROM ...",
  "basis": "textbook convention", "confidence": 0.7}
 ```
 
-— optional, one rival only. A runnable alternative is what lets
-anyone (you, the human, an app) compute what actually moves between
-the readings instead of arguing from prose — the cube (§5) runs the
-rival monthly and the docket's story tile draws both lines, so
-the gap is a chart the human reads before ruling. Start with the
-metric where the families diverge hardest, not everywhere.
+The cube runs the rival monthly and the docket draws both lines, so
+the gap is a chart the human reads before ruling instead of an
+argument from prose. Start where the families diverge hardest.
 
-The round is the *ruling* register, not the *shaping* one (the
-onboard skill's two-registers rule): what the cohort is, what the
-topic means — that was conversation, settled in stage 0. The round
-carries only standing assumptions to confirm or correct.
+## Read at the reader's grain
 
-Close the flow by presenting **every definitional choice you made**
-as a question to the user — one per definition, multiple choice,
-through a question surface when the client has one, numbered prose
-otherwise:
+Grain is the reader's: the app asks by month, another reader by day,
+the same definitions answer both. Evaluate through `read.<aspect>()` —
+the current grounding as an ordinary relation, human slot outranking
+agent, so a human answer is what runs.
 
-> **gross_profit** — I used revenue − COGS (textbook). The other
-> family is revenue − all expenses (closer to operating profit).
-> Which does this business mean? My grounds: … · confidence 0.7.
+- **Flows sum** over any partition.
+- **Stocks take the last period per window** —
+  `last_value(value ORDER BY ts)`, the aggregate form, ORDER BY
+  mandatory. A running sum of a stock is arithmetic nonsense; a
+  period-over-period delta is legal, it is the derived flow. ROLLUP
+  across time is illegal for stocks.
+- **Ratios don't roll up**: compose per the formula at the window
+  asked — numerator and denominator each at the new scope, never an
+  average of finer ratios. Never regroup a ratio's output rows.
+- **Gap-filling**: a flow coalesces a missing period to 0 — no
+  transactions is zero flow. A stock never does — a missing level is
+  unknown, not zero.
+- **`lag` and ROWS frames count rows, not periods.** On an axis with a
+  missing month, `lag(value, 12)` is quietly thirteen months ago.
+  Densify the axis, or use a RANGE frame with an interval.
 
-What counts as definitional: any grounding assumption with
-`dimension: "definition"` whose basis is your judgment rather than a
-measurement or a human ruling — the **basis is the marker**, never
-the number. Calibrate `confidence` soberly: 1.0 is reserved
-for a measured fact; 0.9 is already very high — a well-argued
-convention choice tops out there. Keep data findings (a
-reconciliation gap, a column whose name lies about its content) in a
-separate list: those are facts to explain, not choices to make.
+Percentiles and medians are level statistics — safe for both
+behaviors, which makes p50/p95 the honest summary when behavior is
+unglossed.
 
-And a third list beside those two — **world-coverage wishes**. Some
-assumptions resolve neither by the user's choice nor by SQL, only by
-*more world*: an opening position that would anchor every cumulative
-level, a prior-year extract, the master data a role gloss implies but
-no table carries, the policy document that names the convention. A
-single confidence number flattens these — "no opening rows exist" is
-a fact at 1.0, "therefore the levels are the true levels" is a world
-claim the data cannot settle (a negative opening month is evidence
-against it in real data). Name each wish as a specific ask: which
-document or source, and which numbers shift when it arrives ("every
-stock level moves by its opening values"). The ask is a document,
-not a decision — keep it out of the questions.
+**Record what a read proves.** A composed evaluation you verified may
+land as the metric's own QUERY gloss — durable executable knowledge,
+served by `read.<aspect>()` from then on. Compose it `FROM
+read.revenue()` where you can, so a re-ruled component propagates
+through every metric built on it.
 
-**The questions themselves are ephemeral — never gloss them**: there
-is no ledger for questions or answers; that a `GLOSS` was logged as
-`human` is the entire record of an answer. Ask through the
-client's question surface when it has one, numbered prose otherwise;
-the user's choice lands as the human gloss on the very (subject,
-aspect) the choice governs, and it outranks your slot at every read.
-When the user answers in prose instead, run the statement their
-answer names — the write still travels through a session, and until
-a human slot exists your report says which definitions stand on your
-judgment alone. Read the human slots back at the start of your next
-session (the core skill's brief).
+## Stand up validations
 
-The round covers more than definitions:
+The authored expectation is a FACT gloss; the check is a function
+voice on the same aspect; a detector bands across both slots;
+`ATTEST` is the verdict surface.
 
-- **Every loose assumption you can compose an answer for is a
-  question** — the answer is the full re-grounded gloss, the
-  assumption at 1.0 with the human's ruling as its basis.
-- **A recipe correction is a question targeting `recipe_change`** —
-  shipped with the KPI kit as a FACT aspect ON TABLE; the answer's
-  body is `{"table": …, "sql": …, "reason": …}`. The human gloss is
-  the approval; the re-declare is yours to run next session, and the
-  app lists the approval as waiting on you until an import of that
-  table lands.
-- **After any human formula answer, re-record the metric's
-  materialization in the same act** — the formula gloss and the
-  recorded evaluation are one definition in two forms, and the app
-  counts the drift.
+```glossql
+DECLARE ASPECT journal_balanced WITH $${
+  "type": "object", "required": ["outcome"],
+  "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
+                 "breach_rate": {"type": "number"}}
+}$$ AS FACT ON TABLE WHEN entity = 'journal line';
+GLOSS journal_balanced ON journal_lines AS $${
+  "outcome": "Total debits equal total credits, exactly.", "tolerance": 0.0}$$;
+DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
+  DETECTOR rate_tolerance THRESHOLD 0.0;
+```
+
+- **Scope the check with `WHEN`.** A check declared bare `ON TABLE`
+  owes an unassessed row on every table — three checks on a 14-table
+  workspace put 39 unfillable rows in the backlog.
+- **`breach_rate` is the violation share.** 0.0 is fully passing, and
+  it is compared against `tolerance` upward. Reporting a pass rate
+  under that key bands red.
+- **The expectation is authored, never assumed zero.** A source with
+  known dirt expects its own breach rate; a check reporting 0.0 there
+  has overcleaned, itself a failure.
+- **Promote confirmed reconciliations.** A `behavior_evidence`
+  convention that reconciled at ~0 residual is a standing invariant —
+  make it a check.
+
+The check half needs a `.rhai` file in the workspace directory. Over
+the MCP door alone you cannot author it: say so in the read-back and
+record the expectation gloss anyway, rather than shipping a
+self-measured snapshot as if it were a standing check.
+
+## The bands walk and the cube
+
+`metric_bands` asks, per metric and recent month: knowing only what
+came before, what would this month have had to be for nobody to be
+surprised? PIT says where the actual landed in that corridor — 0.5 is
+on the trajectory, past 0.95 or under 0.05 is outside what the
+metric's own history can explain. `band_breach` is the detector on
+top. Every point is honest: its fit saw only the months before it.
+
+- **The read is recall, you are the judge.** A business shift and a
+  data defect breach identically.
+- The corridor knows only the history it is shown; under about five
+  months the walk says nothing.
+- It follows the grounding's authored behavior — mark your stocks.
+
+`metric_cube` is its sibling and the app's fuel: monthly totals,
+slices along served dimension columns, and the disclosed rival series.
+Run it whenever you run the walk — a grounding write or a landed
+import stales both caches. A dimension the cube should slice must be a
+served column of the extract.
+
+Where every metric stands, in one read:
+
+```sql
+SELECT metric, title, period, value, axes, formula
+FROM metric_surfaces ORDER BY metric
+```
+
+**Fold in every standing ruling before recomputing either.** Each
+grounding write stales both caches, so one batch of fold-ins then one
+recompute, never a recompute per ruling.
+
+## When something breaks pattern
+
+A scenario is declared, then read: a FACT aspect with
+`x-kind: "scenario"`, overrides glossed, served through the `whatif.`
+door. Never hand-edit SQL for a what-if — the declared form is
+versioned, witness-gated and reproducible. Read `basis` before the
+numbers; `replay` is exact arithmetic, the bands are the model's.
+
+When a signal fires and the question is *which rows*, author a sample
+frame — a QUERY aspect with `x-kind: "sample"`, one SELECT holding
+history and suspects together — and read it through `misfit.`. Pick
+the surface to match the suspicion: a relationship suspicion needs the
+**join** in the frame, because a single table is structurally blind to
+wrong pairings whose individual values are all legal. The more
+known-good history the frame carries, the cleaner the ranking. Run it
+on a signal, never as a routine sweep.
+
+## Author what is missing
+
+**A function** when a shipped measurement doesn't fit this dataset's
+shape. A rhai script registered with a declaration; the aspect schema
+is its one validated contract. `ACCEPTS` names the aspects arriving as
+context and is also the invalidation edge — `imports` and
+`relationships` may ride it as edges only. No `RETURNS` declares a
+detector, which never sees table data. Abstain rather than throw:
+`#{applicable: false}` when the subject doesn't fit,
+`#{applicable: false, missing_aspects: [...]}` when a dependency is
+absent — that one heals on its own when the dependency lands. Read the
+closest script in `crates/scripts/functions/` before writing.
+
+Three constants are in scope and the script's last expression is its
+result: `subject` (`"table"` or `"table.column"`), `context` (one
+entry per accepted aspect, `()` where that aspect has no value; a
+detector gets `slots` and `threshold` instead), and `db` — the door
+into the dataset. `db.query("sql")` returns a Table and
+`db.query_all([sql, …])` answers a batch in order; the door overlaps
+the batch below the seam, so a fan-out of small queries belongs in one
+`query_all()`, never a sequential loop.
+
+### Kernels
+
+Zero-copy readers on query results — the compute-heavy halves of a
+measurement live here, in Rust. A script nesting loops over rows or
+pairs should be reaching for one instead.
+
+Table: `num_rows()`, `columns()`, `col(name)`, `cell(name)` — the
+first row's value as a string, `()` for NULL (the one-row aggregate
+read).
+
+Col: `dtype()` (a `LIMIT 0` query types a column without scanning it),
+`count()`, `null_count()`, `distinct()`, `entropy()` — exact Shannon
+entropy over the non-null distribution — `min()`, `max()`, `sum()`,
+`mean()`, `stddev()`, `percentile(p)`, `mad()`, `top_k(k)`,
+`len_stats()`, `match_rate(regex)`, `parse_rate(sql_type)`,
+`value_at(i)`, `floats()`. Read numbers you will loop over with
+`floats()`, never `value_at()` per cell — `value_at` renders display
+strings and a hot loop through it is interpreter-bound. **A score
+reads exact scalars, never `top_k` buckets**: a display cap must not
+become a statistics cap.
+
+Statistical: `key_vec()` on a Col — distinct values as sorted typed
+keys, with `matched(other)` giving intersection by linear merge, so
+containment is `a.matched(b) / a_distinct` and never a per-pair join ·
+`pair_keys(c1, c2)` on a Table for composite domains ·
+`reconcile(y_table, m_table, terms)`, the stock/flow discriminator
+over two grouped results · `tabicl_bands(train_x, train_y, test_x,
+alphas, actual)` — one fit and read, returning the corridor a new
+value would have to land in and where the actual fell.
+
+Two free functions handle stored text: `parse_json(s)` for a stored
+body, and `canonical_sql(s)` for SQL as an identity — parse and
+re-render, so whitespace and keyword case collapse while identifiers
+survive.
+
+**An app** when someone needs to look at this. Shape it with the user
+in prose first — what decision the surface serves — then write it as
+glosses: `app`, `app_page`, `app_frame`, `app_spec`, one gloss per
+part, so a frame can be edited without rewriting the app. Frames are
+SQL; display logic is computed in the frame, never in the template.
+Apps carry no write.
+
+## Close with the question round
+
+A definition is a choice between families the data cannot arbitrate.
+Walk the ladder before asking: close it by measurement first, and if
+it must keep holding, declare a witness so a standing check re-decides
+it on every import instead of anyone re-asking. Only what no
+measurement can arbitrate goes to the user — **a choice between
+readings, never a statistic**. A question you ask that data could have
+answered costs the user's attention twice: once now, and once more
+when they learn to skim your questions.
+
+The close carries three lists, kept apart:
+
+1. **Definitional choices** — every grounding assumption whose basis
+   is your judgment rather than a measurement or a ruling. The basis
+   is the marker, never the number. One per definition, with its
+   alternative named.
+2. **Data findings** — a reconciliation gap, a column whose name lies
+   about its content. Facts to explain, not choices to make.
+3. **World-coverage wishes** — what resolves neither by choice nor by
+   SQL, only by more world: an opening position, a prior-year extract,
+   the policy document naming the convention. Name each as a specific
+   ask and say which numbers shift when it arrives. The ask is a
+   document, not a decision — keep it out of the questions.
+
+And the read-back covers the whole agreed cohort, not just what
+grounded: every metric that did not ground gets named with what would
+close it. Size the review honestly — the load-bearing verdicts
+(entity, behavior, unit, anything a wrong value silently corrupts) get
+named one by one, while for a hundred `meaning` glosses exhaustive
+review is theater: show the distribution and a spot-check sample, and
+treat a failed spot-check as the batch's problem, not the row's.

@@ -1,6 +1,6 @@
 ---
 name: glossql
-description: Speak glossql through the server's MCP door — the statement set, the outcome shape, and where the normative artifacts live. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, witnesses).
+description: Speak glossql through the server's MCP door — the statement set, the shipped reads, the outcome shape, and the substrate's sharp edges. Use when reading or writing anything in a glossql workspace (datasets, sources, recipes, glosses, functions, witnesses).
 ---
 
 # Speaking glossql
@@ -55,7 +55,7 @@ calls: the server keeps one session per actor.
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets | §5.1 |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
-| `DECLARE FUNCTION f FOR fin\|GLOBAL FROM 'f.rhai' [ACCEPTS (…)] [RETURNS aspect];` | register a script (see the glossql-functions skill) | §6 |
+| `DECLARE FUNCTION f FOR fin\|GLOBAL FROM 'f.rhai' [ACCEPTS (…)] [RETURNS aspect];` | register a script (the glossql-metrics skill authors them) | §6 |
 | `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
 | `DELETE FROM cache WHERE …;` | force recomputation at the WHERE clause's grain | §6 |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication | §7.1 |
@@ -94,6 +94,36 @@ anything.
 - `ATTEST(…)` — `(subject, aspect, witness, band, score, computed_at)`,
   band in green/yellow/orange/red.
 - ordinary SELECT over tables for the data itself.
+
+**Shipped reads** — derived relations the binary carries, selectable
+like any table, filters riding WHERE. One file behind each, shared by
+the door, the app and these examples:
+
+| read | serves |
+|---|---|
+| `workspace_next` | the nine surfaces this workspace can be extended through, what stands and what is open on each |
+| `open_questions` | what stands open for a human to judge — the rows the door asks as forms |
+| `ruling_entries` | the human's standing judgments, with `folded_in` |
+| `ruling_conflicts` | one claim ruled two ways on different aspects |
+| `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
+| `agent_assumptions` | every assumption you currently disclose |
+| `metric_surfaces` | every declared metric with its latest cube month, move, axes and formula |
+| `app_parts` | apps authored as glosses, one row per file |
+
+A shipped name is reserved: it shadows a table *and* a CTE of the same
+name, so don't name a CTE after one.
+
+```sql
+SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC
+```
+
+```sql
+SELECT what, why, since FROM owed ORDER BY since DESC
+```
+
+```sql
+SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DESC
+```
 
 ## The brief — start every session with it
 
@@ -291,6 +321,28 @@ verdict is ambiguous, name the readings you saw, which you took, and
 why — in the report's front matter, not softened or buried. An
 honest "two readings survive, I took A because B breaks the grain
 check" is worth more than fluent certainty.
+
+## What will bite
+
+Postgres reflexes that fail at this pin, collected from real refusals:
+`percentile_disc` and `mode()` (absent) · `to_char` PG patterns
+(Chrono only) · 3-arg `date_trunc` with timezone · `date_add` /
+`date_sub` / `age` · `SELECT * EXCLUDE` · `generate_series` in the
+SELECT list (FROM clause or `unnest`) · window inheritance ·
+`information_schema` (off — the glossary is the discovery surface, and
+richer) · `lag` as "previous period" (previous *row*) · window
+`last_value` as "partition's last" (frame-relative) · weekly
+`date_bin` on Monday (Thursday without an origin) · a `LIKE` guard
+before a `CAST` in the same WHERE (conjuncts reorder — only
+`try_cast` is safe on dirty text) · aliasing a projection to its own
+qualified source name (`round(j.x, 2) AS x`) · **two unaliased scalar
+subqueries in one projection** ("Projections require unique expression
+names" — alias both, or compute in a CTE).
+
+Two more, specific to reads: an inner `ORDER BY` does not survive a
+derived relation, so order where you consume; and a correlated
+`NOT EXISTS` over a read that extracts JSON defeats decorrelation —
+use a LEFT JOIN and a count instead.
 
 ## When a slot contests
 
