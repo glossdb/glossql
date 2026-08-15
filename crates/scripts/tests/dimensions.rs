@@ -19,6 +19,13 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
+/// The shipped body, so the declaration carries what runs.
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+/// The shipped body, so the declaration carries what runs.
+const PROFILE: &str = include_str!("../functions/profile.rhai");
+
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -194,12 +201,12 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
                \"properties\": {{\"applicable\": {{\"type\": \"boolean\"}}}}\n\
              }}$$ AS MEASUREMENT ON TABLE;\n\
              DECLARE FUNCTION profile FOR GLOBAL \
-             FROM 'functions/profile.rhai' RETURNS column_profile;\n\
+             AS $${PROFILE}$$ RETURNS column_profile;\n\
              DECLARE FUNCTION dimension_relevance FOR GLOBAL \
-             FROM 'functions/dimension_relevance.rhai' \
+             AS $${DIMENSION_RELEVANCE}$$ \
              ACCEPTS (column_profile) RETURNS dimension_relevance;\n\
              DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
-             FROM 'functions/hierarchies.rhai' RETURNS hierarchy_candidates;\n\
+             AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
              DECLARE RECIPE survey ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('survey/*.parquet')$$;\n\
              DECLARE RECIPE geo ON fin FROM erp_export AS \

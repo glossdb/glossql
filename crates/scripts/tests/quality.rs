@@ -14,6 +14,11 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const COHERENCE: &str = include_str!("../functions/coherence.rhai");
+/// The shipped body, so the declaration carries what runs.
+const DERIVATIONS: &str = include_str!("../functions/derivations.rhai");
+
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -118,7 +123,7 @@ async fn derivations_surface_with_their_violations() {
                                \"candidates\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON TABLE;\n\
              DECLARE FUNCTION detect_derivations FOR GLOBAL \
-             FROM 'functions/derivations.rhai' RETURNS derivation_candidates;\n\
+             AS $${DERIVATIONS}$$ RETURNS derivation_candidates;\n\
              DECLARE RECIPE lines ON fin FROM erp AS \
              $$SELECT * FROM read_parquet('lines/*.parquet')$$;",
             root.display()
@@ -238,7 +243,7 @@ async fn coherence_reads_what_the_declared_join_asserts() {
                                \"relationships\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON DATASET;\n\
              DECLARE FUNCTION relationship_coherence FOR GLOBAL \
-             FROM 'functions/coherence.rhai' RETURNS relationship_coherence;\n\
+             AS $${COHERENCE}$$ RETURNS relationship_coherence;\n\
              DECLARE RECIPE invoices ON fin FROM erp AS \
              $$SELECT * FROM read_parquet('invoices/*.parquet')$$;\n\
              DECLARE RECIPE payments ON fin FROM erp AS \

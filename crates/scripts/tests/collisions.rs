@@ -41,7 +41,7 @@ DECLARE ASPECT grounding_collisions WITH $${
                  "groundings": {"type": "integer"},
                  "collisions": {"type": "array"}}
 }$$ AS MEASUREMENT ON DATASET;
-DECLARE FUNCTION detect_grounding_collisions FOR fin FROM 'functions/grounding_collisions.rhai'
+DECLARE FUNCTION detect_grounding_collisions FOR fin AS $$grounding_collisions.rhai$$
   ACCEPTS (glossary)
   RETURNS grounding_collisions;
 DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;
@@ -54,7 +54,11 @@ async fn concepts_sharing_an_extract_collide_and_spelling_does_not_hide_it() {
     let store = Store::open_memory().await.unwrap();
     let s = session(&store);
     for stmt in SETUP.split(';').filter(|s| !s.trim().is_empty()) {
-        s.execute(&format!("{stmt};")).await.unwrap();
+        // The marker survives the split (a body would not — rhai is full
+        // of semicolons), so the shipped text goes in afterwards, by the
+        // same substitution the door makes at boot.
+        let stmt = glossql_scripts::library::splice(&format!("{stmt};")).expect("shipped");
+        s.execute(&stmt).await.unwrap();
     }
     // Two concepts, one extract — spelled differently: extra whitespace
     // and keyword case collapse under canonicalization. The third is its
@@ -198,7 +202,9 @@ fn identical_served_series_collide_even_when_the_sql_differs() {
         &glossql_glossary::FunctionRow {
             name: "detect_grounding_collisions".into(),
             scope_dataset: None,
-            script: "functions/grounding_collisions.rhai".into(),
+            script: glossql_scripts::library::script("grounding_collisions.rhai")
+                .expect("shipped")
+                .into(),
             accepts: vec![],
             returns: None,
         },

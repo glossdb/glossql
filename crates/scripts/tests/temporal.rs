@@ -59,7 +59,9 @@ fn temporal(door: CtxDoor, subject: &str) -> Value {
     let function = FunctionRow {
         name: "temporal".into(),
         scope_dataset: None,
-        script: "functions/temporal.rhai".into(),
+        script: glossql_scripts::library::script("temporal.rhai")
+            .expect("shipped")
+            .into(),
         accepts: vec![],
         returns: Some("temporal_profile".into()),
     };

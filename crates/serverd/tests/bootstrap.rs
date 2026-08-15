@@ -31,32 +31,35 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
     let store = Store::open_memory().await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
 
-    bootstrap(&store, &plane, dir.path(), human())
+    bootstrap(&store, &plane, human())
         .await
         .unwrap();
     // Every boot calls it; the second changes nothing.
-    bootstrap(&store, &plane, dir.path(), human())
+    bootstrap(&store, &plane, human())
         .await
         .unwrap();
 
-    for name in [
-        "profile.rhai",
-        "outliers.rhai",
-        "temporal.rhai",
-        "relationships.rhai",
-        "behavior_evidence.rhai",
-        "dimension_relevance.rhai",
-        "hierarchies.rhai",
-        "grounding_collisions.rhai",
-        "derivations.rhai",
-        "coherence.rhai",
-        "slot_entropy.rhai",
-        "metric_bands.rhai",
-        "metric_cube.rhai",
-        "band_breach.rhai",
-        "rate_tolerance.rhai",
-    ] {
-        assert!(dir.path().join("functions").join(name).exists(), "{name}");
+    // Nothing lands on disk (fixture 24): a body is data, so the
+    // workspace keeps no `functions/` directory at all.
+    assert!(!dir.path().join("functions").exists());
+
+    // Every shipped body is in the table and is the script itself, not
+    // a path to one — which is what makes the library readable as
+    // examples over a door that has no filesystem.
+    for (name, text) in glossql_scripts::library::SCRIPTS {
+        let stored = count(
+            &plane,
+            &format!(
+                "SELECT script FROM functions WHERE script LIKE '%{}%' LIMIT 1;",
+                text.lines()
+                    .find(|l| l.starts_with("//!"))
+                    .unwrap_or(&"")
+                    .replace('\'', "''")
+            ),
+        )
+        .await;
+        assert!(!stored.is_empty(), "{name} is not stored whole");
+        assert!(!stored.ends_with(".rhai"), "{name} stored as a path");
     }
 
     assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");

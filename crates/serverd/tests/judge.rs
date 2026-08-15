@@ -25,7 +25,6 @@ async fn app() -> (Router, tempfile::TempDir) {
     bootstrap(
         &store,
         &plane,
-        dir.path(),
         Actor {
             kind: ActorKind::Human,
             id: glossql_serverd::HUMAN.into(),

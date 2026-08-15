@@ -17,6 +17,9 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -212,7 +215,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
                                 \"anchors\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
-             FROM 'functions/behavior_evidence.rhai' \
+             AS $${BEHAVIOR_EVIDENCE}$$ \
              ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
              DECLARE RECIPE ledgers ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
@@ -322,7 +325,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
                                 \"anchors\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
-             FROM 'functions/behavior_evidence.rhai' \
+             AS $${BEHAVIOR_EVIDENCE}$$ \
              ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
              {recipes}",
             root.display()

@@ -204,7 +204,7 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
     };
     s.declare_aspect(&m).await.unwrap();
     let Declaration::Function(f) =
-        decl("DECLARE FUNCTION profile_min_max FOR fin FROM 'p.rhai' RETURNS min_max;")
+        decl("DECLARE FUNCTION profile_min_max FOR fin AS $$#{}$$ RETURNS min_max;")
     else {
         unreachable!()
     };
@@ -212,7 +212,7 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
 
     // One producer per MEASUREMENT aspect — a second function is refused.
     let Declaration::Function(rival) =
-        decl("DECLARE FUNCTION other_min_max FOR fin FROM 'o.rhai' RETURNS min_max;")
+        decl("DECLARE FUNCTION other_min_max FOR fin AS $$#{}$$ RETURNS min_max;")
     else {
         unreachable!()
     };
@@ -231,7 +231,7 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
 async fn a_detector_is_a_function_without_returns() {
     let s = store().await;
     let Declaration::Function(f) =
-        decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
+        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
     else {
         unreachable!()
     };
@@ -387,7 +387,7 @@ async fn collapse_serves_by_precedence_human_over_agent() {
 async fn accepts_names_must_be_declared_aspects() {
     let s = store().await;
     let Declaration::Function(good) =
-        decl(r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (unit);"#)
+        decl(r#"DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS (unit);"#)
     else {
         unreachable!()
     };
@@ -396,7 +396,7 @@ async fn accepts_names_must_be_declared_aspects() {
     assert_eq!(row.accepts, vec!["unit"]);
 
     let Declaration::Function(bad) =
-        decl(r#"DECLARE FUNCTION g FOR fin FROM 'g.rhai' ACCEPTS (nope);"#)
+        decl(r#"DECLARE FUNCTION g FOR fin AS $$#{}$$ ACCEPTS (nope);"#)
     else {
         unreachable!()
     };
@@ -407,7 +407,7 @@ async fn accepts_names_must_be_declared_aspects() {
 #[tokio::test]
 async fn function_scope_gates_visibility() {
     let s = store().await;
-    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin FROM 'p.rhai';"#)
+    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin AS $$#{}$$;"#)
     else {
         unreachable!()
     };
@@ -463,12 +463,12 @@ async fn a_glossary_delete_invalidates_detector_verdicts() {
     let s = store().await;
     // One detector (no RETURNS), one extraction function (RETURNS) —
     // only the detector's cache is a verdict about slots.
-    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin FROM 'e.rhai';") else {
+    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin AS $$#{}$$;") else {
         unreachable!()
     };
     s.declare_function(&det).await.unwrap();
     let Declaration::Function(prod) =
-        decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
+        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
     else {
         unreachable!()
     };
@@ -527,13 +527,13 @@ async fn declaration_relations_are_invalidation_edges() {
     // no context arrives, but a write to the relation kills the cache
     // dataset-wide — an edge can change any subject's evidence.
     let Declaration::Function(dep) = decl(
-        "DECLARE FUNCTION evidence FOR fin FROM 'ev.rhai' \
+        "DECLARE FUNCTION evidence FOR fin AS $$#{}$$ \
          ACCEPTS (relationships, imports) RETURNS unit;",
     ) else {
         unreachable!()
     };
     s.declare_function(&dep).await.unwrap();
-    let Declaration::Function(other) = decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai';") else {
+    let Declaration::Function(other) = decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$;") else {
         unreachable!()
     };
     s.declare_function(&other).await.unwrap();
@@ -602,7 +602,7 @@ async fn declaration_relations_are_invalidation_edges() {
     // An unwired relation name is refused as an unknown aspect — a
     // silent no-op edge would be worse than an error.
     let Declaration::Function(bad) =
-        decl("DECLARE FUNCTION w FOR fin FROM 'w.rhai' ACCEPTS (witnesses);")
+        decl("DECLARE FUNCTION w FOR fin AS $$#{}$$ ACCEPTS (witnesses);")
     else {
         unreachable!()
     };
@@ -664,7 +664,7 @@ async fn recipe_redeclare_is_content_idempotent_and_change_is_refused() {
 async fn a_gloss_invalidates_the_caches_of_functions_accepting_its_aspect() {
     let s = store().await;
     let Declaration::Function(f) =
-        decl(r#"DECLARE FUNCTION conv FOR GLOBAL FROM 'conv.rhai' ACCEPTS (unit);"#)
+        decl(r#"DECLARE FUNCTION conv FOR GLOBAL AS $$#{}$$ ACCEPTS (unit);"#)
     else {
         unreachable!()
     };
@@ -989,7 +989,7 @@ async fn a_table_cannot_take_a_store_relation_name() {
 async fn a_function_cannot_accept_the_aspect_it_returns() {
     let s = store().await;
     let Declaration::Function(f) =
-        decl("DECLARE FUNCTION refine FOR fin FROM 'r.rhai' ACCEPTS (unit) RETURNS unit;")
+        decl("DECLARE FUNCTION refine FOR fin AS $$#{}$$ ACCEPTS (unit) RETURNS unit;")
     else {
         unreachable!()
     };
@@ -1010,7 +1010,7 @@ async fn an_aspect_with_cached_values_under_it_does_not_re_declare() {
     };
     s.declare_aspect(&a).await.unwrap();
     let Declaration::Function(f) =
-        decl("DECLARE FUNCTION profile FOR fin FROM 'p.rhai' RETURNS profile_stats;")
+        decl("DECLARE FUNCTION profile FOR fin AS $$#{}$$ RETURNS profile_stats;")
     else {
         unreachable!()
     };
@@ -1042,7 +1042,7 @@ async fn a_glossary_delete_invalidates_accepting_functions_like_a_write() {
     };
     s.declare_aspect(&converted).await.unwrap();
     let Declaration::Function(f) =
-        decl("DECLARE FUNCTION conv FOR GLOBAL FROM 'conv.rhai' ACCEPTS (unit) RETURNS converted;")
+        decl("DECLARE FUNCTION conv FOR GLOBAL AS $$#{}$$ ACCEPTS (unit) RETURNS converted;")
     else {
         unreachable!()
     };
@@ -1138,12 +1138,12 @@ async fn a_cache_delete_of_a_voice_drops_the_verdicts_over_its_aspect() {
     // A voice into `unit` (RETURNS), a detector, and the witness pairing
     // them.
     let Declaration::Function(voice) =
-        decl("DECLARE FUNCTION vibes FOR fin FROM 'v.rhai' RETURNS unit;")
+        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
     else {
         unreachable!()
     };
     s.declare_function(&voice).await.unwrap();
-    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin FROM 'e.rhai';") else {
+    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin AS $$#{}$$;") else {
         unreachable!()
     };
     s.declare_function(&det).await.unwrap();
@@ -1214,8 +1214,8 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     // Two witnesses on one aspect: cross-wiring compared w_b's score
     // against w_a's threshold, so a crossing verdict never contested.
     for f in [
-        "DECLARE FUNCTION det_a FOR fin FROM 'a.rhai';",
-        "DECLARE FUNCTION det_b FOR fin FROM 'b.rhai';",
+        "DECLARE FUNCTION det_a FOR fin AS $$#{}$$;",
+        "DECLARE FUNCTION det_b FOR fin AS $$#{}$$;",
     ] {
         let Declaration::Function(d) = decl(f) else {
             unreachable!()
@@ -1560,7 +1560,7 @@ async fn the_glossary_edge_fires_on_grounding_writes_only() {
     };
     s.declare_aspect(&revenue).await.unwrap();
     let Declaration::Function(f) =
-        decl(r#"DECLARE FUNCTION bands FOR GLOBAL FROM 'bands.rhai' ACCEPTS (glossary);"#)
+        decl(r#"DECLARE FUNCTION bands FOR GLOBAL AS $$#{}$$ ACCEPTS (glossary);"#)
     else {
         unreachable!()
     };

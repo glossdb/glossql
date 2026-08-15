@@ -125,10 +125,9 @@ async fn every_skill_example_parses() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
-    let dir = tempfile::tempdir().unwrap();
     let store = Store::open_memory().await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
-    bootstrap(&store, &plane, dir.path(), human())
+    bootstrap(&store, &plane, human())
         .await
         .unwrap();
 

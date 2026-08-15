@@ -16,6 +16,9 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
         Outcome::Rows(batches) => {
@@ -91,7 +94,7 @@ async fn the_generator_grades_the_discriminator() {
                                 \"anchors\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
-             FROM 'functions/behavior_evidence.rhai' \
+             AS $${BEHAVIOR_EVIDENCE}$$ \
              ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
              DECLARE RECIPE chart_of_accounts ON fin FROM finance AS \
              $$SELECT TRY_CAST(account_id AS BIGINT) AS account_id, name \
@@ -215,7 +218,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
                                 \"anchors\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
-             FROM 'functions/behavior_evidence.rhai' \
+             AS $${BEHAVIOR_EVIDENCE}$$ \
              ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
              DECLARE RECIPE customers ON fin FROM finance AS \
              $$SELECT customer_id, name FROM read_csv('customers.csv')$$;\n\

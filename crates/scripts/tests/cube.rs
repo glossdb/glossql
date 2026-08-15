@@ -160,20 +160,14 @@ impl SqlDoor for CubeDoor {
 }
 
 fn invoke(dir: &Path, door: Arc<CubeDoor>) -> Value {
-    let functions = dir.join("functions");
-    std::fs::create_dir_all(&functions).unwrap();
-    let shipped = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/functions"));
-    std::fs::copy(
-        shipped.join("metric_cube.rhai"),
-        functions.join("metric_cube.rhai"),
-    )
-    .unwrap();
     let rt = RhaiRuntime::new(dir);
     rt.invoke(
         &FunctionRow {
             name: "metric_cube".into(),
             scope_dataset: None,
-            script: "functions/metric_cube.rhai".into(),
+            script: glossql_scripts::library::script("metric_cube.rhai")
+                .expect("shipped")
+                .into(),
             accepts: vec![],
             returns: None,
         },
@@ -333,21 +327,15 @@ fn the_stock_total_sums_the_months_latest_snapshot() {
     });
 
     let dir = tempfile::tempdir().unwrap();
-    let functions = dir.path().join("functions");
-    std::fs::create_dir_all(&functions).unwrap();
-    let shipped = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/functions"));
-    std::fs::copy(
-        shipped.join("metric_cube.rhai"),
-        functions.join("metric_cube.rhai"),
-    )
-    .unwrap();
     let rt = RhaiRuntime::new(dir.path());
     let out = rt
         .invoke(
             &FunctionRow {
                 name: "metric_cube".into(),
                 scope_dataset: None,
-                script: "functions/metric_cube.rhai".into(),
+                script: glossql_scripts::library::script("metric_cube.rhai")
+                .expect("shipped")
+                .into(),
                 accepts: vec![],
                 returns: None,
             },

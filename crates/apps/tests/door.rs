@@ -666,7 +666,7 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
                DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
                DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
                GLOSS meaning ON ledger.value AS $${"value": "the money"}$$;
-               DECLARE FUNCTION probe_check FOR GLOBAL FROM 'probe_check.rhai';
+               DECLARE FUNCTION probe_check FOR GLOBAL AS $$#{}$$;
                DECLARE WITNESS dso_w ON dso DETECTOR probe_check THRESHOLD 0.9;"#,
         )
         .await

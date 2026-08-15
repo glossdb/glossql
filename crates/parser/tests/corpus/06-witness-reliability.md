@@ -45,10 +45,10 @@ DECLARE ASPECT behavior WITH $${
   "properties": {"value": {"enum": ["stock", "flow"]}}
 }$$ AS FACT ON COLUMN;
 
-DECLARE FUNCTION temporal_behavior FOR GLOBAL FROM 'functions/temporal_behavior.rhai'
+DECLARE FUNCTION temporal_behavior FOR GLOBAL AS $$/* stock/flow from a column's period shape */$$
   RETURNS behavior;
 
-DECLARE FUNCTION behavior_entropy FOR GLOBAL FROM 'functions/behavior_entropy.rhai';
+DECLARE FUNCTION behavior_entropy FOR GLOBAL AS $$/* detector: spread across the behavior slots */$$;
 
 DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
   DETECTOR behavior_entropy THRESHOLD 0.7;

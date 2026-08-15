@@ -122,14 +122,14 @@ DECLARE ASPECT temporal_profile WITH $${
                  "completeness": {"type": "object"}, "gaps": {"type": "object"}}
 }$$ AS MEASUREMENT;
 
-DECLARE FUNCTION profile FOR GLOBAL FROM 'functions/profile.rhai'
+DECLARE FUNCTION profile FOR GLOBAL AS $$profile.rhai$$
   RETURNS column_profile;
-DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
+DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
   ACCEPTS (column_profile)
   RETURNS outlier_profile;
-DECLARE FUNCTION temporal FOR GLOBAL FROM 'functions/temporal.rhai'
+DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
   RETURNS temporal_profile;
-DECLARE FUNCTION slot_entropy FOR GLOBAL FROM 'functions/slot_entropy.rhai';
+DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
 
 DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
   DETECTOR slot_entropy THRESHOLD 0.7;
@@ -160,7 +160,9 @@ async fn fixture_11_with_real_scripts() {
         ))
         .await
         .unwrap();
-    agent.execute(DECLARATIONS).await.unwrap();
+    let declarations =
+        glossql_scripts::library::splice(DECLARATIONS).expect("shipped scripts splice");
+    agent.execute(&declarations).await.unwrap();
 
     // The probe: the agent looks at the source before writing the recipe —
     // trial casts through the same statement door, landing nothing.

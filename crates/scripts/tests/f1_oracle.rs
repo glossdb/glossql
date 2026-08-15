@@ -15,6 +15,13 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+/// The shipped body, so the declaration carries what runs.
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+/// The shipped body, so the declaration carries what runs.
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
         Outcome::Rows(batches) => {
@@ -131,12 +138,12 @@ async fn rel_f1_grades_the_planes_at_scale() {
            \"properties\": {{\"applicable\": {{\"type\": \"boolean\"}}}}\n\
          }}$$ AS MEASUREMENT ON COLUMN;\n\
          DECLARE FUNCTION detect_relationships FOR GLOBAL \
-         FROM 'functions/relationships.rhai' \
+         AS $${RELATIONSHIPS}$$ \
          ACCEPTS (imports) RETURNS relationship_candidates;\n\
          DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
-         FROM 'functions/hierarchies.rhai' RETURNS hierarchy_candidates;\n\
+         AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
          DECLARE FUNCTION behavior_evidence FOR GLOBAL \
-         FROM 'functions/behavior_evidence.rhai' \
+         AS $${BEHAVIOR_EVIDENCE}$$ \
          ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n",
         data.display()
     );

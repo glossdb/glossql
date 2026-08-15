@@ -50,10 +50,10 @@ GLOSS trial_balance ON fin AS $${
   "conventions": ["sign_natural_balance"]
 }$$;
 
-DECLARE FUNCTION trial_balance_check FOR fin FROM 'functions/trial_balance.rhai'
+DECLARE FUNCTION trial_balance_check FOR fin AS $$/* debits minus credits per period, as a breach rate */$$
   RETURNS trial_balance;
 
-DECLARE FUNCTION balance_bands FOR fin FROM 'functions/balance_bands.rhai';
+DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
 DECLARE WITNESS tb ON trial_balance BY (HUMAN)
   DETECTOR balance_bands;

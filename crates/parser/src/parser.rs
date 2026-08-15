@@ -246,8 +246,12 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
             } else {
                 FunctionScope::Dataset(p.parse_identifier()?)
             };
-            expect_word(p, "FROM")?;
-            let script = parse_string(p, "the script reference as a string")?;
+            // The body itself, not a path to it (ruled 2026-08-15,
+            // fixture 24): an agent over MCP has statements and no
+            // filesystem, so a function it cannot write is a validation
+            // it cannot finish.
+            expect_word(p, "AS")?;
+            let script = parse_dollar(p, "dollar-quoted script — AS $$ … $$")?;
             let accepts = if consume_word(p, "ACCEPTS") {
                 parse_accepts(p)?
             } else {

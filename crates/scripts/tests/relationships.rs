@@ -17,6 +17,9 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch).unwrap();
@@ -121,7 +124,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
                \"properties\": {{\"candidates\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON DATASET;\n\
              DECLARE FUNCTION detect_relationships FOR GLOBAL \
-             FROM 'functions/relationships.rhai' RETURNS relationship_candidates;\n\
+             AS $${RELATIONSHIPS}$$ RETURNS relationship_candidates;\n\
              DECLARE RECIPE customers ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('customers/*.parquet')$$;\n\
              DECLARE RECIPE orders ON fin FROM erp_export AS \
@@ -264,7 +267,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
                \"properties\": {{\"candidates\": {{\"type\": \"array\"}}}}\n\
              }}$$ AS MEASUREMENT ON DATASET;\n\
              DECLARE FUNCTION detect_relationships FOR GLOBAL \
-             FROM 'functions/relationships.rhai' RETURNS relationship_candidates;\n\
+             AS $${RELATIONSHIPS}$$ RETURNS relationship_candidates;\n\
              DECLARE RECIPE parties ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('parties/*.parquet')$$;\n\
              DECLARE RECIPE txns ON fin FROM erp_export AS \

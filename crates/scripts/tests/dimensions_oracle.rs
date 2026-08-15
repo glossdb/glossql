@@ -15,6 +15,11 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
+/// The shipped body, so the declaration carries what runs.
+const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
+/// The shipped body, so the declaration carries what runs.
+const PROFILE: &str = include_str!("../functions/profile.rhai");
+
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
         Outcome::Rows(batches) => {
@@ -87,9 +92,9 @@ async fn the_generator_grades_the_relevance_score() {
                \"properties\": {{\"applicable\": {{\"type\": \"boolean\"}}}}\n\
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION profile FOR GLOBAL \
-             FROM 'functions/profile.rhai' RETURNS column_profile;\n\
+             AS $${PROFILE}$$ RETURNS column_profile;\n\
              DECLARE FUNCTION dimension_relevance FOR GLOBAL \
-             FROM 'functions/dimension_relevance.rhai' \
+             AS $${DIMENSION_RELEVANCE}$$ \
              ACCEPTS (column_profile) RETURNS dimension_relevance;\n\
              DECLARE RECIPE invoices ON fin FROM finance AS \
              $$SELECT invoice_id, status FROM read_csv('invoices.csv')$$;\n\

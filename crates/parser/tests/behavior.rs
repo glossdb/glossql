@@ -117,7 +117,7 @@ fn recipe_tail_must_be_dollar_quoted() {
 
 #[test]
 fn accepts_is_a_parenthesized_aspect_list() {
-    let e = error("DECLARE FUNCTION f FOR fin FROM 's.rhai' ACCEPTS typing_config RETURNS $${}$$;");
+    let e = error("DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS typing_config RETURNS $${}$$;");
     assert!(e.contains("("), "{e}");
 }
 

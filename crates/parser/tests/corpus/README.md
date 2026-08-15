@@ -44,3 +44,5 @@ simplified language (see `reports/2026-08-03-simplification.md`).
 | 20 | misfit sample frame (evaluation runs, 2026-08-11) | TRANSCRIBES (frame = QUERY aspect + `x-kind`; `misfit.` door; self-fit density is machinery) |
 | 21 | source conventions (both halves run 2026-08-12) | TRANSCRIBES (`AS FACT ON SOURCE`; deposit → read-before-probe → workspace-wide supersede) |
 | 22 | question loop (pin-queue run 2026-08-12 + elicitation spike 2026-08-13) | RULED 2026-08-13: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |
+| 23 | conditional relevance (medium run 2026-08-13) | RULED 2026-08-14: `WHEN` narrows what a subject owes — the backlog counts what is real, not columns × vocabulary |
+| 24 | functions in a table (run 4, 2026-08-15) | RULED 2026-08-15: a function's body is data — `AS $$…$$` replaces `FROM 'path'`, the `functions/` directory retires, and the shipped library reads back as examples · body-in-a-file INFORMATION LOST |

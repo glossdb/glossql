@@ -68,7 +68,7 @@ and fills it from its cache:
 DECLARE ASPECT min_max WITH $${
   "type": "object", "properties": {"min": {}, "max": {}}
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION profile_min_max FOR GLOBAL FROM 'functions/profile.rhai'
+DECLARE FUNCTION profile_min_max FOR GLOBAL AS $$/* min/max/nulls/distincts per column, from kernels */$$
   RETURNS min_max;
 
 SELECT profile_min_max() FROM fin.orders.amount;

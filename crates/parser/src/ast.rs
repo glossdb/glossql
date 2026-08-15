@@ -140,7 +140,8 @@ pub enum AspectKind {
 pub struct FunctionDecl {
     pub name: Ident,
     pub scope: FunctionScope,
-    /// The script reference named by `FROM`.
+    /// The script itself, carried by `AS $$…$$` (ruled 2026-08-15,
+    /// fixture 24 — it was a path until then).
     pub script: String,
     /// `ACCEPTS (aspect, …)` — aspects whose current values the server
     /// hands the script as its context document; empty = no context.

@@ -25,15 +25,10 @@ fn sibling() -> &'static Path {
     ))
 }
 
-/// A workspace with the real shipped scripts and a weights directory
-/// symlinked from the sibling checkout (the flat deployment layout).
+/// A workspace with a weights directory symlinked from the sibling
+/// checkout (the flat deployment layout). Scripts arrive with their
+/// declarations (fixture 24), so nothing is copied here.
 fn workspace(dir: &Path) {
-    let functions = dir.join("functions");
-    std::fs::create_dir_all(&functions).unwrap();
-    let shipped = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/functions"));
-    for name in ["metric_bands.rhai", "band_breach.rhai"] {
-        std::fs::copy(shipped.join(name), functions.join(name)).unwrap();
-    }
     let weights = dir.join("weights");
     std::fs::create_dir_all(&weights).unwrap();
     for (from, to) in [
@@ -146,7 +141,9 @@ fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
         &FunctionRow {
             name: script.into(),
             scope_dataset: None,
-            script: format!("functions/{script}.rhai"),
+            script: glossql_scripts::library::script(&format!("{script}.rhai"))
+                .expect("shipped")
+                .into(),
             accepts: vec![],
             returns: None,
         },
@@ -308,7 +305,9 @@ fn the_stock_walk_sums_the_months_latest_snapshot() {
             &FunctionRow {
                 name: "metric_bands".into(),
                 scope_dataset: None,
-                script: "functions/metric_bands.rhai".into(),
+                script: glossql_scripts::library::script("metric_bands.rhai")
+                    .expect("shipped")
+                    .into(),
                 accepts: vec![],
                 returns: None,
             },

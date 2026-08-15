@@ -217,7 +217,7 @@ async fn extraction_computes_once_then_reads_the_cache() {
         &session,
         r#"DECLARE ASPECT outlier_rows WITH $${"type": "object",
              "required": ["rows"], "properties": {"rows": {"type": "array"}}}$$ AS MEASUREMENT;
-           DECLARE FUNCTION outliers FOR fin FROM 'functions/outliers.rhai'
+           DECLARE FUNCTION outliers FOR fin AS $$#{}$$
            RETURNS outlier_rows;"#,
     )
     .await;
@@ -250,7 +250,7 @@ async fn context_arrives_from_the_accepts_aspects() {
         DECLARE ASPECT null_values WITH $${"type": "object"}$$ AS FACT;
         GLOSS null_values ON fin AS $${"values": ["#N/A", "TBD"]}$$;
         DECLARE ASPECT inferred WITH $${"type": "object"}$$ AS MEASUREMENT;
-        DECLARE FUNCTION infer_types FOR GLOBAL FROM 'functions/infer_types.rhai'
+        DECLARE FUNCTION infer_types FOR GLOBAL AS $$#{}$$
           ACCEPTS (null_values)
           RETURNS inferred;
         SELECT infer_types() FROM orders;
@@ -270,7 +270,7 @@ async fn accepts_must_name_declared_aspects() {
     let (session, _) = agent_session().await;
     run(&session, SETUP).await;
     let e = session
-        .execute(r#"DECLARE FUNCTION f FOR fin FROM 'f.rhai' ACCEPTS (nope);"#)
+        .execute(r#"DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS (nope);"#)
         .await
         .unwrap_err();
     assert!(e.to_string().contains("aspect"), "{e}");
@@ -284,9 +284,9 @@ async fn attest_serves_detector_outputs_in_the_fixed_shape() {
         &session,
         r#"
         DECLARE ASPECT reconciliation WITH $${"type": "object"}$$ AS MEASUREMENT;
-        DECLARE FUNCTION tb_check FOR fin FROM 'functions/tb.rhai'
+        DECLARE FUNCTION tb_check FOR fin AS $$#{}$$
           RETURNS reconciliation;
-        DECLARE FUNCTION tb_bands FOR fin FROM 'functions/tb_bands.rhai';
+        DECLARE FUNCTION tb_bands FOR fin AS $$#{}$$;
         DECLARE WITNESS tb_w ON reconciliation DETECTOR tb_bands THRESHOLD 0.7;
         SELECT tb_check() FROM fin.trial_balance;
         "#,
@@ -521,10 +521,10 @@ async fn the_declarations_read_as_plain_relations() {
         DECLARE SOURCE erp SET (type: parquet, location: 'lake/erp');
         DECLARE ASPECT column_profile WITH $${"type": "object"}$$ AS MEASUREMENT;
         DECLARE ASPECT outlier_profile WITH $${"type": "object"}$$ AS MEASUREMENT;
-        DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
+        DECLARE FUNCTION outliers FOR GLOBAL AS $$#{}$$
           ACCEPTS (column_profile)
           RETURNS outlier_profile;
-        DECLARE FUNCTION checker FOR fin FROM 'functions/checker.rhai';
+        DECLARE FUNCTION checker FOR fin AS $$#{}$$;
         DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN);
         "#,
     )
@@ -599,9 +599,9 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
           "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"}}
         }$$ AS FACT ON TABLE;
         GLOSS journal_balanced ON fin.trial_balance AS $${"outcome": "debits equal credits, exactly", "tolerance": 0.0}$$;
-        DECLARE FUNCTION journal_check FOR fin FROM 'functions/journal_check.rhai'
+        DECLARE FUNCTION journal_check FOR fin AS $$#{}$$
           ACCEPTS (imports) RETURNS journal_balanced;
-        DECLARE FUNCTION framework_bands FOR fin FROM 'functions/framework_bands.rhai';
+        DECLARE FUNCTION framework_bands FOR fin AS $$#{}$$;
         DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
           DETECTOR framework_bands THRESHOLD 0.5;
         SELECT journal_check() FROM fin.trial_balance;
@@ -791,7 +791,7 @@ async fn witnesses_sharing_a_detector_hold_their_own_verdicts() {
         r#"
         DECLARE ASPECT alpha WITH $${"type": "object"}$$ AS FACT ON COLUMN;
         DECLARE ASPECT beta WITH $${"type": "object"}$$ AS FACT ON COLUMN;
-        DECLARE FUNCTION slot_bands FOR fin FROM 'functions/bands.rhai';
+        DECLARE FUNCTION slot_bands FOR fin AS $$#{}$$;
         DECLARE WITNESS alpha_w ON alpha BY (AGENT, HUMAN) DETECTOR slot_bands THRESHOLD 0.5;
         DECLARE WITNESS beta_w ON beta BY (AGENT, HUMAN) DETECTOR slot_bands THRESHOLD 0.5;
         GLOSS alpha ON orders.amount AS $${"reading": "agent's"}$$;
@@ -1022,7 +1022,7 @@ async fn metric_series_serves_the_cached_cube() {
     run(
         &session,
         r#"DECLARE ASPECT metric_cube WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
-           DECLARE FUNCTION metric_cube FOR GLOBAL FROM 'functions/metric_cube.rhai'
+           DECLARE FUNCTION metric_cube FOR GLOBAL AS $$#{}$$
              RETURNS metric_cube;
            SELECT metric_cube() FROM fin;"#,
     )

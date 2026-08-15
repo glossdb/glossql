@@ -71,11 +71,11 @@ snap!(
 );
 snap!(
     function_decl_accepts_aspects,
-    "DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai' ACCEPTS (column_profile) RETURNS outlier_profile;"
+    "DECLARE FUNCTION outliers FOR GLOBAL AS $$let p = context.column_profile; #{iqr: fences(p)}$$ ACCEPTS (column_profile) RETURNS outlier_profile;"
 );
 snap!(
     function_decl_detector,
-    "DECLARE FUNCTION slot_entropy FOR fin FROM 'functions/slot_entropy.rhai';"
+    "DECLARE FUNCTION slot_entropy FOR fin AS $$#{score: spread(context.slots)}$$;"
 );
 snap!(
     witness_decl_full,

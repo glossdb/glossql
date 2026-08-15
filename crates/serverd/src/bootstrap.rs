@@ -5,103 +5,29 @@
 //! any agent connects; what stays the agent's work is the company's
 //! own vocabulary — metrics, validations, scenarios.
 
-use std::path::Path;
 
 use glossql_glossary::{Actor, Store};
 
 use crate::Plane;
 
-const SCRIPTS: &[(&str, &str)] = &[
-    (
-        "profile.rhai",
-        include_str!("../../scripts/functions/profile.rhai"),
-    ),
-    (
-        "outliers.rhai",
-        include_str!("../../scripts/functions/outliers.rhai"),
-    ),
-    (
-        "temporal.rhai",
-        include_str!("../../scripts/functions/temporal.rhai"),
-    ),
-    (
-        "relationships.rhai",
-        include_str!("../../scripts/functions/relationships.rhai"),
-    ),
-    (
-        "behavior_evidence.rhai",
-        include_str!("../../scripts/functions/behavior_evidence.rhai"),
-    ),
-    (
-        "dimension_relevance.rhai",
-        include_str!("../../scripts/functions/dimension_relevance.rhai"),
-    ),
-    (
-        "hierarchies.rhai",
-        include_str!("../../scripts/functions/hierarchies.rhai"),
-    ),
-    (
-        "grounding_collisions.rhai",
-        include_str!("../../scripts/functions/grounding_collisions.rhai"),
-    ),
-    (
-        "derivations.rhai",
-        include_str!("../../scripts/functions/derivations.rhai"),
-    ),
-    (
-        "coherence.rhai",
-        include_str!("../../scripts/functions/coherence.rhai"),
-    ),
-    (
-        "slot_entropy.rhai",
-        include_str!("../../scripts/functions/slot_entropy.rhai"),
-    ),
-    (
-        "metric_bands.rhai",
-        include_str!("../../scripts/functions/metric_bands.rhai"),
-    ),
-    (
-        "metric_cube.rhai",
-        include_str!("../../scripts/functions/metric_cube.rhai"),
-    ),
-    (
-        "band_breach.rhai",
-        include_str!("../../scripts/functions/band_breach.rhai"),
-    ),
-    (
-        "rate_tolerance.rhai",
-        include_str!("../../scripts/functions/rate_tolerance.rhai"),
-    ),
-];
-
-/// The measurement library's declarations.
-const BOOTSTRAP: &str = include_str!("../../scripts/functions/bootstrap.glossql");
-
-/// The KPI kit — the semantic vocabulary and its witnesses.
-const KIT: &str = include_str!("../../scripts/functions/kpi_kit.glossql");
-
-/// Materialize the shipped system into a workspace: the reference
-/// scripts land under `functions/` when absent (an operator's edit is
-/// never clobbered), the declarations run once while none exist.
-/// Idempotent — every boot calls it.
+/// Declare the shipped system into a workspace, once, while none of it
+/// stands. Idempotent — every boot calls it.
+///
+/// Nothing lands on disk any more: a function's body is data (ruled
+/// 2026-08-15, fixture 24), so the reference library arrives as
+/// fifteen ordinary declarations and reads back through the `functions`
+/// relation like anything else an agent wrote.
 pub async fn bootstrap(
     store: &Store,
     plane: &Plane,
-    workspace: &Path,
     actor: Actor,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let dir = workspace.join("functions");
-    std::fs::create_dir_all(&dir)?;
-    for (name, text) in SCRIPTS {
-        let path = dir.join(name);
-        if !path.exists() {
-            std::fs::write(&path, text)?;
-        }
-    }
     if store.relation_rows("functions").await?.is_empty() {
         let session = plane.session(actor).await?;
-        session.execute(BOOTSTRAP).await?;
-        session.execute(KIT).await?;
+        session
+            .execute(&glossql_scripts::library::declarations()?)
+            .await?;
+        session.execute(glossql_scripts::library::KIT).await?;
     }
     Ok(())
 }

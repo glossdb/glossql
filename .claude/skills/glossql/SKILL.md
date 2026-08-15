@@ -55,7 +55,7 @@ calls: the server keeps one session per actor.
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets | §5.1 |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
-| `DECLARE FUNCTION f FOR fin\|GLOBAL FROM 'f.rhai' [ACCEPTS (…)] [RETURNS aspect];` | register a script (the glossql-metrics skill authors them) | §6 |
+| `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$rhai$$ [ACCEPTS (…)] [RETURNS aspect];` | register a script — the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples | §6 |
 | `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
 | `DELETE FROM cache WHERE …;` | force recomputation at the WHERE clause's grain | §6 |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication | §7.1 |

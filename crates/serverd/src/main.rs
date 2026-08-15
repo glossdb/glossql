@@ -63,7 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     bootstrap(
         &store,
         &plane,
-        &args.workspace,
         Actor {
             kind: ActorKind::Human,
             id: glossql_serverd::HUMAN.into(),

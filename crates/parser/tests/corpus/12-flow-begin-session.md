@@ -34,7 +34,7 @@ DECLARE ASPECT relationship_candidates WITH $${
                      "cardinality": {"type": "string"},
                      "overlap": {"type": "number"}}}}}
 }$$ AS MEASUREMENT ON DATASET;
-DECLARE FUNCTION detect_relationships FOR GLOBAL FROM 'functions/relationships.rhai'
+DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$/* candidate edges by containment and cardinality */$$
   RETURNS relationship_candidates;
 
 SELECT detect_relationships() FROM fin;
@@ -81,9 +81,9 @@ DECLARE ASPECT reconciliation WITH $${
   "type": "object",
   "properties": {"pairs": {"type": "array"}, "max_delta": {"type": "number"}}
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION reconcile_aggregates FOR fin FROM 'functions/reconcile.rhai'
+DECLARE FUNCTION reconcile_aggregates FOR fin AS $$/* aggregate against its detail, residual per key */$$
   RETURNS reconciliation;
-DECLARE FUNCTION reconcile_bands FOR fin FROM 'functions/reconcile_bands.rhai';
+DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
 DECLARE WITNESS reconciliation_w ON reconciliation
   DETECTOR reconcile_bands THRESHOLD 0.5;
 
@@ -93,7 +93,7 @@ SELECT subject, band FROM ATTEST(fin::reconciliation) WHERE band = 'red';
 DECLARE ASPECT driver_rankings WITH $${
   "type": "object", "properties": {"rankings": {"type": "array"}}
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION drivers FOR fin FROM 'functions/drivers.rhai'
+DECLARE FUNCTION drivers FOR fin AS $$/* which dimensions move the measure */$$
   RETURNS driver_rankings;
 SELECT drivers() FROM fin.orders;
 ```

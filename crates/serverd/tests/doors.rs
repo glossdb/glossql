@@ -339,7 +339,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
         kind: ActorKind::Human,
         id: HUMAN.into(),
     };
-    bootstrap(&store, &plane, dir.path(), human).await.unwrap();
+    bootstrap(&store, &plane, human).await.unwrap();
     let app = router(plane, DoorConfig::default(), dir.path().to_path_buf());
 
     let setup = format!(

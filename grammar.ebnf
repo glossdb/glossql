@@ -134,12 +134,18 @@ gloss             = "GLOSS", name, "ON", subject, "AS", json ;
 (* -- functions ---------------------------------------------------------- *)
 
 function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
-                    "FROM", string,
+                    "AS", dollar,
                     [ "ACCEPTS", "(", name, { ",", name }, ")" ],
                     [ "RETURNS", name ] ;
                     (* the engine's analytical machinery as rhai scripts; never
                        a metric (metrics are QUERY aspects run as their SQL).
-                       FROM names the script. ACCEPTS names the aspects whose
+                       AS carries the script itself (ruled 2026-08-15, fixture
+                       24): a body on disk was a body an agent over MCP could
+                       neither write nor read, so the store keeps it and
+                       `SELECT script FROM functions` serves the library as
+                       examples. `FROM 'path'` is retired, not deprecated —
+                       two homes for one body is the staleness the registry
+                       rulings exist against. ACCEPTS names the aspects whose
                        current values the server hands the script as context —
                        settings are context, never call arguments. RETURNS
                        mirrors ACCEPTS (ruled 2026-08-04): it names the aspect

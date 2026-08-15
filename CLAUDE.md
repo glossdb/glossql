@@ -51,7 +51,12 @@ documents:
   try_to_date/try_to_timestamp, source-row counting; ADBC executor
   planned) · `scripts` (rhai runtime behind FunctionRuntime, zero-copy
   column kernels, the reference function library and its bootstrap
-  declarations under `crates/scripts/functions/`; abstentions name absent
+  declarations under `crates/scripts/functions/` — repo files the binary
+  embeds, never files a workspace reads: a function's body rides its
+  declaration (`AS $$…$$`, ruled 2026-08-15, fixture 24) and
+  `crates/scripts/src/library.rs` splices the two, so the shipped
+  library reads back through `SELECT script FROM functions` as worked
+  examples an MCP-only agent can open; abstentions name absent
   ACCEPTS inputs — `missing_aspects`, ruled 2026-08-04; the kernel-mirror
   test keeps the kernel list in the glossql-metrics skill honest; the band plane, ruled
   2026-08-11 — `tabicl_bands` native kernel over the sibling-linked
@@ -109,9 +114,11 @@ documents:
   agent judge removes false positives — is taught in the core skill.
   A fresh
   workspace receives the shipped system at boot — embedded bootstrap:
-  reference scripts + the measurement library's declarations, vertical
-  excluded; the declaration relations (functions, aspects, witnesses,
-  sources, relationships) read as plain tables. Flight SQL cut from
+  the measurement library's declarations carrying their bodies, plus the
+  KPI kit, vertical excluded; nothing lands on disk and there is no
+  workspace `functions/` directory. The declaration relations
+  (functions, aspects, witnesses, sources, relationships) read as plain
+  tables. Flight SQL cut from
   M5: a future door, pyarrow reads the HTTP stream).
 - `reports/` — pivot records, review verdicts, and evaluation records;
   `reports/notes/` holds draft flow notes (the old `feedback/` folder,

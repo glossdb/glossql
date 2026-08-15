@@ -10,7 +10,9 @@
 //! result, converted to JSON and validated against `RETURNS` by the session.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, PathBuf};
+use std::path::PathBuf;
+
+pub mod library;
 use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
@@ -248,8 +250,9 @@ impl BandModel {
 }
 
 impl RhaiRuntime {
-    /// `root` is the workspace's functions directory; `FROM` paths resolve
-    /// under it, fenced like import paths (no absolute, no `..`).
+    /// `root` is the workspace directory. Scripts no longer live under
+    /// it — a declaration carries its own body (fixture 24) — but the
+    /// band model's weights still do.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         let mut engine = Engine::new_raw();
@@ -698,33 +701,25 @@ impl RhaiRuntime {
         }
     }
 
-    fn ast(&self, script: &str) -> Result<Arc<AST>, String> {
-        let relative = PathBuf::from(script);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|c| matches!(c, Component::ParentDir))
-        {
-            return Err(format!(
-                "script `{script}` must stay under the functions root — relative, no `..`"
-            ));
-        }
-        let path = self.root.join(relative);
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("script `{script}`: {e}"))?;
-        if let Some((cached_text, ast)) = self.asts.read().expect("asts").get(script)
-            && *cached_text == text
+    /// The compiled script, from the body the declaration carried
+    /// (ruled 2026-08-15, fixture 24 — this read a file until then).
+    /// Cached per function name and invalidated by the source itself,
+    /// so a re-declare recompiles and nothing has to be told to.
+    fn ast(&self, name: &str, source: &str) -> Result<Arc<AST>, String> {
+        if let Some((cached, ast)) = self.asts.read().expect("asts").get(name)
+            && cached == source
         {
             return Ok(Arc::clone(ast));
         }
         let ast = Arc::new(
             self.engine
-                .compile(&text)
-                .map_err(|e| format!("script `{script}`: {e}"))?,
+                .compile(source)
+                .map_err(|e| format!("`{name}`: {e}"))?,
         );
         self.asts
             .write()
             .expect("asts")
-            .insert(script.to_string(), (text, Arc::clone(&ast)));
+            .insert(name.to_string(), (source.to_string(), Arc::clone(&ast)));
         Ok(ast)
     }
 
@@ -746,7 +741,7 @@ impl FunctionRuntime for RhaiRuntime {
         context: &Value,
         door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
-        let ast = self.ast(&function.script)?;
+        let ast = self.ast(&function.name, &function.script)?;
         let mut scope = Scope::new();
         scope.push_constant("subject", subject.to_string());
         scope.push_constant(

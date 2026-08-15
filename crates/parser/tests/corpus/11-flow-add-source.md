@@ -114,7 +114,7 @@ DECLARE ASPECT column_profile WITH $${
     }
   }
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION profile FOR GLOBAL FROM 'functions/profile.rhai'
+DECLARE FUNCTION profile FOR GLOBAL AS $$/* min/max/nulls/distincts per column, from kernels */$$
   RETURNS column_profile;
 
 DECLARE ASPECT outlier_profile WITH $${
@@ -122,7 +122,7 @@ DECLARE ASPECT outlier_profile WITH $${
   "properties": {"applicable": {"type": "boolean"},
                  "iqr": {"type": "object"}, "zscore": {"type": "object"}}
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
+DECLARE FUNCTION outliers FOR GLOBAL AS $$/* iqr and z-score fences over the profile */$$
   ACCEPTS (column_profile)
   RETURNS outlier_profile;
 
@@ -133,7 +133,7 @@ DECLARE ASPECT temporal_profile WITH $${
                  "confidence": {"type": "number"},
                  "completeness": {"type": "object"}, "gaps": {"type": "object"}}
 }$$ AS MEASUREMENT;
-DECLARE FUNCTION temporal FOR GLOBAL FROM 'functions/temporal.rhai'
+DECLARE FUNCTION temporal FOR GLOBAL AS $$/* cadence, completeness and gaps on a time column */$$
   RETURNS temporal_profile;
 
 SELECT profile(), outliers() FROM fin.orders.amount;

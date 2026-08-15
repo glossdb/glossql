@@ -209,12 +209,12 @@ GLOSS bank_reconciliation ON bank_transactions AS $${
 }$$;
 
 DECLARE FUNCTION journal_balance_check FOR fin
-  FROM 'functions/journal_balance_check.rhai'
+  AS $$/* debits equal credits, as a breach rate */$$
   ACCEPTS (imports) RETURNS journal_balanced;
 DECLARE FUNCTION reconciliation_check FOR fin
-  FROM 'functions/reconciliation_check.rhai'
+  AS $$/* the reconciled fraction against the source's own dirt */$$
   ACCEPTS (imports) RETURNS bank_reconciliation;
-DECLARE FUNCTION balance_bands FOR fin FROM 'functions/balance_bands.rhai';
+DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
 DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
   DETECTOR balance_bands THRESHOLD 0.5;

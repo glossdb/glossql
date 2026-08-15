@@ -334,8 +334,8 @@ SELECT * FROM GLOSSARY(fin::dso);
 
 ## 6. The function library
 
-Scripts registered as functions, with name and contract; static by nature —
-ported by copying the script. A function is either a **measurement** — it
+Scripts registered as functions, with name, contract and body. A function
+is either a **measurement** — it
 fills a MEASUREMENT aspect through that aspect's witness (§7) — or a
 **detector** (§7.1). The library is the engine's analytical machinery
 (profiling, quality checks, detection) moved into the server as rhai
@@ -343,18 +343,24 @@ scripts; metrics are not functions (§5.1). Typing is not in it — the
 recipe carries the casts (§3).
 
 ```sql
-DECLARE FUNCTION profile_min_max FOR fin FROM 'functions/profile_min_max.rhai'
+DECLARE FUNCTION profile_min_max FOR fin AS $$/* min and max per column */$$
   RETURNS min_max;
 
-DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
+DECLARE FUNCTION outliers FOR GLOBAL AS $$/* iqr and z-score fences over the profile */$$
   ACCEPTS (column_profile)
   RETURNS outlier_profile;
 
-DECLARE FUNCTION reconcile_bands FOR fin FROM 'functions/reconcile_bands.rhai';
+DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
 ```
 
 - `FOR` scopes the function to a dataset, or `GLOBAL`.
-- `FROM` names the script.
+- `AS` carries the script itself (ruled 2026-08-15, fixture 24). It was a
+  path until then, which put the body outside the language: an agent
+  connected over the MCP door has statements and no filesystem, so it
+  could neither author a function nor read the library's own. The
+  declaration supersedes on re-declare like any other, and
+  `SELECT script FROM functions` serves the shipped library as worked
+  examples.
 - `ACCEPTS` names the aspects whose current values the server hands the
   script as its context document — settings are context, never call
   arguments; calls are always bare `f()`. Absent `ACCEPTS`, the script

@@ -39,18 +39,17 @@ fn function(script: &str) -> FunctionRow {
     }
 }
 
-fn runtime_with(dir: &std::path::Path, name: &str, body: &str) -> RhaiRuntime {
-    std::fs::write(dir.join(name), body).unwrap();
+/// The runtime needs a workspace only for the band model's weights;
+/// scripts arrive with their declarations (fixture 24).
+fn runtime(dir: &std::path::Path) -> RhaiRuntime {
     RhaiRuntime::new(dir)
 }
 
 #[test]
 fn scope_carries_subject_context_and_the_door() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = runtime_with(
-        dir.path(),
-        "t.rhai",
-        r#"
+    let rt = runtime(dir.path());
+    let body = r#"
         let t = db.query("ignored");
         let c = t.col("v");
         #{
@@ -63,11 +62,10 @@ fn scope_carries_subject_context_and_the_door() {
             parse: c.parse_rate("DOUBLE"),
             matched: c.match_rate("^\\d+\\.\\d+$"),
         }
-        "#,
-    );
+        "#;
     let out = rt
         .invoke(
-            &function("t.rhai"),
+            &function(body),
             "orders.amount",
             &json!({"hint": 7}),
             Arc::new(FakeDoor),
@@ -87,10 +85,8 @@ fn scope_carries_subject_context_and_the_door() {
 #[test]
 fn distribution_kernels_compute_textbook_values() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = runtime_with(
-        dir.path(),
-        "t.rhai",
-        r#"
+    let rt = runtime(dir.path());
+    let body = r#"
         let c = db.query("ignored").col("v");
         #{
             mean: c.mean(),
@@ -100,10 +96,9 @@ fn distribution_kernels_compute_textbook_values() {
             top: c.top_k(1),
             lengths: c.len_stats(),
         }
-        "#,
-    );
+        "#;
     let out = rt
-        .invoke(&function("t.rhai"), "s", &Value::Null, Arc::new(FakeDoor))
+        .invoke(&function(body), "s", &Value::Null, Arc::new(FakeDoor))
         .unwrap();
     // Parsed values are [12.5, 8.0]: mean 10.25, sample stddev 3.1820…,
     // interpolated median 10.25, MAD 2.25.
@@ -119,10 +114,8 @@ fn distribution_kernels_compute_textbook_values() {
 #[test]
 fn trial_casts_speak_the_substrates_type_spellings() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = runtime_with(
-        dir.path(),
-        "t.rhai",
-        r#"
+    let rt = runtime(dir.path());
+    let body = r#"
         let c = db.query("ignored").col("v");
         #{
             decimal: c.parse_rate("DECIMAL(12,2)"),
@@ -130,10 +123,9 @@ fn trial_casts_speak_the_substrates_type_spellings() {
             unsigned: c.parse_rate("INTEGER UNSIGNED"),
             micros: c.parse_rate("TIMESTAMP(6)"),
         }
-        "#,
-    );
+        "#;
     let out = rt
-        .invoke(&function("t.rhai"), "s", &Value::Null, Arc::new(FakeDoor))
+        .invoke(&function(body), "s", &Value::Null, Arc::new(FakeDoor))
         .unwrap();
     // "12.50" and "8.00" read as decimals and doubles; neither is an
     // unsigned integer or a timestamp.
@@ -144,38 +136,35 @@ fn trial_casts_speak_the_substrates_type_spellings() {
 
     // A spelling DataFusion rejects is refused, not silently trialed —
     // the defect class v0.3's duckdb_types module exists to close.
-    let rt = runtime_with(
-        dir.path(),
-        "bad.rhai",
-        r#"db.query("ignored").col("v").parse_rate("TIMESTAMP_NS")"#,
-    );
+    let rt = runtime(dir.path());
+    let body = r#"db.query("ignored").col("v").parse_rate("TIMESTAMP_NS")"#;
     let err = rt
-        .invoke(&function("bad.rhai"), "s", &Value::Null, Arc::new(FakeDoor))
+        .invoke(&function(body), "s", &Value::Null, Arc::new(FakeDoor))
         .unwrap_err();
     assert!(err.contains("not a cast target"), "{err}");
 }
 
 #[test]
-fn script_paths_stay_under_the_root() {
+fn a_body_that_will_not_compile_names_the_function() {
+    // What the path fence used to guard is gone with paths (fixture 24):
+    // a declaration carries its body, so nothing resolves under a root.
+    // The failure that replaced it is a body that will not compile, and
+    // it must name the function rather than a line number alone.
     let dir = tempfile::tempdir().unwrap();
-    let rt = RhaiRuntime::new(dir.path());
+    let rt = runtime(dir.path());
     let err = rt
-        .invoke(
-            &function("../outside.rhai"),
-            "s",
-            &Value::Null,
-            Arc::new(FakeDoor),
-        )
+        .invoke(&function("#{ unclosed:"), "s", &Value::Null, Arc::new(FakeDoor))
         .unwrap_err();
-    assert!(err.contains("must stay under the functions root"), "{err}");
+    assert!(err.starts_with("`t`"), "{err}");
 }
 
 #[test]
 fn a_script_error_names_the_function() {
     let dir = tempfile::tempdir().unwrap();
-    let rt = runtime_with(dir.path(), "t.rhai", r#"throw "no data";"#);
+    let rt = runtime(dir.path());
+    let body = r#"throw "no data";"#;
     let err = rt
-        .invoke(&function("t.rhai"), "s", &Value::Null, Arc::new(FakeDoor))
+        .invoke(&function(body), "s", &Value::Null, Arc::new(FakeDoor))
         .unwrap_err();
     assert!(err.contains("`t`") && err.contains("no data"), "{err}");
 }
