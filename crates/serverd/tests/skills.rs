@@ -128,6 +128,49 @@ async fn every_skill_example_parses() {
     );
 }
 
+/// Every `DECLARE FUNCTION … AS $$…$$` body in the skills compiles.
+///
+/// Rule 1 cannot see this: a function's body is opaque text to the
+/// glossql parser, so an example whose rhai the engine rejects parses
+/// perfectly and ships as teaching. Found in a run on 2026-08-15 — the
+/// functions skill's worked example carried a multi-line double-quoted
+/// string, which rhai does not allow (SQL over several lines needs
+/// backticks). An agent copying it got "Open string is not terminated".
+#[tokio::test(flavor = "multi_thread")]
+async fn every_skill_function_body_compiles() {
+    let runtime = glossql_scripts::RhaiRuntime::new(std::env::temp_dir());
+    let mut broken = Vec::new();
+    let mut checked = 0usize;
+    for b in blocks() {
+        // Anchored on DECLARE FUNCTION: PROBE, RECIPE and GLOSS bodies
+        // ride the same dollar quoting and are SQL or JSON, so a bare
+        // scan for `AS $$` compiles the wrong thing. Within a function
+        // statement, `AS $$` opens the body and the next `$$` closes
+        // it — bodies cannot contain `$$`, which is what makes this
+        // sound.
+        for part in b.sql.split("DECLARE FUNCTION").skip(1) {
+            let Some(open) = part.find("AS $$") else {
+                continue;
+            };
+            let after = &part[open + 5..];
+            let Some(close) = after.find("$$") else { continue };
+            checked += 1;
+            if let Err(e) = runtime.compiles(&after[..close]) {
+                broken.push(format!("{}:{} — {e}", b.skill, b.line));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "skill function bodies that do not compile:\n{}",
+        broken.join("\n")
+    );
+    assert!(
+        checked >= 2,
+        "only {checked} function bodies were compiled — the scan has stopped finding its subject"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
     let store = Store::open_memory().await.unwrap();

@@ -48,8 +48,8 @@ everything else is (ruled 2026-08-15, fixture 24).
 
 ```glossql
 DECLARE FUNCTION ap_settles_in_full_check FOR fin AS $$
-  let m = db.query("SELECT count(*) FILTER (WHERE settled < billed) AS short,
-                           count(*) AS n FROM ar_settlement");
+  let m = db.query(`SELECT count(*) FILTER (WHERE settled < billed) AS short,
+                           count(*) AS n FROM ar_settlement`);
   let n = m.cell("n").parse_float();
   #{
     "outcome": "a receipt settles its invoice in full; a short receipt is the exception",
@@ -90,7 +90,10 @@ result, a map that must serialize as JSON.
   by aspect name, and the entry is `()` when that aspect has no value
   yet. A detector gets `slots` (one per speaker, each with a `body`),
   `threshold`, and `subject`/`aspect`/`witness` to echo back.
-- `db` — the door into the dataset. `db.query("sql")` returns a Table;
+- `db` — the door into the dataset. **SQL over more than one line goes
+  in backticks, not quotes** — a `"…"` string cannot span lines in rhai
+  and the declaration fails with `Open string is not terminated`, which
+  names nothing useful. `db.query("sql")` returns a Table;
   `db.query_all([sql, …])` returns an array of Tables answered in
   order. **The door overlaps a batch below the seam**, so a fan-out of
   small queries — pair scans, probes — belongs in one `query_all`,

@@ -37,6 +37,9 @@ pub struct DoorConfig {
     pub agent: String,
     /// Rows an MCP tool result ships before declaring `truncated`.
     pub row_cap: usize,
+    /// How long the question round waits for a person before treating
+    /// the silence as a decline (`--round-wait`).
+    pub round_wait_secs: u64,
 }
 
 impl Default for DoorConfig {
@@ -44,6 +47,7 @@ impl Default for DoorConfig {
         DoorConfig {
             agent: "agent".into(),
             row_cap: DEFAULT_ROW_CAP,
+            round_wait_secs: mcp::DEFAULT_ROUND_WAIT_SECS,
         }
     }
 }

@@ -9,7 +9,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
-[--addr <ip:port>] [--agent <id>] [--row-cap <n>]";
+[--addr <ip:port>] [--agent <id>] [--row-cap <n>] [--round-wait <secs>]";
 
 struct Args {
     workspace: PathBuf,
@@ -28,6 +28,10 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
             "--workspace" => workspace = Some(PathBuf::from(value()?)),
             "--addr" => addr = value()?,
             "--agent" => doors.agent = value()?,
+            "--round-wait" => {
+                doors.round_wait_secs =
+                    value()?.parse().map_err(|e| format!("--round-wait: {e}"))?;
+            }
             "--row-cap" => {
                 doors.row_cap = value()?.parse().map_err(|e| format!("--row-cap: {e}"))?;
             }

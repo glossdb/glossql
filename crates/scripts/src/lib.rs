@@ -705,6 +705,20 @@ impl RhaiRuntime {
     /// (ruled 2026-08-15, fixture 24 — this read a file until then).
     /// Cached per function name and invalidated by the source itself,
     /// so a re-declare recompiles and nothing has to be told to.
+    /// Does this body compile? For the standing skill invariant, which
+    /// could not see rhai before: a `DECLARE FUNCTION … AS $$…$$`
+    /// example parses as glossql whatever its body says, because the
+    /// body is opaque text at that level — so a script the engine
+    /// rejects shipped as teaching. Found in a run on 2026-08-15, where
+    /// the functions skill's own worked example carried a multi-line
+    /// double-quoted string, which rhai does not allow.
+    pub fn compiles(&self, source: &str) -> Result<(), String> {
+        self.engine
+            .compile(source)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     fn ast(&self, name: &str, source: &str) -> Result<Arc<AST>, String> {
         if let Some((cached, ast)) = self.asts.read().expect("asts").get(name)
             && cached == source

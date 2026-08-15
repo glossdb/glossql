@@ -584,11 +584,18 @@ const ROUND_STATE: &str = "question-round:v1";
 const SAME_AS: &str = "same as before";
 
 /// How long the round waits for a person before treating the silence
-/// as a decline. Long enough to read a form and answer it, short
-/// enough that being away costs an agent a pause and not a coffee
-/// break — run 4 waited 120s per read, repeatedly, for a human who was
-/// simply not at the keyboard.
-const ROUND_WAIT_SECS: u64 = 25;
+/// as a decline (`--round-wait`).
+///
+/// Run 4 waited 120s per read, repeatedly, for a human who was simply
+/// not at the keyboard, and the first correction cut it to 25s. That
+/// over-corrected: the cost of being away is already bounded by the
+/// rest-on-decline rule below — one stall per question per workspace
+/// move, never one per read — so the wait does not have to pay for
+/// absence a second time. What it does have to cover is a person who
+/// IS there, reading a definitional question with a named alternative
+/// and thinking before answering, and 25s does not (project lead,
+/// 2026-08-15). Sized for the present human; tune with the flag.
+pub const DEFAULT_ROUND_WAIT_SECS: u64 = 120;
 
 /// One entry of the human's `ruling` slot, as the door composes it.
 /// `key` names the claim (the join column); `assumption` is the prose
@@ -840,12 +847,13 @@ impl ServerHandler for GlossqlMcp {
                         // the workspace and re-opens it. One stall per
                         // question per move, never a stall per read.
                         let qid = question.id();
+                        let wait = self.doors.round_wait_secs;
                         set_of(&self.asking).insert(qid.clone());
                         let asked = context
                             .peer
                             .create_elicitation_with_timeout(
                                 params,
-                                Some(std::time::Duration::from_secs(ROUND_WAIT_SECS)),
+                                Some(std::time::Duration::from_secs(wait)),
                             )
                             .await;
                         set_of(&self.asking).remove(&qid);
@@ -854,7 +862,7 @@ impl ServerHandler for GlossqlMcp {
                             Err(e) => {
                                 set_of(&self.deferred).insert(qid.clone());
                                 format!(
-                                    "question-round: no answer within {ROUND_WAIT_SECS}s \
+                                    "question-round: no answer within {wait}s \
                                      ({e}) — `{qid}` rests like a decline and will not \
                                      be asked again until a write moves the workspace"
                                 )
