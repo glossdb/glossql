@@ -184,6 +184,22 @@ pub struct GlossqlMcp {
     /// so "not now" never hardens into "never" (cadence ruling,
     /// 2026-08-14). A landed slot stops deriving on its own.
     deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Questions asked on the session lifecycle and not yet answered.
+    /// The ask no longer blocks the agent's call (run 4, 2026-08-15),
+    /// so nothing else would stop the next read from asking the same
+    /// thing again — and a person should be looking at one form, not a
+    /// stack of them. Non-empty means an ask is in flight and the
+    /// round stays quiet until it resolves.
+    asking: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+}
+
+/// Take a set without letting a poisoned lock end the door. A panic
+/// inside the round is a bug to fix, never a reason for every later
+/// call to fail on the mutex it left behind.
+fn set_of(
+    lock: &std::sync::Mutex<std::collections::HashSet<String>>,
+) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl GlossqlMcp {
@@ -192,12 +208,14 @@ impl GlossqlMcp {
         doors: crate::DoorConfig,
         brief: Arc<Brief>,
         deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+        asking: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     ) -> Self {
         GlossqlMcp {
             plane,
             doors,
             brief,
             deferred,
+            asking,
         }
     }
 
@@ -294,7 +312,7 @@ impl GlossqlMcp {
     /// dataset bound (or nothing open) derives nothing, and the round
     /// stays silent.
     async fn derive_question(&self, session: &Session, skip_deferred: bool) -> Option<Question> {
-        let deferred = self.deferred.lock().expect("deferred lock").clone();
+        let deferred = set_of(&self.deferred).clone();
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
             println!("glossql ?? question-round: the loose derivation failed: {e}");
@@ -334,10 +352,7 @@ impl GlossqlMcp {
     /// the agent. The monitor note is the whole account.
     async fn digest_round(&self, key: &str, answer: ElicitResult, session: &Session) -> String {
         if answer.action != ElicitationAction::Accept {
-            self.deferred
-                .lock()
-                .expect("deferred lock")
-                .insert(key.to_string());
+            set_of(&self.deferred).insert(key.to_string());
             return format!("question-round: deferred ({:?})", answer.action);
         }
         let Some(content) = answer.content else {
@@ -352,6 +367,8 @@ impl GlossqlMcp {
             key,
             dimension,
             assumption,
+            sibling_stance,
+            sibling_note,
             ..
         } = question;
         let entry = RulingEntry {
@@ -365,6 +382,26 @@ impl GlossqlMcp {
         };
         match content.get("stance").and_then(|v| v.as_str()) {
             Some("stands as stated") => self.land_ruling(session, entry).await,
+            // The sibling ruling, replayed onto this aspect: the same
+            // stance and the same words the human wrote next door, now
+            // standing here in its own right. Nothing is inferred — the
+            // human chose it.
+            Some(said) if said.starts_with(SAME_AS) => {
+                let Some(stance) = sibling_stance.as_deref() else {
+                    return "question-round: nothing stands on that key to repeat".into();
+                };
+                let note = self
+                    .land_ruling(
+                        session,
+                        RulingEntry {
+                            stance,
+                            note: sibling_note.clone(),
+                            ..entry
+                        },
+                    )
+                    .await;
+                format!("{note} — repeated from the ruling already standing on that key")
+            }
             Some("wrong") => {
                 let correction = content
                     .get("correction")
@@ -433,6 +470,17 @@ impl GlossqlMcp {
         let Some(rulings) = body.get_mut("rulings").and_then(|r| r.as_array_mut()) else {
             return "question-round: the standing ruling slot is not a ruling body".into();
         };
+        // ONE KEY IS STILL RULED PER ASPECT, deliberately. Run 4 asked
+        // about `days-in-period` three times (dso, dpo, dio) and
+        // `goods-only` twice, and fanning one answer across every
+        // aspect that discloses the key is the obvious cure — but it is
+        // the wrong one: run 2's human confirmed `goods-only` on
+        // `purchases` in the same session where they corrected it on
+        // `dpo`, on purpose. A fan-out would have silently denied them
+        // that. The key pairs the claims so the form can SAY what was
+        // already ruled next door; it does not make them one claim.
+        // The cheap answer (`params` below) is how the repeat stops
+        // costing a re-read.
         // A re-ruling on the same (aspect, key) replaces its entry —
         // the slot is the standing judgment, not a transcript.
         rulings.retain(|r| !(r["aspect"] == *aspect && r["key"] == *key));
@@ -583,6 +631,18 @@ async fn conflict_count(plane: &Plane) -> Option<usize> {
 /// landing rests on re-derivation, never on the echo.
 const ROUND_STATE: &str = "question-round:v1";
 
+/// The answer that replays the ruling already standing on this key
+/// under another aspect. The form appends which one, so the option
+/// reads "same as before (corrected on dpo)".
+const SAME_AS: &str = "same as before";
+
+/// How long the round waits for a person before treating the silence
+/// as a decline. Long enough to read a form and answer it, short
+/// enough that being away costs an agent a pause and not a coffee
+/// break — run 4 waited 120s per read, repeatedly, for a human who was
+/// simply not at the keyboard.
+const ROUND_WAIT_SECS: u64 = 25;
+
 /// One entry of the human's `ruling` slot, as the door composes it.
 /// `key` names the claim (the join column); `assumption` is the prose
 /// the human read, kept for the record and never matched; `note` is
@@ -618,6 +678,8 @@ fn loose_from(row: &serde_json::Value) -> Option<Question> {
         assumption: row["assumption"].as_str().unwrap_or("").into(),
         confidence: row["conf"].as_f64().unwrap_or(0.0),
         sibling: row["sibling"].as_str().map(str::to_string),
+        sibling_stance: row["sibling_stance"].as_str().map(str::to_string),
+        sibling_note: row["sibling_note"].as_str().map(str::to_string),
     })
 }
 
@@ -635,6 +697,10 @@ struct Question {
     assumption: String,
     confidence: f64,
     sibling: Option<String>,
+    /// The sibling ruling in parts, so the round can offer it back as
+    /// an answer rather than only naming it.
+    sibling_stance: Option<String>,
+    sibling_note: Option<String>,
 }
 
 impl Question {
@@ -656,11 +722,18 @@ impl Question {
             sibling,
             ..
         } = self;
+        // One decision spelled with one key across several groundings
+        // is asked once per grounding, because a human may rule the
+        // same key differently on two aspects and has. What the repeat
+        // must not cost is a re-reading: where they already ruled this
+        // key next door, that ruling is offered back as a third answer,
+        // so agreeing is one choice and differing is still open.
+        let mut stances = vec!["stands as stated".to_string(), "wrong".to_string()];
+        if let Some(s) = sibling {
+            stances.push(format!("{SAME_AS} ({s})"));
+        }
         let schema = ElicitationSchema::builder()
-            .required_enum_schema(
-                "stance",
-                EnumSchema::builder(vec!["stands as stated".into(), "wrong".into()]).build(),
-            )
+            .required_enum_schema("stance", EnumSchema::builder(stances).build())
             .optional_string("correction")
             .build()
             .map_err(|e| e.to_string())?;
@@ -772,7 +845,7 @@ impl ServerHandler for GlossqlMcp {
         // transport's peer_info is synthetic on the sessionless path.
         let shape = glossql_session::call_shape(statements);
         if shape.writes {
-            self.deferred.lock().expect("deferred lock").clear();
+            set_of(&self.deferred).clear();
         }
         let mut probed = None;
         if let Some(responses) = &request.input_responses {
@@ -789,6 +862,7 @@ impl ServerHandler for GlossqlMcp {
             println!("glossql ?? {id}: {note}");
             probed = Some(note);
         } else if shape.reviews
+            && set_of(&self.asking).is_empty()
             && context
                 .client_capabilities()
                 .and_then(|caps| caps.elicitation)
@@ -816,18 +890,45 @@ impl ServerHandler for GlossqlMcp {
                         // Session lifecycle: the ask rides this call's
                         // own stream, the answer routes back through
                         // the transport session.
+                        //
+                        // The wait is bounded and it is spent once. On
+                        // this lifecycle the ask travels on THIS call's
+                        // stream, and the stream closes when the call
+                        // returns — so the request cannot be fired and
+                        // forgotten without losing it, and the handler
+                        // has to stay for the answer.
+                        //
+                        // What can be fixed is the price of nobody
+                        // being there. Run 4 waited two minutes per
+                        // record read for a person who was away, over
+                        // and over, because the next read asked the
+                        // same question again. So: a wait short enough
+                        // that a present human still answers it, and a
+                        // silence treated as a decline — the question
+                        // defers exactly like a "not now", and the
+                        // round stays quiet until a writing call moves
+                        // the workspace and re-opens it. One stall per
+                        // question per move, never a stall per read.
+                        let qid = question.id();
+                        set_of(&self.asking).insert(qid.clone());
                         let asked = context
                             .peer
                             .create_elicitation_with_timeout(
                                 params,
-                                Some(std::time::Duration::from_secs(120)),
+                                Some(std::time::Duration::from_secs(ROUND_WAIT_SECS)),
                             )
                             .await;
+                        set_of(&self.asking).remove(&qid);
                         let note = match asked {
-                            Ok(answer) => {
-                                self.digest_round(&question.id(), answer, &session).await
+                            Ok(answer) => self.digest_round(&qid, answer, &session).await,
+                            Err(e) => {
+                                set_of(&self.deferred).insert(qid.clone());
+                                format!(
+                                    "question-round: no answer within {ROUND_WAIT_SECS}s \
+                                     ({e}) — `{qid}` rests like a decline and will not \
+                                     be asked again until a write moves the workspace"
+                                )
                             }
-                            Err(e) => format!("question-round: no round-trip: {e}"),
                         };
                         println!("glossql ?? {id}: {note}");
                         probed = Some(note);

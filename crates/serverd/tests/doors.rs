@@ -380,6 +380,150 @@ async fn the_round_never_asks_the_human_for_statistics() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
+    // Run 4 spelled one decision with one key across three metrics, as
+    // the practice skill says to, and was then asked about
+    // `days-in-period` three times. Fanning one answer across every
+    // aspect is the obvious cure and the wrong one — run 2's human
+    // ruled `goods-only` two ways on purpose, and that must stay
+    // possible. So the second ask offers the first ruling back as an
+    // answer: agreeing costs a click, differing is still there.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'one key, one decision');
+        USE fin;
+        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        DECLARE ASPECT dio WITH $${"title": "DIO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "convention", "key": "days-in-period",
+            "assumption": "days are the month's own calendar days, 28 to 31",
+            "basis": "judgment", "confidence": 0.8}]}$$;
+        GLOSS dio ON fin AS $${"sql": "SELECT 2 AS v",
+          "assumptions": [{"dimension": "convention", "key": "days-in-period",
+            "assumption": "days are the month's own calendar days",
+            "basis": "judgment", "confidence": 0.8}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 180, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let open = |id: u64| {
+        let app = app.clone();
+        async move {
+            let body = expect_ok(
+                mcp(
+                    app,
+                    call_with(meta(), id, "SELECT aspect, key FROM open_questions;", None),
+                )
+                .await,
+            )
+            .await;
+            let text = body["result"]["content"][0]["text"].as_str().unwrap().to_string();
+            let outcomes: Value = serde_json::from_str(&text).unwrap();
+            outcomes[0]["rows"].as_array().cloned().unwrap_or_default()
+        }
+    };
+
+    // One decision, disclosed twice — two rows stand open.
+    assert_eq!(open(181).await.len(), 2);
+
+    let review = "SELECT subject, aspect FROM glossary LIMIT 5";
+
+    // dio asks first (aspect order) and the human corrects it. With
+    // nothing yet ruled on this key, the form offers two stances.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 182, review, None)).await).await;
+    let first = &body["result"]["inputRequests"]["loose:fin:dio:days-in-period"];
+    assert!(first.is_object(), "{body}");
+    let stances = first["params"]["requestedSchema"]["properties"]["stance"]["enum"].to_string();
+    assert!(!stances.contains("same as before"), "nothing to repeat yet: {stances}");
+
+    let corrected = json!({"action": "accept",
+        "content": {"stance": "wrong", "correction": "use a fixed 30-day month"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                183,
+                review,
+                Some(("loose:fin:dio:days-in-period", corrected)),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    // dso asks next. The same key is already ruled next door, so the
+    // form both names it and offers it back.
+    let body =
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 184, review, None)).await).await;
+    let second = &body["result"]["inputRequests"]["loose:fin:dso:days-in-period"];
+    assert!(second.is_object(), "{body}");
+    let message = second["params"]["message"].as_str().unwrap();
+    assert!(message.contains("corrected on dio"), "{message}");
+    let stances = second["params"]["requestedSchema"]["properties"]["stance"]["enum"].to_string();
+    assert!(
+        stances.contains("same as before (corrected on dio)"),
+        "the repeat must be one click: {stances}"
+    );
+
+    // Taking it replays the stance AND the human's own words.
+    let same = json!({"action": "accept",
+        "content": {"stance": "same as before (corrected on dio)"}});
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta_elicit(),
+                185,
+                review,
+                Some(("loose:fin:dso:days-in-period", same)),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        body["result"]["content"].to_string().contains("ruled (corrected)"),
+        "{body}"
+    );
+
+    // Nothing stands open now, and each aspect carries its own entry.
+    assert!(open(186).await.is_empty());
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                187,
+                "SELECT aspect, stance, note, assumption FROM ruling_entries ORDER BY aspect;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let rows = outcomes[0]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0]["aspect"], json!("dio"), "{rows:?}");
+    assert_eq!(rows[1]["aspect"], json!("dso"), "{rows:?}");
+    assert_eq!(rows[1]["stance"], json!("corrected"), "{rows:?}");
+    assert!(
+        rows[1]["note"].as_str().unwrap().contains("fixed 30-day"),
+        "the repeat carries the human's own words: {rows:?}"
+    );
+    assert!(
+        rows[1]["assumption"].as_str().unwrap().contains("28 to 31"),
+        "each aspect keeps its own wording: {rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_round_rules_a_loose_assumption_on_retry() {
     // A judged assumption below full confidence becomes a
     // confirm/correct form; "stands as stated" lands a RULING entry —
@@ -1421,4 +1565,79 @@ async fn the_workspace_says_what_it_affords() {
     // Nothing ruled yet, so nothing owes a fold-in.
     assert_eq!(row("rulings")["stands"], json!(0), "{rows:?}");
     assert_eq!(row("rulings")["open"], json!(0), "{rows:?}");
+}
+
+/// Run 4 read `workspace_next` twice in one session and got two
+/// different answers: filtered by `surface`, it came back with every row
+/// and reported `aspects` and `functions` as 0 standing, while the same
+/// read unfiltered — and the relations read directly — reported the
+/// real counts. A filter that is silently dropped is bad; one that also
+/// corrupts the counts it returns is worse, so both halves are asserted
+/// here against the same session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'the affordance map, filtered');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 170, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let read = |sql: &'static str, id: u64| {
+        let app = app.clone();
+        async move {
+            let body =
+                expect_ok(mcp(app, call_with(meta(), id, sql, None)).await).await;
+            let text = body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            serde_json::from_str::<Value>(&text).unwrap_or(json!([]))
+        }
+    };
+
+    let whole = read("SELECT surface, stands FROM workspace_next ORDER BY surface;", 171).await;
+    let whole_rows = whole[0]["rows"].as_array().unwrap().clone();
+    let standing = |rows: &[Value], name: &str| -> i64 {
+        rows.iter()
+            .find(|r| r["surface"] == json!(name))
+            .and_then(|r| r["stands"].as_i64())
+            .unwrap_or(-1)
+    };
+    let aspects_whole = standing(&whole_rows, "aspects");
+    assert!(aspects_whole > 0, "aspects should stand: {whole_rows:?}");
+
+    // The same question, filtered.
+    let one = read(
+        "SELECT surface, stands FROM workspace_next WHERE surface = 'aspects';",
+        172,
+    )
+    .await;
+    let one_rows = one[0]["rows"].as_array().unwrap().clone();
+    assert_eq!(
+        one_rows.len(),
+        1,
+        "the filter must bind — got every surface back: {one_rows:?}"
+    );
+    assert_eq!(
+        standing(&one_rows, "aspects"),
+        aspects_whole,
+        "filtered and unfiltered disagree on the same count"
+    );
+
+    // And a filter that keeps several rows keeps exactly those.
+    let some = read(
+        "SELECT surface, stands FROM workspace_next \
+         WHERE surface IN ('tables', 'sources') ORDER BY surface;",
+        173,
+    )
+    .await;
+    let some_rows = some[0]["rows"].as_array().unwrap().clone();
+    let surfaces: Vec<&str> = some_rows
+        .iter()
+        .filter_map(|r| r["surface"].as_str())
+        .collect();
+    assert_eq!(surfaces, vec!["sources", "tables"], "{some_rows:?}");
 }

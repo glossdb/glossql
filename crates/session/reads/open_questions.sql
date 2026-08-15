@@ -24,6 +24,14 @@
 -- be a second query with the subject and key spliced into SQL text;
 -- here it is a join.
 --
+-- `sibling_stance` and `sibling_note` carry that same ruling in parts,
+-- so the round can offer it back as an answer instead of only
+-- mentioning it. One decision spelled with one key across three
+-- metrics is asked three times — that is deliberate, since a human may
+-- rule the same key differently on two aspects and has (run 2:
+-- `goods-only` confirmed on purchases, corrected on dpo) — but the
+-- repeat should cost a click, not a re-reading.
+--
 -- No cap and no display: the rows are the whole of what is owed, and
 -- glyphs, links and ordering are the caller's business. Filters ride
 -- WHERE, like every other read here.
@@ -33,7 +41,9 @@
 -- the door's round served the wrong question first until it ordered at
 -- the call site. Order where you consume.
 SELECT o.dataset, o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis, o.conf,
-       max(s.stance || ' on ' || s.aspect) AS sibling
+       max(s.stance || ' on ' || s.aspect) AS sibling,
+       max(s.stance) AS sibling_stance,
+       max(s.note) AS sibling_note
 FROM agent_assumptions o
 JOIN aspects a ON a.name = o.aspect AND a.kind = 'query'
 LEFT JOIN ruling_entries s

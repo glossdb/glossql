@@ -268,6 +268,76 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_try_to_date_reads_a_column_of_mixed_formats() {
+    // Run 4's payments column: three conventions interleaved, no ISO
+    // row at all. Formats are tried in order and the first that parses
+    // wins, so the recipe spells the value once instead of coalescing
+    // three calls over three copies of it.
+    //
+    // The last row is the honest hard case — `05/06/2026` parses under
+    // both slashed formats, and the one named first decides. Order is
+    // the author's claim about the source, and the accounting counts a
+    // cell as failed only when no format took it.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pay.csv"),
+        "id,paid\n\
+         1,24/10/2026\n\
+         2,02/24/2026\n\
+         3,23-Mar-26\n\
+         4,sometime\n\
+         5,05/06/2026\n",
+    )
+    .unwrap();
+    let landed = run_recipe(
+        &spec("csv", dir.path()),
+        "SELECT id, try_to_date(paid, '%d/%m/%Y', '%m/%d/%Y', '%d-%b-%y') AS paid \
+         FROM read_csv('pay.csv')",
+    )
+    .await
+    .unwrap();
+
+    let dates: Vec<Option<i32>> = landed
+        .batches
+        .iter()
+        .flat_map(|b| {
+            use datafusion::arrow::array::Array;
+            let col = b
+                .column_by_name("paid")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<datafusion::arrow::array::Date32Array>()
+                .unwrap();
+            (0..col.len())
+                .map(|i| (!col.is_null(i)).then(|| col.value(i)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let day = |y: i32, m: u32, d: u32| {
+        (chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days() as i32
+    };
+    assert_eq!(
+        dates,
+        vec![
+            Some(day(2026, 10, 24)), // only day-first can read it
+            Some(day(2026, 2, 24)),  // only month-first can
+            Some(day(2026, 3, 23)),  // the named month
+            None,                    // nothing parses it
+            Some(day(2026, 6, 5)),   // ambiguous: day-first was named first
+        ]
+    );
+
+    let glossql_import::CastAccounting::Checked(checks) = &landed.casts else {
+        panic!("accounted: {:?}", landed.casts);
+    };
+    let paid = checks.iter().find(|c| c.column == "paid").unwrap();
+    assert_eq!(paid.failed, 1, "only the unparseable cell counts as failed");
+    assert_eq!(paid.tokens, vec![("sometime".to_string(), 1)]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accounting_discloses_what_it_cannot_account() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("t.csv"), "a,b\n1,2\n1,3\n").unwrap();

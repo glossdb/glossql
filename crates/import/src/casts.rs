@@ -36,10 +36,7 @@ impl TryParse {
         TryParse {
             name: "try_to_date",
             returns: DataType::Date32,
-            signature: Signature::exact(
-                vec![DataType::Utf8, DataType::Utf8],
-                Volatility::Immutable,
-            ),
+            signature: Signature::variadic(vec![DataType::Utf8], Volatility::Immutable),
         }
     }
 
@@ -47,10 +44,7 @@ impl TryParse {
         TryParse {
             name: "try_to_timestamp",
             returns: DataType::Timestamp(TimeUnit::Microsecond, None),
-            signature: Signature::exact(
-                vec![DataType::Utf8, DataType::Utf8],
-                Volatility::Immutable,
-            ),
+            signature: Signature::variadic(vec![DataType::Utf8], Volatility::Immutable),
         }
     }
 }
@@ -68,49 +62,74 @@ impl ScalarUDFImpl for TryParse {
         &self.signature
     }
 
-    fn return_type(&self, _args: &[DataType]) -> DFResult<DataType> {
+    fn return_type(&self, args: &[DataType]) -> DFResult<DataType> {
+        if args.len() < 2 {
+            return exec_err!("{} takes a value and at least one format", self.name);
+        }
         Ok(self.returns.clone())
     }
 
+    /// Formats are tried in order and the first that parses wins, so one
+    /// call handles a column carrying several conventions:
+    /// `try_to_date(d, '%Y-%m-%d', '%d/%m/%Y', '%d-%b-%y')`. Run 4 met a
+    /// payments column with three interleaved formats and no ISO at all,
+    /// and had to write a coalesce ladder of three separate calls to
+    /// read it — the same work, spelled three times, with the value
+    /// expression repeated in each.
+    ///
+    /// Order is the author's and it is load-bearing where two formats
+    /// can both parse one value: `'02/03/2025'` is March 2nd under
+    /// `%d/%m/%Y` and February 3rd under `%m/%d/%Y`, and whichever is
+    /// named first decides. Put the unambiguous formats first and the
+    /// ambiguous pair last, in the order the source system writes them.
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DFResult<ColumnarValue> {
         let arrays = ColumnarValue::values_to_arrays(&args.args)?;
         let Some(values) = arrays[0].as_any().downcast_ref::<StringArray>() else {
             return exec_err!("{} expects a string column", self.name);
         };
-        let Some(formats) = arrays[1].as_any().downcast_ref::<StringArray>() else {
-            return exec_err!("{} expects a string format", self.name);
-        };
-        let format_at = |i: usize| {
-            if formats.is_null(i) {
-                None
-            } else {
-                Some(formats.value(i))
+        let mut formats = Vec::with_capacity(arrays.len() - 1);
+        for array in &arrays[1..] {
+            let Some(format) = array.as_any().downcast_ref::<StringArray>() else {
+                return exec_err!("{} expects string formats", self.name);
+            };
+            formats.push(format);
+        }
+        // The first format that parses this row's value, in the order
+        // the author named them.
+        let parsed = |i: usize, take: &dyn Fn(&str, &str) -> Option<i64>| -> Option<i64> {
+            if values.is_null(i) {
+                return None;
             }
+            let value = values.value(i);
+            formats.iter().find_map(|f| {
+                if f.is_null(i) {
+                    return None;
+                }
+                take(value, f.value(i))
+            })
         };
         let out: ArrayRef = match self.returns {
             DataType::Date32 => {
                 let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
-                Arc::new(Date32Array::from_iter((0..values.len()).map(|i| {
-                    let f = format_at(i)?;
-                    if values.is_null(i) {
-                        return None;
-                    }
-                    chrono::NaiveDate::parse_from_str(values.value(i), f)
+                let day = move |value: &str, format: &str| {
+                    chrono::NaiveDate::parse_from_str(value, format)
                         .ok()
-                        .map(|d| (d - epoch).num_days() as i32)
-                })))
+                        .map(|d| (d - epoch).num_days())
+                };
+                Arc::new(Date32Array::from_iter(
+                    (0..values.len()).map(|i| parsed(i, &day).map(|d| d as i32)),
+                ))
             }
-            _ => Arc::new(TimestampMicrosecondArray::from_iter((0..values.len()).map(
-                |i| {
-                    let f = format_at(i)?;
-                    if values.is_null(i) {
-                        return None;
-                    }
-                    chrono::NaiveDateTime::parse_from_str(values.value(i), f)
+            _ => {
+                let micros = |value: &str, format: &str| {
+                    chrono::NaiveDateTime::parse_from_str(value, format)
                         .ok()
                         .map(|t| t.and_utc().timestamp_micros())
-                },
-            ))),
+                };
+                Arc::new(TimestampMicrosecondArray::from_iter(
+                    (0..values.len()).map(|i| parsed(i, &micros)),
+                ))
+            }
         };
         Ok(ColumnarValue::Array(out))
     }

@@ -104,6 +104,26 @@ DECLARE RECIPE orders ON fin FROM erp_export AS $$
   FROM read_parquet('orders/*.parquet')$$;
 ```
 
+**One date column may carry several conventions.** `try_to_date` and
+`try_to_timestamp` take as many formats as you name and take the first
+that parses, so a mixed column is one call rather than a coalesce
+ladder over three copies of the value:
+
+```glossql
+PROBE erp_export AS $$SELECT
+  try_to_date(paid, '%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%b-%y') AS paid
+FROM read_csv('payments.csv') LIMIT 5$$;
+```
+
+Order is your claim about the source and it decides the ambiguous
+rows: `02/03/2025` is March 2nd under `%d/%m/%Y` and February 3rd under
+`%m/%d/%Y`, and whichever you name first wins. Name the unambiguous
+formats first. Where two readings both parse and the count matters,
+measure it (`substr` the parts and count which are impossible under
+each) and disclose the residual with a key — run 4 found 2,466 payment
+dates of 14,928 that no evidence could decide, and said so rather than
+picking quietly.
+
 The outcome carries the **cast account** at the decision moment: for
 every `try_*`, how many cells the cast nulled and the top such values.
 Those tokens came from the data, not a list — judge them. A repeated

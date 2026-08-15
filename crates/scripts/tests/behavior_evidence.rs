@@ -268,6 +268,29 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
         anchor["reason"], "no entity series reconciled: wrong anchor, short series, or dead values",
         "{anchor}"
     );
+
+    // The summary is what extraction serves, and it has to carry the
+    // whole verdict: run 4 read 102 anchors — 60KB of context — to
+    // learn one word, and would have paid that per measure column.
+    // The winner is the best-supported anchor; an all-abstain body
+    // still says why, because the reason names the ladder rung.
+    let summary = &balance["summary"];
+    assert_eq!(summary["verdict"], "stock", "{summary}");
+    assert_eq!(summary["convention"], "amount", "{summary}");
+    assert_eq!(summary["voted"], 3, "{summary}");
+    assert!(summary["support"].as_f64().unwrap() > 0.0, "{summary}");
+    assert!(summary["anchors"].as_u64().unwrap() >= 1, "{summary}");
+    assert_eq!(summary["verdict"], moves_anchor(&balance)["verdict"], "{summary}");
+    assert_eq!(turnover["summary"]["verdict"], "flow", "{turnover}");
+    assert_eq!(noise["summary"]["verdict"], "abstain", "{noise}");
+    assert_eq!(noise["summary"]["decided"], 0, "{noise}");
+    assert!(
+        noise["summary"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no entity series reconciled"),
+        "an abstention must say why: {noise}"
+    );
 }
 
 /// A session over its own root with the behavior declarations landed —

@@ -76,6 +76,10 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     // Declined questions defer for the server run — transport state,
     // shared across the per-request handler instances.
     let deferred = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    // One question in flight at a time, shared the same way: the ask no
+    // longer blocks the call that carried it, so this is what keeps the
+    // next read from asking again while a form is still on screen.
+    let asking = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
     let mcp = StreamableHttpService::new(
         move || {
             Ok(GlossqlMcp::new(
@@ -83,6 +87,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
                 mcp_doors.clone(),
                 Arc::clone(&brief),
                 Arc::clone(&deferred),
+                Arc::clone(&asking),
             ))
         },
         Arc::new(LocalSessionManager::default()),

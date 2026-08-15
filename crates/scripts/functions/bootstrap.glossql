@@ -53,7 +53,13 @@ DECLARE ASPECT behavior_evidence WITH $${
       "properties": {
         "event": {"type": "string"}, "align": {"type": "string"},
         "verdict": {"type": "string", "enum": ["flow", "stock", "abstain"]},
-        "convention": {"type": "string"}, "support": {"type": "number"}}}}
+        "convention": {"type": "string"}, "support": {"type": "number"}}}},
+    "summary": {"type": "object", "properties": {
+      "verdict": {"type": "string", "enum": ["flow", "stock", "abstain"]},
+      "support": {"type": "number"}, "voted": {"type": "integer"},
+      "convention": {"type": "string"}, "align": {"type": "string"},
+      "anchors": {"type": "integer"}, "decided": {"type": "integer"},
+      "reason": {"type": "string"}}}
   }
 }$$ AS MEASUREMENT ON COLUMN;
 

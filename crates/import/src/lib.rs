@@ -46,6 +46,11 @@ pub enum Error {
     Relational { name: String, detail: String },
     #[error("recipe failed: {0}")]
     Recipe(#[from] DataFusionError),
+    /// The same engine failure, named for the statement that caused it.
+    /// A refused PROBE used to answer "recipe failed", which sends the
+    /// author looking at a recipe they have not written yet (run 4).
+    #[error("probe failed: {0}")]
+    Probe(DataFusionError),
     #[error("recipe result: {0}")]
     Batches(String),
 }
@@ -343,16 +348,19 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
             }),
         );
     }
-    let df = ctx.sql_with_options(sql, read_only()).await?;
+    let df = ctx
+        .sql_with_options(sql, read_only())
+        .await
+        .map_err(Error::Probe)?;
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
     // A rehearsal is read at the door like any other answer, so it stops at
     // the door's cap — a probe without a LIMIT used to pull the whole
     // source into memory to show 200 rows of it.
-    let mut stream = df.execute_stream().await?;
+    let mut stream = df.execute_stream().await.map_err(Error::Probe)?;
     let mut batches = Vec::new();
     let mut rows = 0usize;
     while let Some(batch) = stream.next().await {
-        let batch = batch?;
+        let batch = batch.map_err(Error::Probe)?;
         rows += batch.num_rows();
         batches.push(batch);
         if rows > row_cap {

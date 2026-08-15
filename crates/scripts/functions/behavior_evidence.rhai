@@ -556,7 +556,46 @@ if parts.len() == 2 {
                 out = #{ applicable: false,
                          reason: `no declared relationships connect ${table} to an event table with a time axis` };
             } else {
-                out = #{ applicable: true, anchors: anchors };
+                // The verdict, in the shape a reader actually needs.
+                // Extraction serves this alone (the same rule profile
+                // follows): run 4 spent 60KB of an agent's context —
+                // 102 anchors — to learn the word "flow", and it would
+                // have spent a megabyte to gloss seventeen measure
+                // columns honestly. The winning anchor is the one with
+                // the most support; every anchor still reads back via
+                // GLOSSARY(table.column::behavior_evidence) when the
+                // judge wants to see what the losers said.
+                let best = #{};
+                let found = false;
+                let decided = 0;
+                for a in anchors {
+                    if a.verdict != "abstain" {
+                        decided += 1;
+                        if !found || a.support > best.support {
+                            best = a;
+                            found = true;
+                        }
+                    }
+                }
+                let summary = #{ anchors: anchors.len(), decided: decided };
+                if found {
+                    summary.verdict = best.verdict;
+                    summary.support = best.support;
+                    summary.voted = best.voted;
+                    summary.convention = best.convention;
+                    summary.align = best.align;
+                    summary.scope = best.scope;
+                    if "r_flow" in best { summary.r_flow = best.r_flow; }
+                    if "r_stock" in best { summary.r_stock = best.r_stock; }
+                    if "sign" in best { summary.sign = best.sign; }
+                } else {
+                    // Every anchor abstained, and WHY is the whole
+                    // finding — it names which ladder rung to climb.
+                    summary.verdict = "abstain";
+                    if "reason" in anchors[0] { summary.reason = anchors[0].reason; }
+                }
+                summary.note = "cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)";
+                out = #{ applicable: true, anchors: anchors, summary: summary };
             }
         }
     }

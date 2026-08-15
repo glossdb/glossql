@@ -16,10 +16,27 @@
 -- Order is the caller's: a reader wants it by surface, an agent by
 -- what is open.
 --
--- The heavy reads are counted once in CTEs rather than named twice in
--- the branches below: each mention expands the whole read into the
--- plan, and four expansions of `open_questions` and `ruling_entries`
--- across a nine-branch union overflowed the planner's stack outright.
+-- SHAPE, and why it is not the obvious one. This was nine UNION ALL
+-- branches, each projecting a literal surface name beside its own
+-- scalar subqueries. Two things went wrong with that, both met in
+-- runs rather than reasoned about:
+--
+--   1. Naming a heavy read twice across the branches expands it into
+--      the plan each time, and four expansions of `open_questions` and
+--      `ruling_entries` overflowed the planner's stack outright.
+--   2. Worse, and found in run 4: `WHERE surface = 'aspects'` over that
+--      union came back with ALL NINE ROWS and every other surface's
+--      `stands` reported as 0. The predicate is pushed into the
+--      branches, constant-folds to false against the literal, and the
+--      optimizer answers by replacing the table scans inside that
+--      branch's scalar subqueries with an empty relation — while
+--      keeping the branch's row. A filter that is silently dropped is
+--      bad; one that also zeroes the numbers it returns is a read
+--      nobody can trust.
+--
+-- So the counts are taken once, in a single row, and the nine surfaces
+-- are a literal relation joined to it. A predicate on `surface` now
+-- lands on plain VALUES rows and cannot reach a subquery at all.
 WITH asked AS (
   SELECT count(*) AS n, count(DISTINCT aspect) AS metrics FROM open_questions
 ),
@@ -28,49 +45,70 @@ ruled AS (
          count(*) FILTER (WHERE NOT folded_in) AS owed
   FROM ruling_entries
 ),
-apps AS (SELECT count(DISTINCT app) AS n FROM app_parts)
-SELECT 'sources' AS surface,
-       'DECLARE SOURCE, then PROBE it — rehearse with LIMIT 0 to see every column before authoring a recipe' AS how,
-       (SELECT count(*) FROM sources) AS stands,
-       0 AS open
-UNION ALL
-SELECT 'tables' AS surface,
-       'author a recipe and extract it — typing is the recipe''s work, this is not ETL' AS how,
-       (SELECT count(DISTINCT table_name) FROM imports) AS stands,
-       (SELECT count(*) FROM imports WHERE dropped_rows_count > 0 OR cast_failures > 0) AS open
-UNION ALL
-SELECT 'relationships' AS surface,
-       'DECLARE RELATIONSHIP between two endpoints — detect_relationships proposes, you judge' AS how,
-       (SELECT count(*) FROM relationships) AS stands,
-       0 AS open
-UNION ALL
-SELECT 'aspects' AS surface,
-       'DECLARE ASPECT to add vocabulary — AS FACT, MEASUREMENT or QUERY, grained with ON' AS how,
-       (SELECT count(*) FROM aspects) AS stands,
-       0 AS open
-UNION ALL
-SELECT 'claims' AS surface,
-       'GLOSS a subject with an aspect — the write verb; a human writing outranks the agent slot at every read' AS how,
-       (SELECT count(*) FROM glossary) AS stands,
-       (SELECT n FROM asked) AS open
-UNION ALL
-SELECT 'functions' AS surface,
-       'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question' AS how,
-       (SELECT count(*) FROM functions) AS stands,
-       (SELECT count(*) FROM functions f
-        WHERE NOT EXISTS (SELECT 1 FROM cache c WHERE c.function = f.name)) AS open
-UNION ALL
-SELECT 'metrics' AS surface,
-       'GLOSS a QUERY aspect with its SQL and its assumptions — read.<name>() then serves it' AS how,
-       (SELECT count(*) FROM aspects WHERE kind = 'query') AS stands,
-       (SELECT metrics FROM asked) AS open
-UNION ALL
-SELECT 'rulings' AS surface,
-       'a human rules a disclosed assumption; the agent owes the re-record that folds it in' AS how,
-       (SELECT n FROM ruled) AS stands,
-       (SELECT owed FROM ruled) AS open
-UNION ALL
-SELECT 'apps' AS surface,
-       'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else' AS how,
-       (SELECT n FROM apps) AS stands,
-       0 AS open
+apps AS (SELECT count(DISTINCT app) AS n FROM app_parts),
+-- A landing is open work when its casts nulled cells: kept rows with
+-- holes in them, which is the one thing about an import that wants an
+-- author's attention. Run 4 read 11 of 11 clean tables as open, because
+-- this used to be `cast_failures > 0` on a column holding JSON text —
+-- '{' sorts above '0', so every landing qualified. The dropped-row
+-- count is deliberately not part of this: which rows a WHERE excluded
+-- is the author's question answered on the files (project lead,
+-- 2026-08-04), and the counter is only meaningful for a
+-- single-relation row-preserving recipe anyway.
+nulled AS (
+  SELECT count(DISTINCT i.table_name) AS n
+  FROM imports i
+  CROSS JOIN generate_series(0, 99) AS c(i)
+  WHERE c.i < json_length(i.cast_failures, 'checked')
+    AND json_get_int(json_get(json_get(i.cast_failures, 'checked'), c.i), 'failed') > 0
+),
+counts AS (
+  SELECT (SELECT count(*) FROM sources) AS n_sources,
+         (SELECT count(DISTINCT table_name) FROM imports) AS n_tables,
+         (SELECT n FROM nulled) AS open_tables,
+         (SELECT count(*) FROM relationships) AS n_relationships,
+         (SELECT count(*) FROM aspects) AS n_aspects,
+         (SELECT count(*) FROM glossary) AS n_claims,
+         (SELECT n FROM asked) AS open_claims,
+         (SELECT count(*) FROM functions) AS n_functions,
+         (SELECT count(*) FROM functions f
+          WHERE NOT EXISTS (SELECT 1 FROM cache c WHERE c.function = f.name)) AS open_functions,
+         (SELECT count(*) FROM aspects WHERE kind = 'query') AS n_metrics,
+         (SELECT metrics FROM asked) AS open_metrics,
+         (SELECT n FROM ruled) AS n_rulings,
+         (SELECT owed FROM ruled) AS open_rulings,
+         (SELECT n FROM apps) AS n_apps
+)
+SELECT s.surface AS surface,
+       s.how AS how,
+       CASE s.surface
+         WHEN 'sources' THEN c.n_sources
+         WHEN 'tables' THEN c.n_tables
+         WHEN 'relationships' THEN c.n_relationships
+         WHEN 'aspects' THEN c.n_aspects
+         WHEN 'claims' THEN c.n_claims
+         WHEN 'functions' THEN c.n_functions
+         WHEN 'metrics' THEN c.n_metrics
+         WHEN 'rulings' THEN c.n_rulings
+         ELSE c.n_apps
+       END AS stands,
+       CASE s.surface
+         WHEN 'tables' THEN c.open_tables
+         WHEN 'claims' THEN c.open_claims
+         WHEN 'functions' THEN c.open_functions
+         WHEN 'metrics' THEN c.open_metrics
+         WHEN 'rulings' THEN c.open_rulings
+         ELSE 0
+       END AS open
+FROM counts c
+CROSS JOIN (VALUES
+  ('sources', 'DECLARE SOURCE, then PROBE it — rehearse with LIMIT 0 to see every column before authoring a recipe'),
+  ('tables', 'author a recipe and extract it — typing is the recipe''s work, this is not ETL'),
+  ('relationships', 'DECLARE RELATIONSHIP between two endpoints — detect_relationships proposes, you judge'),
+  ('aspects', 'DECLARE ASPECT to add vocabulary — AS FACT, MEASUREMENT or QUERY, grained with ON'),
+  ('claims', 'GLOSS a subject with an aspect — the write verb; a human writing outranks the agent slot at every read'),
+  ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
+  ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — read.<name>() then serves it'),
+  ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
+  ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')
+) AS s(surface, how)

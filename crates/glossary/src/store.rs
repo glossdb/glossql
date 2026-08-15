@@ -325,9 +325,24 @@ pub const RELATIONS: &[Relation] = &[
         ],
         // A fan-out join lands more rows than the source scan counted;
         // the difference is then unknown, never negative (2026-08-12).
+        // A recipe whose shape is not row-preserving — DISTINCT, an
+        // aggregate, a relational source that computed its own SQL —
+        // has no dropped-row count either: `vendors` collapsing 16,817
+        // invoices to 120 distinct ids did not drop 16,697 rows, and
+        // run 4 read exactly that number as work owed. The accounting
+        // already says which shape it was, so the difference is only
+        // taken where it means something.
+        //
+        // KNOWN GAP: a row-preserving recipe that scans two relations
+        // (a join) still reports the difference against the SUM of both
+        // scans. `source_rows` is that sum and cannot be NULL without a
+        // schema change; the outcome text lists each scan honestly, the
+        // stored counter does not.
         sql: "SELECT dataset, table_name, CAST(source_rows AS TEXT) AS source_rows, \
                      CAST(landed_rows AS TEXT) AS landed_rows, \
-                     CASE WHEN landed_rows > source_rows THEN NULL \
+                     CASE WHEN landed_rows > source_rows \
+                            OR json_extract(cast_failures, '$.unchecked') IS NOT NULL \
+                          THEN NULL \
                           ELSE CAST(source_rows - landed_rows AS TEXT) END AS dropped_rows_count, \
                      cast_failures, imported_at \
               FROM imports ORDER BY id",

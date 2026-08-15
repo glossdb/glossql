@@ -109,19 +109,44 @@ relationships · 13 metric surfaces, all evaluating · 106 standing checks,
 
 ## Friction — the point of the run
 
-**F1. The question round does not round-trip, and it killed the server.**
-The brief instructs every agent to sweep the round. Doing so produced
-`question-round: no round-trip: request timeout after PT120S` — twice, each
-stalling the tool call for two minutes — and on the third record read the
-MCP transport dropped mid-call and **the serverd process was gone**. The
-workspace survived (SQLite + warehouse on disk) and a restart recovered
-everything, but an agent that follows the brief today pays 120 s per record
-read for nothing and eventually loses the server. This is the single most
-important finding. It is the failure the elicitation plan predicted for
-clients negotiating `2026-07-28`; what is new is the cost — a blocking
-timeout on the agent's own call, and a process death.
+**F1. Sweeping the round stalled every read, and the server did not
+survive it.** The brief instructs every agent to sweep the round. Doing so
+produced `question-round: no round-trip: request timeout after PT120S` —
+twice, each stalling the tool call for two minutes — and on the third
+record read the MCP transport dropped mid-call and **the serverd process
+was gone**. The workspace survived (SQLite + warehouse on disk) and a
+restart recovered everything.
+
+**Correction, on the lead's word after the run: nobody was at the
+keyboard.** So this is NOT evidence that the client cannot round-trip an
+elicitation — the timeout is exactly what an unanswered form looks like,
+and the wire monitor shows Claude Code negotiating `2025-11-25` **with a
+session**, which is the lifecycle that carries the answer back. Whether
+the form rendered is untested and needs a run with a human present.
+
+What the run does prove stands on its own, and is worse for being
+ordinary: a person being away is the normal case, and the round charged
+the agent two minutes for it on every record read, forever, because the
+next read asked the same question again. The failure mode was never "the
+client is broken" — it was "the design waits on a human inside a tool
+call".
+
+**Fixed** (2026-08-15). The ask still travels on the call's own stream,
+because that stream closes when the call returns and firing it into a
+closed sink would simply lose the question — the door's own session test
+proves the delivery path and it stays. What changed is the price of
+silence: the wait is 25 s, and a silence is treated as a decline, so the
+question rests exactly like a "not now" and the round stays quiet until a
+writing call moves the workspace. One pause per question per move, never a
+pause per read. The poisoned-mutex path that could have followed a panic
+in the round is gone too. Whether the answer *arrives* is the open half,
+and only a run with a human present will say.
 
 **F2. A measurement body costs an agent 60KB of context to learn one word.**
+**Fixed** — `behavior_evidence` now carries a `summary` (winning anchor's
+verdict, support, voters, convention, alignment, residuals, sign; the
+abstention reason when every anchor abstains), so extraction serves ~200
+bytes and every anchor still reads back via `GLOSSARY(subject::aspect)`.
 `SELECT behavior_evidence() FROM sales_order_lines.line_cost` returned 102
 anchors — 59.6KB, large enough that the harness spilled it to a file — to
 deliver the word "flow". Seventeen measure columns would be roughly a
@@ -139,6 +164,16 @@ special routing and does not survive a subquery. Combined with F2, the agent
 has no way to ask for less than everything.
 
 **F4. `workspace_next` gave two different answers for the same relation.**
+**Fixed, and the mechanism was worth the hunt.** `EXPLAIN` showed the
+predicate pushed down into the union's branches, constant-folded to false
+against each branch's literal `surface`, and answered by replacing the
+table scans *inside that branch's scalar subqueries* with an empty
+relation — while keeping the branch's row. Hence nine rows and zeroed
+counts. The read no longer offers that shape: the counts are taken once
+in a single row and the nine surfaces are a literal `VALUES` relation
+joined to it, so a predicate on `surface` lands on plain rows and cannot
+reach a subquery. Regression-tested against filtered and unfiltered reads
+of the same session.
 Filtered — `... WHERE surface IN ('tables','sources','relationships')` — it
 returned **all nine rows** (the predicate was not applied) and reported
 `aspects` and `functions` as **0 standing**, while `SELECT count(*) FROM
@@ -149,7 +184,16 @@ suite; the mechanism is unresolved (the read is a nine-branch UNION of
 literal projections with scalar subqueries, and the earlier stack-overflow
 fix put those counts in CTEs).
 
-**F5. `workspace_next` reports every landed table as open work.** The `open`
+**F5. `workspace_next` reports every landed table as open work.**
+**Fixed** — `tables.open` now counts landings whose casts nulled cells,
+read out of the accounting JSON properly; the dropped-row term is gone,
+since which rows a WHERE excluded is the author's question. The relation
+also stops reporting a dropped count for a recipe whose shape is not
+row-preserving (DISTINCT, aggregates, relational sources), which is the
+`vendors` case. **Still open:** a row-preserving recipe that scans two
+relations reports the difference against the sum of both scans;
+`source_rows` is `NOT NULL` in the schema, so making that honest is a
+schema change and a wipe — a ruling, not a patch. The `open`
 count for `tables` is `dropped_rows_count > 0 OR cast_failures > 0`, and
 `cast_failures` is a JSON *text* column — comparing it to 0 is true for every
 row, so 11 of 11 tables read as open with clean casts throughout. The
@@ -161,15 +205,29 @@ honestly in prose — "casts unaccounted — recipe shape (DISTINCT/HAVING/TOP)"
 — but the counter it writes does not.
 
 **F6. `try_to_date` takes exactly one format.** `try_to_date(x, f1, f2, f3)`
-is refused with a coercion error; DataFusion's own `to_date` accepts a list.
-Multi-format parsing needs a `coalesce` ladder, which is what the payments
-recipe does. Worth either accepting a list or documenting the ladder in the
-skill — dirty dates are the common case, not the exotic one.
+was refused with a coercion error; multi-format parsing needed a `coalesce`
+ladder over three copies of the value. **Fixed** — both `try_to_date` and
+`try_to_timestamp` are variadic now and take the first format that parses,
+so a mixed column is one call. Order is the author's claim about the
+source and decides the ambiguous rows, which the skill now says plainly.
+Tested on run 4's own shape: day-first-only, month-first-only, a named
+month, an unparseable cell, and one value both slashed formats accept.
 
-**F7. A PROBE that fails reports itself as a recipe.** The refusal reads
-`recipe failed: type_coercion` for a statement that was a `PROBE`.
+**F7. A PROBE that fails reports itself as a recipe.** The refusal read
+`recipe failed: type_coercion` for a statement that was a `PROBE`, which
+sends the author looking at a recipe they have not written yet.
+**Fixed** — a probe's engine failures are named as probe failures.
 
-**F8. One decision shared across metrics is asked once per metric.** The
+**F8. One decision shared across metrics is asked once per metric.**
+**Ruled the other way, deliberately.** Fanning one answer across every
+aspect that discloses the key is the obvious cure, and it is wrong: run
+2's human confirmed `goods-only` on `purchases` in the same session where
+they corrected it on `dpo`, on purpose, and `ruling_conflicts` exists to
+surface exactly that. A fan-out would silently deny a human the right to
+differ. What was actually costly is the RE-READING, so the second ask now
+offers the first ruling back as a third stance — "same as before
+(corrected on dio)" — which replays that stance and the human's own
+words onto this aspect. Agreeing is one click; differing is untouched. The
 practice skill says to use one key for one decision, and it was followed —
 but `open_questions` is keyed `(aspect, key)`, so `days-in-period` stands
 open three times (dso, dpo, dio), `goods-only` twice, `period-balance-not-
@@ -187,7 +245,12 @@ wrong, but the cohort's headline numbers are exactly the ones that cannot be
 sliced.
 
 **F10. `gl-value` had no `text` format**, so the docket's Corridor tile
-rendered `NaN` for the band word `red`. Fixed in this session.
+rendered `NaN` for the band word `red`. **Fixed.**
+
+**F9 is the one left standing**, along with F5's multi-scan half. Neither
+is a defect to patch: carrying an axis through a composed ratio means
+grouping by it in both halves of the composition, and whether that should
+be the author's work or the library's is a design question.
 
 ## What worked
 
