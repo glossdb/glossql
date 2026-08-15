@@ -100,6 +100,67 @@ async fn resolve_dataset(
     }
 }
 
+/// One open question, as the workspace currently derives it.
+///
+/// The docket's ruling write is gated on this: a posted answer is
+/// accepted only if `open_questions` still carries that exact
+/// `(subject, aspect, key)`, and the prose it records is this read's,
+/// never the browser's. A tab left open across a fold-in posts a
+/// question that no longer stands, and gets told so.
+pub(crate) struct OpenQuestion {
+    pub dimension: String,
+    pub assumption: String,
+}
+
+pub(crate) async fn one_open_question(
+    session: &glossql_session::Session,
+    subject: &str,
+    aspect: &str,
+    key: &str,
+) -> Result<Option<OpenQuestion>, String> {
+    let mut values: HashMap<String, ScalarValue> = HashMap::new();
+    values.insert("subject".into(), ScalarValue::Utf8(Some(subject.into())));
+    values.insert("aspect".into(), ScalarValue::Utf8(Some(aspect.into())));
+    values.insert("key".into(), ScalarValue::Utf8(Some(key.into())));
+    let query = session
+        .query_stream_with_params(
+            "SELECT coalesce(dimension, '-') AS dimension, assumption FROM open_questions \
+             WHERE subject = CAST($subject AS VARCHAR) \
+               AND aspect = CAST($aspect AS VARCHAR) \
+               AND key = CAST($key AS VARCHAR) LIMIT 1",
+            Some(ParamValues::from(values)),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let batches: Vec<_> = query
+        .stream
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    for batch in batches {
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        let text = |name: &str| -> String {
+            batch
+                .column_by_name(name)
+                .and_then(|c| {
+                    c.as_any()
+                        .downcast_ref::<datafusion::arrow::array::StringArray>()
+                        .map(|s| s.value(0).to_string())
+                })
+                .unwrap_or_default()
+        };
+        return Ok(Some(OpenQuestion {
+            dimension: text("dimension"),
+            assumption: text("assumption"),
+        }));
+    }
+    Ok(None)
+}
+
 /// The same binding, for the page shell, which names the workspace an
 /// app is bound to in its bar. A page renders whether or not the
 /// binding resolves — its frames are what fail, and they say so — so

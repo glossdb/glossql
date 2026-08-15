@@ -302,6 +302,23 @@ GLOSS revenue ON fin AS $${
 array carries judgment. A comment inside the query cannot drift from
 the query the way a separate description can.
 
+**A composed ratio serves only the axes its composition carries.** The
+cube slices on the dimension columns an extract *serves*, so a ratio
+that groups to `(date, value)` can never be sliced — run 4 grounded six
+composed metrics and every one of them reported "no axes admitted",
+which is the headline numbers being the only ones nobody can cut. Carry
+the axis through both halves and group by it, and the ratio recomposes
+per member exactly as the reader's grain rule demands:
+
+```glossql
+GLOSS dso ON fin AS $${"sql": "-- DSO by customer segment as well as in total.\nWITH ar AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS bal FROM read.accounts_receivable() GROUP BY date_trunc('month', date), segment), rev AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS rev FROM read.revenue() GROUP BY date_trunc('month', date), segment) SELECT CAST(ar.m AS DATE) AS date, ar.bal / nullif(rev.rev, 0) * 30.0 AS value, ar.segment FROM ar JOIN rev ON ar.m = rev.m AND ar.segment = rev.segment"}$$;
+```
+
+Two things this is not: it is not a roll-up (each member's ratio is
+computed from its own numerator and denominator, never averaged), and
+it is not free — an axis you carry must exist on both sides, so pick
+the axes the question actually needs rather than every one available.
+
 **`behavior`, `sign` and `grain` assumptions carry 1.0, always.** The
 round never serves them to a human — statistics are your work — so a
 measurable assumption below 1.0 is a question nobody will ever be
@@ -513,7 +530,9 @@ in prose first — what decision the surface serves — then write it as
 glosses: `app`, `app_page`, `app_frame`, `app_spec`, one gloss per
 part, so a frame can be edited without rewriting the app. Frames are
 SQL; display logic is computed in the frame, never in the template.
-Apps carry no write.
+Apps carry one write and one only — the docket's ruling form, which
+answers a question the workspace already derived. Anything an app you
+author needs to change, change with a statement.
 
 ## Close with the question round
 

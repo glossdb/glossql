@@ -104,6 +104,9 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
             plane,
             row_cap: doors.row_cap,
         })
-        .nest("/app", glossql_apps::router(app_plane, workspace))
+        .nest(
+            "/app",
+            glossql_apps::router(app_plane, workspace, HUMAN.into()),
+        )
         .nest_service("/mcp", mcp)
 }

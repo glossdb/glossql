@@ -69,7 +69,12 @@ documents:
   one-query path with URL params bound as plan placeholders, the browser
   holds each frame once (htmx + vega-lite + arrow-js, vendored, the only
   JS), the URL is the only state, drill is navigation; authors write
-  declarative artifacts, never code — stack ruled 2026-08-07; gl-rows
+  declarative artifacts, never code — stack ruled 2026-08-07; the door
+  takes exactly ONE write, the docket's ruling form (ruled 2026-08-15,
+  because a human who steps away had no way back into the record: the
+  MCP round can only ask while they watch, and an agent may never speak
+  for them) — composed and written by `glossql-session`'s `rulings`,
+  shared with the MCP round, gated on the question still deriving; gl-rows
   renders row surfaces through author templates, display logic computed
   in frame SQL — 2026-08-10. One app ships in the binary, the docket
   (`crates/apps/builtin/docket/`, ruled 2026-08-15, replacing the

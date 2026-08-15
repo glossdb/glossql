@@ -450,26 +450,6 @@ impl GlossqlMcp {
             stance,
             note,
         } = ruling;
-        if !ident_path(subject, 3) || !ident_path(aspect, 1) {
-            return "question-round: refused: not an identifier path".into();
-        }
-        let sql = format!(
-            "SELECT body FROM glossary \
-             WHERE subject = '{subject}' AND aspect = 'ruling' \
-               AND actor_kind = 'human' \
-             ORDER BY written_at DESC LIMIT 1"
-        );
-        let mut body = match read_rows(session, &sql).await {
-            Ok(rows) => rows
-                .first()
-                .and_then(|r| r["body"].as_str())
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
-                .unwrap_or_else(|| serde_json::json!({ "rulings": [] })),
-            Err(e) => return format!("question-round: the ruling slot read failed: {e}"),
-        };
-        let Some(rulings) = body.get_mut("rulings").and_then(|r| r.as_array_mut()) else {
-            return "question-round: the standing ruling slot is not a ruling body".into();
-        };
         // ONE KEY IS STILL RULED PER ASPECT, deliberately. Run 4 asked
         // about `days-in-period` three times (dso, dpo, dio) and
         // `goods-only` twice, and fanning one answer across every
@@ -481,79 +461,46 @@ impl GlossqlMcp {
         // already ruled next door; it does not make them one claim.
         // The cheap answer (`params` below) is how the repeat stops
         // costing a re-read.
-        // A re-ruling on the same (aspect, key) replaces its entry —
-        // the slot is the standing judgment, not a transcript.
-        rulings.retain(|r| !(r["aspect"] == *aspect && r["key"] == *key));
-        let mut entry = serde_json::json!({
-            "aspect": aspect,
-            "dimension": dimension,
-            "key": key,
-            "assumption": assumption,
-            "stance": stance,
-        });
-        if let Some(note) = note {
-            entry["note"] = serde_json::json!(note);
-        }
-        rulings.push(entry);
-        match self
-            .land_human_answer(session.dataset(), subject, "ruling", &body.to_string())
+        //
+        // The composing and the writing are `glossql_session::rulings`,
+        // shared with the app door — the docket answers these same
+        // questions when a person comes back to a page rather than to a
+        // form. This door's part is to say WHO is speaking: the
+        // anonymous human, on their own channel, witnessed here.
+        let Some(dataset) = session.dataset() else {
+            return "question-round: no dataset is bound — USE one first".into();
+        };
+        let human = match self
+            .plane
+            .channel(
+                Actor {
+                    kind: ActorKind::Human,
+                    id: crate::HUMAN.into(),
+                },
+                Some(&dataset),
+            )
             .await
         {
-            Ok(_) => format!(
-                "question-round: ruled ({stance}) on `{key}` — the fold-in is yours: \
-                 re-record `{aspect}` carrying that key, citing the ruling"
-            ),
+            Ok(session) => session,
+            Err(e) => return format!("question-round: refused: {e}"),
+        };
+        match glossql_session::rulings::land(
+            &human,
+            glossql_session::rulings::Ruling {
+                subject,
+                aspect,
+                dimension,
+                key,
+                assumption,
+                stance,
+                note,
+            },
+        )
+        .await
+        {
+            Ok(said) => format!("question-round: {said}"),
             Err(e) => format!("question-round: refused: {e}"),
         }
-    }
-
-    /// Land a server-witnessed answer as a HUMAN gloss on the human's
-    /// own channel. The door composes the statement and the actor and
-    /// decides nothing — aspect schema, grain, and the witness speaker
-    /// gate all belong to the store.
-    async fn land_human_answer(
-        &self,
-        dataset: Option<String>,
-        subject: &str,
-        aspect: &str,
-        body: &str,
-    ) -> Result<String, String> {
-        if !ident_path(subject, 3) {
-            return Err(format!(
-                "`{subject}` is not a path subject (identifier segments, dots between)"
-            ));
-        }
-        if !ident_path(aspect, 1) {
-            return Err(format!("`{aspect}` is not an aspect name"));
-        }
-        // The body must be JSON, and the spliced text must not carry the
-        // dollar-quote terminator — after it, further text would parse
-        // as further statements, and this hook writes exactly one gloss.
-        let value: serde_json::Value =
-            serde_json::from_str(body).map_err(|e| format!("the body is not JSON: {e}"))?;
-        let body = value.to_string();
-        if body.contains("$$") {
-            return Err("a body carrying `$$` cannot ride the dollar-quoted statement".into());
-        }
-        let Some(dataset) = dataset else {
-            return Err("no dataset is bound — USE one first".into());
-        };
-        let actor = Actor {
-            kind: ActorKind::Human,
-            id: crate::HUMAN.into(),
-        };
-        let session = self
-            .plane
-            .channel(actor, Some(&dataset))
-            .await
-            .map_err(|e| e.to_string())?;
-        session
-            .execute(&format!("GLOSS {aspect} ON {subject} AS $${body}$$;"))
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(format!(
-            "elicit-probe: landed `{aspect}` on `{subject}` with human standing"
-        ))
     }
 
     fn tool(&self) -> Tool {
@@ -753,23 +700,6 @@ impl Question {
             requested_schema: schema,
         })
     }
-}
-
-/// Path subjects only: 1–3 identifier segments (`fin`, `orders`,
-/// `orders.amount`). Mirrors the pin door's gate until that door
-/// retires.
-fn ident_path(s: &str, max_segments: usize) -> bool {
-    let segments: Vec<&str> = s.split('.').collect();
-    !segments.is_empty()
-        && segments.len() <= max_segments
-        && segments.iter().all(|seg| {
-            !seg.is_empty()
-                && seg
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
 }
 
 impl ServerHandler for GlossqlMcp {

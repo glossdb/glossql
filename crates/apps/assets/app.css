@@ -376,6 +376,49 @@ a.rrow:hover { background: var(--panel); }
   text-transform: uppercase;
 }
 
+/* The ruling form: the page's one write, and it should read as a
+   judgement being given rather than a control panel. Confirming is one
+   button; correcting opens for the words that make a correction worth
+   anything. */
+.rule { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+.rule button {
+  font: inherit;
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--open);
+  background: none;
+  border: 1px solid var(--open-dim);
+  border-radius: 2px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+.rule button:hover { color: var(--ground); background: var(--open); border-color: var(--open); }
+.rule details summary {
+  cursor: pointer;
+  font-size: var(--step);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  list-style: none;
+}
+.rule details summary:hover { color: var(--ink); }
+.rule details[open] summary { color: var(--muted); margin-bottom: 0.4rem; }
+.rule textarea {
+  font: inherit;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  width: 100%;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
+  resize: vertical;
+}
+.rule textarea:focus { border-color: var(--open); outline: none; }
+
 /* Where a matter stands: the ruling, then what became of it. */
 .verdict {
   display: flex;

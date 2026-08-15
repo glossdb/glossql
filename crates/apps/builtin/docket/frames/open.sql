@@ -17,6 +17,13 @@ SELECT o.conf,
        arrow_cast(o.assumption, 'Utf8') AS what,
        arrow_cast(coalesce(o.basis, 'unstated'), 'Utf8') AS basis,
        arrow_cast(coalesce(o.sibling, ''), 'Utf8') AS sibling,
+       -- The three columns the ruling form posts back. They are the
+       -- claim's identity and nothing else: the page never sends the
+       -- prose, because the door re-derives it from this same read
+       -- before it writes.
+       arrow_cast(o.subject, 'Utf8') AS subj_id,
+       arrow_cast(o.aspect, 'Utf8') AS asp_id,
+       arrow_cast(o.key, 'Utf8') AS key_id,
        arrow_cast('/app/docket/p/metrics?metric=' || o.aspect, 'Utf8') AS link
 FROM open_questions o
 WHERE o.dataset = CAST($dataset AS VARCHAR)

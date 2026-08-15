@@ -7,9 +7,15 @@
 
 {% if metric %}
 {# ---- one metric: the number, then its reasons -------------------- #}
+{# The three views stand, and the chosen metric joins them as a fourth
+   tab rather than taking Record's place — picking a metric is going
+   deeper, not going somewhere else. Choosing another metric replaces
+   this tab, since there is one metric in view at a time. #}
 <nav class="crumbs">
   <a href="/app/docket">Open</a>
-  <a href="?">Metrics</a><span class="here">{{ metric }}</span>
+  <a href="?">Metrics</a>
+  <a href="/app/docket/p/record">Record</a>
+  <span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
   {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
@@ -19,7 +25,7 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">The formula · {{ metric }}</span>
-      <code class="chip" title="The standing definition from the workspace's formulas gloss.">formulas</code></header>
+      <code class="chip" title="The grounding's own opening comment — the one place the formula is written, where it cannot drift from the query it describes.">the grounding</code></header>
     <gl-rows frame="frames/metric" empty="no metric surface named {{ metric }}">
       <template>
         <div class="rrow" style="grid-template-columns:1fr">

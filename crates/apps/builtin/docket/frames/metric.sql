@@ -16,14 +16,35 @@ SELECT q.aspect,
     coalesce(json_get_str(a.schema, 'title'), q.aspect),
     nullif(coalesce(json_get_str(a.schema, 'x-kind'), ''), ''),
     nullif(coalesce(json_get_str(a.schema, 'x-unit'), ''), '')), 'Utf8') AS meta,
-  arrow_cast(coalesce(json_get_str(json_get(f.value, 'formulas'), CAST($metric AS VARCHAR)),
-           'no recorded formula'), 'Utf8') AS formula,
+  -- The formula, from the one place it is written: the grounding's own
+  -- opening comment. This used to read a `formulas` gloss — a kit
+  -- aspect neither skill teaches, so nothing ever wrote one and the
+  -- face was empty in every workspace that ever existed. The practice
+  -- skill already requires the mechanics to be said as comments inside
+  -- the SQL, where they cannot drift from the query; the first line is
+  -- the author's one-sentence statement of what this metric is.
+  -- The opening block, not just its first line: an author writes a
+  -- sentence and wraps it, so line one alone stops mid-clause. Five
+  -- lines is the bound — a formula that needs more than that is a
+  -- description, and the whole SQL is one tile down.
+  arrow_cast(coalesce(nullif(trim(concat_ws(' ',
+    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 1)), '--')
+         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 1)), '- ') END,
+    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 2)), '--')
+         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 2)), '- ') END,
+    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 3)), '--')
+         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 3)), '- ') END,
+    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 4)), '--')
+         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 4)), '- ') END,
+    CASE WHEN starts_with(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 5)), '--')
+         THEN ltrim(ltrim(split_part(json_get_str(q.body, 'sql'), chr(10), 5)), '- ') END)), ''),
+    'the grounding opens with no comment — say what this metric is above its SQL'
+  ), 'Utf8') AS formula,
   q.actor,
   arrow_cast(substr(q.written_at, 1, 10), 'Utf8') AS written,
   arrow_cast('GLOSS ' || q.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || q.body || '$$;', 'Utf8') AS statement
 FROM GLOSSARY(all => true) q
 JOIN aspects a ON a.name = q.aspect
-LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
 WHERE q.kind = 'query' AND q.aspect = $metric
   AND (EXISTS (SELECT 1 FROM glossary me
                WHERE me.subject = q.subject AND me.aspect = q.aspect

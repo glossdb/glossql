@@ -91,7 +91,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     .unwrap();
 
     let workspace = dir.path().to_path_buf();
-    let router = Router::new().nest("/app", glossql_apps::router(Arc::clone(&plane), workspace));
+    let router = Router::new().nest("/app", glossql_apps::router(Arc::clone(&plane), workspace, "human".into()));
     (router, plane, dir)
 }
 
@@ -532,6 +532,86 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
     let text = body_text(assumptions).await;
     assert!(text.contains("ruled: confirmed"), "{text}");
     assert!(text.contains("awaiting the fold-in"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
+    // The door's one write (2026-08-15). Run 4 found that a human who
+    // steps away has no way back into the record at all: the MCP round
+    // can only ask while they are watching, and an agent may never
+    // speak for them. The docket is already the page of open
+    // questions, so answering there is the gesture it was drawn for.
+    //
+    // Only the claim's identity is posted. The prose the ruling records
+    // is re-derived from `open_questions` — so a tab left open across a
+    // fold-in is refused rather than believed, and a browser can never
+    // put words in the workspace's mouth.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let human = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    human
+        .execute(
+            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+        )
+        .await
+        .unwrap();
+
+    let post = |form: &'static str| {
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::post("/app/docket/rule")
+                    .header(
+                        axum::http::header::CONTENT_TYPE,
+                        "application/x-www-form-urlencoded",
+                    )
+                    .body(Body::from(form))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 1);
+
+    // A correction with the human's own words.
+    let response = post(
+        "subject=perf&aspect=dso&key=per-line&stance=corrected&note=per+order,+not+per+line",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER, "{:?}", response);
+
+    // The question closes and the ruling stands in the human's words.
+    assert_eq!(
+        row_count(get(&app, "/app/docket/frames/open").await).await,
+        0,
+        "the ruling closes its question"
+    );
+    let settled = body_text(get(&app, "/app/docket/frames/settled").await).await;
+    assert!(settled.contains("per order, not per line"), "{settled}");
+    assert!(settled.contains("corrected"), "{settled}");
+
+    // The same post again: the question no longer derives, so the door
+    // refuses instead of writing a second ruling from a stale page.
+    let response =
+        post("subject=perf&aspect=dso&key=per-line&stance=confirmed").await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    // A correction has to say what is right — closing a question with
+    // "wrong" and nothing else tells the agent nothing.
+    let response = post("subject=perf&aspect=dso&key=per-line&stance=corrected").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test(flavor = "multi_thread")]

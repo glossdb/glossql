@@ -30,20 +30,34 @@
   <section class="tile">
     <header><span class="eyebrow">Waiting on your judgment</span>
       <code class="chip" title="Derived, never stored: an assumption drops off this list when the agent raises it to full confidence or a ruling closes it.">open_questions</code></header>
-    <p class="hint">Answer these in your agent client — this page never writes. The rail's fill is the confidence the agent holds.</p>
+    <p class="hint">Answer here or in your agent client — either lands the same ruling, in your own words. The rail's fill is the confidence the agent holds.</p>
     <gl-rows frame="frames/open" empty="nothing stands open — every disclosed assumption is at full confidence or ruled">
       <template>
-        <a class="rrow" href="{link}" style="grid-template-columns:2.6rem minmax(9rem,12rem) minmax(0,1fr) 8rem">
+        <div class="rrow" style="grid-template-columns:2.6rem minmax(9rem,12rem) minmax(0,1fr) minmax(0,15rem)">
           <span class="gutter">
             <span class="rail"><i style="height:{pct}%"></i></span>
             <span class="r-meta">{cf}</span>
           </span>
-          <span class="r-subj">{subj}<br><span class="r-meta">{asp}</span></span>
+          <a class="r-subj" href="{link}">{subj}<br><span class="r-meta">{asp}</span></a>
           <span class="r-what">{what}<br>
             <span class="r-meta">basis: {basis} {sibling}</span>
           </span>
-          <span class="await">Awaits you</span>
-        </a>
+          {# The one write the door takes. Only the claim's identity is
+             posted; the door re-derives the prose from the same read
+             that drew this row, so a stale tab is refused rather than
+             believed. #}
+          <form class="rule" method="post" action="/app/docket/rule">
+            <input type="hidden" name="subject" value="{subj_id}">
+            <input type="hidden" name="aspect" value="{asp_id}">
+            <input type="hidden" name="key" value="{key_id}">
+            <button type="submit" name="stance" value="confirmed">Stands</button>
+            <details>
+              <summary>Correct it</summary>
+              <textarea name="note" rows="3" placeholder="what is right instead"></textarea>
+              <button type="submit" name="stance" value="corrected">Record correction</button>
+            </details>
+          </form>
+        </div>
       </template>
     </gl-rows>
   </section>

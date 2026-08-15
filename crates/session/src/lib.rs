@@ -20,6 +20,7 @@ mod library;
 mod misfit;
 mod plane;
 mod reads;
+pub mod rulings;
 mod session;
 mod subject;
 mod whatif;

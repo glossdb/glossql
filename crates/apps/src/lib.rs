@@ -14,6 +14,7 @@ mod builtin;
 mod frames;
 pub mod glossed;
 mod pages;
+mod rule;
 
 pub use app::AppDef;
 pub use builtin::{BUILTINS, BuiltinApp};
@@ -25,19 +26,34 @@ use axum::Router;
 use axum::routing::get;
 use glossql_session::Plane;
 
-/// State behind the door: the shared plane and the workspace root the
-/// apps live under. Frames speak as a Human actor per app
-/// (`app:<name>`) and can only read — they ride the one-query
-/// streaming path; the door carries no write. The door assumes its
-/// `/app` mount; asset and page URLs in the templates are absolute
-/// against it.
+/// State behind the door: the shared plane, the workspace root the apps
+/// live under, and the id a human writes under. Frames speak as a Human
+/// actor per app (`app:<name>`) and can only read — they ride the
+/// one-query streaming path. The door assumes its `/app` mount; asset
+/// and page URLs in the templates are absolute against it.
 #[derive(Clone)]
 pub struct AppDoor {
     pub plane: Arc<Plane>,
     pub workspace: PathBuf,
+    /// Who a ruling is written as. Anonymous by ruling (2026-08-13):
+    /// standing comes from the server having witnessed the act, not
+    /// from an identity it cannot check.
+    pub human: String,
 }
 
-pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
+/// The door takes exactly ONE write, and it is a ruling.
+///
+/// Every other affordance retired with the pins, and the reason holds:
+/// a page that can change the record invites a second way to say
+/// everything the language already says. A ruling is the exception
+/// because it is the one thing only a person can supply, its shape is
+/// fixed (a stance on a claim the workspace already derived), and the
+/// alternative is worse — run 4 found that a human who steps away has
+/// no way back into the record at all, since the MCP round can only
+/// ask while they are watching and an agent may never speak for them.
+/// The docket is already the page of open questions; answering there
+/// is the gesture the page was drawn for.
+pub fn router(plane: Arc<Plane>, workspace: PathBuf, human: String) -> Router {
     Router::new()
         .route("/", get(pages::home))
         .route("/assets/{*file}", get(assets::asset))
@@ -45,5 +61,10 @@ pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
         .route("/{app}/p/{page}", get(pages::page))
         .route("/{app}/frames/{frame}", get(frames::frame))
         .route("/{app}/specs/{spec}", get(pages::spec))
-        .with_state(AppDoor { plane, workspace })
+        .route("/{app}/rule", axum::routing::post(rule::rule))
+        .with_state(AppDoor {
+            plane,
+            workspace,
+            human,
+        })
 }
