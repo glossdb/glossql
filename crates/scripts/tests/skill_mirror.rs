@@ -1,5 +1,5 @@
 //! The teaching layer cannot drift: the kernel list in the
-//! glossql-metrics skill must mirror what the engine actually registers
+//! glossql-functions skill must mirror what the engine actually registers
 //! (rhai `gen_fn_signatures`, global namespace only — the standard
 //! packages stay out). Add a kernel and forget the skill, or teach a
 //! kernel that doesn't exist, and this test fails — the same invariant
@@ -12,7 +12,7 @@ use glossql_scripts::RhaiRuntime;
 fn skill_text() -> String {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../.claude/skills/glossql-metrics/SKILL.md"
+        "/../../.claude/skills/glossql-functions/SKILL.md"
     );
     std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
@@ -42,7 +42,7 @@ fn every_registered_kernel_is_taught() {
 fn every_taught_kernel_is_registered() {
     let text = skill_text();
     let section = text
-        .split("### Kernels")
+        .split("\n## Kernels\n")
         .nth(1)
         .expect("the skill has a Kernels section")
         .split("\n## ")

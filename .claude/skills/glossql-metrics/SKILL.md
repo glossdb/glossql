@@ -573,10 +573,26 @@ DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
   convention that reconciled at ~0 residual is a standing invariant —
   make it a check.
 
-The check half needs a `.rhai` file in the workspace directory. Over
-the MCP door alone you cannot author it: say so in the read-back and
-record the expectation gloss anyway, rather than shipping a
-self-measured snapshot as if it were a standing check.
+**The check half is a function, and you write it here** — the body
+rides its declaration, so an expectation without a measuring voice is
+now a choice rather than a limit (it was a `.rhai` file on disk until
+2026-08-15, which the door could not author). `glossql-functions` has
+the contract, the kernels and the abstention rule; `rate_tolerance` is
+the detector that bands an authored expectation against a check voice:
+
+```glossql
+DECLARE FUNCTION journal_balanced_check FOR fin AS $$
+  let m = db.query("SELECT sum(debit) AS d, sum(credit) AS c FROM journal_lines");
+  let d = m.cell("d").parse_float();
+  #{
+    "outcome": "measured: debits against credits",
+    "breach_rate": if d > 0.0 { (d - m.cell("c").parse_float()).abs() / d } else { 0.0 }
+  }
+$$ ACCEPTS (imports) RETURNS journal_balanced;
+```
+
+A voice speaks the aspect's own schema — `outcome` like any slot, the
+measurement beside it. One schema, every speaker.
 
 ## The bands walk and the cube
 
@@ -629,60 +645,15 @@ on a signal, never as a routine sweep.
 
 ## Author what is missing
 
-**A function** when a shipped measurement doesn't fit this dataset's
-shape. A rhai script registered with a declaration; the aspect schema
-is its one validated contract. `ACCEPTS` names the aspects arriving as
-context and is also the invalidation edge — `imports` and
-`relationships` may ride it as edges only. No `RETURNS` declares a
-detector, which never sees table data. Abstain rather than throw:
-`#{applicable: false}` when the subject doesn't fit,
-`#{applicable: false, missing_aspects: [...]}` when a dependency is
-absent — that one heals on its own when the dependency lands. Read the
-closest script in `crates/scripts/functions/` before writing.
-
-Three constants are in scope and the script's last expression is its
-result: `subject` (`"table"` or `"table.column"`), `context` (one
-entry per accepted aspect, `()` where that aspect has no value; a
-detector gets `slots` and `threshold` instead), and `db` — the door
-into the dataset. `db.query("sql")` returns a Table and
-`db.query_all([sql, …])` answers a batch in order; the door overlaps
-the batch below the seam, so a fan-out of small queries belongs in one
-`query_all()`, never a sequential loop.
-
-### Kernels
-
-Zero-copy readers on query results — the compute-heavy halves of a
-measurement live here, in Rust. A script nesting loops over rows or
-pairs should be reaching for one instead.
-
-Table: `num_rows()`, `columns()`, `col(name)`, `cell(name)` — the
-first row's value as a string, `()` for NULL (the one-row aggregate
-read).
-
-Col: `dtype()` (a `LIMIT 0` query types a column without scanning it),
-`count()`, `null_count()`, `distinct()`, `entropy()` — exact Shannon
-entropy over the non-null distribution — `min()`, `max()`, `sum()`,
-`mean()`, `stddev()`, `percentile(p)`, `mad()`, `top_k(k)`,
-`len_stats()`, `match_rate(regex)`, `parse_rate(sql_type)`,
-`value_at(i)`, `floats()`. Read numbers you will loop over with
-`floats()`, never `value_at()` per cell — `value_at` renders display
-strings and a hot loop through it is interpreter-bound. **A score
-reads exact scalars, never `top_k` buckets**: a display cap must not
-become a statistics cap.
-
-Statistical: `key_vec()` on a Col — distinct values as sorted typed
-keys, with `matched(other)` giving intersection by linear merge, so
-containment is `a.matched(b) / a_distinct` and never a per-pair join ·
-`pair_keys(c1, c2)` on a Table for composite domains ·
-`reconcile(y_table, m_table, terms)`, the stock/flow discriminator
-over two grouped results · `tabicl_bands(train_x, train_y, test_x,
-alphas, actual)` — one fit and read, returning the corridor a new
-value would have to land in and where the actual fell.
-
-Two free functions handle stored text: `parse_json(s)` for a stored
-body, and `canonical_sql(s)` for SQL as an identity — parse and
-re-render, so whitespace and keyword case collapse while identifiers
-survive.
+**A function** when a shipped measurement does not fit this dataset's
+shape — and it is also the measuring half of a validation, which the
+expectation gloss above owes. **`glossql-functions` teaches it**: the
+declaration carries the body, so a check is writable over the door and
+the shipped library reads back as worked examples
+(`SELECT script FROM functions WHERE name = 'rate_tolerance'`). The
+short version: `ACCEPTS` is both the context and the invalidation
+edge, no `RETURNS` declares a detector, and a script abstains
+(`#{applicable: false}`) rather than throwing.
 
 **An app** when someone needs to look at this. Shape it with the user
 in prose first — what decision the surface serves — then write it as

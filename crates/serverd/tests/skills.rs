@@ -98,7 +98,12 @@ fn blocks() -> Vec<Block> {
 /// shipped. The harness declares and USEs a dataset instead, and a
 /// read that cannot plan for any other reason is a defect.
 fn missing_table(error: &str) -> bool {
-    error.contains("table 'datafusion.public.")
+    // Any qualified table this workspace does not have, not just the
+    // default schema: an extract example names its subject as
+    // `orders.amount`, which resolves to `datafusion.orders.amount`
+    // (widened 2026-08-15). A shipped read that does not exist lands
+    // here too — as `datafusion.public.<name>` — and always did.
+    error.contains("table 'datafusion.")
         || error.contains("No table named")
         || error.contains("table not found")
         // `read.<metric>()` / `whatif.<lever>()` name a workspace's own
