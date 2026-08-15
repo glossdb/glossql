@@ -96,6 +96,21 @@ frame once per state and every tile bound to it shares that one table.
   chip or note. A truncated list that looks complete is the one lie a
   surface can tell without anyone noticing.
 
+A frame is planned through the same path every other read takes, so
+every door is available inside one — `read.<metric>()` for a grounding,
+`metric_series()` for the cached cube's rows (`dimension = ''` is the
+total, `'alternative'` the disclosed rival), and `whatif.<scenario>()`
+for a declared what-if beside the real books:
+
+```sql
+SELECT month, replay, p05, p50, p95 FROM whatif.price_hike()
+WHERE concept = CAST($concept AS VARCHAR) ORDER BY month
+```
+
+The one limit: a placeholder binds a **value, not a relation name**.
+The scenario is fixed per frame; the URL steers the concept, the month,
+the slice. A page comparing two scenarios holds two frames.
+
 ## Tiles place what the frame computed
 
 Pages are tera, extending `shell.html` and importing the tile

@@ -1518,6 +1518,8 @@ async fn the_workspace_says_what_it_affords() {
         DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
         GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
           "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;
+        DECLARE ASPECT price_hike WITH $${"title": "Price +15%", "x-kind": "scenario"}$$ AS FACT ON DATASET;
+        DECLARE ASPECT late_pairs WITH $${"title": "Late pairs", "x-kind": "sample"}$$ AS QUERY ON DATASET;
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 160, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -1547,6 +1549,8 @@ async fn the_workspace_says_what_it_affords() {
         "metrics",
         "relationships",
         "rulings",
+        "samples",
+        "scenarios",
         "sources",
         "tables",
     ] {
@@ -1558,10 +1562,19 @@ async fn the_workspace_says_what_it_affords() {
             .unwrap_or_else(|| panic!("no {name} row"))
             .clone()
     };
-    // One metric declared, one grounded, one assumption open on it.
+    // One metric declared, one grounded, one assumption open on it. The
+    // sample frame is a QUERY aspect too and must not inflate this.
     assert_eq!(row("metrics")["stands"], json!(1), "{rows:?}");
     assert_eq!(row("metrics")["open"], json!(1), "{rows:?}");
     assert_eq!(row("claims")["open"], json!(1), "{rows:?}");
+    // The two model doors (2026-08-15). Both are planner doors, not rows
+    // in `functions`, so this map is the only place an agent meets them
+    // at all. Each is declared here and never glossed — vocabulary
+    // standing with no body, which is exactly what `open` means.
+    assert_eq!(row("scenarios")["stands"], json!(1), "{rows:?}");
+    assert_eq!(row("scenarios")["open"], json!(1), "{rows:?}");
+    assert_eq!(row("samples")["stands"], json!(1), "{rows:?}");
+    assert_eq!(row("samples")["open"], json!(1), "{rows:?}");
     // Nothing ruled yet, so nothing owes a fold-in.
     assert_eq!(row("rulings")["stands"], json!(0), "{rows:?}");
     assert_eq!(row("rulings")["open"], json!(0), "{rows:?}");

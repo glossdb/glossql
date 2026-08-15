@@ -34,9 +34,9 @@
 --      bad; one that also zeroes the numbers it returns is a read
 --      nobody can trust.
 --
--- So the counts are taken once, in a single row, and the nine surfaces
--- are a literal relation joined to it. A predicate on `surface` now
--- lands on plain VALUES rows and cannot reach a subquery at all.
+-- So the counts are taken once, in a single row, and the surfaces are a
+-- literal relation joined to it. A predicate on `surface` now lands on
+-- plain VALUES rows and cannot reach a subquery at all.
 WITH asked AS (
   SELECT count(*) AS n, count(DISTINCT aspect) AS metrics FROM open_questions
 ),
@@ -73,8 +73,36 @@ counts AS (
          (SELECT count(*) FROM functions) AS n_functions,
          (SELECT count(*) FROM functions f
           WHERE NOT EXISTS (SELECT 1 FROM cache c WHERE c.function = f.name)) AS open_functions,
-         (SELECT count(*) FROM aspects WHERE kind = 'query') AS n_metrics,
+         -- A sample frame is a QUERY aspect too, so it counted as a
+         -- metric here until the two doors got their own surfaces
+         -- (2026-08-15). Narrowed by exclusion, not by requiring
+         -- `x-kind = 'metric'`: a grounding declared without the tag is
+         -- still a metric, and dropping it from the map would be worse
+         -- than the miscount this fixes.
+         (SELECT count(*) FROM aspects
+          WHERE kind = 'query'
+            AND coalesce(json_get_str(schema, 'x-kind'), '') <> 'sample') AS n_metrics,
          (SELECT metrics FROM asked) AS open_metrics,
+         -- The two model doors. Both are planner doors rather than rows
+         -- in `functions`, so nothing else on this map or in the
+         -- relations would ever mention them: an agent could not find
+         -- what it could not name. `open` is vocabulary standing
+         -- without a body — declared, never glossed, so the door has
+         -- nothing to serve.
+         (SELECT count(*) FROM aspects
+          WHERE kind = 'fact'
+            AND json_get_str(schema, 'x-kind') = 'scenario') AS n_scenarios,
+         (SELECT count(*) FROM aspects a
+          WHERE a.kind = 'fact'
+            AND json_get_str(a.schema, 'x-kind') = 'scenario'
+            AND NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = a.name)) AS open_scenarios,
+         (SELECT count(*) FROM aspects
+          WHERE kind = 'query'
+            AND json_get_str(schema, 'x-kind') = 'sample') AS n_samples,
+         (SELECT count(*) FROM aspects a
+          WHERE a.kind = 'query'
+            AND json_get_str(a.schema, 'x-kind') = 'sample'
+            AND NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = a.name)) AS open_samples,
          (SELECT n FROM ruled) AS n_rulings,
          (SELECT owed FROM ruled) AS open_rulings,
          (SELECT n FROM apps) AS n_apps
@@ -89,6 +117,8 @@ SELECT s.surface AS surface,
          WHEN 'claims' THEN c.n_claims
          WHEN 'functions' THEN c.n_functions
          WHEN 'metrics' THEN c.n_metrics
+         WHEN 'scenarios' THEN c.n_scenarios
+         WHEN 'samples' THEN c.n_samples
          WHEN 'rulings' THEN c.n_rulings
          ELSE c.n_apps
        END AS stands,
@@ -97,6 +127,8 @@ SELECT s.surface AS surface,
          WHEN 'claims' THEN c.open_claims
          WHEN 'functions' THEN c.open_functions
          WHEN 'metrics' THEN c.open_metrics
+         WHEN 'scenarios' THEN c.open_scenarios
+         WHEN 'samples' THEN c.open_samples
          WHEN 'rulings' THEN c.open_rulings
          ELSE 0
        END AS open
@@ -109,6 +141,8 @@ CROSS JOIN (VALUES
   ('claims', 'GLOSS a subject with an aspect — the write verb; a human writing outranks the agent slot at every read'),
   ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
   ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — read.<name>() then serves it'),
+  ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its column overrides and their basis — whatif.<name>() then replays the recipes and bands the result'),
+  ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')
 ) AS s(surface, how)
