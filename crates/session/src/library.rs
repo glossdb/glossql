@@ -38,6 +38,10 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
     ),
     ("app_parts", include_str!("../reads/app_parts.sql")),
     (
+        "workspace_next",
+        include_str!("../reads/workspace_next.sql"),
+    ),
+    (
         "metric_surfaces",
         include_str!("../reads/metric_surfaces.sql"),
     ),

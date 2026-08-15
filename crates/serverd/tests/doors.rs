@@ -1360,3 +1360,65 @@ async fn an_agent_authors_an_app_over_the_tool() {
     assert!(html.contains("Open work"), "{html}");
     assert!(!html.contains("What stands open"), "superseded: {html}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspace_says_what_it_affords() {
+    // The map that replaces the staged manuals: what this workspace can
+    // be extended through, how much of each stands, and what is open on
+    // it. Not an order to follow — the agent judges what to do next;
+    // this only says what the system affords.
+    let app = app().await;
+    let setup = r#"
+        DECLARE DATASET fin SET (purpose: 'the affordance map');
+        USE fin;
+        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
+        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
+          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;
+    "#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 160, setup, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+
+    let body = expect_ok(
+        mcp(
+            app,
+            call_with(
+                meta(),
+                161,
+                "SELECT surface, stands, open FROM workspace_next ORDER BY surface;",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    let rows = outcomes[0]["rows"].as_array().unwrap();
+    let surfaces: Vec<&str> = rows.iter().filter_map(|r| r["surface"].as_str()).collect();
+    for expected in [
+        "apps",
+        "aspects",
+        "claims",
+        "functions",
+        "metrics",
+        "relationships",
+        "rulings",
+        "sources",
+        "tables",
+    ] {
+        assert!(surfaces.contains(&expected), "{expected} missing: {rows:?}");
+    }
+    let row = |name: &str| {
+        rows.iter()
+            .find(|r| r["surface"] == json!(name))
+            .unwrap_or_else(|| panic!("no {name} row"))
+            .clone()
+    };
+    // One metric declared, one grounded, one assumption open on it.
+    assert_eq!(row("metrics")["stands"], json!(1), "{rows:?}");
+    assert_eq!(row("metrics")["open"], json!(1), "{rows:?}");
+    assert_eq!(row("claims")["open"], json!(1), "{rows:?}");
+    // Nothing ruled yet, so nothing owes a fold-in.
+    assert_eq!(row("rulings")["stands"], json!(0), "{rows:?}");
+    assert_eq!(row("rulings")["open"], json!(0), "{rows:?}");
+}

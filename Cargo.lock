@@ -3046,6 +3046,7 @@ dependencies = [
  "glossql-apps",
  "glossql-catalog",
  "glossql-glossary",
+ "glossql-parser",
  "glossql-scripts",
  "glossql-session",
  "rmcp",

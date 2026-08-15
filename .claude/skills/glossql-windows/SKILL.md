@@ -128,8 +128,11 @@ LEFT JOIN monthly b ON b.period = months.m
   pin, though the docs undersell it:
 
 ```sql
-avg(value) OVER (ORDER BY period
-  RANGE BETWEEN INTERVAL '2' MONTH PRECEDING AND CURRENT ROW)
+SELECT period,
+       avg(value) OVER (ORDER BY period
+         RANGE BETWEEN INTERVAL '2' MONTH PRECEDING AND CURRENT ROW) AS smoothed
+FROM metric_series()
+WHERE metric = 'dso' AND dimension = ''
 ```
 
   That is "last three calendar months" regardless of gaps.

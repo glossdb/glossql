@@ -1,0 +1,191 @@
+//! The skills, under the standing invariant.
+//!
+//! Run 2's first friction was five skills teaching `SELECT value FROM
+//! GLOSSARY(…)` — a column that does not exist and never did. Prose
+//! drifts from a moving surface because nothing checks it, so the
+//! examples are checked here instead of proofread.
+//!
+//! Two rules, over every fenced ` ```glossql ` and ` ```sql ` block in
+//! `.claude/skills/*/SKILL.md`:
+//!
+//!   1. it parses;
+//!   2. if it is a single read, it PLANS against a bootstrapped
+//!      workspace — with the one exemption that a missing TABLE is
+//!      fine, because an example may name a customer's data. A missing
+//!      or misspelled COLUMN is not fine: those are ours, and that is
+//!      exactly the class of error that shipped.
+//!
+//! Nothing here executes a write. A block that declares or glosses is
+//! held to rule 1 alone.
+
+use std::sync::Arc;
+
+use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_serverd::{Plane, bootstrap};
+use glossql_session::NoRuntime;
+
+fn human() -> Actor {
+    Actor {
+        kind: ActorKind::Human,
+        id: glossql_serverd::HUMAN.into(),
+    }
+}
+
+struct Block {
+    skill: String,
+    line: usize,
+    sql: String,
+}
+
+/// Every fenced glossql/sql block in the shipped skills.
+fn blocks() -> Vec<Block> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.claude/skills")
+        .canonicalize()
+        .expect("the skills directory ships with the repo");
+    let mut out = Vec::new();
+    let mut skills: Vec<_> = std::fs::read_dir(&dir)
+        .expect("readable skills directory")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    skills.sort();
+    for skill in skills {
+        let path = skill.join("SKILL.md");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = skill
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        let mut open: Option<(usize, String)> = None;
+        for (i, line) in text.lines().enumerate() {
+            match &mut open {
+                None => {
+                    if line.trim() == "```glossql" || line.trim() == "```sql" {
+                        open = Some((i + 2, String::new()));
+                    }
+                }
+                Some((start, body)) => {
+                    if line.trim() == "```" {
+                        out.push(Block {
+                            skill: name.clone(),
+                            line: *start,
+                            sql: std::mem::take(body),
+                        });
+                        open = None;
+                    } else {
+                        body.push_str(line);
+                        body.push('\n');
+                    }
+                }
+            }
+        }
+    }
+    assert!(!out.is_empty(), "no fenced examples found in the skills");
+    out
+}
+
+/// A refusal that only says "this example names data this workspace
+/// does not have". Everything else is the skill's fault.
+///
+/// "No dataset in use" is deliberately NOT here. It was, and it
+/// swallowed the very bug this file exists for: `SELECT value FROM
+/// GLOSSARY()` fails on the missing dataset before it ever reaches the
+/// missing column, so the test passed on the exact example that
+/// shipped. The harness declares and USEs a dataset instead, and a
+/// read that cannot plan for any other reason is a defect.
+fn missing_table(error: &str) -> bool {
+    error.contains("table 'datafusion.public.")
+        || error.contains("No table named")
+        || error.contains("table not found")
+        // `read.<metric>()` / `whatif.<lever>()` name a workspace's own
+        // groundings, which a fresh one has none of. Narrow on purpose:
+        // only an undeclared aspect behind a serve door, never a
+        // missing column inside one.
+        || (error.contains("not a subject:") && error.contains("is declared"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_skill_example_parses() {
+    let mut broken = Vec::new();
+    for b in blocks() {
+        if let Err(e) = glossql_parser::GlossqlParser::parse_sql(&b.sql) {
+            broken.push(format!("{}:{} — {e}", b.skill, b.line));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "skill examples that do not parse:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_skill_read_names_columns_that_exist() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_memory().await.unwrap();
+    let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
+    bootstrap(&store, &plane, dir.path(), human())
+        .await
+        .unwrap();
+
+    // One session for the run, with a dataset in use — the names the
+    // examples actually spell, so a read reaches its columns instead of
+    // stopping at the binding.
+    let session = plane.session(human()).await.unwrap();
+    for name in ["fin", "orders", "erp_export"] {
+        session
+            .execute(&format!(
+                "DECLARE DATASET {name} SET (purpose: 'the skills harness');"
+            ))
+            .await
+            .unwrap();
+    }
+    session.execute("USE fin;").await.unwrap();
+
+    let mut broken = Vec::new();
+    let mut planned = 0usize;
+    for b in blocks() {
+        let trimmed: String = b
+            .sql
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let head = trimmed.trim_start();
+        // Reads only: a write example is held to parsing alone.
+        if !head.to_lowercase().starts_with("select") {
+            continue;
+        }
+        // One statement per block, or we cannot bound it.
+        if trimmed.trim_end().trim_end_matches(';').contains(';') {
+            continue;
+        }
+        let sql = format!(
+            "SELECT * FROM ({}) LIMIT 0",
+            trimmed.trim().trim_end_matches(';')
+        );
+        planned += 1;
+        if let Err(e) = session.execute(&sql).await {
+            let text = e.to_string();
+            if !missing_table(&text) {
+                broken.push(format!("{}:{} — {text}", b.skill, b.line));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "skill examples naming something the reads do not serve:\n{}",
+        broken.join("\n")
+    );
+    // A test that silently checks nothing passes forever. The skills
+    // teach reads; if this floor is not met, the classification above
+    // has started skipping what it should be holding.
+    assert!(
+        planned >= 5,
+        "only {planned} skill reads were planned — the test is skipping its own subject"
+    );
+}
