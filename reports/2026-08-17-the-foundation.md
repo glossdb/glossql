@@ -218,24 +218,23 @@ plans as one statement with the median as a scalar subquery, or as two if
 that reads badly; two plans over a known read set is not an exception. It
 is a per-column statistic, and it ports at stage 5 like the rest.
 
-**The goldens are diverse in shape and small in size** (ruled
+**The goldens are picked by shape, and used as they are** (ruled
 2026-08-17). `~/glossql-ws` alone is 13 clean tables in one dataset and
-would let a port pass while breaking every abstention path — but
-capturing goldens over 993 MB corpora would spend the port's whole
-budget on a test harness. Diversity of *shape* is what protects a port;
-size is a separate question asked later.
+would let a port pass while breaking every abstention path. Diversity of
+*shape* is what protects a port; size is a separate question asked at
+the end. Nothing is sliced or preprocessed — a dataset either works as
+it stands or it is discussed.
 
-The golden set, ~30 MB total, running in seconds:
+| workspace | covers what the others do not |
+|---|---|
+| `glossql-ws` (finance generator) | ground truth, real glosses, the working-capital run |
+| booksql | broken keys, composite endpoints; already run |
+| `rel-f1` | declared-FK truth; **three tables with `time_col: null`** — the borrowed-axis path; two tables carrying three FKs to different parents — the shared-parent alignment path |
+| `rel-event` | **keyless junction tables** (`pkey: null` on `event_attendees`, `event_interest`), which no other corpus has; and a column literally named `Unnamed: 0`, which is the identifier-quoting hazard string-templated SQL fails on |
 
-| workspace | size | what only it covers |
-|---|---|---|
-| `glossql-ws` (finance generator) | 12 MB, 13 tables | ground truth, real glosses, the working-capital run |
-| `rel-f1` | 1.2 MB, 9 tables | declared-FK truth, a second domain |
-| booksql slice | ~15 MB | broken keys, composite endpoints, the abstention paths |
-
-The booksql slice is the seven small tables plus a row-capped
-`Master_txn_table` — the shapes live in the relationships, not the row
-count, and the full table is 177 MB of the corpus's 192.
+Checked, 2026-08-17: both RelBench schemas are flat, no nested types.
+`timestamp_ns` appears where we cast to microsecond, and the date
+detection matches any unit.
 
 **Scale is verified at the end, on the new stack, not now.** Every
 measurement in this report was taken on 12 MB, where fixed costs
