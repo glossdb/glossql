@@ -18,7 +18,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();

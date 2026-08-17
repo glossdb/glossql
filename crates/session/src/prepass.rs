@@ -59,6 +59,12 @@ impl Resolved {
         self.pins.get(table).cloned()
     }
 
+    /// The pinned tables' names — the bound dataset's tables as this
+    /// statement sees them.
+    pub(crate) fn tables(&self) -> Vec<String> {
+        self.pins.keys().cloned().collect()
+    }
+
     pub(crate) fn batch(&self, key: &str) -> Option<&RecordBatch> {
         self.batches.get(key)
     }

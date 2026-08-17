@@ -20,7 +20,7 @@ const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rha
 /// The shipped body, so the declaration carries what runs.
 const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
-const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.sql");
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {

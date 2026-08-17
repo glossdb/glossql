@@ -7,6 +7,7 @@
 //! optimizes recall: no thresholds here, the judgment lives in the
 //! measurement body that reads the door.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
@@ -696,3 +697,632 @@ fn rows_batch(rows: Vec<Value>, fields: Vec<Field>) -> Result<RecordBatch, Sessi
         .map_err(|e| SessionError::Runtime(e.to_string()))?
         .ok_or_else(|| SessionError::Runtime("a search door emitted no rows".into()))
 }
+
+/// `relationship_candidates('dataset')` — the high-recall half of the
+/// candidate → verified → declared arc (fixture 12): every plausible
+/// join pair across the landed tables, generous by design (ruled
+/// 2026-08-05) — the statistical pass optimizes recall and the judge
+/// removes false positives against the data; this door never does.
+///
+/// The algorithm (2026-08-06, replacing a per-pair SQL join that was
+/// quadratic in engine round-trips): inclusion-dependency discovery on
+/// the SPIDER/SINDY shape — every candidate column's distinct values
+/// land once through one union-of-distincts plan, and containment
+/// between two columns is a set intersection in memory. Values compare
+/// by display form, which is equality-faithful inside one dtype (pairs
+/// are dtype-gated, and even floats print shortest-roundtrip), so the
+/// counts are the typed-key counts. The statistic is containment —
+/// matched over the from side's distinct count; Jaccard punishes
+/// exactly the size-skewed pairs real FKs are. The only pruning is
+/// algebra: a to side with fewer than half the from side's distinct
+/// values cannot reach the 0.5 bar. Exact while Σ distinct fits
+/// memory; the named ladder past that is BINDER-style hash-range
+/// partitioning and bottom-k sketches — not built until a dataset
+/// needs them.
+///
+/// The composite rescue (the v0.3 reality, ported 2026-08-05): a to
+/// side that is no key alone can be one inside a scope — the
+/// multi-tenant shape, (businessID, name). For each overlapping pair
+/// whose to side is not key-like, the co-present pairs between the
+/// same two tables are tried as the scoping leg in overlap order; the
+/// first whose combination makes the to side near-unique and whose
+/// two-leg intersection resolves rescues the anchor. Width 2 only —
+/// wider composites stay future work. Data decides, not names.
+pub(crate) async fn relationship_candidates(
+    shared: &Arc<Shared>,
+    resolved: &crate::prepass::Resolved,
+    dataset: &str,
+) -> Result<RecordBatch, SessionError> {
+    use std::collections::HashMap;
+
+    use datafusion::functions_aggregate::expr_fn::count_distinct;
+    use datafusion::logical_expr::cast;
+
+    let bad =
+        |d: String| SessionError::BadSubject(format!("relationship_candidates('{dataset}'): {d}"));
+    let ctx = shared
+        .ctx
+        .read()
+        .expect("ctx lock")
+        .clone()
+        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let run = |plan| async {
+        ctx.execute_logical_plan(plan)
+            .await
+            .map_err(|e| bad(e.to_string()))?
+            .collect()
+            .await
+            .map_err(|e| bad(e.to_string()))
+    };
+
+    let mut tables: Vec<String> = resolved.tables();
+    tables.sort();
+
+    // Per-column shape: filled and distinct counts decide which columns
+    // look like keys (the join's to side) — near-unique, not strictly
+    // unique, so dirty keys stay in the running.
+    #[derive(Clone)]
+    struct ColShape {
+        table: String,
+        column: String,
+        dtype: String,
+        filled: i64,
+        distinct: i64,
+        unique: bool,
+        key_like: bool,
+    }
+    let mut cols: Vec<ColShape> = Vec::new();
+    for t in &tables {
+        let provider = resolved.pin(t).ok_or_else(|| bad(format!("no pin for `{t}`")))?;
+        let fields = provider.schema();
+        if fields.fields().is_empty() {
+            continue;
+        }
+        let mut aggs = Vec::new();
+        for f in fields.fields() {
+            let c = f.name();
+            aggs.push(count(ident(c)).alias(format!("f_{c}")));
+            aggs.push(count_distinct(ident(c)).alias(format!("d_{c}")));
+        }
+        let plan = LogicalPlanBuilder::scan(t.as_str(), provider_as_source(provider), None)
+            .and_then(|b| b.aggregate(Vec::<Expr>::new(), aggs))
+            .and_then(|b| b.build())
+            .map_err(|e| bad(e.to_string()))?;
+        let batches = run(plan).await?;
+        let one = batches
+            .iter()
+            .find(|b| b.num_rows() > 0)
+            .ok_or_else(|| bad(format!("the shape scan of `{t}` returned nothing")))?;
+        for (i, f) in fields.fields().iter().enumerate() {
+            let int = |col_idx: usize| -> Result<i64, SessionError> {
+                one.column(col_idx)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| bad("a count did not read as an integer".into()))
+                    .map(|a| a.value(0))
+            };
+            let filled = int(i * 2)?;
+            let distinct = int(i * 2 + 1)?;
+            cols.push(ColShape {
+                table: t.clone(),
+                column: f.name().clone(),
+                dtype: f.data_type().to_string(),
+                filled,
+                distinct,
+                unique: filled > 0 && distinct == filled,
+                key_like: filled > 0
+                    && distinct >= 2
+                    && distinct as f64 / filled as f64 >= 0.9,
+            });
+        }
+    }
+
+    // Every type-compatible pair, keys or not — the non-key pairs are
+    // the raw material for composite rescue. Same-table pairs stay in.
+    let mut specs: Vec<(usize, usize)> = Vec::new(); // (from, to) into cols
+    for (ki, k) in cols.iter().enumerate() {
+        if k.distinct < 2 {
+            continue;
+        }
+        for (fi, f) in cols.iter().enumerate() {
+            if f.table == k.table && f.column == k.column {
+                continue;
+            }
+            if f.dtype != k.dtype || f.distinct == 0 {
+                continue;
+            }
+            // Implied by the acceptance bar, never a heuristic:
+            // matched ≤ to_distinct, so a to side under half the from
+            // side's distinct count cannot reach 0.5.
+            if (k.distinct as f64) < 0.5 * f.distinct as f64 {
+                continue;
+            }
+            specs.push((fi, ki));
+        }
+    }
+
+    // One distinct pass per involved column, all in one union plan.
+    let mut involved: Vec<usize> = Vec::new();
+    for (fi, ki) in &specs {
+        for side in [*fi, *ki] {
+            if !involved.contains(&side) {
+                involved.push(side);
+            }
+        }
+    }
+    let mut sets: HashMap<usize, HashSet<String>> = HashMap::new();
+    if !involved.is_empty() {
+        let mut union: Option<LogicalPlanBuilder> = None;
+        for side in &involved {
+            let shape = &cols[*side];
+            let provider = resolved
+                .pin(&shape.table)
+                .ok_or_else(|| bad(format!("no pin for `{}`", shape.table)))?;
+            let arm =
+                LogicalPlanBuilder::scan(shape.table.as_str(), provider_as_source(provider), None)
+                    .and_then(|b| b.filter(ident(&shape.column).is_not_null()))
+                    .and_then(|b| {
+                        b.project(vec![
+                            lit(*side as i64).alias("ci"),
+                            cast(ident(&shape.column), DataType::Utf8).alias("val"),
+                        ])
+                    })
+                    .and_then(|b| b.distinct())
+                    .and_then(|b| b.build())
+                    .map_err(|e| bad(e.to_string()))?;
+            union = Some(match union {
+                None => LogicalPlanBuilder::from(arm),
+                Some(u) => u.union(arm).map_err(|e| bad(e.to_string()))?,
+            });
+        }
+        let plan = union
+            .expect("nonempty")
+            .build()
+            .map_err(|e| bad(e.to_string()))?;
+        for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
+            let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
+            let val_idx = b.schema().index_of("val").map_err(|e| bad(e.to_string()))?;
+            let vals = b.column(val_idx);
+            for r in 0..b.num_rows() {
+                if vals.is_null(r) {
+                    continue;
+                }
+                sets.entry(ci[r] as usize).or_default().insert(
+                    array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?,
+                );
+            }
+        }
+    }
+
+    // Pair mathematics, entirely in memory.
+    struct Pair {
+        f: usize,
+        k: usize,
+        overlap: f64,
+        matched: i64,
+    }
+    let empty = HashSet::new();
+    let set_of = |i: usize| sets.get(&i).unwrap_or(&empty);
+    let mut pairs: Vec<Pair> = Vec::new();
+    for (fi, ki) in &specs {
+        let m = set_of(*fi).intersection(set_of(*ki)).count() as i64;
+        let overlap = m as f64 / cols[*fi].distinct as f64;
+        if overlap < 0.5 {
+            continue;
+        }
+        pairs.push(Pair {
+            f: *fi,
+            k: *ki,
+            overlap,
+            matched: m,
+        });
+    }
+
+    // Single-column candidates: the pairs whose to side stands as a key
+    // on its own.
+    #[derive(Clone)]
+    struct Candidate {
+        from: String,
+        to: String,
+        cardinality: &'static str,
+        overlap: f64,
+        matched: i64,
+        orphans: i64,
+        from_distinct: i64,
+        to_distinct: i64,
+        key_columns: Option<(String, String)>,
+    }
+    let path = |i: usize| format!("{}.{}", cols[i].table, cols[i].column);
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for p in &pairs {
+        if !cols[p.k].key_like {
+            continue;
+        }
+        candidates.push(Candidate {
+            from: path(p.f),
+            to: path(p.k),
+            cardinality: if cols[p.f].unique {
+                "one-to-one"
+            } else {
+                "many-to-one"
+            },
+            overlap: p.overlap,
+            matched: p.matched,
+            orphans: cols[p.f].distinct - p.matched,
+            from_distinct: cols[p.f].distinct,
+            to_distinct: cols[p.k].distinct,
+            key_columns: None,
+        });
+    }
+
+    // Composite rescue, three batched phases.
+    struct Attempt {
+        anchor: usize,
+        p: usize, // into pairs
+        s: usize,
+        order: i64,
+    }
+    let mut attempts: Vec<Attempt> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (pi, p) in pairs.iter().enumerate() {
+        if cols[p.k].key_like {
+            continue;
+        }
+        let mut scopes: Vec<usize> = (0..pairs.len())
+            .filter(|si| {
+                let s = &pairs[*si];
+                cols[s.f].table == cols[p.f].table
+                    && cols[s.k].table == cols[p.k].table
+                    && cols[s.f].column != cols[p.f].column
+                    && cols[s.k].column != cols[p.k].column
+            })
+            .collect();
+        scopes.sort_by(|a, b| pairs[*b].overlap.partial_cmp(&pairs[*a].overlap).unwrap());
+        let mut order = 0i64;
+        for si in scopes {
+            let s = &pairs[si];
+            // Implied by the near-unique bar, never a heuristic: the
+            // combined to side's distinct pairs cannot exceed the
+            // product of the legs' distinct counts — a product under
+            // 0.9 of the co-filled floor can never key the table.
+            let floor = cols[p.k].filled.min(cols[s.k].filled);
+            if (cols[p.k].distinct as f64) * (cols[s.k].distinct as f64)
+                < 0.9 * floor as f64
+            {
+                continue;
+            }
+            let key = format!(
+                "{}|{}|{}+{}|{}+{}",
+                cols[p.f].table,
+                cols[p.k].table,
+                cols[p.f].column,
+                cols[s.f].column,
+                cols[p.k].column,
+                cols[s.k].column
+            );
+            let mirror = format!(
+                "{}|{}|{}+{}|{}+{}",
+                cols[p.f].table,
+                cols[p.k].table,
+                cols[s.f].column,
+                cols[p.f].column,
+                cols[s.k].column,
+                cols[p.k].column
+            );
+            if seen.contains(&key) || seen.contains(&mirror) {
+                continue;
+            }
+            seen.insert(key);
+            attempts.push(Attempt {
+                anchor: pi,
+                p: pi,
+                s: si,
+                order,
+            });
+            order += 1;
+        }
+    }
+
+    // Phase 1, one union plan and one count plan per combination: is
+    // the combined to side a key inside the scope? The same combination
+    // backs many attempts — probed once.
+    let mut to_combos: Vec<(String, String, String)> = Vec::new();
+    let mut to_of: HashMap<(String, String, String), usize> = HashMap::new();
+    for a in &attempts {
+        let (p, s) = (&pairs[a.p], &pairs[a.s]);
+        let key = (
+            cols[p.k].table.clone(),
+            cols[p.k].column.clone(),
+            cols[s.k].column.clone(),
+        );
+        if !to_of.contains_key(&key) {
+            to_of.insert(key.clone(), to_combos.len());
+            to_combos.push(key);
+        }
+    }
+    let to_stats = combo_stats(&ctx, resolved, &format!("relationship_candidates('{dataset}')"), &to_combos).await?;
+    let to_ok = |i: usize| {
+        let t = &to_stats[i];
+        t.filled > 0 && t.distinct >= 2 && t.distinct as f64 / t.filled as f64 >= 0.9
+    };
+
+    // Phase 2, survivors only: the from side's co-present pairs.
+    let mut from_combos: Vec<(String, String, String)> = Vec::new();
+    let mut from_of: HashMap<(String, String, String), usize> = HashMap::new();
+    for a in &attempts {
+        let (p, s) = (&pairs[a.p], &pairs[a.s]);
+        let tk = (
+            cols[p.k].table.clone(),
+            cols[p.k].column.clone(),
+            cols[s.k].column.clone(),
+        );
+        if !to_ok(to_of[&tk]) {
+            continue;
+        }
+        let key = (
+            cols[p.f].table.clone(),
+            cols[p.f].column.clone(),
+            cols[s.f].column.clone(),
+        );
+        if !from_of.contains_key(&key) {
+            from_of.insert(key.clone(), from_combos.len());
+            from_combos.push(key);
+        }
+    }
+    let from_stats = combo_stats(&ctx, resolved, &format!("relationship_candidates('{dataset}')"), &from_combos).await?;
+
+    // Phase 3, no scans: the two-leg resolution is a set intersection.
+    // First passing scope per anchor, in overlap order.
+    struct Rescue {
+        order: i64,
+        p: usize,
+        s: usize,
+        matched: i64,
+        overlap: f64,
+        to_distinct: i64,
+        ffilled: i64,
+        fpairs: i64,
+    }
+    let mut rescued: HashMap<usize, Rescue> = HashMap::new();
+    for a in &attempts {
+        let (p, s) = (&pairs[a.p], &pairs[a.s]);
+        let tk = (
+            cols[p.k].table.clone(),
+            cols[p.k].column.clone(),
+            cols[s.k].column.clone(),
+        );
+        let ti = to_of[&tk];
+        if !to_ok(ti) {
+            continue;
+        }
+        let fk = (
+            cols[p.f].table.clone(),
+            cols[p.f].column.clone(),
+            cols[s.f].column.clone(),
+        );
+        let fs = &from_stats[from_of[&fk]];
+        if fs.set.is_empty() {
+            continue;
+        }
+        let m = fs.set.intersection(&to_stats[ti].set).count() as i64;
+        let overlap = m as f64 / fs.set.len() as f64;
+        if overlap < 0.5 {
+            continue;
+        }
+        if rescued
+            .get(&a.anchor)
+            .is_some_and(|r| r.order <= a.order)
+        {
+            continue;
+        }
+        rescued.insert(
+            a.anchor,
+            Rescue {
+                order: a.order,
+                p: a.p,
+                s: a.s,
+                matched: m,
+                overlap,
+                to_distinct: to_stats[ti].distinct,
+                ffilled: fs.filled,
+                fpairs: fs.set.len() as i64,
+            },
+        );
+    }
+    // The script iterated a map keyed by the anchor index as TEXT, so
+    // its emission order was lexicographic on that text — reproduced,
+    // not admired.
+    let mut anchor_keys: Vec<usize> = rescued.keys().copied().collect();
+    anchor_keys.sort_by_key(|k| k.to_string());
+    for akey in anchor_keys {
+        let r = &rescued[&akey];
+        // The anchor is the identifying leg — the higher-cardinality to
+        // side; the scope is the tenant leg. Which pair triggered the
+        // rescue is iteration order, not evidence.
+        let (mut a, mut sc) = (&pairs[r.p], &pairs[r.s]);
+        if cols[pairs[r.s].k].distinct > cols[pairs[r.p].k].distinct {
+            (a, sc) = (&pairs[r.s], &pairs[r.p]);
+        }
+        candidates.push(Candidate {
+            from: path(a.f),
+            to: path(a.k),
+            cardinality: if r.fpairs == r.ffilled {
+                "one-to-one"
+            } else {
+                "many-to-one"
+            },
+            overlap: r.overlap,
+            matched: r.matched,
+            orphans: r.fpairs - r.matched,
+            from_distinct: r.fpairs,
+            to_distinct: r.to_distinct,
+            key_columns: Some((path(sc.f), path(sc.k))),
+        });
+    }
+
+    // One row per candidate, seq in push order — the body's tie-breaker
+    // under overlap DESC, which reproduces the script's stable sort.
+    let mut out = Vec::new();
+    for (seq, c) in candidates.iter().enumerate() {
+        let mut row = serde_json::Map::new();
+        row.insert("seq".into(), json!(seq as i64));
+        row.insert("from_col".into(), json!(c.from));
+        row.insert("to_col".into(), json!(c.to));
+        row.insert("cardinality".into(), json!(c.cardinality));
+        row.insert("overlap".into(), json!(c.overlap));
+        row.insert("matched".into(), json!(c.matched));
+        row.insert("orphans".into(), json!(c.orphans));
+        row.insert("from_distinct".into(), json!(c.from_distinct));
+        row.insert("to_distinct".into(), json!(c.to_distinct));
+        if let Some((kf, kt)) = &c.key_columns {
+            row.insert("kc_from".into(), json!(kf));
+            row.insert("kc_to".into(), json!(kt));
+        }
+        out.push(Value::Object(row));
+    }
+    if out.is_empty() {
+        out.push(json!({}));
+    }
+    rows_batch(out, relationship_shape())
+}
+
+
+/// One combination's co-presence: how many rows carry both legs, and
+/// the distinct (a, b) pairs — probed once per combination through one
+/// union-of-distincts plan and one union of counts.
+struct ComboStat {
+    filled: i64,
+    distinct: i64,
+    set: std::collections::HashSet<(String, String)>,
+}
+
+async fn combo_stats(
+    ctx: &datafusion::prelude::SessionContext,
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    combos: &[(String, String, String)],
+) -> Result<Vec<ComboStat>, SessionError> {
+    use datafusion::logical_expr::{cast, col};
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let run = |plan| async {
+        ctx.execute_logical_plan(plan)
+            .await
+            .map_err(|e| bad(e.to_string()))?
+            .collect()
+            .await
+            .map_err(|e| bad(e.to_string()))
+    };
+    let mut out: Vec<ComboStat> = Vec::new();
+    if combos.is_empty() {
+        return Ok(out);
+    }
+
+    let mut union: Option<LogicalPlanBuilder> = None;
+    let mut count_plans = Vec::new();
+    for (id, (table, a, b)) in combos.iter().enumerate() {
+        let provider = resolved
+            .pin(table)
+            .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
+        let both = ident(a).is_not_null().and(ident(b).is_not_null());
+        let arm = LogicalPlanBuilder::scan(
+            table.as_str(),
+            provider_as_source(Arc::clone(&provider)),
+            None,
+        )
+        .and_then(|p| p.filter(both.clone()))
+        .and_then(|p| {
+            p.project(vec![
+                lit(id as i64).alias("ci"),
+                cast(ident(a), DataType::Utf8).alias("va"),
+                cast(ident(b), DataType::Utf8).alias("vb"),
+            ])
+        })
+        .and_then(|p| p.distinct())
+        .and_then(|p| p.build())
+        .map_err(|e| bad(e.to_string()))?;
+        union = Some(match union {
+            None => LogicalPlanBuilder::from(arm),
+            Some(u) => u.union(arm).map_err(|e| bad(e.to_string()))?,
+        });
+        count_plans.push(
+            LogicalPlanBuilder::scan(
+                table.as_str(),
+                provider_as_source(provider),
+                None,
+            )
+            .and_then(|p| p.filter(both))
+            .and_then(|p| {
+                p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")])
+            })
+            .and_then(|p| {
+                p.project(vec![lit(id as i64).alias("ci"), col("c")])
+            })
+            .and_then(|p| p.build())
+            .map_err(|e| bad(e.to_string()))?,
+        );
+    }
+    for _ in 0..combos.len() {
+        out.push(ComboStat {
+            filled: 0,
+            distinct: 0,
+            set: HashSet::new(),
+        });
+    }
+    let mut counts_union: Option<LogicalPlanBuilder> = None;
+    for p in count_plans {
+        counts_union = Some(match counts_union {
+            None => LogicalPlanBuilder::from(p),
+            Some(u) => u.union(p).map_err(|e| bad(e.to_string()))?,
+        });
+    }
+    let counts = counts_union
+        .expect("nonempty")
+        .build()
+        .map_err(|e| bad(e.to_string()))?;
+    for b in run(counts).await?.iter().filter(|b| b.num_rows() > 0) {
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
+        let c = int_column(std::slice::from_ref(b), "c").map_err(bad)?;
+        for r in 0..b.num_rows() {
+            out[ci[r] as usize].filled = c[r];
+        }
+    }
+    let plan = union
+        .expect("nonempty")
+        .build()
+        .map_err(|e| bad(e.to_string()))?;
+    for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
+        let va_idx = b.schema().index_of("va").map_err(|e| bad(e.to_string()))?;
+        let vb_idx = b.schema().index_of("vb").map_err(|e| bad(e.to_string()))?;
+        let (va, vb) = (b.column(va_idx), b.column(vb_idx));
+        for r in 0..b.num_rows() {
+            let pair = (
+                array_value_to_string(va, r).map_err(|e| bad(e.to_string()))?,
+                array_value_to_string(vb, r).map_err(|e| bad(e.to_string()))?,
+            );
+            out[ci[r] as usize].set.insert(pair);
+        }
+    }
+    for s in &mut out {
+        s.distinct = s.set.len() as i64;
+    }
+    Ok(out)
+}
+
+fn relationship_shape() -> Vec<Field> {
+    vec![
+        Field::new("seq", DataType::Int64, true),
+        Field::new("from_col", DataType::Utf8, true),
+        Field::new("to_col", DataType::Utf8, true),
+        Field::new("cardinality", DataType::Utf8, true),
+        Field::new("overlap", DataType::Float64, true),
+        Field::new("matched", DataType::Int64, true),
+        Field::new("orphans", DataType::Int64, true),
+        Field::new("from_distinct", DataType::Int64, true),
+        Field::new("to_distinct", DataType::Int64, true),
+        Field::new("kc_from", DataType::Utf8, true),
+        Field::new("kc_to", DataType::Utf8, true),
+    ]
+}
+
