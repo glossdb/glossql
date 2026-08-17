@@ -26,7 +26,7 @@ use datafusion::logical_expr::LogicalPlan;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    ObjectName, Query, Statement as SQLStatement, TableFactor, VisitMut, VisitorMut,
+    Query, Statement as SQLStatement, TableFactor, VisitMut, VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
@@ -242,13 +242,4 @@ pub(crate) async fn resolve_sql(
     let q = parse(sql, "the body")?;
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(q))));
     resolve(shared, ctx, &stmt).await
-}
-
-/// Unused today, kept because the rewrite-side of the visitor is what a
-/// `ViewTable` registration would need (ledger row 15) and removing it
-/// would only mean writing it again.
-#[allow(dead_code)]
-fn rename(name: &mut ObjectName, to: &str) {
-    use datafusion::sql::sqlparser::ast::{Ident, ObjectNamePart};
-    *name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new(to))]);
 }
