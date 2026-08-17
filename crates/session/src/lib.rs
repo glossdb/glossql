@@ -23,6 +23,7 @@ mod plane;
 mod prepass;
 mod reads;
 pub mod rulings;
+mod search;
 mod session;
 mod subject;
 mod whatif;

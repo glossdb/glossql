@@ -365,6 +365,18 @@ impl RelationPlanner for GlossqlReads {
     }
 }
 
+/// The one quoted string argument of a door, if that is what the args
+/// hold.
+fn single_string_arg(a: &datafusion::sql::sqlparser::ast::TableFunctionArgs) -> Option<String> {
+    use datafusion::sql::sqlparser::ast::{Expr, FunctionArg, FunctionArgExpr, Value as SqlValue};
+    if let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))] = a.args.as_slice()
+        && let SqlValue::SingleQuotedString(s) = &v.value
+    {
+        return Some(s.clone());
+    }
+    None
+}
+
 /// The scan's display name: the factor without its alias, which rides
 /// `PlannedRelation` instead.
 fn display_name(factor: &TableFactor) -> String {
@@ -379,9 +391,12 @@ fn display_name(factor: &TableFactor) -> String {
 
 /// Evaluate one compute door ahead of planning — the async half behind
 /// the planner's lookup. `None` for anything that is not a compute door.
+/// `resolved` carries the statement's pins, which is how a search door
+/// reads the same snapshot every other scan in the statement reads.
 pub(crate) async fn compute_batch(
     shared: &Arc<Shared>,
     factor: &TableFactor,
+    resolved: &crate::prepass::Resolved,
 ) -> Result<Option<RecordBatch>, SessionError> {
     let TableFactor::Table { name, args, .. } = factor else {
         return Ok(None);
@@ -420,6 +435,21 @@ pub(crate) async fn compute_batch(
         return Ok(None);
     };
     match (fname.as_str(), args) {
+        // The search doors: candidate enumeration over a table's own
+        // columns, computed here because a static SQL body cannot spell
+        // a schema it does not know (§7e).
+        ("derivation_candidates", Some(a)) => {
+            let table = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "derivation_candidates takes one quoted table: \
+                     derivation_candidates('table')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::search::derivation_candidates(shared, resolved, &table).await?,
+            ))
+        }
         ("glossary", Some(a)) => Ok(Some(glossary_read(shared, &a.args).await?)),
         ("attest", Some(a)) => Ok(Some(attest_read(shared, &a.args).await?)),
         ("metric_series", Some(a)) => {

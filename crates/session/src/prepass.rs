@@ -244,7 +244,7 @@ async fn compute_batches(
         if resolved.batches.contains_key(&key) {
             continue;
         }
-        if let Some(batch) = crate::reads::compute_batch(shared, &factor).await? {
+        if let Some(batch) = crate::reads::compute_batch(shared, &factor, resolved).await? {
             resolved.batches.insert(key, batch);
         }
     }

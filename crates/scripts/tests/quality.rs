@@ -17,7 +17,7 @@ use glossql_session::{Outcome, Session};
 /// The shipped body, so the declaration carries what runs.
 const COHERENCE: &str = include_str!("../functions/coherence.rhai");
 /// The shipped body, so the declaration carries what runs.
-const DERIVATIONS: &str = include_str!("../functions/derivations.rhai");
+const DERIVATIONS: &str = include_str!("../functions/derivations.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();

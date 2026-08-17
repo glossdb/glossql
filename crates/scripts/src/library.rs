@@ -39,8 +39,8 @@ pub const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../functions/grounding_collisions.rhai"),
     ),
     (
-        "derivations.rhai",
-        include_str!("../functions/derivations.rhai"),
+        "derivations.sql",
+        include_str!("../functions/derivations.sql"),
     ),
     ("coherence.rhai", include_str!("../functions/coherence.rhai")),
     (

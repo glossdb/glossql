@@ -191,7 +191,7 @@ DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.rhai$$
 DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.rhai$$
   RETURNS hierarchy_candidates;
 
-DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.rhai$$
+DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.sql$$
   RETURNS derivation_candidates;
 
 DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.rhai$$
