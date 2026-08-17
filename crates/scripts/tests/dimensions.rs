@@ -22,7 +22,7 @@ use glossql_session::{Outcome, Session};
 /// The shipped body, so the declaration carries what runs.
 const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
 /// The shipped body, so the declaration carries what runs.
-const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
 const PROFILE: &str = include_str!("../functions/profile.sql");
 

@@ -188,7 +188,7 @@ DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.rhai$$
   ACCEPTS (column_profile)
   RETURNS dimension_relevance;
 
-DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.rhai$$
+DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.sql$$
   RETURNS hierarchy_candidates;
 
 DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.sql$$

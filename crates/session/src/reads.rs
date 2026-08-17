@@ -450,6 +450,18 @@ pub(crate) async fn compute_batch(
                 crate::search::derivation_candidates(shared, resolved, &table).await?,
             ))
         }
+        ("hierarchy_candidates", Some(a)) => {
+            let table = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "hierarchy_candidates takes one quoted table: \
+                     hierarchy_candidates('table')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::search::hierarchy_candidates(shared, resolved, &table).await?,
+            ))
+        }
         ("glossary", Some(a)) => Ok(Some(glossary_read(shared, &a.args).await?)),
         ("attest", Some(a)) => Ok(Some(attest_read(shared, &a.args).await?)),
         ("metric_series", Some(a)) => {

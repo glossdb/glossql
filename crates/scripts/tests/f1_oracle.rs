@@ -18,7 +18,7 @@ use glossql_session::{Outcome, Session};
 /// The shipped body, so the declaration carries what runs.
 const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
 /// The shipped body, so the declaration carries what runs.
-const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
 const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
 
