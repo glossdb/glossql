@@ -166,13 +166,18 @@ down and never up.
 
 | stage | ledger rows | gate |
 |---|---|---|
-| **0** capture goldens for every function and door; land the conformance test at today's counts | — | suite green, no behaviour change |
+| **0** capture goldens over the small three (§7) for every function and door; land the conformance test at today's counts | — | suite green, no behaviour change |
 | **1** split `store.rs`: rules become pure functions over rows, IO behind a narrow trait | — | goldens green |
 | **2** the async pre-pass; `ViewTable` for groundings | 1, 2, 14, 15 | goldens green; `block_in_place`/`thread_local` → 0; the 16 MB stack workaround goes with it |
 | **3** store relations onto Iceberg v3, `relationships` first, `glossary` last; absorb `Lake`; drop sqlx | 6, 7, 9, 10 | goldens green |
 | **4** compute doors under `execute`; cache removed; `measurements` keyed by the pin | 5, 8 | SPEC + corpus diff lands here |
 | **5** function ports, one per commit against its golden; each rhai file deleted as its port passes | 3, 4, 11, 12, 13 | golden per function |
 | **6** pre-warm at the landing | — | — |
+| **7** scale: land the large corpora (§7) and re-measure | — | the ratios hold, or we learn where they stop |
+
+Stage 7 is deliberately last. Optimising against the current stack would
+tune code we are deleting; the numbers only mean something once the
+architecture under them is the one we intend to keep.
 
 We are running on `iceberg-rust` main and datafusion 54.1 as of today —
 two lines of code (`ScalarUDFImpl::as_any` was removed in 54), arrow
@@ -213,17 +218,33 @@ plans as one statement with the median as a scalar subquery, or as two if
 that reads badly; two plans over a known read set is not an exception. It
 is a per-column statistic, and it ports at stage 5 like the rest.
 
-**The goldens cover diverse datasets, not one workspace** (ruled
+**The goldens are diverse in shape and small in size** (ruled
 2026-08-17). `~/glossql-ws` alone is 13 clean tables in one dataset and
-would let a port pass while breaking every abstention path. Stage 0
-captures against the spread: the ground-truthed finance generator,
-booksql for broken and composite keys, and RelBench —
-`dataraum-eval/corpora/relbench`, seven corpora from `rel-f1` at 1.2 MB
-to `rel-stack` at 993 MB, used freely and kept local regardless of
-licence. The size range is not incidental: every measurement in this
-report was taken on 12 MB, and §2's ratios have never been tested where
-fixed costs stop dominating. Finding a way to run the suite across
-diverse datasets is itself part of stage 0.
+would let a port pass while breaking every abstention path — but
+capturing goldens over 993 MB corpora would spend the port's whole
+budget on a test harness. Diversity of *shape* is what protects a port;
+size is a separate question asked later.
+
+The golden set, ~30 MB total, running in seconds:
+
+| workspace | size | what only it covers |
+|---|---|---|
+| `glossql-ws` (finance generator) | 12 MB, 13 tables | ground truth, real glosses, the working-capital run |
+| `rel-f1` | 1.2 MB, 9 tables | declared-FK truth, a second domain |
+| booksql slice | ~15 MB | broken keys, composite endpoints, the abstention paths |
+
+The booksql slice is the seven small tables plus a row-capped
+`Master_txn_table` — the shapes live in the relationships, not the row
+count, and the full table is 177 MB of the corpus's 192.
+
+**Scale is verified at the end, on the new stack, not now.** Every
+measurement in this report was taken on 12 MB, where fixed costs
+dominate and §2's ratios are untested. `dataraum-eval/corpora/relbench`
+holds six larger corpora — `rel-salt` 85 MB through `rel-stack` 993 MB —
+plus full booksql, used freely and kept local regardless of licence.
+They belong to §6's last stage: confirm the ratios hold, and find the
+optimisation potential of the finished architecture rather than of the
+one being replaced.
 
 ## 8. Still open
 
