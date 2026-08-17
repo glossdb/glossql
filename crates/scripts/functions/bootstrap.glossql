@@ -172,8 +172,7 @@ DECLARE ASPECT metric_cube WITH $${
 DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 
-DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
 
 DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$

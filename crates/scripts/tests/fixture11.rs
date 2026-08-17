@@ -124,8 +124,7 @@ DECLARE ASPECT temporal_profile WITH $${
 
 DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
-DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
 DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
   RETURNS temporal_profile;
@@ -250,11 +249,11 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert_eq!(one(&dropped), "0", "this author kept every row");
 
-    // An agent using functions wildly: outliers before its ACCEPTS
-    // dependency exists. The abstention names what to produce first —
-    // "run the dependency" is a different fact from "never applicable" —
-    // and it is an answer, never landed: the glossary discloses the
-    // debt, and the next extraction recomputes once the producer ran.
+    // Fixture 11's "outliers before profile" sequence, after §7e: the
+    // SQL body composes its dependency inline — the same `profile`
+    // aggregate the profile measurement lands — so the first ask
+    // computes and lands. The missing_aspects abstention this sequence
+    // used to produce is gone with the stored intermediate it named.
     let early = agent
         .execute("SELECT outliers() FROM orders.amount;")
         .await
@@ -270,24 +269,12 @@ async fn fixture_11_with_real_scripts() {
         .unwrap()
         .value(0)
         .to_string();
-    assert!(body.contains("\"applicable\":false"), "{body}");
-    assert!(
-        body.contains("\"missing_aspects\":[\"column_profile\"]"),
-        "{body}"
-    );
-    let owed = agent
-        .execute("SELECT state FROM GLOSSARY(orders.amount::outlier_profile);")
-        .await
-        .unwrap();
-    assert_eq!(one(&owed), "unassessed", "the debt shows, never a value");
+    assert!(body.contains("\"applicable\":true"), "{body}");
 
-    // The measurement plane runs on the served table; outliers chains on
-    // the profile through ACCEPTS.
+    // The profile measurement still lands its own full body, and the
+    // outlier read serves the landed row at the pin.
     agent
-        .execute(
-            "SELECT profile() FROM orders.amount;\n\
-             SELECT outliers() FROM orders.amount;",
-        )
+        .execute("SELECT profile() FROM orders.amount;")
         .await
         .unwrap();
     let outlier = agent

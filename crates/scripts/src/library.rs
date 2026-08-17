@@ -16,7 +16,7 @@
 /// role by shape (§7e), visible in the extension.
 pub const SCRIPTS: &[(&str, &str)] = &[
     ("profile.sql", include_str!("../functions/profile.sql")),
-    ("outliers.rhai", include_str!("../functions/outliers.rhai")),
+    ("outliers.sql", include_str!("../functions/outliers.sql")),
     ("temporal.rhai", include_str!("../functions/temporal.rhai")),
     (
         "relationships.rhai",

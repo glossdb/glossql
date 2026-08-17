@@ -10,7 +10,7 @@
   },
   "Master_txn_table.Account": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Account"
@@ -18,7 +18,7 @@
   ],
   "Master_txn_table.Amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":29871,\"lower\":-18949.525,\"ratio\":0.036875092,\"upper\":81128.115},\"zscore\":{\"count\":1791,\"ratio\":0.0022109501}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Amount"
@@ -26,7 +26,7 @@
   ],
   "Master_txn_table.Billable": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Billable"
@@ -34,7 +34,7 @@
   ],
   "Master_txn_table.Cleared": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Cleared"
@@ -48,7 +48,7 @@
   },
   "Master_txn_table.Credit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":26644,\"lower\":-18902.02,\"ratio\":0.041596543,\"upper\":32140.38},\"zscore\":{\"count\":64516,\"ratio\":0.10072221}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Credit"
@@ -59,7 +59,7 @@
   },
   "Master_txn_table.Debit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":12426,\"lower\":-8852.245,\"ratio\":0.073298923,\"upper\":64299.315},\"zscore\":{\"count\":597,\"ratio\":0.0035216045}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Debit"
@@ -73,7 +73,7 @@
   },
   "Master_txn_table.Invoiced": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Invoiced"
@@ -90,7 +90,7 @@
   },
   "Master_txn_table.Product_Service": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Product_Service"
@@ -98,7 +98,7 @@
   ],
   "Master_txn_table.Purchase": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Purchase"
@@ -106,7 +106,7 @@
   ],
   "Master_txn_table.Quantity": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-35.0,\"ratio\":0.0,\"upper\":125.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Quantity"
@@ -114,7 +114,7 @@
   ],
   "Master_txn_table.Rate": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-449.355,\"ratio\":0.0,\"upper\":798.525},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Rate"
@@ -122,7 +122,7 @@
   ],
   "Master_txn_table.Sale": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "Master_txn_table.Sale"
@@ -175,7 +175,7 @@
   },
   "customer_table.Balance": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customer_table.Balance"
@@ -225,7 +225,7 @@
   },
   "employee_table.Deleted": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "employee_table.Deleted"
@@ -260,7 +260,7 @@
   },
   "product_service_table.Product_Service": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "product_service_table.Product_Service"
@@ -268,7 +268,7 @@
   ],
   "product_service_table.Product_Service_Type": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "product_service_table.Product_Service_Type"
@@ -279,7 +279,7 @@
   },
   "vendor_table.Balance": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "vendor_table.Balance"

@@ -2,6 +2,9 @@
   "Master_txn_table.Account::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Account::outliers": {
+    "applicable": false
+  },
   "Master_txn_table.Account::profile": {
     "cardinality_ratio": 0.00039873639,
     "distinct": 323,
@@ -110,6 +113,19 @@
   },
   "Master_txn_table.Amount::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Amount::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 29871,
+      "lower": -18949.525,
+      "ratio": 0.036875092,
+      "upper": 81128.115
+    },
+    "zscore": {
+      "count": 1791,
+      "ratio": 0.0022109501
+    }
   },
   "Master_txn_table.Amount::profile": {
     "cardinality_ratio": 0.00013208914,
@@ -232,6 +248,9 @@
   "Master_txn_table.Billable::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Billable::outliers": {
+    "applicable": false
+  },
   "Master_txn_table.Billable::profile": {
     "cardinality_ratio": 1.234478e-6,
     "distinct": 1,
@@ -263,6 +282,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "Master_txn_table.Cleared::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Cleared::outliers": {
     "applicable": false
   },
   "Master_txn_table.Cleared::profile": {
@@ -301,6 +323,19 @@
   },
   "Master_txn_table.Credit::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Credit::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 26644,
+      "lower": -18902.02,
+      "ratio": 0.041596543,
+      "upper": 32140.38
+    },
+    "zscore": {
+      "count": 64516,
+      "ratio": 0.10072221
+    }
   },
   "Master_txn_table.Credit::profile": {
     "cardinality_ratio": 0.00023455082,
@@ -423,6 +458,19 @@
   "Master_txn_table.Debit::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Debit::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 12426,
+      "lower": -8852.245,
+      "ratio": 0.073298923,
+      "upper": 64299.315
+    },
+    "zscore": {
+      "count": 597,
+      "ratio": 0.0035216045
+    }
+  },
   "Master_txn_table.Debit::profile": {
     "cardinality_ratio": 0.00013332362,
     "distinct": 108,
@@ -544,6 +592,9 @@
   "Master_txn_table.Invoiced::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Invoiced::outliers": {
+    "applicable": false
+  },
   "Master_txn_table.Invoiced::profile": {
     "cardinality_ratio": 1.234478e-6,
     "distinct": 1,
@@ -575,6 +626,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "Master_txn_table.Product_Service::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Product_Service::outliers": {
     "applicable": false
   },
   "Master_txn_table.Product_Service::profile": {
@@ -686,6 +740,9 @@
   "Master_txn_table.Purchase::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Purchase::outliers": {
+    "applicable": false
+  },
   "Master_txn_table.Purchase::profile": {
     "cardinality_ratio": 2.468956e-6,
     "distinct": 2,
@@ -722,6 +779,19 @@
   },
   "Master_txn_table.Quantity::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Quantity::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -35.0,
+      "ratio": 0.0,
+      "upper": 125.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
   },
   "Master_txn_table.Quantity::profile": {
     "cardinality_ratio": 0.000088882415,
@@ -844,6 +914,19 @@
   "Master_txn_table.Rate::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Rate::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -449.355,
+      "ratio": 0.0,
+      "upper": 798.525
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "Master_txn_table.Rate::profile": {
     "cardinality_ratio": 0.00016912348,
     "distinct": 137,
@@ -963,6 +1046,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "Master_txn_table.Sale::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Sale::outliers": {
     "applicable": false
   },
   "Master_txn_table.Sale::profile": {
@@ -5489,6 +5575,9 @@
   "customer_table.Balance::behavior_evidence": {
     "applicable": false
   },
+  "customer_table.Balance::outliers": {
+    "applicable": false
+  },
   "customer_table.Balance::profile": {
     "cardinality_ratio": 0.00002,
     "distinct": 1,
@@ -5774,6 +5863,9 @@
   "employee_table.Deleted::behavior_evidence": {
     "applicable": false
   },
+  "employee_table.Deleted::outliers": {
+    "applicable": false
+  },
   "employee_table.Deleted::profile": {
     "cardinality_ratio": 0.00004,
     "distinct": 2,
@@ -5839,6 +5931,9 @@
     "rows": 189
   },
   "product_service_table.Product_Service::behavior_evidence": {
+    "applicable": false
+  },
+  "product_service_table.Product_Service::outliers": {
     "applicable": false
   },
   "product_service_table.Product_Service::profile": {
@@ -5950,6 +6045,9 @@
   "product_service_table.Product_Service_Type::behavior_evidence": {
     "applicable": false
   },
+  "product_service_table.Product_Service_Type::outliers": {
+    "applicable": false
+  },
   "product_service_table.Product_Service_Type::profile": {
     "cardinality_ratio": 0.0037037037,
     "distinct": 1,
@@ -6002,6 +6100,9 @@
     "rows": 270
   },
   "vendor_table.Balance::behavior_evidence": {
+    "applicable": false
+  },
+  "vendor_table.Balance::outliers": {
     "applicable": false
   },
   "vendor_table.Balance::profile": {

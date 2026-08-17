@@ -3,6 +3,19 @@
     "applicable": false,
     "reason": "no period axis: no date column on circuits or one declared hop away"
   },
+  "circuits.alt::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 5,
+      "lower": -425.125,
+      "ratio": 0.067567568,
+      "upper": 759.875
+    },
+    "zscore": {
+      "count": 5,
+      "ratio": 0.067567568
+    }
+  },
   "circuits.alt::profile": {
     "cardinality_ratio": 0.87837838,
     "distinct": 65,
@@ -120,6 +133,19 @@
     "applicable": false,
     "reason": "no period axis: no date column on circuits or one declared hop away"
   },
+  "circuits.circuitId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -38.0,
+      "ratio": 0.0,
+      "upper": 114.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "circuits.circuitId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 77,
@@ -236,6 +262,9 @@
   "circuits.circuitRef::behavior_evidence": {
     "applicable": false
   },
+  "circuits.circuitRef::outliers": {
+    "applicable": false
+  },
   "circuits.circuitRef::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 77,
@@ -343,6 +372,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "circuits.country::behavior_evidence": {
+    "applicable": false
+  },
+  "circuits.country::outliers": {
     "applicable": false
   },
   "circuits.country::profile": {
@@ -454,6 +486,19 @@
   "circuits.lat::behavior_evidence": {
     "applicable": false,
     "reason": "no period axis: no date column on circuits or one declared hop away"
+  },
+  "circuits.lat::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 9,
+      "lower": 11.50515,
+      "ratio": 0.11688312,
+      "upper": 68.23115
+    },
+    "zscore": {
+      "count": 9,
+      "ratio": 0.11688312
+    }
   },
   "circuits.lat::profile": {
     "cardinality_ratio": 1.0,
@@ -572,6 +617,19 @@
     "applicable": false,
     "reason": "no period axis: no date column on circuits or one declared hop away"
   },
+  "circuits.lng::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 27,
+      "lower": -52.358325,
+      "ratio": 0.35064935,
+      "upper": 62.212755
+    },
+    "zscore": {
+      "count": 23,
+      "ratio": 0.2987013
+    }
+  },
   "circuits.lng::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 77,
@@ -688,6 +746,9 @@
   "circuits.location::behavior_evidence": {
     "applicable": false
   },
+  "circuits.location::outliers": {
+    "applicable": false
+  },
   "circuits.location::profile": {
     "cardinality_ratio": 0.97402597,
     "distinct": 75,
@@ -795,6 +856,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "circuits.name::behavior_evidence": {
+    "applicable": false
+  },
+  "circuits.name::outliers": {
     "applicable": false
   },
   "circuits.name::profile": {
@@ -1969,6 +2033,19 @@
       "voted": 270
     }
   },
+  "constructor_results.constructorId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1568,
+      "lower": -64.0,
+      "ratio": 0.1275834,
+      "upper": 120.0
+    },
+    "zscore": {
+      "count": 1654,
+      "ratio": 0.13458096
+    }
+  },
   "constructor_results.constructorId::profile": {
     "cardinality_ratio": 0.014239219,
     "distinct": 175,
@@ -3115,6 +3192,19 @@
       "voted": 797
     }
   },
+  "constructor_results.constructorResultsId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -6144.5,
+      "ratio": 0.0,
+      "upper": 18433.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_results.constructorResultsId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 12290,
@@ -3229,6 +3319,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "constructor_results.date::behavior_evidence": {
+    "applicable": false
+  },
+  "constructor_results.date::outliers": {
     "applicable": false
   },
   "constructor_results.date::profile": {
@@ -4495,6 +4588,19 @@
       "voted": 644
     }
   },
+  "constructor_results.points::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1285,
+      "lower": -6.0,
+      "ratio": 0.10455655,
+      "upper": 10.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_results.points::profile": {
     "cardinality_ratio": 0.004637917,
     "distinct": 57,
@@ -5619,6 +5725,19 @@
       "support": 0.089175134,
       "verdict": "stock",
       "voted": 98
+    }
+  },
+  "constructor_results.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -360.0,
+      "ratio": 0.0,
+      "upper": 1496.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "constructor_results.raceId::profile": {
@@ -6795,6 +6914,19 @@
       "voted": 266
     }
   },
+  "constructor_standings.constructorId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1564,
+      "lower": -70.0,
+      "ratio": 0.11983756,
+      "upper": 130.0
+    },
+    "zscore": {
+      "count": 1835,
+      "ratio": 0.14060225
+    }
+  },
   "constructor_standings.constructorId::profile": {
     "cardinality_ratio": 0.012182974,
     "distinct": 159,
@@ -7927,6 +8059,19 @@
       "voted": 796
     }
   },
+  "constructor_standings.constructorStandingsId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -6525.0,
+      "ratio": 0.0,
+      "upper": 19575.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_standings.constructorStandingsId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 13051,
@@ -8041,6 +8186,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "constructor_standings.date::behavior_evidence": {
+    "applicable": false
+  },
+  "constructor_standings.date::outliers": {
     "applicable": false
   },
   "constructor_standings.date::profile": {
@@ -9297,6 +9445,19 @@
       "voted": 632
     }
   },
+  "constructor_standings.points::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1477,
+      "lower": -46.5,
+      "ratio": 0.1131714,
+      "upper": 77.5
+    },
+    "zscore": {
+      "count": 2547,
+      "ratio": 0.19515746
+    }
+  },
   "constructor_standings.points::profile": {
     "cardinality_ratio": 0.041452762,
     "distinct": 541,
@@ -10411,6 +10572,19 @@
       "voted": 243
     }
   },
+  "constructor_standings.position::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 33,
+      "lower": -5.0,
+      "ratio": 0.0025285419,
+      "upper": 19.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_standings.position::profile": {
     "cardinality_ratio": 0.0016856946,
     "distinct": 22,
@@ -11519,6 +11693,19 @@
       "voted": 40
     }
   },
+  "constructor_standings.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -412.0,
+      "ratio": 0.0,
+      "upper": 1500.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_standings.raceId::profile": {
     "cardinality_ratio": 0.078691288,
     "distinct": 1027,
@@ -12617,6 +12804,19 @@
       "voted": 49
     }
   },
+  "constructor_standings.wins::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 2846,
+      "lower": 0.0,
+      "ratio": 0.21806758,
+      "upper": 0.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructor_standings.wins::profile": {
     "cardinality_ratio": 0.0015324496,
     "distinct": 20,
@@ -12768,6 +12968,19 @@
     "applicable": false,
     "reason": "no period axis: no date column on constructors or one declared hop away"
   },
+  "constructors.constructorId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -105.0,
+      "ratio": 0.0,
+      "upper": 315.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "constructors.constructorId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 211,
@@ -12884,6 +13097,9 @@
   "constructors.constructorRef::behavior_evidence": {
     "applicable": false
   },
+  "constructors.constructorRef::outliers": {
+    "applicable": false
+  },
   "constructors.constructorRef::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 211,
@@ -12993,6 +13209,9 @@
   "constructors.name::behavior_evidence": {
     "applicable": false
   },
+  "constructors.name::outliers": {
+    "applicable": false
+  },
   "constructors.name::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 211,
@@ -13100,6 +13319,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "constructors.nationality::behavior_evidence": {
+    "applicable": false
+  },
+  "constructors.nationality::outliers": {
     "applicable": false
   },
   "constructors.nationality::profile": {
@@ -13219,6 +13441,9 @@
   "drivers.code::behavior_evidence": {
     "applicable": false
   },
+  "drivers.code::outliers": {
+    "applicable": false
+  },
   "drivers.code::profile": {
     "cardinality_ratio": 0.11085181,
     "distinct": 95,
@@ -13326,6 +13551,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "drivers.dob::behavior_evidence": {
+    "applicable": false
+  },
+  "drivers.dob::outliers": {
     "applicable": false
   },
   "drivers.dob::profile": {
@@ -13779,6 +14007,19 @@
       "verdict": "abstain"
     }
   },
+  "drivers.driverId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -428.0,
+      "ratio": 0.0,
+      "upper": 1284.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "drivers.driverId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 857,
@@ -13895,6 +14136,9 @@
   "drivers.driverRef::behavior_evidence": {
     "applicable": false
   },
+  "drivers.driverRef::outliers": {
+    "applicable": false
+  },
   "drivers.driverRef::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 857,
@@ -14002,6 +14246,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "drivers.forename::behavior_evidence": {
+    "applicable": false
+  },
+  "drivers.forename::outliers": {
     "applicable": false
   },
   "drivers.forename::profile": {
@@ -14113,6 +14360,9 @@
   "drivers.nationality::behavior_evidence": {
     "applicable": false
   },
+  "drivers.nationality::outliers": {
+    "applicable": false
+  },
   "drivers.nationality::profile": {
     "cardinality_ratio": 0.049008168,
     "distinct": 42,
@@ -14220,6 +14470,9 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "drivers.surname::behavior_evidence": {
+    "applicable": false
+  },
+  "drivers.surname::outliers": {
     "applicable": false
   },
   "drivers.surname::profile": {
@@ -19803,6 +20056,19 @@
       "voted": 94
     }
   },
+  "qualifying.constructorId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 2015,
+      "lower": -33.0,
+      "ratio": 0.20529801,
+      "upper": 63.0
+    },
+    "zscore": {
+      "count": 2202,
+      "ratio": 0.22435048
+    }
+  },
   "qualifying.constructorId::profile": {
     "cardinality_ratio": 0.004686704,
     "distinct": 46,
@@ -19917,6 +20183,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "qualifying.date::behavior_evidence": {
+    "applicable": false
+  },
+  "qualifying.date::outliers": {
     "applicable": false
   },
   "qualifying.date::profile": {
@@ -21511,6 +21780,19 @@
       "voted": 35
     }
   },
+  "qualifying.driverId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -1186.5,
+      "ratio": 0.0,
+      "upper": 2017.5
+    },
+    "zscore": {
+      "count": 3466,
+      "ratio": 0.35313296
+    }
+  },
   "qualifying.driverId::profile": {
     "cardinality_ratio": 0.017116658,
     "distinct": 168,
@@ -22963,6 +23245,19 @@
       "support": 0.88664446,
       "verdict": "flow",
       "voted": 45
+    }
+  },
+  "qualifying.number::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 694,
+      "lower": -15.5,
+      "ratio": 0.0707081,
+      "upper": 44.5
+    },
+    "zscore": {
+      "count": 647,
+      "ratio": 0.065919511
     }
   },
   "qualifying.number::profile": {
@@ -24419,6 +24714,19 @@
       "voted": 45
     }
   },
+  "qualifying.position::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -10.5,
+      "ratio": 0.0,
+      "upper": 33.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "qualifying.position::profile": {
     "cardinality_ratio": 0.0028527764,
     "distinct": 28,
@@ -25847,6 +26155,19 @@
       "voted": 181
     }
   },
+  "qualifying.qualifyId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -4907.0,
+      "ratio": 0.0,
+      "upper": 14721.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "qualifying.qualifyId::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 9815,
@@ -27257,6 +27578,19 @@
       "voted": 6
     }
   },
+  "qualifying.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": 403.0,
+      "ratio": 0.0,
+      "upper": 1307.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "qualifying.raceId::profile": {
     "cardinality_ratio": 0.04686704,
     "distinct": 460,
@@ -27724,6 +28058,19 @@
       "verdict": "abstain"
     }
   },
+  "races.circuitId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 17,
+      "lower": -29.5,
+      "ratio": 0.015440509,
+      "upper": 70.5
+    },
+    "zscore": {
+      "count": 4,
+      "ratio": 0.0036330609
+    }
+  },
   "races.circuitId::profile": {
     "cardinality_ratio": 0.069936421,
     "distinct": 77,
@@ -27838,6 +28185,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "races.date::behavior_evidence": {
+    "applicable": false
+  },
+  "races.date::outliers": {
     "applicable": false
   },
   "races.date::profile": {
@@ -28092,6 +28442,9 @@
     "span_days": 26860.542
   },
   "races.name::behavior_evidence": {
+    "applicable": false
+  },
+  "races.name::outliers": {
     "applicable": false
   },
   "races.name::profile": {
@@ -28518,6 +28871,19 @@
       "note": "cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)",
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
+    }
+  },
+  "races.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -550.0,
+      "ratio": 0.0,
+      "upper": 1650.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "races.raceId::profile": {
@@ -28953,6 +29319,19 @@
       "verdict": "abstain"
     }
   },
+  "races.round::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -8.0,
+      "ratio": 0.0,
+      "upper": 24.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "races.round::profile": {
     "cardinality_ratio": 0.019981835,
     "distinct": 22,
@@ -29067,6 +29446,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "races.time::behavior_evidence": {
+    "applicable": false
+  },
+  "races.time::outliers": {
     "applicable": false
   },
   "races.time::profile": {
@@ -29493,6 +29875,19 @@
       "note": "cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)",
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
+    }
+  },
+  "races.year::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": 1925.0,
+      "ratio": 0.0,
+      "upper": 2061.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "races.year::profile": {
@@ -31042,6 +31437,19 @@
       "voted": 88
     }
   },
+  "results.constructorId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 3105,
+      "lower": -71.875,
+      "ratio": 0.11905675,
+      "upper": 133.125
+    },
+    "zscore": {
+      "count": 3760,
+      "ratio": 0.14417178
+    }
+  },
   "results.constructorId::profile": {
     "cardinality_ratio": 0.0080521472,
     "distinct": 210,
@@ -31156,6 +31564,9 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "results.date::behavior_evidence": {
+    "applicable": false
+  },
+  "results.date::outliers": {
     "applicable": false
   },
   "results.date::profile": {
@@ -32812,6 +33223,19 @@
       "voted": 82
     }
   },
+  "results.driverId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1915,
+      "lower": -404.5,
+      "ratio": 0.073427914,
+      "upper": 823.5
+    },
+    "zscore": {
+      "count": 69,
+      "ratio": 0.0026457055
+    }
+  },
   "results.driverId::profile": {
     "cardinality_ratio": 0.032860429,
     "distinct": 857,
@@ -34288,6 +34712,19 @@
       "support": 0.11653341,
       "verdict": "flow",
       "voted": 35
+    }
+  },
+  "results.fastestLap::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -1.0,
+      "ratio": 0.0,
+      "upper": 87.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "results.fastestLap::profile": {
@@ -35776,6 +36213,19 @@
       "support": 0.88664446,
       "verdict": "flow",
       "voted": 45
+    }
+  },
+  "results.grid::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -13.0,
+      "ratio": 0.0,
+      "upper": 35.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "results.grid::profile": {
@@ -37274,6 +37724,19 @@
       "voted": 36
     }
   },
+  "results.laps::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 250,
+      "lower": -44.0,
+      "ratio": 0.0095858896,
+      "upper": 132.0
+    },
+    "zscore": {
+      "count": 230,
+      "ratio": 0.0088190184
+    }
+  },
   "results.laps::profile": {
     "cardinality_ratio": 0.006595092,
     "distinct": 172,
@@ -38641,6 +39104,19 @@
       "note": "cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)",
       "reason": "no entity series reconciled: wrong anchor, short series, or dead values",
       "verdict": "abstain"
+    }
+  },
+  "results.milliseconds::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 672,
+      "lower": 3871322.8,
+      "ratio": 0.092689655,
+      "upper": 7941868.8
+    },
+    "zscore": {
+      "count": 595,
+      "ratio": 0.082068966
     }
   },
   "results.milliseconds::profile": {
@@ -40151,6 +40627,19 @@
       "voted": 44
     }
   },
+  "results.number::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 981,
+      "lower": -18.5,
+      "ratio": 0.037623686,
+      "upper": 49.5
+    },
+    "zscore": {
+      "count": 681,
+      "ratio": 0.026117972
+    }
+  },
   "results.number::profile": {
     "cardinality_ratio": 0.0049474572,
     "distinct": 129,
@@ -41625,6 +42114,19 @@
       "support": 0.64890841,
       "verdict": "flow",
       "voted": 637
+    }
+  },
+  "results.points::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 3635,
+      "lower": -3.0,
+      "ratio": 0.13937883,
+      "upper": 5.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "results.points::profile": {
@@ -43129,6 +43631,19 @@
       "support": 0.49787055,
       "verdict": "flow",
       "voted": 180
+    }
+  },
+  "results.position::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 39,
+      "lower": -6.5,
+      "ratio": 0.0025646084,
+      "upper": 21.5
+    },
+    "zscore": {
+      "count": 6,
+      "ratio": 0.00039455514
     }
   },
   "results.position::profile": {
@@ -44637,6 +45152,19 @@
       "support": 0.79675064,
       "verdict": "flow",
       "voted": 42
+    }
+  },
+  "results.positionOrder::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 47,
+      "lower": -12.0,
+      "ratio": 0.0018021472,
+      "upper": 36.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "results.positionOrder::profile": {
@@ -46155,6 +46683,19 @@
       "voted": 117
     }
   },
+  "results.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -480.5,
+      "ratio": 0.0,
+      "upper": 1539.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "results.raceId::profile": {
     "cardinality_ratio": 0.041832822,
     "distinct": 1091,
@@ -47639,6 +48180,19 @@
       "voted": 33
     }
   },
+  "results.rank::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -11.5,
+      "ratio": 0.0,
+      "upper": 32.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "results.rank::profile": {
     "cardinality_ratio": 0.0031924403,
     "distinct": 25,
@@ -49071,6 +49625,19 @@
       "support": 0.38594989,
       "verdict": "flow",
       "voted": 1276
+    }
+  },
+  "results.resultId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -13039.5,
+      "ratio": 0.0,
+      "upper": 39118.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "results.resultId::profile": {
@@ -50561,6 +51128,19 @@
       "voted": 90
     }
   },
+  "results.statusId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 3808,
+      "lower": -18.5,
+      "ratio": 0.14601227,
+      "upper": 33.5
+    },
+    "zscore": {
+      "count": 2870,
+      "ratio": 0.11004601
+    }
+  },
   "results.statusId::profile": {
     "cardinality_ratio": 0.0052530675,
     "distinct": 137,
@@ -50709,6 +51289,9 @@
     "rows": 26080
   },
   "standings.date::behavior_evidence": {
+    "applicable": false
+  },
+  "standings.date::outliers": {
     "applicable": false
   },
   "standings.date::profile": {
@@ -51801,6 +52384,19 @@
       "voted": 80
     }
   },
+  "standings.driverId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -541.5,
+      "ratio": 0.0,
+      "upper": 1126.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "standings.driverId::profile": {
     "cardinality_ratio": 0.024909155,
     "distinct": 850,
@@ -52731,6 +53327,19 @@
       "support": 0.18324229,
       "verdict": "flow",
       "voted": 631
+    }
+  },
+  "standings.driverStandingsId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -17061.5,
+      "ratio": 0.0,
+      "upper": 51184.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "standings.driverStandingsId::profile": {
@@ -53671,6 +54280,19 @@
       "support": 0.38125271,
       "verdict": "stock",
       "voted": 1261
+    }
+  },
+  "standings.points::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 4613,
+      "lower": -15.0,
+      "ratio": 0.13518345,
+      "upper": 25.0
+    },
+    "zscore": {
+      "count": 10286,
+      "ratio": 0.30143008
     }
   },
   "standings.points::profile": {
@@ -54633,6 +55255,19 @@
       "voted": 111
     }
   },
+  "standings.position::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 1863,
+      "lower": -19.0,
+      "ratio": 0.054595006,
+      "upper": 53.0
+    },
+    "zscore": {
+      "count": 1518,
+      "ratio": 0.04448482
+    }
+  },
   "standings.position::profile": {
     "cardinality_ratio": 0.0031649279,
     "distinct": 108,
@@ -55585,6 +56220,19 @@
       "voted": 18
     }
   },
+  "standings.raceId::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 0,
+      "lower": -665.5,
+      "ratio": 0.0,
+      "upper": 1530.5
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
   "standings.raceId::profile": {
     "cardinality_ratio": 0.031971633,
     "distinct": 1091,
@@ -56513,6 +57161,19 @@
       "support": 0.57300142,
       "verdict": "flow",
       "voted": 52
+    }
+  },
+  "standings.wins::outliers": {
+    "applicable": true,
+    "iqr": {
+      "count": 4050,
+      "lower": 0.0,
+      "ratio": 0.1186848,
+      "upper": 0.0
+    },
+    "zscore": {
+      "count": 0,
+      "ratio": 0.0
     }
   },
   "standings.wins::profile": {
