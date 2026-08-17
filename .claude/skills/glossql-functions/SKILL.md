@@ -61,18 +61,16 @@ $$ ACCEPTS (imports) RETURNS ar_settles_in_full;
 - `FOR` scopes to a dataset, or `GLOBAL`.
 - `ACCEPTS` names the aspects whose current values arrive as context —
   settings are context, never call arguments; calls are always bare
-  `f()`. It is also the **invalidation edge**: a new value for an
-  accepted aspect deletes your cached results. The declaration
-  relations `relationships` and `imports` ride the list as edges only —
-  no context entry arrives, you read them through `db`, but a declared
-  edge or a landed table kills the cache dataset-wide.
+  `f()`. Declaration relations never ride the list: a script that wants
+  `relationships` or `imports` reads them through `db` as tables.
 - `RETURNS` names the aspect the output fills, validated against that
   aspect's JSON Schema at extraction.
 - A re-declare supersedes and recompiles. The body cannot contain
   `$$` — it would close the statement early.
 
 The name is the key, workspace-wide: there is one row per name, and a
-re-declare **replaces** it and drops its cached results. Take a shipped
+re-declare **replaces** it — old measurements sit at pins that no longer
+resolve, so the next extraction recomputes. Take a shipped
 name only on purpose: the store holds one body per name, and the
 library's own survives nowhere else in the workspace, so replacing
 `profile` costs the tested one until a rebuild lands it again.
@@ -101,7 +99,7 @@ result, a map that must serialize as JSON.
   the workspace is your boundary.
 
 Two free functions handle stored text: `parse_json(s)` turns a stored
-body (a gloss, a cached value) back into a map and errors on text that
+body (a gloss, a measurement) back into a map and errors on text that
 is not JSON; `canonical_sql(s)` reads SQL as an identity — parse and
 re-render, so whitespace and keyword case collapse while identifiers
 survive. A body the parser cannot read falls back to whitespace
@@ -164,9 +162,9 @@ fact:
 - `#{applicable: false}` — the subject genuinely does not fit; a text
   column has no outliers. Readers stop trying.
 - `#{applicable: false, missing_aspects: ["column_profile"]}` — an
-  accepted aspect's context entry was `()`. Name every missing one:
-  readers run the producers first, and the cached abstention heals by
-  itself when the dependency lands, through the `ACCEPTS` edge.
+  accepted aspect's context entry was `()`. Name every missing one: an
+  abstention naming absent inputs is an answer, never landed, so the
+  next extraction recomputes and heals once the producer has run.
 
 Keep `applicable` in the aspect's `required`; `missing_aspects` rides
 the schema's open remainder.
@@ -205,12 +203,8 @@ library's.
 SELECT outliers() FROM orders.amount;
 ```
 
-First run computes and caches; later selects read the cache. A body
-carrying a `summary` object serves the summary alone — the full body
-reads back through `GLOSSARY(subject::aspect)`, uncapped.
-
-Force recomputation at the WHERE clause's grain:
-
-```glossql
-DELETE FROM cache WHERE function = 'outliers';
-```
+Extraction computes at the read's pin — the data and declarations the
+statement resolved — and lands a `measurements` row; the same pin serves
+it back, and any input moving recomputes. A body carrying a `summary`
+object serves the summary alone — the full body reads back through
+`GLOSSARY(subject::aspect)`, uncapped.

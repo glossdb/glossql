@@ -98,7 +98,7 @@ frame once per state and every tile bound to it shares that one table.
 
 A frame is planned through the same path every other read takes, so
 every door is available inside one — `read.<metric>()` for a grounding,
-`metric_series()` for the cached cube's rows (`dimension = ''` is the
+`metric_series()` for the measured cube's rows (`dimension = ''` is the
 total, `'alternative'` the disclosed rival), and `whatif.<scenario>()`
 for a declared what-if beside the real books:
 

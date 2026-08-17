@@ -22,6 +22,8 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::TableProvider;
 use datafusion::logical_expr::LogicalPlan;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
@@ -34,17 +36,29 @@ use datafusion::sql::sqlparser::parser::Parser;
 use crate::reads::{Shared, served_grounding};
 use crate::session::SessionError;
 
-/// What a statement's doors resolved to. Immutable once built and handed
-/// to a planner that only reads it, so two statements never share it and
-/// there is nothing to lock.
-#[derive(Debug, Default)]
+/// What a statement resolved before planning: the bound dataset's tables
+/// pinned at one snapshot each, every SQL-bodied door as a plan, and
+/// every compute door as a batch. Immutable once built and handed to a
+/// planner that only reads it — planning fetches nothing, computes
+/// nothing, and never re-enters.
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Resolved {
     plans: HashMap<String, Arc<LogicalPlan>>,
+    pins: HashMap<String, Arc<dyn TableProvider>>,
+    batches: HashMap<String, RecordBatch>,
 }
 
 impl Resolved {
     pub(crate) fn plan(&self, key: &str) -> Option<Arc<LogicalPlan>> {
         self.plans.get(key).cloned()
+    }
+
+    pub(crate) fn pin(&self, table: &str) -> Option<Arc<dyn TableProvider>> {
+        self.pins.get(table).cloned()
+    }
+
+    pub(crate) fn batch(&self, key: &str) -> Option<&RecordBatch> {
+        self.batches.get(key)
     }
 }
 
@@ -148,14 +162,50 @@ async fn body_of(shared: &Shared, door: &Door) -> Result<String, SessionError> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Every table factor anywhere in the query, one total traversal.
+fn factors_in(q: &mut Query) -> Vec<TableFactor> {
+    struct Collect(Vec<TableFactor>);
+    impl VisitorMut for Collect {
+        type Break = ();
+        fn pre_visit_table_factor(&mut self, f: &mut TableFactor) -> ControlFlow<()> {
+            if matches!(f, TableFactor::Table { .. }) {
+                self.0.push(f.clone());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut c = Collect(Vec::new());
+    let _ = q.visit(&mut c);
+    c.0
+}
+
+/// Evaluate every compute door the query names — the batches the sync
+/// planner will serve as expansions. Keyed by the factor's own rendering,
+/// which is what the planner sees again.
+async fn compute_batches(
+    shared: &Arc<Shared>,
+    q: &mut Query,
+    resolved: &mut Resolved,
+) -> Result<(), SessionError> {
+    for factor in factors_in(q) {
+        let key = factor.to_string();
+        if resolved.batches.contains_key(&key) {
+            continue;
+        }
+        if let Some(batch) = crate::reads::compute_batch(shared, &factor).await? {
+            resolved.batches.insert(key, batch);
+        }
+    }
+    Ok(())
+}
+
 async fn resolve_door(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
     door: Door,
     path: &mut Vec<String>,
     done: &mut HashSet<String>,
-    out: &mut HashMap<String, Arc<LogicalPlan>>,
+    resolved: &mut Resolved,
 ) -> Result<(), SessionError> {
     let key = door.key();
     if path.iter().any(|p| p == &key) {
@@ -184,7 +234,7 @@ async fn resolve_door(
 
     path.push(key.clone());
     for child in doors_in(&mut body) {
-        Box::pin(resolve_door(shared, ctx, child, path, done, out)).await?;
+        Box::pin(resolve_door(shared, ctx, child, path, done, resolved)).await?;
     }
     path.pop();
 
@@ -192,9 +242,11 @@ async fn resolve_door(
         done.insert(key);
         return Ok(());
     }
-    // Planned with everything it depends on already resolved, so the sync
-    // planner finds each nested door in the map rather than re-entering.
-    let state = crate::reads::state_with(ctx, shared, Resolved { plans: out.clone() });
+    // Planned with everything it depends on already resolved — nested
+    // doors, compute batches and pinned tables all in the map — so the
+    // sync planner finds instead of fetching.
+    Box::pin(compute_batches(shared, &mut body, resolved)).await?;
+    let state = crate::reads::state_with(ctx, shared, resolved.clone());
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(body))));
     let plan = state
         .statement_to_plan(stmt)
@@ -202,11 +254,12 @@ async fn resolve_door(
         .map_err(|e| SessionError::BadSubject(format!("not served: {}: {e}", door.what())))?;
 
     done.insert(key.clone());
-    out.insert(key, Arc::new(plan));
+    resolved.plans.insert(key, Arc::new(plan));
     Ok(())
 }
 
-/// Resolve every SQL-bodied door the statement reaches, transitively.
+/// Resolve everything the statement needs ahead of planning: the pin,
+/// the doors, the compute batches.
 pub(crate) async fn resolve(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
@@ -219,17 +272,17 @@ pub(crate) async fn resolve(
         return Ok(Resolved::default());
     };
     let mut q = (**q).clone();
-    let roots = doors_in(&mut q);
-    if roots.is_empty() {
-        return Ok(Resolved::default());
-    }
-    let mut plans = HashMap::new();
+    let mut resolved = Resolved {
+        pins: shared.statement_pins().await?,
+        ..Resolved::default()
+    };
     let mut done = HashSet::new();
     let mut path = Vec::new();
-    for door in roots {
-        resolve_door(shared, ctx, door, &mut path, &mut done, &mut plans).await?;
+    for door in doors_in(&mut q) {
+        resolve_door(shared, ctx, door, &mut path, &mut done, &mut resolved).await?;
     }
-    Ok(Resolved { plans })
+    compute_batches(shared, &mut q, &mut resolved).await?;
+    Ok(resolved)
 }
 
 /// Resolve the doors inside a body of SQL — for the callers that plan

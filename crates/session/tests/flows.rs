@@ -210,7 +210,7 @@ async fn the_human_slot_outranks_the_agent_slot_in_collapse() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn extraction_computes_once_then_reads_the_cache() {
+async fn extraction_computes_once_then_serves_the_pin() {
     let (session, fake) = agent_session().await;
     run(&session, SETUP).await;
     run(
@@ -228,12 +228,16 @@ async fn extraction_computes_once_then_reads_the_cache() {
     assert_eq!(
         fake.invocations.load(Ordering::SeqCst),
         1,
-        "second run reads the cache"
+        "the second run serves the measurement at the same pin"
     );
 
-    // Re-running is removal (SPEC.md §6): drop this function's cache rows.
-    let outcomes = run(&session, "DELETE FROM cache WHERE function = 'outliers';").await;
-    assert!(matches!(outcomes[0], Outcome::Affected(1)));
+    // Any input moving makes a new pin — a gloss moves the glossary head,
+    // so the next extraction recomputes. No sweep, only a miss.
+    run(
+        &session,
+        r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#,
+    )
+    .await;
     run(&session, "SELECT outliers() FROM fin;").await;
     assert_eq!(fake.invocations.load(Ordering::SeqCst), 2);
 }
@@ -601,7 +605,7 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
         }$$ AS FACT ON TABLE;
         GLOSS journal_balanced ON fin.trial_balance AS $${"outcome": "debits equal credits, exactly", "tolerance": 0.0}$$;
         DECLARE FUNCTION journal_check FOR fin AS $$#{}$$
-          ACCEPTS (imports) RETURNS journal_balanced;
+ RETURNS journal_balanced;
         DECLARE FUNCTION framework_bands FOR fin AS $$#{}$$;
         DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
           DETECTOR framework_bands THRESHOLD 0.5;

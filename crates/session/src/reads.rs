@@ -1,4 +1,4 @@
-//! `GLOSSARY()` / `ATTEST()` and the `glossary` / `cache` relations, planned
+//! `GLOSSARY()` / `ATTEST()` and the store's relations, planned
 //! through DataFusion's `RelationPlanner` seam. The planner sees the raw
 //! `TableFactor` before default planning, so named arguments (`all => true`),
 //! zero-argument sweeps, and pair paths (`a.b <-> c.d`) all decode here —
@@ -59,6 +59,27 @@ impl Shared {
         self.store.lake()
     }
 
+    /// The bound dataset's tables, each pinned at its current snapshot —
+    /// resolved once per statement, so two scans can never straddle a
+    /// landing.
+    pub async fn statement_pins(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>,
+        SessionError,
+    > {
+        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+            return Ok(Default::default());
+        };
+        Ok(self
+            .lake()
+            .pin_dataset(&dataset)
+            .await?
+            .into_iter()
+            .map(|p| (p.name, p.provider))
+            .collect())
+    }
+
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
@@ -83,6 +104,7 @@ impl Shared {
             }
             ctx.universe.push(table);
         }
+        ctx.pin = self.store.pin(&dataset, &ctx.snapshots).await?;
         Ok(ctx)
     }
 }
@@ -97,15 +119,18 @@ impl SqlDoor for DeniedDoor {
     }
 }
 
-/// Detector freshness at read (project lead, 2026-08-04): a verdict missing
-/// or older than the newest slot write recomputes here, is cached like any
-/// function result, and `DELETE FROM cache` still forces it.
-pub(crate) async fn ensure_verdicts(
+/// Detector verdicts, computed at read (SPEC.md §7.2) and never stored
+/// (ruled 2026-08-16). Keyed by the witness, not the detector alone: one
+/// detector serving two witnesses answers for each, from its own slots
+/// against its own threshold (defect found 2026-08-06).
+pub(crate) async fn verdicts(
     shared: &Shared,
+    ctx: &ReadContext,
     dataset: &str,
     scope: &Scope,
     aspect: Option<&str>,
-) -> Result<(), SessionError> {
+) -> Result<glossql_glossary::Verdicts, SessionError> {
+    let mut out = glossql_glossary::Verdicts::default();
     for w in shared.store.witnesses_all().await? {
         if let Some(a) = aspect
             && w.aspect != a
@@ -117,28 +142,11 @@ pub(crate) async fn ensure_verdicts(
         };
         let slots = shared
             .store
-            .raw_read(dataset, scope, Some(&w.aspect))
+            .raw_read(dataset, scope, Some(&w.aspect), &ctx.pin)
             .await?;
-        let mut newest: std::collections::BTreeMap<&str, &str> = Default::default();
-        for s in &slots {
-            let t = newest.entry(s.subject.as_str()).or_insert(&s.written_at);
-            if s.written_at.as_str() > *t {
-                *t = &s.written_at;
-            }
-        }
-        for (subject, newest) in newest {
-            // Keyed by the witness, not by the detector alone: the same
-            // detector serving `role` and `behavior` computes a verdict for
-            // each, from different slots against a different threshold
-            // (defect found 2026-08-06 — one row was answering for both).
-            let fresh = shared
-                .store
-                .cache_get(dataset, subject, &detector, Some(&w.name))
-                .await?
-                .is_some_and(|c| c.computed_at.as_str() >= newest);
-            if fresh {
-                continue;
-            }
+        let subjects: std::collections::BTreeSet<&str> =
+            slots.iter().map(|s| s.subject.as_str()).collect();
+        for subject in subjects {
             let function = shared
                 .store
                 .function(&detector, Some(dataset))
@@ -176,32 +184,30 @@ pub(crate) async fn ensure_verdicts(
                     detail,
                 }
             })?;
-            let snapshot = match glossary_table_of(subject) {
-                Some(table) => shared.lake().snapshot_id(dataset, table).await?,
-                None => None,
+            let missing = |what: &str| {
+                SessionError::Runtime(format!("`{detector}` output has no {what}"))
             };
-            shared
-                .store
-                .cache_put(
-                    dataset,
-                    subject,
-                    &detector,
-                    Some(&w.name),
-                    &output.to_string(),
-                    snapshot,
-                )
-                .await?;
+            out.entry((subject.to_string(), w.aspect.clone()))
+                .or_default()
+                .push(glossql_glossary::Verdict {
+                    witness: w.name.clone(),
+                    band: output
+                        .pointer("/band")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| missing("band"))?
+                        .to_string(),
+                    score: output
+                        .pointer("/score")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| missing("score"))?,
+                    threshold: w.threshold,
+                    computed_at: chrono::Utc::now()
+                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .to_string(),
+                });
         }
     }
-    Ok(())
-}
-
-/// The subject's table: its first path segment; pair paths have none.
-fn glossary_table_of(subject: &str) -> Option<&str> {
-    if subject.contains(' ') {
-        return None;
-    }
-    subject.split('.').next()
+    Ok(out)
 }
 
 #[derive(Debug)]
@@ -269,29 +275,15 @@ impl RelationPlanner for GlossqlReads {
             }
             return self.planned(&format!("read.{aspect}"), alias.clone());
         }
-        // `whatif.<scenario>()` — the scenario door (ruled 2026-08-11,
-        // fixture 19): one operation-named prefix beside `read.`, serving
-        // a declared scenario as bands over recipe replay. Computed at
-        // plan time behind the cache, exactly as detector verdicts are.
-        if name.0.len() == 2
-            && name.0[0]
-                .as_ident()
-                .is_some_and(|i| i.value.eq_ignore_ascii_case("whatif"))
-        {
-            let (Some(scenario), Some(a)) = (name.0[1].as_ident().map(|i| i.value.clone()), args)
-            else {
-                return Ok(RelationPlanning::Original(Box::new(relation)));
-            };
-            if !a.args.is_empty() {
-                return Err(DataFusionError::Plan(format!(
-                    "whatif.{scenario}() takes no arguments — the scenario body carries the \
-                     overrides (fixture 19)"
-                )));
-            }
-            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario))?;
-            let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+        // A compute door the pre-pass evaluated — `whatif.<x>()`,
+        // `misfit.<x>()`, `glossary(...)`, `attest(...)`,
+        // `metric_series()`, the store's relations. Keyed by the factor's
+        // own rendering, which is what arrives here again: a lookup —
+        // nothing computes, fetches or blocks during planning.
+        if let Some(batch) = self.resolved.batch(&relation.to_string()) {
+            let provider = MemTable::try_new(batch.schema(), vec![vec![batch.clone()]])?;
             let plan = LogicalPlanBuilder::scan(
-                format!("whatif.{scenario}()"),
+                display_name(&relation),
                 provider_as_source(Arc::new(provider)),
                 None,
             )?
@@ -301,109 +293,124 @@ impl RelationPlanner for GlossqlReads {
                 alias.clone(),
             ))));
         }
-        // `misfit.<frame>()` — the ranking door (ruled 2026-08-11,
-        // fixture 20): a declared sample frame served back with a
-        // per-row misfit score from the density kernel. Computed at
-        // plan time like the other doors; never cached — the ranking
-        // is ephemeral by design, the judge's gloss is the record.
-        if name.0.len() == 2
-            && name.0[0]
-                .as_ident()
-                .is_some_and(|i| i.value.eq_ignore_ascii_case("misfit"))
+        // A shipped read (`crates/session/reads/*.sql`): a bare relation
+        // whose body is SQL, expanded through the same path a served
+        // grounding takes. A name we ship shadows a workspace table of
+        // that name; the shipped names are the reserved surface, kept few
+        // and specific.
+        if let [part] = name.0.as_slice()
+            && let Some(ident) = part.as_ident()
+            && args.is_none()
+            && crate::library::read_sql(&ident.value.to_lowercase()).is_some()
         {
-            let (Some(frame), Some(a)) = (name.0[1].as_ident().map(|i| i.value.clone()), args)
-            else {
-                return Ok(RelationPlanning::Original(Box::new(relation)));
-            };
-            if !a.args.is_empty() {
-                return Err(DataFusionError::Plan(format!(
-                    "misfit.{frame}() takes no arguments — the frame is the aspect's \
-                     grounding (fixture 20)"
-                )));
-            }
-            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame))?;
-            let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
-            let plan = LogicalPlanBuilder::scan(
-                format!("misfit.{frame}()"),
-                provider_as_source(Arc::new(provider)),
-                None,
-            )?
-            .build()?;
-            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
-                plan,
-                alias.clone(),
-            ))));
+            let key = format!("read:{}", ident.value.to_lowercase());
+            return self.planned(&key, alias.clone());
         }
-        if name.0.len() != 1 {
-            return Ok(RelationPlanning::Original(Box::new(relation)));
-        }
-        let Some(fname) = name.0[0].as_ident().map(|i| i.value.to_lowercase()) else {
-            return Ok(RelationPlanning::Original(Box::new(relation)));
-        };
-
-        let batch = match (fname.as_str(), args) {
-            ("glossary", Some(a)) => self.run(glossary_read(&self.shared, &a.args))?,
-            ("attest", Some(a)) => self.run(attest_read(&self.shared, &a.args))?,
-            // `metric_series()` — the cube read (2026-08-13): the cached
-            // `metric_cube` measurement flattened to long rows, so a
-            // static frame slices any metric with plain value filters.
-            ("metric_series", Some(a)) => {
-                if !a.args.is_empty() {
-                    return Err(DataFusionError::Plan(
-                        "metric_series() takes no arguments — filters ride WHERE".into(),
-                    ));
+        // A data table of the bound dataset, pinned at the statement's
+        // snapshot — bare or dataset-qualified. Another dataset's tables
+        // fall through to the live provider.
+        let pinned = match name.0.as_slice() {
+            [t] if args.is_none() => t.as_ident().and_then(|i| self.resolved.pin(&i.value)),
+            [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
+                (Some(d), Some(t))
+                    if self.shared.dataset.read().expect("state lock").as_deref()
+                        == Some(d.value.as_str()) =>
+                {
+                    self.resolved.pin(&t.value)
                 }
-                self.run(metric_series_read(&self.shared))?
-            }
-            // The store's relations, readable as plain tables; snapshot at
-            // plan time, like every other read here. Which names qualify
-            // lives in one place: the store's RELATIONS table.
-            (name, None) if glossql_glossary::relation_columns(name).is_some() => {
-                let table = fname.clone();
-                self.run(async {
-                    let rows = self.shared.store.relation_rows(&table).await?;
-                    Ok(relation_batch(&table, rows))
-                })?
-            }
-            // A shipped read (`crates/session/reads/*.sql`): a bare
-            // relation whose body is SQL, expanded through the same
-            // path a served grounding takes. Checked last, and a name
-            // we do not ship falls through untouched — but a name we
-            // do ship shadows a workspace table of that name, exactly
-            // as the store's relations already do. The shipped names
-            // are the reserved surface; keep them few and specific.
-            (name, None) => match crate::library::read_sql(name) {
-                Some(_) => return self.planned(&format!("read:{fname}"), alias.clone()),
-                None => return Ok(RelationPlanning::Original(Box::new(relation))),
+                _ => None,
             },
-            _ => return Ok(RelationPlanning::Original(Box::new(relation))),
+            _ => None,
         };
+        if let Some(provider) = pinned {
+            let plan =
+                LogicalPlanBuilder::scan(display_name(&relation), provider_as_source(provider), None)?
+                    .build()?;
+            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                plan,
+                alias.clone(),
+            ))));
+        }
+        Ok(RelationPlanning::Original(Box::new(relation)))
+    }
+}
 
-        let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
-        let plan = LogicalPlanBuilder::scan(
-            format!("{fname}()"),
-            provider_as_source(Arc::new(provider)),
-            None,
-        )?
-        .build()?;
-        Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
-            plan,
-            alias.clone(),
-        ))))
+/// The scan's display name: the factor without its alias, which rides
+/// `PlannedRelation` instead.
+fn display_name(factor: &TableFactor) -> String {
+    match factor {
+        TableFactor::Table {
+            name, args: None, ..
+        } => name.to_string(),
+        TableFactor::Table { name, .. } => format!("{name}()"),
+        other => other.to_string(),
+    }
+}
+
+/// Evaluate one compute door ahead of planning — the async half behind
+/// the planner's lookup. `None` for anything that is not a compute door.
+pub(crate) async fn compute_batch(
+    shared: &Arc<Shared>,
+    factor: &TableFactor,
+) -> Result<Option<RecordBatch>, SessionError> {
+    let TableFactor::Table { name, args, .. } = factor else {
+        return Ok(None);
+    };
+    if let [prefix, door] = name.0.as_slice()
+        && let (Some(prefix), Some(door)) = (prefix.as_ident(), door.as_ident())
+    {
+        if prefix.value.eq_ignore_ascii_case("whatif") {
+            let Some(a) = args else { return Ok(None) };
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(format!(
+                    "whatif.{}() takes no arguments — the scenario body carries the \
+                     overrides (fixture 19)",
+                    door.value
+                )));
+            }
+            return Ok(Some(Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?));
+        }
+        if prefix.value.eq_ignore_ascii_case("misfit") {
+            let Some(a) = args else { return Ok(None) };
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(format!(
+                    "misfit.{}() takes no arguments — the frame is the aspect's \
+                     grounding (fixture 20)",
+                    door.value
+                )));
+            }
+            return Ok(Some(Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?));
+        }
+        return Ok(None);
+    }
+    let [part] = name.0.as_slice() else {
+        return Ok(None);
+    };
+    let Some(fname) = part.as_ident().map(|i| i.value.to_lowercase()) else {
+        return Ok(None);
+    };
+    match (fname.as_str(), args) {
+        ("glossary", Some(a)) => Ok(Some(glossary_read(shared, &a.args).await?)),
+        ("attest", Some(a)) => Ok(Some(attest_read(shared, &a.args).await?)),
+        ("metric_series", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "metric_series() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some(metric_series_read(shared).await?))
+        }
+        // The store's relations, readable as plain tables. Which names
+        // qualify lives in one place: the store's RELATIONS table.
+        (name, None) if glossql_glossary::relation_columns(name).is_some() => {
+            let rows = shared.store.relation_rows(&fname).await?;
+            Ok(Some(relation_batch(&fname, rows)))
+        }
+        _ => Ok(None),
     }
 }
 
 impl GlossqlReads {
-    /// Planning is sync; the store is async. Callers run inside the session's
-    /// multi-thread runtime, so blocking in place is safe.
-    fn run(
-        &self,
-        fut: impl Future<Output = Result<RecordBatch, SessionError>>,
-    ) -> DFResult<RecordBatch> {
-        tokio::task::block_in_place(|| self.shared.handle.block_on(fut))
-            .map_err(|e| DataFusionError::External(Box::new(e)))
-    }
-
     /// A door whose body is SQL: the pre-pass planned it before the
     /// planner ran, so this is a lookup. Nothing here fetches, blocks or
     /// re-enters — which is why there is no expansion stack any more.
@@ -446,15 +453,11 @@ pub(crate) async fn served_grounding(shared: &Shared, aspect: &str) -> Result<St
         )));
     }
     let scope = Scope::Subject(dataset.clone());
-    ensure_verdicts(shared, &dataset, &scope, Some(aspect)).await?;
+    let ctx = shared.read_context().await?;
+    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(aspect)).await?;
     let rows = shared
         .store
-        .collapsed_read(
-            &dataset,
-            &scope,
-            Some(aspect),
-            &shared.read_context().await?,
-        )
+        .collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts)
         .await?;
     let row = rows
         .into_iter()
@@ -490,16 +493,20 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     let (subject, all) = split_args(args, true)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let aspect = aspect.as_deref();
+    let ctx = shared.read_context().await?;
     if all {
         Ok(raw_batch(
-            shared.store.raw_read(&dataset, &scope, aspect).await?,
+            shared
+                .store
+                .raw_read(&dataset, &scope, aspect, &ctx.pin)
+                .await?,
         ))
     } else {
-        ensure_verdicts(shared, &dataset, &scope, aspect).await?;
+        let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect).await?;
         Ok(collapsed_batch(
             shared
                 .store
-                .collapsed_read(&dataset, &scope, aspect, &shared.read_context().await?)
+                .collapsed_read(&dataset, &scope, aspect, &ctx, &verdicts)
                 .await?,
         ))
     }
@@ -508,10 +515,10 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 /// The cube flattened: `(metric, dimension, member, period, value)`.
 /// Dimension `''` is the monthly total, `'alternative'` the disclosed
 /// rival reading, anything else a served dimension column with its
-/// member in `member`. Cached-only by design — an empty relation means
-/// the measurement has not run (`SELECT metric_cube() FROM <dataset>`),
-/// the same honesty the bands tile keeps; nothing computes at page
-/// load.
+/// member in `member`. Served from the `measurements` relation at the
+/// current pin — an empty relation means the cube has not been measured
+/// at this pin (`SELECT metric_cube() FROM <dataset>` lands it), the
+/// same honesty the bands tile keeps; nothing computes at page load.
 async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError> {
     let dataset = shared
         .dataset
@@ -519,14 +526,15 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         .expect("state lock")
         .clone()
         .ok_or(SessionError::NoDataset)?;
+    let ctx = shared.read_context().await?;
     let mut rows: Vec<(String, String, String, String, f64)> = Vec::new();
-    if let Some(cached) = shared
+    if let Some(measured) = shared
         .store
-        .cache_get(&dataset, &dataset, "metric_cube", None)
+        .measurement_get(&dataset, &dataset, "metric_cube", &ctx.pin)
         .await?
     {
-        let body: Value = serde_json::from_str(&cached.body).map_err(|e| {
-            SessionError::BadSubject(format!("metric_series(): the cached cube is not JSON: {e}"))
+        let body: Value = serde_json::from_str(&measured.body).map_err(|e| {
+            SessionError::BadSubject(format!("metric_series(): the measured cube is not JSON: {e}"))
         })?;
         for m in body["metrics"].as_array().into_iter().flatten() {
             let Some(metric) = m["metric"].as_str() else {
@@ -581,13 +589,25 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
     let (subject, _) = split_args(args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
-    ensure_verdicts(shared, &dataset, &scope, aspect.as_deref()).await?;
-    Ok(attest_batch(
-        shared
-            .store
-            .attest_read(&dataset, &scope, aspect.as_deref())
-            .await?,
-    ))
+    let ctx = shared.read_context().await?;
+    let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect.as_deref()).await?;
+    let mut rows: Vec<AttestRow> = verdicts
+        .into_iter()
+        .flat_map(|((subject, aspect), vs)| {
+            vs.into_iter().map(move |v| AttestRow {
+                subject: subject.clone(),
+                aspect: aspect.clone(),
+                witness: v.witness,
+                band: v.band,
+                score: v.score,
+                computed_at: v.computed_at,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        (&a.subject, &a.aspect, &a.witness).cmp(&(&b.subject, &b.aspect, &b.witness))
+    });
+    Ok(attest_batch(rows))
 }
 
 /// Split a read's argument list into (optional subject, `all` flag).
@@ -866,13 +886,14 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
     )
 }
 
-/// What an extraction statement returns: one row per call, served from the
-/// cache (whether this run computed it or a previous one did).
+/// What an extraction statement returns: one row per call, served from
+/// the measurement at the read's pin (whether this run landed it or an
+/// earlier one did).
 /// Extraction serves the function-authored `summary` when the body
 /// carries one (ruled 2026-08-14: metric_cube's 54 KB body was
 /// write-only through the door, and 65 profiles pushed their whole
 /// bodies through the agent while warming). The full body stays in
-/// the cache, read back uncapped via `GLOSSARY(subject::aspect)`.
+/// the measurement, read back uncapped via `GLOSSARY(subject::aspect)`.
 fn served_body(body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -882,7 +903,7 @@ fn served_body(body: &str) -> String {
         .unwrap_or_else(|| body.to_string())
 }
 
-pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::CacheRow>) -> RecordBatch {
+pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::MeasurementRow>) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         utf8("function"),
         utf8("subject"),

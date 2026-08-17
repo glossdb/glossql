@@ -1,4 +1,4 @@
-//! The glossary store — declarations, gloss rows, the extraction cache, and
+//! The glossary store — declarations, gloss rows, pin-keyed measurements, and
 //! the read shapes behind `GLOSSARY()` / `ATTEST()` (SPEC.md §5–§7).
 //!
 //! Relational by decision (`reports/2026-08-03-poc-substrate.md`): SQLite in
@@ -19,9 +19,10 @@ pub use glossql_catalog::{Lake, Relations, Row};
 pub use rules::{admit_grain, grain_of};
 pub use store::{
     BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, ReadContext,
-    Relation, Scope, Store, accepts_relation, relation_columns,
+    Pin, Relation, Scope, Store, relation_columns,
 };
 pub use types::{
-    Actor, ActorKind, AttestRow, CacheRow, CollapsedRow, Error, FunctionRow, RawRow,
+    Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, MeasurementRow,
+    RawRow, Verdict, Verdicts,
     RecipeAdmission, RecipeRow, Result, WitnessRow,
 };

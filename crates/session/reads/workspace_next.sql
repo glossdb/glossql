@@ -70,9 +70,9 @@ counts AS (
          (SELECT count(*) FROM aspects) AS n_aspects,
          (SELECT count(*) FROM glossary) AS n_claims,
          (SELECT n FROM asked) AS open_claims,
+         -- A function is never "open": it is called, and computes when a
+         -- read needs it (ruled 2026-08-16) — so this surface owes 0.
          (SELECT count(*) FROM functions) AS n_functions,
-         (SELECT count(*) FROM functions f
-          WHERE NOT EXISTS (SELECT 1 FROM cache c WHERE c.function = f.name)) AS open_functions,
          -- A sample frame is a QUERY aspect too, so it counted as a
          -- metric here until the two doors got their own surfaces
          -- (2026-08-15). Narrowed by exclusion, not by requiring
@@ -125,7 +125,7 @@ SELECT s.surface AS surface,
        CASE s.surface
          WHEN 'tables' THEN c.open_tables
          WHEN 'claims' THEN c.open_claims
-         WHEN 'functions' THEN c.open_functions
+         WHEN 'functions' THEN 0
          WHEN 'metrics' THEN c.open_metrics
          WHEN 'scenarios' THEN c.open_scenarios
          WHEN 'samples' THEN c.open_samples

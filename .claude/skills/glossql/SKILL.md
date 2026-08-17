@@ -56,8 +56,7 @@ calls: the server keeps one session per actor.
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
 | `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$rhai$$ [ACCEPTS (…)] [RETURNS aspect];` | register a script — the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) | §6 |
-| `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
-| `DELETE FROM cache WHERE …;` | force recomputation at the WHERE clause's grain | §6 |
+| `SELECT f() FROM orders.amount;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication | §7.1 |
 | `SELECT … FROM ATTEST(subject \| fin::aspect);` | bands and scores; sweeps are WHERE clauses | §7.2 |
 
@@ -78,10 +77,10 @@ witnesses) are declared at boot; read them back before declaring
 anything.
 
 - `SELECT * FROM glossary` / `aspects` / `witnesses` / `functions` /
-  `cache` / `imports` / `relationships` — the store's relations as
-  plain tables (who said what; the declared vocabulary and its
-  speaker gates; what is computed; source rows vs landed rows; the
-  declared join edges).
+  `measurements` / `imports` / `relationships` — the store's relations
+  as plain tables (who said what; the declared vocabulary and its
+  speaker gates; what was measured at which pin; source rows vs landed
+  rows; the declared join edges).
 - `GLOSSARY(subject)` — the collapsed read, columns
   `(subject, aspect, value, band, score, state)` with `state` in
   `current | stale | contested | unassessed`; a contested value is
@@ -220,9 +219,9 @@ Then close what owes an act, in the same session:
   until then the ruling keeps the question closed for you both. Keep
   the key and rewrite the prose as freely as the correction requires
   — the join is on the key alone. **Fold in every standing ruling
-  before re-reading the cube or the walk** — each grounding write
-  stales both derived caches, so one batch of fold-ins then one
-  recompute, never a recompute per ruling. Read the ruling notes as
+  before re-reading the cube or the walk** — each grounding write moves
+  the pin, so one batch of fold-ins then one recompute, never a
+  recompute per ruling. Read the ruling notes as
   you fold: a note naming a sibling aspect ("differs from … by
   design", or a slip re-ruled) is the human's cross-aspect judgment —
   carry it into the grounding's assumption text.

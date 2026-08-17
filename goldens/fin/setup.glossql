@@ -60,7 +60,7 @@ DECLARE FUNCTION ap_ties_check FOR fin AS $$
     "outcome": "measured: the payables grounding against the ledger balance, per month",
     "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 1.0 }
   }
-$$ ACCEPTS (imports, glossary) RETURNS ap_ties_to_ledger;
+$$ RETURNS ap_ties_to_ledger;
 DECLARE FUNCTION ar_ties_check FOR fin AS $$
   let m = db.query(`WITH oi AS (SELECT date AS d, sum(value) AS ar FROM read.accounts_receivable() GROUP BY 1),
                          gl AS (SELECT period_start AS d, sum(ending_balance) AS gl FROM account_balances
@@ -72,7 +72,7 @@ DECLARE FUNCTION ar_ties_check FOR fin AS $$
     "outcome": "measured: the receivables grounding against the ledger balance, per month",
     "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 1.0 }
   }
-$$ ACCEPTS (imports, glossary) RETURNS ar_ties_to_ledger;
+$$ RETURNS ar_ties_to_ledger;
 DECLARE FUNCTION journal_balanced_check FOR fin AS $$
   let m = db.query(`SELECT count(*) AS n, count(*) FILTER (WHERE abs(d - c) > 0.005) AS bad
                     FROM (SELECT entry_id, sum(debit) AS d, sum(credit) AS c
@@ -82,7 +82,7 @@ DECLARE FUNCTION journal_balanced_check FOR fin AS $$
     "outcome": "measured: per-entry debits against credits, tolerance 0.005 for float noise",
     "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 0.0 }
   }
-$$ ACCEPTS (imports) RETURNS journal_balanced;
+$$ RETURNS journal_balanced;
 DECLARE WITNESS ap_ties_w ON ap_ties_to_ledger BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0;
 DECLARE WITNESS ar_ties_w ON ar_ties_to_ledger BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0;
 DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0;

@@ -49,16 +49,12 @@ pub enum Error {
         grain: &'static str,
         declared: String,
     },
-    #[error("statement targets `{0}` — only the glossary and cache relations accept forwarded SQL")]
+    #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(
         "forwarded delete carries a `{char}` outside a quoted literal — one statement is forwarded, never a sequence"
     )]
     ForwardUnsafe { char: char },
-    #[error(
-        "aspect `{name}` has {values} cached function value(s) under it — delete them before re-declaring it differently"
-    )]
-    AspectValued { name: String, values: i64 },
     #[error(
         "function `{function}` both ACCEPTS and RETURNS `{aspect}` — a function cannot be its own input"
     )]
@@ -156,15 +152,31 @@ pub struct AttestRow {
     pub computed_at: String,
 }
 
-/// A cached extraction result (SPEC.md §6): one row per (subject,
-/// function); re-running is `DELETE FROM cache WHERE …` and selecting again.
+/// A measurement served from the `measurements` relation: one function's
+/// output at one pin.
 #[derive(Debug, Clone)]
-pub struct CacheRow {
+pub struct MeasurementRow {
     pub subject: String,
     pub function: String,
     pub body: String,
     pub computed_at: String,
 }
+
+/// One witness's verdict over one subject, computed at read and never
+/// stored (ruled 2026-08-16). The collapse withholds when a score
+/// crosses its own witness's threshold — never a neighbour's.
+#[derive(Debug, Clone)]
+pub struct Verdict {
+    pub witness: String,
+    pub band: String,
+    pub score: f64,
+    pub threshold: Option<f64>,
+    pub computed_at: String,
+}
+
+/// Verdicts keyed (subject, aspect) — the session computes them (it
+/// holds the script runtime), the collapse consumes them.
+pub type Verdicts = std::collections::HashMap<(String, String), Vec<Verdict>>;
 
 /// A declared function (SPEC.md §6), as the session's extraction executor
 /// needs it.

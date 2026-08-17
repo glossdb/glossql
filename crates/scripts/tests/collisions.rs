@@ -42,7 +42,6 @@ DECLARE ASPECT grounding_collisions WITH $${
                  "collisions": {"type": "array"}}
 }$$ AS MEASUREMENT ON DATASET;
 DECLARE FUNCTION detect_grounding_collisions FOR fin AS $$grounding_collisions.rhai$$
-  ACCEPTS (glossary)
   RETURNS grounding_collisions;
 DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;
 DECLARE ASPECT turnover WITH $${"title": "Turnover"}$$ AS QUERY ON DATASET;

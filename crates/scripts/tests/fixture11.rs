@@ -253,25 +253,33 @@ async fn fixture_11_with_real_scripts() {
     // An agent using functions wildly: outliers before its ACCEPTS
     // dependency exists. The abstention names what to produce first —
     // "run the dependency" is a different fact from "never applicable" —
-    // and the profile's landing heals it through the declared edge.
-    agent
+    // and it is an answer, never landed: the glossary discloses the
+    // debt, and the next extraction recomputes once the producer ran.
+    let early = agent
         .execute("SELECT outliers() FROM orders.amount;")
         .await
         .unwrap();
-    let early = agent
-        .execute("SELECT value FROM GLOSSARY(orders.amount::outlier_profile);")
+    let Some(Outcome::Rows(batches)) = early.last() else {
+        panic!("extraction serves rows")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let body = batch
+        .column(batch.schema().index_of("body").unwrap())
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap()
+        .value(0)
+        .to_string();
+    assert!(body.contains("\"applicable\":false"), "{body}");
+    assert!(
+        body.contains("\"missing_aspects\":[\"column_profile\"]"),
+        "{body}"
+    );
+    let owed = agent
+        .execute("SELECT state FROM GLOSSARY(orders.amount::outlier_profile);")
         .await
         .unwrap();
-    assert!(
-        one(&early).contains("\"applicable\":false"),
-        "{}",
-        one(&early)
-    );
-    assert!(
-        one(&early).contains("\"missing_aspects\":[\"column_profile\"]"),
-        "{}",
-        one(&early)
-    );
+    assert_eq!(one(&owed), "unassessed", "the debt shows, never a value");
 
     // The measurement plane runs on the served table; outliers chains on
     // the profile through ACCEPTS.
@@ -322,20 +330,21 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert!(one(&na).contains("\"applicable\":false"), "{}", one(&na));
 
-    // The ACCEPTS edge is the one declared invalidation: a fresh profile
-    // kills the outlier cache.
+    // Same pin, same answer: a repeated extraction serves the landed
+    // measurement — nothing recomputes, nothing sweeps. Any input moving
+    // makes a new pin, and that is the whole invalidation story.
     agent
+        .execute("SELECT profile() FROM orders.amount;")
+        .await
+        .unwrap();
+    let landed = agent
         .execute(
-            "DELETE FROM cache WHERE function = 'profile';\n\
-             SELECT profile() FROM orders.amount;",
+            "SELECT count(*) FROM measurements \
+             WHERE function = 'profile' AND subject = 'orders.amount';",
         )
         .await
         .unwrap();
-    let stale = agent
-        .execute("SELECT count(*) FROM cache WHERE function = 'outliers';")
-        .await
-        .unwrap();
-    assert_eq!(one(&stale), "0", "a re-profile invalidated its dependent");
+    assert_eq!(one(&landed), "1", "a hit at the pin lands nothing new");
 
     // Semantic glosses and the detector at read: one slot green, a human
     // disagreement turns it red and the collapsed value withholds.

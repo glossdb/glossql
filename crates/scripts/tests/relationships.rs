@@ -180,8 +180,21 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         .unwrap());
     assert_eq!(right, "customers.id");
 
-    // The reject was not declared — and not erased: it stays visible
-    // in the measurement.
+    // The declaration moved the pin — a declared edge is an input, so
+    // the measurement is owed again — and the recompute still carries
+    // the reject: not declared, and not erased.
+    let gone = one(&session
+        .execute(
+            "SELECT count(*) FROM GLOSSARY(fin::relationship_candidates) \
+             WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(gone, "0", "the old pin's row is unreachable");
+    session
+        .execute("SELECT detect_relationships() FROM fin;")
+        .await
+        .unwrap();
     let after = one(&session
         .execute(
             "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",

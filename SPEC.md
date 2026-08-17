@@ -86,12 +86,11 @@ were dropped is the author's question, answered at the source.
 
 Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
-re-lands (ruled 2026-08-06): the old landing and its cached evidence are
-dropped, the table lands fresh, and the import history keeps both
-landings. Glosses stay — no machinery deletes knowledge; their snapshot
-ids disclose their age against the fresh landing. `DROP TABLE` removes a
-table whole (the lake table, the recipe, the cached evidence, the import
-records) and refuses while the table holds data or glosses.
+re-lands (ruled 2026-08-06): the table lands fresh, and its record —
+the recipe it carries, the landings it holds — starts over with it.
+Glosses stay — no machinery deletes knowledge; their snapshot ids
+disclose their age against the fresh landing. `DROP TABLE` drops the
+table, and refuses while it holds data or glosses.
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`EXPLAIN` only over a
 query), `DROP TABLE` routes to the rules above, and everything else that
@@ -180,9 +179,9 @@ The kind fixes the aspect's role:
   once anything is glossed on the aspect and so can never be superseded,
   contested or outranked (ruled 2026-08-12).
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
-  relationship_candidates). Never glossed: its value is the bound function's
-  cached JSON output (§6, §7), served by `GLOSSARY()` beside facts and
-  groundings, from the `cache` relation (§6).
+  relationship_candidates). Never glossed: its value is the bound
+  function's output (§6, §7), computed when a read needs it and served by
+  `GLOSSARY()` beside facts and groundings.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
 is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
@@ -364,18 +363,15 @@ DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliat
 - `ACCEPTS` names the aspects whose current values the server hands the
   script as its context document — settings are context, never call
   arguments; calls are always bare `f()`. Absent `ACCEPTS`, the script
-  receives no context. The declaration relations `relationships` and
-  `imports` may ride the list too, as invalidation edges only: no
-  context entry arrives — the script reads them as tables — but a write
-  to the relation kills the cache like an aspect value would.
+  receives no context. A script that wants a declaration relation reads
+  it as a table, which needs no naming.
 - `RETURNS` names the aspect the function's output fills, mirroring
   `ACCEPTS`: functions read aspects and write an aspect, and the aspect's
   schema is the one contract — output is validated against it at
   extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT aspect has
   exactly one returning function (its producer); a FACT aspect may be
-  returned by functions too — each is a data-grounded *voice* whose cached
-  output joins the spoken slots (§7). Results land in the `cache` relation
-  below.
+  returned by functions too — each is a data-grounded *voice* whose
+  output joins the spoken slots (§7), computed at read.
 - **No `RETURNS` declares a detector** — role by shape. A detector is
   named only in a witness's `DETECTOR` clause; it receives the witness's
   slots and threshold, never table data, and its output must satisfy the
@@ -392,51 +388,33 @@ SELECT profile_min_max() FROM orders;
 SELECT outliers() FROM orders.amount;
 ```
 
-The first run computes and caches; later selects read the cache. A body
-that carries a top-level `summary` object serves the summary at
-extraction — the full body stays cached and reads back through
-`GLOSSARY(subject::aspect)` (ruled 2026-08-14: a large measurement's
-extraction result was effectively write-only at the door; the summary is
-the function's own authorship, never a truncation). The cache
-is an ordinary relation, like the glossary, named `cache`: one row per
-(subject, function, witness) —
-`(subject, function, witness, body, computed_at, snapshot_id)`, the
-snapshot being the subject's table state the run computed against (§5.2).
-`witness` is empty for a function's own value, which is keyed by its
-subject like any value; it names the seat for a detector's verdict, which
-depends on the aspect, threshold and slots that witness holds (§7.2). Re-running is removal, not a modifier — DELETE at whatever
-grain the WHERE clause picks, and select again:
-
-```sql
-DELETE FROM cache WHERE function = 'dso';
-```
-
-**Writes invalidate, reads recompute, judgment only supersedes.** A new
-value for an aspect — glossed, or a bound measurement's fresh output —
-deletes the cached results of every function that `ACCEPTS` it, at and
-under the subject: the declaration that names a script's inputs also names
-what kills its cache, and it is the only definition-level invalidation
-there is. A declared relationship or a recorded import invalidates
-dataset-wide through the same edge, for functions that `ACCEPTS` the
-relation. Data freshness is snapshot staleness, marked at read (§5.3) — a
-table's definition never changes underneath its evidence, because a
-changed recipe sweeps the table's cached evidence as it re-lands and
-`DROP TABLE` takes the evidence with it (§3). Nothing recomputes at write time, and no machinery ever deletes a
-gloss: stale judgment is served and marked, superseded only by whoever
-owns the slot.
+Extraction computes at the read's pin — the set of inputs, data and
+declarations, the statement resolved — and lands one row in the
+`measurements` relation:
+`(dataset, function, subject, aspect, pin_digest, pin, value, computed_at)`.
+A later extraction at the same pin serves that row; any input moving
+makes a new pin, so there is no invalidation, only a miss, and old rows
+stand as the drift record. A body that carries a top-level `summary`
+object serves the summary at extraction — the full value reads back
+through `GLOSSARY(subject::aspect)` (ruled 2026-08-14: a large
+measurement's extraction result was effectively write-only at the door;
+the summary is the function's own authorship, never a truncation).
+Nothing recomputes at write time, and no machinery ever deletes a gloss:
+stale judgment is served and marked, superseded only by whoever owns the
+slot.
 
 Whether multi-function
 extraction fans out or runs one call after another is the caller's choice —
 send one statement with many calls, or many statements; the grammar carries
-no ordering surface. Functions never write the glossary; their results live
-in the cache.
+no ordering surface. Functions never write the glossary; their results
+land in `measurements`.
 
 ## 7. Witnesses
 
 A witness is declared per aspect, dataset-wide. Per (subject, aspect) it
-holds one slot per speaker: each function voice (served from the cache of
-a function whose `RETURNS` names the aspect, §6), the agent's gloss, the
-human's gloss — one current value each.
+holds one slot per speaker: each function voice (the measurement, at the
+read's pin, of a function whose `RETURNS` names the aspect, §6), the
+agent's gloss, the human's gloss — one current value each.
 
 ### 7.1 Declaration
 
@@ -473,13 +451,10 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 The **standard attest schema** is fixed:
 `(subject, aspect, witness, band, score, computed_at)` — `band` in
 `green | yellow | orange | red`, `score` the disagreement/entropy in 0..1.
-Detectors run **at read**: a verdict missing or older than the newest slot
-write recomputes when `ATTEST()` or a collapsed `GLOSSARY()` read needs it,
-and caches like any function result — `DELETE FROM cache` still forces it.
-A verdict belongs to its **witness**, not to its detector: one detector
-serving three witnesses holds three verdicts, computed from each witness's
-own slots against its own threshold.
-Detail lives in the value function's own cached output, reachable by
+Detectors run **at read**. A verdict belongs to its **witness**, not to
+its detector: one detector serving three witnesses holds three verdicts,
+computed from each witness's own slots against its own threshold.
+Detail lives in the value function's own output, reachable by
 SELECT. Sweeps ("all contested
 behavior columns") are WHERE clauses over the attest relation, never a
 special form; with no argument, `ATTEST()` sweeps the `USE`'d dataset.
@@ -528,10 +503,11 @@ the grid, reach, and support guard are machinery, never statement
 syntax; `misfit.<frame>()` (ruled 2026-08-11, fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
-`metric_series()` (2026-08-13) serves the cached `metric_cube`
-measurement as long rows — metric names become data so a static frame
-(the built-in docket app) slices any metric with plain value filters;
-cached-only, nothing computes at read.
+`metric_series()` (2026-08-13) serves the `metric_cube`
+measurement at the read's pin as long rows — metric names become data so
+a static frame (the built-in docket app) slices any metric with plain
+value filters; an extraction lands the cube, nothing computes at page
+load.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

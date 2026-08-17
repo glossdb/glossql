@@ -3,7 +3,7 @@
 //!
 //! glossql statements (`DECLARE`, `USE`, `GLOSS`, extraction) execute against
 //! the store; everything else is substrate SQL handed to DataFusion — with
-//! `GLOSSARY()` / `ATTEST()` and the `glossary` / `cache` relations planned
+//! `GLOSSARY()` / `ATTEST()` and the store's relations planned
 //! by a registered [`RelationPlanner`], DataFusion's seam for custom FROM
 //! elements (`datafusion-expr-53.1.0/src/planner.rs:379`). That seam sees the
 //! raw `TableFactor` before default planning, which is what makes

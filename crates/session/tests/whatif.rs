@@ -3,7 +3,7 @@
 //! grid, banded through the runtime's kernel seam. The kernel here is a
 //! fake — deterministic linear interpolation over the factor axis — so
 //! these tests pin the door's mechanics (dispatch, plan rewrite, the
-//! unmoved refusal, cache semantics), while the real ensemble kernel is
+//! unmoved refusal, replay semantics), while the real ensemble kernel is
 //! graded in the sibling's fidelity suite and wired in `glossql-scripts`.
 
 use std::sync::Arc;
@@ -225,18 +225,19 @@ async fn the_whatif_door_replays_and_bands() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_scenario_read_caches_and_supersession_recomputes() {
+async fn the_scenario_read_recomputes_per_read() {
     let (session, kernel) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
     let fits = kernel.fits.load(Ordering::SeqCst);
     assert!(fits > 0, "the first read fits the kernel");
 
-    // The second read serves the cache — extract semantics.
+    // Nothing is stored: every read replays (an in-memory, pin-keyed
+    // cache is a later, measured question — 2026-08-16 §10).
     run(&session, "SELECT * FROM whatif.price_hike();").await;
-    assert_eq!(kernel.fits.load(Ordering::SeqCst), fits, "cache served");
+    assert!(kernel.fits.load(Ordering::SeqCst) > fits, "recomputed");
 
-    // Superseding the scenario stales the cache; the next read replays.
+    // Superseding the scenario changes what the next read replays.
     run(
         &session,
         r##"GLOSS price_hike ON fin AS $${"overrides": [
@@ -334,17 +335,13 @@ DECLARE ASPECT price_hike WITH $${"type": "object", "required": ["overrides"]}$$
 "##;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn superseding_a_concept_grounding_recomputes_the_cached_read() {
-    let (session, kernel) = scenario_session().await;
+async fn a_superseded_concept_grounding_replays_in_the_next_read() {
+    let (session, _) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
-    let fits = kernel.fits.load(Ordering::SeqCst);
-    run(&session, "SELECT * FROM whatif.price_hike();").await;
-    assert_eq!(kernel.fits.load(Ordering::SeqCst), fits, "cache served");
 
     // Superseding a concept's QUERY grounding — not the scenario —
-    // stales the cache: the computation replayed that grounding
-    // (finding 4, 2026-08-12).
+    // changes what the next read replays (finding 4, 2026-08-12).
     run(
         &session,
         r##"GLOSS revenue ON fin AS $${"sql": "SELECT order_date, units * unit_price + 1000 AS value FROM sales"}$$;"##,
@@ -356,10 +353,6 @@ async fn superseding_a_concept_grounding_recomputes_the_cached_read() {
          AND month = '2026-08';",
     )
     .await;
-    assert!(
-        kernel.fits.load(Ordering::SeqCst) > fits,
-        "a superseded grounding recomputes"
-    );
     assert!(revenue.contains("2150.0"), "{revenue}");
 }
 

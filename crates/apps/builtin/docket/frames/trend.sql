@@ -1,4 +1,4 @@
--- One metric's monthly story from the cached cube: the metric's own
+-- One metric's monthly story from the measured cube: the metric's own
 -- series (dimension '' — the total at the grounding's own verb), and
 -- the disclosed rival beside it where the grounding names one
 -- (dimension 'alternative'). What moves between the readings is a

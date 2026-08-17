@@ -1,7 +1,7 @@
 //! Store behavior the language fixes: admission by aspect kind (SPEC.md
 //! §5.2), the witness speaker gate and detector eligibility (§7.1),
 //! supersession per (subject, aspect, actor kind), the provisional collapse
-//! policy (§5.3), and cache semantics (§6).
+//! policy (§5.3), and measurement semantics (§6).
 
 use glossql_glossary::{Actor, ActorKind, Error, ReadContext, Scope, Store};
 use glossql_parser::{Declaration, Gloss, GlossqlParser, Statement};
@@ -320,7 +320,12 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
     .await
     .unwrap();
     let rows = s
-        .raw_read("fin", &Scope::Subject("orders.amount".into()), None)
+        .raw_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &Default::default(),
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "agent slot holds one current value");
@@ -338,7 +343,12 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
     .await
     .unwrap();
     let rows = s
-        .raw_read("fin", &Scope::Subject("orders.amount".into()), None)
+        .raw_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &Default::default(),
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 2, "human slot is separate");
@@ -348,6 +358,7 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
 async fn collapse_serves_by_precedence_human_over_agent() {
     let s = store().await;
     let ctx = ReadContext::default();
+    let verdicts = Default::default();
     write(
         &s,
         &agent(),
@@ -356,7 +367,13 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     .await
     .unwrap();
     let rows = s
-        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .collapsed_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &ctx,
+            &verdicts,
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -371,7 +388,13 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     .await
     .unwrap();
     let rows = s
-        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .collapsed_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &ctx,
+            &verdicts,
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -381,7 +404,7 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     );
 }
 
-// -- functions and the cache ---------------------------------------------
+// -- functions and measurements --------------------------------------------
 
 #[tokio::test]
 async fn accepts_names_must_be_declared_aspects() {
@@ -417,24 +440,37 @@ async fn function_scope_gates_visibility() {
 }
 
 #[tokio::test]
-async fn cache_serves_the_latest_row_per_subject_and_function() {
+async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
     let s = store().await;
-    s.cache_put("fin", "orders", "profile", None, r#"{"n": 1}"#, None)
+    let pin = s.pin("fin", &Default::default()).await.unwrap();
+    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 1}"#)
         .await
         .unwrap();
-    s.cache_put("fin", "orders", "profile", None, r#"{"n": 2}"#, None)
+    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 2}"#)
         .await
         .unwrap();
     let row = s
-        .cache_get("fin", "orders", "profile", None)
+        .measurement_get("fin", "orders", "profile", &pin)
         .await
         .unwrap()
         .unwrap();
-    assert!(row.body.contains('2'));
+    assert!(row.body.contains('2'), "latest write at the pin wins");
+
+    // Any input moving makes a new pin: a miss, never an invalidation.
+    let moved = s
+        .pin("fin", &std::collections::HashMap::from([("orders".into(), 7)]))
+        .await
+        .unwrap();
+    assert!(
+        s.measurement_get("fin", "orders", "profile", &moved)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
-async fn forwarded_deletes_only_touch_the_two_relations() {
+async fn forwarded_deletes_only_touch_the_glossary() {
     let s = store().await;
     write(
         &s,
@@ -457,208 +493,6 @@ async fn forwarded_deletes_only_touch_the_two_relations() {
         .unwrap_err();
     assert!(matches!(e, Error::ForwardRejected(_)), "{e}");
 }
-
-#[tokio::test]
-async fn a_glossary_delete_invalidates_detector_verdicts() {
-    let s = store().await;
-    // One detector (no RETURNS), one extraction function (RETURNS) —
-    // only the detector's cache is a verdict about slots.
-    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin AS $$#{}$$;") else {
-        unreachable!()
-    };
-    s.declare_function(&det).await.unwrap();
-    let Declaration::Function(prod) =
-        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
-    else {
-        unreachable!()
-    };
-    s.declare_function(&prod).await.unwrap();
-
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await
-    .unwrap();
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "entropy",
-        Some("unit_w"),
-        r#"{"band": "red"}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put("fin", "orders.amount", "vibes", None, r#"{"n": 1}"#, None)
-        .await
-        .unwrap();
-
-    // Striking the slot invalidates the verdict about it: deletion makes
-    // the slot set smaller, never newer, so timestamp freshness alone
-    // would keep serving a verdict about slots that no longer exist.
-    s.forward_delete(
-        "glossary",
-        "DELETE FROM glossary WHERE subject = 'orders.amount' AND actor_kind = 'agent'",
-    )
-    .await
-    .unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "entropy", Some("unit_w"))
-            .await
-            .unwrap()
-            .is_none(),
-        "the detector verdict is gone — it recomputes at the next read"
-    );
-    assert!(
-        s.cache_get("fin", "orders.amount", "vibes", None)
-            .await
-            .unwrap()
-            .is_some(),
-        "extraction caches answer to ACCEPTS invalidation, not slot deletion"
-    );
-}
-
-#[tokio::test]
-async fn declaration_relations_are_invalidation_edges() {
-    let s = store().await;
-    // ACCEPTS admits the wired declaration relations (ruled 2026-08-05):
-    // no context arrives, but a write to the relation kills the cache
-    // dataset-wide — an edge can change any subject's evidence.
-    let Declaration::Function(dep) = decl(
-        "DECLARE FUNCTION evidence FOR fin AS $$#{}$$ \
-         ACCEPTS (relationships, imports) RETURNS unit;",
-    ) else {
-        unreachable!()
-    };
-    s.declare_function(&dep).await.unwrap();
-    let Declaration::Function(other) = decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$;") else {
-        unreachable!()
-    };
-    s.declare_function(&other).await.unwrap();
-
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "evidence",
-        None,
-        r#"{"applicable": false}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put("fin", "orders.amount", "vibes", None, r#"{"n": 1}"#, None)
-        .await
-        .unwrap();
-
-    s.declare_relationship("fin", "orders.customer_id", "->", "customers.id")
-        .await
-        .unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "evidence", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "a declared edge kills the accepting function's cache"
-    );
-
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "evidence",
-        None,
-        r#"{"applicable": false}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.landing_invalidates("fin").await.unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "evidence", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "a landing kills it the same way"
-    );
-
-    assert!(
-        s.cache_get("fin", "orders.amount", "vibes", None)
-            .await
-            .unwrap()
-            .is_some(),
-        "a function without the edge keeps its cache"
-    );
-
-    // An unwired relation name is refused as an unknown aspect — a
-    // silent no-op edge would be worse than an error.
-    let Declaration::Function(bad) =
-        decl("DECLARE FUNCTION w FOR fin AS $$#{}$$ ACCEPTS (witnesses);")
-    else {
-        unreachable!()
-    };
-    let e = s.declare_function(&bad).await.unwrap_err();
-    assert!(matches!(e, Error::Unknown { what: "aspect", .. }), "{e}");
-}
-
-// The recipe admission cycle (Created / Unchanged / Replaced) runs
-// end-to-end in the session's lake_flows suite — a recipe rides its
-// table as properties, so there is no store-only path to exercise.
-
-// -- writes invalidate (project lead, 2026-08-04) --------------------------
-
-#[tokio::test]
-async fn a_gloss_invalidates_the_caches_of_functions_accepting_its_aspect() {
-    let s = store().await;
-    let Declaration::Function(f) =
-        decl(r#"DECLARE FUNCTION conv FOR GLOBAL AS $$#{}$$ ACCEPTS (unit);"#)
-    else {
-        unreachable!()
-    };
-    s.declare_function(&f).await.unwrap();
-    s.cache_put("fin", "orders.amount", "conv", None, "{}", None)
-        .await
-        .unwrap();
-    s.cache_put("fin", "invoices.total", "conv", None, "{}", None)
-        .await
-        .unwrap();
-
-    // At or under the subject: the other table's row survives.
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await
-    .unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "conv", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "the dependent evidence died with the write"
-    );
-    assert!(
-        s.cache_get("fin", "invoices.total", "conv", None)
-            .await
-            .unwrap()
-            .is_some()
-    );
-
-    // A dataset-level gloss sweeps the dataset.
-    let g = gloss(r#"GLOSS unit ON fin AS $${"value": "EUR"}$$;"#);
-    s.gloss("fin", &agent(), "unit", "fin", &g.body, None)
-        .await
-        .unwrap();
-    assert!(
-        s.cache_get("fin", "invoices.total", "conv", None)
-            .await
-            .unwrap()
-            .is_none()
-    );
-}
-
-// -- aspect grain (ruled 2026-08-05) --------------------------------------
 
 #[tokio::test]
 async fn grain_gates_glosses_and_bounds_disclosure() {
@@ -694,11 +528,12 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
     // Disclosure stays within grain: the unglossed column is a visible
     // absence, the table never shows a role row at all.
     let ctx = ReadContext {
+        pin: Default::default(),
         universe: vec!["orders".into(), "orders.amount".into(), "orders.qty".into()],
         ..Default::default()
     };
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default())
         .await
         .unwrap();
     let states: Vec<(String, String)> = rows
@@ -751,6 +586,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
         s.declare_witness(&w).await.unwrap();
     }
     let ctx = ReadContext {
+        pin: Default::default(),
         universe: vec!["orders.amount".into(), "orders.customer_id".into()],
         ..Default::default()
     };
@@ -758,7 +594,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
     // Before any role is spoken, no column owes behavior — role is the
     // whole backlog.
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default())
         .await
         .unwrap();
     assert!(
@@ -781,7 +617,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
             .unwrap();
     }
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default())
         .await
         .unwrap();
     let behavior_states: Vec<(String, String)> = rows
@@ -802,7 +638,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
         .await
         .unwrap();
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default())
         .await
         .unwrap();
     assert!(
@@ -864,19 +700,19 @@ async fn a_forwarded_delete_refuses_a_statement_sequence() {
     let s = store().await;
     let e = s
         .forward_delete(
-            "cache",
-            "DELETE FROM cache WHERE subject = 'x'; DROP TABLE glossary",
+            "glossary",
+            "DELETE FROM glossary WHERE subject = 'x'; DROP TABLE glossary",
         )
         .await
         .unwrap_err();
     assert!(matches!(e, Error::ForwardUnsafe { .. }), "{e}");
     let e = s
-        .forward_delete("cache", "DELETE FROM cache WHERE subject = $q$x$q$")
+        .forward_delete("glossary", "DELETE FROM glossary WHERE subject = $q$x$q$")
         .await
         .unwrap_err();
     assert!(matches!(e, Error::ForwardUnsafe { .. }), "{e}");
     // A `;` inside a quoted literal is data, not a separator.
-    s.forward_delete("cache", "DELETE FROM cache WHERE subject = 'a;b'")
+    s.forward_delete("glossary", "DELETE FROM glossary WHERE subject = 'a;b'")
         .await
         .expect("quoted semicolons are values");
 }
@@ -884,30 +720,30 @@ async fn a_forwarded_delete_refuses_a_statement_sequence() {
 #[tokio::test]
 async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
     // `_` is LIKE's single-character wildcard, so `order_items` used to
-    // sweep `orderxitems` — and its cached evidence with it.
+    // sweep `orderxitems` with it.
     let s = store().await;
-    s.cache_put("fin", "order_items.qty", "profile", None, "{}", None)
-        .await
-        .unwrap();
-    s.cache_put("fin", "orderxitems.qty", "profile", None, "{}", None)
-        .await
-        .unwrap();
-    s.invalidate_table_evidence("fin", "order_items")
-        .await
-        .unwrap();
-    assert!(
-        s.cache_get("fin", "order_items.qty", "profile", None)
+    for subject in ["order_items.qty", "orderxitems.qty"] {
+        let g = gloss(r#"GLOSS unit ON x AS $${"value": "EUR"}$$;"#);
+        s.gloss("fin", &agent(), "unit", subject, &g.body, None)
             .await
-            .unwrap()
-            .is_none(),
-        "the named table's evidence is cleared"
-    );
+            .unwrap();
+    }
+    let rows = s
+        .raw_read(
+            "fin",
+            &Scope::Subject("order_items".into()),
+            None,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].subject, "order_items.qty");
+    let scope = Scope::Subject("order_items".into());
+    assert!(scope.admits("order_items.qty"));
     assert!(
-        s.cache_get("fin", "orderxitems.qty", "profile", None)
-            .await
-            .unwrap()
-            .is_some(),
-        "a neighbour whose name differs by one character keeps its evidence"
+        !scope.admits("orderxitems.qty"),
+        "the in-memory twin holds the same line"
     );
 }
 
@@ -945,239 +781,17 @@ async fn a_function_cannot_accept_the_aspect_it_returns() {
 }
 
 #[tokio::test]
-async fn an_aspect_with_cached_values_under_it_does_not_re_declare() {
-    // Glosses were counted, function values were not — and a MEASUREMENT
-    // aspect can only hold the latter, so its schema could change under
-    // values validated against the old one.
-    let s = store().await;
-    let Declaration::Aspect(a) =
-        decl(r#"DECLARE ASPECT profile_stats WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
-    else {
-        unreachable!()
-    };
-    s.declare_aspect(&a).await.unwrap();
-    let Declaration::Function(f) =
-        decl("DECLARE FUNCTION profile FOR fin AS $$#{}$$ RETURNS profile_stats;")
-    else {
-        unreachable!()
-    };
-    s.declare_function(&f).await.unwrap();
-    s.cache_put("fin", "orders.amount", "profile", None, r#"{"n": 1}"#, None)
-        .await
-        .unwrap();
-
-    let Declaration::Aspect(stricter) = decl(
-        r#"DECLARE ASPECT profile_stats WITH $${"type": "object", "required": ["n"]}$$ AS MEASUREMENT;"#,
-    ) else {
-        unreachable!()
-    };
-    let e = s.declare_aspect(&stricter).await.unwrap_err();
-    assert!(matches!(e, Error::AspectValued { .. }), "{e}");
-}
-
-// -- what the adversarial review found (2026-08-12) ------------------------
-
-#[tokio::test]
-async fn a_glossary_delete_invalidates_accepting_functions_like_a_write() {
-    let s = store().await;
-    // `conv` RETURNS so its cache rows are values, not detector verdicts —
-    // only the ACCEPTS edge can strike them here.
-    let Declaration::Aspect(converted) =
-        decl(r#"DECLARE ASPECT converted WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
-    else {
-        unreachable!()
-    };
-    s.declare_aspect(&converted).await.unwrap();
-    let Declaration::Function(f) =
-        decl("DECLARE FUNCTION conv FOR GLOBAL AS $$#{}$$ ACCEPTS (unit) RETURNS converted;")
-    else {
-        unreachable!()
-    };
-    s.declare_function(&f).await.unwrap();
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await
-    .unwrap();
-    s.cache_put("fin", "orders.amount", "conv", None, "{}", None)
-        .await
-        .unwrap();
-    // `whatif` rows are ordinary cache rows outside the functions table;
-    // their reads replay QUERY groundings, so a glossary strike stales them.
-    s.cache_put("fin", "fin", "whatif", None, r#"{"bands": []}"#, None)
-        .await
-        .unwrap();
-    s.cache_put("crm", "leads.score", "conv", None, "{}", None)
-        .await
-        .unwrap();
-    s.cache_put("crm", "crm", "whatif", None, r#"{"bands": []}"#, None)
-        .await
-        .unwrap();
-
-    s.forward_delete("glossary", "DELETE FROM glossary WHERE aspect = 'unit'")
-        .await
-        .unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "conv", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "the dependent evidence died with the strike, as it would with a write"
-    );
-    assert!(
-        s.cache_get("fin", "fin", "whatif", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "whatif reads replay what the delete just changed"
-    );
-    assert!(
-        s.cache_get("crm", "leads.score", "conv", None)
-            .await
-            .unwrap()
-            .is_some(),
-        "the sweep is keyed by the doomed rows' dataset, not the world"
-    );
-    assert!(
-        s.cache_get("crm", "crm", "whatif", None)
-            .await
-            .unwrap()
-            .is_some()
-    );
-}
-
-#[tokio::test]
-async fn an_unextractable_delete_predicate_sweeps_the_cache_blunt() {
-    let s = store().await;
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await
-    .unwrap();
-    s.cache_put("crm", "leads.score", "profile", None, "{}", None)
-        .await
-        .unwrap();
-    // A LIMIT anywhere outside a literal — even in a subquery, where the
-    // predicate would still be exact — hides which rows die; correctness
-    // over precision, the whole cache goes.
-    s.forward_delete(
-        "glossary",
-        "DELETE FROM glossary WHERE id IN (SELECT id FROM glossary LIMIT 1)",
-    )
-    .await
-    .unwrap();
-    assert!(
-        s.cache_get("crm", "leads.score", "profile", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "unknown targets sweep everything"
-    );
-}
-
-#[tokio::test]
-async fn a_cache_delete_of_a_voice_drops_the_verdicts_over_its_aspect() {
-    let s = store().await;
-    // A voice into `unit` (RETURNS), a detector, and the witness pairing
-    // them.
-    let Declaration::Function(voice) =
-        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
-    else {
-        unreachable!()
-    };
-    s.declare_function(&voice).await.unwrap();
-    let Declaration::Function(det) = decl("DECLARE FUNCTION entropy FOR fin AS $$#{}$$;") else {
-        unreachable!()
-    };
-    s.declare_function(&det).await.unwrap();
-    let Declaration::Witness(w) =
-        decl("DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN) DETECTOR entropy THRESHOLD 0.5;")
-    else {
-        unreachable!()
-    };
-    s.declare_witness(&w).await.unwrap();
-
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "vibes",
-        None,
-        r#"{"value": "EUR"}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "entropy",
-        Some("unit_w"),
-        r#"{"band": "red", "score": 0.9}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put(
-        "fin",
-        "invoices.total",
-        "entropy",
-        Some("unit_w"),
-        r#"{"band": "green", "score": 0.1}"#,
-        None,
-    )
-    .await
-    .unwrap();
-
-    // Striking the disputed voice makes the slot set older, never newer —
-    // a cached contested verdict would pass the freshness check and keep
-    // withholding a value the dispute no longer touches.
-    s.forward_delete("cache", "DELETE FROM cache WHERE function = 'vibes'")
-        .await
-        .unwrap();
-    assert!(
-        s.cache_get("fin", "orders.amount", "entropy", Some("unit_w"))
-            .await
-            .unwrap()
-            .is_none(),
-        "the verdict over the struck voice's slot recomputes at the next read"
-    );
-    assert!(
-        s.cache_get("fin", "invoices.total", "entropy", Some("unit_w"))
-            .await
-            .unwrap()
-            .is_some(),
-        "verdicts on untouched subjects stand"
-    );
-}
-
-#[tokio::test]
 async fn each_verdict_is_judged_against_its_own_witness_threshold() {
+    use glossql_glossary::{Verdict, Verdicts};
     let s = store().await;
     let ctx = ReadContext::default();
-    // Two witnesses on one aspect: cross-wiring compared w_b's score
-    // against w_a's threshold, so a crossing verdict never contested.
-    for f in [
-        "DECLARE FUNCTION det_a FOR fin AS $$#{}$$;",
-        "DECLARE FUNCTION det_b FOR fin AS $$#{}$$;",
-    ] {
-        let Declaration::Function(d) = decl(f) else {
-            unreachable!()
-        };
-        s.declare_function(&d).await.unwrap();
-    }
-    for w in [
-        "DECLARE WITNESS w_a ON unit BY (AGENT, HUMAN) DETECTOR det_a THRESHOLD 0.9;",
-        "DECLARE WITNESS w_b ON unit BY (AGENT, HUMAN) DETECTOR det_b THRESHOLD 0.5;",
-    ] {
-        let Declaration::Witness(d) = decl(w) else {
-            unreachable!()
-        };
-        s.declare_witness(&d).await.unwrap();
-    }
+    let at = |witness: &str, band: &str, score: f64, threshold: f64| Verdict {
+        witness: witness.into(),
+        band: band.into(),
+        score,
+        threshold: Some(threshold),
+        computed_at: "t".into(),
+    };
     write(
         &s,
         &agent(),
@@ -1189,32 +803,21 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     // is judged against the RIGHT threshold (the cross-wiring
     // regression this test exists for). With one voice it shows as a
     // red band beside the served value (ruled 2026-08-14: contested
-    // needs voices that can differ — a single-speaker crossing that
-    // withheld the value hid the body at its most interesting
-    // moment); a second voice below turns the same crossing into a
-    // contest.
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "det_a",
-        Some("w_a"),
-        r#"{"band": "green", "score": 0.2}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put(
-        "fin",
-        "orders.amount",
-        "det_b",
-        Some("w_b"),
-        r#"{"band": "red", "score": 0.7}"#,
-        None,
-    )
-    .await
-    .unwrap();
+    // needs voices that can differ); a second voice below turns the
+    // same crossing into a contest.
+    let mut verdicts = Verdicts::default();
+    verdicts.insert(
+        ("orders.amount".into(), "unit".into()),
+        vec![at("w_a", "green", 0.2, 0.9), at("w_b", "red", 0.7, 0.5)],
+    );
     let rows = s
-        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .collapsed_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &ctx,
+            &verdicts,
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -1237,7 +840,13 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     .await
     .unwrap();
     let rows = s
-        .collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &ctx)
+        .collapsed_read(
+            "fin",
+            &Scope::Subject("orders.amount".into()),
+            None,
+            &ctx,
+            &verdicts,
+        )
         .await
         .unwrap();
     assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
@@ -1248,28 +857,19 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     s.gloss("fin", &agent(), "unit", "invoices.total", &g.body, None)
         .await
         .unwrap();
-    s.cache_put(
-        "fin",
-        "invoices.total",
-        "det_a",
-        Some("w_a"),
-        r#"{"band": "yellow", "score": 0.6}"#,
-        None,
-    )
-    .await
-    .unwrap();
-    s.cache_put(
-        "fin",
-        "invoices.total",
-        "det_b",
-        Some("w_b"),
-        r#"{"band": "green", "score": 0.3}"#,
-        None,
-    )
-    .await
-    .unwrap();
+    let mut verdicts = Verdicts::default();
+    verdicts.insert(
+        ("invoices.total".into(), "unit".into()),
+        vec![at("w_a", "yellow", 0.6, 0.9), at("w_b", "green", 0.3, 0.5)],
+    );
     let rows = s
-        .collapsed_read("fin", &Scope::Subject("invoices.total".into()), None, &ctx)
+        .collapsed_read(
+            "fin",
+            &Scope::Subject("invoices.total".into()),
+            None,
+            &ctx,
+            &verdicts,
+        )
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -1278,7 +878,7 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     assert_eq!(
         rows[0].score,
         Some(0.6),
-        "uncontested, the first witness's verdict (name order) rides the row"
+        "uncontested, the first witness's verdict rides the row"
     );
 }
 
@@ -1329,6 +929,7 @@ async fn source_grain_slots_read_and_supersede_workspace_wide() {
             &Scope::Subject("glos_erp".into()),
             None,
             &ReadContext::default(),
+            &Default::default(),
         )
         .await
         .unwrap();
@@ -1351,6 +952,7 @@ async fn source_grain_slots_read_and_supersede_workspace_wide() {
             &Scope::Subject("glos_erp".into()),
             None,
             &ReadContext::default(),
+            &Default::default(),
         )
         .await
         .unwrap();
@@ -1390,7 +992,13 @@ async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
     s.declare_witness(&w).await.unwrap();
 
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ReadContext::default())
+        .collapsed_read(
+            "fin",
+            &Scope::Dataset,
+            None,
+            &ReadContext::default(),
+            &Default::default(),
+        )
         .await
         .unwrap();
     assert!(
@@ -1444,11 +1052,12 @@ async fn a_source_subject_is_refused_outside_source_grain() {
     // And the disclosure agrees: the table owes an entity row, the
     // source never does.
     let ctx = ReadContext {
+        pin: Default::default(),
         universe: vec!["orders".into()],
         snapshots: Default::default(),
     };
     let rows = s
-        .collapsed_read("fin", &Scope::Dataset, None, &ctx)
+        .collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default())
         .await
         .unwrap();
     assert!(
@@ -1462,59 +1071,3 @@ async fn a_source_subject_is_refused_outside_source_grain() {
     );
 }
 
-// -- the glossary edge is grounding-scoped (2026-08-12) ---------------------
-
-#[tokio::test]
-async fn the_glossary_edge_fires_on_grounding_writes_only() {
-    // Functions that ACCEPTS (glossary) read groundings — metric_bands
-    // walks them, detect_grounding_collisions buckets them — so a fact
-    // gloss (an app pin included) must leave their caches standing,
-    // while a QUERY write must sweep them. The unscoped edge emptied
-    // the band walk after every pin (found live by the first pinner).
-    let s = store().await;
-    let Declaration::Aspect(revenue) = decl(
-        r#"DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;"#,
-    ) else {
-        unreachable!()
-    };
-    s.declare_aspect(&revenue).await.unwrap();
-    let Declaration::Function(f) =
-        decl(r#"DECLARE FUNCTION bands FOR GLOBAL AS $$#{}$$ ACCEPTS (glossary);"#)
-    else {
-        unreachable!()
-    };
-    s.declare_function(&f).await.unwrap();
-    s.cache_put("fin", "fin", "bands", None, "{}", None)
-        .await
-        .unwrap();
-
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await
-    .unwrap();
-    assert!(
-        s.cache_get("fin", "fin", "bands", None)
-            .await
-            .unwrap()
-            .is_some(),
-        "a fact gloss must not sweep the grounding readers"
-    );
-
-    write(
-        &s,
-        &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT 1"}$$;"#,
-    )
-    .await
-    .unwrap();
-    assert!(
-        s.cache_get("fin", "fin", "bands", None)
-            .await
-            .unwrap()
-            .is_none(),
-        "a grounding write must sweep the grounding readers"
-    );
-}

@@ -488,7 +488,7 @@ impl Session {
                     format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
                 } else {
                     // Supersede-and-reland (ruled 2026-08-06): a changed
-                    // recipe drops the old landing and its cached
+                    // recipe drops the old landing and its
                     // evidence, then lands fresh. Glosses stay — the
                     // snapshot id discloses their age.
                     //
@@ -506,10 +506,6 @@ impl Session {
                     if replaced {
                         let mounted = self.mount_schema(dataset).await?;
                         mounted.deregister_table(table)?;
-                        self.shared
-                            .store
-                            .invalidate_table_evidence(dataset, table)
-                            .await?;
                     }
                     let (summary, casts) = self.materialize(dataset, table, landed).await?;
                     store.put_recipe(d).await?;
@@ -628,7 +624,6 @@ impl Session {
         );
         self.land(dataset, table, Arc::clone(&landed.schema), &landed.batches, facts)
             .await?;
-        self.shared.store.landing_invalidates(dataset).await?;
         Ok((summary, cast_summary(&landed.casts)))
     }
 
@@ -744,14 +739,16 @@ impl Session {
         )))
     }
 
-    /// Extraction (SPEC.md §6): first run computes and caches, later runs
-    /// read the cache; re-running is `DELETE FROM cache WHERE …`. The
-    /// context document holds one entry per `ACCEPTS` aspect: the nearest
-    /// value walking up from the subject (subject, parent, dataset), null
-    /// when nothing is glossed.
+    /// Extraction (SPEC.md §6): the compute act. A hit at the statement's
+    /// pin serves; a miss computes, validates against the RETURNS
+    /// aspect's schema, and lands one `measurements` row — the drift
+    /// record's next point. The context document holds one entry per
+    /// `ACCEPTS` aspect: the nearest value walking up from the subject
+    /// (subject, parent, dataset), null when nothing is glossed.
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
         let resolved = self.subject(&extract.subject).await?;
+        let ctx = self.shared.read_context().await?;
         let mut results = Vec::new();
         for call in &extract.calls {
             let name = call.value.clone();
@@ -764,23 +761,22 @@ impl Session {
             let Some(returns) = function.returns.clone() else {
                 return Err(SessionError::DetectorNotExtractable(name.clone()));
             };
-            let cached = store
-                .cache_get(&resolved.dataset, &resolved.subject, &name, None)
+            let measured = store
+                .measurement_get(&resolved.dataset, &resolved.subject, &name, &ctx.pin)
                 .await?;
-            let row = match cached {
+            let row = match measured {
                 Some(row) => row,
                 None => {
                     let mut context = serde_json::Map::new();
                     for aspect in &function.accepts {
-                        // A declaration relation in ACCEPTS is an
-                        // invalidation edge only (ruled 2026-08-05): the
-                        // script reads it as a table, no context entry.
-                        if glossql_glossary::accepts_relation(aspect) {
-                            continue;
-                        }
-                        let value =
-                            context_value(&store, &resolved.dataset, &resolved.subject, aspect)
-                                .await?;
+                        let value = context_value(
+                            &self.shared,
+                            &ctx,
+                            &resolved.dataset,
+                            &resolved.subject,
+                            aspect,
+                        )
+                        .await?;
                         context.insert(aspect.clone(), value);
                     }
                     let context = Value::Object(context);
@@ -822,26 +818,40 @@ impl Session {
                             detail,
                         }
                     })?;
-                    let snapshot = self.stamp(&resolved).await?;
-                    store
-                        .cache_put(
-                            &resolved.dataset,
-                            &resolved.subject,
-                            &name,
-                            None,
-                            &output.to_string(),
-                            snapshot,
-                        )
-                        .await?;
-                    store
-                        .cache_get(&resolved.dataset, &resolved.subject, &name, None)
-                        .await?
-                        .ok_or_else(|| {
-                            SessionError::Runtime(format!(
-                                "`{name}` wrote a value that was invalidated before it could be \
-                                 read — check what it ACCEPTS"
-                            ))
-                        })?
+                    // An abstention naming absent inputs is an answer
+                    // about the context, not a measurement of the
+                    // subject (ruled 2026-08-04/16) — it serves without
+                    // landing, so the retry recomputes once the
+                    // producer has run.
+                    if output.get("missing_aspects").is_some() {
+                        glossql_glossary::MeasurementRow {
+                            subject: resolved.subject.clone(),
+                            function: name.clone(),
+                            body: output.to_string(),
+                            computed_at: chrono::Utc::now()
+                                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                                .to_string(),
+                        }
+                    } else {
+                        store
+                            .measurement_put(
+                                &resolved.dataset,
+                                &name,
+                                &resolved.subject,
+                                &returns,
+                                &ctx.pin,
+                                &output.to_string(),
+                            )
+                            .await?;
+                        store
+                            .measurement_get(&resolved.dataset, &resolved.subject, &name, &ctx.pin)
+                            .await?
+                            .ok_or_else(|| {
+                                SessionError::Runtime(format!(
+                                    "`{name}` landed a measurement this read cannot see"
+                                ))
+                            })?
+                    }
                 }
             };
             results.push(row);
@@ -1016,7 +1026,7 @@ impl Session {
     /// `DROP TABLE` (PoC rules, project lead 2026-08-04): refused while the
     /// table holds data or glosses — replacement is postponed, so this only
     /// ever removes a mis-declared table. What it removes, it removes
-    /// whole: the lake table, the recipe row, the cached evidence, the
+    /// whole: the lake table, its recipe property, its landings, the
     /// import records.
     async fn drop_table(&self, name: &str) -> Result<Outcome, SessionError> {
         let dataset = self
@@ -1064,12 +1074,9 @@ impl Session {
         // move (iceberg-datafusion-0.10.1 schema.rs:215-236).
         let mounted = self.mount_schema(&dataset).await?;
         mounted.deregister_table(table)?;
-        // The recipe and the import record die with the table — they are
-        // its properties and its snapshots. Cached evidence is ours.
-        self.shared
-            .store
-            .invalidate_table_evidence(&dataset, table)
-            .await?;
+        // The recipe and the import record die with the table (its
+        // properties and snapshots); measurements that read it sit at
+        // pins that no longer resolve.
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }
 
@@ -1133,7 +1140,8 @@ fn endpoint_parts(side: &glossql_parser::RelSide) -> (Vec<String>, Vec<String>) 
 /// the subject itself, its parent, then the dataset. Null when nothing is
 /// glossed — scripts are deterministic and handle absence themselves.
 async fn context_value(
-    store: &glossql_glossary::Store,
+    shared: &Arc<Shared>,
+    ctx: &glossql_glossary::ReadContext,
     dataset: &str,
     subject: &str,
     aspect: &str,
@@ -1145,8 +1153,10 @@ async fn context_value(
         } else {
             glossql_glossary::Scope::Subject(current.clone())
         };
-        let rows = store
-            .collapsed_read(dataset, &scope, Some(aspect), &Default::default())
+        let verdicts = crate::reads::verdicts(shared, ctx, dataset, &scope, Some(aspect)).await?;
+        let rows = shared
+            .store
+            .collapsed_read(dataset, &scope, Some(aspect), ctx, &verdicts)
             .await?;
         let target = if current == dataset {
             dataset
@@ -1330,7 +1340,7 @@ fn selects_into(query: &Query) -> bool {
     body_selects_into(&query.body)
 }
 
-/// `DELETE FROM glossary … | DELETE FROM cache …` → (target, SQL for the
+/// `DELETE FROM glossary …` → (target, SQL for the
 /// store). The text is rendered from the AST with dollar-quoted literals
 /// normalized to single quotes: the store speaks SQLite, which reads
 /// `$tag$` as a bind parameter rather than a quote, so a dollar-quoted body
@@ -1369,5 +1379,5 @@ fn store_delete(statement: &DFStatement) -> Option<(String, String)> {
         return None;
     }
     let target = name.0[0].as_ident()?.value.to_lowercase();
-    (target == "glossary" || target == "cache").then(|| (target, normalized.to_string()))
+    (target == "glossary").then(|| (target, normalized.to_string()))
 }

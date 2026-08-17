@@ -25,7 +25,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use glossql_glossary::Scope;
 use serde_json::Value;
 
-use crate::reads::{Shared, ensure_verdicts};
+use crate::reads::{Shared, verdicts};
 use crate::session::SessionError;
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
@@ -62,10 +62,11 @@ pub(crate) async fn misfit_batch(
     // The frame's collapsed current grounding, witness-gated and judged
     // like any read.
     let scope = Scope::Subject(dataset.clone());
-    ensure_verdicts(shared, &dataset, &scope, Some(frame)).await?;
+    let ctx = shared.read_context().await?;
+    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(frame)).await?;
     let collapsed = shared
         .store
-        .collapsed_read(&dataset, &scope, Some(frame), &shared.read_context().await?)
+        .collapsed_read(&dataset, &scope, Some(frame), &ctx, &verdicts)
         .await?;
     let current = collapsed
         .into_iter()

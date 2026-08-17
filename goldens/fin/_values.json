@@ -6491,7 +6491,7 @@
             "category",
             "goods",
             "2025-04",
-            4304378.5
+            4304378.4
           ],
           [
             "category",
@@ -6551,7 +6551,7 @@
             "category",
             "goods",
             "2025-09",
-            4218458.4
+            4218458.5
           ],
           [
             "category",
@@ -6802,7 +6802,7 @@
             "segment",
             "Enterprise",
             "2025-04",
-            4670115.0
+            4670115.1
           ],
           [
             "segment",
@@ -7740,7 +7740,7 @@
             "region",
             "Nordics",
             "2025-05",
-            2579899.8
+            2579899.7
           ],
           [
             "region",
@@ -11177,7 +11177,7 @@
             "location_id",
             "WH-MAIN",
             "2025-09",
-            8620525.7
+            8620525.6
           ],
           [
             "location_id",
@@ -11777,7 +11777,7 @@
             "product_group",
             "Optics",
             "2025-08",
-            1080389.1
+            1080389.0
           ],
           [
             "product_group",
@@ -12599,7 +12599,7 @@
             "region",
             "UK&I",
             "2025-09",
-            3588384.9
+            3588385.0
           ],
           [
             "region",
@@ -12985,183 +12985,6 @@
             "precedes_rate": 0.99482402
           }
         ]
-      }
-    ]
-  },
-  "fin::whatif": {
-    "rows": [
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "accounts_payable",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "accounts_receivable",
-        "month": "2025-10",
-        "q": [
-          32259219.0,
-          32965237.0,
-          34806150.0,
-          35652918.0,
-          36097537.0
-        ],
-        "replay": 35676640.0
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "accounts_receivable",
-        "month": "2025-11",
-        "q": [
-          34294434.0,
-          35083216.0,
-          37090879.0,
-          38569032.0,
-          39371851.0
-        ],
-        "replay": 38868649.0
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "accounts_receivable",
-        "month": "2025-12",
-        "q": [
-          39171656.0,
-          40046784.0,
-          42177176.0,
-          45117368.0,
-          46691341.0
-        ],
-        "replay": 43518872.0
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "ccc",
-        "month": "2025-10",
-        "q": [
-          62.551203,
-          65.173651,
-          68.054174,
-          70.10532,
-          72.060028
-        ],
-        "replay": 68.149554
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "ccc",
-        "month": "2025-11",
-        "q": [
-          58.406539,
-          61.550426,
-          67.206307,
-          71.365868,
-          73.665587
-        ],
-        "replay": 67.0604
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "ccc",
-        "month": "2025-12",
-        "q": [
-          44.951575,
-          50.149105,
-          61.491615,
-          70.364905,
-          74.01428
-        ],
-        "replay": 62.010773
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "cogs",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "dio",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "dpo",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "dso",
-        "month": "2025-10",
-        "q": [
-          55.553098,
-          56.329944,
-          57.314182,
-          57.993843,
-          58.358186
-        ],
-        "replay": 58.460766
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "dso",
-        "month": "2025-11",
-        "q": [
-          63.586699,
-          64.427637,
-          65.68911,
-          66.834823,
-          67.288695
-        ],
-        "replay": 67.687262
-      },
-      {
-        "basis": "replayed x[0.85, 1.05, 1.15, 1.25, 0.85, 1.05, 1.15, 1.25] on ar_invoices.amount, receipts.amount; 9 of 9 worlds x 3 months; asked (1.10, 1.10) in support",
-        "concept": "dso",
-        "month": "2025-12",
-        "q": [
-          72.567966,
-          73.487687,
-          75.441764,
-          77.509557,
-          78.794642
-        ],
-        "replay": 77.997506
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "gross_margin",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "gross_profit",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "inventory_value",
-        "month": null,
-        "q": null,
-        "replay": null
-      },
-      {
-        "basis": "unmoved by the overrides: no declared path from ar_invoices.amount, receipts.amount into this grounding — declare the derivation (detect_derivations proposes candidates) or gloss the assumption",
-        "concept": "revenue",
-        "month": null,
-        "q": null,
-        "replay": null
       }
     ]
   },

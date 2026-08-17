@@ -12,7 +12,7 @@
 -- Callers join `open_questions` and `ruling_entries` scoped to their
 -- own dataset — one line each, against reads that already exist.
 --
--- Values come from the cached `metric_cube` measurement: a metric with
+-- Values come from the `metric_cube` measurement: a metric with
 -- no cube rows carries nulls here until `SELECT metric_cube() FROM`
 -- the dataset runs. Formatting, glyphs and links are the caller's.
 WITH latest AS (

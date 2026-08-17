@@ -15,22 +15,21 @@ use std::path::{Path, PathBuf};
 /// Today's counts, and what removes them.
 ///
 /// `block_in_place` / `block_on` — sync code bridging to async. Stage 2's
-/// pre-pass removed the expansion path's; what remains has a named owner:
-/// the compute doors still building batches at plan time
-/// (`reads.rs`, one site) go when they move under `execute` (stage 4);
-/// the two `db.query` bridge sites in `session.rs` go with the script
-/// re-entrancy (stage 5); the `glossql-import` ones bridge a genuinely
-/// sync ADBC driver and are argued separately.
+/// pre-pass removed the expansion path's; stage 4 removed the compute
+/// doors' (they evaluate in the pre-pass now). What remains has a named
+/// owner: the two `db.query` bridge sites in `session.rs` go with the
+/// script re-entrancy (stage 5); the `glossql-import` ones bridge a
+/// genuinely sync ADBC driver and are argued separately.
 ///
 /// `thread_local` — was the door expansion stack. Stage 2 deleted it by
 /// deleting the re-entrancy: nothing re-plans through the same context,
 /// so there is no stack to guard. At zero, and it stays there.
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
-/// partition; stages 4 and 5 remove the ones in the read path.
+/// partition; stage 5 removes the read path's (`sql_all`).
 const CEILING: [(&str, usize); 4] = [
-    ("block_in_place", 6),
-    ("block_on", 4),
+    ("block_in_place", 5),
+    ("block_on", 3),
     ("thread_local!", 0),
     ("tokio::spawn", 4),
 ];

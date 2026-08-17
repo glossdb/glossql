@@ -42,6 +42,16 @@ pub enum Error {
     Iceberg(#[from] iceberg::Error),
 }
 
+/// One table pinned at its current snapshot: every scan reads that
+/// snapshot whatever lands after — the statement's consistent view, and
+/// a durable key, since a snapshot stays addressable after later
+/// commits (spike 3, 2026-08-17).
+pub struct PinnedTable {
+    pub name: String,
+    pub snapshot_id: Option<i64>,
+    pub provider: Arc<dyn datafusion::catalog::TableProvider>,
+}
+
 /// One append snapshot on a data table, with the facts that rode it.
 #[derive(Debug, Clone)]
 pub struct Landing {
@@ -193,6 +203,38 @@ impl Lake {
     /// writer just created invalidate and touch again.
     pub fn invalidate_provider(&self) {
         *self.provider.write().expect("provider lock") = None;
+    }
+
+    /// Every table of the dataset, pinned at its current snapshot — one
+    /// catalog resolution per statement, everything derived computed
+    /// against that set. The catalog-backed provider always reads
+    /// current, so two scans in one query could otherwise straddle a
+    /// landing.
+    pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
+        let ns = NamespaceIdent::new(dataset.to_string());
+        let mut out = Vec::new();
+        for ident in self.catalog.list_tables(&ns).await? {
+            let table = self.catalog.load_table(&ident).await?;
+            let snapshot_id = table.metadata().current_snapshot_id();
+            let provider: Arc<dyn datafusion::catalog::TableProvider> = match snapshot_id {
+                Some(id) => Arc::new(
+                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table_snapshot(
+                        table, id,
+                    )
+                    .await?,
+                ),
+                None => Arc::new(
+                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table)
+                        .await?,
+                ),
+            };
+            out.push(PinnedTable {
+                name: ident.name,
+                snapshot_id,
+                provider,
+            });
+        }
+        Ok(out)
     }
 
     /// Single-part namespaces with their properties.

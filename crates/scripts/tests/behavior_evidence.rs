@@ -215,7 +215,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE ledgers ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
              DECLARE RECIPE positions ON fin FROM erp_export AS \
@@ -324,7 +324,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              {recipes}",
             root.display()
         ))

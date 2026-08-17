@@ -94,7 +94,7 @@ async fn the_generator_grades_the_discriminator() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE chart_of_accounts ON fin FROM finance AS \
              $$SELECT TRY_CAST(account_id AS BIGINT) AS account_id, name \
              FROM read_csv('chart_of_accounts.csv')$$;\n\
@@ -217,7 +217,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE customers ON fin FROM finance AS \
              $$SELECT customer_id, name FROM read_csv('customers.csv')$$;\n\
              DECLARE RECIPE ar_invoices ON fin FROM finance AS \

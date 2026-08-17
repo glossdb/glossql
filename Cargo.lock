@@ -3014,6 +3014,7 @@ name = "glossql-glossary"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "glossql-catalog",
  "glossql-parser",
  "insta",
@@ -3095,6 +3096,7 @@ dependencies = [
 name = "glossql-session"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "datafusion",
  "datafusion-functions-json",
  "futures",

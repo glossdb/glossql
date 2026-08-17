@@ -115,35 +115,27 @@ async fn fixture(root: &std::path::Path) {
     .await;
 }
 
-fn one(outcomes: &[Outcome]) -> String {
-    match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
-            let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-            assert_eq!(rows, 1, "expected one row");
-            let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
-            datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap()
-        }
-        other => panic!("expected Rows, got {other:?}"),
-    }
-}
 
+/// The extraction's own outcome: the served body. An abstention naming
+/// missing inputs never lands, so it exists only here — a landed value
+/// also reads back through `GLOSSARY(subject::aspect)`.
 async fn measure(session: &Session, function: &str, subject: &str) -> serde_json::Value {
-    session
+    let outcomes = session
         .execute(&format!("SELECT {function}() FROM {subject};"))
         .await
         .unwrap();
-    let aspect = match function {
-        "dimension_relevance" => "dimension_relevance",
-        "detect_hierarchies" => "hierarchy_candidates",
-        other => other,
+    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("extraction serves rows");
     };
-    let value = one(&session
-        .execute(&format!(
-            "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
-        ))
-        .await
-        .unwrap());
-    serde_json::from_str(&value).unwrap()
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let body = batch
+        .column(batch.schema().index_of("body").unwrap())
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap()
+        .value(0)
+        .to_string();
+    serde_json::from_str(&body).unwrap()
 }
 
 fn candidate<'a>(

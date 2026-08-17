@@ -138,12 +138,12 @@ async fn rel_f1_grades_the_planes_at_scale() {
          }}$$ AS MEASUREMENT ON COLUMN;\n\
          DECLARE FUNCTION detect_relationships FOR GLOBAL \
          AS $${RELATIONSHIPS}$$ \
-         ACCEPTS (imports) RETURNS relationship_candidates;\n\
+ RETURNS relationship_candidates;\n\
          DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
          AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
          DECLARE FUNCTION behavior_evidence FOR GLOBAL \
          AS $${BEHAVIOR_EVIDENCE}$$ \
-         ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n",
+ RETURNS behavior_evidence;\n",
         data.display()
     );
     for t in TABLES {

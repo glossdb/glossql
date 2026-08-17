@@ -321,6 +321,60 @@ What landed, and the decisions it carries:
   and the other three corpora reproduce byte-identically on the new
   stack.
 
+## 7c. Stage 4 landed (2026-08-17)
+
+The cache is gone whole — relation, invalidation edges, sweeps, detector
+freshness, `forward_delete`'s re-aiming machinery, `DELETE FROM cache` —
+and what replaced it is the pin.
+
+- **The pin is per statement.** The pre-pass resolves every table of the
+  bound dataset once (`IcebergStaticTableProvider`), so two scans can no
+  longer straddle a landing, and the same resolution set — data tables,
+  the crossed declaration relations, and the glossary at its sqlite
+  write head until 4½ — is the measurement key. The glossary-head
+  component is the bridge that keeps gloss writes visible to the key
+  before the relation crosses.
+- **`measurements` holds what extraction lands**: `(dataset, function,
+  subject, aspect, pin_digest, pin, value, computed_at)`, append-only,
+  partitioned by dataset. Extraction is the compute act — a hit at the
+  pin serves, a miss computes, validates and lands. Reads never write:
+  `GLOSSARY()` serves measurement slots at the read's pin and discloses
+  misses as `unassessed`; detector verdicts compute at every read and
+  are never stored; `whatif.` and `misfit.` replay per read.
+- **An abstention naming `missing_aspects` never lands** — found by the
+  suite an hour in: landed, it hit forever at its own pin, and the
+  producer's later run could not heal it. It is an answer about the
+  context, exactly as ruled on 2026-08-04; the next extraction
+  recomputes.
+- **A declaration whose current row already says this writes nothing.**
+  Found by the golden gate: every idempotent re-declare appended a row,
+  moved that relation's snapshot, and staled every key in the
+  workspace. Statement-identity-is-content now holds for every
+  declaration write, which is what makes the pin usable at all.
+- **No query runs during plan time** (ruled 2026-08-17). Every compute
+  door — `glossary()`, `attest()`, `metric_series()`, `whatif.`,
+  `misfit.`, the store relations — evaluates in the async pre-pass,
+  keyed by the factor's own rendering; the planner is a lookup. The
+  ratchet came down: `block_in_place` 6→5, `block_on` 4→3; what remains
+  is the `db.query` bridge (stage 5) and the sync ADBC driver.
+- **`ACCEPTS` lost its relation entries** — the invalidation-edge
+  meaning died with the cache, so the shipped declarations dropped
+  `(glossary, imports, relationships)` from their lists; a script reads
+  those as tables, which needs no naming. The SPEC diff of 2026-08-16
+  §7 is applied; `metric_series` serves the cube at the read's pin
+  rather than computing at page load, which revises that diff's one
+  line — flagged for review.
+- **Goldens:** rel-f1 and booksql reproduce byte-identically — their
+  baselines were always the cold-run pattern, dependency-ordered
+  abstentions included, and the pin reproduces it exactly. fin's
+  `_values` shed the rows that no longer store (verdicts, the whatif
+  read) and was re-accepted; two consecutive captures are
+  byte-identical. One observation recorded for stages 5–6: the capture
+  calls functions alphabetically, so cold corpora golden the
+  `dimension_relevance`/`outliers` abstentions where a warmed workspace
+  goldens values — pre-existing, and the pre-warm orders by dependency
+  when it lands.
+
 ## 8. Still open
 
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns

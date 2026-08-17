@@ -480,17 +480,19 @@ async fn capture(
         std::fs::write(&path, serde_json::to_string_pretty(v).unwrap()).unwrap();
     }
     // Extraction serves a summary where a body carries one; the whole
-    // value reads back from the store. Dump it as the value golden.
-    let cached = cell(
+    // value reads back from the store. Dump the measurements this
+    // capture landed as the value golden — verdicts compute at read and
+    // are covered by the outcome files.
+    let measured = cell(
         &session,
-        "SELECT subject, function, witness, body FROM cache ORDER BY 1, 2, 3;",
+        "SELECT subject, function, value FROM measurements ORDER BY 1, 2;",
     )
     .await;
     let mut values = serde_json::Map::new();
-    for r in &cached {
+    for r in &measured {
         let key = format!("{}::{}", r[0], r[1]);
         let mut body: serde_json::Value =
-            serde_json::from_str(&r[3]).unwrap_or(serde_json::Value::String(r[3].clone()));
+            serde_json::from_str(&r[2]).unwrap_or(serde_json::Value::String(r[2].clone()));
         scrub(&mut body);
         values.insert(key, body);
     }
@@ -499,7 +501,7 @@ async fn capture(
         serde_json::to_string_pretty(&serde_json::Value::Object(values)).unwrap(),
     )
     .unwrap();
-    println!("  {} computed values dumped", cached.len());
+    println!("  {} computed values dumped", measured.len());
 
     println!(
         "captured {} functions, {calls} calls, {:.1}s → {}",

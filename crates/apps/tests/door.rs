@@ -11,9 +11,44 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Float64Array;
 use glossql_catalog::Lake;
-use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{NoRuntime, Plane};
+use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
+use glossql_session::{FunctionRuntime, Plane, SqlDoor};
 use tower::ServiceExt;
+
+/// Verdicts compute at read, so a frame that reads ATTEST invokes the
+/// witness's detector live — this stub is that detector.
+#[derive(Debug)]
+struct StubDetector;
+
+impl FunctionRuntime for StubDetector {
+    fn invoke(
+        &self,
+        _: &FunctionRow,
+        subject: &str,
+        context: &serde_json::Value,
+        _: Arc<dyn SqlDoor>,
+    ) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "subject": subject,
+            "aspect": context["aspect"],
+            "witness": context["witness"],
+            "band": "orange",
+            "score": 0.42,
+            "computed_at": "2026-08-17T00:00:00.000Z",
+        }))
+    }
+}
+
+async fn current_pin(store: &Store, dataset: &str) -> glossql_glossary::Pin {
+    let lake = store.lake();
+    let mut snaps = std::collections::HashMap::new();
+    for t in lake.table_names(dataset).await.unwrap() {
+        if let Some(s) = lake.snapshot_id(dataset, &t).await.unwrap() {
+            snaps.insert(t, s);
+        }
+    }
+    store.pin(dataset, &snaps).await.unwrap()
+}
 
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -30,7 +65,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     .await
     .unwrap();
     let store = Store::open_scratch(lake).await.unwrap();
-    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store, Arc::new(StubDetector)));
     let session = plane
         .session(Actor {
             kind: ActorKind::Agent,
@@ -715,22 +750,14 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
         )
         .await
         .unwrap();
-    // The verdict, planted fresh as the detector would cache it.
-    plane
-        .store()
-        .cache_put(
-            "perf",
-            "perf",
-            "probe_check",
-            Some("dso_w"),
-            r#"{"band": "orange", "score": 0.42}"#,
-            None,
-        )
-        .await
-        .unwrap();
+    // The verdict computes at read — the stub detector answers.
 
     let checks = get(&app, "/app/docket/frames/checks").await;
-    assert_eq!(checks.status(), StatusCode::OK);
+    let status = checks.status();
+    if status != StatusCode::OK {
+        let body = to_bytes(checks.into_body(), usize::MAX).await.unwrap();
+        panic!("checks frame: {status} — {}", String::from_utf8_lossy(&body));
+    }
     assert_eq!(
         row_count(checks).await,
         1,
@@ -739,7 +766,7 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_metrics_faces_serve_the_cached_cube() {
+async fn the_metrics_faces_serve_the_measured_cube() {
     // The business surface end to end from the cube cache: the pulse
     // carries the latest month and the admitted axes, the picker lists
     // them, a picked slice serves its members, and the trend carries
@@ -764,9 +791,10 @@ async fn the_metrics_faces_serve_the_cached_cube() {
             ]
         }]
     });
+    let pin = current_pin(plane.store(), "perf").await;
     plane
         .store()
-        .cache_put("perf", "perf", "metric_cube", None, &cube.to_string(), None)
+        .measurement_put("perf", "metric_cube", "perf", "metric_cube", &pin, &cube.to_string())
         .await
         .unwrap();
 
