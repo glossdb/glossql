@@ -96,6 +96,12 @@ pub trait Relations: Send + Sync + std::fmt::Debug {
     /// callers order by [`Row::seq`] because that is the rule.
     async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>>;
 
+    /// The rows whose `column` equals `value` — the predicate pushed into
+    /// the format's own scan, so a big relation's history is not read to
+    /// serve one key.
+    async fn scan_where(&self, relation: &str, column: &str, value: &str)
+    -> crate::Result<Vec<Row>>;
+
     /// Append rows as one write. Ordering inside one append is by
     /// position, so a caller that appends two rows sharing a supersession
     /// key gets the later one — see the batching ruling of 2026-08-17.
@@ -178,6 +184,73 @@ impl IcebergRelations {
         Ok(())
     }
 
+    async fn scan_filtered(
+        &self,
+        relation: &str,
+        filter: Option<iceberg::expr::Predicate>,
+    ) -> crate::Result<Vec<Row>> {
+        let spec = self.spec(relation)?.clone();
+        let catalog = self.lake.catalog();
+        let ident = self.ident(relation);
+        if !catalog.table_exists(&ident).await? {
+            return Ok(Vec::new());
+        }
+        let table = catalog.load_table(&ident).await?;
+        if table.metadata().current_snapshot().is_none() {
+            return Ok(Vec::new());
+        }
+        // The ordering columns ride the projection: the rule reads them,
+        // the caller never sees them.
+        let mut select: Vec<String> = spec.columns.iter().map(|c| c.to_string()).collect();
+        select.push(SEQ.into());
+        select.push(POS.into());
+        let mut scan = table.scan().select(select);
+        if let Some(filter) = filter {
+            scan = scan.with_filter(filter);
+        }
+        let scan = scan.build()?;
+        let mut stream = scan.to_arrow().await?;
+        let mut out = Vec::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            let text = |i: usize, r: usize| -> Option<String> {
+                batch
+                    .column(i)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .filter(|a| !a.is_null(r))
+                    .map(|a| a.value(r).to_string())
+            };
+            let num = |name: &str, r: usize| -> i64 {
+                batch
+                    .schema()
+                    .index_of(name)
+                    .ok()
+                    .and_then(|i| {
+                        datafusion::arrow::compute::cast(
+                            batch.column(i),
+                            &datafusion::arrow::datatypes::DataType::Int64,
+                        )
+                        .ok()
+                    })
+                    .and_then(|a| {
+                        a.as_any()
+                            .downcast_ref::<datafusion::arrow::array::Int64Array>()
+                            .filter(|a| !a.is_null(r))
+                            .map(|a| a.value(r))
+                    })
+                    .unwrap_or(0)
+            };
+            for r in 0..batch.num_rows() {
+                out.push(Row::new(
+                    (0..spec.columns.len()).map(|i| text(i, r)).collect(),
+                    (num(SEQ, r), num(POS, r)),
+                ));
+            }
+        }
+        Ok(out)
+    }
+
     /// Create the table at v3 if it is not there yet. `format-version` is
     /// a reserved property and cannot be set at create (spike 7), so the
     /// upgrade is a transaction of its own. Called from the append path
@@ -243,62 +316,23 @@ impl IcebergRelations {
 #[async_trait::async_trait]
 impl Relations for IcebergRelations {
     async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>> {
-        let spec = self.spec(relation)?.clone();
-        let catalog = self.lake.catalog();
-        let ident = self.ident(relation);
-        if !catalog.table_exists(&ident).await? {
-            return Ok(Vec::new());
-        }
-        let table = catalog.load_table(&ident).await?;
-        if table.metadata().current_snapshot().is_none() {
-            return Ok(Vec::new());
-        }
-        // The ordering columns ride the projection: the rule reads them,
-        // the caller never sees them.
-        let mut select: Vec<String> = spec.columns.iter().map(|c| c.to_string()).collect();
-        select.push(SEQ.into());
-        select.push(POS.into());
-        let scan = table.scan().select(select).build()?;
-        let mut stream = scan.to_arrow().await?;
-        let mut out = Vec::new();
-        while let Some(batch) = stream.next().await {
-            let batch = batch?;
-            let text = |i: usize, r: usize| -> Option<String> {
-                batch
-                    .column(i)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .filter(|a| !a.is_null(r))
-                    .map(|a| a.value(r).to_string())
-            };
-            let num = |name: &str, r: usize| -> i64 {
-                batch
-                    .schema()
-                    .index_of(name)
-                    .ok()
-                    .and_then(|i| {
-                        datafusion::arrow::compute::cast(
-                            batch.column(i),
-                            &datafusion::arrow::datatypes::DataType::Int64,
-                        )
-                        .ok()
-                    })
-                    .and_then(|a| {
-                        a.as_any()
-                            .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                            .filter(|a| !a.is_null(r))
-                            .map(|a| a.value(r))
-                    })
-                    .unwrap_or(0)
-            };
-            for r in 0..batch.num_rows() {
-                out.push(Row::new(
-                    (0..spec.columns.len()).map(|i| text(i, r)).collect(),
-                    (num(SEQ, r), num(POS, r)),
-                ));
-            }
-        }
-        Ok(out)
+        self.scan_filtered(relation, None).await
+    }
+
+    async fn scan_where(
+        &self,
+        relation: &str,
+        column: &str,
+        value: &str,
+    ) -> crate::Result<Vec<Row>> {
+        self.scan_filtered(
+            relation,
+            Some(
+                iceberg::expr::Reference::new(column)
+                    .equal_to(iceberg::spec::Datum::string(value)),
+            ),
+        )
+        .await
     }
 
     async fn append(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()> {

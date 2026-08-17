@@ -375,23 +375,58 @@ and what replaced it is the pin.
   goldens values — pre-existing, and the pre-warm orders by dependency
   when it lands.
 
+## 7d. Stage 4½ landed (2026-08-17): one store, and sqlx leaves
+
+The glossary crossed — the last relation — and with it the sqlite pool,
+the schema, the `NOT EXISTS` supersession SQL, the LIKE-escaped scope
+predicate and the forwarded-SQL injection guards left whole: there is
+no raw SQL to guard because nothing executes any. `Store::open(lake)`
+takes exactly one argument now, and a workspace's `glossary.sqlite` is
+dead weight. The strike refuses by name
+(`Error::StrikeParked`, pointing at the 0.11 item and the delete
+report), and the judge flow closes contests by concession until then.
+
+What the crossing forced, and what it taught:
+
+- **The ReadContext is the statement's store snapshot.** The first
+  post-crossing capture ran 45× slower than before (383 s against 8.5),
+  because every read re-scanned every relation from the lake. The
+  architecture's own words — one statement, one resolution — were the
+  fix: `Store::read_context` reads each relation once, and the read
+  rules (`slots`, `raw_read`, `collapsed_read`, `measurement_in`)
+  became pure functions over it, no IO at all.
+- **The context reuses on pin identity** — the exact shape 2026-08-16
+  §10 sanctioned: in-memory, read-path only, keyed by the snapshots the
+  computation reads. Same pin, same contents, no invalidation to write;
+  a session forgets its own context after landing a measurement (the
+  one write the pin cannot see), and another channel's landing staying
+  invisible until the pin moves is the ruled harmless-duplicate case.
+- **Measurement reads push the digest into the format's scan**
+  (`scan_where`, `Reference::equal_to` → `TableScan::with_filter`), so
+  the drift record's history is never decoded to serve today. Warm
+  capture after all three: **5.3 s** — faster than the sqlite-era 8.5.
+- **The fixture migrated by a scratch tool, once**: 119 glossary rows
+  read from `glossary.sqlite` in id order and landed as one commit, so
+  `_pos` carries the original history order. The tool was never
+  committed — it preserved a fixture, it is not a migration feature.
+
+Goldens: booksql, rel-f1 and rel-event byte-identical through the whole
+crossing; fin moved by six eighth-digit rounding flips from the one
+recompute at the new pin and was re-accepted.
+
 ## 8. Still open
 
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.
-- **The glossary strike, postponed** (project lead, 2026-08-17: "I have
-  to dig into that first"). The facts it waits on, verified in the
-  pinned sources: DataFusion 54.1 has the seam —
-  `TableProvider::delete_from`, called by the default planner for
-  `Dml(Delete)` — but iceberg-rust main cannot commit a row removal at
-  all: `fast_append` is the only data-touching action and it rejects
-  delete files ("Only data content type is allowed for fast append",
-  transaction/snapshot.rs:139), no overwrite/rewrite action exists, and
-  custom actions are sealed (`TransactionAction` is `pub(crate)`). The
-  read side already applies deletes other engines write. `glossary`'s
-  crossing (stage 4½) gates on this ruling.
-- **Contributing upstream** — the `_row_id` read path is the obvious
-  first contribution, and it is what unblocks batching; a delete-capable
-  transaction action is the second, and the strike wants it. Premature
-  until this architecture is worth defending.
+- **The strike and batch commits are one parked item: iceberg-rust
+  0.11** (ruled 2026-08-17 — "none of the 3 mentioned [strike] flows is
+  mission critical for the immediate future of this prototype"). The
+  full grounding is `reports/2026-08-17-delete-in-iceberg-v3.md`: the
+  checkout reads deletes but cannot commit one, and upstream tracks the
+  gap (#2580 DV writer + RowDelta, #2792 DV read, #2879 `_row_id`).
+  Until 0.11: `glossary` crosses anyway and `DELETE FROM glossary`
+  refuses loudly, naming this item — a contest closes by concession,
+  and a glossed aspect's re-declaration waits or rebuilds the
+  workspace. Check upstream main every few days; contribute when this
+  architecture is worth defending.

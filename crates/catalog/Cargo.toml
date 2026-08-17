@@ -11,10 +11,12 @@ path = "src/lib.rs"
 datafusion = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-sql = { workspace = true }
+# Feature-unification only: enables sqlx's tokio runtime for
+# iceberg-catalog-sql (see the workspace Cargo.toml).
+sqlx = { workspace = true }
 iceberg-datafusion = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
-sqlx = { workspace = true }
 uuid = { version = "1", features = ["v7"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }

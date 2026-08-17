@@ -257,15 +257,7 @@ async fn main() {
     let lake = Lake::open(&ws.join("catalog.sqlite"), &ws.join("warehouse"))
         .await
         .unwrap();
-    // sqlx's sqlite URL opens read-write but does not create; an empty
-    // file is a valid empty database (same move as `Lake::open`).
-    let glossary = ws.join("glossary.sqlite");
-    if !existing {
-        std::fs::File::create(&glossary).unwrap();
-    }
-    let store = Store::open(&format!("sqlite:{}", glossary.display()), lake.clone())
-        .await
-        .unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     // The same wiring `serverd` uses, so the workspace receives the
     // shipped library before anything is asked of it.
     let actor = Actor {

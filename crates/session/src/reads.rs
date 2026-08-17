@@ -37,6 +37,11 @@ pub(crate) struct Shared {
     pub dataset: RwLock<Option<String>>,
     pub handle: tokio::runtime::Handle,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
+    /// The statement context, reused while the pin holds: same pin, same
+    /// contents — the §10-sanctioned shape (in-memory, read-path, keyed
+    /// by the snapshots the computation reads). Measurements refresh per
+    /// statement regardless, because a landing does not move the pin.
+    pub context: RwLock<Option<ReadContext>>,
     /// The session's own context, set right after construction (the planner
     /// is built before the context exists). The metric bind plans each
     /// grounding through it as its own statement — `statement_to_plan`
@@ -80,6 +85,15 @@ impl Shared {
             .collect())
     }
 
+    /// A landing at the same pin is the one write the pin cannot see —
+    /// the session forgets its own context after landing a measurement.
+    /// Another channel's landing stays invisible until this pin moves;
+    /// the duplicate computation that allows is harmless and
+    /// uncoordinated by design (§4).
+    pub fn forget_context(&self) {
+        *self.context.write().expect("context lock") = None;
+    }
+
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
@@ -90,21 +104,30 @@ impl Shared {
     /// a landing the moment it committed; the disclosure grid and the
     /// staleness comparison ride on this.
     pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
-        let mut ctx = ReadContext::default();
         let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
-            return Ok(ctx);
+            return Ok(ReadContext::default());
         };
         let lake = self.lake();
+        let mut universe = Vec::new();
+        let mut snapshots = std::collections::HashMap::new();
         for table in lake.table_names(&dataset).await? {
             if let Some(snapshot) = lake.snapshot_id(&dataset, &table).await? {
-                ctx.snapshots.insert(table.clone(), snapshot);
+                snapshots.insert(table.clone(), snapshot);
             }
             for column in lake.table_columns(&dataset, &table).await? {
-                ctx.universe.push(format!("{table}.{column}"));
+                universe.push(format!("{table}.{column}"));
             }
-            ctx.universe.push(table);
+            universe.push(table);
         }
-        ctx.pin = self.store.pin(&dataset, &ctx.snapshots).await?;
+        let pin = self.store.pin(&dataset, &snapshots).await?;
+        let cached = self.context.read().expect("context lock").clone();
+        if let Some(mut ctx) = cached.filter(|c| c.pin == pin) {
+            ctx.universe = universe;
+            ctx.snapshots = snapshots;
+            return Ok(ctx);
+        }
+        let ctx = self.store.read_context(&dataset, universe, snapshots).await?;
+        *self.context.write().expect("context lock") = Some(ctx.clone());
         Ok(ctx)
     }
 }
@@ -140,18 +163,18 @@ pub(crate) async fn verdicts(
         let Some(detector) = w.detector.clone() else {
             continue;
         };
-        let slots = shared
-            .store
-            .raw_read(dataset, scope, Some(&w.aspect), &ctx.pin)
-            .await?;
+        let slots = glossql_glossary::Store::raw_read(dataset, scope, Some(&w.aspect), ctx);
+        let function = ctx
+            .functions
+            .iter()
+            .find(|f| {
+                f.name == detector && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+            })
+            .cloned()
+            .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
         let subjects: std::collections::BTreeSet<&str> =
             slots.iter().map(|s| s.subject.as_str()).collect();
         for subject in subjects {
-            let function = shared
-                .store
-                .function(&detector, Some(dataset))
-                .await?
-                .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
             let doc: Vec<Value> = slots
                 .iter()
                 .filter(|s| s.subject == subject)
@@ -455,10 +478,7 @@ pub(crate) async fn served_grounding(shared: &Shared, aspect: &str) -> Result<St
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(aspect)).await?;
-    let rows = shared
-        .store
-        .collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts)
-        .await?;
+    let rows = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts);
     let row = rows
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == aspect && r.state != "unassessed");
@@ -496,18 +516,12 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     let ctx = shared.read_context().await?;
     if all {
         Ok(raw_batch(
-            shared
-                .store
-                .raw_read(&dataset, &scope, aspect, &ctx.pin)
-                .await?,
+            glossql_glossary::Store::raw_read(&dataset, &scope, aspect, &ctx),
         ))
     } else {
         let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect).await?;
         Ok(collapsed_batch(
-            shared
-                .store
-                .collapsed_read(&dataset, &scope, aspect, &ctx, &verdicts)
-                .await?,
+            glossql_glossary::Store::collapsed_read(&dataset, &scope, aspect, &ctx, &verdicts),
         ))
     }
 }
@@ -528,10 +542,8 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         .ok_or(SessionError::NoDataset)?;
     let ctx = shared.read_context().await?;
     let mut rows: Vec<(String, String, String, String, f64)> = Vec::new();
-    if let Some(measured) = shared
-        .store
-        .measurement_get(&dataset, &dataset, "metric_cube", &ctx.pin)
-        .await?
+    if let Some(measured) =
+        glossql_glossary::Store::measurement_in(&ctx, &dataset, &dataset, "metric_cube")
     {
         let body: Value = serde_json::from_str(&measured.body).map_err(|e| {
             SessionError::BadSubject(format!("metric_series(): the measured cube is not JSON: {e}"))

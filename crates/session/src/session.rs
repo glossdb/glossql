@@ -318,6 +318,7 @@ impl Session {
             dataset: RwLock::new(None),
             handle: tokio::runtime::Handle::current(),
             runtime: RwLock::new(Arc::new(NoRuntime)),
+            context: RwLock::new(None),
             ctx: RwLock::new(None),
         });
         let config = SessionConfig::new()
@@ -761,9 +762,12 @@ impl Session {
             let Some(returns) = function.returns.clone() else {
                 return Err(SessionError::DetectorNotExtractable(name.clone()));
             };
-            let measured = store
-                .measurement_get(&resolved.dataset, &resolved.subject, &name, &ctx.pin)
-                .await?;
+            let measured = glossql_glossary::Store::measurement_in(
+                &ctx,
+                &resolved.dataset,
+                &resolved.subject,
+                &name,
+            );
             let row = match measured {
                 Some(row) => row,
                 None => {
@@ -833,7 +837,7 @@ impl Session {
                                 .to_string(),
                         }
                     } else {
-                        store
+                        let row = store
                             .measurement_put(
                                 &resolved.dataset,
                                 &name,
@@ -843,14 +847,8 @@ impl Session {
                                 &output.to_string(),
                             )
                             .await?;
-                        store
-                            .measurement_get(&resolved.dataset, &resolved.subject, &name, &ctx.pin)
-                            .await?
-                            .ok_or_else(|| {
-                                SessionError::Runtime(format!(
-                                    "`{name}` landed a measurement this read cannot see"
-                                ))
-                            })?
+                        self.shared.forget_context();
+                        row
                     }
                 }
             };
@@ -1154,10 +1152,7 @@ async fn context_value(
             glossql_glossary::Scope::Subject(current.clone())
         };
         let verdicts = crate::reads::verdicts(shared, ctx, dataset, &scope, Some(aspect)).await?;
-        let rows = shared
-            .store
-            .collapsed_read(dataset, &scope, Some(aspect), ctx, &verdicts)
-            .await?;
+        let rows = glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), ctx, &verdicts);
         let target = if current == dataset {
             dataset
         } else {

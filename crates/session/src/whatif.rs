@@ -92,10 +92,7 @@ pub(crate) async fn whatif_batch(
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(scenario)).await?;
-    let collapsed = shared
-        .store
-        .collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts)
-        .await?;
+    let collapsed = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts);
     let current = collapsed
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == scenario)
@@ -224,10 +221,7 @@ async fn compute(
         .collect();
     let read_ctx = shared.read_context().await?;
     let all_verdicts = verdicts(shared, &read_ctx, dataset, &scope, None).await?;
-    let collapsed = shared
-        .store
-        .collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts)
-        .await?;
+    let collapsed = glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
 
     let mut out = Vec::new();
     for c in collapsed {

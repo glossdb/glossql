@@ -52,9 +52,9 @@ pub enum Error {
     #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(
-        "forwarded delete carries a `{char}` outside a quoted literal — one statement is forwarded, never a sequence"
+        "the strike is parked: the substrate cannot remove rows until iceberg-rust 0.11 lands the delete write path — supersede the slot, or rebuild the workspace (reports/2026-08-17-delete-in-iceberg-v3.md)"
     )]
-    ForwardUnsafe { char: char },
+    StrikeParked,
     #[error(
         "function `{function}` both ACCEPTS and RETURNS `{aspect}` — a function cannot be its own input"
     )]
@@ -65,8 +65,6 @@ pub enum Error {
     ReservedTableName(String),
     #[error("stored JSON is corrupt: {0}")]
     Corrupt(String),
-    #[error(transparent)]
-    Db(#[from] sqlx::Error),
 }
 
 impl From<glossql_catalog::Error> for Error {
@@ -160,6 +158,39 @@ pub struct MeasurementRow {
     pub function: String,
     pub body: String,
     pub computed_at: String,
+}
+
+/// One glossary row, with the format's write order — the store's read
+/// rules run over these.
+#[derive(Debug, Clone)]
+pub struct GlossRow {
+    pub dataset: String,
+    pub subject: String,
+    pub aspect: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub body: String,
+    pub written_at: String,
+    pub snapshot_id: Option<i64>,
+    pub seq: (i64, i64),
+}
+
+/// A declared aspect, parsed once.
+#[derive(Debug, Clone)]
+pub struct AspectRow {
+    pub name: String,
+    pub kind: String,
+    pub grains: Option<String>,
+    pub condition: Option<(String, String)>,
+    pub schema: String,
+}
+
+impl AspectRow {
+    pub fn source_grain(&self) -> bool {
+        self.grains
+            .as_deref()
+            .is_some_and(|g| g.split(',').any(|g| g == "source"))
+    }
 }
 
 /// One witness's verdict over one subject, computed at read and never

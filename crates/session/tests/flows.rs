@@ -329,7 +329,7 @@ async fn attest_serves_detector_outputs_in_the_fixed_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn glossary_and_cache_are_plain_readable_relations() {
+async fn the_glossary_is_a_plain_readable_relation_and_the_strike_is_parked() {
     let (session, _) = agent_session().await;
     run(&session, SETUP).await;
     run(
@@ -351,12 +351,14 @@ async fn glossary_and_cache_are_plain_readable_relations() {
     +---------------+--------+------------+
     ");
 
-    let outcomes = run(
-        &session,
-        "DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';",
-    )
-    .await;
-    assert!(matches!(outcomes[0], Outcome::Affected(1)));
+    // The strike routes, and refuses by name until iceberg-rust 0.11
+    // can remove rows (ruled 2026-08-17).
+    let e = session
+        .execute("DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("parked"), "{e}");
+    assert!(e.to_string().contains("0.11"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -928,54 +930,6 @@ async fn a_self_referential_frame_errors_instead_of_recursing() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("read cycle"), "{e}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_forwarded_delete_carries_one_statement_only() {
-    // SQLite reads `$tag$` as a bind parameter, not a quote, so a
-    // dollar-quoted body carrying a `;` used to arrive as a statement
-    // sequence and execute — that payload promoted an agent's gloss to
-    // human rank (found 2026-08-06). The delete now renders from the AST
-    // with its literals normalized, so the payload is what it always
-    // claimed to be: a string nobody's body matches.
-    let (session, _) = agent_session().await;
-    run(&session, SETUP).await;
-    run(
-        &session,
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await;
-    let outcomes = session
-        .execute(
-            "DELETE FROM glossary WHERE body = $q$ ; UPDATE glossary SET actor_kind='human'; --$q$;",
-        )
-        .await
-        .unwrap();
-    assert!(
-        matches!(outcomes.first(), Some(Outcome::Affected(0))),
-        "the payload matched nothing and ran as nothing: {outcomes:?}"
-    );
-
-    // The gloss is untouched, and it is still an agent's — the rank the
-    // collapse turns on.
-    let rows = table(
-        &session,
-        "SELECT actor_kind, body FROM glossary WHERE subject = 'orders.amount';",
-    )
-    .await;
-    assert!(rows.contains("agent"), "{rows}");
-    assert!(!rows.contains("human"), "{rows}");
-
-    // A dollar-quoted body without the trick still deletes: normalizing it
-    // to a single-quoted string keeps the value identical.
-    let outcomes = session
-        .execute(r#"DELETE FROM glossary WHERE body = $q${"value": "EUR"}$q$;"#)
-        .await
-        .unwrap();
-    assert!(
-        matches!(outcomes.first(), Some(Outcome::Affected(1))),
-        "{outcomes:?}"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
