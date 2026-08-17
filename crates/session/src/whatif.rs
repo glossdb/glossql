@@ -90,7 +90,7 @@ impl Row {
 }
 
 pub(crate) async fn whatif_batch(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     scenario: &str,
 ) -> Result<RecordBatch, SessionError> {
     let dataset = shared
@@ -222,7 +222,7 @@ fn decode_overrides(body: &Value) -> Result<Vec<Override>, String> {
 /// worlds, banded by the runtime's kernel. One `Row` per (concept,
 /// month) — or one refusal row per concept, with the reason.
 async fn compute(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     dataset: &str,
     scenario: &str,
     overrides: &[Override],
@@ -355,7 +355,7 @@ async fn compute(
 /// refusal row, not a failed read.
 #[allow(clippy::too_many_arguments)]
 async fn concept_rows(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     concept: &str,
     sql: &str,
@@ -370,7 +370,7 @@ async fn concept_rows(
     // The grounding's shape: a `value` column and a time axis, found by
     // dtype exactly as any reader finds them (the metric_bands probe) —
     // from the plan's schema, nothing scanned.
-    let probe = build_plan(ctx, sql).await?;
+    let probe = build_plan(shared, ctx, sql).await?;
     let fields: Fields = probe.schema().fields().clone();
     if !fields.iter().any(|f| f.name() == "value") {
         return Err(refuse(
@@ -425,7 +425,7 @@ async fn concept_rows(
         )
     };
 
-    let base = run_series(ctx, &series_sql, None).await?;
+    let base = run_series(shared, ctx, &series_sql, None).await?;
     let post: Vec<usize> = (0..base.len())
         .filter(|i| base[*i].0.as_str() >= from_month)
         .collect();
@@ -456,7 +456,7 @@ async fn concept_rows(
     // factors. Identical to baseline on every post month = the
     // overrides never reach this grounding — refused, never served
     // as a silently unchanged number.
-    let joint = run_series(ctx, &series_sql, Some((overrides, declared))).await?;
+    let joint = run_series(shared, ctx, &series_sql, Some((overrides, declared))).await?;
     if !same_roster(&joint, &base) {
         return Err(refuse(
             "not served: the replay changed the month roster — the grounding is not \
@@ -493,7 +493,7 @@ async fn concept_rows(
         let s = if w.iter().all(|f| (*f - 1.0).abs() < 1e-9) {
             &base
         } else {
-            owned = run_series(ctx, &series_sql, Some((overrides, w))).await?;
+            owned = run_series(shared, ctx, &series_sql, Some((overrides, w))).await?;
             &owned
         };
         if !same_roster(s, &base) {
@@ -591,6 +591,7 @@ async fn concept_rows(
 /// re-enters the relation planner. The `misfit.` door plans its frame
 /// through the same gate.
 pub(crate) async fn build_plan(
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<LogicalPlan, SessionError> {
@@ -602,7 +603,9 @@ pub(crate) async fn build_plan(
         })?;
     let statement =
         datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
-    ctx.state()
+    // A grounding body may name `read.<x>()`; resolve before planning.
+    let resolved = crate::prepass::resolve_sql(shared, ctx, sql).await?;
+    crate::reads::state_with(ctx, shared, resolved)
         .statement_to_plan(statement)
         .await
         .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
@@ -611,11 +614,12 @@ pub(crate) async fn build_plan(
 /// A monthly series: Vec<(period "YYYY-MM", value)>, optionally with
 /// the override rewrite applied at the given strengths.
 async fn run_series(
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
     overlay: Option<(&[Override], &[f64])>,
 ) -> Result<Vec<(String, f64)>, SessionError> {
-    let mut plan = build_plan(ctx, sql).await?;
+    let mut plan = build_plan(shared, ctx, sql).await?;
     if let Some((overrides, factors)) = overlay {
         plan = apply_overrides(plan, overrides, factors)
             .map_err(|e| SessionError::Runtime(format!("the override rewrite failed: {e}")))?;

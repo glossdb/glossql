@@ -19,6 +19,7 @@
 mod library;
 mod misfit;
 mod plane;
+mod prepass;
 mod reads;
 pub mod rulings;
 mod session;

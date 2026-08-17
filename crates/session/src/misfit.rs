@@ -38,7 +38,7 @@ pub(crate) const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     frame: &str,
 ) -> Result<RecordBatch, SessionError> {
     let dataset = shared
@@ -96,7 +96,7 @@ pub(crate) async fn misfit_batch(
     // The frame's rows, capped one past the stated limit so the refusal
     // can say "more than" without materializing the excess.
     let capped = format!("SELECT * FROM ({sql}) LIMIT {}", ROW_CAP + 1);
-    let plan = crate::whatif::build_plan(&ctx, &capped).await?;
+    let plan = crate::whatif::build_plan(shared, &ctx, &capped).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await

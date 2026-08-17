@@ -20,15 +20,16 @@ use std::path::{Path, PathBuf};
 /// to zero in `glossql-session`. The `glossql-import` ones bridge a
 /// genuinely sync ADBC driver and are argued separately.
 ///
-/// `thread_local` — the door expansion stack, which exists only because
-/// expansion re-enters the planner on one thread. Stage 2 deletes it.
+/// `thread_local` — was the door expansion stack. Stage 2 deleted it by
+/// deleting the re-entrancy: nothing re-plans through the same context,
+/// so there is no stack to guard. At zero, and it stays there.
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
 /// partition; stage 3 and stage 5 remove the ones in the read path.
 const CEILING: [(&str, usize); 4] = [
-    ("block_in_place", 8),
-    ("block_on", 6),
-    ("thread_local!", 1),
+    ("block_in_place", 6),
+    ("block_on", 4),
+    ("thread_local!", 0),
     ("tokio::spawn", 4),
 ];
 

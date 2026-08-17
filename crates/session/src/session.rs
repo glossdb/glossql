@@ -193,6 +193,30 @@ impl FunctionRuntime for NoRuntime {
 struct CtxDoor {
     ctx: SessionContext,
     handle: tokio::runtime::Handle,
+    /// A script's SQL names doors like anyone else's, so it needs the same
+    /// pre-pass. It runs inside the door's existing `block_on` — the door
+    /// is blocking because `SqlDoor` is sync, which is `db.query`'s
+    /// re-entrancy and stage 5's to remove, not a new cost here.
+    shared: Arc<Shared>,
+}
+
+/// Plan one script query with its doors resolved first.
+async fn door_plan(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    query: &str,
+) -> Result<datafusion::logical_expr::LogicalPlan, SessionError> {
+    let mut statements = GlossqlParser::parse_sql(query)?;
+    let Some(Statement::Substrate(statement)) = statements.pop() else {
+        return Err(SessionError::NotOneRead);
+    };
+    let resolved = crate::prepass::resolve(shared, ctx, &statement).await?;
+    let plan = crate::reads::state_with(ctx, shared, resolved)
+        .statement_to_plan(*statement)
+        .await?;
+    // A script reads; it never writes.
+    read_only().verify_plan(&plan)?;
+    Ok(plan)
 }
 
 /// A script reads; it never writes. `SessionContext::sql` permits DDL, DML
@@ -209,9 +233,12 @@ impl SqlDoor for CtxDoor {
     fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
         tokio::task::block_in_place(|| {
             self.handle.block_on(async {
+                let plan = door_plan(&self.shared, &self.ctx, query)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let df = self
                     .ctx
-                    .sql_with_options(query, read_only())
+                    .execute_logical_plan(plan)
                     .await
                     .map_err(|e| e.to_string())?;
                 let schema = Arc::new(df.schema().as_arrow().clone());
@@ -241,10 +268,14 @@ impl SqlDoor for CtxDoor {
                     let mut handles = Vec::with_capacity(wave.len());
                     for q in wave {
                         let ctx = self.ctx.clone();
+                        let shared = Arc::clone(&self.shared);
                         let q = q.clone();
                         handles.push(tokio::spawn(async move {
+                            let plan = door_plan(&shared, &ctx, &q)
+                                .await
+                                .map_err(|e| e.to_string())?;
                             let df = ctx
-                                .sql_with_options(&q, read_only())
+                                .execute_logical_plan(plan)
                                 .await
                                 .map_err(|e| e.to_string())?;
                             let schema = Arc::new(df.schema().as_arrow().clone());
@@ -305,8 +336,12 @@ impl Session {
         let state = SessionStateBuilder::new()
             .with_default_features()
             .with_config(config)
+            // The base planner resolves nothing: every statement builds its
+            // own state carrying its own pre-pass result (`reads::state_with`).
+            // This one only serves paths that name no SQL-bodied door.
             .with_relation_planners(vec![Arc::new(GlossqlReads {
                 shared: Arc::clone(&shared),
+                resolved: Arc::new(Default::default()),
             })])
             .build();
         let mut ctx = SessionContext::new_with_state(state);
@@ -357,6 +392,7 @@ impl Session {
         CtxDoor {
             ctx: self.ctx.clone(),
             handle: self.shared.handle.clone(),
+            shared: Arc::clone(&self.shared),
         }
     }
 
@@ -860,6 +896,19 @@ impl Session {
     /// [`SessionError::NotOneRead`] and belongs in [`Session::execute`].
     /// The result says whether the query reads only the store's
     /// relations — the doors' cap policy wants to know.
+    /// Plan one statement: resolve its doors asynchronously, then run the
+    /// sync planner over a state that already holds them. Nothing blocks a
+    /// planner thread, and nothing re-enters — the two defects the
+    /// expansion stack existed to survive.
+    pub(crate) async fn plan_statement(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<datafusion::logical_expr::LogicalPlan, SessionError> {
+        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
+        Ok(state.statement_to_plan(statement).await?)
+    }
+
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
         self.query_stream_with_params(sql, None).await
     }
@@ -896,7 +945,7 @@ impl Session {
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
-        let mut plan = self.ctx.state().statement_to_plan(*statement).await?;
+        let mut plan = self.plan_statement(*statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
@@ -976,7 +1025,7 @@ impl Session {
                 other => return Err(SessionError::SubstrateClosed(verb_of(other))),
             }
         }
-        let plan = self.ctx.state().statement_to_plan(statement).await?;
+        let plan = self.plan_statement(statement).await?;
         let frame = self.ctx.execute_logical_plan(plan).await?;
         // Bounded like the streaming door, for the same reason: the reader
         // sees at most its cap, so the engine should not be asked for more

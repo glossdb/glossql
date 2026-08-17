@@ -20,10 +20,8 @@ use datafusion::logical_expr::planner::{
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, FunctionArg, FunctionArgExpr,
-    Statement as SQLStatement, TableAlias, TableFactor, Value as SQLValue,
+    TableAlias, TableFactor, Value as SQLValue,
 };
-use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
-use datafusion::sql::sqlparser::parser::Parser;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{AttestRow, CollapsedRow, RawRow, ReadContext, Scope, Store, schemas};
@@ -104,37 +102,6 @@ impl Shared {
         *self.read_cache.write().expect("read cache") = Some((version, ctx.clone()));
         Ok(ctx)
     }
-}
-
-thread_local! {
-    /// The doors' expansion stack. `read.` groundings nest by design;
-    /// `whatif.` and `misfit.` re-enter the planner through the
-    /// groundings they replay — all three guard here so a body that
-    /// reaches its own door errors instead of recursing (the two newer
-    /// doors lacked the guard; found 2026-08-12).
-    static EXPANDING: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Refuse re-entry of an already-expanding door, else push it.
-fn enter_expansion(key: &str) -> DFResult<()> {
-    EXPANDING.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.iter().any(|k| k == key) {
-            return Err(DataFusionError::Plan(format!(
-                "read cycle: {} -> {key}",
-                s.join(" -> ")
-            )));
-        }
-        s.push(key.to_string());
-        Ok(())
-    })
-}
-
-fn leave_expansion() {
-    EXPANDING.with(|s| {
-        s.borrow_mut().pop();
-    });
 }
 
 /// What a detector gets instead of a SQL door: a refusal (SPEC.md §7.1 — a
@@ -257,6 +224,26 @@ fn glossary_table_of(subject: &str) -> Option<&str> {
 #[derive(Debug)]
 pub(crate) struct GlossqlReads {
     pub shared: Arc<Shared>,
+    /// Everything the pre-pass resolved for THIS statement. Immutable,
+    /// and never shared between statements — which is why concurrent
+    /// reads on one session need no lock (`sql_all` runs four at once).
+    pub resolved: Arc<crate::prepass::Resolved>,
+}
+
+/// A session state for one statement, carrying that statement's resolved
+/// doors. Building from the existing state keeps the config, the
+/// catalogs and the registered functions; only the planner differs.
+pub(crate) fn state_with(
+    ctx: &datafusion::prelude::SessionContext,
+    shared: &Arc<Shared>,
+    resolved: crate::prepass::Resolved,
+) -> datafusion::execution::SessionState {
+    datafusion::execution::SessionStateBuilder::new_from_existing(ctx.state())
+        .with_relation_planners(vec![Arc::new(GlossqlReads {
+            shared: Arc::clone(shared),
+            resolved: Arc::new(resolved),
+        })])
+        .build()
 }
 
 impl RelationPlanner for GlossqlReads {
@@ -297,7 +284,7 @@ impl RelationPlanner for GlossqlReads {
                     "read.{aspect}() takes no arguments — filters ride WHERE"
                 )));
             }
-            return self.plan_serve(&aspect, alias.clone());
+            return self.planned(&format!("read.{aspect}"), alias.clone());
         }
         // `whatif.<scenario>()` — the scenario door (ruled 2026-08-11,
         // fixture 19): one operation-named prefix beside `read.`, serving
@@ -318,10 +305,7 @@ impl RelationPlanner for GlossqlReads {
                      overrides (fixture 19)"
                 )));
             }
-            enter_expansion(&format!("whatif.{scenario}"))?;
-            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario));
-            leave_expansion();
-            let batch = batch?;
+            let batch = self.run(crate::whatif::whatif_batch(&self.shared, &scenario))?;
             let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
             let plan = LogicalPlanBuilder::scan(
                 format!("whatif.{scenario}()"),
@@ -354,10 +338,7 @@ impl RelationPlanner for GlossqlReads {
                      grounding (fixture 20)"
                 )));
             }
-            enter_expansion(&format!("misfit.{frame}"))?;
-            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame));
-            leave_expansion();
-            let batch = batch?;
+            let batch = self.run(crate::misfit::misfit_batch(&self.shared, &frame))?;
             let provider = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
             let plan = LogicalPlanBuilder::scan(
                 format!("misfit.{frame}()"),
@@ -409,15 +390,7 @@ impl RelationPlanner for GlossqlReads {
             // as the store's relations already do. The shipped names
             // are the reserved surface; keep them few and specific.
             (name, None) => match crate::library::read_sql(name) {
-                Some(sql) => {
-                    let alias = alias.clone();
-                    return self.plan_sql(
-                        &format!("read:{fname}"),
-                        &format!("the shipped read `{fname}`"),
-                        sql,
-                        alias,
-                    );
-                }
+                Some(_) => return self.planned(&format!("read:{fname}"), alias.clone()),
                 None => return Ok(RelationPlanning::Original(Box::new(relation))),
             },
             _ => return Ok(RelationPlanning::Original(Box::new(relation))),
@@ -448,78 +421,22 @@ impl GlossqlReads {
             .map_err(|e| DataFusionError::External(Box::new(e)))
     }
 
-    /// The serve bind: fetch the collapsed current grounding, parse its
-    /// SQL, plan it as a derived subquery. Expansion nests (a recorded
-    /// evaluation may compose `FROM read.revenue()`), so a stack guards
-    /// against a grounding that reaches itself.
-    fn plan_serve(&self, aspect: &str, alias: Option<TableAlias>) -> DFResult<RelationPlanning> {
-        let sql = tokio::task::block_in_place(|| {
-            self.shared
-                .handle
-                .block_on(served_grounding(&self.shared, aspect))
-        })
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        self.plan_sql(
-            &format!("read.{aspect}"),
-            &format!("the grounding for `{aspect}` (read.{aspect}())"),
-            &sql,
-            alias,
-        )
-    }
-
-    /// Plan SQL text as a derived relation: the one expansion path.
-    /// `key` guards the cycle stack, `what` names the source in errors.
+    /// A door whose body is SQL: the pre-pass planned it before the
+    /// planner ran, so this is a lookup. Nothing here fetches, blocks or
+    /// re-enters — which is why there is no expansion stack any more.
     ///
-    /// Both callers hand SQL that came from somewhere else — a QUERY
-    /// gloss the workspace authored, or a read the binary ships — and
-    /// both want the same thing: the body planned as its own statement
-    /// so the full pipeline composes around it. Planning it as its own
-    /// statement is what makes that work: `statement_to_plan` collects
-    /// table references per statement, so the body's tables resolve even
-    /// when the outer statement never names them, and a nested read
-    /// re-enters this planner through the same pipeline.
-    fn plan_sql(
-        &self,
-        key: &str,
-        what: &str,
-        sql: &str,
-        alias: Option<TableAlias>,
-    ) -> DFResult<RelationPlanning> {
-        enter_expansion(key)?;
-        let planned = self.plan_sql_expansion(what, sql, alias);
-        leave_expansion();
-        planned
-    }
-
-    fn plan_sql_expansion(
-        &self,
-        what: &str,
-        sql: &str,
-        alias: Option<TableAlias>,
-    ) -> DFResult<RelationPlanning> {
-        // Query-shaped or refused — a grounding's schema admits any
-        // string, and a shipped read is only checked at build time.
-        let query = Parser::new(&PostgreSqlDialect {})
-            .try_with_sql(sql)
-            .and_then(|mut p| p.parse_query())
-            .map_err(|e| DataFusionError::Plan(format!("{what} does not parse: {e}")))?;
-        let ctx = self
-            .shared
-            .ctx
-            .read()
-            .expect("ctx lock")
-            .clone()
-            .ok_or_else(|| DataFusionError::Plan("the session context is not wired".into()))?;
-        let statement =
-            datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
-        let plan = tokio::task::block_in_place(|| {
-            self.shared
-                .handle
-                .block_on(async { ctx.state().statement_to_plan(statement).await })
-        })
-        .map_err(|e| e.context(format!("running {what}")))?;
+    /// A miss means the pre-pass did not see this reference. That can
+    /// only happen if its traversal missed a position the planner
+    /// reaches, so it says so rather than falling back to fetching.
+    fn planned(&self, key: &str, alias: Option<TableAlias>) -> DFResult<RelationPlanning> {
+        let plan = self.resolved.plan(key).ok_or_else(|| {
+            DataFusionError::Plan(format!(
+                "`{key}` was not resolved before planning — the pre-pass missed this reference"
+            ))
+        })?;
         Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
-            plan, alias,
+            (*plan).clone(),
+            alias,
         ))))
     }
 }
@@ -527,7 +444,7 @@ impl GlossqlReads {
 /// What a `read.<aspect>()` may expand: a QUERY aspect with a current
 /// collapsed grounding on the `USE`'d dataset — human outranking agent,
 /// so a pinned definition is literally what runs.
-async fn served_grounding(shared: &Shared, aspect: &str) -> Result<String, SessionError> {
+pub(crate) async fn served_grounding(shared: &Shared, aspect: &str) -> Result<String, SessionError> {
     let dataset = shared
         .dataset
         .read()
