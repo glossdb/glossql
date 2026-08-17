@@ -329,6 +329,13 @@ impl RelationPlanner for GlossqlReads {
             let key = format!("read:{}", ident.value.to_lowercase());
             return self.planned(&key, alias.clone());
         }
+        // `subject_column('table.column')` — the pre-pass built the
+        // projection from the pin; a malformed argument is refused here
+        // with the same reader the pre-pass used.
+        if let Some(arg) = crate::prepass::subject_column_arg(&relation) {
+            let subject = arg.map_err(|e| DataFusionError::Plan(e.to_string()))?;
+            return self.planned(&format!("subject_column:{subject}"), alias.clone());
+        }
         // A data table of the bound dataset, pinned at the statement's
         // snapshot — bare or dataset-qualified. Another dataset's tables
         // fall through to the live provider.

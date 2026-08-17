@@ -122,7 +122,7 @@ DECLARE ASPECT temporal_profile WITH $${
                  "completeness": {"type": "object"}, "gaps": {"type": "object"}}
 }$$ AS MEASUREMENT;
 
-DECLARE FUNCTION profile FOR GLOBAL AS $$profile.rhai$$
+DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
   ACCEPTS (column_profile)

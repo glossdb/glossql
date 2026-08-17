@@ -414,6 +414,52 @@ Goldens: booksql, rel-f1 and rel-event byte-identical through the whole
 crossing; fin moved by six eighth-digit rounding flips from the one
 recompute at the new pin and was re-accepted.
 
+## 7e. Stage 5 revised (ruled 2026-08-17): a measurement is a query
+
+The fused-native plan (eleven rhai orchestrations become eleven Rust
+functions) was presented and replaced by the project lead's own
+question — how would agents extend this? The answer is the final state:
+
+- **A measurement's body is SQL.** The declaration stays
+  `DECLARE FUNCTION … RETURNS aspect AS $$…$$`; the body plans through
+  the same pre-pass, pin and read-only guard as every statement, the
+  result validates against the RETURNS aspect's schema and lands at the
+  pin. The engine is the runtime; there is no function runtime for
+  measurements. Role by shape decides the body language with no marker:
+  RETURNS present → SQL, absent → a judge, rhai, pure over its input.
+- **The four shapes stand as authored/shipped**: searches and
+  statistics are shipped Rust behind the engine's points
+  (`hierarchy_candidates('t')`, `profile(col)`, `mad`, `entropy`);
+  reads are the agent's home for complex SQL (a QUERY gloss, nothing
+  new); judges are small rhai; a measurement composes them in one
+  statement. Heavy walks (`metric_bands`) stay native with a thin true
+  SQL body. Agents are bounded to non-heavy functions by design —
+  accepted.
+- **Values land, relations replay.** The landed measurement stays one
+  JSON body — pin-keyed, schema-validated, the drift record — never a
+  persisted frame. Chaining is inline SQL at compute time or a read
+  over the `measurements` table with the JSON functions; a result that
+  wants to be a table is a read, replayed at the pin. The result-shape
+  rule is fixed and dumb: one row × one column → the value; one row →
+  an object of its columns; many rows → an array of row objects; NULL
+  keys are omitted (checked: no golden body carries a null-valued key,
+  so the rule is byte-compatible with the record).
+- **Abstentions shrink**: `missing_aspects` was composition through
+  stored intermediates; inline composition removes the absent input.
+  `applicable: false` stays a durable finding, expressible in SQL.
+- **Table functions take names, not tables** — DataFusion has no
+  polymorphic `TABLE t` argument (`datafusion-sql/src/relation/mod.rs:290`);
+  a search resolves its subject argument through the statement's pin
+  inside the pre-pass, the same door discipline as `read.<aspect>()`.
+- **Migration**: same one-function-per-commit cadence against the same
+  goldens. Native recall pieces land first with their own tests, then
+  each declaration's body rewrites rhai→SQL gated on its golden; a
+  shipped rhai measurement runs on the legacy door path until its body
+  crosses, and the door dies with the last one. The composite fix rides
+  `coherence` and `behavior_evidence` as the two argued diffs. SPEC's
+  "functions are scripts with JSON contracts" line is proposed as a
+  diff after the first body survives its golden — corpus first.
+
 ## 8. Still open
 
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns

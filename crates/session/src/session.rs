@@ -138,6 +138,14 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String>;
 
+    /// The aggregate statistics the runtime ships (`profile`, `mad`,
+    /// `entropy` — the shapes SQL lacks). Registered on the session's
+    /// context when the runtime attaches, so a measurement body and an
+    /// agent's own SQL name the same functions.
+    fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
+        Vec::new()
+    }
+
     /// The band kernel behind the `whatif.` door (ruled 2026-08-11):
     /// fit one estimator on the replayed worlds, quantiles at `alphas`
     /// for every test row. Slices are row-major; the return is
@@ -372,6 +380,9 @@ impl Session {
     }
 
     pub fn with_runtime(self, runtime: Arc<dyn FunctionRuntime>) -> Self {
+        for udaf in runtime.udafs() {
+            self.ctx.register_udaf(udaf);
+        }
         *self.shared.runtime.write().expect("runtime lock") = runtime;
         self
     }
@@ -784,16 +795,24 @@ impl Session {
                         context.insert(aspect.clone(), value);
                     }
                     let context = Value::Object(context);
-                    let output = self
-                        .shared
-                        .runtime()
-                        .invoke(
-                            &function,
-                            &resolved.subject,
-                            &context,
-                            Arc::new(self.door()),
-                        )
-                        .map_err(SessionError::Runtime)?;
+                    // Role by shape, extended to the body (ruled
+                    // 2026-08-17, §7e): a RETURNS function whose body is
+                    // one SQL query is a measurement the engine runs; a
+                    // script body rides the legacy runtime path until its
+                    // declaration crosses.
+                    let output = match crate::measure::sql_body(&function.script) {
+                        Some(body) => self.compute_sql(body, &resolved.subject).await?,
+                        None => self
+                            .shared
+                            .runtime()
+                            .invoke(
+                                &function,
+                                &resolved.subject,
+                                &context,
+                                Arc::new(self.door()),
+                            )
+                            .map_err(SessionError::Runtime)?,
+                    };
                     // The aspect's schema is the one contract: nothing lands
                     // under an aspect without validating against it.
                     let (schema, _, grains) = store.aspect(&returns).await?.ok_or_else(|| {
@@ -855,6 +874,25 @@ impl Session {
             results.push(row);
         }
         Ok(Outcome::Rows(vec![crate::reads::extraction_batch(results)]))
+    }
+
+    /// A SQL measurement body: the subject bound into the AST, planned
+    /// through the statement pre-pass — same pin, same doors, same
+    /// read-only guard as any read — executed, and shaped by the result
+    /// rule (`measure::body_value`).
+    async fn compute_sql(
+        &self,
+        mut statement: DFStatement,
+        subject: &str,
+    ) -> Result<Value, SessionError> {
+        crate::measure::bind_subject(&mut statement, subject);
+        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let plan = crate::reads::state_with(&self.ctx, &self.shared, resolved)
+            .statement_to_plan(statement)
+            .await?;
+        read_only().verify_plan(&plan)?;
+        let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
+        crate::measure::body_value(&batches)
     }
 
     /// One query, streaming (project lead, 2026-08-04): batches flow as

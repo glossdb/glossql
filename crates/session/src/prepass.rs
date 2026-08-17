@@ -24,11 +24,13 @@ use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::TableProvider;
-use datafusion::logical_expr::LogicalPlan;
+use datafusion::datasource::provider_as_source;
+use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    Query, Statement as SQLStatement, TableFactor, VisitMut, VisitorMut,
+    Expr, FunctionArg, FunctionArgExpr, Query, Statement as SQLStatement, TableFactor,
+    Value as SqlValue, VisitMut, VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
@@ -71,6 +73,12 @@ enum Door {
     Serve(String),
     /// A shipped read (`crates/session/reads/*.sql`) — SQL from the binary.
     Shipped(String),
+    /// `subject_column('table.column')` — the named column of a pinned
+    /// table, projected as `v`. The primitive a column-grain measurement
+    /// body stands on: the body is declared once, the subject varies per
+    /// extraction, so the body cannot name the column itself (stage 5,
+    /// 2026-08-17). No SQL behind it — the plan is built here.
+    Column(String),
     /// `misfit.<frame>()` / `whatif.<scenario>()`. These still build their
     /// batch inside the planner (stage 4 moves them), so the pre-pass does
     /// not plan them — it walks the body they replay, for the path. That
@@ -84,6 +92,7 @@ impl Door {
         match self {
             Door::Serve(a) => format!("read.{a}"),
             Door::Shipped(n) => format!("read:{n}"),
+            Door::Column(s) => format!("subject_column:{s}"),
             Door::Replay(kind, n) => format!("{kind}.{n}"),
         }
     }
@@ -92,6 +101,7 @@ impl Door {
         match self {
             Door::Serve(a) => format!("the grounding for `{a}` (read.{a}())"),
             Door::Shipped(n) => format!("the shipped read `{n}`"),
+            Door::Column(s) => format!("the subject's column (subject_column('{s}'))"),
             Door::Replay(kind, n) => format!("the body `{kind}.{n}()` replays"),
         }
     }
@@ -128,7 +138,14 @@ fn doors_in(q: &mut Query) -> Vec<Door> {
                     [name] if args.is_none() && crate::library::read_sql(name).is_some() => {
                         self.0.push(Door::Shipped(name.clone()));
                     }
-                    _ => {}
+                    _ => {
+                        // The malformed-argument case is left uncollected
+                        // on purpose: the planner meets the factor, calls
+                        // the same reader, and reports it.
+                        if let Some(Ok(subject)) = subject_column_arg(f) {
+                            self.0.push(Door::Column(subject));
+                        }
+                    }
                 }
             }
             ControlFlow::Continue(())
@@ -139,6 +156,40 @@ fn doors_in(q: &mut Query) -> Vec<Door> {
     c.0.sort_by_key(Door::key);
     c.0.dedup();
     c.0
+}
+
+/// Reads a factor as the `subject_column` door: `None` if it is
+/// something else (including a bare `subject_column` table, which stays
+/// a table), `Some(Err)` if it is the door with anything but one quoted
+/// subject. Both sides of the seam call this — the pre-pass to collect,
+/// the planner to serve or refuse — so the two cannot disagree on what
+/// the door accepts.
+pub(crate) fn subject_column_arg(f: &TableFactor) -> Option<Result<String, SessionError>> {
+    let TableFactor::Table {
+        name,
+        args: Some(a),
+        ..
+    } = f
+    else {
+        return None;
+    };
+    let [part] = name.0.as_slice() else {
+        return None;
+    };
+    if !part
+        .as_ident()
+        .is_some_and(|i| i.value.eq_ignore_ascii_case("subject_column"))
+    {
+        return None;
+    }
+    if let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))] = a.args.as_slice()
+        && let SqlValue::SingleQuotedString(subject) = &v.value
+    {
+        return Some(Ok(subject.clone()));
+    }
+    Some(Err(SessionError::BadSubject(
+        "subject_column takes one quoted subject: subject_column('table.column')".into(),
+    )))
 }
 
 fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
@@ -159,6 +210,7 @@ async fn body_of(shared: &Shared, door: &Door) -> Result<String, SessionError> {
         // Both replay a declared grounding; a body that is not SQL names
         // no doors and walks to nothing.
         Door::Replay(_, name) => Ok(served_grounding(shared, name).await.unwrap_or_default()),
+        Door::Column(_) => unreachable!("the column door resolves before any body is fetched"),
     }
 }
 
@@ -217,6 +269,27 @@ async fn resolve_door(
         )));
     }
     if done.contains(&key) {
+        return Ok(());
+    }
+    // The column door has no SQL behind it: one projection of a pinned
+    // table, aliased `v`, built right here.
+    if let Door::Column(subject) = &door {
+        let Some((table, column)) = subject.split_once('.') else {
+            return Err(SessionError::BadSubject(format!(
+                "subject_column wants 'table.column', got '{subject}'"
+            )));
+        };
+        let provider = resolved.pins.get(table).cloned().ok_or_else(|| {
+            SessionError::BadSubject(format!(
+                "subject_column: no table `{table}` in the bound dataset"
+            ))
+        })?;
+        let plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
+            .and_then(|b| b.project(vec![ident(column).alias("v")]))
+            .and_then(|b| b.build())
+            .map_err(|e| SessionError::BadSubject(format!("subject_column('{subject}'): {e}")))?;
+        done.insert(key.clone());
+        resolved.plans.insert(key, Arc::new(plan));
         return Ok(());
     }
     let sql = body_of(shared, &door).await?;

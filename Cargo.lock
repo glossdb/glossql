@@ -3054,6 +3054,7 @@ dependencies = [
 name = "glossql-scripts"
 version = "0.1.0"
 dependencies = [
+ "arrow-json",
  "datafusion",
  "faer",
  "glossql-catalog",
@@ -3095,6 +3096,7 @@ dependencies = [
 name = "glossql-session"
 version = "0.1.0"
 dependencies = [
+ "arrow-json",
  "chrono",
  "datafusion",
  "datafusion-functions-json",

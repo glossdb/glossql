@@ -1,20 +1,23 @@
 ---
 name: glossql-functions
-description: Write a rhai function for a glossql workspace — measurements (RETURNS an aspect), check voices, and detectors (no RETURNS). The declaration carries the body, the script contract is subject/context/db, and the column kernels do the compute. Use when a shipped measurement does not fit this dataset, when a validation needs its measuring half, or when debugging a function that abstains.
+description: Write a function for a glossql workspace — measurements (RETURNS an aspect, body is SQL the engine plans), check voices, and detectors (no RETURNS, body is a rhai script over slots). Use when a shipped measurement does not fit this dataset, when a validation needs its measuring half, or when debugging a function that abstains.
 ---
 
 # Writing functions
 
-A function is a rhai script the server runs over the workspace. Two
-roles, told apart by shape:
+A function is declared over the door and run by the server. Two roles,
+told apart by shape, and the shape also picks the body's language:
 
 - **A measurement or a voice** — it `RETURNS` an aspect, and its output
-  is validated against that aspect's schema. Filling a MEASUREMENT
-  aspect makes it a measurement; filling a FACT aspect makes it a
-  **voice** in that aspect's slots, beside the agent's and the human's.
-  The check half of a validation is a voice.
-- **A detector** — no `RETURNS`. Named in a witness's `DETECTOR`
-  clause, it sees the slots and never the table data.
+  is validated against that aspect's schema. Its body is **one SQL
+  query** the engine plans and runs (read-only, same doors as any
+  statement). Filling a MEASUREMENT aspect makes it a measurement;
+  filling a FACT aspect makes it a **voice** in that aspect's slots,
+  beside the agent's and the human's. The check half of a validation is
+  a voice. (Shipped bodies not yet rewritten to SQL still run as rhai
+  scripts — read them as history, write new measurements as SQL.)
+- **A detector** — no `RETURNS`. A rhai script named in a witness's
+  `DETECTOR` clause; it sees the slots and never the table data.
 
 Normative prose: SPEC.md §6 (functions) and §7 (witnesses, detectors).
 
@@ -33,9 +36,9 @@ SELECT script FROM functions WHERE name = 'rate_tolerance'
 
 Read the one nearest your task before writing:
 
-- `profile` — a measurement built from column kernels.
+- `profile` — a measurement whose body is SQL over the engine's
+  `profile` aggregate; the shape every new measurement takes.
 - `outliers` — a measurement chained on another through `ACCEPTS`.
-- `temporal` — a measurement built from `db.query` SQL.
 - `slot_entropy` — a detector.
 - `rate_tolerance` — a detector over slot voices (authored expectation
   against check voice), which is the usual validation shape.
@@ -44,29 +47,40 @@ Read the one nearest your task before writing:
 
 The body rides the statement. There is no path and no file: an agent
 over the door has statements, so a function is written the way
-everything else is (ruled 2026-08-15, fixture 24).
+everything else is (ruled 2026-08-15, fixture 24). A measurement's body
+is one SQL query:
 
 ```glossql
 DECLARE FUNCTION ap_settles_in_full_check FOR fin AS $$
-  let m = db.query(`SELECT count(*) FILTER (WHERE settled < billed) AS short,
-                           count(*) AS n FROM ar_settlement`);
-  let n = m.cell("n").parse_float();
-  #{
-    "outcome": "a receipt settles its invoice in full; a short receipt is the exception",
-    "breach_rate": if n > 0.0 { m.cell("short").parse_float() / n } else { 0.0 }
-  }
-$$ ACCEPTS (imports) RETURNS ar_settles_in_full;
+  SELECT
+    'a receipt settles its invoice in full; a short receipt is the exception' AS outcome,
+    CASE WHEN count(*) = 0 THEN 0.0
+         ELSE CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*)
+    END AS breach_rate
+  FROM ar_settlement
+$$ RETURNS ar_settles_in_full;
 ```
 
 - `FOR` scopes to a dataset, or `GLOBAL`.
-- `ACCEPTS` names the aspects whose current values arrive as context —
-  settings are context, never call arguments; calls are always bare
-  `f()`. Declaration relations never ride the list: a script that wants
-  `relationships` or `imports` reads them through `db` as tables.
 - `RETURNS` names the aspect the output fills, validated against that
   aspect's JSON Schema at extraction.
-- A re-declare supersedes and recompiles. The body cannot contain
-  `$$` — it would close the statement early.
+- `ACCEPTS` names aspects whose current values arrive as `context` — a
+  script-body mechanism. A SQL body composes inline instead: another
+  measurement's landed value is a read over `measurements`, and a
+  statistic it needs is the same aggregate, computed in place.
+- The body composes anything a read can: tables, `read.<aspect>()`
+  groundings, the declaration relations as plain tables, and the
+  shipped aggregates (`profile`, `mad`, `entropy` beside the engine's
+  own). `$subject` arrives as a string literal wherever the body writes
+  it; `subject_column($subject)` is the subject's column as a relation
+  named `v`, for column-grain functions whose body cannot know the
+  column's name.
+- The result lands by a fixed rule: one row × one column → the value;
+  one row → an object of its columns; many rows → an array of row
+  objects. NULL keys are omitted. Size it like a claim — something that
+  wants to be a table is a read, not a measurement.
+- A re-declare supersedes. The body cannot contain `$$` — it would
+  close the statement early.
 
 The name is the key, workspace-wide: there is one row per name, and a
 re-declare **replaces** it — old measurements sit at pins that no longer

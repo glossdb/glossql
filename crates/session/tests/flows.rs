@@ -1023,3 +1023,119 @@ async fn metric_series_serves_the_cached_cube() {
         .unwrap_err();
     assert!(e.to_string().contains("no arguments"), "{e}");
 }
+
+/// A measurement is a query (stage 5, §7e): the skill's own
+/// quick-validation flow, end to end — declare the aspect and a
+/// SQL-bodied function, extract, read the landed value back. No script
+/// runtime is involved: the Fake would panic on an unknown name, and
+/// the assertion on `invocations` proves it was never asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_measurement_body_is_sql() {
+    let (session, fake) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("billed", DataType::Float64, true),
+        Field::new("settled", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Float64Array::from(vec![100.0, 200.0, 50.0])),
+            Arc::new(Float64Array::from(vec![100.0, 150.0, 50.0])),
+        ],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    run(
+        &session,
+        r#"DECLARE ASPECT ar_check WITH $${"type": "object",
+             "required": ["outcome", "breach_rate"],
+             "properties": {"outcome": {"type": "string"},
+                            "breach_rate": {"type": "number"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION ar_settles_in_full FOR fin AS $$
+             SELECT
+               'a receipt settles its invoice in full' AS outcome,
+               CASE WHEN count(*) = 0 THEN 0.0
+                    ELSE CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*)
+               END AS breach_rate
+             FROM settlements
+           $$ RETURNS ar_check;
+           SELECT ar_settles_in_full() FROM settlements;"#,
+    )
+    .await;
+    assert_eq!(
+        fake.invocations.load(Ordering::SeqCst),
+        0,
+        "the engine ran the body; the script runtime was never asked"
+    );
+
+    let read = table(
+        &session,
+        "SELECT aspect, value FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(
+        read.contains("0.3333333333333333") && read.contains("settles its invoice"),
+        "{read}"
+    );
+}
+
+/// `subject_column($subject)` — the column-grain primitive: the body is
+/// declared once, the subject varies per extraction, and a one-column
+/// one-row result lands as the bare value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_subject_binds_through_the_column_door() {
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "billed",
+        DataType::Float64,
+        true,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Float64Array::from(vec![
+            Some(100.0),
+            None,
+            Some(50.0),
+        ]))],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    run(
+        &session,
+        r#"DECLARE ASPECT filled WITH $${"type": "integer"}$$ AS MEASUREMENT;
+           DECLARE FUNCTION filled_count FOR fin AS $$
+             SELECT count(v) FROM subject_column($subject)
+           $$ RETURNS filled;
+           SELECT filled_count() FROM settlements.billed;"#,
+    )
+    .await;
+    let read = table(
+        &session,
+        "SELECT subject, value FROM GLOSSARY(settlements.billed::filled);",
+    )
+    .await;
+    assert!(read.contains("| 2"), "the two non-null cells: {read}");
+
+    // A malformed argument is refused with the door's own sentence.
+    let e = session
+        .execute("SELECT * FROM subject_column(billed);")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("one quoted subject"), "{e}");
+}

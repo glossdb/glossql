@@ -155,7 +155,13 @@ async fn every_skill_function_body_compiles() {
             let after = &part[open + 5..];
             let Some(close) = after.find("$$") else { continue };
             checked += 1;
-            if let Err(e) = runtime.compiles(&after[..close]) {
+            let body = &after[..close];
+            // Role by shape (§7e): a body that parses as one SQL query
+            // is a measurement the engine runs; anything else must
+            // compile as a script.
+            let is_sql = glossql_parser::GlossqlParser::parse_sql(body)
+                .is_ok_and(|statements| statements.len() == 1);
+            if !is_sql && let Err(e) = runtime.compiles(body) {
                 broken.push(format!("{}:{} — {e}", b.skill, b.line));
             }
         }

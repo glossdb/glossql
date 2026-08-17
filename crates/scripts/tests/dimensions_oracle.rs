@@ -18,7 +18,7 @@ use glossql_session::{Outcome, Session};
 /// The shipped body, so the declaration carries what runs.
 const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
 /// The shipped body, so the declaration carries what runs.
-const PROFILE: &str = include_str!("../functions/profile.rhai");
+const PROFILE: &str = include_str!("../functions/profile.sql");
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {

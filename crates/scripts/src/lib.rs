@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 pub mod library;
+mod statistics;
 use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
@@ -344,38 +345,10 @@ impl RhaiRuntime {
                 c.0.null_count() as i64
             })
             .register_fn("distinct", |c: &mut Col| -> ScriptResult<i64> {
-                let mut seen = std::collections::HashSet::new();
-                for i in 0..c.0.len() {
-                    if c.0.is_null(i) {
-                        continue;
-                    }
-                    seen.insert(array_value_to_string(&c.0, i).map_err(|e| e.to_string())?);
-                }
-                Ok(seen.len() as i64)
+                distinct_of(&c.0)
             })
             .register_fn("entropy", |c: &mut Col| -> ScriptResult<f64> {
-                // Shannon entropy (nats) of the non-null value
-                // distribution, exact — one pass over typed cell keys,
-                // never display buckets. The profile's top_k stays a
-                // display cap; this scalar is what a score may read
-                // (the 2026-08-06 f1 lesson: a display cap must not
-                // become a statistics cap).
-                let mut counts: HashMap<u64, i64> = HashMap::new();
-                for key in cell_keys(&c.0)?.into_iter().flatten() {
-                    *counts.entry(key).or_insert(0) += 1;
-                }
-                let n: i64 = counts.values().sum();
-                if n == 0 {
-                    return Ok(0.0);
-                }
-                let n = n as f64;
-                Ok(counts
-                    .values()
-                    .map(|&count| {
-                        let p = count as f64 / n;
-                        -p * p.ln()
-                    })
-                    .sum())
+                entropy_of(&c.0)
             })
             .register_fn("min", |c: &mut Col| -> ScriptResult<Dynamic> {
                 extremum(c, true)
@@ -394,21 +367,11 @@ impl RhaiRuntime {
             })
             .register_fn("mean", |c: &mut Col| -> ScriptResult<Dynamic> {
                 let v = valid_floats(&c.0)?;
-                if v.is_empty() {
-                    return Ok(Dynamic::UNIT);
-                }
-                Ok(Dynamic::from(v.iter().sum::<f64>() / v.len() as f64))
+                Ok(mean_of(&v).map(Dynamic::from).unwrap_or(Dynamic::UNIT))
             })
             .register_fn("stddev", |c: &mut Col| -> ScriptResult<Dynamic> {
-                // Sample standard deviation, matching SQL STDDEV.
                 let v = valid_floats(&c.0)?;
-                if v.len() < 2 {
-                    return Ok(Dynamic::UNIT);
-                }
-                let mean = v.iter().sum::<f64>() / v.len() as f64;
-                let var =
-                    v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
-                Ok(Dynamic::from(var.sqrt()))
+                Ok(stddev_of(&v).map(Dynamic::from).unwrap_or(Dynamic::UNIT))
             })
             .register_fn(
                 "percentile",
@@ -426,33 +389,13 @@ impl RhaiRuntime {
                 },
             )
             .register_fn("mad", |c: &mut Col| -> ScriptResult<Dynamic> {
-                // Median absolute deviation — the robust spread the modified
-                // Z-score fences ride on.
-                let mut v = valid_floats(&c.0)?;
-                if v.is_empty() {
-                    return Ok(Dynamic::UNIT);
-                }
-                v.sort_by(f64::total_cmp);
-                let median = interpolate(&v, 0.5);
-                let mut deviations: Vec<f64> = v.iter().map(|x| (x - median).abs()).collect();
-                deviations.sort_by(f64::total_cmp);
-                Ok(Dynamic::from(interpolate(&deviations, 0.5)))
+                let v = valid_floats(&c.0)?;
+                Ok(mad_of(&v).map(Dynamic::from).unwrap_or(Dynamic::UNIT))
             })
             .register_fn(
                 "top_k",
                 |c: &mut Col, k: i64| -> ScriptResult<rhai::Array> {
-                    let mut counts: HashMap<String, i64> = HashMap::new();
-                    for i in 0..c.0.len() {
-                        if c.0.is_null(i) {
-                            continue;
-                        }
-                        let value = array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
-                        *counts.entry(value).or_insert(0) += 1;
-                    }
-                    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
-                    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                    pairs.truncate(k.max(0) as usize);
-                    Ok(pairs
+                    Ok(top_k_of(&c.0, k.max(0) as usize)?
                         .into_iter()
                         .map(|(value, count)| {
                             let mut row = rhai::Map::new();
@@ -464,27 +407,13 @@ impl RhaiRuntime {
                 },
             )
             .register_fn("len_stats", |c: &mut Col| -> ScriptResult<Dynamic> {
-                let Some(values) = c.0.as_any().downcast_ref::<StringArray>() else {
+                let Some((min, max, avg)) = len_stats_of(&c.0) else {
                     return Ok(Dynamic::UNIT);
                 };
-                let (mut min, mut max, mut total, mut n) = (i64::MAX, 0i64, 0i64, 0i64);
-                for i in 0..values.len() {
-                    if values.is_null(i) {
-                        continue;
-                    }
-                    let len = values.value(i).chars().count() as i64;
-                    min = min.min(len);
-                    max = max.max(len);
-                    total += len;
-                    n += 1;
-                }
-                if n == 0 {
-                    return Ok(Dynamic::UNIT);
-                }
                 let mut stats = rhai::Map::new();
                 stats.insert("min".into(), Dynamic::from(min));
                 stats.insert("max".into(), Dynamic::from(max));
-                stats.insert("avg".into(), Dynamic::from(total as f64 / n as f64));
+                stats.insert("avg".into(), Dynamic::from(avg));
                 Ok(Dynamic::from_map(stats))
             })
             .register_fn(
@@ -748,6 +677,13 @@ impl RhaiRuntime {
 }
 
 impl FunctionRuntime for RhaiRuntime {
+    /// The shipped statistics (`profile`, `mad`, `entropy`), registered
+    /// when the runtime attaches — a measurement body and an agent's own
+    /// SQL name the same aggregates (stage 5, §7e).
+    fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
+        statistics::udafs()
+    }
+
     fn invoke(
         &self,
         function: &FunctionRow,
@@ -906,34 +842,39 @@ fn numeric_like(dt: &DataType) -> bool {
         )
 }
 
-fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
-    if let Some(values) = c.0.as_any().downcast_ref::<StringArray>() {
+/// A column's smallest or largest value under the scripts' type rules.
+pub(crate) enum Extremum {
+    Num(f64),
+    Text(String),
+}
+
+/// min/max with the scripts' type rules: strings compare as strings,
+/// numeric-readable columns as floats, everything else by its display
+/// form — ISO spellings sort chronologically, so min/max stay truthful.
+pub(crate) fn extremum_of(a: &ArrayRef, min: bool) -> ScriptResult<Option<Extremum>> {
+    if let Some(values) = a.as_any().downcast_ref::<StringArray>() {
         let v = if min {
             aggregate::min_string(values)
         } else {
             aggregate::max_string(values)
         };
-        return Ok(v
-            .map(|s| Dynamic::from(s.to_string()))
-            .unwrap_or(Dynamic::UNIT));
+        return Ok(v.map(|s| Extremum::Text(s.to_string())));
     }
-    if numeric_like(c.0.data_type()) {
-        let floats = as_floats(&c.0)?;
+    if numeric_like(a.data_type()) {
+        let floats = as_floats(a)?;
         let v = if min {
             aggregate::min(&floats)
         } else {
             aggregate::max(&floats)
         };
-        return Ok(v.map(Dynamic::from).unwrap_or(Dynamic::UNIT));
+        return Ok(v.map(Extremum::Num));
     }
-    // Dates, timestamps, and the rest order by their display form — ISO
-    // spellings sort chronologically, so min/max stay truthful.
     let mut best: Option<String> = None;
-    for i in 0..c.0.len() {
-        if c.0.is_null(i) {
+    for i in 0..a.len() {
+        if a.is_null(i) {
             continue;
         }
-        let value = array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
+        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
         best = Some(match best {
             None => value,
             Some(b) => {
@@ -945,7 +886,114 @@ fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
             }
         });
     }
-    Ok(best.map(Dynamic::from).unwrap_or(Dynamic::UNIT))
+    Ok(best.map(Extremum::Text))
+}
+
+fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
+    Ok(match extremum_of(&c.0, min)? {
+        Some(Extremum::Num(v)) => Dynamic::from(v),
+        Some(Extremum::Text(s)) => Dynamic::from(s),
+        None => Dynamic::UNIT,
+    })
+}
+
+/// Distinct non-null values, counted by display form — the reading a
+/// human would count.
+pub(crate) fn distinct_of(a: &ArrayRef) -> ScriptResult<i64> {
+    let mut seen = HashSet::new();
+    for i in 0..a.len() {
+        if a.is_null(i) {
+            continue;
+        }
+        seen.insert(array_value_to_string(a, i).map_err(|e| e.to_string())?);
+    }
+    Ok(seen.len() as i64)
+}
+
+/// Shannon entropy (nats) of the non-null value distribution, exact —
+/// one pass over typed cell keys, never display buckets. `top_k` stays
+/// a display cap; this scalar is what a score may read (the 2026-08-06
+/// f1 lesson: a display cap must not become a statistics cap).
+pub(crate) fn entropy_of(a: &ArrayRef) -> ScriptResult<f64> {
+    let mut counts: HashMap<u64, i64> = HashMap::new();
+    for key in cell_keys(a)?.into_iter().flatten() {
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    let n: i64 = counts.values().sum();
+    if n == 0 {
+        return Ok(0.0);
+    }
+    let n = n as f64;
+    Ok(counts
+        .values()
+        .map(|&count| {
+            let p = count as f64 / n;
+            -p * p.ln()
+        })
+        .sum())
+}
+
+/// The k most frequent display values, count descending then value
+/// ascending — deterministic buckets for a judge to read.
+pub(crate) fn top_k_of(a: &ArrayRef, k: usize) -> ScriptResult<Vec<(String, i64)>> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for i in 0..a.len() {
+        if a.is_null(i) {
+            continue;
+        }
+        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
+        *counts.entry(value).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    pairs.truncate(k);
+    Ok(pairs)
+}
+
+/// (min, max, avg) of string lengths in characters; `None` off strings
+/// or when nothing is there.
+pub(crate) fn len_stats_of(a: &ArrayRef) -> Option<(i64, i64, f64)> {
+    let values = a.as_any().downcast_ref::<StringArray>()?;
+    let (mut min, mut max, mut total, mut n) = (i64::MAX, 0i64, 0i64, 0i64);
+    for i in 0..values.len() {
+        if values.is_null(i) {
+            continue;
+        }
+        let len = values.value(i).chars().count() as i64;
+        min = min.min(len);
+        max = max.max(len);
+        total += len;
+        n += 1;
+    }
+    (n > 0).then(|| (min, max, total as f64 / n as f64))
+}
+
+pub(crate) fn mean_of(v: &[f64]) -> Option<f64> {
+    (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
+}
+
+/// Sample standard deviation, matching SQL STDDEV.
+pub(crate) fn stddev_of(v: &[f64]) -> Option<f64> {
+    if v.len() < 2 {
+        return None;
+    }
+    let mean = v.iter().sum::<f64>() / v.len() as f64;
+    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
+    Some(var.sqrt())
+}
+
+/// Median absolute deviation — the robust spread the modified Z-score
+/// fences ride on.
+pub(crate) fn mad_of(v: &[f64]) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    let median = interpolate(&v, 0.5);
+    let mut deviations: Vec<f64> = v.iter().map(|x| (x - median).abs()).collect();
+    deviations.sort_by(f64::total_cmp);
+    Some(interpolate(&deviations, 0.5))
 }
 
 /// The parseable values as floats — safe-cast semantics, so on a raw

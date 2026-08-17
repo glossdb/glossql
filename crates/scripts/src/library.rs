@@ -11,9 +11,11 @@
 //! test suites which run library functions compose the same
 //! declarations the door does, from the same text.
 
-/// Every reference script the binary carries: file name, body.
+/// Every reference body the binary carries: file name, text. `.sql` is
+/// a measurement the engine runs, `.rhai` a script the runtime runs —
+/// role by shape (§7e), visible in the extension.
 pub const SCRIPTS: &[(&str, &str)] = &[
-    ("profile.rhai", include_str!("../functions/profile.rhai")),
+    ("profile.sql", include_str!("../functions/profile.sql")),
     ("outliers.rhai", include_str!("../functions/outliers.rhai")),
     ("temporal.rhai", include_str!("../functions/temporal.rhai")),
     (
@@ -108,11 +110,13 @@ pub fn splice(statements: &str) -> Result<String, String> {
         }
         out = out.replace(&format!("$${name}$$"), &format!("$${text}$$"));
     }
-    if let Some(at) = out.find(".rhai$$") {
-        return Err(format!(
-            "a script marker had no embedded body: …{}",
-            &out[at.saturating_sub(40)..at + 7]
-        ));
+    for marker in [".rhai$$", ".sql$$"] {
+        if let Some(at) = out.find(marker) {
+            return Err(format!(
+                "a script marker had no embedded body: …{}",
+                &out[at.saturating_sub(40)..at + marker.len()]
+            ));
+        }
     }
     Ok(out)
 }

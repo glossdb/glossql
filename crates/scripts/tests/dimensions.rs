@@ -24,7 +24,7 @@ const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance
 /// The shipped body, so the declaration carries what runs.
 const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
 /// The shipped body, so the declaration carries what runs.
-const PROFILE: &str = include_str!("../functions/profile.rhai");
+const PROFILE: &str = include_str!("../functions/profile.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();

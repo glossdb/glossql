@@ -7,6 +7,7 @@ edition.workspace = true
 glossql-glossary = { path = "../glossary" }
 glossql-session = { path = "../session" }
 datafusion.workspace = true
+arrow-json.workspace = true
 serde_json.workspace = true
 # `sync` because the runtime lives in an Arc<dyn FunctionRuntime: Send+Sync>
 # and shares compiled ASTs across threads; `serde` is the JSON bridge both

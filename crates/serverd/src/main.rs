@@ -53,8 +53,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let lake = Lake::open(&args.workspace.join("catalog.sqlite"), &warehouse).await?;
     let store = Store::open(lake).await?;
-    // The runtime's root is the workspace, so declarations reference
-    // scripts the way the corpus spells them: 'functions/profile.rhai'.
+    // The runtime's root is the workspace — the band model's weights
+    // live under it (bodies ride their declarations, fixture 24).
     let runtime = Arc::new(RhaiRuntime::new(args.workspace.clone()));
 
     let plane =
