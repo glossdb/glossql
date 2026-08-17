@@ -13,6 +13,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub mod relations;
+pub use relations::IcebergRelations;
+
 use iceberg::io::LocalFsStorageFactory;
 use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
