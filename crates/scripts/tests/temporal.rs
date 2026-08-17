@@ -1,87 +1,96 @@
-//! The temporal reference script against a real DataFusion context — the
-//! v0.3 semantics it ports (analysis/temporal/detection.py), scenario by
+//! The temporal reference measurement against a real session — the v0.3
+//! semantics it ports (analysis/temporal/detection.py), scenario by
 //! scenario: cadence from the median distinct-instant gap, calendar-bucket
 //! completeness, significant gaps with severity, and the abstentions.
+//! Since stage 5 the body is SQL and the engine is the runtime, so each
+//! scenario runs the whole extraction path: declare, extract, read back.
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::RecordBatch;
+use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
-use glossql_glossary::FunctionRow;
-use glossql_scripts::RhaiRuntime;
-use glossql_session::{FunctionRuntime, SqlDoor};
+use glossql_catalog::Lake;
+use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_session::{Outcome, Session};
 use serde_json::{Value, json};
 
-/// A door straight onto a SessionContext, blocking on its own runtime.
-struct CtxDoor {
-    ctx: SessionContext,
-    rt: tokio::runtime::Runtime,
-}
+/// One scenario: a lake of its own, `events` built from the VALUES
+/// clause, the shipped body declared, one extraction — the landed body.
+async fn temporal(values_sql: &str, subject: &str) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open_scratch(lake).await.unwrap();
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "t".into(),
+        },
+    )
+    .unwrap();
+    session
+        .execute("DECLARE DATASET fin SET (purpose: 'temporal scenarios'); USE fin;")
+        .await
+        .unwrap();
 
-impl CtxDoor {
-    fn new() -> Self {
-        CtxDoor {
-            ctx: SessionContext::new(),
-            rt: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
-        }
-    }
+    let ctx = SessionContext::new();
+    let df = ctx.sql(values_sql).await.unwrap();
+    let schema = Arc::new(df.schema().as_arrow().clone());
+    let batches = df.collect().await.unwrap();
+    session
+        .register_table(
+            "events",
+            Arc::new(MemTable::try_new(schema, vec![batches]).unwrap()),
+        )
+        .await
+        .unwrap();
 
-    fn run(&self, sql: &str) {
-        self.rt
-            .block_on(async { self.ctx.sql(sql).await.unwrap().collect().await })
-            .unwrap();
-    }
-}
+    let declarations = glossql_scripts::library::splice(
+        r#"DECLARE ASPECT temporal_profile WITH $${
+             "type": "object", "required": ["applicable"],
+             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
+             RETURNS temporal_profile;"#,
+    )
+    .expect("shipped body splices");
+    session.execute(&declarations).await.unwrap();
 
-impl SqlDoor for CtxDoor {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
-        // The door contract: an empty result still ships one empty batch
-        // carrying the schema, so LIMIT 0 types columns without scanning.
-        self.rt
-            .block_on(async {
-                let df = self.ctx.sql(query).await?;
-                let schema = Arc::new(df.schema().as_arrow().clone());
-                let mut batches = df.collect().await?;
-                if batches.is_empty() {
-                    batches.push(RecordBatch::new_empty(schema));
-                }
-                Ok(batches)
-            })
-            .map_err(|e: datafusion::error::DataFusionError| e.to_string())
-    }
-}
-
-fn temporal(door: CtxDoor, subject: &str) -> Value {
-    let rt = RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"));
-    let function = FunctionRow {
-        name: "temporal".into(),
-        scope_dataset: None,
-        script: glossql_scripts::library::script("temporal.rhai")
-            .expect("shipped")
-            .into(),
-        accepts: vec![],
-        returns: Some("temporal_profile".into()),
+    let outcomes = session
+        .execute(&format!("SELECT temporal() FROM {subject};"))
+        .await
+        .unwrap();
+    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("extraction serves rows")
     };
-    rt.invoke(&function, subject, &Value::Null, Arc::new(door))
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let body = batch
+        .column(batch.schema().index_of("body").unwrap())
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap()
+        .value(0)
+        .to_string();
+    serde_json::from_str(&body).unwrap()
 }
 
-#[test]
-fn daily_with_a_hole_finds_cadence_completeness_and_the_gap() {
-    let door = CtxDoor::new();
+#[tokio::test(flavor = "multi_thread")]
+async fn daily_with_a_hole_finds_cadence_completeness_and_the_gap() {
     // Jan 1–5 and Jan 11–15: day cadence with a six-day stretch between
     // observations, i.e. five missing days.
-    door.run(
-        "CREATE TABLE events AS SELECT * FROM (VALUES \
+    let out = temporal(
+        "SELECT * FROM (VALUES \
          (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-03'), \
          (DATE '2024-01-04'), (DATE '2024-01-05'), (DATE '2024-01-11'), \
          (DATE '2024-01-12'), (DATE '2024-01-13'), (DATE '2024-01-14'), \
          (DATE '2024-01-15')) AS t(d)",
-    );
-    let out = temporal(door, "events.d");
+        "events.d",
+    )
+    .await;
 
     assert_eq!(out["applicable"], json!(true));
     assert_eq!(out["min"], json!("2024-01-01"));
@@ -115,17 +124,17 @@ fn daily_with_a_hole_finds_cadence_completeness_and_the_gap() {
     );
 }
 
-#[test]
-fn monthly_cadence_counts_calendar_buckets_across_the_year_boundary() {
-    let door = CtxDoor::new();
+#[tokio::test(flavor = "multi_thread")]
+async fn monthly_cadence_counts_calendar_buckets_across_the_year_boundary() {
     // Month starts across a year boundary, one duplicated instant — the
     // family reads DISTINCT instants, so the duplicate must not count.
-    door.run(
-        "CREATE TABLE events AS SELECT * FROM (VALUES \
+    let out = temporal(
+        "SELECT * FROM (VALUES \
          (DATE '2023-11-01'), (DATE '2023-12-01'), (DATE '2023-12-01'), \
          (DATE '2024-01-01'), (DATE '2024-02-01')) AS t(d)",
-    );
-    let out = temporal(door, "events.d");
+        "events.d",
+    )
+    .await;
 
     assert_eq!(out["granularity"], json!("month"));
     let confidence = out["confidence"].as_f64().unwrap();
@@ -137,17 +146,17 @@ fn monthly_cadence_counts_calendar_buckets_across_the_year_boundary() {
     assert_eq!(out["gaps"]["count"], json!(0));
 }
 
-#[test]
-fn irregular_cadence_still_reports_gaps_but_no_completeness() {
-    let door = CtxDoor::new();
+#[tokio::test(flavor = "multi_thread")]
+async fn irregular_cadence_still_reports_gaps_but_no_completeness() {
     // Steps of 1, 10, and 45 days: median 10d matches no named grain, yet
     // the 45-day stretch is still 4.5× the median — a reportable gap.
-    door.run(
-        "CREATE TABLE events AS SELECT * FROM (VALUES \
+    let out = temporal(
+        "SELECT * FROM (VALUES \
          (DATE '2024-01-01'), (DATE '2024-01-02'), (DATE '2024-01-12'), \
          (DATE '2024-02-26')) AS t(d)",
-    );
-    let out = temporal(door, "events.d");
+        "events.d",
+    )
+    .await;
 
     assert_eq!(out["granularity"], json!("irregular"));
     assert_eq!(out["confidence"], json!(0.3));
@@ -161,16 +170,16 @@ fn irregular_cadence_still_reports_gaps_but_no_completeness() {
     assert_eq!(gap["missing_periods"], json!(3));
 }
 
-#[test]
-fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
-    let door = CtxDoor::new();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     // One distinct instant, repeated: no gap exists, so cadence is unknown
     // — not zero, not stale, not complete.
-    door.run(
-        "CREATE TABLE events AS SELECT * FROM (VALUES \
+    let out = temporal(
+        "SELECT * FROM (VALUES \
          (DATE '2024-03-31'), (DATE '2024-03-31'), (DATE '2024-03-31')) AS t(d)",
-    );
-    let out = temporal(door, "events.d");
+        "events.d",
+    )
+    .await;
     assert_eq!(out["applicable"], json!(true));
     assert_eq!(out["granularity"], json!("unknown"));
     assert_eq!(out["confidence"], json!(0.0));
@@ -181,9 +190,11 @@ fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     // A column that is not a point in time abstains — and the reason
     // names the type, so a date landed as text reads as a typing gap
     // rather than a dead end (the SQLite run, 2026-08-07).
-    let door = CtxDoor::new();
-    door.run("CREATE TABLE events AS SELECT * FROM (VALUES (1.5), (2.5)) AS t(d)");
-    let out = temporal(door, "events.d");
+    let out = temporal(
+        "SELECT * FROM (VALUES (1.5), (2.5)) AS t(d)",
+        "events.d",
+    )
+    .await;
     assert_eq!(out["applicable"], json!(false));
     let reason = out["reason"].as_str().unwrap();
     assert!(
@@ -192,11 +203,11 @@ fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     );
 
     // An all-NULL temporal column abstains too — nothing bounds a window.
-    let door = CtxDoor::new();
-    door.run(
-        "CREATE TABLE events AS SELECT CAST(NULL AS DATE) AS d FROM (VALUES (1), (2)) AS t(x)",
-    );
-    let out = temporal(door, "events.d");
+    let out = temporal(
+        "SELECT CAST(NULL AS DATE) AS d FROM (VALUES (1), (2)) AS t(x)",
+        "events.d",
+    )
+    .await;
     assert_eq!(out["applicable"], json!(false));
     assert_eq!(
         out["reason"],
@@ -204,15 +215,15 @@ fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     );
 }
 
-#[test]
-fn timestamps_at_hour_grain_ride_the_fixed_grain_path() {
-    let door = CtxDoor::new();
-    door.run(
-        "CREATE TABLE events AS SELECT * FROM (VALUES \
+#[tokio::test(flavor = "multi_thread")]
+async fn timestamps_at_hour_grain_ride_the_fixed_grain_path() {
+    let out = temporal(
+        "SELECT * FROM (VALUES \
          (TIMESTAMP '2024-01-01 08:00:00'), (TIMESTAMP '2024-01-01 09:00:00'), \
          (TIMESTAMP '2024-01-01 10:00:00'), (TIMESTAMP '2024-01-01 12:00:00')) AS t(ts)",
-    );
-    let out = temporal(door, "events.ts");
+        "events.ts",
+    )
+    .await;
 
     assert_eq!(out["granularity"], json!("hour"));
     // Four hour-buckets present of the five between 08:00 and 12:00.

@@ -175,7 +175,7 @@ DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
 DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
 
-DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
+DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
   RETURNS temporal_profile;
 
 DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$relationships.rhai$$

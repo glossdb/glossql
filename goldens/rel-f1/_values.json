@@ -3535,13 +3535,6 @@
         },
         {
           "days": 147.0,
-          "end": "2004-03-07T00:00:00",
-          "missing_periods": 9,
-          "severity": "severe",
-          "start": "2003-10-12T00:00:00"
-        },
-        {
-          "days": 147.0,
           "end": "1997-03-09T00:00:00",
           "missing_periods": 9,
           "severity": "severe",
@@ -3553,6 +3546,13 @@
           "missing_periods": 9,
           "severity": "severe",
           "start": "2002-10-13T00:00:00"
+        },
+        {
+          "days": 147.0,
+          "end": "2004-03-07T00:00:00",
+          "missing_periods": 9,
+          "severity": "severe",
+          "start": "2003-10-12T00:00:00"
         },
         {
           "days": 146.54167,

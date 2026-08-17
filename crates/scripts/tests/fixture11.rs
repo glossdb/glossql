@@ -126,7 +126,7 @@ DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
-DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
+DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
   RETURNS temporal_profile;
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
 

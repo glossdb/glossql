@@ -17,7 +17,7 @@
 pub const SCRIPTS: &[(&str, &str)] = &[
     ("profile.sql", include_str!("../functions/profile.sql")),
     ("outliers.sql", include_str!("../functions/outliers.sql")),
-    ("temporal.rhai", include_str!("../functions/temporal.rhai")),
+    ("temporal.sql", include_str!("../functions/temporal.sql")),
     (
         "relationships.rhai",
         include_str!("../functions/relationships.rhai"),
