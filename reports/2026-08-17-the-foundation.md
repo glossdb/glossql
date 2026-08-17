@@ -245,6 +245,39 @@ They belong to §6's last stage: confirm the ratios hold, and find the
 optimisation potential of the finished architecture rather than of the
 one being replaced.
 
+## 7a. What stage 0 found: composite endpoints are declared and then ignored
+
+The goldens made an asymmetry visible that nothing was holding in place.
+
+- The **detector** handles composites. `relationships.rhai:192,218` calls
+  `pair_keys` (`crates/scripts/src/lib.rs:583`), which fnv1a-hashes two
+  columns' cells into one key per row — "the composite rescue's pair
+  domain" — and computes its overlap statistics over that.
+- The two functions that **consume** declared relationships skip them.
+  `behavior_evidence.rhai:136` and `coherence.rhai:35` both drop any
+  endpoint containing `(`.
+
+So the system can find a composite edge, an agent can declare one — the
+tuple is the key, ruled 2026-08-05, fixture 14 — and then the two
+measurements that read declared relationships pretend it is not there.
+
+Neither skip is a ruling. `behavior_evidence` says "for now";
+`coherence`'s was added on 2026-08-13 to stop a tuple from being quoted
+as one impossible column name, which is a crash guard, not a decision.
+
+**On booksql this is total.** Fixture 14 records that every surviving
+edge there is composite, so both functions are blind to the entire
+declared graph. That is why booksql's golden holds 70 computed values
+against rel-f1's 224, and it is exactly the kind of thing a golden set
+exists to surface.
+
+**It closes during stage 5, not before.** The consumers do not need the
+hash: a composite join is `ON a.c1 = b.c1 AND a.c2 = b.c2`, plain SQL,
+and the port is already rewriting both functions to build joins rather
+than template strings. Fixing it in rhai first would change the goldens
+that were just captured, and for no lasting code. The rule this follows:
+the golden diff at stage 5 is *expected and argued*, not discovered.
+
 ## 8. Still open
 
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
