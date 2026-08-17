@@ -6,7 +6,6 @@
 //! these register in the recipe/probe context and in the session — usable
 //! in recipes, probes, scripts, and user SQL alike.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
@@ -50,10 +49,6 @@ impl TryParse {
 }
 
 impl ScalarUDFImpl for TryParse {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         self.name
     }
