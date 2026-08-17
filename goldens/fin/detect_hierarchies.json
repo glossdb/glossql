@@ -41,7 +41,7 @@
   ],
   "customers": [
     {
-      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"region\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"payment_terms\"},{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"payment_terms\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"region\"},{\"distinct_from\":356,\"distinct_to\":10,\"from\":\"created_date\",\"g3\":0.0025,\"kind\":\"edge\",\"lambda\":0.9696969696969697,\"pair_groups\":357,\"rows_per_value\":1.1235955056179776,\"to\":\"churned_date\"}],\"rows\":400}",
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"region\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"payment_terms\"},{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"payment_terms\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"region\"},{\"distinct_from\":356,\"distinct_to\":10,\"from\":\"created_date\",\"g3\":0.0025,\"kind\":\"edge\",\"lambda\":0.969696969697,\"pair_groups\":357,\"rows_per_value\":1.12359550562,\"to\":\"churned_date\"}],\"rows\":400}",
       "computed_at": "<volatile>",
       "function": "detect_hierarchies",
       "subject": "customers"
@@ -65,7 +65,7 @@
   ],
   "journal_lines": [
     {
-      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":73037,\"distinct_to\":6,\"from\":\"entry_id\",\"g3\":0.0,\"kind\":\"edge\",\"lambda\":1.0,\"pair_groups\":73037,\"rows_per_value\":2.1612470391719265,\"to\":\"cost_center\"}],\"rows\":157851}",
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":73037,\"distinct_to\":6,\"from\":\"entry_id\",\"g3\":0.0,\"kind\":\"edge\",\"lambda\":1.0,\"pair_groups\":73037,\"rows_per_value\":2.16124703917,\"to\":\"cost_center\"}],\"rows\":157851}",
       "computed_at": "<volatile>",
       "function": "detect_hierarchies",
       "subject": "journal_lines"

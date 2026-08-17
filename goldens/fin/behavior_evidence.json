@@ -9,7 +9,7 @@
   ],
   "account_balances.ending_balance": [
     {
-      "body": "{\"align\":\"account_balances.account_id = journal_lines.account_id\",\"anchors\":4,\"convention\":\"net_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":5.449389467718225,\"r_stock\":5.093308240278916e-16,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":8},\"support\":0.6755843804891231,\"verdict\":\"stock\",\"voted\":8}",
+      "body": "{\"align\":\"account_balances.account_id = journal_lines.account_id\",\"anchors\":4,\"convention\":\"net_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":5.44938946772,\"r_stock\":0.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":8},\"support\":0.675584380489,\"verdict\":\"stock\",\"voted\":8}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "account_balances.ending_balance"
@@ -145,7 +145,7 @@
   ],
   "ar_invoices.amount": [
     {
-      "body": "{\"align\":\"ar_invoices.customer_id = receipts.customer_id\",\"anchors\":32,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.35389956685094015,\"r_stock\":1.0305117563348274,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":73},\"support\":0.14848298639304394,\"verdict\":\"flow\",\"voted\":73}",
+      "body": "{\"align\":\"ar_invoices.customer_id = receipts.customer_id\",\"anchors\":32,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.353899566851,\"r_stock\":1.03051175633,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":73},\"support\":0.148482986393,\"verdict\":\"flow\",\"voted\":73}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "ar_invoices.amount"
@@ -321,7 +321,7 @@
   ],
   "inventory_positions.unit_cost": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.4082927784319389,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":28},\"support\":0.08196205521476754,\"verdict\":\"flow\",\"voted\":28}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.408292778432,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":28},\"support\":0.0819620552148,\"verdict\":\"flow\",\"voted\":28}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.unit_cost"
@@ -329,7 +329,7 @@
   ],
   "inventory_positions.units_on_hand": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.4127199597787833,\"r_stock\":1.0009142147402592,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":130},\"support\":0.4784666302802626,\"verdict\":\"flow\",\"voted\":130}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.412719959779,\"r_stock\":1.00091421474,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":130},\"support\":0.47846663028,\"verdict\":\"flow\",\"voted\":130}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.units_on_hand"
@@ -337,7 +337,7 @@
   ],
   "inventory_positions.value": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"line_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.411728274523083,\"r_stock\":1.0006813217698869,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":159},\"support\":0.6005331652397183,\"verdict\":\"flow\",\"voted\":159}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"line_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.411728274523,\"r_stock\":1.00068132177,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":159},\"support\":0.60053316524,\"verdict\":\"flow\",\"voted\":159}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.value"
@@ -393,7 +393,7 @@
   ],
   "journal_lines.debit": [
     {
-      "body": "{\"align\":\"journal_lines.account_id = account_balances.account_id\",\"anchors\":12,\"convention\":\"ending_balance\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.3938902886715817,\"r_stock\":0.9907318164869242,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":1,\"primary\":3},\"support\":0.13684175946152105,\"verdict\":\"flow\",\"voted\":3}",
+      "body": "{\"align\":\"journal_lines.account_id = account_balances.account_id\",\"anchors\":12,\"convention\":\"ending_balance\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.393890288672,\"r_stock\":0.990731816487,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":1,\"primary\":3},\"support\":0.136841759462,\"verdict\":\"flow\",\"voted\":3}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "journal_lines.debit"
@@ -465,7 +465,7 @@
   ],
   "receipts.amount": [
     {
-      "body": "{\"align\":\"receipts.customer_id = ar_invoices.customer_id\",\"anchors\":36,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.37126543867634293,\"r_stock\":1.027422236605036,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.20646438547590282,\"verdict\":\"flow\",\"voted\":98}",
+      "body": "{\"align\":\"receipts.customer_id = ar_invoices.customer_id\",\"anchors\":36,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.371265438676,\"r_stock\":1.02742223661,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.206464385476,\"verdict\":\"flow\",\"voted\":98}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "receipts.amount"
@@ -513,7 +513,7 @@
   ],
   "sales_order_lines.line_amount": [
     {
-      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":2.1170116825914117e-17,\"r_stock\":1.0041601413726493,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":400},\"support\":0.9904873594003194,\"verdict\":\"flow\",\"voted\":400}",
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.00416014137,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":400},\"support\":0.9904873594,\"verdict\":\"flow\",\"voted\":400}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.line_amount"
@@ -521,7 +521,7 @@
   ],
   "sales_order_lines.line_cost": [
     {
-      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.31157571743692064,\"r_stock\":1.0027986171732663,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":395},\"support\":0.971075847268862,\"verdict\":\"flow\",\"voted\":395}",
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.311575717437,\"r_stock\":1.00279861717,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":395},\"support\":0.971075847269,\"verdict\":\"flow\",\"voted\":395}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.line_cost"
@@ -561,7 +561,7 @@
   ],
   "sales_order_lines.units": [
     {
-      "body": "{\"align\":\"sales_order_lines.product_id = inventory_positions.product_id\",\"anchors\":22,\"convention\":\"units_on_hand\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.3791838606143971,\"r_stock\":1.0124186871673566,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":189},\"support\":0.7314251575172397,\"verdict\":\"flow\",\"voted\":189}",
+      "body": "{\"align\":\"sales_order_lines.product_id = inventory_positions.product_id\",\"anchors\":22,\"convention\":\"units_on_hand\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.379183860614,\"r_stock\":1.01241868717,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":189},\"support\":0.731425157517,\"verdict\":\"flow\",\"voted\":189}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.units"

@@ -9,14 +9,15 @@
 //! (`orders.amount`, `orders.customer_id -> customers.id`); the session
 //! resolves dataset prefixes before the store sees anything.
 
+pub mod rules;
 pub mod schemas;
 mod store;
 mod types;
 
 pub use schemas::{GROUNDING_SCHEMA, grounding_schema};
+pub use rules::{admit_grain, grain_of};
 pub use store::{
-    BriefCounts, ReadContext, Relation, Scope, Store, accepts_relation, admit_grain, grain_of,
-    relation_columns,
+    BriefCounts, ReadContext, Relation, Scope, Store, accepts_relation, relation_columns,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CacheRow, CollapsedRow, Error, FunctionRow, RawRow,

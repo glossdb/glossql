@@ -13,6 +13,7 @@ use glossql_parser::{
 };
 
 use crate::schemas::grounding_schema;
+use crate::rules::{self, Slot, admit_grain, grain_of, rank_of};
 use crate::types::{
     Actor, ActorKind, AttestRow, CacheRow, CollapsedRow, Error, FunctionRow, RawRow,
     RecipeAdmission, RecipeRow, Result, WitnessRow,
@@ -37,22 +38,6 @@ pub enum Scope {
 pub struct ReadContext {
     pub universe: Vec<String>,
     pub snapshots: std::collections::HashMap<String, i64>,
-}
-
-/// One current slot under (subject, aspect): a gloss (human or agent) or a
-/// witness-bound function's cached output. The collapse and the raw read
-/// both build from these.
-#[derive(Debug, Clone)]
-struct Slot {
-    subject: String,
-    aspect: String,
-    /// 0 = human, 1 = agent, 2 = function — the precedence order.
-    rank: u8,
-    actor: String,
-    witness: Option<String>,
-    body: String,
-    written_at: String,
-    snapshot_id: Option<i64>,
 }
 
 impl Scope {
@@ -395,56 +380,6 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
 /// consumers appear.
 pub fn accepts_relation(name: &str) -> bool {
     matches!(name, "relationships" | "imports" | "glossary")
-}
-
-/// The grain of a canonical subject spelling: the dataset itself, a pair
-/// path, `table.column` (a composite endpoint's tuple counts as its pair's
-/// grain, never a column), or a bare table.
-pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
-    if subject == dataset {
-        "dataset"
-    } else if subject.contains(" -> ") || subject.contains(" <-> ") {
-        "relationship"
-    } else if subject.contains('.') {
-        "column"
-    } else {
-        "table"
-    }
-}
-
-/// Grain admission (ruled 2026-08-05): an aspect declared `ON grain, …`
-/// only accepts subjects of those grains; `None` (no clause) admits all.
-/// A bare name is table-shaped unless it names a declared source — then
-/// it is SOURCE grain, satisfying `source` and only `source`: the
-/// 2026-08-12 ruling admitted it there, and the 2026-08-14 run showed
-/// the other half — a table-grain aspect accepting `GLOSS entity ON erp`
-/// put unfillable rows in the backlog. `is_source` is the caller's
-/// lookup against the `sources` relation.
-pub fn admit_grain(
-    aspect: &str,
-    grains: Option<&str>,
-    dataset: &str,
-    subject: &str,
-    is_source: bool,
-) -> Result<()> {
-    let Some(declared) = grains else {
-        return Ok(());
-    };
-    let grain = grain_of(dataset, subject);
-    let effective = if is_source && grain == "table" {
-        "source"
-    } else {
-        grain
-    };
-    if declared.split(',').any(|g| g == effective) {
-        return Ok(());
-    }
-    Err(Error::GrainRefused {
-        aspect: aspect.into(),
-        subject: subject.into(),
-        grain: effective,
-        declared: declared.to_uppercase().replace(',', ", "),
-    })
 }
 
 #[derive(Debug, Clone)]
@@ -1211,22 +1146,20 @@ impl Store {
         // workspace-wide (ruled 2026-08-12) — the deposit the next
         // dataset reads — while every other row stays dataset-scoped.
         // NULL grains (no ON clause) never qualify: the sweep is opt-in.
-        const SOURCE_GRAIN: &str = "(g.subject IN (SELECT name FROM sources) \
-             AND EXISTS (SELECT 1 FROM aspects a WHERE a.name = g.aspect \
-               AND (',' || a.grains || ',') LIKE '%,source,%'))";
+        //
+        // The query fetches history; `rules::latest_by` picks the current
+        // row (stage 1, 2026-08-17). Supersession used to live in a SQL
+        // `NOT EXISTS ... n.id > g.id`, which meant every backend carrying
+        // the store had to reimplement it. Only the ordering column is
+        // backend-shaped, and it is a closure now.
         let sql = format!(
-            "SELECT g.subject, g.aspect, g.actor_kind, g.actor_id, g.body, g.written_at, \
-                    g.snapshot_id \
+            "SELECT g.id, g.dataset, g.subject, g.aspect, g.actor_kind, g.actor_id, g.body, \
+                    g.written_at, g.snapshot_id, \
+                    (g.subject IN (SELECT name FROM sources) \
+                     AND EXISTS (SELECT 1 FROM aspects a WHERE a.name = g.aspect \
+                       AND (',' || a.grains || ',') LIKE '%,source,%')) AS source_grain \
              FROM glossary g \
-             WHERE {pred} {aspect_clause}AND (\
-               (NOT {SOURCE_GRAIN} AND g.dataset = ? AND NOT EXISTS (\
-                 SELECT 1 FROM glossary n \
-                 WHERE n.dataset = g.dataset AND n.subject = g.subject \
-                   AND n.aspect = g.aspect AND n.actor_kind = g.actor_kind AND n.id > g.id)) \
-               OR ({SOURCE_GRAIN} AND NOT EXISTS (\
-                 SELECT 1 FROM glossary n \
-                 WHERE n.subject = g.subject \
-                   AND n.aspect = g.aspect AND n.actor_kind = g.actor_kind AND n.id > g.id)))"
+             WHERE {pred} {aspect_clause}"
         );
         let mut q = sqlx::query(&sql);
         for b in &binds {
@@ -1235,7 +1168,6 @@ impl Store {
         if let Some(a) = aspect {
             q = q.bind(a);
         }
-        q = q.bind(dataset);
         let witnesses = self.witnesses_all().await?;
         let witness_on = |aspect: &str| {
             witnesses
@@ -1243,27 +1175,56 @@ impl Store {
                 .find(|w| w.aspect == aspect)
                 .map(|w| w.name.clone())
         };
-        let mut rows: Vec<Slot> = q
+        // (id, source-grain, dataset, slot) — everything the rule needs.
+        let history: Vec<(i64, bool, String, String, Slot)> = q
             .fetch_all(&self.pool)
             .await?
             .into_iter()
             .map(|r| {
                 let aspect: String = r.get("aspect");
-                Slot {
-                    subject: r.get("subject"),
-                    rank: match r.get::<String, _>("actor_kind").as_str() {
-                        "human" => 0,
-                        _ => 1,
+                let actor_kind: String = r.get("actor_kind");
+                (
+                    r.get::<i64, _>("id"),
+                    r.get::<i64, _>("source_grain") != 0,
+                    r.get::<String, _>("dataset"),
+                    actor_kind.clone(),
+                    Slot {
+                        subject: r.get("subject"),
+                        rank: rank_of(&actor_kind),
+                        actor: r.get("actor_id"),
+                        witness: witness_on(&aspect),
+                        aspect,
+                        body: r.get("body"),
+                        written_at: r.get("written_at"),
+                        snapshot_id: r.get("snapshot_id"),
                     },
-                    actor: r.get("actor_id"),
-                    witness: witness_on(&aspect),
-                    aspect,
-                    body: r.get("body"),
-                    written_at: r.get("written_at"),
-                    snapshot_id: r.get("snapshot_id"),
-                }
+                )
             })
+            // A dataset-scoped row from another dataset is not in scope at
+            // all; a source-grain row is in scope from everywhere.
+            .filter(|(_, source_grain, ds, _, _)| *source_grain || ds == dataset)
             .collect();
+
+        // The key carries the dataset only where the row is dataset-scoped,
+        // which is what makes a source-grain row supersede workspace-wide.
+        let mut rows: Vec<Slot> = rules::latest_by(
+            history,
+            // Keyed on actor KIND, not rank: rank folds every non-human
+            // kind together, which is the same thing only while there are
+            // exactly two of them.
+            |(_, source_grain, ds, kind, s)| {
+                (
+                    (!*source_grain).then(|| ds.clone()),
+                    s.subject.clone(),
+                    s.aspect.clone(),
+                    kind.clone(),
+                )
+            },
+            |(id, ..)| *id,
+        )
+        .into_iter()
+        .map(|(.., slot)| slot)
+        .collect();
 
         let (cpred, cbinds) = scope.predicate("c.subject");
         for (f, a) in self.returning(aspect).await? {
@@ -1285,7 +1246,7 @@ impl Store {
                 rows.push(Slot {
                     subject: c.get("subject"),
                     aspect: a.clone(),
-                    rank: 2,
+                    rank: rules::RANK_FUNCTION,
                     actor: f.clone(),
                     witness: witness_on(&a),
                     body: c.get("body"),
@@ -1404,7 +1365,7 @@ impl Store {
         }
 
         let mut rows = Vec::new();
-        for ((subject, aspect), mut group) in grouped {
+        for ((subject, aspect), group) in grouped {
             let verdict = verdicts.get(&(subject.clone(), aspect.clone()));
             let crossing =
                 verdict.and_then(|v| v.iter().find(|(_, s, t)| t.is_some_and(|t| *s > t)));
@@ -1420,7 +1381,7 @@ impl Store {
             // read as `contested`, and the withholding hid the body at
             // its most interesting moment). One slot cannot contest —
             // the crossing still shows as its band, beside the value.
-            if crossing.is_some() && group.len() >= 2 {
+            if rules::contested(crossing.is_some(), group.len()) {
                 rows.push(CollapsedRow {
                     subject,
                     aspect,
@@ -1431,26 +1392,15 @@ impl Store {
                 });
                 continue;
             }
-            group.sort_by_key(|s| s.rank);
-            let serving = group[0];
-            // Serve-and-mark (project lead, 2026-08-04): staleness never
-            // suppresses a value, it shows beside it.
-            let snapshot_moved = serving.snapshot_id.is_some_and(|seen| {
-                table_of(&subject)
-                    .and_then(|t| ctx.snapshots.get(t))
-                    .is_some_and(|current| *current != seen)
-            });
+            let serving = group[rules::serving(&group).expect("a group is never empty")];
+            let current = table_of(&subject).and_then(|t| ctx.snapshots.get(t)).copied();
             rows.push(CollapsedRow {
                 subject,
                 aspect,
                 value: Some(serving.body.clone()),
                 band,
                 score,
-                state: if snapshot_moved {
-                    "stale".into()
-                } else {
-                    "current".into()
-                },
+                state: rules::state(serving.snapshot_id, current).into(),
             });
         }
 
@@ -1500,24 +1450,8 @@ impl Store {
             if sibling_values.contains_key(cond_aspect) {
                 continue;
             }
-            let mut winners: std::collections::HashMap<String, (u8, String)> =
-                std::collections::HashMap::new();
-            for slot in self.slots(dataset, scope, Some(cond_aspect)).await? {
-                let value = serde_json::from_str::<Value>(&slot.body)
-                    .ok()
-                    .and_then(|b| b.pointer("/value").and_then(|v| v.as_str().map(String::from)));
-                let Some(value) = value else { continue };
-                match winners.get(&slot.subject) {
-                    Some((rank, _)) if *rank <= slot.rank => {}
-                    _ => {
-                        winners.insert(slot.subject.clone(), (slot.rank, value));
-                    }
-                }
-            }
-            sibling_values.insert(
-                cond_aspect.clone(),
-                winners.into_iter().map(|(s, (_, v))| (s, v)).collect(),
-            );
+            let slots = self.slots(dataset, scope, Some(cond_aspect)).await?;
+            sibling_values.insert(cond_aspect.clone(), rules::sibling_winners(&slots));
         }
         let present: std::collections::HashSet<(String, String)> = rows
             .iter()
@@ -1565,11 +1499,10 @@ impl Store {
                     continue;
                 }
                 if let Some((cond_aspect, cond_value)) = condition_map.get(a) {
-                    let holds = sibling_values
+                    let sibling = sibling_values
                         .get(cond_aspect)
-                        .and_then(|m| m.get(subject.as_str()))
-                        .is_some_and(|v| v == cond_value);
-                    if !holds {
+                        .and_then(|m| m.get(subject.as_str()));
+                    if !rules::condition_holds(cond_value, sibling.map(String::as_str)) {
                         continue;
                     }
                 }

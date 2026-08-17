@@ -49,7 +49,7 @@
   ],
   "ap_invoices.category": [
     {
-      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.996427471267999,\"groups\":2,\"relevance\":0.996427471267999}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.996427471268,\"groups\":2,\"relevance\":0.996427471268}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "ap_invoices.category"
@@ -281,7 +281,7 @@
   ],
   "customers.segment": [
     {
-      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.9999943157279291,\"groups\":3,\"relevance\":0.9999943157279291}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.999994315728,\"groups\":3,\"relevance\":0.999994315728}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "customers.segment"
@@ -433,7 +433,7 @@
   ],
   "products.product_group": [
     {
-      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":1.0000000000000004,\"groups\":12,\"relevance\":1.0}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":1.0,\"groups\":12,\"relevance\":1.0}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "products.product_group"

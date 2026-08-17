@@ -26,6 +26,26 @@ Two files per corpus shape:
 Timestamps and snapshot ids are replaced with `<volatile>`; everything
 else is compared verbatim.
 
+## Determinism, and what it cost to get
+
+The first capture was not reproducible, which stage 1 found by running
+its own gate: two runs of unchanged code differed in the last digits of
+`entropy`, `r_flow` and every summed `actual`. Sums over partitions do
+not associate, so DataFusion may add the same values in a different
+order run to run. Two normalisations settle it, both in `scrub`:
+
+- every float rounds to **twelve significant digits** — far finer than
+  any change worth arguing about, far coarser than the noise;
+- anything under **1e-12 absolute snaps to zero**. A residual of 2e-17
+  means the two series matched exactly; its significant digits *are* the
+  noise, so rounding alone cannot settle it.
+
+A body rides as a JSON string, so the normalisation parses into it too —
+otherwise it never reaches the numbers that actually move.
+
+With both in place, two runs of the same code are byte-identical, and a
+diff means behaviour changed.
+
 ## Regenerating
 
 ```

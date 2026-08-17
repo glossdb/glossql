@@ -61,6 +61,25 @@ fn render(outcome: &Outcome) -> serde_json::Value {
     }
 }
 
+/// Sums over partitions do not associate: DataFusion may add the same
+/// values in a different order run to run, and the last bit moves.
+/// Rounding to twelve significant digits removes that without hiding any
+/// change worth arguing about — a real one moves far more than 1e-16.
+fn round_sig(x: f64, digits: i32) -> f64 {
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
+    // A residual of 2e-17 means the two series matched exactly; its
+    // significant digits ARE the summation noise, so rounding cannot
+    // settle it. Below this floor a number is zero and says so.
+    if x.abs() < 1e-12 {
+        return 0.0;
+    }
+    let mag = x.abs().log10().floor();
+    let factor = 10f64.powi(digits - 1 - mag as i32);
+    (x * factor).round() / factor
+}
+
 /// Timestamps and snapshot ids move between runs and say nothing about
 /// behaviour. Everything else is compared.
 fn scrub(v: &mut serde_json::Value) {
@@ -83,6 +102,28 @@ fn scrub(v: &mut serde_json::Value) {
             }
         }
         serde_json::Value::Array(a) => a.iter_mut().for_each(scrub),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64()
+                && !n.is_i64()
+                && !n.is_u64()
+                && let Some(r) = serde_json::Number::from_f64(round_sig(f, 12))
+            {
+                *v = serde_json::Value::Number(r);
+            }
+        }
+        // A body rides as a JSON *string*; normalise inside it too, or the
+        // rounding never reaches the numbers that actually move.
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim_start();
+            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                if let Ok(mut inner) = serde_json::from_str::<serde_json::Value>(s) {
+                    scrub(&mut inner);
+                    if let Ok(text) = serde_json::to_string(&inner) {
+                        *s = text;
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }

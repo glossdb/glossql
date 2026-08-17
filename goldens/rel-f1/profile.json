@@ -1,7 +1,7 @@
 {
   "circuits.alt": [
     {
-      "body": "{\"distinct\":65,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.03896103896103896,\"total\":77}",
+      "body": "{\"distinct\":65,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.038961038961,\"total\":77}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "circuits.alt"
@@ -385,7 +385,7 @@
   ],
   "results.fastestLap": [
     {
-      "body": "{\"distinct\":79,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.7080138036809815,\"total\":26080}",
+      "body": "{\"distinct\":79,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.708013803681,\"total\":26080}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "results.fastestLap"
@@ -409,7 +409,7 @@
   ],
   "results.milliseconds": [
     {
-      "body": "{\"distinct\":7212,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.7220092024539877,\"total\":26080}",
+      "body": "{\"distinct\":7212,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.722009202454,\"total\":26080}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "results.milliseconds"
@@ -417,7 +417,7 @@
   ],
   "results.number": [
     {
-      "body": "{\"distinct\":129,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.00023006134969325153,\"total\":26080}",
+      "body": "{\"distinct\":129,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.000230061349693,\"total\":26080}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "results.number"
@@ -433,7 +433,7 @@
   ],
   "results.position": [
     {
-      "body": "{\"distinct\":33,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.416909509202454,\"total\":26080}",
+      "body": "{\"distinct\":33,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.416909509202,\"total\":26080}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "results.position"
@@ -457,7 +457,7 @@
   ],
   "results.rank": [
     {
-      "body": "{\"distinct\":25,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.6997315950920245,\"total\":26080}",
+      "body": "{\"distinct\":25,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.699731595092,\"total\":26080}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "results.rank"
