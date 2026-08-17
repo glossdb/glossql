@@ -197,7 +197,7 @@ DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.sql$$
 DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.rhai$$
   RETURNS relationship_coherence;
 
-DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.rhai$$
+DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.sql$$
   RETURNS grounding_collisions;
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;

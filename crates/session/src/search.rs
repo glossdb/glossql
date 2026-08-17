@@ -1326,3 +1326,298 @@ fn relationship_shape() -> Vec<Field> {
     ]
 }
 
+/// `grounding_collisions('dataset')` — two concepts grounding to the
+/// same extract make every ratio between them compute 1.0, silently:
+/// the cheapest wrong number there is. Every current QUERY grounding
+/// buckets by its canonical SQL (parse-and-re-render, so spelling
+/// differences collapse and identifiers survive); a bucket holding two
+/// or more concepts is a collision — reported, never resolved:
+/// deliberate synonyms exist, and telling them from errors is the
+/// judge's call against the definitions, never this door's.
+///
+/// Two bucketings (the second added 2026-08-14, from the medium run):
+/// canonical SQL catches respelled extracts, and the SERVED monthly
+/// series catches what canonicalization cannot — revenue and
+/// ar_open_items carried different SQL yet served identical totals in
+/// every month, the exact failure this read exists to catch. A series
+/// collision is reported only when the canonical SQL differs (else the
+/// SQL bucket already carries it). A grounding whose SQL does not plan
+/// or run cannot serve a number and cannot collide — skipped, not
+/// failed.
+pub(crate) async fn grounding_collisions(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<RecordBatch, SessionError> {
+    use std::collections::BTreeMap;
+
+    let ctx = shared
+        .ctx
+        .read()
+        .expect("ctx lock")
+        .clone()
+        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let rctx = shared.read_context().await?;
+
+    // The collapse done over the statement's snapshot: latest row per
+    // (subject, aspect, actor kind) — the supersession key — QUERY
+    // aspects only, then human over agent per (subject, aspect).
+    let query_aspects: HashSet<&str> = rctx
+        .aspects
+        .iter()
+        .filter(|a| a.kind == "query")
+        .map(|a| a.name.as_str())
+        .collect();
+    let mut latest: BTreeMap<(&str, &str, &str), &glossql_glossary::GlossRow> = BTreeMap::new();
+    for row in rctx.glossary.iter() {
+        if row.dataset != dataset || !query_aspects.contains(row.aspect.as_str()) {
+            continue;
+        }
+        let key = (
+            row.subject.as_str(),
+            row.aspect.as_str(),
+            row.actor_kind.as_str(),
+        );
+        match latest.get(&key) {
+            Some(have) if have.written_at > row.written_at => {}
+            _ => {
+                latest.insert(key, row);
+            }
+        }
+    }
+    struct Slot<'a> {
+        subject: &'a str,
+        aspect: &'a str,
+        body: &'a str,
+        human: bool,
+    }
+    let mut slots: BTreeMap<String, Slot> = BTreeMap::new();
+    let mut ordered: Vec<&&glossql_glossary::GlossRow> = latest.values().collect();
+    ordered.sort_by_key(|r| r.seq);
+    for row in ordered {
+        let key = format!("{} {}", row.subject, row.aspect);
+        // Human over agent: a filled human slot is never displaced by
+        // another kind; anything else overwrites in row order.
+        if row.actor_kind != "human"
+            && slots.get(&key).is_some_and(|s| s.human)
+        {
+            continue;
+        }
+        slots.insert(
+            key,
+            Slot {
+                subject: &row.subject,
+                aspect: &row.aspect,
+                body: &row.body,
+                human: row.actor_kind == "human",
+            },
+        );
+    }
+
+    // Bucket by canonical SQL.
+    let mut buckets: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
+    let mut groundings = 0i64;
+    let mut grounded: Vec<(&Slot, Value, String)> = Vec::new();
+    for slot in slots.values() {
+        let Ok(body) = serde_json::from_str::<Value>(slot.body) else {
+            continue;
+        };
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+        groundings += 1;
+        let canon = canonical_sql(sql);
+        buckets
+            .entry(canon.clone())
+            .or_default()
+            .push((slot.aspect, slot.subject));
+        grounded.push((slot, body.clone(), canon));
+    }
+
+    struct Collision {
+        kind: &'static str,
+        sql: String,
+        months: Option<i64>,
+        aspects: Vec<String>,
+        subjects: Vec<String>,
+    }
+    let dedup_sorted = |items: Vec<&str>| {
+        let mut seen = Vec::new();
+        for i in items {
+            if !seen.contains(&i.to_string()) {
+                seen.push(i.to_string());
+            }
+        }
+        seen.sort();
+        seen
+    };
+    let mut collisions: Vec<Collision> = Vec::new();
+    for (canon, members) in &buckets {
+        // Two or more distinct concepts on one extract; one concept
+        // glossed on two subjects is scope, not collision.
+        let aspects = dedup_sorted(members.iter().map(|(a, _)| *a).collect());
+        if aspects.len() < 2 {
+            continue;
+        }
+        collisions.push(Collision {
+            kind: "sql",
+            sql: canon.clone(),
+            months: None,
+            aspects,
+            subjects: dedup_sorted(members.iter().map(|(_, s)| *s).collect()),
+        });
+    }
+
+    // The served-series pass: fingerprint each grounding's monthly
+    // totals at its own verb (flows sum; a marked stock sums the latest
+    // observed date — metric_cube's verb).
+    let mut series_buckets: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
+    for (slot, body, canon) in &grounded {
+        let sql = body["sql"].as_str().expect("filtered above");
+        let Some(fp) = series_fingerprint(shared, &ctx, sql, body).await else {
+            continue;
+        };
+        series_buckets
+            .entry(fp)
+            .or_default()
+            .push((slot.aspect, slot.subject, canon.as_str()));
+    }
+    let mut series_collisions: Vec<Collision> = Vec::new();
+    for (fp, members) in &series_buckets {
+        let aspects = dedup_sorted(members.iter().map(|(a, _, _)| *a).collect());
+        let canons: HashSet<&str> = members.iter().map(|(_, _, c)| *c).collect();
+        if aspects.len() < 2 || canons.len() < 2 {
+            continue;
+        }
+        series_collisions.push(Collision {
+            kind: "served_series",
+            sql: String::new(),
+            months: Some(fp.split(';').count() as i64 - 1),
+            aspects,
+            subjects: dedup_sorted(members.iter().map(|(_, s, _)| *s).collect()),
+        });
+    }
+    series_collisions.sort_by(|a, b| a.aspects[0].cmp(&b.aspects[0]));
+    collisions.extend(series_collisions);
+
+    let mut out = Vec::new();
+    for (seq, c) in collisions.iter().enumerate() {
+        out.push(json!({
+            "groundings": groundings, "seq": seq as i64,
+            "kind": c.kind, "sql": c.sql, "months": c.months,
+            "aspects": c.aspects, "subjects": c.subjects,
+        }));
+    }
+    if out.is_empty() {
+        out.push(json!({ "groundings": groundings }));
+    }
+    rows_batch(out, collision_shape())
+}
+
+/// One grounding's monthly fingerprint, `None` when it cannot serve a
+/// number: no `value` column, no time column, or any planning or
+/// execution failure — the script's try/catch, spelled out.
+async fn series_fingerprint(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    sql: &str,
+    body: &Value,
+) -> Option<String> {
+    use datafusion::arrow::array::Float64Array;
+    use datafusion::arrow::compute::{CastOptions, cast_with_options};
+
+    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await.ok()?;
+    let fields = probe.schema();
+    let has_value = fields.fields().iter().any(|f| f.name() == "value");
+    let tcol = has_value
+        .then(|| {
+            fields.fields().iter().find_map(|f| {
+                let d = f.data_type().to_string();
+                (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
+            })
+        })
+        .flatten()?;
+
+    let is_stock = body.get("behavior").and_then(Value::as_str) == Some("stock");
+    let q = if is_stock {
+        format!(
+            "SELECT period, sum(value) AS value FROM (\
+               SELECT date_trunc('month', \"{tcol}\") AS period, value, \
+                      rank() OVER (PARTITION BY date_trunc('month', \"{tcol}\") \
+                                   ORDER BY \"{tcol}\" DESC) AS rk \
+               FROM ({sql})\
+             ) WHERE rk = 1 GROUP BY period ORDER BY period"
+        )
+    } else {
+        format!(
+            "SELECT date_trunc('month', \"{tcol}\") AS period, sum(value) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+        )
+    };
+    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await.ok()?;
+    let batches = ctx
+        .execute_logical_plan(plan)
+        .await
+        .ok()?
+        .collect()
+        .await
+        .ok()?;
+    let mut fp = String::new();
+    for b in batches.iter().filter(|b| b.num_rows() > 0) {
+        let period = b.column(b.schema().index_of("period").ok()?);
+        let value = b.column(b.schema().index_of("value").ok()?);
+        let floats = cast_with_options(
+            value,
+            &DataType::Float64,
+            &CastOptions {
+                safe: true,
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let floats = floats.as_any().downcast_ref::<Float64Array>()?;
+        for i in 0..b.num_rows() {
+            if floats.is_null(i) {
+                // The script's arithmetic threw on a null value and the
+                // catch dropped the grounding whole.
+                return None;
+            }
+            let r = (floats.value(i) * 100.0).round() / 100.0;
+            let p = array_value_to_string(period, i).ok()?;
+            fp.push_str(&format!("{p}={r};"));
+        }
+    }
+    (!fp.is_empty()).then_some(fp)
+}
+
+/// SQL text as an identity: parse and re-render, so spelling differences
+/// collapse and identifiers survive verbatim. A body the parser cannot
+/// read normalizes by whitespace alone — weaker, honestly so. The rhai
+/// kernel of the same name is this exact rule; they change together.
+fn canonical_sql(sql: &str) -> String {
+    use datafusion::sql::sqlparser::dialect::GenericDialect;
+    use datafusion::sql::sqlparser::parser::Parser;
+    match Parser::parse_sql(&GenericDialect {}, sql) {
+        Ok(statements) if statements.len() == 1 => statements[0].to_string(),
+        _ => sql.split_whitespace().collect::<Vec<_>>().join(" "),
+    }
+}
+
+fn collision_shape() -> Vec<Field> {
+    vec![
+        Field::new("groundings", DataType::Int64, true),
+        Field::new("seq", DataType::Int64, true),
+        Field::new("kind", DataType::Utf8, true),
+        Field::new("sql", DataType::Utf8, true),
+        Field::new("months", DataType::Int64, true),
+        Field::new(
+            "aspects",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
+            "subjects",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+    ]
+}

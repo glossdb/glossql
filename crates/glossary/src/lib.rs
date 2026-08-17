@@ -23,7 +23,7 @@ pub use store::{
     Pin, Relation, Scope, Store, relation_columns,
 };
 pub use types::{
-    Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, MeasurementRow,
+    Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, GlossRow, MeasurementRow,
     RawRow, Verdict, Verdicts,
     RecipeAdmission, RecipeRow, Result, WitnessRow,
 };
