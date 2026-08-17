@@ -1,0 +1,10 @@
+{
+  "fin": [
+    {
+      "body": "{\"breach_rate\":0.0,\"outcome\":\"measured: per-entry debits against credits, tolerance 0.005 for float noise\"}",
+      "computed_at": "<volatile>",
+      "function": "journal_balanced_check",
+      "subject": "fin"
+    }
+  ]
+}

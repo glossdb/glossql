@@ -1,0 +1,1040 @@
+{
+  "event_attendees.Unnamed: 0": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 47\")"
+  },
+  "event_attendees.event": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_attendees.event"
+    }
+  ],
+  "event_attendees.start_time": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_attendees.start_time"
+    }
+  ],
+  "event_attendees.status": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_attendees.status"
+    }
+  ],
+  "event_attendees.user_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_attendees.user_id"
+    }
+  ],
+  "event_interest.event": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.event"
+    }
+  ],
+  "event_interest.interested": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.interested"
+    }
+  ],
+  "event_interest.invited": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.invited"
+    }
+  ],
+  "event_interest.not_interested": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.not_interested"
+    }
+  ],
+  "event_interest.timestamp": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.timestamp"
+    }
+  ],
+  "event_interest.user": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "event_interest.user"
+    }
+  ],
+  "events.c_1": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_1"
+    }
+  ],
+  "events.c_10": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_10"
+    }
+  ],
+  "events.c_100": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_100"
+    }
+  ],
+  "events.c_11": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_11"
+    }
+  ],
+  "events.c_12": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_12"
+    }
+  ],
+  "events.c_13": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_13"
+    }
+  ],
+  "events.c_14": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_14"
+    }
+  ],
+  "events.c_15": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_15"
+    }
+  ],
+  "events.c_16": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_16"
+    }
+  ],
+  "events.c_17": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_17"
+    }
+  ],
+  "events.c_18": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_18"
+    }
+  ],
+  "events.c_19": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_19"
+    }
+  ],
+  "events.c_2": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_2"
+    }
+  ],
+  "events.c_20": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_20"
+    }
+  ],
+  "events.c_21": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_21"
+    }
+  ],
+  "events.c_22": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_22"
+    }
+  ],
+  "events.c_23": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_23"
+    }
+  ],
+  "events.c_24": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_24"
+    }
+  ],
+  "events.c_25": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_25"
+    }
+  ],
+  "events.c_26": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_26"
+    }
+  ],
+  "events.c_27": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_27"
+    }
+  ],
+  "events.c_28": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_28"
+    }
+  ],
+  "events.c_29": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_29"
+    }
+  ],
+  "events.c_3": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_3"
+    }
+  ],
+  "events.c_30": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_30"
+    }
+  ],
+  "events.c_31": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_31"
+    }
+  ],
+  "events.c_32": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_32"
+    }
+  ],
+  "events.c_33": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_33"
+    }
+  ],
+  "events.c_34": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_34"
+    }
+  ],
+  "events.c_35": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_35"
+    }
+  ],
+  "events.c_36": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_36"
+    }
+  ],
+  "events.c_37": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_37"
+    }
+  ],
+  "events.c_38": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_38"
+    }
+  ],
+  "events.c_39": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_39"
+    }
+  ],
+  "events.c_4": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_4"
+    }
+  ],
+  "events.c_40": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_40"
+    }
+  ],
+  "events.c_41": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_41"
+    }
+  ],
+  "events.c_42": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_42"
+    }
+  ],
+  "events.c_43": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_43"
+    }
+  ],
+  "events.c_44": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_44"
+    }
+  ],
+  "events.c_45": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_45"
+    }
+  ],
+  "events.c_46": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_46"
+    }
+  ],
+  "events.c_47": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_47"
+    }
+  ],
+  "events.c_48": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_48"
+    }
+  ],
+  "events.c_49": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_49"
+    }
+  ],
+  "events.c_5": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_5"
+    }
+  ],
+  "events.c_50": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_50"
+    }
+  ],
+  "events.c_51": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_51"
+    }
+  ],
+  "events.c_52": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_52"
+    }
+  ],
+  "events.c_53": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_53"
+    }
+  ],
+  "events.c_54": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_54"
+    }
+  ],
+  "events.c_55": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_55"
+    }
+  ],
+  "events.c_56": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_56"
+    }
+  ],
+  "events.c_57": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_57"
+    }
+  ],
+  "events.c_58": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_58"
+    }
+  ],
+  "events.c_59": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_59"
+    }
+  ],
+  "events.c_6": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_6"
+    }
+  ],
+  "events.c_60": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_60"
+    }
+  ],
+  "events.c_61": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_61"
+    }
+  ],
+  "events.c_62": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_62"
+    }
+  ],
+  "events.c_63": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_63"
+    }
+  ],
+  "events.c_64": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_64"
+    }
+  ],
+  "events.c_65": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_65"
+    }
+  ],
+  "events.c_66": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_66"
+    }
+  ],
+  "events.c_67": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_67"
+    }
+  ],
+  "events.c_68": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_68"
+    }
+  ],
+  "events.c_69": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_69"
+    }
+  ],
+  "events.c_7": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_7"
+    }
+  ],
+  "events.c_70": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_70"
+    }
+  ],
+  "events.c_71": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_71"
+    }
+  ],
+  "events.c_72": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_72"
+    }
+  ],
+  "events.c_73": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_73"
+    }
+  ],
+  "events.c_74": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_74"
+    }
+  ],
+  "events.c_75": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_75"
+    }
+  ],
+  "events.c_76": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_76"
+    }
+  ],
+  "events.c_77": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_77"
+    }
+  ],
+  "events.c_78": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_78"
+    }
+  ],
+  "events.c_79": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_79"
+    }
+  ],
+  "events.c_8": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_8"
+    }
+  ],
+  "events.c_80": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_80"
+    }
+  ],
+  "events.c_81": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_81"
+    }
+  ],
+  "events.c_82": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_82"
+    }
+  ],
+  "events.c_83": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_83"
+    }
+  ],
+  "events.c_84": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_84"
+    }
+  ],
+  "events.c_85": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_85"
+    }
+  ],
+  "events.c_86": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_86"
+    }
+  ],
+  "events.c_87": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_87"
+    }
+  ],
+  "events.c_88": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_88"
+    }
+  ],
+  "events.c_89": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_89"
+    }
+  ],
+  "events.c_9": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_9"
+    }
+  ],
+  "events.c_90": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_90"
+    }
+  ],
+  "events.c_91": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_91"
+    }
+  ],
+  "events.c_92": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_92"
+    }
+  ],
+  "events.c_93": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_93"
+    }
+  ],
+  "events.c_94": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_94"
+    }
+  ],
+  "events.c_95": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_95"
+    }
+  ],
+  "events.c_96": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_96"
+    }
+  ],
+  "events.c_97": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_97"
+    }
+  ],
+  "events.c_98": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_98"
+    }
+  ],
+  "events.c_99": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_99"
+    }
+  ],
+  "events.c_other": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.c_other"
+    }
+  ],
+  "events.city": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.city"
+    }
+  ],
+  "events.country": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.country"
+    }
+  ],
+  "events.event_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.event_id"
+    }
+  ],
+  "events.lat": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.lat"
+    }
+  ],
+  "events.lng": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.lng"
+    }
+  ],
+  "events.start_time": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.start_time"
+    }
+  ],
+  "events.state": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.state"
+    }
+  ],
+  "events.user_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.user_id"
+    }
+  ],
+  "events.zip": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "events.zip"
+    }
+  ],
+  "user_friends.Unnamed: 0": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 44\")"
+  },
+  "user_friends.friend": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "user_friends.friend"
+    }
+  ],
+  "user_friends.user": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "user_friends.user"
+    }
+  ],
+  "users.birthyear": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.birthyear"
+    }
+  ],
+  "users.gender": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.gender"
+    }
+  ],
+  "users.joinedAt": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.joinedAt"
+    }
+  ],
+  "users.locale": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.locale"
+    }
+  ],
+  "users.location": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.location"
+    }
+  ],
+  "users.timezone": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.timezone"
+    }
+  ],
+  "users.user_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "users.user_id"
+    }
+  ]
+}

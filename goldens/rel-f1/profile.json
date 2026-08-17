@@ -1,0 +1,538 @@
+{
+  "circuits.alt": [
+    {
+      "body": "{\"distinct\":65,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.03896103896103896,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.alt"
+    }
+  ],
+  "circuits.circuitId": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.circuitId"
+    }
+  ],
+  "circuits.circuitRef": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.circuitRef"
+    }
+  ],
+  "circuits.country": [
+    {
+      "body": "{\"distinct\":35,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.country"
+    }
+  ],
+  "circuits.lat": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.lat"
+    }
+  ],
+  "circuits.lng": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.lng"
+    }
+  ],
+  "circuits.location": [
+    {
+      "body": "{\"distinct\":75,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.location"
+    }
+  ],
+  "circuits.name": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":77}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "circuits.name"
+    }
+  ],
+  "constructor_results.constructorId": [
+    {
+      "body": "{\"distinct\":175,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":12290}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_results.constructorId"
+    }
+  ],
+  "constructor_results.constructorResultsId": [
+    {
+      "body": "{\"distinct\":12290,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":12290}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_results.constructorResultsId"
+    }
+  ],
+  "constructor_results.date": [
+    {
+      "body": "{\"distinct\":1028,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":12290}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_results.date"
+    }
+  ],
+  "constructor_results.points": [
+    {
+      "body": "{\"distinct\":57,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":12290}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_results.points"
+    }
+  ],
+  "constructor_results.raceId": [
+    {
+      "body": "{\"distinct\":1028,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":12290}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_results.raceId"
+    }
+  ],
+  "constructor_standings.constructorId": [
+    {
+      "body": "{\"distinct\":159,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.constructorId"
+    }
+  ],
+  "constructor_standings.constructorStandingsId": [
+    {
+      "body": "{\"distinct\":13051,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.constructorStandingsId"
+    }
+  ],
+  "constructor_standings.date": [
+    {
+      "body": "{\"distinct\":1027,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.date"
+    }
+  ],
+  "constructor_standings.points": [
+    {
+      "body": "{\"distinct\":541,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.points"
+    }
+  ],
+  "constructor_standings.position": [
+    {
+      "body": "{\"distinct\":22,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.position"
+    }
+  ],
+  "constructor_standings.raceId": [
+    {
+      "body": "{\"distinct\":1027,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.raceId"
+    }
+  ],
+  "constructor_standings.wins": [
+    {
+      "body": "{\"distinct\":20,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":13051}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructor_standings.wins"
+    }
+  ],
+  "constructors.constructorId": [
+    {
+      "body": "{\"distinct\":211,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":211}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructors.constructorId"
+    }
+  ],
+  "constructors.constructorRef": [
+    {
+      "body": "{\"distinct\":211,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":211}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructors.constructorRef"
+    }
+  ],
+  "constructors.name": [
+    {
+      "body": "{\"distinct\":211,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":211}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructors.name"
+    }
+  ],
+  "constructors.nationality": [
+    {
+      "body": "{\"distinct\":24,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":211}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "constructors.nationality"
+    }
+  ],
+  "drivers.code": [
+    {
+      "body": "{\"distinct\":95,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.code"
+    }
+  ],
+  "drivers.dob": [
+    {
+      "body": "{\"distinct\":839,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.dob"
+    }
+  ],
+  "drivers.driverId": [
+    {
+      "body": "{\"distinct\":857,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.driverId"
+    }
+  ],
+  "drivers.driverRef": [
+    {
+      "body": "{\"distinct\":857,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.driverRef"
+    }
+  ],
+  "drivers.forename": [
+    {
+      "body": "{\"distinct\":476,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.forename"
+    }
+  ],
+  "drivers.nationality": [
+    {
+      "body": "{\"distinct\":42,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.nationality"
+    }
+  ],
+  "drivers.surname": [
+    {
+      "body": "{\"distinct\":798,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":857}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "drivers.surname"
+    }
+  ],
+  "qualifying.constructorId": [
+    {
+      "body": "{\"distinct\":46,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.constructorId"
+    }
+  ],
+  "qualifying.date": [
+    {
+      "body": "{\"distinct\":460,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.date"
+    }
+  ],
+  "qualifying.driverId": [
+    {
+      "body": "{\"distinct\":168,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.driverId"
+    }
+  ],
+  "qualifying.number": [
+    {
+      "body": "{\"distinct\":54,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.number"
+    }
+  ],
+  "qualifying.position": [
+    {
+      "body": "{\"distinct\":28,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.position"
+    }
+  ],
+  "qualifying.qualifyId": [
+    {
+      "body": "{\"distinct\":9815,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.qualifyId"
+    }
+  ],
+  "qualifying.raceId": [
+    {
+      "body": "{\"distinct\":460,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":9815}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "qualifying.raceId"
+    }
+  ],
+  "races.circuitId": [
+    {
+      "body": "{\"distinct\":77,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.circuitId"
+    }
+  ],
+  "races.date": [
+    {
+      "body": "{\"distinct\":1101,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.date"
+    }
+  ],
+  "races.name": [
+    {
+      "body": "{\"distinct\":54,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.name"
+    }
+  ],
+  "races.raceId": [
+    {
+      "body": "{\"distinct\":1101,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.raceId"
+    }
+  ],
+  "races.round": [
+    {
+      "body": "{\"distinct\":22,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.round"
+    }
+  ],
+  "races.time": [
+    {
+      "body": "{\"distinct\":34,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.time"
+    }
+  ],
+  "races.year": [
+    {
+      "body": "{\"distinct\":74,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":1101}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "races.year"
+    }
+  ],
+  "results.constructorId": [
+    {
+      "body": "{\"distinct\":210,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.constructorId"
+    }
+  ],
+  "results.date": [
+    {
+      "body": "{\"distinct\":1091,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.date"
+    }
+  ],
+  "results.driverId": [
+    {
+      "body": "{\"distinct\":857,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.driverId"
+    }
+  ],
+  "results.fastestLap": [
+    {
+      "body": "{\"distinct\":79,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.7080138036809815,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.fastestLap"
+    }
+  ],
+  "results.grid": [
+    {
+      "body": "{\"distinct\":35,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.grid"
+    }
+  ],
+  "results.laps": [
+    {
+      "body": "{\"distinct\":172,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.laps"
+    }
+  ],
+  "results.milliseconds": [
+    {
+      "body": "{\"distinct\":7212,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.7220092024539877,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.milliseconds"
+    }
+  ],
+  "results.number": [
+    {
+      "body": "{\"distinct\":129,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.00023006134969325153,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.number"
+    }
+  ],
+  "results.points": [
+    {
+      "body": "{\"distinct\":39,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.points"
+    }
+  ],
+  "results.position": [
+    {
+      "body": "{\"distinct\":33,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.416909509202454,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.position"
+    }
+  ],
+  "results.positionOrder": [
+    {
+      "body": "{\"distinct\":39,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.positionOrder"
+    }
+  ],
+  "results.raceId": [
+    {
+      "body": "{\"distinct\":1091,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.raceId"
+    }
+  ],
+  "results.rank": [
+    {
+      "body": "{\"distinct\":25,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.6997315950920245,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.rank"
+    }
+  ],
+  "results.resultId": [
+    {
+      "body": "{\"distinct\":26080,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.resultId"
+    }
+  ],
+  "results.statusId": [
+    {
+      "body": "{\"distinct\":137,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":26080}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "results.statusId"
+    }
+  ],
+  "standings.date": [
+    {
+      "body": "{\"distinct\":1091,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.date"
+    }
+  ],
+  "standings.driverId": [
+    {
+      "body": "{\"distinct\":850,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.driverId"
+    }
+  ],
+  "standings.driverStandingsId": [
+    {
+      "body": "{\"distinct\":34124,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.driverStandingsId"
+    }
+  ],
+  "standings.points": [
+    {
+      "body": "{\"distinct\":418,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.points"
+    }
+  ],
+  "standings.position": [
+    {
+      "body": "{\"distinct\":108,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.position"
+    }
+  ],
+  "standings.raceId": [
+    {
+      "body": "{\"distinct\":1091,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.raceId"
+    }
+  ],
+  "standings.wins": [
+    {
+      "body": "{\"distinct\":16,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":34124}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "standings.wins"
+    }
+  ]
+}

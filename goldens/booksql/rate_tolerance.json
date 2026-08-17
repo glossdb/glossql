@@ -1,0 +1,5 @@
+{
+  "books": {
+    "error": "function `rate_tolerance` has no RETURNS — a detector runs through its witness, never through extraction"
+  }
+}

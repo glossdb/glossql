@@ -1,0 +1,602 @@
+{
+  "account_balances.account_id": [
+    {
+      "body": "{\"distinct\":8,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":112}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "account_balances.account_id"
+    }
+  ],
+  "account_balances.ending_balance": [
+    {
+      "body": "{\"distinct\":104,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":112}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "account_balances.ending_balance"
+    }
+  ],
+  "account_balances.period": [
+    {
+      "body": "{\"distinct\":14,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":112}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "account_balances.period"
+    }
+  ],
+  "account_balances.period_start": [
+    {
+      "body": "{\"distinct\":14,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":112}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "account_balances.period_start"
+    }
+  ],
+  "ap_invoices.amount": [
+    {
+      "body": "{\"distinct\":14781,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.amount"
+    }
+  ],
+  "ap_invoices.ap_invoice_id": [
+    {
+      "body": "{\"distinct\":16817,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.ap_invoice_id"
+    }
+  ],
+  "ap_invoices.category": [
+    {
+      "body": "{\"distinct\":2,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.category"
+    }
+  ],
+  "ap_invoices.due_date": [
+    {
+      "body": "{\"distinct\":455,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.due_date"
+    }
+  ],
+  "ap_invoices.entry_id": [
+    {
+      "body": "{\"distinct\":16465,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.020931200570850926,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.entry_id"
+    }
+  ],
+  "ap_invoices.invoice_date": [
+    {
+      "body": "{\"distinct\":365,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.invoice_date"
+    }
+  ],
+  "ap_invoices.payment_terms": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.payment_terms"
+    }
+  ],
+  "ap_invoices.status": [
+    {
+      "body": "{\"distinct\":5,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.status"
+    }
+  ],
+  "ap_invoices.vendor_id": [
+    {
+      "body": "{\"distinct\":120,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":16817}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_invoices.vendor_id"
+    }
+  ],
+  "ap_payments.amount": [
+    {
+      "body": "{\"distinct\":13263,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14928}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_payments.amount"
+    }
+  ],
+  "ap_payments.ap_invoice_id": [
+    {
+      "body": "{\"distinct\":14928,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14928}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_payments.ap_invoice_id"
+    }
+  ],
+  "ap_payments.method": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14928}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_payments.method"
+    }
+  ],
+  "ap_payments.payment_date": [
+    {
+      "body": "{\"distinct\":406,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14928}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_payments.payment_date"
+    }
+  ],
+  "ap_payments.payment_id": [
+    {
+      "body": "{\"distinct\":14928,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14928}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ap_payments.payment_id"
+    }
+  ],
+  "ar_invoices.amount": [
+    {
+      "body": "{\"distinct\":14677,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.amount"
+    }
+  ],
+  "ar_invoices.ar_invoice_id": [
+    {
+      "body": "{\"distinct\":14770,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.ar_invoice_id"
+    }
+  ],
+  "ar_invoices.customer_id": [
+    {
+      "body": "{\"distinct\":400,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.customer_id"
+    }
+  ],
+  "ar_invoices.due_date": [
+    {
+      "body": "{\"distinct\":455,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.due_date"
+    }
+  ],
+  "ar_invoices.invoice_date": [
+    {
+      "body": "{\"distinct\":365,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.invoice_date"
+    }
+  ],
+  "ar_invoices.order_id": [
+    {
+      "body": "{\"distinct\":14770,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.order_id"
+    }
+  ],
+  "ar_invoices.status": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "ar_invoices.status"
+    }
+  ],
+  "chart_of_accounts.account_id": [
+    {
+      "body": "{\"distinct\":61,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":61}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "chart_of_accounts.account_id"
+    }
+  ],
+  "chart_of_accounts.account_name": [
+    {
+      "body": "{\"distinct\":61,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":61}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "chart_of_accounts.account_name"
+    }
+  ],
+  "chart_of_accounts.account_type": [
+    {
+      "body": "{\"distinct\":5,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":61}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "chart_of_accounts.account_type"
+    }
+  ],
+  "chart_of_accounts.parent_id": [
+    {
+      "body": "{\"distinct\":18,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.08196721311475409,\"total\":61}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "chart_of_accounts.parent_id"
+    }
+  ],
+  "customers.churned_date": [
+    {
+      "body": "{\"distinct\":9,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.9175,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.churned_date"
+    }
+  ],
+  "customers.created_date": [
+    {
+      "body": "{\"distinct\":356,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.created_date"
+    }
+  ],
+  "customers.customer_id": [
+    {
+      "body": "{\"distinct\":400,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.customer_id"
+    }
+  ],
+  "customers.customer_name": [
+    {
+      "body": "{\"distinct\":400,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.customer_name"
+    }
+  ],
+  "customers.payment_terms": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.payment_terms"
+    }
+  ],
+  "customers.region": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.region"
+    }
+  ],
+  "customers.segment": [
+    {
+      "body": "{\"distinct\":3,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":400}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "customers.segment"
+    }
+  ],
+  "inventory_positions.location_id": [
+    {
+      "body": "{\"distinct\":2,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.location_id"
+    }
+  ],
+  "inventory_positions.period": [
+    {
+      "body": "{\"distinct\":12,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.period"
+    }
+  ],
+  "inventory_positions.period_start": [
+    {
+      "body": "{\"distinct\":12,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.period_start"
+    }
+  ],
+  "inventory_positions.product_id": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.product_id"
+    }
+  ],
+  "inventory_positions.unit_cost": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.unit_cost"
+    }
+  ],
+  "inventory_positions.units_on_hand": [
+    {
+      "body": "{\"distinct\":190,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.units_on_hand"
+    }
+  ],
+  "inventory_positions.value": [
+    {
+      "body": "{\"distinct\":3657,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":5760}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "inventory_positions.value"
+    }
+  ],
+  "journal_entries.entry_date": [
+    {
+      "body": "{\"distinct\":407,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":73037}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_entries.entry_date"
+    }
+  ],
+  "journal_entries.entry_id": [
+    {
+      "body": "{\"distinct\":73037,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":73037}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_entries.entry_id"
+    }
+  ],
+  "journal_entries.status": [
+    {
+      "body": "{\"distinct\":1,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":73037}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_entries.status"
+    }
+  ],
+  "journal_lines.account_id": [
+    {
+      "body": "{\"distinct\":28,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.account_id"
+    }
+  ],
+  "journal_lines.cost_center": [
+    {
+      "body": "{\"distinct\":5,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.5215868128805012,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.cost_center"
+    }
+  ],
+  "journal_lines.credit": [
+    {
+      "body": "{\"distinct\":52317,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.credit"
+    }
+  ],
+  "journal_lines.debit": [
+    {
+      "body": "{\"distinct\":44044,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.debit"
+    }
+  ],
+  "journal_lines.entry_id": [
+    {
+      "body": "{\"distinct\":73037,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.entry_id"
+    }
+  ],
+  "journal_lines.line_id": [
+    {
+      "body": "{\"distinct\":157851,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.line_id"
+    }
+  ],
+  "journal_lines.net_amount": [
+    {
+      "body": "{\"distinct\":96359,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":157851}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "journal_lines.net_amount"
+    }
+  ],
+  "products.list_price": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":240}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "products.list_price"
+    }
+  ],
+  "products.product_group": [
+    {
+      "body": "{\"distinct\":12,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":240}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "products.product_group"
+    }
+  ],
+  "products.product_id": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":240}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "products.product_id"
+    }
+  ],
+  "products.product_name": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":240}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "products.product_name"
+    }
+  ],
+  "products.standard_cost": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":240}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "products.standard_cost"
+    }
+  ],
+  "receipts.amount": [
+    {
+      "body": "{\"distinct\":11305,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.amount"
+    }
+  ],
+  "receipts.ar_invoice_id": [
+    {
+      "body": "{\"distinct\":11360,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.ar_invoice_id"
+    }
+  ],
+  "receipts.customer_id": [
+    {
+      "body": "{\"distinct\":400,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.customer_id"
+    }
+  ],
+  "receipts.method": [
+    {
+      "body": "{\"distinct\":4,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.method"
+    }
+  ],
+  "receipts.receipt_date": [
+    {
+      "body": "{\"distinct\":359,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.receipt_date"
+    }
+  ],
+  "receipts.receipt_id": [
+    {
+      "body": "{\"distinct\":11360,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":11360}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "receipts.receipt_id"
+    }
+  ],
+  "sales_order_lines.line_amount": [
+    {
+      "body": "{\"distinct\":23042,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.line_amount"
+    }
+  ],
+  "sales_order_lines.line_cost": [
+    {
+      "body": "{\"distinct\":8081,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.line_cost"
+    }
+  ],
+  "sales_order_lines.order_id": [
+    {
+      "body": "{\"distinct\":14770,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.order_id"
+    }
+  ],
+  "sales_order_lines.order_line_id": [
+    {
+      "body": "{\"distinct\":23613,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.order_line_id"
+    }
+  ],
+  "sales_order_lines.product_id": [
+    {
+      "body": "{\"distinct\":240,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.product_id"
+    }
+  ],
+  "sales_order_lines.unit_price": [
+    {
+      "body": "{\"distinct\":20633,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.unit_price"
+    }
+  ],
+  "sales_order_lines.units": [
+    {
+      "body": "{\"distinct\":194,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":23613}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_order_lines.units"
+    }
+  ],
+  "sales_orders.customer_id": [
+    {
+      "body": "{\"distinct\":400,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_orders.customer_id"
+    }
+  ],
+  "sales_orders.order_date": [
+    {
+      "body": "{\"distinct\":365,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_orders.order_date"
+    }
+  ],
+  "sales_orders.order_id": [
+    {
+      "body": "{\"distinct\":14770,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_orders.order_id"
+    }
+  ],
+  "sales_orders.status": [
+    {
+      "body": "{\"distinct\":2,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0,\"total\":14770}",
+      "computed_at": "<volatile>",
+      "function": "profile",
+      "subject": "sales_orders.status"
+    }
+  ]
+}

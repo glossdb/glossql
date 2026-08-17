@@ -1,0 +1,306 @@
+{
+  "Master_txn_table.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 41\")"
+  },
+  "Master_txn_table.A/P paid": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: / at Line: 1, Column: 42\")"
+  },
+  "Master_txn_table.A/R paid": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: / at Line: 1, Column: 42\")"
+  },
+  "Master_txn_table.Account": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Account"
+    }
+  ],
+  "Master_txn_table.Amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Amount"
+    }
+  ],
+  "Master_txn_table.Billable": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Billable"
+    }
+  ],
+  "Master_txn_table.Cleared": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Cleared"
+    }
+  ],
+  "Master_txn_table.Created date": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.created' not found"
+  },
+  "Master_txn_table.Created user": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.created' not found"
+  },
+  "Master_txn_table.Credit": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Credit"
+    }
+  ],
+  "Master_txn_table.Customer name": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.customer' not found"
+  },
+  "Master_txn_table.Debit": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Debit"
+    }
+  ],
+  "Master_txn_table.Due date": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.due' not found"
+  },
+  "Master_txn_table.Estimate status": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.estimate' not found"
+  },
+  "Master_txn_table.Invoiced": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Invoiced"
+    }
+  ],
+  "Master_txn_table.Misc (Business specific fields)": {
+    "error": "SQL error: ParserError(\"Expected: ), found: specific at Line: 1, Column: 56\")"
+  },
+  "Master_txn_table.Open balance": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.open' not found"
+  },
+  "Master_txn_table.PO status": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.po' not found"
+  },
+  "Master_txn_table.Product_Service": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Product_Service"
+    }
+  ],
+  "Master_txn_table.Purchase": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Purchase"
+    }
+  ],
+  "Master_txn_table.Quantity": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Quantity"
+    }
+  ],
+  "Master_txn_table.Rate": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Rate"
+    }
+  ],
+  "Master_txn_table.Sale": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "Master_txn_table.Sale"
+    }
+  ],
+  "Master_txn_table.Transaction ID": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.transaction' not found"
+  },
+  "Master_txn_table.Transaction date": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.transaction' not found"
+  },
+  "Master_txn_table.Transaction type": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.transaction' not found"
+  },
+  "Master_txn_table.Unnamed: 0": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 48\")"
+  },
+  "Master_txn_table.Unnamed: 0.1": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 48\")"
+  },
+  "Master_txn_table.Unnamed: 0.2": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 48\")"
+  },
+  "Master_txn_table.Vendor name": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.vendor' not found"
+  },
+  "Master_txn_table.business Id": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.business' not found"
+  },
+  "Master_txn_table.payment method": {
+    "error": "Error during planning: table 'datafusion.master_txn_table.payment' not found"
+  },
+  "chart_of_account_OB.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 44\")"
+  },
+  "chart_of_account_OB.Account Full Name": {
+    "error": "SQL error: ParserError(\"Expected: JOIN, found: Name at Line: 1, Column: 57\")"
+  },
+  "chart_of_account_OB.Account name": {
+    "error": "Error during planning: table 'datafusion.chart_of_account_ob.account' not found"
+  },
+  "chart_of_account_OB.Account type": {
+    "error": "Error during planning: table 'datafusion.chart_of_account_ob.account' not found"
+  },
+  "chart_of_account_OB.Business Id": {
+    "error": "Error during planning: table 'datafusion.chart_of_account_ob.business' not found"
+  },
+  "customer_table.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 39\")"
+  },
+  "customer_table.Balance": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customer_table.Balance"
+    }
+  ],
+  "customer_table.Billing ZIP code": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: code at Line: 1, Column: 51\")"
+  },
+  "customer_table.Billing address": {
+    "error": "Error during planning: table 'datafusion.customer_table.billing' not found"
+  },
+  "customer_table.Billing city": {
+    "error": "Error during planning: table 'datafusion.customer_table.billing' not found"
+  },
+  "customer_table.Billing state": {
+    "error": "Error during planning: table 'datafusion.customer_table.billing' not found"
+  },
+  "customer_table.Business Id": {
+    "error": "Error during planning: table 'datafusion.customer_table.business' not found"
+  },
+  "customer_table.Customer full name": {
+    "error": "SQL error: ParserError(\"Expected: JOIN, found: name at Line: 1, Column: 53\")"
+  },
+  "customer_table.Customer name": {
+    "error": "Error during planning: table 'datafusion.customer_table.customer' not found"
+  },
+  "customer_table.Shipping ZIP code": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: code at Line: 1, Column: 52\")"
+  },
+  "customer_table.Shipping address": {
+    "error": "Error during planning: table 'datafusion.customer_table.shipping' not found"
+  },
+  "customer_table.Shipping city": {
+    "error": "Error during planning: table 'datafusion.customer_table.shipping' not found"
+  },
+  "customer_table.Shipping state": {
+    "error": "Error during planning: table 'datafusion.customer_table.shipping' not found"
+  },
+  "employee_table.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 39\")"
+  },
+  "employee_table.Billing rate": {
+    "error": "Error during planning: table 'datafusion.employee_table.billing' not found"
+  },
+  "employee_table.Business Id": {
+    "error": "Error during planning: table 'datafusion.employee_table.business' not found"
+  },
+  "employee_table.Deleted": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "employee_table.Deleted"
+    }
+  ],
+  "employee_table.Employee ID": {
+    "error": "Error during planning: table 'datafusion.employee_table.employee' not found"
+  },
+  "employee_table.Employee name": {
+    "error": "Error during planning: table 'datafusion.employee_table.employee' not found"
+  },
+  "employee_table.Hire date": {
+    "error": "Error during planning: table 'datafusion.employee_table.hire' not found"
+  },
+  "payment_method.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 39\")"
+  },
+  "payment_method.Business Id": {
+    "error": "Error during planning: table 'datafusion.payment_method.business' not found"
+  },
+  "payment_method.Credit card": {
+    "error": "Error during planning: table 'datafusion.payment_method.credit' not found"
+  },
+  "payment_method.Payment method": {
+    "error": "Error during planning: table 'datafusion.payment_method.payment' not found"
+  },
+  "product_service_table.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 46\")"
+  },
+  "product_service_table.Business Id": {
+    "error": "Error during planning: table 'datafusion.product_service_table.business' not found"
+  },
+  "product_service_table.Product_Service": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "product_service_table.Product_Service"
+    }
+  ],
+  "product_service_table.Product_Service_Type": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "product_service_table.Product_Service_Type"
+    }
+  ],
+  "vendor_table.": {
+    "error": "SQL error: ParserError(\"Expected: identifier, found: ; at Line: 1, Column: 37\")"
+  },
+  "vendor_table.Balance": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "vendor_table.Balance"
+    }
+  ],
+  "vendor_table.Billing ZIP code": {
+    "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: code at Line: 1, Column: 49\")"
+  },
+  "vendor_table.Billing address": {
+    "error": "Error during planning: table 'datafusion.vendor_table.billing' not found"
+  },
+  "vendor_table.Billing city": {
+    "error": "Error during planning: table 'datafusion.vendor_table.billing' not found"
+  },
+  "vendor_table.Billing state": {
+    "error": "Error during planning: table 'datafusion.vendor_table.billing' not found"
+  },
+  "vendor_table.Business Id": {
+    "error": "Error during planning: table 'datafusion.vendor_table.business' not found"
+  },
+  "vendor_table.Vendor name": {
+    "error": "Error during planning: table 'datafusion.vendor_table.vendor' not found"
+  }
+}

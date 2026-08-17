@@ -1,0 +1,538 @@
+{
+  "circuits.alt": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.alt"
+    }
+  ],
+  "circuits.circuitId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.circuitId"
+    }
+  ],
+  "circuits.circuitRef": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.circuitRef"
+    }
+  ],
+  "circuits.country": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.country"
+    }
+  ],
+  "circuits.lat": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.lat"
+    }
+  ],
+  "circuits.lng": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.lng"
+    }
+  ],
+  "circuits.location": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.location"
+    }
+  ],
+  "circuits.name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "circuits.name"
+    }
+  ],
+  "constructor_results.constructorId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_results.constructorId"
+    }
+  ],
+  "constructor_results.constructorResultsId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_results.constructorResultsId"
+    }
+  ],
+  "constructor_results.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":120,\"largest_days\":532.0,\"sample\":[{\"days\":532.0,\"end\":\"1958-01-19T00:00:00\",\"missing_periods\":37,\"severity\":\"severe\",\"start\":\"1956-08-05T00:00:00\"},{\"days\":224.0,\"end\":\"1962-05-20T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1961-10-08T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-05T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-12-01T13:10:00\"},{\"days\":210.0,\"end\":\"1966-05-22T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"1965-10-24T00:00:00\"},{\"days\":203.0,\"end\":\"1959-05-10T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1958-10-19T00:00:00\"},{\"days\":196.0,\"end\":\"1956-08-05T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1956-01-22T00:00:00\"},{\"days\":175.0,\"end\":\"1961-05-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1960-11-20T00:00:00\"},{\"days\":169.0,\"end\":\"1983-03-13T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1982-09-25T00:00:00\"},{\"days\":168.0,\"end\":\"1985-04-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1984-10-21T00:00:00\"},{\"days\":168.0,\"end\":\"1987-04-12T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1986-10-26T00:00:00\"},{\"days\":162.0,\"end\":\"1984-03-25T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1983-10-15T00:00:00\"},{\"days\":161.0,\"end\":\"1981-03-15T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1980-10-05T00:00:00\"},{\"days\":149.0,\"end\":\"1965-05-30T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1965-01-01T00:00:00\"},{\"days\":148.0,\"end\":\"1963-05-26T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1962-12-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-12T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-16T14:00:00\"},{\"days\":147.0,\"end\":\"2004-03-07T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-12T00:00:00\"},{\"days\":147.0,\"end\":\"1997-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1996-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2003-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-13T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-18T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-22T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-29T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-02T17:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-07-30T13:00:00\",\"min\":\"1956-01-22T00:00:00\",\"span_days\":24661.541666666668}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_results.date"
+    }
+  ],
+  "constructor_results.points": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_results.points"
+    }
+  ],
+  "constructor_results.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_results.raceId"
+    }
+  ],
+  "constructor_standings.constructorId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.constructorId"
+    }
+  ],
+  "constructor_standings.constructorStandingsId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.constructorStandingsId"
+    }
+  ],
+  "constructor_standings.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":118,\"largest_days\":224.0,\"sample\":[{\"days\":224.0,\"end\":\"1962-05-20T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1961-10-08T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-05T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-12-01T13:10:00\"},{\"days\":210.0,\"end\":\"1966-05-22T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"1965-10-24T00:00:00\"},{\"days\":203.0,\"end\":\"1959-05-10T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1958-10-19T00:00:00\"},{\"days\":175.0,\"end\":\"1961-05-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1960-11-20T00:00:00\"},{\"days\":169.0,\"end\":\"1983-03-13T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1982-09-25T00:00:00\"},{\"days\":168.0,\"end\":\"1985-04-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1984-10-21T00:00:00\"},{\"days\":168.0,\"end\":\"1987-04-12T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1986-10-26T00:00:00\"},{\"days\":162.0,\"end\":\"1984-03-25T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1983-10-15T00:00:00\"},{\"days\":161.0,\"end\":\"1981-03-15T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1980-10-05T00:00:00\"},{\"days\":149.0,\"end\":\"1965-05-30T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1965-01-01T00:00:00\"},{\"days\":148.0,\"end\":\"1963-05-26T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1962-12-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-12T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-16T14:00:00\"},{\"days\":147.0,\"end\":\"1997-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1996-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2003-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2004-03-07T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-12T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-18T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-22T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-29T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-02T17:00:00\"},{\"days\":146.52083333333334,\"end\":\"2008-03-16T04:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2007-10-21T16:00:00\"},{\"days\":140.0,\"end\":\"1986-03-23T00:00:00\",\"missing_periods\":9,\"severity\":\"moderate\",\"start\":\"1985-11-03T00:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-07-30T13:00:00\",\"min\":\"1958-01-19T00:00:00\",\"span_days\":23933.541666666668}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.date"
+    }
+  ],
+  "constructor_standings.points": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.points"
+    }
+  ],
+  "constructor_standings.position": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.position"
+    }
+  ],
+  "constructor_standings.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.raceId"
+    }
+  ],
+  "constructor_standings.wins": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructor_standings.wins"
+    }
+  ],
+  "constructors.constructorId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructors.constructorId"
+    }
+  ],
+  "constructors.constructorRef": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructors.constructorRef"
+    }
+  ],
+  "constructors.name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructors.name"
+    }
+  ],
+  "constructors.nationality": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "constructors.nationality"
+    }
+  ],
+  "drivers.code": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.code"
+    }
+  ],
+  "drivers.dob": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":224,\"largest_days\":528.0,\"sample\":[{\"days\":528.0,\"end\":\"1898-06-09T00:00:00\",\"missing_periods\":18,\"severity\":\"severe\",\"start\":\"1896-12-28T00:00:00\"},{\"days\":486.0,\"end\":\"1902-04-27T00:00:00\",\"missing_periods\":17,\"severity\":\"severe\",\"start\":\"1900-12-27T00:00:00\"},{\"days\":439.0,\"end\":\"1988-10-31T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1987-08-19T00:00:00\"},{\"days\":378.0,\"end\":\"1997-09-30T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1996-09-17T00:00:00\"},{\"days\":330.0,\"end\":\"1972-03-04T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1971-04-09T00:00:00\"},{\"days\":326.0,\"end\":\"1993-12-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1993-01-22T00:00:00\"},{\"days\":320.0,\"end\":\"1904-10-08T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1903-11-23T00:00:00\"},{\"days\":308.0,\"end\":\"1903-05-23T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1902-07-19T00:00:00\"},{\"days\":293.0,\"end\":\"1987-07-03T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1986-09-13T00:00:00\"},{\"days\":290.0,\"end\":\"1905-07-25T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1904-10-08T00:00:00\"},{\"days\":275.0,\"end\":\"1899-08-03T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1898-11-01T00:00:00\"},{\"days\":275.0,\"end\":\"1951-01-01T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1950-04-01T00:00:00\"},{\"days\":273.0,\"end\":\"1900-12-27T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1900-03-29T00:00:00\"},{\"days\":256.0,\"end\":\"1998-10-29T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1998-02-15T00:00:00\"},{\"days\":250.0,\"end\":\"1983-10-15T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1983-02-07T00:00:00\"},{\"days\":243.0,\"end\":\"1989-07-01T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1988-10-31T00:00:00\"},{\"days\":241.0,\"end\":\"1971-01-18T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1970-05-22T00:00:00\"},{\"days\":240.0,\"end\":\"1978-01-05T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1977-05-10T00:00:00\"},{\"days\":236.0,\"end\":\"1973-01-14T00:00:00\",\"missing_periods\":7,\"severity\":\"moderate\",\"start\":\"1972-05-23T00:00:00\"},{\"days\":234.0,\"end\":\"2000-12-31T00:00:00\",\"missing_periods\":7,\"severity\":\"moderate\",\"start\":\"2000-05-11T00:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2001-04-06T00:00:00\",\"min\":\"1896-12-28T00:00:00\",\"span_days\":38084.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.dob"
+    }
+  ],
+  "drivers.driverId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.driverId"
+    }
+  ],
+  "drivers.driverRef": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.driverRef"
+    }
+  ],
+  "drivers.forename": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.forename"
+    }
+  ],
+  "drivers.nationality": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.nationality"
+    }
+  ],
+  "drivers.surname": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "drivers.surname"
+    }
+  ],
+  "qualifying.constructorId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.constructorId"
+    }
+  ],
+  "qualifying.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":36,\"largest_days\":357.0,\"sample\":[{\"days\":357.0,\"end\":\"2001-09-29T00:00:00\",\"missing_periods\":24,\"severity\":\"severe\",\"start\":\"2000-10-07T00:00:00\"},{\"days\":315.0,\"end\":\"2000-03-11T00:00:00\",\"missing_periods\":21,\"severity\":\"severe\",\"start\":\"1999-05-01T00:00:00\"},{\"days\":280.0,\"end\":\"1997-03-08T00:00:00\",\"missing_periods\":19,\"severity\":\"severe\",\"start\":\"1996-06-01T00:00:00\"},{\"days\":224.0,\"end\":\"1998-03-07T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1997-07-26T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-04T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-11-30T13:10:00\"},{\"days\":210.0,\"end\":\"2002-10-12T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2002-03-16T00:00:00\"},{\"days\":189.0,\"end\":\"1999-03-06T00:00:00\",\"missing_periods\":12,\"severity\":\"severe\",\"start\":\"1998-08-29T00:00:00\"},{\"days\":168.0,\"end\":\"2000-10-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"2000-04-22T00:00:00\"},{\"days\":168.0,\"end\":\"2002-03-16T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"2001-09-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-11T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-15T14:00:00\"},{\"days\":147.0,\"end\":\"2003-03-08T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-12T00:00:00\"},{\"days\":147.0,\"end\":\"2004-03-06T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-11T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-17T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-21T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-28T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-01T17:00:00\"},{\"days\":146.52083333333334,\"end\":\"2008-03-15T04:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2007-10-20T16:00:00\"},{\"days\":133.58333333333334,\"end\":\"2005-03-05T14:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"2004-10-23T00:00:00\"},{\"days\":133.04166666666666,\"end\":\"2010-03-13T12:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"2009-10-31T11:00:00\"},{\"days\":133.0,\"end\":\"1995-03-25T00:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"1994-11-12T00:00:00\"},{\"days\":132.70833333333334,\"end\":\"2011-03-26T06:00:00\",\"missing_periods\":8,\"severity\":\"moderate\",\"start\":\"2010-11-13T13:00:00\"},{\"days\":119.0,\"end\":\"1996-03-09T00:00:00\",\"missing_periods\":7,\"severity\":\"moderate\",\"start\":\"1995-11-11T00:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-07-29T13:00:00\",\"min\":\"1994-03-26T00:00:00\",\"span_days\":10717.541666666666}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.date"
+    }
+  ],
+  "qualifying.driverId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.driverId"
+    }
+  ],
+  "qualifying.number": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.number"
+    }
+  ],
+  "qualifying.position": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.position"
+    }
+  ],
+  "qualifying.qualifyId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.qualifyId"
+    }
+  ],
+  "qualifying.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "qualifying.raceId"
+    }
+  ],
+  "races.circuitId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.circuitId"
+    }
+  ],
+  "races.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":137,\"largest_days\":266.0,\"sample\":[{\"days\":266.0,\"end\":\"1951-05-27T00:00:00\",\"missing_periods\":18,\"severity\":\"severe\",\"start\":\"1950-09-03T00:00:00\"},{\"days\":224.0,\"end\":\"1962-05-20T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1961-10-08T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-05T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-12-01T13:10:00\"},{\"days\":210.0,\"end\":\"1966-05-22T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"1965-10-24T00:00:00\"},{\"days\":203.0,\"end\":\"1952-05-18T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1951-10-28T00:00:00\"},{\"days\":203.0,\"end\":\"1959-05-10T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1958-10-19T00:00:00\"},{\"days\":175.0,\"end\":\"1961-05-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1960-11-20T00:00:00\"},{\"days\":169.0,\"end\":\"1983-03-13T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1982-09-25T00:00:00\"},{\"days\":168.0,\"end\":\"1985-04-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1984-10-21T00:00:00\"},{\"days\":168.0,\"end\":\"1987-04-12T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1986-10-26T00:00:00\"},{\"days\":162.0,\"end\":\"1984-03-25T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1983-10-15T00:00:00\"},{\"days\":161.0,\"end\":\"1981-03-15T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1980-10-05T00:00:00\"},{\"days\":149.0,\"end\":\"1965-05-30T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1965-01-01T00:00:00\"},{\"days\":148.0,\"end\":\"1963-05-26T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1962-12-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-12T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-16T14:00:00\"},{\"days\":147.0,\"end\":\"1997-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1996-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2003-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2004-03-07T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-12T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-18T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-22T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-29T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-02T17:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-11-26T13:00:00\",\"min\":\"1950-05-13T00:00:00\",\"span_days\":26860.541666666668}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.date"
+    }
+  ],
+  "races.name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.name"
+    }
+  ],
+  "races.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.raceId"
+    }
+  ],
+  "races.round": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.round"
+    }
+  ],
+  "races.time": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.time"
+    }
+  ],
+  "races.year": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "races.year"
+    }
+  ],
+  "results.constructorId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.constructorId"
+    }
+  ],
+  "results.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":137,\"largest_days\":266.0,\"sample\":[{\"days\":266.0,\"end\":\"1951-05-27T00:00:00\",\"missing_periods\":18,\"severity\":\"severe\",\"start\":\"1950-09-03T00:00:00\"},{\"days\":224.0,\"end\":\"1962-05-20T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1961-10-08T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-05T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-12-01T13:10:00\"},{\"days\":210.0,\"end\":\"1966-05-22T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"1965-10-24T00:00:00\"},{\"days\":203.0,\"end\":\"1952-05-18T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1951-10-28T00:00:00\"},{\"days\":203.0,\"end\":\"1959-05-10T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1958-10-19T00:00:00\"},{\"days\":175.0,\"end\":\"1961-05-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1960-11-20T00:00:00\"},{\"days\":169.0,\"end\":\"1983-03-13T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1982-09-25T00:00:00\"},{\"days\":168.0,\"end\":\"1985-04-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1984-10-21T00:00:00\"},{\"days\":168.0,\"end\":\"1987-04-12T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1986-10-26T00:00:00\"},{\"days\":162.0,\"end\":\"1984-03-25T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1983-10-15T00:00:00\"},{\"days\":161.0,\"end\":\"1981-03-15T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1980-10-05T00:00:00\"},{\"days\":149.0,\"end\":\"1965-05-30T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1965-01-01T00:00:00\"},{\"days\":148.0,\"end\":\"1963-05-26T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1962-12-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-12T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-16T14:00:00\"},{\"days\":147.0,\"end\":\"1997-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1996-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2003-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2004-03-07T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-12T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-18T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-22T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-29T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-02T17:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-07-30T13:00:00\",\"min\":\"1950-05-13T00:00:00\",\"span_days\":26741.541666666668}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.date"
+    }
+  ],
+  "results.driverId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.driverId"
+    }
+  ],
+  "results.fastestLap": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.fastestLap"
+    }
+  ],
+  "results.grid": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.grid"
+    }
+  ],
+  "results.laps": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.laps"
+    }
+  ],
+  "results.milliseconds": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.milliseconds"
+    }
+  ],
+  "results.number": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.number"
+    }
+  ],
+  "results.points": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.points"
+    }
+  ],
+  "results.position": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.position"
+    }
+  ],
+  "results.positionOrder": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.positionOrder"
+    }
+  ],
+  "results.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.raceId"
+    }
+  ],
+  "results.rank": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.rank"
+    }
+  ],
+  "results.resultId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.resultId"
+    }
+  ],
+  "results.statusId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "results.statusId"
+    }
+  ],
+  "standings.date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":137,\"largest_days\":266.0,\"sample\":[{\"days\":266.0,\"end\":\"1951-05-27T00:00:00\",\"missing_periods\":18,\"severity\":\"severe\",\"start\":\"1950-09-03T00:00:00\"},{\"days\":224.0,\"end\":\"1962-05-20T00:00:00\",\"missing_periods\":15,\"severity\":\"severe\",\"start\":\"1961-10-08T00:00:00\"},{\"days\":217.0,\"end\":\"2020-07-05T13:10:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"2019-12-01T13:10:00\"},{\"days\":210.0,\"end\":\"1966-05-22T00:00:00\",\"missing_periods\":14,\"severity\":\"severe\",\"start\":\"1965-10-24T00:00:00\"},{\"days\":203.0,\"end\":\"1952-05-18T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1951-10-28T00:00:00\"},{\"days\":203.0,\"end\":\"1959-05-10T00:00:00\",\"missing_periods\":13,\"severity\":\"severe\",\"start\":\"1958-10-19T00:00:00\"},{\"days\":175.0,\"end\":\"1961-05-14T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1960-11-20T00:00:00\"},{\"days\":169.0,\"end\":\"1983-03-13T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1982-09-25T00:00:00\"},{\"days\":168.0,\"end\":\"1985-04-07T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1984-10-21T00:00:00\"},{\"days\":168.0,\"end\":\"1987-04-12T00:00:00\",\"missing_periods\":11,\"severity\":\"severe\",\"start\":\"1986-10-26T00:00:00\"},{\"days\":162.0,\"end\":\"1984-03-25T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1983-10-15T00:00:00\"},{\"days\":161.0,\"end\":\"1981-03-15T00:00:00\",\"missing_periods\":10,\"severity\":\"severe\",\"start\":\"1980-10-05T00:00:00\"},{\"days\":149.0,\"end\":\"1965-05-30T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1965-01-01T00:00:00\"},{\"days\":148.0,\"end\":\"1963-05-26T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1962-12-29T00:00:00\"},{\"days\":147.02083333333334,\"end\":\"2006-03-12T14:30:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2005-10-16T14:00:00\"},{\"days\":147.0,\"end\":\"1997-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"1996-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2003-03-09T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2002-10-13T00:00:00\"},{\"days\":147.0,\"end\":\"2004-03-07T00:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2003-10-12T00:00:00\"},{\"days\":146.54166666666666,\"end\":\"2007-03-18T03:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2006-10-22T14:00:00\"},{\"days\":146.54166666666666,\"end\":\"2009-03-29T06:00:00\",\"missing_periods\":9,\"severity\":\"severe\",\"start\":\"2008-11-02T17:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2023-07-30T13:00:00\",\"min\":\"1950-05-13T00:00:00\",\"span_days\":26741.541666666668}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.date"
+    }
+  ],
+  "standings.driverId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.driverId"
+    }
+  ],
+  "standings.driverStandingsId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.driverStandingsId"
+    }
+  ],
+  "standings.points": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.points"
+    }
+  ],
+  "standings.position": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.position"
+    }
+  ],
+  "standings.raceId": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.raceId"
+    }
+  ],
+  "standings.wins": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "standings.wins"
+    }
+  ]
+}

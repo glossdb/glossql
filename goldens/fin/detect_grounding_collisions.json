@@ -1,0 +1,10 @@
+{
+  "fin": [
+    {
+      "body": "{\"applicable\":true,\"collisions\":[],\"groundings\":11}",
+      "computed_at": "<volatile>",
+      "function": "detect_grounding_collisions",
+      "subject": "fin"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "fin": [
+    {
+      "body": "{\"breach_rate\":0.0,\"outcome\":\"measured: the payables grounding against the ledger balance, per month\"}",
+      "computed_at": "<volatile>",
+      "function": "ap_ties_check",
+      "subject": "fin"
+    }
+  ]
+}

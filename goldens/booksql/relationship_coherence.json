@@ -1,0 +1,10 @@
+{
+  "books": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"no declared relationships\"}",
+      "computed_at": "<volatile>",
+      "function": "relationship_coherence",
+      "subject": "books"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "circuits": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":75,\"distinct_to\":35,\"from\":\"location\",\"g3\":0.0,\"kind\":\"edge\",\"lambda\":1.0,\"pair_groups\":75,\"rows_per_value\":1.0266666666666666,\"to\":\"country\"}],\"rows\":77}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "circuits"
+    }
+  ],
+  "constructor_results": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":1028,\"distinct_to\":1028,\"from\":\"raceId\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1028,\"rows_per_value\":11.955252918287938,\"to\":\"date\"},{\"distinct_from\":1028,\"distinct_to\":1028,\"from\":\"date\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1028,\"rows_per_value\":11.955252918287938,\"to\":\"raceId\"}],\"rows\":12290}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "constructor_results"
+    }
+  ],
+  "constructor_standings": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":1027,\"distinct_to\":1027,\"from\":\"raceId\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1027,\"rows_per_value\":12.7078870496592,\"to\":\"date\"},{\"distinct_from\":1027,\"distinct_to\":1027,\"from\":\"date\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1027,\"rows_per_value\":12.7078870496592,\"to\":\"raceId\"}],\"rows\":13051}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "constructor_standings"
+    }
+  ],
+  "constructors": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"fewer than two dimension-like columns\"}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "constructors"
+    }
+  ],
+  "drivers": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":476,\"distinct_to\":95,\"from\":\"forename\",\"g3\":0.047841306884480746,\"kind\":\"edge\",\"lambda\":0.59,\"pair_groups\":517,\"rows_per_value\":1.800420168067227,\"to\":\"code\"},{\"distinct_from\":798,\"distinct_to\":95,\"from\":\"surname\",\"g3\":0.012835472578763127,\"kind\":\"edge\",\"lambda\":0.89,\"pair_groups\":809,\"rows_per_value\":1.0739348370927317,\"to\":\"code\"},{\"distinct_from\":839,\"distinct_to\":95,\"from\":\"dob\",\"g3\":0.0,\"kind\":\"edge\",\"lambda\":1.0,\"pair_groups\":839,\"rows_per_value\":1.0214541120381406,\"to\":\"code\"},{\"distinct_from\":839,\"distinct_to\":476,\"from\":\"dob\",\"g3\":0.021003500583430573,\"kind\":\"edge\",\"lambda\":0.9786476868327402,\"pair_groups\":857,\"rows_per_value\":1.0214541120381406,\"to\":\"forename\"},{\"distinct_from\":839,\"distinct_to\":798,\"from\":\"dob\",\"g3\":0.021003500583430573,\"kind\":\"edge\",\"lambda\":0.9788732394366197,\"pair_groups\":857,\"rows_per_value\":1.0214541120381406,\"to\":\"surname\"},{\"distinct_from\":798,\"distinct_to\":42,\"from\":\"surname\",\"g3\":0.022170361726954493,\"kind\":\"edge\",\"lambda\":0.9725433526011561,\"pair_groups\":817,\"rows_per_value\":1.0739348370927317,\"to\":\"nationality\"},{\"distinct_from\":839,\"distinct_to\":42,\"from\":\"dob\",\"g3\":0.01866977829638273,\"kind\":\"edge\",\"lambda\":0.976878612716763,\"pair_groups\":855,\"rows_per_value\":1.0214541120381406,\"to\":\"nationality\"}],\"rows\":857}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "drivers"
+    }
+  ],
+  "qualifying": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":460,\"distinct_to\":460,\"from\":\"raceId\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":460,\"rows_per_value\":21.33695652173913,\"to\":\"date\"},{\"distinct_from\":460,\"distinct_to\":460,\"from\":\"date\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":460,\"rows_per_value\":21.33695652173913,\"to\":\"raceId\"}],\"rows\":9815}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "qualifying"
+    }
+  ],
+  "races": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":77,\"distinct_to\":54,\"from\":\"circuitId\",\"g3\":0.03814713896457766,\"kind\":\"edge\",\"lambda\":0.9591041869522883,\"pair_groups\":92,\"rows_per_value\":14.2987012987013,\"to\":\"name\"}],\"rows\":1101}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "races"
+    }
+  ],
+  "results": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":1091,\"distinct_to\":1091,\"from\":\"raceId\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1091,\"rows_per_value\":23.904674610449128,\"to\":\"date\"},{\"distinct_from\":1091,\"distinct_to\":1091,\"from\":\"date\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1091,\"rows_per_value\":23.904674610449128,\"to\":\"raceId\"}],\"rows\":26080}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "results"
+    }
+  ],
+  "standings": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":1091,\"distinct_to\":1091,\"from\":\"raceId\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1091,\"rows_per_value\":31.277726856095324,\"to\":\"date\"},{\"distinct_from\":1091,\"distinct_to\":1091,\"from\":\"date\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":1091,\"rows_per_value\":31.277726856095324,\"to\":\"raceId\"}],\"rows\":34124}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "standings"
+    }
+  ]
+}

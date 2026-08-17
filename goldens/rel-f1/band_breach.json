@@ -1,0 +1,5 @@
+{
+  "f1": {
+    "error": "function `band_breach` has no RETURNS — a detector runs through its witness, never through extraction"
+  }
+}

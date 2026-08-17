@@ -1,0 +1,602 @@
+{
+  "account_balances.account_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "account_balances.account_id"
+    }
+  ],
+  "account_balances.ending_balance": [
+    {
+      "body": "{\"align\":\"account_balances.account_id = journal_lines.account_id\",\"anchors\":4,\"convention\":\"net_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":5.449389467718225,\"r_stock\":5.093308240278916e-16,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":8},\"support\":0.6755843804891231,\"verdict\":\"stock\",\"voted\":8}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "account_balances.ending_balance"
+    }
+  ],
+  "account_balances.period": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "account_balances.period"
+    }
+  ],
+  "account_balances.period_start": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "account_balances.period_start"
+    }
+  ],
+  "ap_invoices.amount": [
+    {
+      "body": "{\"anchors\":16,\"decided\":0,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"reason\":\"fewer than two entities carry 4+ periods on this alignment\",\"verdict\":\"abstain\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.amount"
+    }
+  ],
+  "ap_invoices.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.ap_invoice_id"
+    }
+  ],
+  "ap_invoices.category": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.category"
+    }
+  ],
+  "ap_invoices.due_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.due_date"
+    }
+  ],
+  "ap_invoices.entry_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.entry_id"
+    }
+  ],
+  "ap_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.invoice_date"
+    }
+  ],
+  "ap_invoices.payment_terms": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.payment_terms"
+    }
+  ],
+  "ap_invoices.status": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.status"
+    }
+  ],
+  "ap_invoices.vendor_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_invoices.vendor_id"
+    }
+  ],
+  "ap_payments.amount": [
+    {
+      "body": "{\"anchors\":20,\"decided\":0,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"reason\":\"fewer than two entities carry 4+ periods on this alignment\",\"verdict\":\"abstain\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_payments.amount"
+    }
+  ],
+  "ap_payments.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_payments.ap_invoice_id"
+    }
+  ],
+  "ap_payments.method": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_payments.method"
+    }
+  ],
+  "ap_payments.payment_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_payments.payment_date"
+    }
+  ],
+  "ap_payments.payment_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ap_payments.payment_id"
+    }
+  ],
+  "ar_invoices.amount": [
+    {
+      "body": "{\"align\":\"ar_invoices.customer_id = receipts.customer_id\",\"anchors\":32,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.35389956685094015,\"r_stock\":1.0305117563348274,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":73},\"support\":0.14848298639304394,\"verdict\":\"flow\",\"voted\":73}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.amount"
+    }
+  ],
+  "ar_invoices.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.ar_invoice_id"
+    }
+  ],
+  "ar_invoices.customer_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.customer_id"
+    }
+  ],
+  "ar_invoices.due_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.due_date"
+    }
+  ],
+  "ar_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.invoice_date"
+    }
+  ],
+  "ar_invoices.order_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.order_id"
+    }
+  ],
+  "ar_invoices.status": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "ar_invoices.status"
+    }
+  ],
+  "chart_of_accounts.account_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "chart_of_accounts.account_id"
+    }
+  ],
+  "chart_of_accounts.account_name": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "chart_of_accounts.account_name"
+    }
+  ],
+  "chart_of_accounts.account_type": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "chart_of_accounts.account_type"
+    }
+  ],
+  "chart_of_accounts.parent_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "chart_of_accounts.parent_id"
+    }
+  ],
+  "customers.churned_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.churned_date"
+    }
+  ],
+  "customers.created_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.created_date"
+    }
+  ],
+  "customers.customer_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.customer_id"
+    }
+  ],
+  "customers.customer_name": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.customer_name"
+    }
+  ],
+  "customers.payment_terms": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.payment_terms"
+    }
+  ],
+  "customers.region": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.region"
+    }
+  ],
+  "customers.segment": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "customers.segment"
+    }
+  ],
+  "inventory_positions.location_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.location_id"
+    }
+  ],
+  "inventory_positions.period": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.period"
+    }
+  ],
+  "inventory_positions.period_start": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.period_start"
+    }
+  ],
+  "inventory_positions.product_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.product_id"
+    }
+  ],
+  "inventory_positions.unit_cost": [
+    {
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.4082927784319389,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":28},\"support\":0.08196205521476754,\"verdict\":\"flow\",\"voted\":28}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.unit_cost"
+    }
+  ],
+  "inventory_positions.units_on_hand": [
+    {
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.4127199597787833,\"r_stock\":1.0009142147402592,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":130},\"support\":0.4784666302802626,\"verdict\":\"flow\",\"voted\":130}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.units_on_hand"
+    }
+  ],
+  "inventory_positions.value": [
+    {
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"line_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.411728274523083,\"r_stock\":1.0006813217698869,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":159},\"support\":0.6005331652397183,\"verdict\":\"flow\",\"voted\":159}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "inventory_positions.value"
+    }
+  ],
+  "journal_entries.entry_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_entries.entry_date"
+    }
+  ],
+  "journal_entries.entry_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_entries.entry_id"
+    }
+  ],
+  "journal_entries.status": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_entries.status"
+    }
+  ],
+  "journal_lines.account_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.account_id"
+    }
+  ],
+  "journal_lines.cost_center": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.cost_center"
+    }
+  ],
+  "journal_lines.credit": [
+    {
+      "body": "{\"anchors\":12,\"decided\":0,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"reason\":\"votes below the candidacy floor (2 voters, 0.8 agreement)\",\"verdict\":\"abstain\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.credit"
+    }
+  ],
+  "journal_lines.debit": [
+    {
+      "body": "{\"align\":\"journal_lines.account_id = account_balances.account_id\",\"anchors\":12,\"convention\":\"ending_balance\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.3938902886715817,\"r_stock\":0.9907318164869242,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":1,\"primary\":3},\"support\":0.13684175946152105,\"verdict\":\"flow\",\"voted\":3}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.debit"
+    }
+  ],
+  "journal_lines.entry_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.entry_id"
+    }
+  ],
+  "journal_lines.line_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.line_id"
+    }
+  ],
+  "journal_lines.net_amount": [
+    {
+      "body": "{\"anchors\":12,\"decided\":0,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"reason\":\"no entity series reconciled: wrong anchor, short series, or dead values\",\"verdict\":\"abstain\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "journal_lines.net_amount"
+    }
+  ],
+  "products.list_price": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"no period axis: no date column on products or one declared hop away\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "products.list_price"
+    }
+  ],
+  "products.product_group": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "products.product_group"
+    }
+  ],
+  "products.product_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "products.product_id"
+    }
+  ],
+  "products.product_name": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "products.product_name"
+    }
+  ],
+  "products.standard_cost": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"no period axis: no date column on products or one declared hop away\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "products.standard_cost"
+    }
+  ],
+  "receipts.amount": [
+    {
+      "body": "{\"align\":\"receipts.customer_id = ar_invoices.customer_id\",\"anchors\":36,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.37126543867634293,\"r_stock\":1.027422236605036,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.20646438547590282,\"verdict\":\"flow\",\"voted\":98}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.amount"
+    }
+  ],
+  "receipts.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.ar_invoice_id"
+    }
+  ],
+  "receipts.customer_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.customer_id"
+    }
+  ],
+  "receipts.method": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.method"
+    }
+  ],
+  "receipts.receipt_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.receipt_date"
+    }
+  ],
+  "receipts.receipt_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "receipts.receipt_id"
+    }
+  ],
+  "sales_order_lines.line_amount": [
+    {
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":2.1170116825914117e-17,\"r_stock\":1.0041601413726493,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":400},\"support\":0.9904873594003194,\"verdict\":\"flow\",\"voted\":400}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.line_amount"
+    }
+  ],
+  "sales_order_lines.line_cost": [
+    {
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.31157571743692064,\"r_stock\":1.0027986171732663,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":395},\"support\":0.971075847268862,\"verdict\":\"flow\",\"voted\":395}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.line_cost"
+    }
+  ],
+  "sales_order_lines.order_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.order_id"
+    }
+  ],
+  "sales_order_lines.order_line_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.order_line_id"
+    }
+  ],
+  "sales_order_lines.product_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.product_id"
+    }
+  ],
+  "sales_order_lines.unit_price": [
+    {
+      "body": "{\"anchors\":22,\"decided\":0,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"reason\":\"fewer than two entities carry 4+ periods on this alignment\",\"verdict\":\"abstain\"}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.unit_price"
+    }
+  ],
+  "sales_order_lines.units": [
+    {
+      "body": "{\"align\":\"sales_order_lines.product_id = inventory_positions.product_id\",\"anchors\":22,\"convention\":\"units_on_hand\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.3791838606143971,\"r_stock\":1.0124186871673566,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":189},\"support\":0.7314251575172397,\"verdict\":\"flow\",\"voted\":189}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_order_lines.units"
+    }
+  ],
+  "sales_orders.customer_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_orders.customer_id"
+    }
+  ],
+  "sales_orders.order_date": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_orders.order_date"
+    }
+  ],
+  "sales_orders.order_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_orders.order_id"
+    }
+  ],
+  "sales_orders.status": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "behavior_evidence",
+      "subject": "sales_orders.status"
+    }
+  ]
+}

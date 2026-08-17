@@ -1,0 +1,6102 @@
+{
+  "Master_txn_table.Account::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Account::profile": {
+    "cardinality_ratio": 0.0003987363883371458,
+    "distinct": 323,
+    "entropy": 3.7386729591257786,
+    "lengths": {
+      "avg": 22.35864301242255,
+      "max": 87,
+      "min": 4
+    },
+    "max": "golf instruction services",
+    "min": "Abandoned infant assistance",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 323,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 167743,
+        "value": "Accounts Receivable (A/R)"
+      },
+      {
+        "count": 75817,
+        "value": "Loan Payable"
+      },
+      {
+        "count": 75816,
+        "value": "Arizona Dept. of Revenue Payable"
+      },
+      {
+        "count": 69569,
+        "value": "Uncategorized Income"
+      },
+      {
+        "count": 44134,
+        "value": "Job Materials"
+      },
+      {
+        "count": 15174,
+        "value": "Decks and Patios"
+      },
+      {
+        "count": 15093,
+        "value": "Labor"
+      },
+      {
+        "count": 15068,
+        "value": "Installation"
+      },
+      {
+        "count": 15067,
+        "value": "Maintenance and Repair"
+      },
+      {
+        "count": 13332,
+        "value": "Design income"
+      },
+      {
+        "count": 12665,
+        "value": "Discounts given"
+      },
+      {
+        "count": 12665,
+        "value": "Other Income"
+      },
+      {
+        "count": 12665,
+        "value": "Unapplied Cash Payment Income"
+      },
+      {
+        "count": 12664,
+        "value": "Billable Expense Income"
+      },
+      {
+        "count": 12663,
+        "value": "Services"
+      },
+      {
+        "count": 12662,
+        "value": "Refunds-Allowances"
+      },
+      {
+        "count": 12661,
+        "value": "Fees Billed"
+      },
+      {
+        "count": 2576,
+        "value": "Acidizing and chemically treating wells"
+      },
+      {
+        "count": 2576,
+        "value": "Amusement and recreation services"
+      },
+      {
+        "count": 2576,
+        "value": "Baby accessories"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Account::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Amount::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Amount::profile": {
+    "cardinality_ratio": 0.00013208914412406997,
+    "distinct": 107,
+    "entropy": 3.5526452925160785,
+    "lengths": {
+      "avg": 7.593458007379709,
+      "max": 8,
+      "min": 5
+    },
+    "max": "9860.15",
+    "min": "13390.66",
+    "null_ratio": 0.0,
+    "numeric": {
+      "mad": 10755.21,
+      "mean": 31996.257604888728,
+      "percentiles": {
+        "p01": 7458.03,
+        "p25": 18579.59,
+        "p50": 29334.8,
+        "p75": 43599.0,
+        "p99": 82658.99
+      },
+      "stddev": 17943.139780534864
+    },
+    "summary": {
+      "distinct": 107,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 28085,
+        "value": "50617.44"
+      },
+      {
+        "count": 28080,
+        "value": "13982.2"
+      },
+      {
+        "count": 28080,
+        "value": "14644.6"
+      },
+      {
+        "count": 28080,
+        "value": "15041.95"
+      },
+      {
+        "count": 28080,
+        "value": "15118.45"
+      },
+      {
+        "count": 28080,
+        "value": "18579.59"
+      },
+      {
+        "count": 28080,
+        "value": "22522.32"
+      },
+      {
+        "count": 28080,
+        "value": "22657.05"
+      },
+      {
+        "count": 28080,
+        "value": "23236.9"
+      },
+      {
+        "count": 28080,
+        "value": "24304.1"
+      },
+      {
+        "count": 28080,
+        "value": "25662.6"
+      },
+      {
+        "count": 28080,
+        "value": "26635.05"
+      },
+      {
+        "count": 28080,
+        "value": "29334.8"
+      },
+      {
+        "count": 28080,
+        "value": "29846.68"
+      },
+      {
+        "count": 28080,
+        "value": "31316.83"
+      },
+      {
+        "count": 28080,
+        "value": "31397.33"
+      },
+      {
+        "count": 28080,
+        "value": "34985.71"
+      },
+      {
+        "count": 28080,
+        "value": "35875.48"
+      },
+      {
+        "count": 28080,
+        "value": "36753.38"
+      },
+      {
+        "count": 28080,
+        "value": "43599.0"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Amount::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Billable::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Billable::profile": {
+    "cardinality_ratio": 1.2344779824679437e-6,
+    "distinct": 1,
+    "entropy": -0.0,
+    "lengths": {
+      "avg": 2.0,
+      "max": 2,
+      "min": 2
+    },
+    "max": "No",
+    "min": "No",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 1,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 810059,
+        "value": "No"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Billable::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Cleared::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Cleared::profile": {
+    "cardinality_ratio": 2.4689559649358875e-6,
+    "distinct": 2,
+    "entropy": 0.4833404500965069,
+    "lengths": {
+      "avg": 3.3161461078760928,
+      "max": 9,
+      "min": 2
+    },
+    "max": "Uncleared",
+    "min": "--",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 2,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 657751,
+        "value": "--"
+      },
+      {
+        "count": 152308,
+        "value": "Uncleared"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Cleared::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Credit::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Credit::profile": {
+    "cardinality_ratio": 0.0002345508166689093,
+    "distinct": 190,
+    "entropy": 3.7418042360871366,
+    "lengths": {
+      "avg": 7.375907187007366,
+      "max": 18,
+      "min": 2
+    },
+    "max": "999.0",
+    "min": "--",
+    "null_ratio": 0.0,
+    "numeric": {
+      "mad": 3965.8,
+      "mean": 8397.443588008573,
+      "percentiles": {
+        "p01": 10.5,
+        "p25": 238.88,
+        "p50": 3976.3,
+        "p75": 12999.48,
+        "p99": 44574.799999999996
+      },
+      "stddev": 10302.510120534793
+    },
+    "summary": {
+      "distinct": 190,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 169525,
+        "value": "--"
+      },
+      {
+        "count": 151633,
+        "value": "10.5"
+      },
+      {
+        "count": 5617,
+        "value": "10152.06"
+      },
+      {
+        "count": 5617,
+        "value": "39710.88"
+      },
+      {
+        "count": 5617,
+        "value": "744.0"
+      },
+      {
+        "count": 5616,
+        "value": "1023.28"
+      },
+      {
+        "count": 5616,
+        "value": "10247.67"
+      },
+      {
+        "count": 5616,
+        "value": "10375.5"
+      },
+      {
+        "count": 5616,
+        "value": "10661.279999999999"
+      },
+      {
+        "count": 5616,
+        "value": "10944.130000000001"
+      },
+      {
+        "count": 5616,
+        "value": "11508.0"
+      },
+      {
+        "count": 5616,
+        "value": "11533.08"
+      },
+      {
+        "count": 5616,
+        "value": "11621.070000000002"
+      },
+      {
+        "count": 5616,
+        "value": "12209.6"
+      },
+      {
+        "count": 5616,
+        "value": "12220.74"
+      },
+      {
+        "count": 5616,
+        "value": "12298.8"
+      },
+      {
+        "count": 5616,
+        "value": "12999.48"
+      },
+      {
+        "count": 5616,
+        "value": "13261.52"
+      },
+      {
+        "count": 5616,
+        "value": "13292.720000000001"
+      },
+      {
+        "count": 5616,
+        "value": "13468.460000000001"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Credit::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Debit::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Debit::profile": {
+    "cardinality_ratio": 0.0001333236221065379,
+    "distinct": 108,
+    "entropy": 1.2818251030896866,
+    "lengths": {
+      "avg": 4.062494213384457,
+      "max": 18,
+      "min": 2
+    },
+    "max": "9860.15",
+    "min": "--",
+    "null_ratio": 0.0,
+    "numeric": {
+      "mad": 10755.210000000006,
+      "mean": 31728.937508922736,
+      "percentiles": {
+        "p01": 575.27,
+        "p25": 18579.589999999997,
+        "p50": 29334.800000000003,
+        "p75": 36867.48,
+        "p99": 82658.98999999999
+      },
+      "stddev": 18145.18539030491
+    },
+    "summary": {
+      "distinct": 108,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 640534,
+        "value": "--"
+      },
+      {
+        "count": 5617,
+        "value": "50617.439999999995"
+      },
+      {
+        "count": 5616,
+        "value": "13982.2"
+      },
+      {
+        "count": 5616,
+        "value": "14644.6"
+      },
+      {
+        "count": 5616,
+        "value": "15041.95"
+      },
+      {
+        "count": 5616,
+        "value": "15118.45"
+      },
+      {
+        "count": 5616,
+        "value": "18579.589999999997"
+      },
+      {
+        "count": 5616,
+        "value": "22522.32"
+      },
+      {
+        "count": 5616,
+        "value": "22657.05"
+      },
+      {
+        "count": 5616,
+        "value": "23236.899999999998"
+      },
+      {
+        "count": 5616,
+        "value": "24304.1"
+      },
+      {
+        "count": 5616,
+        "value": "25662.600000000002"
+      },
+      {
+        "count": 5616,
+        "value": "26635.05"
+      },
+      {
+        "count": 5616,
+        "value": "29334.800000000003"
+      },
+      {
+        "count": 5616,
+        "value": "29846.68"
+      },
+      {
+        "count": 5616,
+        "value": "31316.83"
+      },
+      {
+        "count": 5616,
+        "value": "31397.329999999998"
+      },
+      {
+        "count": 5616,
+        "value": "34985.71"
+      },
+      {
+        "count": 5616,
+        "value": "35875.479999999996"
+      },
+      {
+        "count": 5616,
+        "value": "36753.380000000005"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Debit::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Invoiced::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Invoiced::profile": {
+    "cardinality_ratio": 1.2344779824679437e-6,
+    "distinct": 1,
+    "entropy": -0.0,
+    "lengths": {
+      "avg": 2.0,
+      "max": 2,
+      "min": 2
+    },
+    "max": "--",
+    "min": "--",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 1,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 810059,
+        "value": "--"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Invoiced::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Product_Service::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Product_Service::profile": {
+    "cardinality_ratio": 0.00032960562131894097,
+    "distinct": 267,
+    "entropy": 2.196219716219415,
+    "lengths": {
+      "avg": 5.403022495892275,
+      "max": 44,
+      "min": 2
+    },
+    "max": "homebuilders",
+    "min": "--",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 267,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 557176,
+        "value": "--"
+      },
+      {
+        "count": 17207,
+        "value": "Services"
+      },
+      {
+        "count": 15068,
+        "value": "Installation"
+      },
+      {
+        "count": 13332,
+        "value": "Design"
+      },
+      {
+        "count": 3354,
+        "value": "Transportation"
+      },
+      {
+        "count": 2576,
+        "value": "Accessories"
+      },
+      {
+        "count": 2576,
+        "value": "Coffee and Snack"
+      },
+      {
+        "count": 2576,
+        "value": "Dance"
+      },
+      {
+        "count": 2576,
+        "value": "Database management"
+      },
+      {
+        "count": 2576,
+        "value": "Eucalyptus oil"
+      },
+      {
+        "count": 2576,
+        "value": "Financial Planning"
+      },
+      {
+        "count": 2576,
+        "value": "Fishing"
+      },
+      {
+        "count": 2576,
+        "value": "Home care"
+      },
+      {
+        "count": 2576,
+        "value": "Home office"
+      },
+      {
+        "count": 2576,
+        "value": "Macro"
+      },
+      {
+        "count": 2576,
+        "value": "Marine Supplies"
+      },
+      {
+        "count": 2576,
+        "value": "Nitrogen"
+      },
+      {
+        "count": 2576,
+        "value": "Nonfossil-fuel"
+      },
+      {
+        "count": 2576,
+        "value": "Photography"
+      },
+      {
+        "count": 2576,
+        "value": "Providing other outdoor maintenance services"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Product_Service::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Purchase::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Purchase::profile": {
+    "cardinality_ratio": 2.4689559649358875e-6,
+    "distinct": 2,
+    "entropy": 0.028263631499108953,
+    "lengths": {
+      "avg": 2.0043996795295156,
+      "max": 3,
+      "min": 2
+    },
+    "max": "Yes",
+    "min": "No",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 2,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 806495,
+        "value": "No"
+      },
+      {
+        "count": 3564,
+        "value": "Yes"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Purchase::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Quantity::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Quantity::profile": {
+    "cardinality_ratio": 0.00008888241473769195,
+    "distinct": 72,
+    "entropy": 3.061402610718729,
+    "lengths": {
+      "avg": 1.940117942026445,
+      "max": 2,
+      "min": 1
+    },
+    "max": "99",
+    "min": "--",
+    "null_ratio": 0.0,
+    "numeric": {
+      "mad": 20.0,
+      "mean": 46.38364752760619,
+      "percentiles": {
+        "p01": 1.0,
+        "p25": 25.0,
+        "p50": 46.0,
+        "p75": 65.0,
+        "p99": 99.0
+      },
+      "stddev": 28.09935092846415
+    },
+    "summary": {
+      "distinct": 72,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 322940,
+        "value": "--"
+      },
+      {
+        "count": 22464,
+        "value": "94"
+      },
+      {
+        "count": 18041,
+        "value": "10"
+      },
+      {
+        "count": 17445,
+        "value": "1"
+      },
+      {
+        "count": 16849,
+        "value": "40"
+      },
+      {
+        "count": 16848,
+        "value": "27"
+      },
+      {
+        "count": 16848,
+        "value": "8"
+      },
+      {
+        "count": 12426,
+        "value": "69"
+      },
+      {
+        "count": 11829,
+        "value": "25"
+      },
+      {
+        "count": 11829,
+        "value": "39"
+      },
+      {
+        "count": 11829,
+        "value": "50"
+      },
+      {
+        "count": 11232,
+        "value": "26"
+      },
+      {
+        "count": 11232,
+        "value": "28"
+      },
+      {
+        "count": 11232,
+        "value": "31"
+      },
+      {
+        "count": 11232,
+        "value": "43"
+      },
+      {
+        "count": 11232,
+        "value": "48"
+      },
+      {
+        "count": 11232,
+        "value": "55"
+      },
+      {
+        "count": 11232,
+        "value": "57"
+      },
+      {
+        "count": 11232,
+        "value": "59"
+      },
+      {
+        "count": 11232,
+        "value": "60"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Quantity::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Rate::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Rate::profile": {
+    "cardinality_ratio": 0.00016912348359810828,
+    "distinct": 137,
+    "entropy": 3.7209323534134033,
+    "lengths": {
+      "avg": 4.565415605529967,
+      "max": 6,
+      "min": 2
+    },
+    "max": "97.53",
+    "min": "--",
+    "null_ratio": 0.0,
+    "numeric": {
+      "mad": 153.0,
+      "mean": 185.51761145095108,
+      "percentiles": {
+        "p01": 0.08,
+        "p25": 18.6,
+        "p50": 153.08,
+        "p75": 330.57,
+        "p99": 495.44
+      },
+      "stddev": 165.70964847091653
+    },
+    "summary": {
+      "distinct": 137,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 171307,
+        "value": "--"
+      },
+      {
+        "count": 151633,
+        "value": "0.08"
+      },
+      {
+        "count": 5617,
+        "value": "18.6"
+      },
+      {
+        "count": 5617,
+        "value": "199.06"
+      },
+      {
+        "count": 5617,
+        "value": "431.64"
+      },
+      {
+        "count": 5616,
+        "value": "111.84"
+      },
+      {
+        "count": 5616,
+        "value": "114.93"
+      },
+      {
+        "count": 5616,
+        "value": "117.49"
+      },
+      {
+        "count": 5616,
+        "value": "119.44"
+      },
+      {
+        "count": 5616,
+        "value": "127.91"
+      },
+      {
+        "count": 5616,
+        "value": "128.12"
+      },
+      {
+        "count": 5616,
+        "value": "141.08"
+      },
+      {
+        "count": 5616,
+        "value": "142.8"
+      },
+      {
+        "count": 5616,
+        "value": "153.08"
+      },
+      {
+        "count": 5616,
+        "value": "155.07"
+      },
+      {
+        "count": 5616,
+        "value": "161.16"
+      },
+      {
+        "count": 5616,
+        "value": "178.43"
+      },
+      {
+        "count": 5616,
+        "value": "187.04"
+      },
+      {
+        "count": 5616,
+        "value": "191.8"
+      },
+      {
+        "count": 5616,
+        "value": "208.22"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Rate::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table.Sale::behavior_evidence": {
+    "applicable": false
+  },
+  "Master_txn_table.Sale::profile": {
+    "cardinality_ratio": 2.4689559649358875e-6,
+    "distinct": 2,
+    "entropy": 0.028263631499108953,
+    "lengths": {
+      "avg": 2.9956003204704844,
+      "max": 3,
+      "min": 2
+    },
+    "max": "Yes",
+    "min": "No",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 2,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 810059
+    },
+    "top_values": [
+      {
+        "count": 806495,
+        "value": "Yes"
+      },
+      {
+        "count": 3564,
+        "value": "No"
+      }
+    ],
+    "total": 810059
+  },
+  "Master_txn_table.Sale::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "Master_txn_table::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "Master_txn_table::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 169525,
+        "distinct_to": 27,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "business Id"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 27,
+        "from": "Amount",
+        "g3": 0.00010122719456237138,
+        "kind": "edge",
+        "lambda": 0.999894879341996,
+        "pair_groups": 108,
+        "rows_per_value": 7570.644859813084,
+        "to": "business Id"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 27,
+        "from": "business Id",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 27,
+        "rows_per_value": 30002.185185185186,
+        "to": "Created user"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 27,
+        "from": "Created user",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 27,
+        "rows_per_value": 30002.185185185186,
+        "to": "business Id"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "business Id",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "business Id",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 27,
+        "from": "Open balance",
+        "g3": 0.02199716316959629,
+        "kind": "edge",
+        "lambda": 0.9771567682320244,
+        "pair_groups": 169304,
+        "rows_per_value": 4.8987602805999035,
+        "to": "business Id"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 1088,
+        "from": "business Id",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1134,
+        "rows_per_value": 30002.185185185186,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "business Id",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "business Id",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 10958,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Transaction date"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 21,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Transaction type"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 107,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Amount"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 11268,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Created date"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 27,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Created user"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 2,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 2,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 11440,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Due date"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 165360,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Open balance"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 169525,
+        "from": "Open balance",
+        "g3": 0.02324398593188891,
+        "kind": "edge",
+        "lambda": 0.9767558705962812,
+        "pair_groups": 169525,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Transaction ID"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 70980,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Customer name"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 1088,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 2,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 2,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 7,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "payment method"
+      },
+      {
+        "distinct_from": 169525,
+        "distinct_to": 3,
+        "from": "Transaction ID",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 169525,
+        "rows_per_value": 4.778404365137885,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 10958,
+        "distinct_to": 2,
+        "from": "Transaction date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12592,
+        "rows_per_value": 73.92398247855448,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 10958,
+        "distinct_to": 2,
+        "from": "Transaction date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12009,
+        "rows_per_value": 73.92398247855448,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 10958,
+        "from": "Open balance",
+        "g3": 0.02324028249794151,
+        "kind": "edge",
+        "lambda": 0.9767548105417045,
+        "pair_groups": 169524,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Transaction date"
+      },
+      {
+        "distinct_from": 10958,
+        "distinct_to": 1088,
+        "from": "Transaction date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12065,
+        "rows_per_value": 73.92398247855448,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 10958,
+        "distinct_to": 2,
+        "from": "Transaction date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12592,
+        "rows_per_value": 73.92398247855448,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 10958,
+        "distinct_to": 2,
+        "from": "Transaction date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12592,
+        "rows_per_value": 73.92398247855448,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 21,
+        "distinct_to": 2,
+        "from": "Transaction type",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 42,
+        "rows_per_value": 38574.23809523809,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 21,
+        "distinct_to": 2,
+        "from": "Transaction type",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 42,
+        "rows_per_value": 38574.23809523809,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 21,
+        "from": "Open balance",
+        "g3": 0.022274920715651576,
+        "kind": "edge",
+        "lambda": 0.9765921951497949,
+        "pair_groups": 169350,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Transaction type"
+      },
+      {
+        "distinct_from": 21,
+        "distinct_to": 1088,
+        "from": "Transaction type",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1127,
+        "rows_per_value": 38574.23809523809,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 21,
+        "distinct_to": 2,
+        "from": "Transaction type",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 42,
+        "rows_per_value": 38574.23809523809,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 21,
+        "distinct_to": 2,
+        "from": "Transaction type",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 42,
+        "rows_per_value": 38574.23809523809,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 27,
+        "from": "Amount",
+        "g3": 0.00010122719456237138,
+        "kind": "edge",
+        "lambda": 0.999894879341996,
+        "pair_groups": 108,
+        "rows_per_value": 7570.644859813084,
+        "to": "Created user"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 2,
+        "from": "Amount",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 107,
+        "rows_per_value": 7570.644859813084,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 2,
+        "from": "Amount",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 107,
+        "rows_per_value": 7570.644859813084,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 107,
+        "from": "Open balance",
+        "g3": 0.02211567305591321,
+        "kind": "edge",
+        "lambda": 0.9770900311263546,
+        "pair_groups": 169337,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Amount"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 1088,
+        "from": "Amount",
+        "g3": 0.002668941398095694,
+        "kind": "edge",
+        "lambda": 0.023486901535682024,
+        "pair_groups": 1188,
+        "rows_per_value": 7570.644859813084,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 2,
+        "from": "Amount",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 107,
+        "rows_per_value": 7570.644859813084,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 2,
+        "from": "Amount",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 107,
+        "rows_per_value": 7570.644859813084,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 107,
+        "distinct_to": 3,
+        "from": "Amount",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 107,
+        "rows_per_value": 7570.644859813084,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 11268,
+        "distinct_to": 2,
+        "from": "Created date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12925,
+        "rows_per_value": 71.89022009229677,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 11268,
+        "distinct_to": 2,
+        "from": "Created date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12327,
+        "rows_per_value": 71.89022009229677,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 11268,
+        "from": "Open balance",
+        "g3": 0.02324398593188891,
+        "kind": "edge",
+        "lambda": 0.9767515369124451,
+        "pair_groups": 169525,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Created date"
+      },
+      {
+        "distinct_from": 11268,
+        "distinct_to": 1088,
+        "from": "Created date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12375,
+        "rows_per_value": 71.89022009229677,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 11268,
+        "distinct_to": 2,
+        "from": "Created date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12925,
+        "rows_per_value": 71.89022009229677,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 11268,
+        "distinct_to": 2,
+        "from": "Created date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12925,
+        "rows_per_value": 71.89022009229677,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "Created user",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "Created user",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 27,
+        "from": "Open balance",
+        "g3": 0.02199716316959629,
+        "kind": "edge",
+        "lambda": 0.9771567682320244,
+        "pair_groups": 169304,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Created user"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 1088,
+        "from": "Created user",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1134,
+        "rows_per_value": 30002.185185185186,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "Created user",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 27,
+        "distinct_to": 2,
+        "from": "Created user",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 54,
+        "rows_per_value": 30002.185185185186,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 2,
+        "from": "Account",
+        "g3": 0.0009665962602723999,
+        "kind": "edge",
+        "lambda": 0.7803030303030303,
+        "pair_groups": 578,
+        "rows_per_value": 2507.9226006191952,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 2,
+        "from": "Account",
+        "g3": 0.0001333236221065379,
+        "kind": "edge",
+        "lambda": 0.9512195121951219,
+        "pair_groups": 327,
+        "rows_per_value": 2507.9226006191952,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 1088,
+        "from": "Account",
+        "g3": 0.0026849896118677774,
+        "kind": "edge",
+        "lambda": 0.017615176151761516,
+        "pair_groups": 2480,
+        "rows_per_value": 2507.9226006191952,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 267,
+        "from": "Account",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 323,
+        "rows_per_value": 2507.9226006191952,
+        "to": "Product_Service"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 2,
+        "from": "Account",
+        "g3": 0.0009665962602723999,
+        "kind": "edge",
+        "lambda": 0.7803030303030303,
+        "pair_groups": 578,
+        "rows_per_value": 2507.9226006191952,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 2,
+        "from": "Account",
+        "g3": 0.0009665962602723999,
+        "kind": "edge",
+        "lambda": 0.7803030303030303,
+        "pair_groups": 578,
+        "rows_per_value": 2507.9226006191952,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 323,
+        "distinct_to": 2,
+        "from": "Account",
+        "g3": 0.000833272638165862,
+        "kind": "edge",
+        "lambda": 0.9955681907713317,
+        "pair_groups": 578,
+        "rows_per_value": 2507.9226006191952,
+        "to": "Cleared"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/R paid",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.3902439024390244,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/P paid",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 11440,
+        "distinct_to": 2,
+        "from": "Due date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 13103,
+        "rows_per_value": 70.80935314685314,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 2,
+        "from": "Open balance",
+        "g3": 0.00033701248921374864,
+        "kind": "edge",
+        "lambda": 0.9234006734006734,
+        "pair_groups": 165495,
+        "rows_per_value": 4.8987602805999035,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 70980,
+        "distinct_to": 2,
+        "from": "Customer name",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 70980,
+        "rows_per_value": 11.412496477881094,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 1088,
+        "from": "A/R paid",
+        "g3": 0.0027331342531840275,
+        "kind": "alias",
+        "lambda": 0.0,
+        "pair_groups": 1089,
+        "rows_per_value": 405029.5,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 1088,
+        "distinct_to": 2,
+        "from": "Vendor name",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 1089,
+        "rows_per_value": 744.5395220588235,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 267,
+        "distinct_to": 2,
+        "from": "Product_Service",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 509,
+        "rows_per_value": 3033.928838951311,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 2,
+        "from": "Quantity",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 73,
+        "rows_per_value": 11250.819444444445,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 2,
+        "from": "Rate",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 138,
+        "rows_per_value": 5912.839416058394,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 2,
+        "from": "Credit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 191,
+        "rows_per_value": 4263.468421052631,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 2,
+        "from": "Debit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 109,
+        "rows_per_value": 7500.5462962962965,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/R paid",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Sale",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/R paid",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Purchase",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Cleared",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 4,
+        "rows_per_value": 405029.5,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 7,
+        "distinct_to": 2,
+        "from": "payment method",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 14,
+        "rows_per_value": 115722.71428571429,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 3,
+        "distinct_to": 2,
+        "from": "Misc (Business specific fields)",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.3787878787878788,
+        "pair_groups": 4,
+        "rows_per_value": 270019.6666666667,
+        "to": "A/R paid"
+      },
+      {
+        "distinct_from": 11440,
+        "distinct_to": 2,
+        "from": "Due date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12498,
+        "rows_per_value": 70.80935314685314,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 2,
+        "from": "Open balance",
+        "g3": 0.00021356469096695427,
+        "kind": "edge",
+        "lambda": 0.9218608852755195,
+        "pair_groups": 165445,
+        "rows_per_value": 4.8987602805999035,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 70980,
+        "distinct_to": 2,
+        "from": "Customer name",
+        "g3": 0.001666545276331724,
+        "kind": "edge",
+        "lambda": 0.3902439024390244,
+        "pair_groups": 70981,
+        "rows_per_value": 11.412496477881094,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 1088,
+        "from": "A/P paid",
+        "g3": 0.0027257273852892196,
+        "kind": "alias",
+        "lambda": 0.0027100271002710027,
+        "pair_groups": 1088,
+        "rows_per_value": 405029.5,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 1088,
+        "distinct_to": 2,
+        "from": "Vendor name",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 1088,
+        "rows_per_value": 744.5395220588235,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 267,
+        "distinct_to": 2,
+        "from": "Product_Service",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 269,
+        "rows_per_value": 3033.928838951311,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 2,
+        "from": "Quantity",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 73,
+        "rows_per_value": 11250.819444444445,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 2,
+        "from": "Rate",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 138,
+        "rows_per_value": 5912.839416058394,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 2,
+        "from": "Credit",
+        "g3": 0.0013665671265920137,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 191,
+        "rows_per_value": 4263.468421052631,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 2,
+        "from": "Debit",
+        "g3": 0.0013665671265920137,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 109,
+        "rows_per_value": 7500.5462962962965,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/P paid",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Sale",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.3902439024390244,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "A/P paid",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Purchase",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.3902439024390244,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Cleared",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 3,
+        "rows_per_value": 405029.5,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 7,
+        "distinct_to": 2,
+        "from": "payment method",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 14,
+        "rows_per_value": 115722.71428571429,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 3,
+        "distinct_to": 2,
+        "from": "Misc (Business specific fields)",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 4,
+        "rows_per_value": 270019.6666666667,
+        "to": "A/P paid"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 11440,
+        "from": "Open balance",
+        "g3": 0.02324398593188891,
+        "kind": "edge",
+        "lambda": 0.9767517378474151,
+        "pair_groups": 169525,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Due date"
+      },
+      {
+        "distinct_from": 11440,
+        "distinct_to": 1088,
+        "from": "Due date",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 12547,
+        "rows_per_value": 70.80935314685314,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 11440,
+        "distinct_to": 2,
+        "from": "Due date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 13103,
+        "rows_per_value": 70.80935314685314,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 11440,
+        "distinct_to": 2,
+        "from": "Due date",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 13103,
+        "rows_per_value": 70.80935314685314,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 70980,
+        "from": "Open balance",
+        "g3": 0.023205717114432405,
+        "kind": "edge",
+        "lambda": 0.9766917339847117,
+        "pair_groups": 169508,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Customer name"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 1088,
+        "from": "Open balance",
+        "g3": 0.00024689559649358875,
+        "kind": "edge",
+        "lambda": 0.9096657633242999,
+        "pair_groups": 165460,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 2,
+        "from": "Open balance",
+        "g3": 0.00033701248921374864,
+        "kind": "edge",
+        "lambda": 0.9234006734006734,
+        "pair_groups": 165495,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 2,
+        "from": "Open balance",
+        "g3": 0.00033701248921374864,
+        "kind": "edge",
+        "lambda": 0.9234006734006734,
+        "pair_groups": 165495,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 7,
+        "from": "Open balance",
+        "g3": 0.019763992499311777,
+        "kind": "edge",
+        "lambda": 0.976917931062323,
+        "pair_groups": 168891,
+        "rows_per_value": 4.8987602805999035,
+        "to": "payment method"
+      },
+      {
+        "distinct_from": 165360,
+        "distinct_to": 3,
+        "from": "Open balance",
+        "g3": 0.0028454717495886104,
+        "kind": "edge",
+        "lambda": 0.9536030595813204,
+        "pair_groups": 166150,
+        "rows_per_value": 4.8987602805999035,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 70980,
+        "distinct_to": 1088,
+        "from": "Customer name",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 72067,
+        "rows_per_value": 11.412496477881094,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 70980,
+        "distinct_to": 2,
+        "from": "Customer name",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 70980,
+        "rows_per_value": 11.412496477881094,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 70980,
+        "distinct_to": 2,
+        "from": "Customer name",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 70980,
+        "rows_per_value": 11.412496477881094,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 267,
+        "distinct_to": 1088,
+        "from": "Product_Service",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1381,
+        "rows_per_value": 3033.928838951311,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 1088,
+        "from": "Quantity",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1159,
+        "rows_per_value": 11250.819444444445,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 1088,
+        "from": "Rate",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1224,
+        "rows_per_value": 5912.839416058394,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 1088,
+        "from": "Credit",
+        "g3": 0.0027010378256398606,
+        "kind": "edge",
+        "lambda": 0.011743450767841012,
+        "pair_groups": 2358,
+        "rows_per_value": 4263.468421052631,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 1088,
+        "from": "Debit",
+        "g3": 0.0027010378256398606,
+        "kind": "edge",
+        "lambda": 0.011743450767841012,
+        "pair_groups": 2276,
+        "rows_per_value": 7500.5462962962965,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 1088,
+        "distinct_to": 2,
+        "from": "Vendor name",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 1089,
+        "rows_per_value": 744.5395220588235,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 1088,
+        "from": "Sale",
+        "g3": 0.0027331342531840275,
+        "kind": "alias",
+        "lambda": 0.0,
+        "pair_groups": 1089,
+        "rows_per_value": 405029.5,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 1088,
+        "distinct_to": 2,
+        "from": "Vendor name",
+        "g3": 0.001666545276331724,
+        "kind": "alias",
+        "lambda": 0.6212121212121212,
+        "pair_groups": 1089,
+        "rows_per_value": 744.5395220588235,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 1088,
+        "from": "Purchase",
+        "g3": 0.0027331342531840275,
+        "kind": "alias",
+        "lambda": 0.0,
+        "pair_groups": 1089,
+        "rows_per_value": 405029.5,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 1088,
+        "from": "Cleared",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1089,
+        "rows_per_value": 405029.5,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 7,
+        "distinct_to": 1088,
+        "from": "payment method",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1112,
+        "rows_per_value": 115722.71428571429,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 3,
+        "distinct_to": 1088,
+        "from": "Misc (Business specific fields)",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 1090,
+        "rows_per_value": 270019.6666666667,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 267,
+        "distinct_to": 2,
+        "from": "Product_Service",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 509,
+        "rows_per_value": 3033.928838951311,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 267,
+        "distinct_to": 2,
+        "from": "Product_Service",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 509,
+        "rows_per_value": 3033.928838951311,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 72,
+        "from": "Rate",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 137,
+        "rows_per_value": 5912.839416058394,
+        "to": "Quantity"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 72,
+        "from": "Credit",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 190,
+        "rows_per_value": 4263.468421052631,
+        "to": "Quantity"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 2,
+        "from": "Quantity",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 73,
+        "rows_per_value": 11250.819444444445,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 2,
+        "from": "Quantity",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 73,
+        "rows_per_value": 11250.819444444445,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 72,
+        "distinct_to": 3,
+        "from": "Quantity",
+        "g3": 0.04512387369315075,
+        "kind": "edge",
+        "lambda": 0.2642310789049919,
+        "pair_groups": 97,
+        "rows_per_value": 11250.819444444445,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 190,
+        "from": "Rate",
+        "g3": 0.002199839764757876,
+        "kind": "alias",
+        "lambda": 0.9972179462760759,
+        "pair_groups": 190,
+        "rows_per_value": 5912.839416058394,
+        "to": "Credit"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 137,
+        "from": "Credit",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 190,
+        "rows_per_value": 4263.468421052631,
+        "to": "Rate"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 2,
+        "from": "Rate",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 138,
+        "rows_per_value": 5912.839416058394,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 2,
+        "from": "Rate",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 138,
+        "rows_per_value": 5912.839416058394,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 2,
+        "from": "Rate",
+        "g3": 0.000833272638165862,
+        "kind": "edge",
+        "lambda": 0.9955681907713317,
+        "pair_groups": 138,
+        "rows_per_value": 5912.839416058394,
+        "to": "Cleared"
+      },
+      {
+        "distinct_from": 137,
+        "distinct_to": 3,
+        "from": "Rate",
+        "g3": 0.021553985573890298,
+        "kind": "edge",
+        "lambda": 0.6485507246376812,
+        "pair_groups": 139,
+        "rows_per_value": 5912.839416058394,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 2,
+        "from": "Credit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 191,
+        "rows_per_value": 4263.468421052631,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 2,
+        "from": "Credit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 191,
+        "rows_per_value": 4263.468421052631,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 2,
+        "from": "Credit",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 190,
+        "rows_per_value": 4263.468421052631,
+        "to": "Cleared"
+      },
+      {
+        "distinct_from": 190,
+        "distinct_to": 3,
+        "from": "Credit",
+        "g3": 0.020720712935724434,
+        "kind": "edge",
+        "lambda": 0.6621376811594203,
+        "pair_groups": 192,
+        "rows_per_value": 4263.468421052631,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 2,
+        "from": "Debit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 109,
+        "rows_per_value": 7500.5462962962965,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 2,
+        "from": "Debit",
+        "g3": 0.002199839764757876,
+        "kind": "edge",
+        "lambda": 0.5,
+        "pair_groups": 109,
+        "rows_per_value": 7500.5462962962965,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 108,
+        "distinct_to": 3,
+        "from": "Debit",
+        "g3": 0.040608153233283005,
+        "kind": "edge",
+        "lambda": 0.3378623188405797,
+        "pair_groups": 110,
+        "rows_per_value": 7500.5462962962965,
+        "to": "Misc (Business specific fields)"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Sale",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Purchase",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 2,
+        "rows_per_value": 405029.5,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Cleared",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 4,
+        "rows_per_value": 405029.5,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 7,
+        "distinct_to": 2,
+        "from": "payment method",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 14,
+        "rows_per_value": 115722.71428571429,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 3,
+        "distinct_to": 2,
+        "from": "Misc (Business specific fields)",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.3787878787878788,
+        "pair_groups": 4,
+        "rows_per_value": 270019.6666666667,
+        "to": "Sale"
+      },
+      {
+        "distinct_from": 2,
+        "distinct_to": 2,
+        "from": "Cleared",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 4,
+        "rows_per_value": 405029.5,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 7,
+        "distinct_to": 2,
+        "from": "payment method",
+        "g3": 0.004399679529515752,
+        "kind": "edge",
+        "lambda": 0.0,
+        "pair_groups": 14,
+        "rows_per_value": 115722.71428571429,
+        "to": "Purchase"
+      },
+      {
+        "distinct_from": 3,
+        "distinct_to": 2,
+        "from": "Misc (Business specific fields)",
+        "g3": 0.0027331342531840275,
+        "kind": "edge",
+        "lambda": 0.3787878787878788,
+        "pair_groups": 4,
+        "rows_per_value": 270019.6666666667,
+        "to": "Purchase"
+      }
+    ],
+    "rows": 810059
+  },
+  "books::detect_grounding_collisions": {
+    "applicable": false,
+    "collisions": [],
+    "groundings": 0
+  },
+  "books::detect_relationships": {
+    "candidates": [
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.1",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Transaction ID",
+        "from_distinct": 169525,
+        "matched": 169525,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 100000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.1",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Transaction ID",
+        "from_distinct": 169525,
+        "matched": 169525,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 100000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "matched": 810059,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Transaction ID",
+        "from_distinct": 169525,
+        "matched": 169525,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 100000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "chart_of_account_OB.",
+        "from_distinct": 2430,
+        "matched": 2430,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "chart_of_account_OB.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 500,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 270,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "product_service_table.Business Id",
+        "from_distinct": 27,
+        "matched": 27,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "matched": 1000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Account",
+        "from_distinct": 1754,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.business Id",
+            "to": "chart_of_account_OB.Business Id"
+          }
+        ],
+        "matched": 1754,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "chart_of_account_OB.Account name",
+        "to_distinct": 2213
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 189,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.payment method",
+            "to": "payment_method.Payment method"
+          }
+        ],
+        "matched": 189,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "payment_method.Business Id",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Business Id",
+            "to": "vendor_table.Business Id"
+          }
+        ],
+        "matched": 50000,
+        "orphans": 0,
+        "overlap": 1.0,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.1",
+        "from_distinct": 810059,
+        "matched": 810050,
+        "orphans": 9,
+        "overlap": 0.9999888896981578,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Transaction ID",
+        "from_distinct": 169525,
+        "matched": 169522,
+        "orphans": 3,
+        "overlap": 0.9999823034950597,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 99997,
+        "orphans": 3,
+        "overlap": 0.99997,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 49872,
+        "orphans": 128,
+        "overlap": 0.99744,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 49872,
+        "orphans": 128,
+        "overlap": 0.99744,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 49872,
+        "orphans": 128,
+        "overlap": 0.99744,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 49872,
+        "orphans": 128,
+        "overlap": 0.99744,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 99732,
+        "orphans": 268,
+        "overlap": 0.99732,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 99732,
+        "orphans": 268,
+        "overlap": 0.99732,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 807845,
+        "orphans": 2214,
+        "overlap": 0.997266865746816,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 99677,
+        "orphans": 323,
+        "overlap": 0.99677,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Billable",
+            "to": "Master_txn_table.Purchase"
+          }
+        ],
+        "matched": 806495,
+        "orphans": 3564,
+        "overlap": 0.9956003204704843,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 49680,
+        "orphans": 320,
+        "overlap": 0.9936,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 49680,
+        "orphans": 320,
+        "overlap": 0.9936,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Product_Service",
+        "from_distinct": 267,
+        "matched": 264,
+        "orphans": 3,
+        "overlap": 0.9887640449438202,
+        "to": "product_service_table.Product_Service",
+        "to_distinct": 266
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "chart_of_account_OB.",
+        "to_distinct": 2430
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Quantity",
+        "from_distinct": 72,
+        "matched": 71,
+        "orphans": 1,
+        "overlap": 0.9861111111111112,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 760379,
+        "orphans": 49680,
+        "overlap": 0.9386711338309925,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 760379,
+        "orphans": 49680,
+        "overlap": 0.9386711338309925,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 760379,
+        "orphans": 49680,
+        "overlap": 0.9386711338309925,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 93866,
+        "orphans": 6134,
+        "overlap": 0.93866,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 46927,
+        "orphans": 3073,
+        "overlap": 0.93854,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 46927,
+        "orphans": 3073,
+        "overlap": 0.93854,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 758165,
+        "orphans": 51894,
+        "overlap": 0.9359379995778085,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "matched": 35752,
+        "orphans": 3615,
+        "overlap": 0.9081718190362487,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "matched": 35752,
+        "orphans": 3615,
+        "overlap": 0.9081718190362487,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "matched": 35752,
+        "orphans": 3615,
+        "overlap": 0.9081718190362487,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "matched": 35752,
+        "orphans": 3615,
+        "overlap": 0.9081718190362487,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "matched": 35752,
+        "orphans": 3615,
+        "overlap": 0.9081718190362487,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Billing ZIP code",
+        "from_distinct": 39367,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 35750,
+        "orphans": 3617,
+        "overlap": 0.908121015063378,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "matched": 35564,
+        "orphans": 3695,
+        "overlap": 0.9058814539341298,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "matched": 35564,
+        "orphans": 3695,
+        "overlap": 0.9058814539341298,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "matched": 35564,
+        "orphans": 3695,
+        "overlap": 0.9058814539341298,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "matched": 35564,
+        "orphans": 3695,
+        "overlap": 0.9058814539341298,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "matched": 35564,
+        "orphans": 3695,
+        "overlap": 0.9058814539341298,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Shipping ZIP code",
+        "from_distinct": 39259,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 35561,
+        "orphans": 3698,
+        "overlap": 0.9058050383351588,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "matched": 57102,
+        "orphans": 5996,
+        "overlap": 0.9049732162667596,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "matched": 57102,
+        "orphans": 5996,
+        "overlap": 0.9049732162667596,
+        "to": "Master_txn_table.Unnamed: 0.2",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "matched": 57102,
+        "orphans": 5996,
+        "overlap": 0.9049732162667596,
+        "to": "Master_txn_table.Unnamed: 0.1",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "matched": 57102,
+        "orphans": 5996,
+        "overlap": 0.9049732162667596,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "matched": 57101,
+        "orphans": 5997,
+        "overlap": 0.9049573679038956,
+        "to": "Master_txn_table.Unnamed: 0",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Billing ZIP code",
+        "from_distinct": 63098,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 57097,
+        "orphans": 6001,
+        "overlap": 0.904893974452439,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 81199,
+        "orphans": 18801,
+        "overlap": 0.81199,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 657751,
+        "orphans": 152308,
+        "overlap": 0.8119791274462724,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 657751,
+        "orphans": 152308,
+        "overlap": 0.8119791274462724,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 657751,
+        "orphans": 152308,
+        "overlap": 0.8119791274462724,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 40597,
+        "orphans": 9403,
+        "overlap": 0.81194,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 40597,
+        "orphans": 9403,
+        "overlap": 0.81194,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Cleared",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 655537,
+        "orphans": 154522,
+        "overlap": 0.8092459931930884,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Cleared",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 655537,
+        "orphans": 154522,
+        "overlap": 0.8092459931930884,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.Cleared"
+          }
+        ],
+        "matched": 655537,
+        "orphans": 154522,
+        "overlap": 0.8092459931930884,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 39537,
+        "orphans": 10463,
+        "overlap": 0.79074,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 39537,
+        "orphans": 10463,
+        "overlap": 0.79074,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 79074,
+        "orphans": 20926,
+        "overlap": 0.79074,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 640534,
+        "orphans": 169525,
+        "overlap": 0.7907251200221218,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 640534,
+        "orphans": 169525,
+        "overlap": 0.7907251200221218,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 640534,
+        "orphans": 169525,
+        "overlap": 0.7907251200221218,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 639427,
+        "orphans": 170632,
+        "overlap": 0.7893585528955298,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Cleared",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 608746,
+        "orphans": 201313,
+        "overlap": 0.7514835339154309,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Product_Service",
+        "from_distinct": 374,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.business Id",
+            "to": "product_service_table.Business Id"
+          }
+        ],
+        "matched": 268,
+        "orphans": 106,
+        "overlap": 0.7165775401069518,
+        "to": "product_service_table.Product_Service",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "payment_method.",
+        "from_distinct": 189,
+        "key_columns": [
+          {
+            "from": "payment_method.Credit card",
+            "to": "Master_txn_table.Sale"
+          }
+        ],
+        "matched": 135,
+        "orphans": 54,
+        "overlap": 0.7142857142857143,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "product_service_table.",
+        "from_distinct": 270,
+        "matched": 189,
+        "orphans": 81,
+        "overlap": 0.7,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.PO status",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 557176,
+        "orphans": 252883,
+        "overlap": 0.687821504359559,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Estimate status",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 557176,
+        "orphans": 252883,
+        "overlap": 0.687821504359559,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Invoiced",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 557176,
+        "orphans": 252883,
+        "overlap": 0.687821504359559,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "customer_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "customer_table.Balance",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 34387,
+        "orphans": 15613,
+        "overlap": 0.68774,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Billing rate",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 34387,
+        "orphans": 15613,
+        "overlap": 0.68774,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 68770,
+        "orphans": 31230,
+        "overlap": 0.6877,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 554989,
+        "orphans": 255070,
+        "overlap": 0.6851217010119016,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "vendor_table.Business Id",
+        "from_distinct": 1000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Balance",
+            "to": "Master_txn_table.Rate"
+          }
+        ],
+        "matched": 685,
+        "orphans": 315,
+        "overlap": 0.685,
+        "to": "Master_txn_table.Transaction ID",
+        "to_distinct": 808277
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Cleared",
+            "to": "Master_txn_table.Debit"
+          }
+        ],
+        "matched": 488226,
+        "orphans": 321833,
+        "overlap": 0.6027042474683942,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 27,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Billable",
+            "to": "employee_table.Deleted"
+          }
+        ],
+        "matched": 16,
+        "orphans": 11,
+        "overlap": 0.5925925925925926,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.Transaction ID",
+        "from_distinct": 169525,
+        "matched": 99677,
+        "orphans": 69848,
+        "overlap": 0.5879781743105736,
+        "to": "vendor_table.",
+        "to_distinct": 100000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 500,
+        "matched": 269,
+        "orphans": 231,
+        "overlap": 0.538,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "customer_table.Business Id",
+        "from_distinct": 500,
+        "matched": 268,
+        "orphans": 232,
+        "overlap": 0.536,
+        "to": "product_service_table.",
+        "to_distinct": 270
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "employee_table.",
+        "from_distinct": 50000,
+        "key_columns": [
+          {
+            "from": "employee_table.Deleted",
+            "to": "Master_txn_table.Purchase"
+          }
+        ],
+        "matched": 25078,
+        "orphans": 24922,
+        "overlap": 0.50156,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "Master_txn_table.Unnamed: 0.2",
+        "from_distinct": 810059,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Cleared",
+            "to": "Master_txn_table.Product_Service"
+          }
+        ],
+        "matched": 405246,
+        "orphans": 404813,
+        "overlap": 0.5002672644832044,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 50000,
+        "orphans": 50000,
+        "overlap": 0.5,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "matched": 50000,
+        "orphans": 50000,
+        "overlap": 0.5,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/P paid",
+            "to": "Master_txn_table.A/R paid"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/R paid",
+            "to": "Master_txn_table.A/P paid"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/R paid",
+            "to": "Master_txn_table.Vendor name"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Purchase",
+            "to": "Master_txn_table.Sale"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "employee_table.Business Id",
+        "from_distinct": 1000,
+        "key_columns": [
+          {
+            "from": "employee_table.Deleted",
+            "to": "Master_txn_table.Sale"
+          }
+        ],
+        "matched": 500,
+        "orphans": 500,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Sale",
+            "to": "Master_txn_table.Purchase"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "payment_method.Credit card",
+            "to": "Master_txn_table.Purchase"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.A/R paid",
+            "to": "Master_txn_table.Misc (Business specific fields)"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "Master_txn_table.",
+        "to_distinct": 810059
+      },
+      {
+        "cardinality": "one-to-one",
+        "from": "vendor_table.",
+        "from_distinct": 100000,
+        "key_columns": [
+          {
+            "from": "vendor_table.Business Id",
+            "to": "customer_table.Business Id"
+          }
+        ],
+        "matched": 50000,
+        "orphans": 50000,
+        "overlap": 0.5,
+        "to": "customer_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Sale",
+            "to": "employee_table.Deleted"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Purchase",
+            "to": "employee_table.Deleted"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "payment_method.Business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "payment_method.Credit card",
+            "to": "employee_table.Deleted"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "employee_table.",
+        "to_distinct": 50000
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Sale",
+            "to": "payment_method.Credit card"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "payment_method.",
+        "to_distinct": 189
+      },
+      {
+        "cardinality": "many-to-one",
+        "from": "Master_txn_table.business Id",
+        "from_distinct": 54,
+        "key_columns": [
+          {
+            "from": "Master_txn_table.Purchase",
+            "to": "payment_method.Credit card"
+          }
+        ],
+        "matched": 27,
+        "orphans": 27,
+        "overlap": 0.5,
+        "to": "payment_method.",
+        "to_distinct": 189
+      }
+    ]
+  },
+  "books::metric_bands": {
+    "applicable": false,
+    "metrics": []
+  },
+  "books::metric_cube": {
+    "applicable": false,
+    "caps": {
+      "dims": 2,
+      "members": 24,
+      "months": 24
+    },
+    "metrics": [],
+    "summary": {
+      "metrics": [],
+      "note": "cached — slice with metric_series(); the whole cube reads back via GLOSSARY(<dataset>::metric_cube)",
+      "rows": 0
+    }
+  },
+  "books::relationship_coherence": {
+    "applicable": false,
+    "reason": "no declared relationships"
+  },
+  "chart_of_account_OB::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "chart_of_account_OB::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 340,
+        "distinct_to": 340,
+        "from": "Account name",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 340,
+        "rows_per_value": 7.147058823529412,
+        "to": "Account Full Name"
+      },
+      {
+        "distinct_from": 340,
+        "distinct_to": 340,
+        "from": "Account Full Name",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 340,
+        "rows_per_value": 7.147058823529412,
+        "to": "Account name"
+      }
+    ],
+    "rows": 2430
+  },
+  "customer_table.Balance::behavior_evidence": {
+    "applicable": false
+  },
+  "customer_table.Balance::profile": {
+    "cardinality_ratio": 0.00002,
+    "distinct": 1,
+    "entropy": -0.0,
+    "lengths": {
+      "avg": 2.0,
+      "max": 2,
+      "min": 2
+    },
+    "max": "--",
+    "min": "--",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 1,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 50000
+    },
+    "top_values": [
+      {
+        "count": 50000,
+        "value": "--"
+      }
+    ],
+    "total": 50000
+  },
+  "customer_table.Balance::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "customer_table::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "customer_table::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 49339,
+        "distinct_to": 500,
+        "from": "Billing address",
+        "g3": 0.01318,
+        "kind": "edge",
+        "lambda": 0.9867935871743487,
+        "pair_groups": 49998,
+        "rows_per_value": 1.013397109791443,
+        "to": "Business Id"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 500,
+        "from": "Shipping address",
+        "g3": 0.0125,
+        "kind": "edge",
+        "lambda": 0.9874749498997996,
+        "pair_groups": 49998,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Business Id"
+      },
+      {
+        "distinct_from": 40239,
+        "distinct_to": 40239,
+        "from": "Customer name",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 40239,
+        "rows_per_value": 1.2425756107259127,
+        "to": "Customer full name"
+      },
+      {
+        "distinct_from": 40239,
+        "distinct_to": 40239,
+        "from": "Customer full name",
+        "g3": 0.0,
+        "kind": "alias",
+        "lambda": 1.0,
+        "pair_groups": 40239,
+        "rows_per_value": 1.2425756107259127,
+        "to": "Customer name"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 40239,
+        "from": "Billing address",
+        "g3": 0.01322,
+        "kind": "edge",
+        "lambda": 0.9867744452670122,
+        "pair_groups": 50000,
+        "rows_per_value": 1.013397109791443,
+        "to": "Customer name"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 40239,
+        "from": "Shipping address",
+        "g3": 0.01254,
+        "kind": "edge",
+        "lambda": 0.9874547309870145,
+        "pair_groups": 50000,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Customer name"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 40239,
+        "from": "Billing address",
+        "g3": 0.01322,
+        "kind": "edge",
+        "lambda": 0.9867744452670122,
+        "pair_groups": 50000,
+        "rows_per_value": 1.013397109791443,
+        "to": "Customer full name"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 40239,
+        "from": "Shipping address",
+        "g3": 0.01254,
+        "kind": "edge",
+        "lambda": 0.9874547309870145,
+        "pair_groups": 50000,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Customer full name"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 23378,
+        "from": "Billing address",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 49339,
+        "rows_per_value": 1.013397109791443,
+        "to": "Billing city"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 62,
+        "from": "Billing address",
+        "g3": 0.00768,
+        "kind": "edge",
+        "lambda": 0.9920308803386876,
+        "pair_groups": 49649,
+        "rows_per_value": 1.013397109791443,
+        "to": "Billing state"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 39367,
+        "from": "Billing address",
+        "g3": 0.01322,
+        "kind": "edge",
+        "lambda": 0.9867784134096091,
+        "pair_groups": 50000,
+        "rows_per_value": 1.013397109791443,
+        "to": "Billing ZIP code"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 49373,
+        "from": "Billing address",
+        "g3": 0.01322,
+        "kind": "edge",
+        "lambda": 0.9867768264383452,
+        "pair_groups": 50000,
+        "rows_per_value": 1.013397109791443,
+        "to": "Shipping address"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 49339,
+        "from": "Shipping address",
+        "g3": 0.01254,
+        "kind": "edge",
+        "lambda": 0.9874564878165887,
+        "pair_groups": 50000,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Billing address"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 23404,
+        "from": "Billing address",
+        "g3": 0.01302,
+        "kind": "edge",
+        "lambda": 0.9864853643346482,
+        "pair_groups": 49990,
+        "rows_per_value": 1.013397109791443,
+        "to": "Shipping city"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 62,
+        "from": "Billing address",
+        "g3": 0.01268,
+        "kind": "edge",
+        "lambda": 0.9868442895086321,
+        "pair_groups": 49970,
+        "rows_per_value": 1.013397109791443,
+        "to": "Shipping state"
+      },
+      {
+        "distinct_from": 49339,
+        "distinct_to": 39259,
+        "from": "Billing address",
+        "g3": 0.01322,
+        "kind": "edge",
+        "lambda": 0.9867786778677867,
+        "pair_groups": 50000,
+        "rows_per_value": 1.013397109791443,
+        "to": "Shipping ZIP code"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 23378,
+        "from": "Shipping address",
+        "g3": 0.01248,
+        "kind": "edge",
+        "lambda": 0.9870536733127243,
+        "pair_groups": 49997,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Billing city"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 62,
+        "from": "Shipping address",
+        "g3": 0.01222,
+        "kind": "edge",
+        "lambda": 0.987319968455568,
+        "pair_groups": 49980,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Billing state"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 39367,
+        "from": "Shipping address",
+        "g3": 0.01254,
+        "kind": "edge",
+        "lambda": 0.9874584950194023,
+        "pair_groups": 50000,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Billing ZIP code"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 23404,
+        "from": "Shipping address",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 49373,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Shipping city"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 62,
+        "from": "Shipping address",
+        "g3": 0.0073,
+        "kind": "edge",
+        "lambda": 0.9924261288180611,
+        "pair_groups": 49682,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Shipping state"
+      },
+      {
+        "distinct_from": 49373,
+        "distinct_to": 39259,
+        "from": "Shipping address",
+        "g3": 0.01254,
+        "kind": "edge",
+        "lambda": 0.9874587458745875,
+        "pair_groups": 50000,
+        "rows_per_value": 1.0126992485771575,
+        "to": "Shipping ZIP code"
+      }
+    ],
+    "rows": 50000
+  },
+  "employee_table.Deleted::behavior_evidence": {
+    "applicable": false
+  },
+  "employee_table.Deleted::profile": {
+    "cardinality_ratio": 0.00004,
+    "distinct": 2,
+    "entropy": 0.6931432605548231,
+    "lengths": {
+      "avg": 2.4986,
+      "max": 3,
+      "min": 2
+    },
+    "max": "Yes",
+    "min": "No",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 2,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 50000
+    },
+    "top_values": [
+      {
+        "count": 25070,
+        "value": "No"
+      },
+      {
+        "count": 24930,
+        "value": "Yes"
+      }
+    ],
+    "total": 50000
+  },
+  "employee_table.Deleted::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "employee_table::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "employee_table::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [],
+    "rows": 50000
+  },
+  "payment_method::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "payment_method::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 7,
+        "distinct_to": 2,
+        "from": "Payment method",
+        "g3": 0.0,
+        "kind": "edge",
+        "lambda": 1.0,
+        "pair_groups": 7,
+        "rows_per_value": 27.0,
+        "to": "Credit card"
+      }
+    ],
+    "rows": 189
+  },
+  "product_service_table.Product_Service::behavior_evidence": {
+    "applicable": false
+  },
+  "product_service_table.Product_Service::profile": {
+    "cardinality_ratio": 0.9851851851851852,
+    "distinct": 266,
+    "entropy": 5.577884264759566,
+    "lengths": {
+      "avg": 13.774074074074074,
+      "max": 44,
+      "min": 3
+    },
+    "max": "homebuilders",
+    "min": "AI Courses",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 266,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 270
+    },
+    "top_values": [
+      {
+        "count": 2,
+        "value": "Aircraft"
+      },
+      {
+        "count": 2,
+        "value": "Repair and Maintainenance"
+      },
+      {
+        "count": 2,
+        "value": "Services"
+      },
+      {
+        "count": 2,
+        "value": "Transportation"
+      },
+      {
+        "count": 1,
+        "value": "AI Courses"
+      },
+      {
+        "count": 1,
+        "value": "Abandoned Infant"
+      },
+      {
+        "count": 1,
+        "value": "Accessories"
+      },
+      {
+        "count": 1,
+        "value": "Acetylene"
+      },
+      {
+        "count": 1,
+        "value": "Adoption"
+      },
+      {
+        "count": 1,
+        "value": "Aeronautical Equipment"
+      },
+      {
+        "count": 1,
+        "value": "Aircraft Engines"
+      },
+      {
+        "count": 1,
+        "value": "Apparel and shoes"
+      },
+      {
+        "count": 1,
+        "value": "Appearances and speeches"
+      },
+      {
+        "count": 1,
+        "value": "Application Hosting"
+      },
+      {
+        "count": 1,
+        "value": "Assessing product problems"
+      },
+      {
+        "count": 1,
+        "value": "Athletic uniforms"
+      },
+      {
+        "count": 1,
+        "value": "Attire and accessories"
+      },
+      {
+        "count": 1,
+        "value": "Auto mobiles"
+      },
+      {
+        "count": 1,
+        "value": "Auto sector"
+      },
+      {
+        "count": 1,
+        "value": "Bangalow"
+      }
+    ],
+    "total": 270
+  },
+  "product_service_table.Product_Service::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "product_service_table.Product_Service_Type::behavior_evidence": {
+    "applicable": false
+  },
+  "product_service_table.Product_Service_Type::profile": {
+    "cardinality_ratio": 0.003703703703703704,
+    "distinct": 1,
+    "entropy": -0.0,
+    "lengths": {
+      "avg": 7.0,
+      "max": 7,
+      "min": 7
+    },
+    "max": "Service",
+    "min": "Service",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 1,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 270
+    },
+    "top_values": [
+      {
+        "count": 270,
+        "value": "Service"
+      }
+    ],
+    "total": 270
+  },
+  "product_service_table.Product_Service_Type::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "product_service_table::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "product_service_table::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 266,
+        "distinct_to": 27,
+        "from": "Product_Service",
+        "g3": 0.014814814814814815,
+        "kind": "edge",
+        "lambda": 0.9846153846153847,
+        "pair_groups": 270,
+        "rows_per_value": 1.0150375939849625,
+        "to": "Business Id"
+      }
+    ],
+    "rows": 270
+  },
+  "vendor_table.Balance::behavior_evidence": {
+    "applicable": false
+  },
+  "vendor_table.Balance::profile": {
+    "cardinality_ratio": 0.00001,
+    "distinct": 1,
+    "entropy": -0.0,
+    "lengths": {
+      "avg": 2.0,
+      "max": 2,
+      "min": 2
+    },
+    "max": "--",
+    "min": "--",
+    "null_ratio": 0.0,
+    "summary": {
+      "distinct": 1,
+      "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+      "null_ratio": 0.0,
+      "total": 100000
+    },
+    "top_values": [
+      {
+        "count": 100000,
+        "value": "--"
+      }
+    ],
+    "total": 100000
+  },
+  "vendor_table.Balance::temporal": {
+    "applicable": false,
+    "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "vendor_table::detect_derivations": {
+    "applicable": false,
+    "reason": "fewer than three numeric columns"
+  },
+  "vendor_table::detect_hierarchies": {
+    "applicable": true,
+    "candidates": [
+      {
+        "distinct_from": 98344,
+        "distinct_to": 1000,
+        "from": "Billing address",
+        "g3": 0.01652,
+        "kind": "edge",
+        "lambda": 0.9834634634634635,
+        "pair_groups": 99996,
+        "rows_per_value": 1.0168388513788336,
+        "to": "Business Id"
+      },
+      {
+        "distinct_from": 98344,
+        "distinct_to": 70942,
+        "from": "Billing address",
+        "g3": 0.01656,
+        "kind": "edge",
+        "lambda": 0.9834315500905462,
+        "pair_groups": 100000,
+        "rows_per_value": 1.0168388513788336,
+        "to": "Vendor name"
+      },
+      {
+        "distinct_from": 98344,
+        "distinct_to": 35709,
+        "from": "Billing address",
+        "g3": 0.00002,
+        "kind": "edge",
+        "lambda": 0.9999792429919151,
+        "pair_groups": 98346,
+        "rows_per_value": 1.0168388513788336,
+        "to": "Billing city"
+      },
+      {
+        "distinct_from": 98344,
+        "distinct_to": 62,
+        "from": "Billing address",
+        "g3": 0.00983,
+        "kind": "edge",
+        "lambda": 0.9897995185123692,
+        "pair_groups": 99098,
+        "rows_per_value": 1.0168388513788336,
+        "to": "Billing state"
+      },
+      {
+        "distinct_from": 98344,
+        "distinct_to": 63098,
+        "from": "Billing address",
+        "g3": 0.01656,
+        "kind": "edge",
+        "lambda": 0.9834386750940075,
+        "pair_groups": 100000,
+        "rows_per_value": 1.0168388513788336,
+        "to": "Billing ZIP code"
+      }
+    ],
+    "rows": 100000
+  }
+}

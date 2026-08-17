@@ -1,0 +1,10 @@
+{
+  "books": [
+    {
+      "body": "{\"applicable\":false,\"collisions\":[],\"groundings\":0}",
+      "computed_at": "<volatile>",
+      "function": "detect_grounding_collisions",
+      "subject": "books"
+    }
+  ]
+}

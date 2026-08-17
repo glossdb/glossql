@@ -1,0 +1,602 @@
+{
+  "account_balances.account_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "account_balances.account_id"
+    }
+  ],
+  "account_balances.ending_balance": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "account_balances.ending_balance"
+    }
+  ],
+  "account_balances.period": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "account_balances.period"
+    }
+  ],
+  "account_balances.period_start": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":14,\"expected\":14,\"ratio\":1.0},\"confidence\":0.9903225806451613,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2026-02-01\",\"min\":\"2025-01-01\",\"span_days\":396.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "account_balances.period_start"
+    }
+  ],
+  "ap_invoices.amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.amount"
+    }
+  ],
+  "ap_invoices.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.ap_invoice_id"
+    }
+  ],
+  "ap_invoices.category": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.category"
+    }
+  ],
+  "ap_invoices.due_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":455,\"expected\":455,\"ratio\":1.0},\"confidence\":1.0,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-03-31\",\"min\":\"2025-01-01\",\"span_days\":454.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.due_date"
+    }
+  ],
+  "ap_invoices.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.entry_id"
+    }
+  ],
+  "ap_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":365,\"expected\":365,\"ratio\":1.0},\"confidence\":1.0,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-01\",\"span_days\":364.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.invoice_date"
+    }
+  ],
+  "ap_invoices.payment_terms": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.payment_terms"
+    }
+  ],
+  "ap_invoices.status": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.status"
+    }
+  ],
+  "ap_invoices.vendor_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_invoices.vendor_id"
+    }
+  ],
+  "ap_payments.amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_payments.amount"
+    }
+  ],
+  "ap_payments.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_payments.ap_invoice_id"
+    }
+  ],
+  "ap_payments.method": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_payments.method"
+    }
+  ],
+  "ap_payments.payment_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":406,\"expected\":407,\"ratio\":0.9975429975429976},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-02\",\"span_days\":406.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_payments.payment_date"
+    }
+  ],
+  "ap_payments.payment_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ap_payments.payment_id"
+    }
+  ],
+  "ar_invoices.amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.amount"
+    }
+  ],
+  "ar_invoices.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.ar_invoice_id"
+    }
+  ],
+  "ar_invoices.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.customer_id"
+    }
+  ],
+  "ar_invoices.due_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":455,\"expected\":455,\"ratio\":1.0},\"confidence\":1.0,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-03-31\",\"min\":\"2025-01-01\",\"span_days\":454.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.due_date"
+    }
+  ],
+  "ar_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":365,\"expected\":365,\"ratio\":1.0},\"confidence\":1.0,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-01\",\"span_days\":364.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.invoice_date"
+    }
+  ],
+  "ar_invoices.order_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.order_id"
+    }
+  ],
+  "ar_invoices.status": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "ar_invoices.status"
+    }
+  ],
+  "chart_of_accounts.account_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "chart_of_accounts.account_id"
+    }
+  ],
+  "chart_of_accounts.account_name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "chart_of_accounts.account_name"
+    }
+  ],
+  "chart_of_accounts.account_type": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "chart_of_accounts.account_type"
+    }
+  ],
+  "chart_of_accounts.parent_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "chart_of_accounts.parent_id"
+    }
+  ],
+  "customers.churned_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":9,\"expected\":10,\"ratio\":0.9},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2025-12-31\",\"min\":\"2025-03-31\",\"span_days\":275.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.churned_date"
+    }
+  ],
+  "customers.created_date": [
+    {
+      "body": "{\"applicable\":true,\"confidence\":0.3,\"gaps\":{\"count\":81,\"largest_days\":245.0,\"sample\":[{\"days\":245.0,\"end\":\"2025-02-01T00:00:00\",\"missing_periods\":39,\"severity\":\"severe\",\"start\":\"2024-06-01T00:00:00\"},{\"days\":53.0,\"end\":\"2023-10-11T00:00:00\",\"missing_periods\":7,\"severity\":\"moderate\",\"start\":\"2023-08-19T00:00:00\"},{\"days\":37.0,\"end\":\"2024-05-22T00:00:00\",\"missing_periods\":5,\"severity\":\"moderate\",\"start\":\"2024-04-15T00:00:00\"},{\"days\":33.0,\"end\":\"2024-04-15T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2024-03-13T00:00:00\"},{\"days\":32.0,\"end\":\"2018-12-26T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2018-11-24T00:00:00\"},{\"days\":31.0,\"end\":\"2025-11-01T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2025-10-01T00:00:00\"},{\"days\":31.0,\"end\":\"2025-04-01T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2025-03-01T00:00:00\"},{\"days\":31.0,\"end\":\"2025-06-01T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2025-05-01T00:00:00\"},{\"days\":31.0,\"end\":\"2025-08-01T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2025-07-01T00:00:00\"},{\"days\":31.0,\"end\":\"2025-09-01T00:00:00\",\"missing_periods\":4,\"severity\":\"moderate\",\"start\":\"2025-08-01T00:00:00\"},{\"days\":30.0,\"end\":\"2025-10-01T00:00:00\",\"missing_periods\":4,\"severity\":\"minor\",\"start\":\"2025-09-01T00:00:00\"},{\"days\":30.0,\"end\":\"2022-05-12T00:00:00\",\"missing_periods\":4,\"severity\":\"minor\",\"start\":\"2022-04-12T00:00:00\"},{\"days\":30.0,\"end\":\"2022-11-27T00:00:00\",\"missing_periods\":4,\"severity\":\"minor\",\"start\":\"2022-10-28T00:00:00\"},{\"days\":30.0,\"end\":\"2025-05-01T00:00:00\",\"missing_periods\":4,\"severity\":\"minor\",\"start\":\"2025-04-01T00:00:00\"},{\"days\":30.0,\"end\":\"2025-07-01T00:00:00\",\"missing_periods\":4,\"severity\":\"minor\",\"start\":\"2025-06-01T00:00:00\"},{\"days\":29.0,\"end\":\"2018-08-30T00:00:00\",\"missing_periods\":3,\"severity\":\"minor\",\"start\":\"2018-08-01T00:00:00\"},{\"days\":28.0,\"end\":\"2020-11-15T00:00:00\",\"missing_periods\":3,\"severity\":\"minor\",\"start\":\"2020-10-18T00:00:00\"},{\"days\":28.0,\"end\":\"2017-11-21T00:00:00\",\"missing_periods\":3,\"severity\":\"minor\",\"start\":\"2017-10-24T00:00:00\"},{\"days\":28.0,\"end\":\"2018-05-14T00:00:00\",\"missing_periods\":3,\"severity\":\"minor\",\"start\":\"2018-04-16T00:00:00\"},{\"days\":28.0,\"end\":\"2025-03-01T00:00:00\",\"missing_periods\":3,\"severity\":\"minor\",\"start\":\"2025-02-01T00:00:00\"}]},\"granularity\":\"irregular\",\"max\":\"2025-11-01\",\"min\":\"2016-10-25\",\"span_days\":3294.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.created_date"
+    }
+  ],
+  "customers.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.customer_id"
+    }
+  ],
+  "customers.customer_name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.customer_name"
+    }
+  ],
+  "customers.payment_terms": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.payment_terms"
+    }
+  ],
+  "customers.region": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.region"
+    }
+  ],
+  "customers.segment": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "customers.segment"
+    }
+  ],
+  "inventory_positions.location_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.location_id"
+    }
+  ],
+  "inventory_positions.period": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.period"
+    }
+  ],
+  "inventory_positions.period_start": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":12,\"expected\":12,\"ratio\":1.0},\"confidence\":0.9903225806451613,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2025-12-01\",\"min\":\"2025-01-01\",\"span_days\":334.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.period_start"
+    }
+  ],
+  "inventory_positions.product_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.product_id"
+    }
+  ],
+  "inventory_positions.unit_cost": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.unit_cost"
+    }
+  ],
+  "inventory_positions.units_on_hand": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.units_on_hand"
+    }
+  ],
+  "inventory_positions.value": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "inventory_positions.value"
+    }
+  ],
+  "journal_entries.entry_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":407,\"expected\":408,\"ratio\":0.9975490196078431},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-01\",\"span_days\":407.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_entries.entry_date"
+    }
+  ],
+  "journal_entries.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_entries.entry_id"
+    }
+  ],
+  "journal_entries.status": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_entries.status"
+    }
+  ],
+  "journal_lines.account_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.account_id"
+    }
+  ],
+  "journal_lines.cost_center": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.cost_center"
+    }
+  ],
+  "journal_lines.credit": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.credit"
+    }
+  ],
+  "journal_lines.debit": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.debit"
+    }
+  ],
+  "journal_lines.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.entry_id"
+    }
+  ],
+  "journal_lines.line_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.line_id"
+    }
+  ],
+  "journal_lines.net_amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "journal_lines.net_amount"
+    }
+  ],
+  "products.list_price": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "products.list_price"
+    }
+  ],
+  "products.product_group": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "products.product_group"
+    }
+  ],
+  "products.product_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "products.product_id"
+    }
+  ],
+  "products.product_name": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "products.product_name"
+    }
+  ],
+  "products.standard_cost": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "products.standard_cost"
+    }
+  ],
+  "receipts.amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.amount"
+    }
+  ],
+  "receipts.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.ar_invoice_id"
+    }
+  ],
+  "receipts.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.customer_id"
+    }
+  ],
+  "receipts.method": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.method"
+    }
+  ],
+  "receipts.receipt_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":359,\"expected\":360,\"ratio\":0.9972222222222222},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-06\",\"span_days\":359.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.receipt_date"
+    }
+  ],
+  "receipts.receipt_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "receipts.receipt_id"
+    }
+  ],
+  "sales_order_lines.line_amount": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.line_amount"
+    }
+  ],
+  "sales_order_lines.line_cost": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.line_cost"
+    }
+  ],
+  "sales_order_lines.order_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.order_id"
+    }
+  ],
+  "sales_order_lines.order_line_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.order_line_id"
+    }
+  ],
+  "sales_order_lines.product_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.product_id"
+    }
+  ],
+  "sales_order_lines.unit_price": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.unit_price"
+    }
+  ],
+  "sales_order_lines.units": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_order_lines.units"
+    }
+  ],
+  "sales_orders.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_orders.customer_id"
+    }
+  ],
+  "sales_orders.order_date": [
+    {
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":365,\"expected\":365,\"ratio\":1.0},\"confidence\":1.0,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-01\",\"span_days\":364.0}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_orders.order_date"
+    }
+  ],
+  "sales_orders.order_id": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_orders.order_id"
+    }
+  ],
+  "sales_orders.status": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe\"}",
+      "computed_at": "<volatile>",
+      "function": "temporal",
+      "subject": "sales_orders.status"
+    }
+  ]
+}

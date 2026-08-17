@@ -1,0 +1,106 @@
+{
+  "account_balances": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":14,\"distinct_to\":14,\"from\":\"period\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":14,\"rows_per_value\":8.0,\"to\":\"period_start\"},{\"distinct_from\":14,\"distinct_to\":14,\"from\":\"period_start\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":14,\"rows_per_value\":8.0,\"to\":\"period\"}],\"rows\":112}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "account_balances"
+    }
+  ],
+  "ap_invoices": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":16817}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "ap_invoices"
+    }
+  ],
+  "ap_payments": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":14928}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "ap_payments"
+    }
+  ],
+  "ar_invoices": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":14770}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "ar_invoices"
+    }
+  ],
+  "chart_of_accounts": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":61}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "chart_of_accounts"
+    }
+  ],
+  "customers": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"region\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"payment_terms\"},{\"distinct_from\":4,\"distinct_to\":4,\"from\":\"payment_terms\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":4,\"rows_per_value\":100.0,\"to\":\"region\"},{\"distinct_from\":356,\"distinct_to\":10,\"from\":\"created_date\",\"g3\":0.0025,\"kind\":\"edge\",\"lambda\":0.9696969696969697,\"pair_groups\":357,\"rows_per_value\":1.1235955056179776,\"to\":\"churned_date\"}],\"rows\":400}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "customers"
+    }
+  ],
+  "inventory_positions": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":12,\"distinct_to\":12,\"from\":\"period\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":12,\"rows_per_value\":480.0,\"to\":\"period_start\"},{\"distinct_from\":12,\"distinct_to\":12,\"from\":\"period_start\",\"g3\":0.0,\"kind\":\"alias\",\"lambda\":1.0,\"pair_groups\":12,\"rows_per_value\":480.0,\"to\":\"period\"}],\"rows\":5760}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "inventory_positions"
+    }
+  ],
+  "journal_entries": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"fewer than two dimension-like columns\"}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "journal_entries"
+    }
+  ],
+  "journal_lines": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[{\"distinct_from\":73037,\"distinct_to\":6,\"from\":\"entry_id\",\"g3\":0.0,\"kind\":\"edge\",\"lambda\":1.0,\"pair_groups\":73037,\"rows_per_value\":2.1612470391719265,\"to\":\"cost_center\"}],\"rows\":157851}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "journal_lines"
+    }
+  ],
+  "products": [
+    {
+      "body": "{\"applicable\":false,\"reason\":\"fewer than two dimension-like columns\"}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "products"
+    }
+  ],
+  "receipts": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":11360}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "receipts"
+    }
+  ],
+  "sales_order_lines": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":23613}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "sales_order_lines"
+    }
+  ],
+  "sales_orders": [
+    {
+      "body": "{\"applicable\":true,\"candidates\":[],\"rows\":14770}",
+      "computed_at": "<volatile>",
+      "function": "detect_hierarchies",
+      "subject": "sales_orders"
+    }
+  ]
+}

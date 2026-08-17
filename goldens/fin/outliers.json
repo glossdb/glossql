@@ -1,0 +1,602 @@
+{
+  "account_balances.account_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "account_balances.account_id"
+    }
+  ],
+  "account_balances.ending_balance": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "account_balances.ending_balance"
+    }
+  ],
+  "account_balances.period": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "account_balances.period"
+    }
+  ],
+  "account_balances.period_start": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "account_balances.period_start"
+    }
+  ],
+  "ap_invoices.amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.amount"
+    }
+  ],
+  "ap_invoices.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.ap_invoice_id"
+    }
+  ],
+  "ap_invoices.category": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.category"
+    }
+  ],
+  "ap_invoices.due_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.due_date"
+    }
+  ],
+  "ap_invoices.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.entry_id"
+    }
+  ],
+  "ap_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.invoice_date"
+    }
+  ],
+  "ap_invoices.payment_terms": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.payment_terms"
+    }
+  ],
+  "ap_invoices.status": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.status"
+    }
+  ],
+  "ap_invoices.vendor_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_invoices.vendor_id"
+    }
+  ],
+  "ap_payments.amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_payments.amount"
+    }
+  ],
+  "ap_payments.ap_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_payments.ap_invoice_id"
+    }
+  ],
+  "ap_payments.method": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_payments.method"
+    }
+  ],
+  "ap_payments.payment_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_payments.payment_date"
+    }
+  ],
+  "ap_payments.payment_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ap_payments.payment_id"
+    }
+  ],
+  "ar_invoices.amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.amount"
+    }
+  ],
+  "ar_invoices.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.ar_invoice_id"
+    }
+  ],
+  "ar_invoices.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.customer_id"
+    }
+  ],
+  "ar_invoices.due_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.due_date"
+    }
+  ],
+  "ar_invoices.invoice_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.invoice_date"
+    }
+  ],
+  "ar_invoices.order_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.order_id"
+    }
+  ],
+  "ar_invoices.status": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "ar_invoices.status"
+    }
+  ],
+  "chart_of_accounts.account_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "chart_of_accounts.account_id"
+    }
+  ],
+  "chart_of_accounts.account_name": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "chart_of_accounts.account_name"
+    }
+  ],
+  "chart_of_accounts.account_type": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "chart_of_accounts.account_type"
+    }
+  ],
+  "chart_of_accounts.parent_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "chart_of_accounts.parent_id"
+    }
+  ],
+  "customers.churned_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.churned_date"
+    }
+  ],
+  "customers.created_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.created_date"
+    }
+  ],
+  "customers.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.customer_id"
+    }
+  ],
+  "customers.customer_name": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.customer_name"
+    }
+  ],
+  "customers.payment_terms": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.payment_terms"
+    }
+  ],
+  "customers.region": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.region"
+    }
+  ],
+  "customers.segment": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "customers.segment"
+    }
+  ],
+  "inventory_positions.location_id": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.location_id"
+    }
+  ],
+  "inventory_positions.period": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.period"
+    }
+  ],
+  "inventory_positions.period_start": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.period_start"
+    }
+  ],
+  "inventory_positions.product_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.product_id"
+    }
+  ],
+  "inventory_positions.unit_cost": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.unit_cost"
+    }
+  ],
+  "inventory_positions.units_on_hand": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.units_on_hand"
+    }
+  ],
+  "inventory_positions.value": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "inventory_positions.value"
+    }
+  ],
+  "journal_entries.entry_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_entries.entry_date"
+    }
+  ],
+  "journal_entries.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_entries.entry_id"
+    }
+  ],
+  "journal_entries.status": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_entries.status"
+    }
+  ],
+  "journal_lines.account_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.account_id"
+    }
+  ],
+  "journal_lines.cost_center": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.cost_center"
+    }
+  ],
+  "journal_lines.credit": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.credit"
+    }
+  ],
+  "journal_lines.debit": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.debit"
+    }
+  ],
+  "journal_lines.entry_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.entry_id"
+    }
+  ],
+  "journal_lines.line_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.line_id"
+    }
+  ],
+  "journal_lines.net_amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "journal_lines.net_amount"
+    }
+  ],
+  "products.list_price": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "products.list_price"
+    }
+  ],
+  "products.product_group": [
+    {
+      "body": "{\"applicable\":false}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "products.product_group"
+    }
+  ],
+  "products.product_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "products.product_id"
+    }
+  ],
+  "products.product_name": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "products.product_name"
+    }
+  ],
+  "products.standard_cost": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "products.standard_cost"
+    }
+  ],
+  "receipts.amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.amount"
+    }
+  ],
+  "receipts.ar_invoice_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.ar_invoice_id"
+    }
+  ],
+  "receipts.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.customer_id"
+    }
+  ],
+  "receipts.method": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.method"
+    }
+  ],
+  "receipts.receipt_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.receipt_date"
+    }
+  ],
+  "receipts.receipt_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "receipts.receipt_id"
+    }
+  ],
+  "sales_order_lines.line_amount": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.line_amount"
+    }
+  ],
+  "sales_order_lines.line_cost": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.line_cost"
+    }
+  ],
+  "sales_order_lines.order_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.order_id"
+    }
+  ],
+  "sales_order_lines.order_line_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.order_line_id"
+    }
+  ],
+  "sales_order_lines.product_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.product_id"
+    }
+  ],
+  "sales_order_lines.unit_price": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.unit_price"
+    }
+  ],
+  "sales_order_lines.units": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_order_lines.units"
+    }
+  ],
+  "sales_orders.customer_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_orders.customer_id"
+    }
+  ],
+  "sales_orders.order_date": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_orders.order_date"
+    }
+  ],
+  "sales_orders.order_id": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_orders.order_id"
+    }
+  ],
+  "sales_orders.status": [
+    {
+      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "computed_at": "<volatile>",
+      "function": "outliers",
+      "subject": "sales_orders.status"
+    }
+  ]
+}

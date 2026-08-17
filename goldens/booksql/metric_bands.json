@@ -1,0 +1,10 @@
+{
+  "books": [
+    {
+      "body": "{\"applicable\":false,\"metrics\":[]}",
+      "computed_at": "<volatile>",
+      "function": "metric_bands",
+      "subject": "books"
+    }
+  ]
+}
