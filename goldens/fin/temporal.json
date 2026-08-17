@@ -25,7 +25,7 @@
   ],
   "account_balances.period_start": [
     {
-      "body": "{\"applicable\":true,\"completeness\":{\"actual\":14,\"expected\":14,\"ratio\":1.0},\"confidence\":0.990322580645,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2026-02-01\",\"min\":\"2025-01-01\",\"span_days\":396.0}",
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":14,\"expected\":14,\"ratio\":1.0},\"confidence\":0.99032258,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2026-02-01\",\"min\":\"2025-01-01\",\"span_days\":396.0}",
       "computed_at": "<volatile>",
       "function": "temporal",
       "subject": "account_balances.period_start"
@@ -129,7 +129,7 @@
   ],
   "ap_payments.payment_date": [
     {
-      "body": "{\"applicable\":true,\"completeness\":{\"actual\":406,\"expected\":407,\"ratio\":0.997542997543},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-02\",\"span_days\":406.0}",
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":406,\"expected\":407,\"ratio\":0.997543},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-02\",\"span_days\":406.0}",
       "computed_at": "<volatile>",
       "function": "temporal",
       "subject": "ap_payments.payment_date"
@@ -305,7 +305,7 @@
   ],
   "inventory_positions.period_start": [
     {
-      "body": "{\"applicable\":true,\"completeness\":{\"actual\":12,\"expected\":12,\"ratio\":1.0},\"confidence\":0.990322580645,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2025-12-01\",\"min\":\"2025-01-01\",\"span_days\":334.0}",
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":12,\"expected\":12,\"ratio\":1.0},\"confidence\":0.99032258,\"gaps\":{\"count\":0},\"granularity\":\"month\",\"max\":\"2025-12-01\",\"min\":\"2025-01-01\",\"span_days\":334.0}",
       "computed_at": "<volatile>",
       "function": "temporal",
       "subject": "inventory_positions.period_start"
@@ -345,7 +345,7 @@
   ],
   "journal_entries.entry_date": [
     {
-      "body": "{\"applicable\":true,\"completeness\":{\"actual\":407,\"expected\":408,\"ratio\":0.997549019608},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-01\",\"span_days\":407.0}",
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":407,\"expected\":408,\"ratio\":0.99754902},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2026-02-12\",\"min\":\"2025-01-01\",\"span_days\":407.0}",
       "computed_at": "<volatile>",
       "function": "temporal",
       "subject": "journal_entries.entry_date"
@@ -497,7 +497,7 @@
   ],
   "receipts.receipt_date": [
     {
-      "body": "{\"applicable\":true,\"completeness\":{\"actual\":359,\"expected\":360,\"ratio\":0.997222222222},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-06\",\"span_days\":359.0}",
+      "body": "{\"applicable\":true,\"completeness\":{\"actual\":359,\"expected\":360,\"ratio\":0.99722222},\"confidence\":0.9,\"gaps\":{\"count\":0},\"granularity\":\"day\",\"max\":\"2025-12-31\",\"min\":\"2025-01-06\",\"span_days\":359.0}",
       "computed_at": "<volatile>",
       "function": "temporal",
       "subject": "receipts.receipt_date"

@@ -12,7 +12,6 @@ datafusion = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-sql = { workspace = true }
 iceberg-datafusion = { workspace = true }
-glossql-glossary = { path = "../glossary" }
 async-trait = "0.1"
 futures = "0.3"
 sqlx = { workspace = true }

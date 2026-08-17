@@ -5,11 +5,14 @@ edition.workspace = true
 
 [dependencies]
 glossql-parser = { path = "../parser" }
+glossql-catalog = { path = "../catalog" }
 serde_json.workspace = true
 sqlx.workspace = true
 async-trait = "0.1"
 jsonschema.workspace = true
 thiserror.workspace = true
+
+tempfile = "3"
 
 [dev-dependencies]
 tokio.workspace = true

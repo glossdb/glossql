@@ -65,7 +65,7 @@
   ],
   "constructor_results.constructorId": [
     {
-      "body": "{\"align\":\"constructor_results.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"positionOrder\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.308128884289,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":270},\"support\":0.260348407978,\"verdict\":\"flow\",\"voted\":270}",
+      "body": "{\"align\":\"constructor_results.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"positionOrder\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.30812888,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":270},\"support\":0.26034841,\"verdict\":\"flow\",\"voted\":270}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_results.constructorId"
@@ -73,7 +73,7 @@
   ],
   "constructor_results.constructorResultsId": [
     {
-      "body": "{\"align\":\"constructor_results.constructorId = constructor_standings.constructorId\",\"anchors\":36,\"convention\":\"constructorStandingsId - position\",\"decided\":9,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.124566211949,\"r_stock\":0.997184271093,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":797},\"support\":0.85280403642,\"verdict\":\"flow\",\"voted\":797}",
+      "body": "{\"align\":\"constructor_results.constructorId = constructor_standings.constructorId\",\"anchors\":36,\"convention\":\"constructorStandingsId - position\",\"decided\":9,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.12456621,\"r_stock\":0.99718427,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":797},\"support\":0.85280404,\"verdict\":\"flow\",\"voted\":797}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_results.constructorResultsId"
@@ -89,7 +89,7 @@
   ],
   "constructor_results.points": [
     {
-      "body": "{\"align\":\"constructor_results.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"points\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":644},\"support\":0.657635478972,\"verdict\":\"flow\",\"voted\":644}",
+      "body": "{\"align\":\"constructor_results.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"points\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":644},\"support\":0.65763548,\"verdict\":\"flow\",\"voted\":644}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_results.points"
@@ -97,7 +97,7 @@
   ],
   "constructor_results.raceId": [
     {
-      "body": "{\"align\":\"constructor_results.constructorId = constructor_standings.constructorId\",\"anchors\":36,\"convention\":\"position\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":356.4,\"r_stock\":0.222222222222,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.08917513402,\"verdict\":\"stock\",\"voted\":98}",
+      "body": "{\"align\":\"constructor_results.constructorId = constructor_standings.constructorId\",\"anchors\":36,\"convention\":\"position\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":356.4,\"r_stock\":0.22222222,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.089175134,\"verdict\":\"stock\",\"voted\":98}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_results.raceId"
@@ -105,7 +105,7 @@
   ],
   "constructor_standings.constructorId": [
     {
-      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"positionOrder\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.317106352774,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":266},\"support\":0.263678666899,\"verdict\":\"flow\",\"voted\":266}",
+      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"positionOrder\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.31710635,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":266},\"support\":0.26367867,\"verdict\":\"flow\",\"voted\":266}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.constructorId"
@@ -113,7 +113,7 @@
   ],
   "constructor_standings.constructorStandingsId": [
     {
-      "body": "{\"align\":\"constructor_standings.constructorId = constructor_results.constructorId\",\"anchors\":36,\"convention\":\"constructorResultsId\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.145152075027,\"r_stock\":0.996684254728,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":796},\"support\":0.851629388103,\"verdict\":\"flow\",\"voted\":796}",
+      "body": "{\"align\":\"constructor_standings.constructorId = constructor_results.constructorId\",\"anchors\":36,\"convention\":\"constructorResultsId\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.14515208,\"r_stock\":0.99668425,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":796},\"support\":0.85162939,\"verdict\":\"flow\",\"voted\":796}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.constructorStandingsId"
@@ -129,7 +129,7 @@
   ],
   "constructor_standings.points": [
     {
-      "body": "{\"align\":\"constructor_standings.constructorId = constructor_results.constructorId\",\"anchors\":36,\"convention\":\"points\",\"decided\":9,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":7.56596200161,\"r_stock\":0.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":632},\"support\":0.663811805352,\"verdict\":\"stock\",\"voted\":632}",
+      "body": "{\"align\":\"constructor_standings.constructorId = constructor_results.constructorId\",\"anchors\":36,\"convention\":\"points\",\"decided\":9,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":7.565962,\"r_stock\":0.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":632},\"support\":0.66381181,\"verdict\":\"stock\",\"voted\":632}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.points"
@@ -137,7 +137,7 @@
   ],
   "constructor_standings.position": [
     {
-      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"position\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.404255319149,\"r_stock\":0.990990990991,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":243},\"support\":0.239311231377,\"verdict\":\"flow\",\"voted\":243}",
+      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"position\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.40425532,\"r_stock\":0.99099099,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":243},\"support\":0.23931123,\"verdict\":\"flow\",\"voted\":243}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.position"
@@ -145,7 +145,7 @@
   ],
   "constructor_standings.raceId": [
     {
-      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"laps\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.382400322951,\"r_stock\":0.992078710947,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":40},\"support\":0.0324442672842,\"verdict\":\"flow\",\"voted\":40}",
+      "body": "{\"align\":\"constructor_standings.constructorId = results.constructorId\",\"anchors\":36,\"convention\":\"laps\",\"decided\":7,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.38240032,\"r_stock\":0.99207871,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":40},\"support\":0.032444267,\"verdict\":\"flow\",\"voted\":40}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.raceId"
@@ -153,7 +153,7 @@
   ],
   "constructor_standings.wins": [
     {
-      "body": "{\"align\":\"constructor_standings via races.circuitId = races.circuitId\",\"anchors\":36,\"convention\":\"round\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":0.993288590604,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":49},\"support\":0.557287910734,\"verdict\":\"flow\",\"voted\":49}",
+      "body": "{\"align\":\"constructor_standings via races.circuitId = races.circuitId\",\"anchors\":36,\"convention\":\"round\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":0.99328859,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":49},\"support\":0.55728791,\"verdict\":\"flow\",\"voted\":49}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "constructor_standings.wins"
@@ -249,7 +249,7 @@
   ],
   "qualifying.constructorId": [
     {
-      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"grid\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.301633842621,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":94},\"support\":0.241098694251,\"verdict\":\"flow\",\"voted\":94}",
+      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"grid\",\"decided\":10,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.30163384,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":94},\"support\":0.24109869,\"verdict\":\"flow\",\"voted\":94}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.constructorId"
@@ -265,7 +265,7 @@
   ],
   "qualifying.driverId": [
     {
-      "body": "{\"align\":\"qualifying.driverId = results.driverId\",\"anchors\":44,\"convention\":\"laps - position\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.340248962656,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":35},\"support\":0.153783103204,\"verdict\":\"flow\",\"voted\":35}",
+      "body": "{\"align\":\"qualifying.driverId = results.driverId\",\"anchors\":44,\"convention\":\"laps - position\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.34024896,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":35},\"support\":0.1537831,\"verdict\":\"flow\",\"voted\":35}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.driverId"
@@ -273,7 +273,7 @@
   ],
   "qualifying.number": [
     {
-      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0902683219864,\"r_stock\":0.994691710902,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.886644455057,\"verdict\":\"flow\",\"voted\":45}",
+      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.090268322,\"r_stock\":0.99469171,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.88664446,\"verdict\":\"flow\",\"voted\":45}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.number"
@@ -281,7 +281,7 @@
   ],
   "qualifying.position": [
     {
-      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"grid\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.131805157593,\"r_stock\":0.995684582189,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.886644455057,\"verdict\":\"flow\",\"voted\":45}",
+      "body": "{\"align\":\"qualifying.constructorId = results.constructorId\",\"anchors\":44,\"convention\":\"grid\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.13180516,\"r_stock\":0.99568458,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.88664446,\"verdict\":\"flow\",\"voted\":45}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.position"
@@ -289,7 +289,7 @@
   ],
   "qualifying.qualifyId": [
     {
-      "body": "{\"align\":\"qualifying.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"constructorStandingsId\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.262876727418,\"r_stock\":0.969439962727,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":181},\"support\":0.499322745453,\"verdict\":\"flow\",\"voted\":181}",
+      "body": "{\"align\":\"qualifying.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"constructorStandingsId\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.26287673,\"r_stock\":0.96943996,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":181},\"support\":0.49932275,\"verdict\":\"flow\",\"voted\":181}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.qualifyId"
@@ -297,7 +297,7 @@
   ],
   "qualifying.raceId": [
     {
-      "body": "{\"align\":\"qualifying.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":3,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":230.688888889,\"r_stock\":0.269330565646,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":6},\"support\":0.0084356793864,\"verdict\":\"stock\",\"voted\":6}",
+      "body": "{\"align\":\"qualifying.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":3,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":230.68889,\"r_stock\":0.26933057,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":6},\"support\":0.0084356794,\"verdict\":\"stock\",\"voted\":6}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "qualifying.raceId"
@@ -361,7 +361,7 @@
   ],
   "results.constructorId": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":18,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.287607403924,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":88},\"support\":0.223928808027,\"verdict\":\"flow\",\"voted\":88}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":18,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.2876074,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":88},\"support\":0.22392881,\"verdict\":\"flow\",\"voted\":88}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.constructorId"
@@ -377,7 +377,7 @@
   ],
   "results.driverId": [
     {
-      "body": "{\"align\":\"results.driverId = qualifying.driverId\",\"anchors\":44,\"convention\":\"number\",\"decided\":16,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.245098039216,\"r_stock\":0.986607142857,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":82},\"support\":0.0898054286583,\"verdict\":\"flow\",\"voted\":82}",
+      "body": "{\"align\":\"results.driverId = qualifying.driverId\",\"anchors\":44,\"convention\":\"number\",\"decided\":16,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.24509804,\"r_stock\":0.98660714,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":82},\"support\":0.089805429,\"verdict\":\"flow\",\"voted\":82}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.driverId"
@@ -385,7 +385,7 @@
   ],
   "results.fastestLap": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":11,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.243049897459,\"r_stock\":0.965621216078,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":34},\"support\":0.116533413599,\"verdict\":\"flow\",\"voted\":35}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":11,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.2430499,\"r_stock\":0.96562122,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":34},\"support\":0.11653341,\"verdict\":\"flow\",\"voted\":35}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.fastestLap"
@@ -393,7 +393,7 @@
   ],
   "results.grid": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.135458167331,\"r_stock\":1.00355174525,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.886644455057,\"verdict\":\"flow\",\"voted\":45}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.13545817,\"r_stock\":1.0035517,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":45},\"support\":0.88664446,\"verdict\":\"flow\",\"voted\":45}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.grid"
@@ -401,7 +401,7 @@
   ],
   "results.laps": [
     {
-      "body": "{\"align\":\"results via races.circuitId = races.circuitId\",\"anchors\":44,\"convention\":\"year\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.419242277022,\"r_stock\":0.99744129841,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":36},\"support\":0.365419130118,\"verdict\":\"flow\",\"voted\":36}",
+      "body": "{\"align\":\"results via races.circuitId = races.circuitId\",\"anchors\":44,\"convention\":\"year\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.41924228,\"r_stock\":0.9974413,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":36},\"support\":0.36541913,\"verdict\":\"flow\",\"voted\":36}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.laps"
@@ -417,7 +417,7 @@
   ],
   "results.number": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0913089927217,\"r_stock\":1.0004056466,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":44},\"support\":0.854674770809,\"verdict\":\"flow\",\"voted\":44}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"number\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.091308993,\"r_stock\":1.0004056,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":44},\"support\":0.85467477,\"verdict\":\"flow\",\"voted\":44}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.number"
@@ -425,7 +425,7 @@
   ],
   "results.points": [
     {
-      "body": "{\"align\":\"results.constructorId = constructor_results.constructorId\",\"anchors\":44,\"convention\":\"points\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":636},\"support\":0.648908405937,\"verdict\":\"flow\",\"voted\":637}",
+      "body": "{\"align\":\"results.constructorId = constructor_results.constructorId\",\"anchors\":44,\"convention\":\"points\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":636},\"support\":0.64890841,\"verdict\":\"flow\",\"voted\":637}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.points"
@@ -433,7 +433,7 @@
   ],
   "results.position": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":13,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.338902646003,\"r_stock\":0.97216356982,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":180},\"support\":0.4978705515,\"verdict\":\"flow\",\"voted\":180}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":13,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.33890265,\"r_stock\":0.97216357,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":180},\"support\":0.49787055,\"verdict\":\"flow\",\"voted\":180}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.position"
@@ -441,7 +441,7 @@
   ],
   "results.positionOrder": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.256216814832,\"r_stock\":1.01479097353,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":42},\"support\":0.796750643648,\"verdict\":\"flow\",\"voted\":42}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":14,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.25621681,\"r_stock\":1.014791,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":42},\"support\":0.79675064,\"verdict\":\"flow\",\"voted\":42}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.positionOrder"
@@ -449,7 +449,7 @@
   ],
   "results.raceId": [
     {
-      "body": "{\"align\":\"results.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":16,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":469.8,\"r_stock\":0.318181818182,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":117},\"support\":0.108374291973,\"verdict\":\"stock\",\"voted\":117}",
+      "body": "{\"align\":\"results.constructorId = constructor_standings.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":16,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":469.8,\"r_stock\":0.31818182,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":117},\"support\":0.10837429,\"verdict\":\"stock\",\"voted\":117}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.raceId"
@@ -457,7 +457,7 @@
   ],
   "results.rank": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":11,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.235045317221,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":33},\"support\":0.850840977837,\"verdict\":\"flow\",\"voted\":33}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":11,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.23504532,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":33},\"support\":0.85084098,\"verdict\":\"flow\",\"voted\":33}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.rank"
@@ -465,7 +465,7 @@
   ],
   "results.resultId": [
     {
-      "body": "{\"align\":\"results.driverId = standings.driverId\",\"anchors\":44,\"convention\":\"driverStandingsId - points\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.334882682619,\"r_stock\":0.998896341718,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":1276},\"support\":0.385949894363,\"verdict\":\"flow\",\"voted\":1276}",
+      "body": "{\"align\":\"results.driverId = standings.driverId\",\"anchors\":44,\"convention\":\"driverStandingsId - points\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.33488268,\"r_stock\":0.99889634,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":1276},\"support\":0.38594989,\"verdict\":\"flow\",\"voted\":1276}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.resultId"
@@ -473,7 +473,7 @@
   ],
   "results.statusId": [
     {
-      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.41038961039,\"r_stock\":1.01919902415,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":88},\"support\":0.223928808027,\"verdict\":\"flow\",\"voted\":90}",
+      "body": "{\"align\":\"results.constructorId = qualifying.constructorId\",\"anchors\":44,\"convention\":\"position\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.41038961,\"r_stock\":1.019199,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":88},\"support\":0.22392881,\"verdict\":\"flow\",\"voted\":90}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "results.statusId"
@@ -489,7 +489,7 @@
   ],
   "standings.driverId": [
     {
-      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"number\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.245098039216,\"r_stock\":0.966145833333,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":80},\"support\":0.0878451486009,\"verdict\":\"flow\",\"voted\":80}",
+      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"number\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.24509804,\"r_stock\":0.96614583,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":80},\"support\":0.087845149,\"verdict\":\"flow\",\"voted\":80}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.driverId"
@@ -497,7 +497,7 @@
   ],
   "standings.driverStandingsId": [
     {
-      "body": "{\"align\":\"standings.driverId = results.driverId\",\"anchors\":32,\"convention\":\"resultId\",\"decided\":4,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.385291087745,\"r_stock\":0.998851186044,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":623},\"support\":0.183242291065,\"verdict\":\"flow\",\"voted\":631}",
+      "body": "{\"align\":\"standings.driverId = results.driverId\",\"anchors\":32,\"convention\":\"resultId\",\"decided\":4,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.38529109,\"r_stock\":0.99885119,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":623},\"support\":0.18324229,\"verdict\":\"flow\",\"voted\":631}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.driverStandingsId"
@@ -505,7 +505,7 @@
   ],
   "standings.points": [
     {
-      "body": "{\"align\":\"standings.driverId = results.driverId\",\"anchors\":32,\"convention\":\"points\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":6.75,\"r_stock\":0.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":1261},\"support\":0.381252711667,\"verdict\":\"stock\",\"voted\":1261}",
+      "body": "{\"align\":\"standings.driverId = results.driverId\",\"anchors\":32,\"convention\":\"points\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":6.75,\"r_stock\":0.0,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":1261},\"support\":0.38125271,\"verdict\":\"stock\",\"voted\":1261}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.points"
@@ -513,7 +513,7 @@
   ],
   "standings.position": [
     {
-      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"position\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.289151157512,\"r_stock\":0.990338164251,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":111},\"support\":0.59396726708,\"verdict\":\"flow\",\"voted\":111}",
+      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"position\",\"decided\":8,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.28915116,\"r_stock\":0.99033816,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":111},\"support\":0.59396727,\"verdict\":\"flow\",\"voted\":111}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.position"
@@ -521,7 +521,7 @@
   ],
   "standings.raceId": [
     {
-      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"qualifyId\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.391314039919,\"r_stock\":0.98636954152,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":18},\"support\":0.0696971228472,\"verdict\":\"flow\",\"voted\":18}",
+      "body": "{\"align\":\"standings.driverId = qualifying.driverId\",\"anchors\":32,\"convention\":\"qualifyId\",\"decided\":6,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.39131404,\"r_stock\":0.98636954,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":18},\"support\":0.069697123,\"verdict\":\"flow\",\"voted\":18}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.raceId"
@@ -529,7 +529,7 @@
   ],
   "standings.wins": [
     {
-      "body": "{\"align\":\"standings via races.circuitId = races.circuitId\",\"anchors\":32,\"convention\":\"round\",\"decided\":5,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":0.9926549336,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":52},\"support\":0.573001422921,\"verdict\":\"flow\",\"voted\":52}",
+      "body": "{\"align\":\"standings via races.circuitId = races.circuitId\",\"anchors\":32,\"convention\":\"round\",\"decided\":5,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":0.99265493,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":52},\"support\":0.57300142,\"verdict\":\"flow\",\"voted\":52}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "standings.wins"

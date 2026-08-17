@@ -34,8 +34,13 @@ its own gate: two runs of unchanged code differed in the last digits of
 not associate, so DataFusion may add the same values in a different
 order run to run. Two normalisations settle it, both in `scrub`:
 
-- every float rounds to **twelve significant digits** — far finer than
-  any change worth arguing about, far coarser than the noise;
+- every float rounds to **eight significant digits**. Twelve was not
+  enough: rounding only settles the noise if the quantum sits well above
+  it, and booksql's larger sums carry a relative noise near 3e-12, so
+  values landing on a boundary flipped either way (`31996.2576049` /
+  `31996.257605`, found 2026-08-17 by the first automated diff). Eight
+  leaves four orders of margin, and a real change moves far more than
+  1 part in 1e8;
 - anything under **1e-12 absolute snaps to zero**. A residual of 2e-17
   means the two series matched exactly; its significant digits *are* the
   noise, so rounding alone cannot settle it.
@@ -46,7 +51,18 @@ otherwise it never reaches the numbers that actually move.
 With both in place, two runs of the same code are byte-identical, and a
 diff means behaviour changed.
 
-## Regenerating
+## Diffing, and regenerating
+
+`./goldens/diff.sh` re-captures into a temp dir and diffs against what is
+committed. Any output means behaviour moved.
+
+```
+./goldens/diff.sh                 # all four (~10 min; rel-event is 8 of it)
+./goldens/diff.sh fin rel-f1      # the fast ones
+UPDATE=1 ./goldens/diff.sh        # accept the new capture as the baseline
+```
+
+It wraps one command per corpus:
 
 ```
 cargo run --release -p glossql-serverd --example capture_goldens -- \
@@ -56,7 +72,11 @@ cargo run --release -p glossql-serverd --example capture_goldens -- \
 - `--setup=` runs glossql after landing, for a corpus that ships no FK
   truth of its own (`booksql/setup.glossql`).
 - `--existing` captures a workspace that already carries glosses instead
-  of landing one, which is how `fin` is taken.
+  of landing one, which is how `fin` is taken. `--setup=` applies here
+  too: `fin`'s FK truth is re-declared on every capture, because
+  `relationships` crossed to the lake on 2026-08-17 and that workspace
+  is a fixture nobody wants to re-land. Declaring is idempotent, so it
+  is a statement in the file rather than a one-off to remember.
 
 RelBench corpora carry `schema.json` beside `tables/`; the FK truth in it
 is declared automatically, and that is what turns the borrowed-axis and

@@ -63,8 +63,13 @@ fn render(outcome: &Outcome) -> serde_json::Value {
 
 /// Sums over partitions do not associate: DataFusion may add the same
 /// values in a different order run to run, and the last bit moves.
-/// Rounding to twelve significant digits removes that without hiding any
-/// change worth arguing about — a real one moves far more than 1e-16.
+///
+/// Rounding settles it only if the quantum is comfortably above the
+/// noise, because a value sitting on a rounding boundary flips either
+/// way. Twelve digits was not: booksql's larger sums carry a relative
+/// noise near 3e-12, and two means flipped between runs
+/// (`31996.2576049` / `31996.257605`). Eight digits leaves four orders
+/// of margin, and a real change moves far more than 1 part in 1e8.
 fn round_sig(x: f64, digits: i32) -> f64 {
     if x == 0.0 || !x.is_finite() {
         return x;
@@ -106,7 +111,7 @@ fn scrub(v: &mut serde_json::Value) {
             if let Some(f) = n.as_f64()
                 && !n.is_i64()
                 && !n.is_u64()
-                && let Some(r) = serde_json::Number::from_f64(round_sig(f, 12))
+                && let Some(r) = serde_json::Number::from_f64(round_sig(f, 8))
             {
                 *v = serde_json::Value::Number(r);
             }
@@ -172,6 +177,25 @@ async fn cell(session: &Session, sql: &str) -> Vec<Vec<String>> {
     rows
 }
 
+/// Run a `.glossql` setup file statement by statement, reporting what the
+/// door refuses rather than stopping — a refusal is worth seeing.
+async fn run_setup(session: &Session, path: &Path) -> usize {
+    let text = std::fs::read_to_string(path).expect("setup file");
+    let mut n = 0;
+    for stmt in text.split(";\n") {
+        let stmt = stmt.trim();
+        if stmt.is_empty() || stmt.lines().all(|l| l.trim_start().starts_with("--")) {
+            continue;
+        }
+        match session.execute(&format!("{stmt};")).await {
+            Ok(_) => n += 1,
+            Err(e) => println!("  REFUSED setup: {e}"),
+        }
+    }
+    println!("  ran {n} setup statement(s) from {}", path.display());
+    n
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let mut args = std::env::args().skip(1);
@@ -211,7 +235,7 @@ async fn main() {
     if !existing {
         std::fs::File::create(&glossary).unwrap();
     }
-    let store = Store::open(&format!("sqlite:{}", glossary.display()))
+    let store = Store::open(&format!("sqlite:{}", glossary.display()), lake.clone())
         .await
         .unwrap();
     // The same wiring `serverd` uses, so the workspace receives the
@@ -240,6 +264,13 @@ async fn main() {
     let kind = source_kind(&files);
     if existing {
         session.execute(&format!("USE {dataset};")).await.expect("use");
+        // An existing workspace can need declarations too — fin's FK
+        // truth was re-declared when `relationships` crossed to the lake.
+        // Declaring is idempotent, so this runs on every capture rather
+        // than being a one-off somebody has to remember.
+        if let Some(path) = &setup {
+            run_setup(&session, path).await;
+        }
         let names = lake_tables(&session, &dataset).await;
         println!("existing workspace: {} tables", names.len());
         capture(&session, &dataset, names, &only, &out).await;
@@ -310,18 +341,7 @@ async fn main() {
 
     // A corpus that ships no FK truth declares it by hand.
     if let Some(path) = &setup {
-        let text = std::fs::read_to_string(path).expect("setup file");
-        for stmt in text.split(";\n") {
-            let stmt = stmt.trim();
-            if stmt.is_empty() || stmt.lines().all(|l| l.trim_start().starts_with("--")) {
-                continue;
-            }
-            match session.execute(&format!("{stmt};")).await {
-                Ok(_) => rels += 1,
-                Err(e) => println!("  REFUSED setup: {e}"),
-            }
-        }
-        println!("  ran {} setup statement(s) from {}", rels, path.display());
+        run_setup(&session, path).await;
     }
 
     println!(

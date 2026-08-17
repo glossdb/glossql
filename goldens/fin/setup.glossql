@@ -1,0 +1,22 @@
+-- fin: the FK truth the finance generator ground-truths, transcribed
+-- from the workspace's sqlite `relationships` table on 2026-08-17, when
+-- the relation crossed to the lake. The workspace is a fixture with real
+-- glosses, so it was re-declared rather than re-landed — declaring an
+-- edge is what a user does, and there is no migration machinery
+-- (schema is CREATE-only; a shim would need a ruling).
+USE fin;
+
+DECLARE RELATIONSHIP account_balances.account_id -> chart_of_accounts.account_id;
+DECLARE RELATIONSHIP ap_invoices.entry_id -> journal_entries.entry_id;
+DECLARE RELATIONSHIP ap_payments.ap_invoice_id -> ap_invoices.ap_invoice_id;
+DECLARE RELATIONSHIP ar_invoices.customer_id -> customers.customer_id;
+DECLARE RELATIONSHIP ar_invoices.order_id -> sales_orders.order_id;
+DECLARE RELATIONSHIP chart_of_accounts.parent_id -> chart_of_accounts.account_id;
+DECLARE RELATIONSHIP inventory_positions.product_id -> products.product_id;
+DECLARE RELATIONSHIP journal_lines.account_id -> chart_of_accounts.account_id;
+DECLARE RELATIONSHIP journal_lines.entry_id -> journal_entries.entry_id;
+DECLARE RELATIONSHIP receipts.ar_invoice_id -> ar_invoices.ar_invoice_id;
+DECLARE RELATIONSHIP receipts.customer_id -> customers.customer_id;
+DECLARE RELATIONSHIP sales_order_lines.order_id -> sales_orders.order_id;
+DECLARE RELATIONSHIP sales_order_lines.product_id -> products.product_id;
+DECLARE RELATIONSHIP sales_orders.customer_id -> customers.customer_id;

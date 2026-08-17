@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod relations;
-pub use relations::IcebergRelations;
+pub use relations::{IcebergRelations, RelationSpec, Relations, Row};
 
 use iceberg::io::LocalFsStorageFactory;
 use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};

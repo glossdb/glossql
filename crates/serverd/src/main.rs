@@ -55,8 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "sqlite://{}?mode=rwc",
         args.workspace.join("glossary.sqlite").display()
     );
-    let store = Store::open(&store_url).await?;
     let lake = Lake::open(&args.workspace.join("catalog.sqlite"), &warehouse).await?;
+    let store = Store::open(&store_url, lake.clone()).await?;
     // The runtime's root is the workspace, so declarations reference
     // scripts the way the corpus spells them: 'functions/profile.rhai'.
     let runtime = Arc::new(RhaiRuntime::new(args.workspace.clone()));

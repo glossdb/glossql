@@ -2999,7 +2999,6 @@ dependencies = [
  "async-trait",
  "datafusion",
  "futures",
- "glossql-glossary",
  "iceberg",
  "iceberg-catalog-sql",
  "iceberg-datafusion",
@@ -3014,11 +3013,13 @@ name = "glossql-glossary"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "glossql-catalog",
  "glossql-parser",
  "insta",
  "jsonschema",
  "serde_json",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
 ]

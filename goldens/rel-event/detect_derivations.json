@@ -9,7 +9,7 @@
   ],
   "event_interest": [
     {
-      "body": "{\"applicable\":true,\"candidates\":[{\"form\":\"product\",\"match_rate\":0.958501104039,\"operands\":[\"invited\",\"interested\"],\"support\":15398,\"target\":\"not_interested\",\"violations\":639},{\"form\":\"product\",\"match_rate\":0.957526951552,\"operands\":[\"interested\",\"not_interested\"],\"support\":15398,\"target\":\"invited\",\"violations\":654}],\"rows\":15398,\"truncated\":false}",
+      "body": "{\"applicable\":true,\"candidates\":[{\"form\":\"product\",\"match_rate\":0.9585011,\"operands\":[\"invited\",\"interested\"],\"support\":15398,\"target\":\"not_interested\",\"violations\":639},{\"form\":\"product\",\"match_rate\":0.95752695,\"operands\":[\"interested\",\"not_interested\"],\"support\":15398,\"target\":\"invited\",\"violations\":654}],\"rows\":15398,\"truncated\":false}",
       "computed_at": "<volatile>",
       "function": "detect_derivations",
       "subject": "event_interest"

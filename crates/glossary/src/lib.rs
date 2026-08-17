@@ -9,14 +9,13 @@
 //! (`orders.amount`, `orders.customer_id -> customers.id`); the session
 //! resolves dataset prefixes before the store sees anything.
 
-pub mod relations;
 pub mod rules;
 pub mod schemas;
 mod store;
 mod types;
 
 pub use schemas::{GROUNDING_SCHEMA, grounding_schema};
-pub use relations::{Relations, Row};
+pub use glossql_catalog::{Lake, Relations, Row};
 pub use rules::{admit_grain, grain_of};
 pub use store::{
     BriefCounts, ReadContext, Relation, Scope, Store, accepts_relation, relation_columns,

@@ -1,31 +1,34 @@
-//! The store's relations on Iceberg v3 (stage 3): rows round-trip, and
-//! the write order comes from the format rather than a column of ours.
+//! The store's relations on Iceberg v3 (stage 3): rows round-trip, the
+//! write order comes from the format rather than a column of ours, and a
+//! dataset-scoped relation lives in `<dataset>_meta` with the dataset
+//! carried by the namespace.
 
-use glossql_catalog::{IcebergRelations, Lake};
-use glossql_glossary::Relations;
+use glossql_catalog::{IcebergRelations, Lake, RelationSpec, Relations};
 
-const RELATIONSHIPS: (&str, &[&str]) = (
-    "relationships",
-    &["dataset", "left_path", "op", "right_path"],
-);
+const RELATIONSHIPS: RelationSpec = RelationSpec {
+    name: "relationships",
+    columns: &["dataset", "left_path", "op", "right_path"],
+    dataset_scoped: true,
+};
 
 fn row(v: &[&str]) -> Vec<Option<String>> {
     v.iter().map(|s| Some((*s).to_string())).collect()
 }
 
-async fn open(dir: &std::path::Path) -> IcebergRelations {
+async fn open(dir: &std::path::Path) -> (Lake, IcebergRelations) {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    IcebergRelations::open(lake, "fin_meta", &[RELATIONSHIPS])
+    let rel = IcebergRelations::open(lake.clone(), "glossql", &[RELATIONSHIPS])
         .await
-        .unwrap()
+        .unwrap();
+    (lake, rel)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rows_round_trip_and_an_empty_relation_is_empty() {
     let dir = tempfile::tempdir().unwrap();
-    let rel = open(dir.path()).await;
+    let (_lake, rel) = open(dir.path()).await;
 
     assert!(
         rel.scan("relationships").await.unwrap().is_empty(),
@@ -51,9 +54,48 @@ async fn rows_round_trip_and_an_empty_relation_is_empty() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_namespace_carries_the_dataset() {
+    let dir = tempfile::tempdir().unwrap();
+    let (lake, rel) = open(dir.path()).await;
+
+    // One append, two datasets: the seam fans out to each dataset's own
+    // record namespace and fans back in at scan.
+    rel.append(
+        "relationships",
+        vec![
+            row(&["fin", "orders.customer_id", "->", "customers.id"]),
+            row(&["books", "review.book_id", "->", "book.id"]),
+        ],
+    )
+    .await
+    .unwrap();
+
+    for ns in ["fin_meta", "books_meta"] {
+        assert_eq!(
+            lake.table_names(ns).await.unwrap(),
+            vec!["relationships"],
+            "{ns} holds its dataset's record"
+        );
+    }
+    assert_eq!(
+        lake.table_columns("fin_meta", "relationships").await.unwrap(),
+        vec!["left_path", "op", "right_path"],
+        "the namespace carries the dataset; a stored column restating it \
+         would be a place for the two to disagree"
+    );
+
+    let mut rows = rel.scan("relationships").await.unwrap();
+    rows.sort_by_key(|r| r.cells.clone());
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get(0), Some("books"), "injected from books_meta");
+    assert_eq!(rows[0].get(1), Some("review.book_id"));
+    assert_eq!(rows[1].get(0), Some("fin"), "injected from fin_meta");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_format_supplies_the_write_order() {
     let dir = tempfile::tempdir().unwrap();
-    let rel = open(dir.path()).await;
+    let (_lake, rel) = open(dir.path()).await;
 
     // Three commits, then two rows inside one.
     for i in 1..=3 {
@@ -98,28 +140,16 @@ async fn the_format_supplies_the_write_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn supersession_is_the_rule_applied_over_history() {
+async fn a_scan_returns_history_not_the_current_view() {
     let dir = tempfile::tempdir().unwrap();
-    let rel = open(dir.path()).await;
+    let (_lake, rel) = open(dir.path()).await;
 
-    // The same edge declared twice: the scan returns both, because a scan
-    // returns history. Which one stands is `rules::latest_by`, not the
-    // store — that is the whole point of the seam.
-    rel.append("relationships", vec![row(&["fin", "a.k", "->", "b.k"])])
-        .await
-        .unwrap();
-    rel.append("relationships", vec![row(&["fin", "a.k", "<->", "b.k"])])
-        .await
-        .unwrap();
-
-    let rows = rel.scan("relationships").await.unwrap();
-    assert_eq!(rows.len(), 2, "history, not the current view");
-
-    let current = glossql_glossary::rules::latest_by(
-        rows,
-        |r| (r.get(0).map(str::to_string), r.get(1).map(str::to_string)),
-        |r| r.seq,
-    );
-    assert_eq!(current.len(), 1);
-    assert_eq!(current[0].get(2), Some("<->"), "the later write stands");
+    // The same edge written twice comes back twice. Collapsing it is a
+    // rule, applied above this seam — see the glossary's own test.
+    for _ in 0..2 {
+        rel.append("relationships", vec![row(&["fin", "a.k", "->", "b.k"])])
+            .await
+            .unwrap();
+    }
+    assert_eq!(rel.scan("relationships").await.unwrap().len(), 2);
 }

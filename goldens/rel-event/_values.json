@@ -1,14 +1,14 @@
 {
   "event_attendees.event::profile": {
-    "cardinality_ratio": 0.0110871279481,
+    "cardinality_ratio": 0.011087128,
     "distinct": 22046,
-    "entropy": 9.03149613656,
+    "entropy": 9.0314961,
     "max": 3127079.0,
     "min": 104748.0,
     "null_ratio": 0.005784,
     "numeric": {
       "mad": 582550.0,
-      "mean": 1826248.51475,
+      "mean": 1826248.5,
       "percentiles": {
         "p01": 402877.0,
         "p25": 1277886.0,
@@ -16,7 +16,7 @@
         "p75": 2442726.0,
         "p99": 2990502.0
       },
-      "stddev": 727224.554865
+      "stddev": 727224.55
     },
     "summary": {
       "distinct": 22046,
@@ -116,9 +116,9 @@
     "applicable": false
   },
   "event_attendees.start_time::profile": {
-    "cardinality_ratio": 0.00288569083579,
+    "cardinality_ratio": 0.0028856908,
     "distinct": 5738,
-    "entropy": 7.24249050646,
+    "entropy": 7.2424905,
     "max": "2015-06-11T00:00:00.001",
     "min": "2012-05-24T15:00:00.002",
     "null_ratio": 0.005784,
@@ -241,21 +241,21 @@
           "start": "2013-08-30T23:30:00.003"
         },
         {
-          "days": 32.7951388889,
+          "days": 32.795139,
           "end": "2013-12-31T00:00:00.001",
           "missing_periods": 1573,
           "severity": "severe",
           "start": "2013-11-28T04:55:00.003"
         },
         {
-          "days": 24.3229166667,
+          "days": 24.322917,
           "end": "2013-05-15T05:05:00.003",
           "missing_periods": 1166,
           "severity": "severe",
           "start": "2013-04-20T21:20:00.003"
         },
         {
-          "days": 23.7881944444,
+          "days": 23.788194,
           "end": "2013-06-08T00:00:00.003",
           "missing_periods": 1140,
           "severity": "severe",
@@ -269,14 +269,14 @@
           "start": "2013-06-08T00:00:00.003"
         },
         {
-          "days": 21.3368055556,
+          "days": 21.336806,
           "end": "2012-06-22T17:05:00.003",
           "missing_periods": 1023,
           "severity": "severe",
           "start": "2012-06-01T09:00:00"
         },
         {
-          "days": 19.7048611111,
+          "days": 19.704861,
           "end": "2013-11-28T04:55:00.003",
           "missing_periods": 944,
           "severity": "severe",
@@ -290,49 +290,49 @@
           "start": "2013-10-22T00:00:00.001"
         },
         {
-          "days": 16.0833333333,
+          "days": 16.083333,
           "end": "2013-10-22T00:00:00.001",
           "missing_periods": 771,
           "severity": "severe",
           "start": "2013-10-05T22:00:00.003"
         },
         {
-          "days": 14.6041666667,
+          "days": 14.604167,
           "end": "2013-03-30T16:30:00.002",
           "missing_periods": 700,
           "severity": "severe",
           "start": "2013-03-16T02:00:00.003"
         },
         {
-          "days": 11.0729166667,
+          "days": 11.072917,
           "end": "2013-07-25T00:00:00.001",
           "missing_periods": 530,
           "severity": "severe",
           "start": "2013-07-13T22:15:00.003"
         },
         {
-          "days": 9.08333333333,
+          "days": 9.0833333,
           "end": "2013-03-08T20:00:00.003",
           "missing_periods": 435,
           "severity": "severe",
           "start": "2013-02-27T18:00:00.002"
         },
         {
-          "days": 9.08333333333,
+          "days": 9.0833333,
           "end": "2013-04-16T14:00:00.002",
           "missing_periods": 435,
           "severity": "severe",
           "start": "2013-04-07T12:00:00.003"
         },
         {
-          "days": 8.64583333333,
+          "days": 8.6458333,
           "end": "2013-02-27T08:30:00.003",
           "missing_periods": 414,
           "severity": "severe",
           "start": "2013-02-18T17:00:00.003"
         },
         {
-          "days": 8.45833333333,
+          "days": 8.4583333,
           "end": "2013-08-10T19:00:00.002",
           "missing_periods": 405,
           "severity": "severe",
@@ -353,7 +353,7 @@
           "start": "2013-03-08T20:00:00.003"
         },
         {
-          "days": 6.83333333333,
+          "days": 6.8333333,
           "end": "2013-01-19T20:00:00.003",
           "missing_periods": 327,
           "severity": "severe",
@@ -372,7 +372,7 @@
   "event_attendees.status::profile": {
     "cardinality_ratio": 2e-6,
     "distinct": 4,
-    "entropy": 0.616149532773,
+    "entropy": 0.61614953,
     "lengths": {
       "avg": 6.4012985,
       "max": 7,
@@ -412,15 +412,15 @@
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "event_attendees.user_id::profile": {
-    "cardinality_ratio": 0.360696305145,
+    "cardinality_ratio": 0.36069631,
     "distinct": 4227,
-    "entropy": 7.42679923465,
+    "entropy": 7.4267992,
     "max": 38196.0,
     "min": 0.0,
     "null_ratio": 0.9941405,
     "numeric": {
       "mad": 4686.0,
-      "mean": 13104.2094889,
+      "mean": 13104.209,
       "percentiles": {
         "p01": 932.9,
         "p25": 4340.0,
@@ -428,7 +428,7 @@
         "p75": 21893.0,
         "p99": 37475.0
       },
-      "stddev": 10852.035797
+      "stddev": 10852.036
     },
     "summary": {
       "distinct": 4227,
@@ -539,9 +539,9 @@
         "from": "event",
         "g3": 0.0058565,
         "kind": "edge",
-        "lambda": 0.000511989077566,
+        "lambda": 0.00051198908,
         "pair_groups": 33760,
-        "rows_per_value": 90.7152900621,
+        "rows_per_value": 90.71529,
         "to": "user_id"
       },
       {
@@ -552,7 +552,7 @@
         "kind": "edge",
         "lambda": 1.0,
         "pair_groups": 22047,
-        "rows_per_value": 90.7152900621,
+        "rows_per_value": 90.71529,
         "to": "start_time"
       },
       {
@@ -574,30 +574,30 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 16929,
-        "rows_per_value": 348.492768775,
+        "rows_per_value": 348.49277,
         "to": "user_id"
       }
     ],
     "rows": 2000000
   },
   "event_interest.event::profile": {
-    "cardinality_ratio": 0.574490193532,
+    "cardinality_ratio": 0.57449019,
     "distinct": 8846,
-    "entropy": 8.3438859276,
+    "entropy": 8.3438859,
     "max": 3124277.0,
     "min": 74443.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 308642.0,
-      "mean": 1672866.24029,
+      "mean": 1672866.2,
       "percentiles": {
         "p01": 382342.46,
-        "p25": 1273469.25,
+        "p25": 1273469.3,
         "p50": 1712178.0,
         "p75": 1936392.0,
         "p99": 3097805.0
       },
-      "stddev": 564769.289171
+      "stddev": 564769.29
     },
     "summary": {
       "distinct": 8846,
@@ -694,15 +694,15 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "event_interest.interested::profile": {
-    "cardinality_ratio": 0.000129886998311,
+    "cardinality_ratio": 0.000129887,
     "distinct": 2,
-    "entropy": 0.581542174774,
+    "entropy": 0.58154217,
     "max": 1.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 0.0,
-      "mean": 0.268281595012,
+      "mean": 0.2682816,
       "percentiles": {
         "p01": 0.0,
         "p25": 0.0,
@@ -710,7 +710,7 @@
         "p75": 1.0,
         "p99": 1.0
       },
-      "stddev": 0.443079372635
+      "stddev": 0.44307937
     },
     "summary": {
       "distinct": 2,
@@ -735,15 +735,15 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "event_interest.invited::profile": {
-    "cardinality_ratio": 0.000129886998311,
+    "cardinality_ratio": 0.000129887,
     "distinct": 2,
-    "entropy": 0.17572551964,
+    "entropy": 0.17572552,
     "max": 1.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 0.0,
-      "mean": 0.0424730484479,
+      "mean": 0.042473048,
       "percentiles": {
         "p01": 0.0,
         "p25": 0.0,
@@ -751,7 +751,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.201672333174
+      "stddev": 0.20167233
     },
     "summary": {
       "distinct": 2,
@@ -776,15 +776,15 @@
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
   "event_interest.not_interested::profile": {
-    "cardinality_ratio": 0.000129886998311,
+    "cardinality_ratio": 0.000129887,
     "distinct": 2,
-    "entropy": 0.146305079077,
+    "entropy": 0.14630508,
     "max": 1.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 0.0,
-      "mean": 0.033380958566,
+      "mean": 0.033380959,
       "percentiles": {
         "p01": 0.0,
         "p25": 0.0,
@@ -792,7 +792,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.17963509072
+      "stddev": 0.17963509
     },
     "summary": {
       "distinct": 2,
@@ -820,9 +820,9 @@
     "applicable": false
   },
   "event_interest.timestamp::profile": {
-    "cardinality_ratio": 0.303351084556,
+    "cardinality_ratio": 0.30335108,
     "distinct": 4671,
-    "entropy": 8.15920684756,
+    "entropy": 8.1592068,
     "max": "2012-12-12T12:33:32.985",
     "min": "2012-04-27T21:41:02.227",
     "null_ratio": 0.0,
@@ -921,115 +921,115 @@
     "confidence": 0.3,
     "gaps": {
       "count": 2123,
-      "largest_days": 26.2648958333,
+      "largest_days": 26.264896,
       "sample": [
         {
-          "days": 26.2648958333,
+          "days": 26.264896,
           "end": "2012-05-24T04:02:29.999",
           "missing_periods": 34382,
           "severity": "severe",
           "start": "2012-04-27T21:41:02.227"
         },
         {
-          "days": 13.1327199074,
+          "days": 13.13272,
           "end": "2012-06-06T07:13:36.562",
           "missing_periods": 17190,
           "severity": "severe",
           "start": "2012-05-24T04:02:29.999"
         },
         {
-          "days": 9.62350694444,
+          "days": 9.6235069,
           "end": "2012-06-15T22:11:27.383",
           "missing_periods": 12597,
           "severity": "severe",
           "start": "2012-06-06T07:13:36.562"
         },
         {
-          "days": 6.96944444444,
+          "days": 6.9694444,
           "end": "2012-06-22T21:27:27.637",
           "missing_periods": 9122,
           "severity": "severe",
           "start": "2012-06-15T22:11:27.383"
         },
         {
-          "days": 4.90858796296,
+          "days": 4.908588,
           "end": "2012-07-03T03:07:58.811",
           "missing_periods": 6424,
           "severity": "severe",
           "start": "2012-06-28T05:19:36.761"
         },
         {
-          "days": 3.88471064815,
+          "days": 3.8847106,
           "end": "2012-06-27T01:17:15.728",
           "missing_periods": 5084,
           "severity": "severe",
           "start": "2012-06-23T04:03:16.914"
         },
         {
-          "days": 3.44075231481,
+          "days": 3.4407523,
           "end": "2012-08-29T03:15:16.925",
           "missing_periods": 4503,
           "severity": "severe",
           "start": "2012-08-25T16:40:35.732"
         },
         {
-          "days": 1.75702546296,
+          "days": 1.7570255,
           "end": "2012-07-04T21:18:05.053",
           "missing_periods": 2299,
           "severity": "severe",
           "start": "2012-07-03T03:07:58.811"
         },
         {
-          "days": 1.71149305556,
+          "days": 1.7114931,
           "end": "2012-07-13T21:38:36.160",
           "missing_periods": 2239,
           "severity": "severe",
           "start": "2012-07-12T04:34:03.975"
         },
         {
-          "days": 1.61574074074,
+          "days": 1.6157407,
           "end": "2012-07-28T09:28:48.643",
           "missing_periods": 2114,
           "severity": "severe",
           "start": "2012-07-26T18:42:08.502"
         },
         {
-          "days": 1.51998842593,
+          "days": 1.5199884,
           "end": "2012-07-18T14:43:26.005",
           "missing_periods": 1988,
           "severity": "severe",
           "start": "2012-07-17T02:14:39.180"
         },
         {
-          "days": 1.33055555556,
+          "days": 1.3305556,
           "end": "2012-08-11T02:33:55.963",
           "missing_periods": 1740,
           "severity": "severe",
           "start": "2012-08-09T18:37:55.659"
         },
         {
-          "days": 1.30256944444,
+          "days": 1.3025694,
           "end": "2012-09-02T01:26:00.705",
           "missing_periods": 1704,
           "severity": "severe",
           "start": "2012-08-31T18:10:18.631"
         },
         {
-          "days": 1.3000462963,
+          "days": 1.3000463,
           "end": "2012-08-21T19:00:02.739",
           "missing_periods": 1700,
           "severity": "severe",
           "start": "2012-08-20T11:47:58.510"
         },
         {
-          "days": 1.22137731481,
+          "days": 1.2213773,
           "end": "2012-07-17T02:14:37.670",
           "missing_periods": 1597,
           "severity": "severe",
           "start": "2012-07-15T20:55:50.651"
         },
         {
-          "days": 1.18872685185,
+          "days": 1.1887269,
           "end": "2012-08-01T22:27:45.959",
           "missing_periods": 1555,
           "severity": "severe",
@@ -1043,21 +1043,21 @@
           "start": "2012-07-29T14:29:07.806"
         },
         {
-          "days": 1.14949074074,
+          "days": 1.1494907,
           "end": "2012-06-28T04:52:31.814",
           "missing_periods": 1503,
           "severity": "severe",
           "start": "2012-06-27T01:17:15.728"
         },
         {
-          "days": 1.11569444444,
+          "days": 1.1156944,
           "end": "2012-09-17T01:36:26.764",
           "missing_periods": 1459,
           "severity": "severe",
           "start": "2012-09-15T22:49:50.818"
         },
         {
-          "days": 1.08221064815,
+          "days": 1.0822106,
           "end": "2012-09-10T18:50:55.388",
           "missing_periods": 1415,
           "severity": "severe",
@@ -1068,18 +1068,18 @@
     "granularity": "irregular",
     "max": "2012-12-12T12:33:32.985",
     "min": "2012-04-27T21:41:02.227",
-    "span_days": 228.619791667
+    "span_days": 228.61979
   },
   "event_interest.user::profile": {
-    "cardinality_ratio": 0.132095077283,
+    "cardinality_ratio": 0.13209508,
     "distinct": 2034,
-    "entropy": 7.51708243768,
+    "entropy": 7.5170824,
     "max": 38123.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 7977.0,
-      "mean": 17196.6260553,
+      "mean": 17196.626,
       "percentiles": {
         "p01": 1034.0,
         "p25": 8783.0,
@@ -1087,7 +1087,7 @@
         "p75": 26022.0,
         "p99": 37249.0
       },
-      "stddev": 10073.5124851
+      "stddev": 10073.512
     },
     "summary": {
       "distinct": 2034,
@@ -1188,7 +1188,7 @@
     "candidates": [
       {
         "form": "product",
-        "match_rate": 0.958501104039,
+        "match_rate": 0.9585011,
         "operands": [
           "invited",
           "interested"
@@ -1199,7 +1199,7 @@
       },
       {
         "form": "product",
-        "match_rate": 0.957526951552,
+        "match_rate": 0.95752695,
         "operands": [
           "interested",
           "not_interested"
@@ -1219,11 +1219,11 @@
         "distinct_from": 2034,
         "distinct_to": 2,
         "from": "user",
-        "g3": 0.0357189245357,
+        "g3": 0.035718925,
         "kind": "edge",
-        "lambda": 0.159021406728,
+        "lambda": 0.15902141,
         "pair_groups": 2345,
-        "rows_per_value": 7.57030481809,
+        "rows_per_value": 7.5703048,
         "to": "invited"
       },
       {
@@ -1234,58 +1234,58 @@
         "kind": "edge",
         "lambda": 1.0,
         "pair_groups": 4671,
-        "rows_per_value": 3.29651038322,
+        "rows_per_value": 3.2965104,
         "to": "user"
       },
       {
         "distinct_from": 2034,
         "distinct_to": 2,
         "from": "user",
-        "g3": 0.020846863229,
+        "g3": 0.020846863,
         "kind": "edge",
-        "lambda": 0.375486381323,
+        "lambda": 0.37548638,
         "pair_groups": 2145,
-        "rows_per_value": 7.57030481809,
+        "rows_per_value": 7.5703048,
         "to": "not_interested"
       },
       {
         "distinct_from": 8846,
         "distinct_to": 2,
         "from": "event",
-        "g3": 0.0118846603455,
+        "g3": 0.01188466,
         "kind": "edge",
-        "lambda": 0.720183486239,
+        "lambda": 0.72018349,
         "pair_groups": 8987,
-        "rows_per_value": 1.74067375085,
+        "rows_per_value": 1.7406738,
         "to": "invited"
       },
       {
         "distinct_from": 8846,
         "distinct_to": 2,
         "from": "event",
-        "g3": 0.00727367190544,
+        "g3": 0.0072736719,
         "kind": "edge",
-        "lambda": 0.782101167315,
+        "lambda": 0.78210117,
         "pair_groups": 8946,
-        "rows_per_value": 1.74067375085,
+        "rows_per_value": 1.7406738,
         "to": "not_interested"
       },
       {
         "distinct_from": 4671,
         "distinct_to": 2,
         "from": "timestamp",
-        "g3": 0.0303286141057,
+        "g3": 0.030328614,
         "kind": "edge",
-        "lambda": 0.285932721713,
+        "lambda": 0.28593272,
         "pair_groups": 5001,
-        "rows_per_value": 3.29651038322,
+        "rows_per_value": 3.2965104,
         "to": "invited"
       },
       {
         "distinct_from": 2,
         "distinct_to": 2,
         "from": "interested",
-        "g3": 0.0424730484479,
+        "g3": 0.042473048,
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 4,
@@ -1296,7 +1296,7 @@
         "distinct_from": 2,
         "distinct_to": 2,
         "from": "invited",
-        "g3": 0.033380958566,
+        "g3": 0.033380959,
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 4,
@@ -1307,7 +1307,7 @@
         "distinct_from": 2,
         "distinct_to": 2,
         "from": "not_interested",
-        "g3": 0.0424730484479,
+        "g3": 0.042473048,
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 4,
@@ -1322,14 +1322,14 @@
         "kind": "edge",
         "lambda": 1.0,
         "pair_groups": 4671,
-        "rows_per_value": 3.29651038322,
+        "rows_per_value": 3.2965104,
         "to": "not_interested"
       },
       {
         "distinct_from": 2,
         "distinct_to": 2,
         "from": "interested",
-        "g3": 0.033380958566,
+        "g3": 0.033380959,
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 3,
@@ -2258,7 +2258,7 @@
   "events.c_100::profile": {
     "cardinality_ratio": 9.5e-6,
     "distinct": 19,
-    "entropy": 0.271067578018,
+    "entropy": 0.27106758,
     "max": 41.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -2272,7 +2272,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.346429300911
+      "stddev": 0.3464293
     },
     "summary": {
       "distinct": 19,
@@ -3283,7 +3283,7 @@
   "events.c_10::profile": {
     "cardinality_ratio": 0.000021,
     "distinct": 42,
-    "entropy": 1.06574538613,
+    "entropy": 1.0657454,
     "max": 255.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -3297,7 +3297,7 @@
         "p75": 1.0,
         "p99": 5.0
       },
-      "stddev": 1.14939112643
+      "stddev": 1.1493911
     },
     "summary": {
       "distinct": 42,
@@ -4312,7 +4312,7 @@
   "events.c_11::profile": {
     "cardinality_ratio": 0.000023,
     "distinct": 46,
-    "entropy": 0.994713220031,
+    "entropy": 0.99471322,
     "max": 75.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -4326,7 +4326,7 @@
         "p75": 1.0,
         "p99": 5.0
       },
-      "stddev": 1.19786748991
+      "stddev": 1.1978675
     },
     "summary": {
       "distinct": 46,
@@ -5341,7 +5341,7 @@
   "events.c_12::profile": {
     "cardinality_ratio": 0.0000265,
     "distinct": 53,
-    "entropy": 0.967874677973,
+    "entropy": 0.96787468,
     "max": 60.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -5355,7 +5355,7 @@
         "p75": 1.0,
         "p99": 6.0
       },
-      "stddev": 1.24042707126
+      "stddev": 1.2404271
     },
     "summary": {
       "distinct": 53,
@@ -6370,7 +6370,7 @@
   "events.c_13::profile": {
     "cardinality_ratio": 0.000021,
     "distinct": 42,
-    "entropy": 0.951918604671,
+    "entropy": 0.9519186,
     "max": 164.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -6384,7 +6384,7 @@
         "p75": 1.0,
         "p99": 5.0
       },
-      "stddev": 1.0481487116
+      "stddev": 1.0481487
     },
     "summary": {
       "distinct": 42,
@@ -7399,7 +7399,7 @@
   "events.c_14::profile": {
     "cardinality_ratio": 0.000028,
     "distinct": 56,
-    "entropy": 0.935412860973,
+    "entropy": 0.93541286,
     "max": 138.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -7413,7 +7413,7 @@
         "p75": 1.0,
         "p99": 5.0
       },
-      "stddev": 1.1527440521
+      "stddev": 1.1527441
     },
     "summary": {
       "distinct": 56,
@@ -8428,7 +8428,7 @@
   "events.c_15::profile": {
     "cardinality_ratio": 0.0000215,
     "distinct": 43,
-    "entropy": 0.840907946554,
+    "entropy": 0.84090795,
     "max": 68.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -8442,7 +8442,7 @@
         "p75": 0.0,
         "p99": 4.0
       },
-      "stddev": 0.977173906728
+      "stddev": 0.97717391
     },
     "summary": {
       "distinct": 43,
@@ -9457,7 +9457,7 @@
   "events.c_16::profile": {
     "cardinality_ratio": 0.000021,
     "distinct": 42,
-    "entropy": 0.889736738893,
+    "entropy": 0.88973674,
     "max": 117.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -9471,7 +9471,7 @@
         "p75": 1.0,
         "p99": 4.0
       },
-      "stddev": 0.979162662441
+      "stddev": 0.97916266
     },
     "summary": {
       "distinct": 42,
@@ -10486,7 +10486,7 @@
   "events.c_17::profile": {
     "cardinality_ratio": 0.0000205,
     "distinct": 41,
-    "entropy": 0.841347591466,
+    "entropy": 0.84134759,
     "max": 57.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -10500,7 +10500,7 @@
         "p75": 1.0,
         "p99": 4.0
       },
-      "stddev": 0.932025844316
+      "stddev": 0.93202584
     },
     "summary": {
       "distinct": 41,
@@ -11515,7 +11515,7 @@
   "events.c_18::profile": {
     "cardinality_ratio": 0.000024,
     "distinct": 48,
-    "entropy": 0.775013452177,
+    "entropy": 0.77501345,
     "max": 2456.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -11529,7 +11529,7 @@
         "p75": 0.0,
         "p99": 5.0
       },
-      "stddev": 2.06000588029
+      "stddev": 2.0600059
     },
     "summary": {
       "distinct": 48,
@@ -12544,7 +12544,7 @@
   "events.c_19::profile": {
     "cardinality_ratio": 0.0000175,
     "distinct": 35,
-    "entropy": 0.761809326901,
+    "entropy": 0.76180933,
     "max": 89.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -12558,7 +12558,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.797211937076
+      "stddev": 0.79721194
     },
     "summary": {
       "distinct": 35,
@@ -13573,7 +13573,7 @@
   "events.c_1::profile": {
     "cardinality_ratio": 0.000074,
     "distinct": 148,
-    "entropy": 1.98540529342,
+    "entropy": 1.9854053,
     "max": 2186.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -13587,7 +13587,7 @@
         "p75": 3.0,
         "p99": 17.0
       },
-      "stddev": 4.23651977593
+      "stddev": 4.2365198
     },
     "summary": {
       "distinct": 148,
@@ -14602,7 +14602,7 @@
   "events.c_20::profile": {
     "cardinality_ratio": 0.0000235,
     "distinct": 47,
-    "entropy": 0.704109894949,
+    "entropy": 0.70410989,
     "max": 67.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -14616,7 +14616,7 @@
         "p75": 0.0,
         "p99": 4.0
       },
-      "stddev": 0.871315196616
+      "stddev": 0.8713152
     },
     "summary": {
       "distinct": 47,
@@ -15631,7 +15631,7 @@
   "events.c_21::profile": {
     "cardinality_ratio": 0.000025,
     "distinct": 50,
-    "entropy": 0.733699468285,
+    "entropy": 0.73369947,
     "max": 85.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -15645,7 +15645,7 @@
         "p75": 0.0,
         "p99": 5.0
       },
-      "stddev": 1.02127140441
+      "stddev": 1.0212714
     },
     "summary": {
       "distinct": 50,
@@ -16660,7 +16660,7 @@
   "events.c_22::profile": {
     "cardinality_ratio": 0.000018,
     "distinct": 36,
-    "entropy": 0.672490112174,
+    "entropy": 0.67249011,
     "max": 1317.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -16674,7 +16674,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 1.26921284855
+      "stddev": 1.2692128
     },
     "summary": {
       "distinct": 36,
@@ -17689,7 +17689,7 @@
   "events.c_23::profile": {
     "cardinality_ratio": 0.000021,
     "distinct": 42,
-    "entropy": 0.658258914834,
+    "entropy": 0.65825891,
     "max": 89.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -17703,7 +17703,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.746756120811
+      "stddev": 0.74675612
     },
     "summary": {
       "distinct": 42,
@@ -18718,7 +18718,7 @@
   "events.c_24::profile": {
     "cardinality_ratio": 9.5e-6,
     "distinct": 19,
-    "entropy": 0.673008393391,
+    "entropy": 0.67300839,
     "max": 25.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -18732,7 +18732,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.604946161105
+      "stddev": 0.60494616
     },
     "summary": {
       "distinct": 19,
@@ -19743,7 +19743,7 @@
   "events.c_25::profile": {
     "cardinality_ratio": 0.000017,
     "distinct": 34,
-    "entropy": 0.618695775136,
+    "entropy": 0.61869578,
     "max": 57.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -19757,7 +19757,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.717492612183
+      "stddev": 0.71749261
     },
     "summary": {
       "distinct": 34,
@@ -20772,7 +20772,7 @@
   "events.c_26::profile": {
     "cardinality_ratio": 0.0000175,
     "distinct": 35,
-    "entropy": 0.590809858894,
+    "entropy": 0.59080986,
     "max": 42.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -20786,7 +20786,7 @@
         "p75": 0.0,
         "p99": 4.0
       },
-      "stddev": 0.746716707226
+      "stddev": 0.74671671
     },
     "summary": {
       "distinct": 35,
@@ -21801,7 +21801,7 @@
   "events.c_27::profile": {
     "cardinality_ratio": 0.0000165,
     "distinct": 33,
-    "entropy": 0.600414549141,
+    "entropy": 0.60041455,
     "max": 47.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -21815,7 +21815,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.710943762415
+      "stddev": 0.71094376
     },
     "summary": {
       "distinct": 33,
@@ -22830,7 +22830,7 @@
   "events.c_28::profile": {
     "cardinality_ratio": 0.000016,
     "distinct": 32,
-    "entropy": 0.604325833429,
+    "entropy": 0.60432583,
     "max": 58.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -22844,7 +22844,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.665120497412
+      "stddev": 0.6651205
     },
     "summary": {
       "distinct": 32,
@@ -23859,7 +23859,7 @@
   "events.c_29::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.490404175484,
+    "entropy": 0.49040418,
     "max": 24.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -23873,7 +23873,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.557381012501
+      "stddev": 0.55738101
     },
     "summary": {
       "distinct": 23,
@@ -24888,7 +24888,7 @@
   "events.c_2::profile": {
     "cardinality_ratio": 0.0000535,
     "distinct": 107,
-    "entropy": 1.72955947633,
+    "entropy": 1.7295595,
     "max": 301.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -24902,7 +24902,7 @@
         "p75": 2.0,
         "p99": 12.0
       },
-      "stddev": 2.85355234048
+      "stddev": 2.8535523
     },
     "summary": {
       "distinct": 107,
@@ -25917,7 +25917,7 @@
   "events.c_30::profile": {
     "cardinality_ratio": 0.0000165,
     "distinct": 33,
-    "entropy": 0.559855494929,
+    "entropy": 0.55985549,
     "max": 74.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -25931,7 +25931,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.703087887135
+      "stddev": 0.70308789
     },
     "summary": {
       "distinct": 33,
@@ -26946,7 +26946,7 @@
   "events.c_31::profile": {
     "cardinality_ratio": 0.0000195,
     "distinct": 39,
-    "entropy": 0.545849789267,
+    "entropy": 0.54584979,
     "max": 88.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -26960,7 +26960,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.735923335568
+      "stddev": 0.73592334
     },
     "summary": {
       "distinct": 39,
@@ -27975,7 +27975,7 @@
   "events.c_32::profile": {
     "cardinality_ratio": 0.0000305,
     "distinct": 61,
-    "entropy": 0.435865497752,
+    "entropy": 0.4358655,
     "max": 120.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -27989,7 +27989,7 @@
         "p75": 0.0,
         "p99": 4.0
       },
-      "stddev": 0.883142669693
+      "stddev": 0.88314267
     },
     "summary": {
       "distinct": 61,
@@ -29004,7 +29004,7 @@
   "events.c_33::profile": {
     "cardinality_ratio": 0.000013,
     "distinct": 26,
-    "entropy": 0.563295967785,
+    "entropy": 0.56329597,
     "max": 36.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -29018,7 +29018,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.669124330675
+      "stddev": 0.66912433
     },
     "summary": {
       "distinct": 26,
@@ -30033,7 +30033,7 @@
   "events.c_34::profile": {
     "cardinality_ratio": 0.0000225,
     "distinct": 45,
-    "entropy": 0.562595409941,
+    "entropy": 0.56259541,
     "max": 300.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -30047,7 +30047,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.710151208203
+      "stddev": 0.71015121
     },
     "summary": {
       "distinct": 45,
@@ -31062,7 +31062,7 @@
   "events.c_35::profile": {
     "cardinality_ratio": 0.0000125,
     "distinct": 25,
-    "entropy": 0.525519219978,
+    "entropy": 0.52551922,
     "max": 29.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -31076,7 +31076,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.573565485346
+      "stddev": 0.57356549
     },
     "summary": {
       "distinct": 25,
@@ -32091,7 +32091,7 @@
   "events.c_36::profile": {
     "cardinality_ratio": 0.0000265,
     "distinct": 53,
-    "entropy": 0.536429074882,
+    "entropy": 0.53642907,
     "max": 110.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -32105,7 +32105,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.75243609293
+      "stddev": 0.75243609
     },
     "summary": {
       "distinct": 53,
@@ -33120,7 +33120,7 @@
   "events.c_37::profile": {
     "cardinality_ratio": 0.000013,
     "distinct": 26,
-    "entropy": 0.547550689723,
+    "entropy": 0.54755069,
     "max": 103.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -33134,7 +33134,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.559237872355
+      "stddev": 0.55923787
     },
     "summary": {
       "distinct": 26,
@@ -34149,7 +34149,7 @@
   "events.c_38::profile": {
     "cardinality_ratio": 0.0000255,
     "distinct": 51,
-    "entropy": 0.390010848347,
+    "entropy": 0.39001085,
     "max": 102.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -34163,7 +34163,7 @@
         "p75": 0.0,
         "p99": 5.0
       },
-      "stddev": 0.982952286951
+      "stddev": 0.98295229
     },
     "summary": {
       "distinct": 51,
@@ -35178,7 +35178,7 @@
   "events.c_39::profile": {
     "cardinality_ratio": 0.000012,
     "distinct": 24,
-    "entropy": 0.515818047913,
+    "entropy": 0.51581805,
     "max": 1448.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -35192,7 +35192,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 1.15459132631
+      "stddev": 1.1545913
     },
     "summary": {
       "distinct": 24,
@@ -36207,7 +36207,7 @@
   "events.c_3::profile": {
     "cardinality_ratio": 0.0000485,
     "distinct": 97,
-    "entropy": 1.59527379255,
+    "entropy": 1.5952738,
     "max": 253.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -36221,7 +36221,7 @@
         "p75": 2.0,
         "p99": 12.0
       },
-      "stddev": 2.62341087534
+      "stddev": 2.6234109
     },
     "summary": {
       "distinct": 97,
@@ -37236,7 +37236,7 @@
   "events.c_40::profile": {
     "cardinality_ratio": 0.000016,
     "distinct": 32,
-    "entropy": 0.48548935569,
+    "entropy": 0.48548936,
     "max": 47.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -37250,7 +37250,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.613333115343
+      "stddev": 0.61333312
     },
     "summary": {
       "distinct": 32,
@@ -38265,7 +38265,7 @@
   "events.c_41::profile": {
     "cardinality_ratio": 0.0000135,
     "distinct": 27,
-    "entropy": 0.464873284721,
+    "entropy": 0.46487328,
     "max": 42.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -38279,7 +38279,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.595705678306
+      "stddev": 0.59570568
     },
     "summary": {
       "distinct": 27,
@@ -39294,7 +39294,7 @@
   "events.c_42::profile": {
     "cardinality_ratio": 0.000012,
     "distinct": 24,
-    "entropy": 0.466636841976,
+    "entropy": 0.46663684,
     "max": 36.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -39308,7 +39308,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.57357019959
+      "stddev": 0.5735702
     },
     "summary": {
       "distinct": 24,
@@ -40323,7 +40323,7 @@
   "events.c_43::profile": {
     "cardinality_ratio": 0.000014,
     "distinct": 28,
-    "entropy": 0.465691146915,
+    "entropy": 0.46569115,
     "max": 31.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -40337,7 +40337,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.584187209429
+      "stddev": 0.58418721
     },
     "summary": {
       "distinct": 28,
@@ -41352,7 +41352,7 @@
   "events.c_44::profile": {
     "cardinality_ratio": 0.000022,
     "distinct": 44,
-    "entropy": 0.42720623009,
+    "entropy": 0.42720623,
     "max": 155.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -41366,7 +41366,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.725793744002
+      "stddev": 0.72579374
     },
     "summary": {
       "distinct": 44,
@@ -42381,7 +42381,7 @@
   "events.c_45::profile": {
     "cardinality_ratio": 0.000012,
     "distinct": 24,
-    "entropy": 0.479418931803,
+    "entropy": 0.47941893,
     "max": 56.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -42395,7 +42395,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.492251452608
+      "stddev": 0.49225145
     },
     "summary": {
       "distinct": 24,
@@ -43410,7 +43410,7 @@
   "events.c_46::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.468577492977,
+    "entropy": 0.46857749,
     "max": 33.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -43424,7 +43424,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.528557957145
+      "stddev": 0.52855796
     },
     "summary": {
       "distinct": 23,
@@ -44439,7 +44439,7 @@
   "events.c_47::profile": {
     "cardinality_ratio": 9e-6,
     "distinct": 18,
-    "entropy": 0.454437562869,
+    "entropy": 0.45443756,
     "max": 18.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -44453,7 +44453,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.513405221027
+      "stddev": 0.51340522
     },
     "summary": {
       "distinct": 18,
@@ -45460,7 +45460,7 @@
   "events.c_48::profile": {
     "cardinality_ratio": 0.000025,
     "distinct": 50,
-    "entropy": 0.43654175379,
+    "entropy": 0.43654175,
     "max": 128.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -45474,7 +45474,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.579642864049
+      "stddev": 0.57964286
     },
     "summary": {
       "distinct": 50,
@@ -46489,7 +46489,7 @@
   "events.c_49::profile": {
     "cardinality_ratio": 0.000012,
     "distinct": 24,
-    "entropy": 0.438887097354,
+    "entropy": 0.4388871,
     "max": 51.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -46503,7 +46503,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.490501246247
+      "stddev": 0.49050125
     },
     "summary": {
       "distinct": 24,
@@ -47518,7 +47518,7 @@
   "events.c_4::profile": {
     "cardinality_ratio": 0.000037,
     "distinct": 74,
-    "entropy": 1.40946706628,
+    "entropy": 1.4094671,
     "max": 157.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -47532,7 +47532,7 @@
         "p75": 1.0,
         "p99": 8.0
       },
-      "stddev": 1.91078797242
+      "stddev": 1.910788
     },
     "summary": {
       "distinct": 74,
@@ -48547,7 +48547,7 @@
   "events.c_50::profile": {
     "cardinality_ratio": 9e-6,
     "distinct": 18,
-    "entropy": 0.443701586941,
+    "entropy": 0.44370159,
     "max": 27.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -48561,7 +48561,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.477400800861
+      "stddev": 0.4774008
     },
     "summary": {
       "distinct": 18,
@@ -49568,7 +49568,7 @@
   "events.c_51::profile": {
     "cardinality_ratio": 0.000013,
     "distinct": 26,
-    "entropy": 0.437824708588,
+    "entropy": 0.43782471,
     "max": 53.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -49582,7 +49582,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.497838664332
+      "stddev": 0.49783866
     },
     "summary": {
       "distinct": 26,
@@ -50597,7 +50597,7 @@
   "events.c_52::profile": {
     "cardinality_ratio": 0.0000215,
     "distinct": 43,
-    "entropy": 0.436282859363,
+    "entropy": 0.43628286,
     "max": 318.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -50611,7 +50611,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.580273575664
+      "stddev": 0.58027358
     },
     "summary": {
       "distinct": 43,
@@ -51626,7 +51626,7 @@
   "events.c_53::profile": {
     "cardinality_ratio": 0.000014,
     "distinct": 28,
-    "entropy": 0.401813901848,
+    "entropy": 0.4018139,
     "max": 44.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -51640,7 +51640,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.588981948977
+      "stddev": 0.58898195
     },
     "summary": {
       "distinct": 28,
@@ -52655,7 +52655,7 @@
   "events.c_54::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.42467491545,
+    "entropy": 0.42467492,
     "max": 30.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -52669,7 +52669,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.467086429656
+      "stddev": 0.46708643
     },
     "summary": {
       "distinct": 23,
@@ -53684,7 +53684,7 @@
   "events.c_55::profile": {
     "cardinality_ratio": 0.000014,
     "distinct": 28,
-    "entropy": 0.400729250112,
+    "entropy": 0.40072925,
     "max": 56.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -53698,7 +53698,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.498805088587
+      "stddev": 0.49880509
     },
     "summary": {
       "distinct": 28,
@@ -54713,7 +54713,7 @@
   "events.c_56::profile": {
     "cardinality_ratio": 0.000011,
     "distinct": 22,
-    "entropy": 0.406624356493,
+    "entropy": 0.40662436,
     "max": 137.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -54727,7 +54727,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.482316514133
+      "stddev": 0.48231651
     },
     "summary": {
       "distinct": 22,
@@ -55742,7 +55742,7 @@
   "events.c_57::profile": {
     "cardinality_ratio": 9.5e-6,
     "distinct": 19,
-    "entropy": 0.395232709699,
+    "entropy": 0.39523271,
     "max": 42.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -55756,7 +55756,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.433030365321
+      "stddev": 0.43303037
     },
     "summary": {
       "distinct": 19,
@@ -56767,7 +56767,7 @@
   "events.c_58::profile": {
     "cardinality_ratio": 0.00001,
     "distinct": 20,
-    "entropy": 0.383718503669,
+    "entropy": 0.3837185,
     "max": 32.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -56781,7 +56781,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.431896017487
+      "stddev": 0.43189602
     },
     "summary": {
       "distinct": 20,
@@ -57796,7 +57796,7 @@
   "events.c_59::profile": {
     "cardinality_ratio": 7.5e-6,
     "distinct": 15,
-    "entropy": 0.402325555409,
+    "entropy": 0.40232556,
     "max": 18.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -57810,7 +57810,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.389267199413
+      "stddev": 0.3892672
     },
     "summary": {
       "distinct": 15,
@@ -58805,7 +58805,7 @@
   "events.c_5::profile": {
     "cardinality_ratio": 0.000047,
     "distinct": 94,
-    "entropy": 1.38516128705,
+    "entropy": 1.3851613,
     "max": 1801.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -58819,7 +58819,7 @@
         "p75": 1.0,
         "p99": 9.0
       },
-      "stddev": 2.42097032729
+      "stddev": 2.4209703
     },
     "summary": {
       "distinct": 94,
@@ -59834,7 +59834,7 @@
   "events.c_60::profile": {
     "cardinality_ratio": 0.0000135,
     "distinct": 27,
-    "entropy": 0.388981619496,
+    "entropy": 0.38898162,
     "max": 36.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -59848,7 +59848,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.461232528272
+      "stddev": 0.46123253
     },
     "summary": {
       "distinct": 27,
@@ -60863,7 +60863,7 @@
   "events.c_61::profile": {
     "cardinality_ratio": 0.0000175,
     "distinct": 35,
-    "entropy": 0.318288847,
+    "entropy": 0.31828885,
     "max": 54.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -60877,7 +60877,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.522953914998
+      "stddev": 0.52295391
     },
     "summary": {
       "distinct": 35,
@@ -61892,7 +61892,7 @@
   "events.c_62::profile": {
     "cardinality_ratio": 0.000013,
     "distinct": 26,
-    "entropy": 0.376771714593,
+    "entropy": 0.37677171,
     "max": 46.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -61906,7 +61906,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.444471339218
+      "stddev": 0.44447134
     },
     "summary": {
       "distinct": 26,
@@ -62921,7 +62921,7 @@
   "events.c_63::profile": {
     "cardinality_ratio": 0.000018,
     "distinct": 36,
-    "entropy": 0.369857201533,
+    "entropy": 0.3698572,
     "max": 161.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -62935,7 +62935,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.507408343259
+      "stddev": 0.50740834
     },
     "summary": {
       "distinct": 36,
@@ -63950,7 +63950,7 @@
   "events.c_64::profile": {
     "cardinality_ratio": 0.000013,
     "distinct": 26,
-    "entropy": 0.365275258915,
+    "entropy": 0.36527526,
     "max": 84.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -63964,7 +63964,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.484877917675
+      "stddev": 0.48487792
     },
     "summary": {
       "distinct": 26,
@@ -64979,7 +64979,7 @@
   "events.c_65::profile": {
     "cardinality_ratio": 0.000017,
     "distinct": 34,
-    "entropy": 0.352675018723,
+    "entropy": 0.35267502,
     "max": 43.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -64993,7 +64993,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.496761241034
+      "stddev": 0.49676124
     },
     "summary": {
       "distinct": 34,
@@ -66008,7 +66008,7 @@
   "events.c_66::profile": {
     "cardinality_ratio": 0.0000105,
     "distinct": 21,
-    "entropy": 0.265306285965,
+    "entropy": 0.26530629,
     "max": 41.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -66022,7 +66022,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.337679369203
+      "stddev": 0.33767937
     },
     "summary": {
       "distinct": 21,
@@ -67037,7 +67037,7 @@
   "events.c_67::profile": {
     "cardinality_ratio": 8.5e-6,
     "distinct": 17,
-    "entropy": 0.281778905256,
+    "entropy": 0.28177891,
     "max": 20.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -67051,7 +67051,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.333818290759
+      "stddev": 0.33381829
     },
     "summary": {
       "distinct": 17,
@@ -68054,7 +68054,7 @@
   "events.c_68::profile": {
     "cardinality_ratio": 7.5e-6,
     "distinct": 15,
-    "entropy": 0.354533375815,
+    "entropy": 0.35453338,
     "max": 14.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -68068,7 +68068,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.411386967979
+      "stddev": 0.41138697
     },
     "summary": {
       "distinct": 15,
@@ -69063,7 +69063,7 @@
   "events.c_69::profile": {
     "cardinality_ratio": 9e-6,
     "distinct": 18,
-    "entropy": 0.357801592108,
+    "entropy": 0.35780159,
     "max": 17.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -69077,7 +69077,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.411496643813
+      "stddev": 0.41149664
     },
     "summary": {
       "distinct": 18,
@@ -70084,7 +70084,7 @@
   "events.c_6::profile": {
     "cardinality_ratio": 0.0000975,
     "distinct": 195,
-    "entropy": 1.19837479798,
+    "entropy": 1.1983748,
     "max": 505.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -70098,7 +70098,7 @@
         "p75": 1.0,
         "p99": 12.0
       },
-      "stddev": 3.47016300099
+      "stddev": 3.470163
     },
     "summary": {
       "distinct": 195,
@@ -71113,7 +71113,7 @@
   "events.c_70::profile": {
     "cardinality_ratio": 8e-6,
     "distinct": 16,
-    "entropy": 0.358815695589,
+    "entropy": 0.3588157,
     "max": 18.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -71127,7 +71127,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.361600554056
+      "stddev": 0.36160055
     },
     "summary": {
       "distinct": 16,
@@ -72126,7 +72126,7 @@
   "events.c_71::profile": {
     "cardinality_ratio": 0.000016,
     "distinct": 32,
-    "entropy": 0.301666126836,
+    "entropy": 0.30166613,
     "max": 96.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -72140,7 +72140,7 @@
         "p75": 0.0,
         "p99": 3.0
       },
-      "stddev": 0.568371273937
+      "stddev": 0.56837127
     },
     "summary": {
       "distinct": 32,
@@ -73155,7 +73155,7 @@
   "events.c_72::profile": {
     "cardinality_ratio": 8e-6,
     "distinct": 16,
-    "entropy": 0.337756849388,
+    "entropy": 0.33775685,
     "max": 16.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -73169,7 +73169,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.389453422112
+      "stddev": 0.38945342
     },
     "summary": {
       "distinct": 16,
@@ -74168,7 +74168,7 @@
   "events.c_73::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.334371357461,
+    "entropy": 0.33437136,
     "max": 37.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -74182,7 +74182,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.402678063528
+      "stddev": 0.40267806
     },
     "summary": {
       "distinct": 23,
@@ -75197,7 +75197,7 @@
   "events.c_74::profile": {
     "cardinality_ratio": 0.0000105,
     "distinct": 21,
-    "entropy": 0.331743319194,
+    "entropy": 0.33174332,
     "max": 26.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -75211,7 +75211,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.398891872068
+      "stddev": 0.39889187
     },
     "summary": {
       "distinct": 21,
@@ -76226,7 +76226,7 @@
   "events.c_75::profile": {
     "cardinality_ratio": 8e-6,
     "distinct": 16,
-    "entropy": 0.259843767975,
+    "entropy": 0.25984377,
     "max": 18.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -76240,7 +76240,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.310363925746
+      "stddev": 0.31036393
     },
     "summary": {
       "distinct": 16,
@@ -77239,7 +77239,7 @@
   "events.c_76::profile": {
     "cardinality_ratio": 0.000016,
     "distinct": 32,
-    "entropy": 0.298461854309,
+    "entropy": 0.29846185,
     "max": 80.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -77253,7 +77253,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.446352622991
+      "stddev": 0.44635262
     },
     "summary": {
       "distinct": 32,
@@ -78268,7 +78268,7 @@
   "events.c_77::profile": {
     "cardinality_ratio": 9.5e-6,
     "distinct": 19,
-    "entropy": 0.314269126578,
+    "entropy": 0.31426913,
     "max": 21615.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -78282,7 +78282,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 15.2892516685
+      "stddev": 15.289252
     },
     "summary": {
       "distinct": 19,
@@ -79293,7 +79293,7 @@
   "events.c_78::profile": {
     "cardinality_ratio": 0.000018,
     "distinct": 36,
-    "entropy": 0.318292303735,
+    "entropy": 0.3182923,
     "max": 1136.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -79307,7 +79307,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.909871057672
+      "stddev": 0.90987106
     },
     "summary": {
       "distinct": 36,
@@ -80322,7 +80322,7 @@
   "events.c_79::profile": {
     "cardinality_ratio": 0.000015,
     "distinct": 30,
-    "entropy": 0.31358199212,
+    "entropy": 0.31358199,
     "max": 46.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -80336,7 +80336,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.427249587898
+      "stddev": 0.42724959
     },
     "summary": {
       "distinct": 30,
@@ -81351,7 +81351,7 @@
   "events.c_7::profile": {
     "cardinality_ratio": 0.000027,
     "distinct": 54,
-    "entropy": 1.2556960757,
+    "entropy": 1.2556961,
     "max": 2120.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -81365,7 +81365,7 @@
         "p75": 1.0,
         "p99": 6.0
       },
-      "stddev": 2.10312107313
+      "stddev": 2.1031211
     },
     "summary": {
       "distinct": 54,
@@ -82380,7 +82380,7 @@
   "events.c_80::profile": {
     "cardinality_ratio": 0.0000125,
     "distinct": 25,
-    "entropy": 0.309612500397,
+    "entropy": 0.3096125,
     "max": 1136.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -82394,7 +82394,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.898974962615
+      "stddev": 0.89897496
     },
     "summary": {
       "distinct": 25,
@@ -83409,7 +83409,7 @@
   "events.c_81::profile": {
     "cardinality_ratio": 6.5e-6,
     "distinct": 13,
-    "entropy": 0.206285557208,
+    "entropy": 0.20628556,
     "max": 13.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -83423,7 +83423,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.289441808127
+      "stddev": 0.28944181
     },
     "summary": {
       "distinct": 13,
@@ -84410,7 +84410,7 @@
   "events.c_82::profile": {
     "cardinality_ratio": 0.000011,
     "distinct": 22,
-    "entropy": 0.30997063349,
+    "entropy": 0.30997063,
     "max": 35.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -84424,7 +84424,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.400168123469
+      "stddev": 0.40016812
     },
     "summary": {
       "distinct": 22,
@@ -85439,7 +85439,7 @@
   "events.c_83::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.304106092792,
+    "entropy": 0.30410609,
     "max": 94.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -85453,7 +85453,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.439443380941
+      "stddev": 0.43944338
     },
     "summary": {
       "distinct": 23,
@@ -86468,7 +86468,7 @@
   "events.c_84::profile": {
     "cardinality_ratio": 0.000011,
     "distinct": 22,
-    "entropy": 0.297079008437,
+    "entropy": 0.29707901,
     "max": 35.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -86482,7 +86482,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.419726447368
+      "stddev": 0.41972645
     },
     "summary": {
       "distinct": 22,
@@ -87497,7 +87497,7 @@
   "events.c_85::profile": {
     "cardinality_ratio": 7e-6,
     "distinct": 14,
-    "entropy": 0.318086953841,
+    "entropy": 0.31808695,
     "max": 13.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -87511,7 +87511,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.343561393949
+      "stddev": 0.34356139
     },
     "summary": {
       "distinct": 14,
@@ -88502,7 +88502,7 @@
   "events.c_86::profile": {
     "cardinality_ratio": 0.000017,
     "distinct": 34,
-    "entropy": 0.273023245169,
+    "entropy": 0.27302325,
     "max": 131.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -88516,7 +88516,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.526787383462
+      "stddev": 0.52678738
     },
     "summary": {
       "distinct": 34,
@@ -89531,7 +89531,7 @@
   "events.c_87::profile": {
     "cardinality_ratio": 6.5e-6,
     "distinct": 13,
-    "entropy": 0.305512553804,
+    "entropy": 0.30551255,
     "max": 13.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -89545,7 +89545,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.364842718441
+      "stddev": 0.36484272
     },
     "summary": {
       "distinct": 13,
@@ -90532,7 +90532,7 @@
   "events.c_88::profile": {
     "cardinality_ratio": 0.0000145,
     "distinct": 29,
-    "entropy": 0.289896793293,
+    "entropy": 0.28989679,
     "max": 42.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -90546,7 +90546,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.424027256388
+      "stddev": 0.42402726
     },
     "summary": {
       "distinct": 29,
@@ -91561,7 +91561,7 @@
   "events.c_89::profile": {
     "cardinality_ratio": 0.00001,
     "distinct": 20,
-    "entropy": 0.30523542172,
+    "entropy": 0.30523542,
     "max": 23.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -91575,7 +91575,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.3541880208
+      "stddev": 0.35418802
     },
     "summary": {
       "distinct": 20,
@@ -92590,7 +92590,7 @@
   "events.c_8::profile": {
     "cardinality_ratio": 0.000031,
     "distinct": 62,
-    "entropy": 1.06083353173,
+    "entropy": 1.0608335,
     "max": 99.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -92604,7 +92604,7 @@
         "p75": 1.0,
         "p99": 7.0
       },
-      "stddev": 1.5185699676
+      "stddev": 1.51857
     },
     "summary": {
       "distinct": 62,
@@ -93619,7 +93619,7 @@
   "events.c_90::profile": {
     "cardinality_ratio": 8.5e-6,
     "distinct": 17,
-    "entropy": 0.302817473352,
+    "entropy": 0.30281747,
     "max": 18.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -93633,7 +93633,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.350526068262
+      "stddev": 0.35052607
     },
     "summary": {
       "distinct": 17,
@@ -94636,7 +94636,7 @@
   "events.c_91::profile": {
     "cardinality_ratio": 0.0000115,
     "distinct": 23,
-    "entropy": 0.28853348962,
+    "entropy": 0.28853349,
     "max": 30.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -94650,7 +94650,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.369401650545
+      "stddev": 0.36940165
     },
     "summary": {
       "distinct": 23,
@@ -95665,7 +95665,7 @@
   "events.c_92::profile": {
     "cardinality_ratio": 9e-6,
     "distinct": 18,
-    "entropy": 0.276116482419,
+    "entropy": 0.27611648,
     "max": 20.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -95679,7 +95679,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.342772047034
+      "stddev": 0.34277205
     },
     "summary": {
       "distinct": 18,
@@ -96686,7 +96686,7 @@
   "events.c_93::profile": {
     "cardinality_ratio": 0.00001,
     "distinct": 20,
-    "entropy": 0.283694896333,
+    "entropy": 0.2836949,
     "max": 25.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -96700,7 +96700,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.367290179866
+      "stddev": 0.36729018
     },
     "summary": {
       "distinct": 20,
@@ -97715,7 +97715,7 @@
   "events.c_94::profile": {
     "cardinality_ratio": 0.00001,
     "distinct": 20,
-    "entropy": 0.236261409157,
+    "entropy": 0.23626141,
     "max": 40.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -97729,7 +97729,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.296850623325
+      "stddev": 0.29685062
     },
     "summary": {
       "distinct": 20,
@@ -98744,7 +98744,7 @@
   "events.c_95::profile": {
     "cardinality_ratio": 9.5e-6,
     "distinct": 19,
-    "entropy": 0.286369320871,
+    "entropy": 0.28636932,
     "max": 21.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -98758,7 +98758,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 0.329392706906
+      "stddev": 0.32939271
     },
     "summary": {
       "distinct": 19,
@@ -99769,7 +99769,7 @@
   "events.c_96::profile": {
     "cardinality_ratio": 0.0000135,
     "distinct": 27,
-    "entropy": 0.267236264919,
+    "entropy": 0.26723626,
     "max": 31.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -99783,7 +99783,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.393082320833
+      "stddev": 0.39308232
     },
     "summary": {
       "distinct": 27,
@@ -100798,7 +100798,7 @@
   "events.c_97::profile": {
     "cardinality_ratio": 0.00001,
     "distinct": 20,
-    "entropy": 0.276943232373,
+    "entropy": 0.27694323,
     "max": 1801.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -100812,7 +100812,7 @@
         "p75": 0.0,
         "p99": 1.0
       },
-      "stddev": 1.31554997989
+      "stddev": 1.31555
     },
     "summary": {
       "distinct": 20,
@@ -101827,7 +101827,7 @@
   "events.c_98::profile": {
     "cardinality_ratio": 7.5e-6,
     "distinct": 15,
-    "entropy": 0.277395293908,
+    "entropy": 0.27739529,
     "max": 19.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -101841,7 +101841,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.340698901045
+      "stddev": 0.3406989
     },
     "summary": {
       "distinct": 15,
@@ -102836,7 +102836,7 @@
   "events.c_99::profile": {
     "cardinality_ratio": 0.0000145,
     "distinct": 29,
-    "entropy": 0.254393450675,
+    "entropy": 0.25439345,
     "max": 36.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -102850,7 +102850,7 @@
         "p75": 0.0,
         "p99": 2.0
       },
-      "stddev": 0.427838391608
+      "stddev": 0.42783839
     },
     "summary": {
       "distinct": 29,
@@ -103865,7 +103865,7 @@
   "events.c_9::profile": {
     "cardinality_ratio": 0.000035,
     "distinct": 70,
-    "entropy": 1.13363050989,
+    "entropy": 1.1336305,
     "max": 205.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -103879,7 +103879,7 @@
         "p75": 1.0,
         "p99": 6.0
       },
-      "stddev": 1.47613762718
+      "stddev": 1.4761376
     },
     "summary": {
       "distinct": 70,
@@ -104894,7 +104894,7 @@
   "events.c_other::profile": {
     "cardinality_ratio": 0.000497,
     "distinct": 994,
-    "entropy": 4.70170743687,
+    "entropy": 4.7017074,
     "max": 9664.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -104908,7 +104908,7 @@
         "p75": 55.0,
         "p99": 222.0
       },
-      "stddev": 49.8139042173
+      "stddev": 49.813904
     },
     "summary": {
       "distinct": 994,
@@ -105008,11 +105008,11 @@
     "applicable": false
   },
   "events.city::profile": {
-    "cardinality_ratio": 0.0270355050085,
+    "cardinality_ratio": 0.027035505,
     "distinct": 27235,
-    "entropy": 7.41930168935,
+    "entropy": 7.4193017,
     "lengths": {
-      "avg": 8.74642909967,
+      "avg": 8.7464291,
       "max": 45,
       "min": 2
     },
@@ -105117,11 +105117,11 @@
     "applicable": false
   },
   "events.country::profile": {
-    "cardinality_ratio": 0.000199484469547,
+    "cardinality_ratio": 0.00019948447,
     "distinct": 204,
-    "entropy": 1.68270432422,
+    "entropy": 1.6827043,
     "lengths": {
-      "avg": 11.3156088775,
+      "avg": 11.315609,
       "max": 32,
       "min": 4
     },
@@ -106141,21 +106141,21 @@
   "events.event_id::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 2000000,
-    "entropy": 14.5086577383,
+    "entropy": 14.508658,
     "max": 3137970.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 784838.0,
-      "mean": 1569498.03218,
+      "mean": 1569498.0,
       "percentiles": {
         "p01": 31299.98,
         "p25": 784841.5,
         "p50": 1569787.0,
-        "p75": 2354530.25,
-        "p99": 3106685.02
+        "p75": 2354530.3,
+        "p99": 3106685.0
       },
-      "stddev": 906030.909618
+      "stddev": 906030.91
     },
     "summary": {
       "distinct": 2000000,
@@ -107168,15 +107168,15 @@
     }
   },
   "events.lat::profile": {
-    "cardinality_ratio": 0.0499287811805,
+    "cardinality_ratio": 0.049928781,
     "distinct": 57452,
-    "entropy": 9.88633368223,
+    "entropy": 9.8863337,
     "max": 78.218,
     "min": -85.501,
     "null_ratio": 0.4246605,
     "numeric": {
       "mad": 5.56,
-      "mean": 33.9547644973,
+      "mean": 33.954764,
       "percentiles": {
         "p01": -36.81,
         "p25": 32.873,
@@ -107184,7 +107184,7 @@
         "p75": 43.36,
         "p99": 54.46622
       },
-      "stddev": 18.9495893126
+      "stddev": 18.949589
     },
     "summary": {
       "distinct": 57452,
@@ -108197,15 +108197,15 @@
     }
   },
   "events.lng::profile": {
-    "cardinality_ratio": 0.0876430351123,
+    "cardinality_ratio": 0.087643035,
     "distinct": 100849,
-    "entropy": 10.4523922135,
+    "entropy": 10.452392,
     "max": 179.317,
     "min": -175.217,
     "null_ratio": 0.4246605,
     "numeric": {
       "mad": 20.273,
-      "mean": -57.5279575181,
+      "mean": -57.527958,
       "percentiles": {
         "p01": -123.123,
         "p25": -97.146,
@@ -108213,7 +108213,7 @@
         "p75": -4.9395,
         "p99": 151.201
       },
-      "stddev": 65.3783473552
+      "stddev": 65.378347
     },
     "summary": {
       "distinct": 100849,
@@ -108313,9 +108313,9 @@
     "applicable": false
   },
   "events.start_time::profile": {
-    "cardinality_ratio": 0.03835003835,
+    "cardinality_ratio": 0.038350038,
     "distinct": 76700,
-    "entropy": 9.00766336096,
+    "entropy": 9.0076634,
     "max": "2069-12-31T00:00:00.001",
     "min": "1912-01-01T05:59:24.003",
     "null_ratio": 1e-6,
@@ -108414,31 +108414,31 @@
     "confidence": 0.3,
     "gaps": {
       "count": 31073,
-      "largest_days": 27698.7920718,
+      "largest_days": 27698.792,
       "sample": [
         {
-          "days": 27698.7920718,
+          "days": 27698.792,
           "end": "1987-11-02T01:00:00.003",
           "missing_periods": 5953172,
           "severity": "severe",
           "start": "1912-01-01T05:59:24.003"
         },
         {
-          "days": 3652.52916667,
+          "days": 3652.5292,
           "end": "2060-01-01T12:42:00.003",
           "missing_periods": 785020,
           "severity": "severe",
           "start": "2050-01-01T00:00:00.001"
         },
         {
-          "days": 3286.83333333,
+          "days": 3286.8333,
           "end": "2000-01-01T02:00:00.003",
           "missing_periods": 706422,
           "severity": "severe",
           "start": "1991-01-01T06:00:00.003"
         },
         {
-          "days": 1970.08333333,
+          "days": 1970.0833,
           "end": "2069-12-31T00:00:00.001",
           "missing_periods": 423419,
           "severity": "severe",
@@ -108452,28 +108452,28 @@
           "start": "2039-12-31T19:30:00.002"
         },
         {
-          "days": 1694.29166667,
+          "days": 1694.2917,
           "end": "2007-10-04T00:00:00.001",
           "missing_periods": 364145,
           "severity": "severe",
           "start": "2003-02-12T17:00:00.003"
         },
         {
-          "days": 1460.16666667,
+          "days": 1460.1667,
           "end": "2050-01-01T00:00:00.001",
           "missing_periods": 313825,
           "severity": "severe",
           "start": "2046-01-01T20:00:00.003"
         },
         {
-          "days": 1156.20833333,
+          "days": 1156.2083,
           "end": "1991-01-01T06:00:00.003",
           "missing_periods": 248497,
           "severity": "severe",
           "start": "1987-11-02T01:00:00.003"
         },
         {
-          "days": 1107.20833333,
+          "days": 1107.2083,
           "end": "2064-08-08T22:00:00",
           "missing_periods": 237966,
           "severity": "severe",
@@ -108487,21 +108487,21 @@
           "start": "2000-01-01T02:00:00.003"
         },
         {
-          "days": 586.166666667,
+          "days": 586.16667,
           "end": "2009-05-12T04:00:00.003",
           "missing_periods": 125981,
           "severity": "severe",
           "start": "2007-10-04T00:00:00.001"
         },
         {
-          "days": 574.179166667,
+          "days": 574.17917,
           "end": "2061-07-28T17:00:00.002",
           "missing_periods": 123404,
           "severity": "severe",
           "start": "2060-01-01T12:42:00.003"
         },
         {
-          "days": 365.833333333,
+          "days": 365.83333,
           "end": "2046-01-01T20:00:00.003",
           "missing_periods": 78625,
           "severity": "severe",
@@ -108522,21 +108522,21 @@
           "start": "2038-01-18T18:00:00.002"
         },
         {
-          "days": 322.041666667,
+          "days": 322.04167,
           "end": "2010-09-06T01:00:00.003",
           "missing_periods": 69213,
           "severity": "severe",
           "start": "2009-10-19T00:00:00.001"
         },
         {
-          "days": 208.958333333,
+          "days": 208.95833,
           "end": "2011-04-03T00:00:00.001",
           "missing_periods": 44909,
           "severity": "severe",
           "start": "2010-09-06T01:00:00.003"
         },
         {
-          "days": 159.833333333,
+          "days": 159.83333,
           "end": "2009-10-19T00:00:00.001",
           "missing_periods": 34351,
           "severity": "severe",
@@ -108550,7 +108550,7 @@
           "start": "2011-04-03T00:00:00.001"
         },
         {
-          "days": 87.6458333333,
+          "days": 87.645833,
           "end": "2034-08-15T17:30:00.002",
           "missing_periods": 18836,
           "severity": "severe",
@@ -108561,17 +108561,17 @@
     "granularity": "irregular",
     "max": "2069-12-31T00:00:00.001",
     "min": "1912-01-01T05:59:24.003",
-    "span_days": 57708.7504051
+    "span_days": 57708.75
   },
   "events.state::behavior_evidence": {
     "applicable": false
   },
   "events.state::profile": {
-    "cardinality_ratio": 0.000978980201728,
+    "cardinality_ratio": 0.0009789802,
     "distinct": 779,
-    "entropy": 3.66678561148,
+    "entropy": 3.6667856,
     "lengths": {
-      "avg": 2.26794776091,
+      "avg": 2.2679478,
       "max": 36,
       "min": 1
     },
@@ -109589,15 +109589,15 @@
     }
   },
   "events.user_id::profile": {
-    "cardinality_ratio": 0.56142668428,
+    "cardinality_ratio": 0.56142668,
     "distinct": 425,
-    "entropy": 5.62222535364,
+    "entropy": 5.6222254,
     "max": 38150.0,
     "min": 0.0,
     "null_ratio": 0.9996215,
     "numeric": {
       "mad": 5677.0,
-      "mean": 13382.1228534,
+      "mean": 13382.123,
       "percentiles": {
         "p01": 66.8,
         "p25": 4284.0,
@@ -109605,7 +109605,7 @@
         "p75": 20023.0,
         "p99": 36714.0
       },
-      "stddev": 11364.4210737
+      "stddev": 11364.421
     },
     "summary": {
       "distinct": 425,
@@ -109705,11 +109705,11 @@
     "applicable": false
   },
   "events.zip::profile": {
-    "cardinality_ratio": 0.2098714931,
+    "cardinality_ratio": 0.20987149,
     "distinct": 60541,
-    "entropy": 9.73730362447,
+    "entropy": 9.7373036,
     "lengths": {
-      "avg": 5.76722120728,
+      "avg": 5.7672212,
       "max": 186,
       "min": 1
     },
@@ -109718,7 +109718,7 @@
     "null_ratio": 0.8557665,
     "numeric": {
       "mad": 33708.0,
-      "mean": 29152650110.0,
+      "mean": 29152650000.0,
       "percentiles": {
         "p01": 680.0,
         "p25": 14850.0,
@@ -109726,7 +109726,7 @@
         "p75": 84403.0,
         "p99": 411001.0
       },
-      "stddev": 9659014307170.0
+      "stddev": 9659014300000.0
     },
     "summary": {
       "distinct": 60541,
@@ -109837,9 +109837,9 @@
         "from": "start_time",
         "g3": 0.000368,
         "kind": "edge",
-        "lambda": 0.0277410832232,
+        "lambda": 0.027741083,
         "pair_groups": 77420,
-        "rows_per_value": 26.0752793314,
+        "rows_per_value": 26.075279,
         "to": "user_id"
       },
       {
@@ -109848,9 +109848,9 @@
         "from": "city",
         "g3": 0.0003775,
         "kind": "edge",
-        "lambda": 0.00264200792602,
+        "lambda": 0.0026420079,
         "pair_groups": 27741,
-        "rows_per_value": 73.432222059,
+        "rows_per_value": 73.432222,
         "to": "user_id"
       },
       {
@@ -109861,7 +109861,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 1245,
-        "rows_per_value": 2564.1025641,
+        "rows_per_value": 2564.1026,
         "to": "user_id"
       },
       {
@@ -109870,9 +109870,9 @@
         "from": "zip",
         "g3": 0.000374,
         "kind": "edge",
-        "lambda": 0.0118890356671,
+        "lambda": 0.011889036,
         "pair_groups": 61002,
-        "rows_per_value": 33.0349179082,
+        "rows_per_value": 33.034918,
         "to": "user_id"
       },
       {
@@ -109883,7 +109883,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 669,
-        "rows_per_value": 9756.09756098,
+        "rows_per_value": 9756.0976,
         "to": "user_id"
       },
       {
@@ -109894,7 +109894,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 735,
-        "rows_per_value": 13513.5135135,
+        "rows_per_value": 13513.514,
         "to": "user_id"
       },
       {
@@ -109905,7 +109905,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 683,
-        "rows_per_value": 18691.588785,
+        "rows_per_value": 18691.589,
         "to": "user_id"
       },
       {
@@ -109916,7 +109916,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 646,
-        "rows_per_value": 20618.556701,
+        "rows_per_value": 20618.557,
         "to": "user_id"
       },
       {
@@ -109927,7 +109927,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 622,
-        "rows_per_value": 27027.027027,
+        "rows_per_value": 27027.027,
         "to": "user_id"
       },
       {
@@ -109938,7 +109938,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 637,
-        "rows_per_value": 21276.5957447,
+        "rows_per_value": 21276.596,
         "to": "user_id"
       },
       {
@@ -109949,7 +109949,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 747,
-        "rows_per_value": 10256.4102564,
+        "rows_per_value": 10256.41,
         "to": "user_id"
       },
       {
@@ -109960,7 +109960,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 593,
-        "rows_per_value": 37037.037037,
+        "rows_per_value": 37037.037,
         "to": "user_id"
       },
       {
@@ -109971,7 +109971,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 589,
-        "rows_per_value": 32258.0645161,
+        "rows_per_value": 32258.065,
         "to": "user_id"
       },
       {
@@ -109982,7 +109982,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 594,
-        "rows_per_value": 28571.4285714,
+        "rows_per_value": 28571.429,
         "to": "user_id"
       },
       {
@@ -109993,7 +109993,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 572,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "user_id"
       },
       {
@@ -110004,7 +110004,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 553,
-        "rows_per_value": 43478.2608696,
+        "rows_per_value": 43478.261,
         "to": "user_id"
       },
       {
@@ -110015,7 +110015,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 549,
-        "rows_per_value": 37735.8490566,
+        "rows_per_value": 37735.849,
         "to": "user_id"
       },
       {
@@ -110026,7 +110026,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 566,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "user_id"
       },
       {
@@ -110037,7 +110037,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 569,
-        "rows_per_value": 35714.2857143,
+        "rows_per_value": 35714.286,
         "to": "user_id"
       },
       {
@@ -110048,7 +110048,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 554,
-        "rows_per_value": 46511.627907,
+        "rows_per_value": 46511.628,
         "to": "user_id"
       },
       {
@@ -110059,7 +110059,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 558,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "user_id"
       },
       {
@@ -110070,7 +110070,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 551,
-        "rows_per_value": 48780.4878049,
+        "rows_per_value": 48780.488,
         "to": "user_id"
       },
       {
@@ -110081,7 +110081,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 544,
-        "rows_per_value": 41666.6666667,
+        "rows_per_value": 41666.667,
         "to": "user_id"
       },
       {
@@ -110092,7 +110092,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 530,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "user_id"
       },
       {
@@ -110103,7 +110103,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 544,
-        "rows_per_value": 42553.1914894,
+        "rows_per_value": 42553.191,
         "to": "user_id"
       },
       {
@@ -110125,7 +110125,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 522,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "user_id"
       },
       {
@@ -110136,7 +110136,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 537,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "user_id"
       },
       {
@@ -110147,7 +110147,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 504,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "user_id"
       },
       {
@@ -110158,7 +110158,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 504,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "user_id"
       },
       {
@@ -110169,7 +110169,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 506,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "user_id"
       },
       {
@@ -110180,7 +110180,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 533,
-        "rows_per_value": 60606.0606061,
+        "rows_per_value": 60606.061,
         "to": "user_id"
       },
       {
@@ -110202,7 +110202,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 485,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110213,7 +110213,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 534,
-        "rows_per_value": 60606.0606061,
+        "rows_per_value": 60606.061,
         "to": "user_id"
       },
       {
@@ -110224,7 +110224,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 504,
-        "rows_per_value": 51282.0512821,
+        "rows_per_value": 51282.051,
         "to": "user_id"
       },
       {
@@ -110235,7 +110235,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 521,
-        "rows_per_value": 32786.8852459,
+        "rows_per_value": 32786.885,
         "to": "user_id"
       },
       {
@@ -110246,7 +110246,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 523,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "user_id"
       },
       {
@@ -110257,7 +110257,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 534,
-        "rows_per_value": 44444.4444444,
+        "rows_per_value": 44444.444,
         "to": "user_id"
       },
       {
@@ -110279,7 +110279,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 524,
-        "rows_per_value": 37735.8490566,
+        "rows_per_value": 37735.849,
         "to": "user_id"
       },
       {
@@ -110290,7 +110290,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 499,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "user_id"
       },
       {
@@ -110301,7 +110301,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 496,
-        "rows_per_value": 39215.6862745,
+        "rows_per_value": 39215.686,
         "to": "user_id"
       },
       {
@@ -110312,7 +110312,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 494,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "user_id"
       },
       {
@@ -110334,7 +110334,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 480,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "user_id"
       },
       {
@@ -110345,7 +110345,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 487,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "user_id"
       },
       {
@@ -110356,7 +110356,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 508,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "user_id"
       },
       {
@@ -110367,7 +110367,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 541,
-        "rows_per_value": 45454.5454545,
+        "rows_per_value": 45454.545,
         "to": "user_id"
       },
       {
@@ -110378,7 +110378,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 505,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "user_id"
       },
       {
@@ -110389,7 +110389,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 495,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110400,7 +110400,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 479,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "user_id"
       },
       {
@@ -110422,7 +110422,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 498,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "user_id"
       },
       {
@@ -110433,7 +110433,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 477,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "user_id"
       },
       {
@@ -110444,7 +110444,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 494,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "user_id"
       },
       {
@@ -110455,7 +110455,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 503,
-        "rows_per_value": 46511.627907,
+        "rows_per_value": 46511.628,
         "to": "user_id"
       },
       {
@@ -110466,7 +110466,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 500,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "user_id"
       },
       {
@@ -110477,7 +110477,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 485,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110488,7 +110488,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 498,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "user_id"
       },
       {
@@ -110499,7 +110499,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 490,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "user_id"
       },
       {
@@ -110510,7 +110510,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 477,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "user_id"
       },
       {
@@ -110532,7 +110532,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 471,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "user_id"
       },
       {
@@ -110543,7 +110543,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 492,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "user_id"
       },
       {
@@ -110554,7 +110554,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 485,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "user_id"
       },
       {
@@ -110565,7 +110565,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 483,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "user_id"
       },
       {
@@ -110576,7 +110576,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 499,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "user_id"
       },
       {
@@ -110587,7 +110587,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 477,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "user_id"
       },
       {
@@ -110598,7 +110598,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 489,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "user_id"
       },
       {
@@ -110609,7 +110609,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 453,
-        "rows_per_value": 95238.0952381,
+        "rows_per_value": 95238.095,
         "to": "user_id"
       },
       {
@@ -110620,7 +110620,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 478,
-        "rows_per_value": 117647.058824,
+        "rows_per_value": 117647.06,
         "to": "user_id"
       },
       {
@@ -110631,7 +110631,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 474,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "user_id"
       },
       {
@@ -110642,7 +110642,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 472,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "user_id"
       },
       {
@@ -110686,7 +110686,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 480,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110697,7 +110697,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 479,
-        "rows_per_value": 95238.0952381,
+        "rows_per_value": 95238.095,
         "to": "user_id"
       },
       {
@@ -110730,7 +110730,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 473,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "user_id"
       },
       {
@@ -110741,7 +110741,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 495,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "user_id"
       },
       {
@@ -110752,7 +110752,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 491,
-        "rows_per_value": 66666.6666667,
+        "rows_per_value": 66666.667,
         "to": "user_id"
       },
       {
@@ -110772,9 +110772,9 @@
         "from": "user_id",
         "g3": 0.042979,
         "kind": "edge",
-        "lambda": 0.000325634405601,
+        "lambda": 0.00032563441,
         "pair_groups": 444,
-        "rows_per_value": 4694.83568075,
+        "rows_per_value": 4694.8357,
         "to": "c_81"
       },
       {
@@ -110785,7 +110785,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 444,
-        "rows_per_value": 153846.153846,
+        "rows_per_value": 153846.15,
         "to": "user_id"
       },
       {
@@ -110796,7 +110796,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 486,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "user_id"
       },
       {
@@ -110807,7 +110807,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 500,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110818,7 +110818,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 461,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "user_id"
       },
       {
@@ -110829,7 +110829,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 474,
-        "rows_per_value": 142857.142857,
+        "rows_per_value": 142857.14,
         "to": "user_id"
       },
       {
@@ -110840,7 +110840,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 498,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "user_id"
       },
       {
@@ -110851,7 +110851,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 468,
-        "rows_per_value": 153846.153846,
+        "rows_per_value": 153846.15,
         "to": "user_id"
       },
       {
@@ -110862,7 +110862,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 470,
-        "rows_per_value": 68965.5172414,
+        "rows_per_value": 68965.517,
         "to": "user_id"
       },
       {
@@ -110884,7 +110884,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 471,
-        "rows_per_value": 117647.058824,
+        "rows_per_value": 117647.06,
         "to": "user_id"
       },
       {
@@ -110895,7 +110895,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 471,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "user_id"
       },
       {
@@ -110906,7 +110906,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 467,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "user_id"
       },
       {
@@ -110939,7 +110939,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 465,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "user_id"
       },
       {
@@ -110950,7 +110950,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 473,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "user_id"
       },
       {
@@ -110972,7 +110972,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 474,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "user_id"
       },
       {
@@ -110983,7 +110983,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 462,
-        "rows_per_value": 68965.5172414,
+        "rows_per_value": 68965.517,
         "to": "user_id"
       },
       {
@@ -110994,7 +110994,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 458,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "user_id"
       },
       {
@@ -111005,7 +111005,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 1719,
-        "rows_per_value": 2012.07243461,
+        "rows_per_value": 2012.0724,
         "to": "user_id"
       },
       {
@@ -111014,9 +111014,9 @@
         "from": "start_time",
         "g3": 0.0494635,
         "kind": "edge",
-        "lambda": 0.172643639709,
+        "lambda": 0.17264364,
         "pair_groups": 92416,
-        "rows_per_value": 26.0752793314,
+        "rows_per_value": 26.075279,
         "to": "c_66"
       },
       {
@@ -111025,9 +111025,9 @@
         "from": "start_time",
         "g3": 0.0385785,
         "kind": "edge",
-        "lambda": 0.102679505966,
+        "lambda": 0.10267951,
         "pair_groups": 89987,
-        "rows_per_value": 26.0752793314,
+        "rows_per_value": 26.075279,
         "to": "c_81"
       },
       {
@@ -111036,9 +111036,9 @@
         "from": "city",
         "g3": 0.0469815,
         "kind": "edge",
-        "lambda": 0.881915382933,
+        "lambda": 0.88191538,
         "pair_groups": 37756,
-        "rows_per_value": 73.432222059,
+        "rows_per_value": 73.432222,
         "to": "state"
       },
       {
@@ -111047,9 +111047,9 @@
         "from": "city",
         "g3": 0.0212845,
         "kind": "edge",
-        "lambda": 0.958373262823,
+        "lambda": 0.95837326,
         "pair_groups": 28660,
-        "rows_per_value": 73.432222059,
+        "rows_per_value": 73.432222,
         "to": "country"
       },
       {
@@ -111058,9 +111058,9 @@
         "from": "city",
         "g3": 0.0429455,
         "kind": "edge",
-        "lambda": 0.001104831019,
+        "lambda": 0.001104831,
         "pair_groups": 31404,
-        "rows_per_value": 73.432222059,
+        "rows_per_value": 73.432222,
         "to": "c_81"
       },
       {
@@ -111069,9 +111069,9 @@
         "from": "state",
         "g3": 0.04299,
         "kind": "edge",
-        "lambda": 0.0000697788012002,
+        "lambda": 0.000069778801,
         "pair_groups": 1171,
-        "rows_per_value": 2564.1025641,
+        "rows_per_value": 2564.1026,
         "to": "c_81"
       },
       {
@@ -111080,9 +111080,9 @@
         "from": "zip",
         "g3": 0.04268,
         "kind": "edge",
-        "lambda": 0.00728025492522,
+        "lambda": 0.0072802549,
         "pair_groups": 63537,
-        "rows_per_value": 33.0349179082,
+        "rows_per_value": 33.034918,
         "to": "c_81"
       },
       {
@@ -111091,9 +111091,9 @@
         "from": "country",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 430,
-        "rows_per_value": 9756.09756098,
+        "rows_per_value": 9756.0976,
         "to": "c_81"
       },
       {
@@ -111102,9 +111102,9 @@
         "from": "c_1",
         "g3": 0.0429725,
         "kind": "edge",
-        "lambda": 0.000476821808201,
+        "lambda": 0.00047682181,
         "pair_groups": 540,
-        "rows_per_value": 13513.5135135,
+        "rows_per_value": 13513.514,
         "to": "c_81"
       },
       {
@@ -111113,9 +111113,9 @@
         "from": "c_2",
         "g3": 0.042979,
         "kind": "edge",
-        "lambda": 0.000325634405601,
+        "lambda": 0.00032563441,
         "pair_groups": 422,
-        "rows_per_value": 18691.588785,
+        "rows_per_value": 18691.589,
         "to": "c_81"
       },
       {
@@ -111124,9 +111124,9 @@
         "from": "c_3",
         "g3": 0.042978,
         "kind": "edge",
-        "lambda": 0.000348894006001,
+        "lambda": 0.00034889401,
         "pair_groups": 397,
-        "rows_per_value": 20618.556701,
+        "rows_per_value": 20618.557,
         "to": "c_81"
       },
       {
@@ -111135,9 +111135,9 @@
         "from": "c_4",
         "g3": 0.0429835,
         "kind": "edge",
-        "lambda": 0.000220966203801,
+        "lambda": 0.0002209662,
         "pair_groups": 314,
-        "rows_per_value": 27027.027027,
+        "rows_per_value": 27027.027,
         "to": "c_81"
       },
       {
@@ -111146,9 +111146,9 @@
         "from": "c_5",
         "g3": 0.042979,
         "kind": "edge",
-        "lambda": 0.000325634405601,
+        "lambda": 0.00032563441,
         "pair_groups": 340,
-        "rows_per_value": 21276.5957447,
+        "rows_per_value": 21276.596,
         "to": "c_81"
       },
       {
@@ -111157,9 +111157,9 @@
         "from": "c_6",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 434,
-        "rows_per_value": 10256.4102564,
+        "rows_per_value": 10256.41,
         "to": "c_81"
       },
       {
@@ -111168,9 +111168,9 @@
         "from": "c_7",
         "g3": 0.0429855,
         "kind": "edge",
-        "lambda": 0.000174447003,
+        "lambda": 0.000174447,
         "pair_groups": 224,
-        "rows_per_value": 37037.037037,
+        "rows_per_value": 37037.037,
         "to": "c_81"
       },
       {
@@ -111179,9 +111179,9 @@
         "from": "c_8",
         "g3": 0.042988,
         "kind": "edge",
-        "lambda": 0.000116298002,
+        "lambda": 0.000116298,
         "pair_groups": 266,
-        "rows_per_value": 32258.0645161,
+        "rows_per_value": 32258.065,
         "to": "c_81"
       },
       {
@@ -111190,9 +111190,9 @@
         "from": "c_9",
         "g3": 0.0429875,
         "kind": "edge",
-        "lambda": 0.0001279278022,
+        "lambda": 0.0001279278,
         "pair_groups": 276,
-        "rows_per_value": 28571.4285714,
+        "rows_per_value": 28571.429,
         "to": "c_81"
       },
       {
@@ -111201,9 +111201,9 @@
         "from": "c_10",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 168,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "c_81"
       },
       {
@@ -111212,9 +111212,9 @@
         "from": "c_11",
         "g3": 0.042988,
         "kind": "edge",
-        "lambda": 0.000116298002,
+        "lambda": 0.000116298,
         "pair_groups": 209,
-        "rows_per_value": 43478.2608696,
+        "rows_per_value": 43478.261,
         "to": "c_81"
       },
       {
@@ -111223,9 +111223,9 @@
         "from": "c_12",
         "g3": 0.0429875,
         "kind": "edge",
-        "lambda": 0.0001279278022,
+        "lambda": 0.0001279278,
         "pair_groups": 211,
-        "rows_per_value": 37735.8490566,
+        "rows_per_value": 37735.849,
         "to": "c_81"
       },
       {
@@ -111234,9 +111234,9 @@
         "from": "c_13",
         "g3": 0.042989,
         "kind": "edge",
-        "lambda": 0.0000930384016003,
+        "lambda": 0.000093038402,
         "pair_groups": 189,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "c_81"
       },
       {
@@ -111245,9 +111245,9 @@
         "from": "c_14",
         "g3": 0.0429845,
         "kind": "edge",
-        "lambda": 0.000197706603401,
+        "lambda": 0.0001977066,
         "pair_groups": 233,
-        "rows_per_value": 35714.2857143,
+        "rows_per_value": 35714.286,
         "to": "c_81"
       },
       {
@@ -111256,9 +111256,9 @@
         "from": "c_15",
         "g3": 0.0429875,
         "kind": "edge",
-        "lambda": 0.0001279278022,
+        "lambda": 0.0001279278,
         "pair_groups": 182,
-        "rows_per_value": 46511.627907,
+        "rows_per_value": 46511.628,
         "to": "c_81"
       },
       {
@@ -111267,9 +111267,9 @@
         "from": "c_16",
         "g3": 0.0429905,
         "kind": "edge",
-        "lambda": 0.0000581490010002,
+        "lambda": 0.000058149001,
         "pair_groups": 179,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "c_81"
       },
       {
@@ -111278,9 +111278,9 @@
         "from": "c_17",
         "g3": 0.0429865,
         "kind": "edge",
-        "lambda": 0.0001511874026,
+        "lambda": 0.0001511874,
         "pair_groups": 190,
-        "rows_per_value": 48780.4878049,
+        "rows_per_value": 48780.488,
         "to": "c_81"
       },
       {
@@ -111289,9 +111289,9 @@
         "from": "c_18",
         "g3": 0.042985,
         "kind": "edge",
-        "lambda": 0.000186076803201,
+        "lambda": 0.0001860768,
         "pair_groups": 223,
-        "rows_per_value": 41666.6666667,
+        "rows_per_value": 41666.667,
         "to": "c_81"
       },
       {
@@ -111300,9 +111300,9 @@
         "from": "c_19",
         "g3": 0.04299,
         "kind": "edge",
-        "lambda": 0.0000697788012002,
+        "lambda": 0.000069778801,
         "pair_groups": 148,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "c_81"
       },
       {
@@ -111311,9 +111311,9 @@
         "from": "c_20",
         "g3": 0.042983,
         "kind": "edge",
-        "lambda": 0.000232596004001,
+        "lambda": 0.000232596,
         "pair_groups": 193,
-        "rows_per_value": 42553.1914894,
+        "rows_per_value": 42553.191,
         "to": "c_81"
       },
       {
@@ -111322,7 +111322,7 @@
         "from": "c_21",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 158,
         "rows_per_value": 40000.0,
         "to": "c_81"
@@ -111333,9 +111333,9 @@
         "from": "c_22",
         "g3": 0.042985,
         "kind": "edge",
-        "lambda": 0.000186076803201,
+        "lambda": 0.0001860768,
         "pair_groups": 177,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "c_81"
       },
       {
@@ -111344,9 +111344,9 @@
         "from": "c_23",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 146,
-        "rows_per_value": 47619.047619,
+        "rows_per_value": 47619.048,
         "to": "c_81"
       },
       {
@@ -111355,9 +111355,9 @@
         "from": "c_24",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 81,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "c_81"
       },
       {
@@ -111366,9 +111366,9 @@
         "from": "c_25",
         "g3": 0.042988,
         "kind": "edge",
-        "lambda": 0.000116298002,
+        "lambda": 0.000116298,
         "pair_groups": 149,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "c_81"
       },
       {
@@ -111377,9 +111377,9 @@
         "from": "c_26",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 147,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "c_81"
       },
       {
@@ -111388,9 +111388,9 @@
         "from": "c_27",
         "g3": 0.0429905,
         "kind": "edge",
-        "lambda": 0.0000581490010002,
+        "lambda": 0.000058149001,
         "pair_groups": 153,
-        "rows_per_value": 60606.0606061,
+        "rows_per_value": 60606.061,
         "to": "c_81"
       },
       {
@@ -111399,7 +111399,7 @@
         "from": "c_28",
         "g3": 0.042989,
         "kind": "edge",
-        "lambda": 0.0000930384016003,
+        "lambda": 0.000093038402,
         "pair_groups": 131,
         "rows_per_value": 62500.0,
         "to": "c_81"
@@ -111410,9 +111410,9 @@
         "from": "c_29",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 126,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -111423,7 +111423,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 98,
-        "rows_per_value": 60606.0606061,
+        "rows_per_value": 60606.061,
         "to": "c_81"
       },
       {
@@ -111432,9 +111432,9 @@
         "from": "c_31",
         "g3": 0.0429895,
         "kind": "edge",
-        "lambda": 0.0000814086014002,
+        "lambda": 0.000081408601,
         "pair_groups": 166,
-        "rows_per_value": 51282.0512821,
+        "rows_per_value": 51282.051,
         "to": "c_81"
       },
       {
@@ -111443,9 +111443,9 @@
         "from": "c_32",
         "g3": 0.0429875,
         "kind": "edge",
-        "lambda": 0.0001279278022,
+        "lambda": 0.0001279278,
         "pair_groups": 221,
-        "rows_per_value": 32786.8852459,
+        "rows_per_value": 32786.885,
         "to": "c_81"
       },
       {
@@ -111454,9 +111454,9 @@
         "from": "c_33",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 84,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "c_81"
       },
       {
@@ -111465,9 +111465,9 @@
         "from": "c_34",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 108,
-        "rows_per_value": 44444.4444444,
+        "rows_per_value": 44444.444,
         "to": "c_81"
       },
       {
@@ -111476,7 +111476,7 @@
         "from": "c_35",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 107,
         "rows_per_value": 80000.0,
         "to": "c_81"
@@ -111487,9 +111487,9 @@
         "from": "c_36",
         "g3": 0.042982,
         "kind": "edge",
-        "lambda": 0.000255855604401,
+        "lambda": 0.0002558556,
         "pair_groups": 223,
-        "rows_per_value": 37735.8490566,
+        "rows_per_value": 37735.849,
         "to": "c_81"
       },
       {
@@ -111498,9 +111498,9 @@
         "from": "c_37",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 115,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "c_81"
       },
       {
@@ -111509,9 +111509,9 @@
         "from": "c_38",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 97,
-        "rows_per_value": 39215.6862745,
+        "rows_per_value": 39215.686,
         "to": "c_81"
       },
       {
@@ -111520,9 +111520,9 @@
         "from": "c_39",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 117,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "c_81"
       },
       {
@@ -111531,7 +111531,7 @@
         "from": "c_40",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 128,
         "rows_per_value": 62500.0,
         "to": "c_81"
@@ -111542,9 +111542,9 @@
         "from": "c_41",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 90,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "c_81"
       },
       {
@@ -111553,9 +111553,9 @@
         "from": "c_42",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 130,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "c_81"
       },
       {
@@ -111564,9 +111564,9 @@
         "from": "c_43",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 102,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "c_81"
       },
       {
@@ -111575,9 +111575,9 @@
         "from": "c_44",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 103,
-        "rows_per_value": 45454.5454545,
+        "rows_per_value": 45454.545,
         "to": "c_81"
       },
       {
@@ -111586,9 +111586,9 @@
         "from": "c_45",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 108,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "c_81"
       },
       {
@@ -111597,9 +111597,9 @@
         "from": "c_46",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 108,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -111610,7 +111610,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 100,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "c_81"
       },
       {
@@ -111619,7 +111619,7 @@
         "from": "c_48",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 109,
         "rows_per_value": 40000.0,
         "to": "c_81"
@@ -111630,9 +111630,9 @@
         "from": "c_49",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 129,
-        "rows_per_value": 83333.3333333,
+        "rows_per_value": 83333.333,
         "to": "c_81"
       },
       {
@@ -111643,7 +111643,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 96,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "c_81"
       },
       {
@@ -111652,9 +111652,9 @@
         "from": "c_51",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 105,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "c_81"
       },
       {
@@ -111663,9 +111663,9 @@
         "from": "c_52",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 123,
-        "rows_per_value": 46511.627907,
+        "rows_per_value": 46511.628,
         "to": "c_81"
       },
       {
@@ -111676,7 +111676,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 90,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "c_81"
       },
       {
@@ -111685,9 +111685,9 @@
         "from": "c_54",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 105,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -111696,9 +111696,9 @@
         "from": "c_55",
         "g3": 0.04299,
         "kind": "edge",
-        "lambda": 0.0000697788012002,
+        "lambda": 0.000069778801,
         "pair_groups": 108,
-        "rows_per_value": 71428.5714286,
+        "rows_per_value": 71428.571,
         "to": "c_81"
       },
       {
@@ -111709,7 +111709,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 92,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "c_81"
       },
       {
@@ -111718,9 +111718,9 @@
         "from": "c_57",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 72,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "c_81"
       },
       {
@@ -111729,7 +111729,7 @@
         "from": "c_58",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 94,
         "rows_per_value": 100000.0,
         "to": "c_81"
@@ -111740,9 +111740,9 @@
         "from": "c_59",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 69,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "c_81"
       },
       {
@@ -111751,9 +111751,9 @@
         "from": "c_60",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 119,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "c_81"
       },
       {
@@ -111762,9 +111762,9 @@
         "from": "c_61",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 137,
-        "rows_per_value": 57142.8571429,
+        "rows_per_value": 57142.857,
         "to": "c_81"
       },
       {
@@ -111773,9 +111773,9 @@
         "from": "c_62",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 82,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "c_81"
       },
       {
@@ -111784,9 +111784,9 @@
         "from": "c_63",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 113,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "c_81"
       },
       {
@@ -111795,9 +111795,9 @@
         "from": "c_64",
         "g3": 0.0429905,
         "kind": "edge",
-        "lambda": 0.0000581490010002,
+        "lambda": 0.000058149001,
         "pair_groups": 96,
-        "rows_per_value": 76923.0769231,
+        "rows_per_value": 76923.077,
         "to": "c_81"
       },
       {
@@ -111806,9 +111806,9 @@
         "from": "c_65",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 122,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "c_81"
       },
       {
@@ -111817,9 +111817,9 @@
         "from": "c_66",
         "g3": 0.042416,
         "kind": "edge",
-        "lambda": 0.0134207894308,
+        "lambda": 0.013420789,
         "pair_groups": 68,
-        "rows_per_value": 95238.0952381,
+        "rows_per_value": 95238.095,
         "to": "c_81"
       },
       {
@@ -111828,9 +111828,9 @@
         "from": "c_67",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 87,
-        "rows_per_value": 117647.058824,
+        "rows_per_value": 117647.06,
         "to": "c_81"
       },
       {
@@ -111839,9 +111839,9 @@
         "from": "c_68",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 79,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "c_81"
       },
       {
@@ -111850,9 +111850,9 @@
         "from": "c_69",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 83,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "c_81"
       },
       {
@@ -111861,7 +111861,7 @@
         "from": "c_70",
         "g3": 0.042991,
         "kind": "edge",
-        "lambda": 0.0000465192008001,
+        "lambda": 0.000046519201,
         "pair_groups": 68,
         "rows_per_value": 125000.0,
         "to": "c_81"
@@ -111883,7 +111883,7 @@
         "from": "c_72",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 61,
         "rows_per_value": 125000.0,
         "to": "c_81"
@@ -111894,9 +111894,9 @@
         "from": "c_73",
         "g3": 0.04299,
         "kind": "edge",
-        "lambda": 0.0000697788012002,
+        "lambda": 0.000069778801,
         "pair_groups": 100,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -111907,7 +111907,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 67,
-        "rows_per_value": 95238.0952381,
+        "rows_per_value": 95238.095,
         "to": "c_81"
       },
       {
@@ -111916,7 +111916,7 @@
         "from": "c_75",
         "g3": 0.0429895,
         "kind": "edge",
-        "lambda": 0.0000814086014002,
+        "lambda": 0.000081408601,
         "pair_groups": 72,
         "rows_per_value": 125000.0,
         "to": "c_81"
@@ -111927,7 +111927,7 @@
         "from": "c_76",
         "g3": 0.0429905,
         "kind": "edge",
-        "lambda": 0.0000581490010002,
+        "lambda": 0.000058149001,
         "pair_groups": 109,
         "rows_per_value": 62500.0,
         "to": "c_81"
@@ -111940,7 +111940,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 94,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "c_81"
       },
       {
@@ -111949,9 +111949,9 @@
         "from": "c_78",
         "g3": 0.0429875,
         "kind": "edge",
-        "lambda": 0.0001279278022,
+        "lambda": 0.0001279278,
         "pair_groups": 131,
-        "rows_per_value": 55555.5555556,
+        "rows_per_value": 55555.556,
         "to": "c_81"
       },
       {
@@ -111960,9 +111960,9 @@
         "from": "c_79",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 99,
-        "rows_per_value": 66666.6666667,
+        "rows_per_value": 66666.667,
         "to": "c_81"
       },
       {
@@ -111971,7 +111971,7 @@
         "from": "c_80",
         "g3": 0.042989,
         "kind": "edge",
-        "lambda": 0.0000930384016003,
+        "lambda": 0.000093038402,
         "pair_groups": 117,
         "rows_per_value": 80000.0,
         "to": "c_81"
@@ -111984,7 +111984,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 70,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "c_81"
       },
       {
@@ -111993,9 +111993,9 @@
         "from": "c_83",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 66,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -112004,9 +112004,9 @@
         "from": "c_84",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 102,
-        "rows_per_value": 90909.0909091,
+        "rows_per_value": 90909.091,
         "to": "c_81"
       },
       {
@@ -112017,7 +112017,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 63,
-        "rows_per_value": 142857.142857,
+        "rows_per_value": 142857.14,
         "to": "c_81"
       },
       {
@@ -112026,9 +112026,9 @@
         "from": "c_86",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 97,
-        "rows_per_value": 58823.5294118,
+        "rows_per_value": 58823.529,
         "to": "c_81"
       },
       {
@@ -112037,9 +112037,9 @@
         "from": "c_87",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 62,
-        "rows_per_value": 153846.153846,
+        "rows_per_value": 153846.15,
         "to": "c_81"
       },
       {
@@ -112048,9 +112048,9 @@
         "from": "c_88",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 118,
-        "rows_per_value": 68965.5172414,
+        "rows_per_value": 68965.517,
         "to": "c_81"
       },
       {
@@ -112070,9 +112070,9 @@
         "from": "c_90",
         "g3": 0.0429925,
         "kind": "edge",
-        "lambda": 0.0000116298002,
+        "lambda": 0.0000116298,
         "pair_groups": 81,
-        "rows_per_value": 117647.058824,
+        "rows_per_value": 117647.06,
         "to": "c_81"
       },
       {
@@ -112081,9 +112081,9 @@
         "from": "c_91",
         "g3": 0.0429895,
         "kind": "edge",
-        "lambda": 0.0000814086014002,
+        "lambda": 0.000081408601,
         "pair_groups": 105,
-        "rows_per_value": 86956.5217391,
+        "rows_per_value": 86956.522,
         "to": "c_81"
       },
       {
@@ -112092,9 +112092,9 @@
         "from": "c_92",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 94,
-        "rows_per_value": 111111.111111,
+        "rows_per_value": 111111.11,
         "to": "c_81"
       },
       {
@@ -112125,9 +112125,9 @@
         "from": "c_95",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 85,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "c_81"
       },
       {
@@ -112136,9 +112136,9 @@
         "from": "c_96",
         "g3": 0.04299,
         "kind": "edge",
-        "lambda": 0.0000697788012002,
+        "lambda": 0.000069778801,
         "pair_groups": 110,
-        "rows_per_value": 74074.0740741,
+        "rows_per_value": 74074.074,
         "to": "c_81"
       },
       {
@@ -112147,7 +112147,7 @@
         "from": "c_97",
         "g3": 0.042992,
         "kind": "edge",
-        "lambda": 0.0000232596004001,
+        "lambda": 0.0000232596,
         "pair_groups": 86,
         "rows_per_value": 100000.0,
         "to": "c_81"
@@ -112160,7 +112160,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 57,
-        "rows_per_value": 133333.333333,
+        "rows_per_value": 133333.33,
         "to": "c_81"
       },
       {
@@ -112169,9 +112169,9 @@
         "from": "c_99",
         "g3": 0.0429915,
         "kind": "edge",
-        "lambda": 0.0000348894006001,
+        "lambda": 0.000034889401,
         "pair_groups": 87,
-        "rows_per_value": 68965.5172414,
+        "rows_per_value": 68965.517,
         "to": "c_81"
       },
       {
@@ -112182,7 +112182,7 @@
         "kind": "edge",
         "lambda": 0.0,
         "pair_groups": 81,
-        "rows_per_value": 105263.157895,
+        "rows_per_value": 105263.16,
         "to": "c_81"
       },
       {
@@ -112191,9 +112191,9 @@
         "from": "c_other",
         "g3": 0.042943,
         "kind": "edge",
-        "lambda": 0.00116298002,
+        "lambda": 0.00116298,
         "pair_groups": 2766,
-        "rows_per_value": 2012.07243461,
+        "rows_per_value": 2012.0724,
         "to": "c_81"
       }
     ],
@@ -112227,7 +112227,7 @@
     "relationships": [
       {
         "filled": 1988432,
-        "orphan_rate": 0.371935273623,
+        "orphan_rate": 0.37193527,
         "orphans": 739568,
         "relationship": "event_attendees.event -> events.event_id",
         "temporal": [
@@ -112251,13 +112251,13 @@
             "joined": 11642,
             "parent_column": "joinedAt",
             "precedes": 2644,
-            "precedes_rate": 0.227108744202
+            "precedes_rate": 0.22710874
           }
         ]
       },
       {
         "filled": 15398,
-        "orphan_rate": 0.357513962852,
+        "orphan_rate": 0.35751396,
         "orphans": 5505,
         "relationship": "event_interest.event -> events.event_id",
         "temporal": [
@@ -112266,7 +112266,7 @@
             "joined": 9893,
             "parent_column": "start_time",
             "precedes": 9187,
-            "precedes_rate": 0.928636409583
+            "precedes_rate": 0.92863641
           }
         ]
       },
@@ -112281,7 +112281,7 @@
             "joined": 15398,
             "parent_column": "joinedAt",
             "precedes": 27,
-            "precedes_rate": 0.0017534744772
+            "precedes_rate": 0.0017534745
           }
         ]
       },
@@ -112296,7 +112296,7 @@
             "joined": 757,
             "parent_column": "joinedAt",
             "precedes": 323,
-            "precedes_rate": 0.426684280053
+            "precedes_rate": 0.42668428
           }
         ]
       },
@@ -112317,15 +112317,15 @@
     ]
   },
   "user_friends.friend::profile": {
-    "cardinality_ratio": 0.636584350721,
+    "cardinality_ratio": 0.63658435,
     "distinct": 9177,
-    "entropy": 8.95303087446,
+    "entropy": 8.9530309,
     "max": 38190.0,
     "min": 0.0,
     "null_ratio": 0.992792,
     "numeric": {
       "mad": 6908.0,
-      "mean": 19349.3826304,
+      "mean": 19349.383,
       "percentiles": {
         "p01": 2615.2,
         "p25": 11487.5,
@@ -112333,7 +112333,7 @@
         "p75": 26299.25,
         "p99": 37011.55
       },
-      "stddev": 8965.09446313
+      "stddev": 8965.0945
     },
     "summary": {
       "distinct": 9177,
@@ -112432,13 +112432,13 @@
   "user_friends.user::profile": {
     "cardinality_ratio": 0.0182965,
     "distinct": 36593,
-    "entropy": 10.0043713223,
+    "entropy": 10.004371,
     "max": 38208.0,
     "min": 0.0,
     "null_ratio": 0.0,
     "numeric": {
       "mad": 8023.0,
-      "mean": 18952.9628885,
+      "mean": 18952.963,
       "percentiles": {
         "p01": 1140.0,
         "p25": 10495.0,
@@ -112446,7 +112446,7 @@
         "p75": 26574.0,
         "p99": 37364.0
       },
-      "stddev": 9539.54598069
+      "stddev": 9539.546
     },
     "summary": {
       "distinct": 36593,
@@ -112557,9 +112557,9 @@
         "from": "user",
         "g3": 0.007164,
         "kind": "edge",
-        "lambda": 0.00610432852386,
+        "lambda": 0.0061043285,
         "pair_groups": 50921,
-        "rows_per_value": 54.6552619353,
+        "rows_per_value": 54.655262,
         "to": "friend"
       }
     ],
@@ -112998,15 +112998,15 @@
     }
   },
   "users.birthyear::profile": {
-    "cardinality_ratio": 0.0025874982977,
+    "cardinality_ratio": 0.0025874983,
     "distinct": 95,
-    "entropy": 3.12213022345,
+    "entropy": 3.1221302,
     "max": 1999.0,
     "min": 1900.0,
-    "null_ratio": 0.0391007354288,
+    "null_ratio": 0.039100735,
     "numeric": {
       "mad": 3.0,
-      "mean": 1988.73694675,
+      "mean": 1988.7369,
       "percentiles": {
         "p01": 1954.0,
         "p25": 1987.0,
@@ -113014,12 +113014,12 @@
         "p75": 1994.0,
         "p99": 1998.0
       },
-      "stddev": 8.96547436936
+      "stddev": 8.9654744
     },
     "summary": {
       "distinct": 95,
       "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
-      "null_ratio": 0.0391007354288,
+      "null_ratio": 0.039100735,
       "total": 38209
     },
     "top_values": [
@@ -113114,21 +113114,21 @@
     "applicable": false
   },
   "users.gender::profile": {
-    "cardinality_ratio": 0.0000524934383202,
+    "cardinality_ratio": 0.000052493438,
     "distinct": 2,
-    "entropy": 0.668736344926,
+    "entropy": 0.66873634,
     "lengths": {
-      "avg": 4.77994750656,
+      "avg": 4.7799475,
       "max": 6,
       "min": 4
     },
     "max": "male",
     "min": "female",
-    "null_ratio": 0.00285273103196,
+    "null_ratio": 0.002852731,
     "summary": {
       "distinct": 2,
       "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
-      "null_ratio": 0.00285273103196,
+      "null_ratio": 0.002852731,
       "total": 38209
     },
     "top_values": [
@@ -113153,14 +113153,14 @@
   "users.joinedAt::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 38151,
-    "entropy": 10.5493072487,
+    "entropy": 10.549307,
     "max": "2012-12-12T20:00:13.885",
     "min": "2012-04-13T01:06:25.740",
-    "null_ratio": 0.00151796697113,
+    "null_ratio": 0.001517967,
     "summary": {
       "distinct": 38151,
       "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
-      "null_ratio": 0.00151796697113,
+      "null_ratio": 0.001517967,
       "total": 38209
     },
     "top_values": [
@@ -113252,10 +113252,10 @@
     "confidence": 0.3,
     "gaps": {
       "count": 13874,
-      "largest_days": 1.98928240741,
+      "largest_days": 1.9892824,
       "sample": [
         {
-          "days": 1.98928240741,
+          "days": 1.9892824,
           "end": "2012-04-21T00:50:41.168",
           "missing_periods": 1735,
           "severity": "severe",
@@ -113269,126 +113269,126 @@
           "start": "2012-04-16T18:11:39.715"
         },
         {
-          "days": 0.767326388889,
+          "days": 0.76732639,
           "end": "2012-04-22T13:32:14.183",
           "missing_periods": 668,
           "severity": "severe",
           "start": "2012-04-21T19:07:17.240"
         },
         {
-          "days": 0.745115740741,
+          "days": 0.74511574,
           "end": "2012-04-14T16:03:07.031",
           "missing_periods": 649,
           "severity": "severe",
           "start": "2012-04-13T22:10:09.341"
         },
         {
-          "days": 0.525277777778,
+          "days": 0.52527778,
           "end": "2012-04-15T18:23:40.968",
           "missing_periods": 457,
           "severity": "severe",
           "start": "2012-04-15T05:47:16.947"
         },
         {
-          "days": 0.477453703704,
+          "days": 0.4774537,
           "end": "2012-07-11T15:24:22.612",
           "missing_periods": 415,
           "severity": "severe",
           "start": "2012-07-11T03:56:50.204"
         },
         {
-          "days": 0.469537037037,
+          "days": 0.46953704,
           "end": "2012-06-23T14:49:12.551",
           "missing_periods": 408,
           "severity": "severe",
           "start": "2012-06-23T03:33:04.821"
         },
         {
-          "days": 0.459398148148,
+          "days": 0.45939815,
           "end": "2012-05-13T17:20:18.528",
           "missing_periods": 399,
           "severity": "severe",
           "start": "2012-05-13T06:18:46.602"
         },
         {
-          "days": 0.422268518519,
+          "days": 0.42226852,
           "end": "2012-05-31T13:45:29.223",
           "missing_periods": 367,
           "severity": "severe",
           "start": "2012-05-31T03:37:25.635"
         },
         {
-          "days": 0.422175925926,
+          "days": 0.42217593,
           "end": "2012-07-10T16:19:12.883",
           "missing_periods": 367,
           "severity": "severe",
           "start": "2012-07-10T06:11:16.914"
         },
         {
-          "days": 0.414340277778,
+          "days": 0.41434028,
           "end": "2012-04-18T16:13:59.657",
           "missing_periods": 360,
           "severity": "severe",
           "start": "2012-04-18T06:17:20.964"
         },
         {
-          "days": 0.404074074074,
+          "days": 0.40407407,
           "end": "2012-09-16T17:15:02.679",
           "missing_periods": 351,
           "severity": "severe",
           "start": "2012-09-16T07:33:10.304"
         },
         {
-          "days": 0.39318287037,
+          "days": 0.39318287,
           "end": "2012-05-12T15:50:04.349",
           "missing_periods": 342,
           "severity": "severe",
           "start": "2012-05-12T06:23:53.741"
         },
         {
-          "days": 0.391412037037,
+          "days": 0.39141204,
           "end": "2012-04-16T15:28:42.867",
           "missing_periods": 340,
           "severity": "severe",
           "start": "2012-04-16T06:05:04.281"
         },
         {
-          "days": 0.390972222222,
+          "days": 0.39097222,
           "end": "2012-04-30T13:43:30.843",
           "missing_periods": 340,
           "severity": "severe",
           "start": "2012-04-30T04:20:30.486"
         },
         {
-          "days": 0.386886574074,
+          "days": 0.38688657,
           "end": "2012-04-21T14:30:56.227",
           "missing_periods": 336,
           "severity": "severe",
           "start": "2012-04-21T05:13:49.934"
         },
         {
-          "days": 0.373321759259,
+          "days": 0.37332176,
           "end": "2012-09-12T02:39:07.001",
           "missing_periods": 324,
           "severity": "severe",
           "start": "2012-09-11T17:41:32.379"
         },
         {
-          "days": 0.36912037037,
+          "days": 0.36912037,
           "end": "2012-04-27T13:35:50.013",
           "missing_periods": 321,
           "severity": "severe",
           "start": "2012-04-27T04:44:18.131"
         },
         {
-          "days": 0.364456018519,
+          "days": 0.36445602,
           "end": "2012-08-05T15:28:23.956",
           "missing_periods": 317,
           "severity": "severe",
           "start": "2012-08-05T06:43:34.792"
         },
         {
-          "days": 0.350069444444,
+          "days": 0.35006944,
           "end": "2012-04-13T20:03:25.028",
           "missing_periods": 304,
           "severity": "severe",
@@ -113399,15 +113399,15 @@
     "granularity": "irregular",
     "max": "2012-12-12T20:00:13.885",
     "min": "2012-04-13T01:06:25.740",
-    "span_days": 243.787361111
+    "span_days": 243.78736
   },
   "users.locale::behavior_evidence": {
     "applicable": false
   },
   "users.locale::profile": {
-    "cardinality_ratio": 0.00167499803711,
+    "cardinality_ratio": 0.001674998,
     "distinct": 64,
-    "entropy": 1.70295757969,
+    "entropy": 1.7029576,
     "lengths": {
       "avg": 5.0,
       "max": 5,
@@ -113514,21 +113514,21 @@
     "applicable": false
   },
   "users.location::profile": {
-    "cardinality_ratio": 0.0856034693379,
+    "cardinality_ratio": 0.085603469,
     "distinct": 2803,
-    "entropy": 4.88644602704,
+    "entropy": 4.886446,
     "lengths": {
-      "avg": 16.8292206206,
+      "avg": 16.829221,
       "max": 65,
       "min": 2
     },
     "max": "undefined  undefined",
     "min": "  ",
-    "null_ratio": 0.143029129263,
+    "null_ratio": 0.14302913,
     "summary": {
       "distinct": 2803,
       "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
-      "null_ratio": 0.143029129263,
+      "null_ratio": 0.14302913,
       "total": 38209
     },
     "top_values": [
@@ -114052,15 +114052,15 @@
     }
   },
   "users.timezone::profile": {
-    "cardinality_ratio": 0.0013766446933,
+    "cardinality_ratio": 0.0013766447,
     "distinct": 52,
-    "entropy": 2.24743419094,
+    "entropy": 2.2474342,
     "max": 840.0,
     "min": -720.0,
-    "null_ratio": 0.0114109241278,
+    "null_ratio": 0.011410924,
     "numeric": {
       "mad": 180.0,
-      "mean": 110.161226273,
+      "mean": 110.16123,
       "percentiles": {
         "p01": -480.0,
         "p25": -240.0,
@@ -114068,12 +114068,12 @@
         "p75": 420.0,
         "p99": 540.0
       },
-      "stddev": 359.60482263
+      "stddev": 359.60482
     },
     "summary": {
       "distinct": 52,
       "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
-      "null_ratio": 0.0114109241278,
+      "null_ratio": 0.011410924,
       "total": 38209
     },
     "top_values": [
@@ -114599,7 +114599,7 @@
   "users.user_id::profile": {
     "cardinality_ratio": 1.0,
     "distinct": 38209,
-    "entropy": 10.5508263689,
+    "entropy": 10.550826,
     "max": 38208.0,
     "min": 0.0,
     "null_ratio": 0.0,
@@ -114613,7 +114613,7 @@
         "p75": 28656.0,
         "p99": 37825.92
       },
-      "stddev": 11030.1325544
+      "stddev": 11030.133
     },
     "summary": {
       "distinct": 38209,

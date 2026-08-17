@@ -65,7 +65,7 @@
   ],
   "ap_invoices.entry_id": [
     {
-      "body": "{\"distinct\":16465,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0209312005709,\"total\":16817}",
+      "body": "{\"distinct\":16465,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.020931201,\"total\":16817}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "ap_invoices.entry_id"
@@ -225,7 +225,7 @@
   ],
   "chart_of_accounts.parent_id": [
     {
-      "body": "{\"distinct\":18,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0819672131148,\"total\":61}",
+      "body": "{\"distinct\":18,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.081967213,\"total\":61}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "chart_of_accounts.parent_id"
@@ -377,7 +377,7 @@
   ],
   "journal_lines.cost_center": [
     {
-      "body": "{\"distinct\":5,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.521586812881,\"total\":157851}",
+      "body": "{\"distinct\":5,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.52158681,\"total\":157851}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "journal_lines.cost_center"

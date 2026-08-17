@@ -9,7 +9,7 @@
   ],
   "account_balances.ending_balance": [
     {
-      "body": "{\"align\":\"account_balances.account_id = journal_lines.account_id\",\"anchors\":4,\"convention\":\"net_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":5.44938946772,\"r_stock\":0.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":8},\"support\":0.675584380489,\"verdict\":\"stock\",\"voted\":8}",
+      "body": "{\"align\":\"account_balances.account_id = journal_lines.account_id\",\"anchors\":4,\"convention\":\"net_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":5.4493895,\"r_stock\":0.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":8},\"support\":0.67558438,\"verdict\":\"stock\",\"voted\":8}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "account_balances.ending_balance"
@@ -145,7 +145,7 @@
   ],
   "ar_invoices.amount": [
     {
-      "body": "{\"align\":\"ar_invoices.customer_id = receipts.customer_id\",\"anchors\":32,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.353899566851,\"r_stock\":1.03051175633,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":73},\"support\":0.148482986393,\"verdict\":\"flow\",\"voted\":73}",
+      "body": "{\"align\":\"ar_invoices.customer_id = receipts.customer_id\",\"anchors\":32,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.35389957,\"r_stock\":1.0305118,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":73},\"support\":0.14848299,\"verdict\":\"flow\",\"voted\":73}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "ar_invoices.amount"
@@ -321,7 +321,7 @@
   ],
   "inventory_positions.unit_cost": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.408292778432,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":28},\"support\":0.0819620552148,\"verdict\":\"flow\",\"voted\":28}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.40829278,\"r_stock\":1.0,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":28},\"support\":0.081962055,\"verdict\":\"flow\",\"voted\":28}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.unit_cost"
@@ -329,7 +329,7 @@
   ],
   "inventory_positions.units_on_hand": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.412719959779,\"r_stock\":1.00091421474,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":130},\"support\":0.47846663028,\"verdict\":\"flow\",\"voted\":130}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"units\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.41271996,\"r_stock\":1.0009142,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":130},\"support\":0.47846663,\"verdict\":\"flow\",\"voted\":130}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.units_on_hand"
@@ -337,7 +337,7 @@
   ],
   "inventory_positions.value": [
     {
-      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"line_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.411728274523,\"r_stock\":1.00068132177,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":159},\"support\":0.60053316524,\"verdict\":\"flow\",\"voted\":159}",
+      "body": "{\"align\":\"inventory_positions.product_id = sales_order_lines.product_id\",\"anchors\":2,\"convention\":\"line_amount\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.41172827,\"r_stock\":1.0006813,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":159},\"support\":0.60053317,\"verdict\":\"flow\",\"voted\":159}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "inventory_positions.value"
@@ -393,7 +393,7 @@
   ],
   "journal_lines.debit": [
     {
-      "body": "{\"align\":\"journal_lines.account_id = account_balances.account_id\",\"anchors\":12,\"convention\":\"ending_balance\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.393890288672,\"r_stock\":0.990731816487,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":1,\"primary\":3},\"support\":0.136841759462,\"verdict\":\"flow\",\"voted\":3}",
+      "body": "{\"align\":\"journal_lines.account_id = account_balances.account_id\",\"anchors\":12,\"convention\":\"ending_balance\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.39389029,\"r_stock\":0.99073182,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":1,\"primary\":3},\"support\":0.13684176,\"verdict\":\"flow\",\"voted\":3}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "journal_lines.debit"
@@ -465,7 +465,7 @@
   ],
   "receipts.amount": [
     {
-      "body": "{\"align\":\"receipts.customer_id = ar_invoices.customer_id\",\"anchors\":36,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.371265438676,\"r_stock\":1.02742223661,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.206464385476,\"verdict\":\"flow\",\"voted\":98}",
+      "body": "{\"align\":\"receipts.customer_id = ar_invoices.customer_id\",\"anchors\":36,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.37126544,\"r_stock\":1.0274222,\"scope\":\"year\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":98},\"support\":0.20646439,\"verdict\":\"flow\",\"voted\":98}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "receipts.amount"
@@ -513,7 +513,7 @@
   ],
   "sales_order_lines.line_amount": [
     {
-      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.00416014137,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":400},\"support\":0.9904873594,\"verdict\":\"flow\",\"voted\":400}",
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.0,\"r_stock\":1.0041601,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":400},\"support\":0.99048736,\"verdict\":\"flow\",\"voted\":400}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.line_amount"
@@ -521,7 +521,7 @@
   ],
   "sales_order_lines.line_cost": [
     {
-      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.311575717437,\"r_stock\":1.00279861717,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":395},\"support\":0.971075847269,\"verdict\":\"flow\",\"voted\":395}",
+      "body": "{\"align\":\"sales_order_lines via sales_orders.customer_id = ar_invoices.customer_id\",\"anchors\":22,\"convention\":\"amount\",\"decided\":12,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.31157572,\"r_stock\":1.0027986,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":395},\"support\":0.97107585,\"verdict\":\"flow\",\"voted\":395}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.line_cost"
@@ -561,7 +561,7 @@
   ],
   "sales_order_lines.units": [
     {
-      "body": "{\"align\":\"sales_order_lines.product_id = inventory_positions.product_id\",\"anchors\":22,\"convention\":\"units_on_hand\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.379183860614,\"r_stock\":1.01241868717,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":189},\"support\":0.731425157517,\"verdict\":\"flow\",\"voted\":189}",
+      "body": "{\"align\":\"sales_order_lines.product_id = inventory_positions.product_id\",\"anchors\":22,\"convention\":\"units_on_hand\",\"decided\":2,\"note\":\"cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)\",\"r_flow\":0.37918386,\"r_stock\":1.0124187,\"scope\":\"none\",\"sign\":{\"both\":0,\"mirror\":0,\"primary\":189},\"support\":0.73142516,\"verdict\":\"flow\",\"voted\":189}",
       "computed_at": "<volatile>",
       "function": "behavior_evidence",
       "subject": "sales_order_lines.units"

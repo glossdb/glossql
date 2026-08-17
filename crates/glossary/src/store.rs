@@ -3,6 +3,9 @@
 //! in portable SQL. Admission (SPEC.md §5.2, §7.1) happens on the write
 //! paths; supersession is the `NOT EXISTS` read predicate, never an update.
 
+use std::sync::Arc;
+
+use glossql_catalog::{Lake, Relations};
 use serde_json::Value;
 use sqlx::Row as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -187,13 +190,6 @@ CREATE TABLE IF NOT EXISTS recipes (
   sql TEXT NOT NULL,
   PRIMARY KEY (dataset, table_name)
 );
-CREATE TABLE IF NOT EXISTS relationships (
-  dataset TEXT NOT NULL,
-  left_path TEXT NOT NULL,
-  op TEXT NOT NULL,
-  right_path TEXT NOT NULL,
-  PRIMARY KEY (dataset, left_path, op, right_path)
-);
 CREATE TABLE IF NOT EXISTS aspects (
   name TEXT PRIMARY KEY,
   schema TEXT NOT NULL,
@@ -260,7 +256,16 @@ CREATE INDEX IF NOT EXISTS cache_key
 pub struct Relation {
     pub name: &'static str,
     pub columns: &'static [&'static str],
-    sql: &'static str,
+    /// The sqlite select, `None` once the relation has crossed to the
+    /// lake — see [`WORKSPACE_NAMESPACE`]. A moved relation is served by
+    /// scanning history and applying the rule, which is the same shape
+    /// the `ORDER BY` used to hand-roll.
+    sql: Option<&'static str>,
+    /// Dataset-scoped relations lead with a `dataset` column and, once
+    /// crossed, store under `<dataset>_meta` — the namespace carries the
+    /// dataset (2026-08-16 §5). Workspace-wide relations store under
+    /// [`WORKSPACE_NAMESPACE`].
+    dataset_scoped: bool,
 }
 
 /// Every relation [`Store::relation_rows`] serves — the glossary, the
@@ -279,9 +284,10 @@ pub const RELATIONS: &[Relation] = &[
             "written_at",
             "snapshot_id",
         ],
-        sql: "SELECT dataset, subject, aspect, actor_kind, actor_id, body, written_at, \
+        sql: Some("SELECT dataset, subject, aspect, actor_kind, actor_id, body, written_at, \
                      CAST(snapshot_id AS TEXT) AS snapshot_id \
-              FROM glossary ORDER BY id",
+              FROM glossary ORDER BY id"),
+        dataset_scoped: true,
     },
     Relation {
         name: "cache",
@@ -294,9 +300,10 @@ pub const RELATIONS: &[Relation] = &[
             "computed_at",
             "snapshot_id",
         ],
-        sql: "SELECT dataset, subject, function, witness, body, computed_at, \
+        sql: Some("SELECT dataset, subject, function, witness, body, computed_at, \
                      CAST(snapshot_id AS TEXT) AS snapshot_id \
-              FROM cache ORDER BY id",
+              FROM cache ORDER BY id"),
+        dataset_scoped: true,
     },
     Relation {
         name: "imports",
@@ -319,50 +326,58 @@ pub const RELATIONS: &[Relation] = &[
         // the sum reported 16,817 phantom dropped rows; fixed
         // 2026-08-15 by giving the store the shape instead of a proxy
         // for it).
-        sql: "SELECT dataset, table_name, source_scans, \
+        sql: Some("SELECT dataset, table_name, source_scans, \
                      CAST(landed_rows AS TEXT) AS landed_rows, \
                      CAST(dropped_rows_count AS TEXT) AS dropped_rows_count, \
                      cast_failures, imported_at \
-              FROM imports ORDER BY id",
+              FROM imports ORDER BY id"),
+        dataset_scoped: true,
     },
     Relation {
         name: "functions",
         columns: &["name", "scope", "script", "accepts", "returns"],
-        sql: "SELECT name, COALESCE(scope_dataset, 'GLOBAL') AS scope, script, \
+        sql: Some("SELECT name, COALESCE(scope_dataset, 'GLOBAL') AS scope, script, \
                      accepts, returns \
-              FROM functions ORDER BY name",
+              FROM functions ORDER BY name"),
+        dataset_scoped: false,
     },
     Relation {
         name: "aspects",
         columns: &["name", "kind", "grains", "condition", "schema"],
-        sql: "SELECT name, kind, grains, \
+        sql: Some("SELECT name, kind, grains, \
                      CASE WHEN condition_aspect IS NULL THEN NULL \
                           ELSE condition_aspect || ' = ''' || condition_value || '''' \
                      END AS condition, \
-                     schema FROM aspects ORDER BY name",
+                     schema FROM aspects ORDER BY name"),
+        dataset_scoped: false,
     },
     Relation {
         name: "witnesses",
         columns: &["name", "aspect", "speakers", "detector", "threshold"],
-        sql: "SELECT name, aspect, speakers, detector, \
+        sql: Some("SELECT name, aspect, speakers, detector, \
                      CAST(threshold AS TEXT) AS threshold \
-              FROM witnesses ORDER BY name",
+              FROM witnesses ORDER BY name"),
+        dataset_scoped: false,
     },
     Relation {
         name: "sources",
         columns: &["name", "settings"],
-        sql: "SELECT name, settings FROM sources ORDER BY name",
+        sql: Some("SELECT name, settings FROM sources ORDER BY name"),
+        dataset_scoped: false,
     },
     Relation {
         name: "datasets",
         columns: &["name", "settings"],
-        sql: "SELECT name, settings FROM datasets ORDER BY name",
+        sql: Some("SELECT name, settings FROM datasets ORDER BY name"),
+        dataset_scoped: false,
     },
+    // First across (2026-08-17): no supersession of its own, one writer,
+    // one reader.
     Relation {
         name: "relationships",
         columns: &["dataset", "left_path", "op", "right_path"],
-        sql: "SELECT dataset, left_path, op, right_path FROM relationships \
-              ORDER BY dataset, left_path, op, right_path",
+        sql: None,
+        dataset_scoped: true,
     },
 ];
 
@@ -382,9 +397,41 @@ pub fn accepts_relation(name: &str) -> bool {
     matches!(name, "relationships" | "imports" | "glossary")
 }
 
+/// Where the crossed workspace-wide relations live (`sources`,
+/// `aspects`, `functions`, `witnesses`, and source-grain glossary rows
+/// when their relation crosses). Dataset-scoped relations live in
+/// `<dataset>_meta` instead — a workspace holds many datasets, and the
+/// pairing is what lets a REST catalog grant a dataset and its record
+/// as a unit (2026-08-16 §5).
+const WORKSPACE_NAMESPACE: &str = "glossql";
+
+/// The seam over a workspace's lake, carrying every relation that has
+/// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
+/// setting its `sql` to `None` and nothing else.
+async fn lake_relations(lake: Lake) -> Result<Arc<dyn Relations>> {
+    let moved: Vec<glossql_catalog::RelationSpec> = RELATIONS
+        .iter()
+        .filter(|r| r.sql.is_none())
+        .map(|r| glossql_catalog::RelationSpec {
+            name: r.name,
+            columns: r.columns,
+            dataset_scoped: r.dataset_scoped,
+        })
+        .collect();
+    let relations = glossql_catalog::IcebergRelations::open(lake, WORKSPACE_NAMESPACE, &moved)
+        .await
+        .map_err(|e| Error::Backend(e.to_string()))?;
+    Ok(Arc::new(relations))
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     pool: SqlitePool,
+    relations: Arc<dyn Relations>,
+    /// Held for its lifetime, not read: [`Store::open_memory`] puts the
+    /// lake in a temp dir, and dropping the handle would delete it out
+    /// from under an open store.
+    _scratch: Option<Arc<tempfile::TempDir>>,
 }
 
 /// What the connect-time brief is composed from — see
@@ -403,7 +450,9 @@ pub struct BriefCounts {
 }
 
 impl Store {
-    pub async fn open(url: &str) -> Result<Self> {
+    /// The store over a workspace's own lake. The relations that have
+    /// crossed live there; the rest still ride the sqlite pool.
+    pub async fn open(url: &str, lake: Lake) -> Result<Self> {
         // WAL, so a read never waits behind the write of a gloss; a busy
         // timeout, so a concurrent writer waits instead of erroring. sqlx
         // sets neither by default (sqlx-sqlite-0.8.6 options/mod.rs:177).
@@ -413,18 +462,34 @@ impl Store {
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new().connect_with(options).await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        Ok(Store { pool })
+        Ok(Store {
+            pool,
+            relations: lake_relations(lake).await?,
+            _scratch: None,
+        })
     }
 
-    /// In-memory store. One connection, or every pool checkout would see a
-    /// different empty database.
+    /// A throwaway store: sqlite in memory, the lake in a temp dir that
+    /// goes when the store does. One sqlite connection, or every pool
+    /// checkout would see a different empty database.
     pub async fn open_memory() -> Result<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        Ok(Store { pool })
+        let scratch = tempfile::tempdir().map_err(|e| Error::Backend(e.to_string()))?;
+        let lake = Lake::open(
+            &scratch.path().join("catalog.sqlite"),
+            &scratch.path().join("warehouse"),
+        )
+        .await
+        .map_err(|e| Error::Backend(e.to_string()))?;
+        Ok(Store {
+            pool,
+            relations: lake_relations(lake).await?,
+            _scratch: Some(Arc::new(scratch)),
+        })
     }
 
     /// The connect-time brief's raw counts (ruled 2026-08-12, delivery
@@ -584,16 +649,23 @@ impl Store {
         op: &str,
         right: &str,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO relationships (dataset, left_path, op, right_path) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(dataset)
-        .bind(left)
-        .bind(op)
-        .bind(right)
-        .execute(&self.pool)
-        .await?;
+        // Append, where sqlite had `INSERT OR REPLACE` on a four-column
+        // primary key. The key was the whole row, so a re-declaration
+        // wrote what was already there; on the lake it appends a
+        // duplicate, and `relation_rows` collapses identical rows the
+        // same way the primary key did.
+        self.relations
+            .append(
+                "relationships",
+                vec![vec![
+                    Some(dataset.to_string()),
+                    Some(left.to_string()),
+                    Some(op.to_string()),
+                    Some(right.to_string()),
+                ]],
+            )
+            .await
+            .map_err(|e| Error::Backend(e.to_string()))?;
         // A new edge invalidates dataset-wide through the same ACCEPTS
         // machinery an aspect value uses (ruled 2026-08-05): an edge can
         // change any subject's evidence, and the next call repopulates.
@@ -1821,13 +1893,40 @@ impl Store {
         )
     }
 
+    /// A moved relation, served from the lake. Two things the sqlite
+    /// select did for free have to be said out loud here:
+    ///
+    /// - **the collapse.** A primary key made a re-declaration a no-op;
+    ///   an append cannot, so [`rules::latest_by`] keyed on the whole row
+    ///   keeps the last write of each distinct row. Where a relation has
+    ///   a narrower key, that key is the rule and belongs here.
+    /// - **the order.** A scan returns rows in file order. The doors
+    ///   compared dumps, so the order is part of the answer; sorting by
+    ///   the cells is what every moved relation's `ORDER BY` spelled.
+    async fn lake_rows(&self, table: &str) -> Result<Vec<Vec<Option<String>>>> {
+        let rows = self
+            .relations
+            .scan(table)
+            .await
+            .map_err(|e| Error::Backend(e.to_string()))?;
+        let mut rows = rules::latest_by(rows, |r| r.cells.clone(), |r| r.seq)
+            .into_iter()
+            .map(|r| r.cells)
+            .collect::<Vec<_>>();
+        rows.sort();
+        Ok(rows)
+    }
+
     /// Full relation dump for substrate `SELECT`s over the store's
     /// relations — the names and column shapes live in [`RELATIONS`].
     pub async fn relation_rows(&self, table: &str) -> Result<Vec<Vec<Option<String>>>> {
         let Some(relation) = RELATIONS.iter().find(|r| r.name == table) else {
             return Err(Error::ForwardRejected(table.into()));
         };
-        let rows = sqlx::query(relation.sql).fetch_all(&self.pool).await?;
+        let Some(sql) = relation.sql else {
+            return self.lake_rows(table).await;
+        };
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| {

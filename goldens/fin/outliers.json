@@ -1,7 +1,7 @@
 {
   "account_balances.account_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":388.75,\"ratio\":0.0,\"upper\":2518.75},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "account_balances.account_id"
@@ -9,7 +9,7 @@
   ],
   "account_balances.ending_balance": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-33479417.0,\"ratio\":0.0,\"upper\":39818696.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "account_balances.ending_balance"
@@ -17,7 +17,7 @@
   ],
   "account_balances.period": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "account_balances.period"
@@ -25,7 +25,7 @@
   ],
   "account_balances.period_start": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "account_balances.period_start"
@@ -33,7 +33,7 @@
   ],
   "ap_invoices.amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":1837,\"lower\":-12304.565,\"ratio\":0.1092347,\"upper\":21617.555},\"zscore\":{\"count\":2512,\"ratio\":0.14937266}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.amount"
@@ -41,7 +41,7 @@
   ],
   "ap_invoices.ap_invoice_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.ap_invoice_id"
@@ -57,7 +57,7 @@
   ],
   "ap_invoices.due_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.due_date"
@@ -65,7 +65,7 @@
   ],
   "ap_invoices.entry_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.entry_id"
@@ -73,7 +73,7 @@
   ],
   "ap_invoices.invoice_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.invoice_date"
@@ -81,7 +81,7 @@
   ],
   "ap_invoices.payment_terms": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.payment_terms"
@@ -89,7 +89,7 @@
   ],
   "ap_invoices.status": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.status"
@@ -97,7 +97,7 @@
   ],
   "ap_invoices.vendor_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_invoices.vendor_id"
@@ -105,7 +105,7 @@
   ],
   "ap_payments.amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":1638,\"lower\":-12396.87,\"ratio\":0.10972669,\"upper\":21796.89},\"zscore\":{\"count\":2236,\"ratio\":0.14978564}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_payments.amount"
@@ -113,7 +113,7 @@
   ],
   "ap_payments.ap_invoice_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_payments.ap_invoice_id"
@@ -121,7 +121,7 @@
   ],
   "ap_payments.method": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_payments.method"
@@ -129,7 +129,7 @@
   ],
   "ap_payments.payment_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_payments.payment_date"
@@ -137,7 +137,7 @@
   ],
   "ap_payments.payment_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ap_payments.payment_id"
@@ -145,7 +145,7 @@
   ],
   "ar_invoices.amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":1225,\"lower\":-15364.731,\"ratio\":0.082938389,\"upper\":31643.419},\"zscore\":{\"count\":1355,\"ratio\":0.091740014}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.amount"
@@ -153,7 +153,7 @@
   ],
   "ar_invoices.ar_invoice_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.ar_invoice_id"
@@ -161,7 +161,7 @@
   ],
   "ar_invoices.customer_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.customer_id"
@@ -169,7 +169,7 @@
   ],
   "ar_invoices.due_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.due_date"
@@ -177,7 +177,7 @@
   ],
   "ar_invoices.invoice_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.invoice_date"
@@ -185,7 +185,7 @@
   ],
   "ar_invoices.order_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.order_id"
@@ -193,7 +193,7 @@
   ],
   "ar_invoices.status": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "ar_invoices.status"
@@ -201,7 +201,7 @@
   ],
   "chart_of_accounts.account_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-2845.0,\"ratio\":0.0,\"upper\":10075.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "chart_of_accounts.account_id"
@@ -209,7 +209,7 @@
   ],
   "chart_of_accounts.account_name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "chart_of_accounts.account_name"
@@ -217,7 +217,7 @@
   ],
   "chart_of_accounts.account_type": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "chart_of_accounts.account_type"
@@ -225,7 +225,7 @@
   ],
   "chart_of_accounts.parent_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-2812.5,\"ratio\":0.0,\"upper\":9687.5},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "chart_of_accounts.parent_id"
@@ -233,7 +233,7 @@
   ],
   "customers.churned_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customers.churned_date"
@@ -241,7 +241,7 @@
   ],
   "customers.created_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customers.created_date"
@@ -249,7 +249,7 @@
   ],
   "customers.customer_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customers.customer_id"
@@ -257,7 +257,7 @@
   ],
   "customers.customer_name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customers.customer_name"
@@ -265,7 +265,7 @@
   ],
   "customers.payment_terms": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "customers.payment_terms"
@@ -297,7 +297,7 @@
   ],
   "inventory_positions.period": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.period"
@@ -305,7 +305,7 @@
   ],
   "inventory_positions.period_start": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.period_start"
@@ -313,7 +313,7 @@
   ],
   "inventory_positions.product_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.product_id"
@@ -321,7 +321,7 @@
   ],
   "inventory_positions.unit_cost": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":288,\"lower\":-381.455,\"ratio\":0.05,\"upper\":966.885},\"zscore\":{\"count\":192,\"ratio\":0.033333333}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.unit_cost"
@@ -329,7 +329,7 @@
   ],
   "inventory_positions.units_on_hand": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":4,\"lower\":-51.0,\"ratio\":0.00069444444,\"upper\":197.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.units_on_hand"
@@ -337,7 +337,7 @@
   ],
   "inventory_positions.value": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":402,\"lower\":-31614.527,\"ratio\":0.069791667,\"upper\":72376.213},\"zscore\":{\"count\":384,\"ratio\":0.066666667}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "inventory_positions.value"
@@ -345,7 +345,7 @@
   ],
   "journal_entries.entry_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_entries.entry_date"
@@ -353,7 +353,7 @@
   ],
   "journal_entries.entry_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_entries.entry_id"
@@ -361,7 +361,7 @@
   ],
   "journal_entries.status": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_entries.status"
@@ -369,7 +369,7 @@
   ],
   "journal_lines.account_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":0,\"lower\":-3140.0,\"ratio\":0.0,\"upper\":8460.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.account_id"
@@ -385,7 +385,7 @@
   ],
   "journal_lines.credit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":20669,\"lower\":-5607.3825,\"ratio\":0.13093994,\"upper\":9345.6375},\"zscore\":{\"count\":70512,\"ratio\":0.44669974}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.credit"
@@ -393,7 +393,7 @@
   ],
   "journal_lines.debit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":22461,\"lower\":-5178.0,\"ratio\":0.14229241,\"upper\":8630.0},\"zscore\":{\"count\":0,\"ratio\":0.0}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.debit"
@@ -401,7 +401,7 @@
   ],
   "journal_lines.entry_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.entry_id"
@@ -409,7 +409,7 @@
   ],
   "journal_lines.line_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.line_id"
@@ -417,7 +417,7 @@
   ],
   "journal_lines.net_amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":26791,\"lower\":-14523.638,\"ratio\":0.16972335,\"upper\":14237.383},\"zscore\":{\"count\":20068,\"ratio\":0.12713255}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "journal_lines.net_amount"
@@ -425,7 +425,7 @@
   ],
   "products.list_price": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":7,\"lower\":-647.7875,\"ratio\":0.029166667,\"upper\":1584.8725},\"zscore\":{\"count\":6,\"ratio\":0.025}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "products.list_price"
@@ -441,7 +441,7 @@
   ],
   "products.product_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "products.product_id"
@@ -449,7 +449,7 @@
   ],
   "products.product_name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "products.product_name"
@@ -457,7 +457,7 @@
   ],
   "products.standard_cost": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":12,\"lower\":-381.455,\"ratio\":0.05,\"upper\":966.885},\"zscore\":{\"count\":8,\"ratio\":0.033333333}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "products.standard_cost"
@@ -465,7 +465,7 @@
   ],
   "receipts.amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":939,\"lower\":-15388.941,\"ratio\":0.082658451,\"upper\":31574.709},\"zscore\":{\"count\":1081,\"ratio\":0.095158451}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.amount"
@@ -473,7 +473,7 @@
   ],
   "receipts.ar_invoice_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.ar_invoice_id"
@@ -481,7 +481,7 @@
   ],
   "receipts.customer_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.customer_id"
@@ -489,7 +489,7 @@
   ],
   "receipts.method": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.method"
@@ -497,7 +497,7 @@
   ],
   "receipts.receipt_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.receipt_date"
@@ -505,7 +505,7 @@
   ],
   "receipts.receipt_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "receipts.receipt_id"
@@ -513,7 +513,7 @@
   ],
   "sales_order_lines.line_amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":2259,\"lower\":-8850.5,\"ratio\":0.095667641,\"upper\":18069.34},\"zscore\":{\"count\":2677,\"ratio\":0.11336975}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.line_amount"
@@ -521,7 +521,7 @@
   ],
   "sales_order_lines.line_cost": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":2238,\"lower\":-6126.9,\"ratio\":0.0947783,\"upper\":12493.18},\"zscore\":{\"count\":2652,\"ratio\":0.11231102}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.line_cost"
@@ -529,7 +529,7 @@
   ],
   "sales_order_lines.order_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.order_id"
@@ -537,7 +537,7 @@
   ],
   "sales_order_lines.order_line_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.order_line_id"
@@ -545,7 +545,7 @@
   ],
   "sales_order_lines.product_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.product_id"
@@ -553,7 +553,7 @@
   ],
   "sales_order_lines.unit_price": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":905,\"lower\":-576.12,\"ratio\":0.038326346,\"upper\":1438.44},\"zscore\":{\"count\":577,\"ratio\":0.024435692}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.unit_price"
@@ -561,7 +561,7 @@
   ],
   "sales_order_lines.units": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"iqr\":{\"count\":1884,\"lower\":-14.5,\"ratio\":0.079786558,\"upper\":37.5},\"zscore\":{\"count\":2161,\"ratio\":0.091517384}}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_order_lines.units"
@@ -569,7 +569,7 @@
   ],
   "sales_orders.customer_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_orders.customer_id"
@@ -577,7 +577,7 @@
   ],
   "sales_orders.order_date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_orders.order_date"
@@ -585,7 +585,7 @@
   ],
   "sales_orders.order_id": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_orders.order_id"
@@ -593,7 +593,7 @@
   ],
   "sales_orders.status": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false}",
       "computed_at": "<volatile>",
       "function": "outliers",
       "subject": "sales_orders.status"

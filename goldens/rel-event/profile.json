@@ -983,7 +983,7 @@
   ],
   "users.birthyear": [
     {
-      "body": "{\"distinct\":95,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0391007354288,\"total\":38209}",
+      "body": "{\"distinct\":95,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.039100735,\"total\":38209}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "users.birthyear"
@@ -991,7 +991,7 @@
   ],
   "users.gender": [
     {
-      "body": "{\"distinct\":2,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.00285273103196,\"total\":38209}",
+      "body": "{\"distinct\":2,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.002852731,\"total\":38209}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "users.gender"
@@ -999,7 +999,7 @@
   ],
   "users.joinedAt": [
     {
-      "body": "{\"distinct\":38151,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.00151796697113,\"total\":38209}",
+      "body": "{\"distinct\":38151,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.001517967,\"total\":38209}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "users.joinedAt"
@@ -1015,7 +1015,7 @@
   ],
   "users.location": [
     {
-      "body": "{\"distinct\":2803,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.143029129263,\"total\":38209}",
+      "body": "{\"distinct\":2803,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.14302913,\"total\":38209}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "users.location"
@@ -1023,7 +1023,7 @@
   ],
   "users.timezone": [
     {
-      "body": "{\"distinct\":52,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.0114109241278,\"total\":38209}",
+      "body": "{\"distinct\":52,\"note\":\"cached — the full profile reads back via GLOSSARY(table.column::profile)\",\"null_ratio\":0.011410924,\"total\":38209}",
       "computed_at": "<volatile>",
       "function": "profile",
       "subject": "users.timezone"
