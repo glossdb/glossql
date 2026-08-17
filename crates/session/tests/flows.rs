@@ -377,6 +377,7 @@ async fn substrate_sql_runs_against_registered_tables() {
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
 
     let rows = table(
@@ -691,6 +692,7 @@ async fn the_serve_door_runs_the_current_grounding() {
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
 
     run(

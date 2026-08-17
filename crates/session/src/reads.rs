@@ -36,13 +36,7 @@ pub(crate) struct Shared {
     pub store: Store,
     pub dataset: RwLock<Option<String>>,
     pub handle: tokio::runtime::Handle,
-    pub lake: RwLock<Option<Lake>>,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
-    /// The read context is rebuilt from Iceberg metadata only when the data
-    /// plane changed — tagged with the lake's data version, so another
-    /// channel's landing stales it too, not only this session's own
-    /// writes (found 2026-08-12); `USE` still clears it directly.
-    pub read_cache: RwLock<Option<(u64, ReadContext)>>,
     /// The session's own context, set right after construction (the planner
     /// is built before the context exists). The metric bind plans each
     /// grounding through it as its own statement — `statement_to_plan`
@@ -61,8 +55,8 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
-    pub fn lake(&self) -> Option<Lake> {
-        self.lake.read().expect("lake lock").clone()
+    pub fn lake(&self) -> Lake {
+        self.store.lake()
     }
 
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
@@ -71,25 +65,15 @@ impl Shared {
 
     /// What the store cannot know (SPEC.md §5.3): the subjects that exist —
     /// the recipe tables and their columns — and each table's current
-    /// snapshot. The disclosure grid and the staleness comparison ride on
-    /// this.
+    /// snapshot. Rebuilt per read from the catalog, so every channel sees
+    /// a landing the moment it committed; the disclosure grid and the
+    /// staleness comparison ride on this.
     pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
-        // The version is read before building: a landing that races the
-        // build tags the cache stale and the next read rebuilds.
-        let version = self.lake().map(|l| l.data_version()).unwrap_or(0);
-        if let Some((cached_version, cached)) =
-            self.read_cache.read().expect("read cache").clone()
-            && cached_version == version
-        {
-            return Ok(cached);
-        }
         let mut ctx = ReadContext::default();
-        let (Some(lake), Some(dataset)) = (
-            self.lake(),
-            self.dataset.read().expect("state lock").clone(),
-        ) else {
+        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
             return Ok(ctx);
         };
+        let lake = self.lake();
         for table in lake.table_names(&dataset).await? {
             if let Some(snapshot) = lake.snapshot_id(&dataset, &table).await? {
                 ctx.snapshots.insert(table.clone(), snapshot);
@@ -99,7 +83,6 @@ impl Shared {
             }
             ctx.universe.push(table);
         }
-        *self.read_cache.write().expect("read cache") = Some((version, ctx.clone()));
         Ok(ctx)
     }
 }
@@ -193,9 +176,9 @@ pub(crate) async fn ensure_verdicts(
                     detail,
                 }
             })?;
-            let snapshot = match (shared.lake(), glossary_table_of(subject)) {
-                (Some(lake), Some(table)) => lake.snapshot_id(dataset, table).await?,
-                _ => None,
+            let snapshot = match glossary_table_of(subject) {
+                Some(table) => shared.lake().snapshot_id(dataset, table).await?,
+                None => None,
             };
             shared
                 .store

@@ -109,7 +109,7 @@ async fn rel_f1_grades_the_planes_at_scale() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -118,7 +118,6 @@ async fn rel_f1_grades_the_planes_at_scale() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     let mut setup = format!(

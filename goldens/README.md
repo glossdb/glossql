@@ -73,10 +73,20 @@ cargo run --release -p glossql-serverd --example capture_goldens -- \
   truth of its own (`booksql/setup.glossql`).
 - `--existing` captures a workspace that already carries glosses instead
   of landing one, which is how `fin` is taken. `--setup=` applies here
-  too: `fin`'s FK truth is re-declared on every capture, because
-  `relationships` crossed to the lake on 2026-08-17 and that workspace
-  is a fixture nobody wants to re-land. Declaring is idempotent, so it
-  is a statement in the file rather than a one-off to remember.
+  too: `fin`'s FK truth and its authored vocabulary (the three checks,
+  their aspects and witnesses) are re-declared on every capture, because
+  the declaration relations crossed to the lake on 2026-08-17 and that
+  workspace is a fixture nobody wants to re-land. Declaring is
+  idempotent, so it is statements in the file rather than a one-off to
+  remember.
+
+The fin baseline was re-captured at that crossing: the migration's
+re-declares sweep a function's cached rows once (by design — a
+re-declared function is a different function), so verdicts the fixture
+had accumulated from its own interactive reads left `_values.json`, and
+one fresh recompute flipped 15 metric-cube cells on the eighth-digit
+rounding boundary. Argued, not discovered: two consecutive captures on
+the new stack are byte-identical.
 
 RelBench corpora carry `schema.json` beside `tables/`; the FK truth in it
 is declared automatically, and that is what turns the borrowed-axis and

@@ -171,14 +171,15 @@ const SCENARIO: &str = r##"GLOSS price_hike ON fin AS $${"overrides": [
 
 async fn scenario_session() -> (Session, Arc<LinearKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     run(&session, SCENARIO).await;
     (session, kernel)
 }
@@ -282,14 +283,15 @@ async fn the_door_refuses_what_is_not_a_scenario() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
     let (session, _) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     run(
         &session,
         r##"GLOSS price_hike ON fin AS $${"overrides": [
@@ -306,12 +308,18 @@ async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
 
 async fn session_with_sales(rows: &[(f64, i32)]) -> (Session, Arc<LinearKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'scenario flows');\nUSE fin;",
+    )
+    .await;
     let (schema, batch) = sales_batch(rows);
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     (session, kernel)
 }
@@ -545,12 +553,18 @@ async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
     // A stock is 30, never 10 or 20. A ratio is 400/2000 = 0.2, never
     // the 0.4 its two rows add up to.
     let (session, _) = session_with_kernel().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'the stock and ratio verbs');\nUSE fin;",
+    )
+    .await;
     let (schema, batch) = cells_table();
     session
         .register_table(
             "cells",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     run(
         &session,

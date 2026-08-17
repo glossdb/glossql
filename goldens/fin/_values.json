@@ -413,14 +413,6 @@
     ],
     "total": 112
   },
-  "account_balances.ending_balance::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "account_balances.ending_balance",
-    "witness": "unit_w"
-  },
   "account_balances.ending_balance::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -987,14 +979,6 @@
     ],
     "total": 16817
   },
-  "ap_invoices.amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "ap_invoices.amount",
-    "witness": "unit_w"
-  },
   "ap_invoices.amount::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -1157,14 +1141,6 @@
       }
     ],
     "total": 16817
-  },
-  "ap_invoices.category::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "ap_invoices.category",
-    "witness": "role_w"
   },
   "ap_invoices.category::temporal": {
     "applicable": false,
@@ -2160,14 +2136,6 @@
       }
     ],
     "total": 14928
-  },
-  "ap_payments.amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "ap_payments.amount",
-    "witness": "unit_w"
   },
   "ap_payments.amount::temporal": {
     "applicable": false,
@@ -3292,14 +3260,6 @@
     ],
     "total": 14770
   },
-  "ar_invoices.amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "ar_invoices.amount",
-    "witness": "unit_w"
-  },
   "ar_invoices.amount::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -4280,14 +4240,6 @@
     ],
     "total": 61
   },
-  "chart_of_accounts.account_type::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "chart_of_accounts.account_type",
-    "witness": "role_w"
-  },
   "chart_of_accounts.account_type::temporal": {
     "applicable": false,
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -5115,14 +5067,6 @@
     ],
     "total": 400
   },
-  "customers.region::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "customers.region",
-    "witness": "role_w"
-  },
   "customers.region::temporal": {
     "applicable": false,
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -5173,14 +5117,6 @@
       }
     ],
     "total": 400
-  },
-  "customers.segment::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "customers.segment",
-    "witness": "role_w"
   },
   "customers.segment::temporal": {
     "applicable": false,
@@ -5236,14 +5172,6 @@
   "fin::ar_ties_check": {
     "breach_rate": 0.0,
     "outcome": "measured: the receivables grounding against the ledger balance, per month"
-  },
-  "fin::band_breach": {
-    "aspect": "metric_bands",
-    "band": "red",
-    "computed_at": "<volatile>",
-    "score": 0.998,
-    "subject": "fin",
-    "witness": "bands_w"
   },
   "fin::detect_grounding_collisions": {
     "applicable": true,
@@ -6563,7 +6491,7 @@
             "category",
             "goods",
             "2025-04",
-            4304378.4
+            4304378.5
           ],
           [
             "category",
@@ -6623,7 +6551,7 @@
             "category",
             "goods",
             "2025-09",
-            4218458.5
+            4218458.4
           ],
           [
             "category",
@@ -6820,7 +6748,7 @@
             "segment",
             "Enterprise",
             "2025-01",
-            2826736.3
+            2826736.4
           ],
           [
             "segment",
@@ -6934,7 +6862,7 @@
             "segment",
             "Mid-Market",
             "2025-07",
-            7616753.8
+            7616753.7
           ],
           [
             "segment",
@@ -6970,7 +6898,7 @@
             "segment",
             "Mid-Market",
             "2025-09",
-            9525789.0
+            9525788.9
           ],
           [
             "segment",
@@ -7180,7 +7108,7 @@
             "region",
             "Benelux",
             "2025-07",
-            5120280.1
+            5120280.2
           ],
           [
             "region",
@@ -7848,7 +7776,7 @@
             "region",
             "Benelux",
             "2025-07",
-            2382389.9
+            2382390.0
           ],
           [
             "region",
@@ -7884,7 +7812,7 @@
             "region",
             "Nordics",
             "2025-08",
-            2748798.0
+            2748797.9
           ],
           [
             "region",
@@ -7926,7 +7854,7 @@
             "region",
             "DACH",
             "2025-10",
-            3559462.7
+            3559462.8
           ],
           [
             "region",
@@ -10800,7 +10728,7 @@
             "region",
             "UK&I",
             "2025-01",
-            1023546.7
+            1023546.8
           ],
           [
             "region",
@@ -10998,7 +10926,7 @@
             "region",
             "Benelux",
             "2025-10",
-            1433367.6
+            1433367.7
           ],
           [
             "region",
@@ -11189,7 +11117,7 @@
             "location_id",
             "WH-MAIN",
             "2025-04",
-            8655033.2
+            8655033.1
           ],
           [
             "location_id",
@@ -12251,7 +12179,7 @@
             "segment",
             "Mid-Market",
             "2025-01",
-            3888504.7
+            3888504.8
           ],
           [
             "segment",
@@ -12437,7 +12365,7 @@
             "segment",
             "SMB",
             "2025-11",
-            6291617.4
+            6291617.5
           ],
           [
             "segment",
@@ -12671,7 +12599,7 @@
             "region",
             "UK&I",
             "2025-09",
-            3588385.0
+            3588384.9
           ],
           [
             "region",
@@ -12837,14 +12765,6 @@
       "note": "cached — slice with metric_series(); the whole cube reads back via GLOSSARY(<dataset>::metric_cube)",
       "rows": 1044
     }
-  },
-  "fin::rate_tolerance": {
-    "aspect": "journal_balanced",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "fin",
-    "witness": "journal_balanced_w"
   },
   "fin::relationship_coherence": {
     "applicable": true,
@@ -13287,14 +13207,6 @@
       }
     ],
     "total": 5760
-  },
-  "inventory_positions.location_id::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "inventory_positions.location_id",
-    "witness": "role_w"
   },
   "inventory_positions.location_id::temporal": {
     "applicable": false,
@@ -14100,14 +14012,6 @@
     ],
     "total": 5760
   },
-  "inventory_positions.units_on_hand::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "inventory_positions.units_on_hand",
-    "witness": "unit_w"
-  },
   "inventory_positions.units_on_hand::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -14359,14 +14263,6 @@
       }
     ],
     "total": 5760
-  },
-  "inventory_positions.value::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "inventory_positions.value",
-    "witness": "unit_w"
   },
   "inventory_positions.value::temporal": {
     "applicable": false,
@@ -14901,14 +14797,6 @@
     ],
     "total": 157851
   },
-  "journal_lines.cost_center::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "journal_lines.cost_center",
-    "witness": "role_w"
-  },
   "journal_lines.cost_center::temporal": {
     "applicable": false,
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -15229,14 +15117,6 @@
       }
     ],
     "total": 157851
-  },
-  "journal_lines.credit::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "journal_lines.credit",
-    "witness": "unit_w"
   },
   "journal_lines.credit::temporal": {
     "applicable": false,
@@ -15575,14 +15455,6 @@
       }
     ],
     "total": 157851
-  },
-  "journal_lines.debit::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "journal_lines.debit",
-    "witness": "unit_w"
   },
   "journal_lines.debit::temporal": {
     "applicable": false,
@@ -16140,14 +16012,6 @@
     ],
     "total": 157851
   },
-  "journal_lines.net_amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "journal_lines.net_amount",
-    "witness": "unit_w"
-  },
   "journal_lines.net_amount::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -16403,14 +16267,6 @@
       }
     ],
     "total": 240
-  },
-  "products.product_group::slot_entropy": {
-    "aspect": "role",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "products.product_group",
-    "witness": "role_w"
   },
   "products.product_group::temporal": {
     "applicable": false,
@@ -17534,14 +17390,6 @@
       }
     ],
     "total": 11360
-  },
-  "receipts.amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "receipts.amount",
-    "witness": "unit_w"
   },
   "receipts.amount::temporal": {
     "applicable": false,
@@ -18699,14 +18547,6 @@
     ],
     "total": 23613
   },
-  "sales_order_lines.line_amount::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "sales_order_lines.line_amount",
-    "witness": "unit_w"
-  },
   "sales_order_lines.line_amount::temporal": {
     "applicable": false,
     "reason": "column type is Float64, not Date/Timestamp — a date landed as text needs typing in the recipe"
@@ -19324,14 +19164,6 @@
       }
     ],
     "total": 23613
-  },
-  "sales_order_lines.line_cost::slot_entropy": {
-    "aspect": "unit",
-    "band": "green",
-    "computed_at": "<volatile>",
-    "score": 0.0,
-    "subject": "sales_order_lines.line_cost",
-    "witness": "unit_w"
   },
   "sales_order_lines.line_cost::temporal": {
     "applicable": false,

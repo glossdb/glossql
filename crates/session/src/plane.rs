@@ -11,7 +11,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use glossql_catalog::Lake;
 use glossql_glossary::{Actor, Store};
 use glossql_parser::{GlossqlParser, Statement};
 use tokio::sync::RwLock;
@@ -20,7 +19,6 @@ use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
 
 pub struct Plane {
     store: Store,
-    lake: Option<Lake>,
     runtime: Arc<dyn FunctionRuntime>,
     /// One session per (actor, dataset), created on first sight and kept
     /// for the server's life; `None` is the actor's unbound channel —
@@ -39,10 +37,9 @@ impl Plane {
         &self.store
     }
 
-    pub fn new(store: Store, lake: Option<Lake>, runtime: Arc<dyn FunctionRuntime>) -> Self {
+    pub fn new(store: Store, runtime: Arc<dyn FunctionRuntime>) -> Self {
         Plane {
             store,
-            lake,
             runtime,
             channels: RwLock::new(HashMap::new()),
             current: RwLock::new(HashMap::new()),
@@ -88,12 +85,9 @@ impl Plane {
         if let Some(session) = channels.get(&key) {
             return Ok(Arc::clone(session));
         }
-        let mut session = Session::new(self.store.clone(), actor)?
+        let session = Session::new(self.store.clone(), actor)?
             .with_row_cap(self.row_cap)
             .with_runtime(Arc::clone(&self.runtime));
-        if let Some(lake) = &self.lake {
-            session = session.with_lake(lake.clone());
-        }
         let session = Arc::new(session);
         if let Some(dataset) = dataset {
             session.bind(dataset).await?;

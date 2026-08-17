@@ -51,8 +51,8 @@ async fn plane(dir: &std::path::Path) -> Plane {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_memory().await.unwrap();
-    Plane::new(store, Some(lake), Arc::new(NoRuntime))
+    let store = Store::open_scratch(lake).await.unwrap();
+    Plane::new(store, Arc::new(NoRuntime))
 }
 
 fn single_value(outcomes: &[Outcome]) -> String {

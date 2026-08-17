@@ -21,7 +21,7 @@ async fn app() -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_memory().await.unwrap();
     let runtime = Arc::new(RhaiRuntime::new(dir.path().to_path_buf()));
-    let plane = Arc::new(Plane::new(store.clone(), None, runtime));
+    let plane = Arc::new(Plane::new(store.clone(), runtime));
     bootstrap(
         &store,
         &plane,

@@ -1,14 +1,15 @@
 //! The store's relations on Iceberg v3 (stage 3): rows round-trip, the
 //! write order comes from the format rather than a column of ours, and a
-//! dataset-scoped relation lives in `<dataset>_meta` with the dataset
-//! carried by the namespace.
+//! dataset-scoped relation is one table with `dataset` as a key column —
+//! partitioned by the format, never routed by a layout of ours.
 
 use glossql_catalog::{IcebergRelations, Lake, RelationSpec, Relations};
+use iceberg::{NamespaceIdent, TableIdent};
 
 const RELATIONSHIPS: RelationSpec = RelationSpec {
     name: "relationships",
     columns: &["dataset", "left_path", "op", "right_path"],
-    dataset_scoped: true,
+    partition: &["dataset"],
 };
 
 fn row(v: &[&str]) -> Vec<Option<String>> {
@@ -54,12 +55,12 @@ async fn rows_round_trip_and_an_empty_relation_is_empty() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_namespace_carries_the_dataset() {
+async fn the_dataset_is_a_partition_not_a_namespace() {
     let dir = tempfile::tempdir().unwrap();
     let (lake, rel) = open(dir.path()).await;
 
-    // One append, two datasets: the seam fans out to each dataset's own
-    // record namespace and fans back in at scan.
+    // One append, two datasets: one table, the dataset an explicit key
+    // column, the physical split per dataset the format's own.
     rel.append(
         "relationships",
         vec![
@@ -70,26 +71,28 @@ async fn the_namespace_carries_the_dataset() {
     .await
     .unwrap();
 
-    for ns in ["fin_meta", "books_meta"] {
-        assert_eq!(
-            lake.table_names(ns).await.unwrap(),
-            vec!["relationships"],
-            "{ns} holds its dataset's record"
-        );
-    }
+    let table = lake
+        .catalog()
+        .load_table(&TableIdent::new(
+            NamespaceIdent::new("glossql".into()),
+            "relationships".into(),
+        ))
+        .await
+        .unwrap();
+    let spec = table.metadata().default_partition_spec().clone();
+    assert_eq!(spec.fields().len(), 1, "identity partition on the key");
+    assert_eq!(spec.fields()[0].name, "dataset");
     assert_eq!(
-        lake.table_columns("fin_meta", "relationships").await.unwrap(),
-        vec!["left_path", "op", "right_path"],
-        "the namespace carries the dataset; a stored column restating it \
-         would be a place for the two to disagree"
+        lake.table_columns("glossql", "relationships").await.unwrap(),
+        vec!["dataset", "left_path", "op", "right_path"],
+        "the dataset is an explicit key column, not a naming convention"
     );
 
     let mut rows = rel.scan("relationships").await.unwrap();
     rows.sort_by_key(|r| r.cells.clone());
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].get(0), Some("books"), "injected from books_meta");
-    assert_eq!(rows[0].get(1), Some("review.book_id"));
-    assert_eq!(rows[1].get(0), Some("fin"), "injected from fin_meta");
+    assert_eq!(rows[0].get(0), Some("books"));
+    assert_eq!(rows[1].get(0), Some("fin"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

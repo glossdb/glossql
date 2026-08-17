@@ -573,22 +573,13 @@ async fn declaration_relations_are_invalidation_edges() {
     )
     .await
     .unwrap();
-    s.import_put(
-        "fin",
-        "payments",
-        r#"[{"relation":"payments.csv","rows":10}]"#,
-        10,
-        Some(0),
-        "{}",
-    )
-    .await
-    .unwrap();
+    s.landing_invalidates("fin").await.unwrap();
     assert!(
         s.cache_get("fin", "orders.amount", "evidence", None)
             .await
             .unwrap()
             .is_none(),
-        "a landed import kills it the same way"
+        "a landing kills it the same way"
     );
 
     assert!(
@@ -610,53 +601,9 @@ async fn declaration_relations_are_invalidation_edges() {
     assert!(matches!(e, Error::Unknown { what: "aspect", .. }), "{e}");
 }
 
-// -- recipe admission (SPEC.md §3) ----------------------------------------
-
-#[tokio::test]
-async fn recipe_redeclare_is_content_idempotent_and_change_is_refused() {
-    use glossql_glossary::RecipeAdmission;
-
-    let s = store().await;
-    for setup in [
-        "DECLARE DATASET fin SET (purpose: 'test');",
-        "DECLARE SOURCE erp SET (type: parquet, location: 'lake/erp');",
-    ] {
-        match decl(setup) {
-            Declaration::Dataset(d) => s.declare_dataset(&d).await.unwrap(),
-            Declaration::Source(d) => s.declare_source(&d).await.unwrap(),
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-    let recipe = |sql: &str| match decl(sql) {
-        Declaration::Recipe(r) => r,
-        other => panic!("not a recipe: {other:?}"),
-    };
-    // The session's two steps: decide what the declaration does, land it,
-    // then record it. Nothing lands here (no lake), so the record follows
-    // the decision directly.
-    async fn declare(s: &Store, d: &glossql_parser::RecipeDecl) -> RecipeAdmission {
-        let admission = s.recipe_admission(d).await.unwrap();
-        s.put_recipe(d).await.unwrap();
-        admission
-    }
-
-    let v1 = recipe(
-        "DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders/*.parquet')$$;",
-    );
-    assert_eq!(declare(&s, &v1).await, RecipeAdmission::Created);
-    assert_eq!(declare(&s, &v1).await, RecipeAdmission::Unchanged);
-
-    // A changed SQL supersedes (ruled 2026-08-06) — the row updates and
-    // the session re-lands on `Replaced`.
-    let v2 = recipe(
-        "DECLARE RECIPE orders ON fin FROM erp AS $$SELECT * FROM read_parquet('orders_v2/*.parquet')$$;",
-    );
-    assert_eq!(declare(&s, &v2).await, RecipeAdmission::Replaced);
-    let row = s.recipe("fin", "orders").await.unwrap().unwrap();
-    assert!(row.sql.contains("orders_v2"), "{}", row.sql);
-    // The new spelling is now the unchanged one.
-    assert_eq!(declare(&s, &v2).await, RecipeAdmission::Unchanged);
-}
+// The recipe admission cycle (Created / Unchanged / Replaced) runs
+// end-to-end in the session's lake_flows suite — a recipe rides its
+// table as properties, so there is no store-only path to exercise.
 
 // -- writes invalidate (project lead, 2026-08-04) --------------------------
 
@@ -1333,34 +1280,6 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         Some(0.6),
         "uncontested, the first witness's verdict (name order) rides the row"
     );
-}
-
-#[tokio::test]
-async fn the_imports_relation_serves_an_unknown_dropped_count_as_null() {
-    let s = store().await;
-    // The landing decides whether a dropped count is true — a join or an
-    // aggregate has none (fixed 2026-08-15). The store's job is to keep
-    // that verdict, including its absence, and to serve the scans it was
-    // decided from rather than a sum across them.
-    let joined = r#"[{"relation":"orders.csv","rows":3},{"relation":"customers.csv","rows":2}]"#;
-    s.import_put("fin", "orders", joined, 3, None, "{}")
-        .await
-        .unwrap();
-    s.import_put(
-        "fin",
-        "payments",
-        r#"[{"relation":"payments.csv","rows":10}]"#,
-        7,
-        Some(3),
-        "{}",
-    )
-    .await
-    .unwrap();
-    let rows = s.relation_rows("imports").await.unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0][2].as_deref(), Some(joined), "both scans, unsummed");
-    assert_eq!(rows[0][4], None, "a join has no dropped count");
-    assert_eq!(rows[1][4].as_deref(), Some("3"));
 }
 
 #[tokio::test]

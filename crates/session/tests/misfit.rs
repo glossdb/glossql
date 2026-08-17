@@ -165,14 +165,15 @@ GLOSS suspects ON fin AS $${"sql": "SELECT * FROM orders"}$$;
 
 async fn frame_session() -> (Session, Arc<MeanKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = orders_table();
     session
         .register_table(
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     (session, kernel)
 }
 
@@ -259,6 +260,7 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
             "big",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     run(
         &session,
@@ -318,14 +320,15 @@ async fn a_non_finite_score_refuses_the_read() {
     )
     .expect("session builds")
     .with_runtime(Arc::new(NanKernel));
+    run(&session, SETUP).await;
     let (schema, batch) = orders_table();
     session
         .register_table(
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
 
     let e = session
         .execute("SELECT * FROM misfit.suspects();")

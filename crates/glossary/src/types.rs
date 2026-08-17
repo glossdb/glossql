@@ -73,6 +73,12 @@ pub enum Error {
     Db(#[from] sqlx::Error),
 }
 
+impl From<glossql_catalog::Error> for Error {
+    fn from(e: glossql_catalog::Error) -> Self {
+        Error::Backend(e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActorKind {
     Agent,

@@ -23,14 +23,14 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     )
     .unwrap();
 
-    let store = Store::open_memory().await.unwrap();
     let lake = Lake::open(
         &dir.path().join("catalog.db"),
         &dir.path().join("warehouse"),
     )
     .await
     .unwrap();
-    let plane = Arc::new(Plane::new(store, Some(lake), Arc::new(NoRuntime)));
+    let store = Store::open_scratch(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let session = plane
         .session(Actor {
             kind: ActorKind::Agent,

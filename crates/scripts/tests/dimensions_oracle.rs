@@ -66,7 +66,7 @@ async fn the_generator_grades_the_relevance_score() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -75,7 +75,6 @@ async fn the_generator_grades_the_relevance_score() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session

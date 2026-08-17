@@ -48,7 +48,7 @@ async fn session_over(dir: &std::path::Path) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     Session::new(
         store,
         Actor {
@@ -57,7 +57,6 @@ async fn session_over(dir: &std::path::Path) -> Session {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))))
 }
 

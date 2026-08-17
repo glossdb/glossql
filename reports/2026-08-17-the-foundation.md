@@ -168,9 +168,10 @@ down and never up.
 |---|---|---|
 | **0** capture goldens over the small three (§7) for every function and door; land the conformance test at today's counts | — | suite green, no behaviour change |
 | **1** split `store.rs`: rules become pure functions over rows, IO behind a narrow trait | — | goldens green |
-| **2** the async pre-pass; `ViewTable` for groundings | 1, 2, 14, 15 | goldens green; `block_in_place`/`thread_local` → 0; the 16 MB stack workaround goes with it |
-| **3** store relations onto Iceberg v3, `relationships` first, `glossary` last; absorb `Lake`; drop sqlx | 6, 7, 9, 10 | goldens green |
+| **2** the async pre-pass; groundings as pre-resolved plans | 1, 2, 14, 15 | goldens green; the expansion path stops blocking; the 16 MB stack workaround goes with it |
+| **3** declarations and records onto the lake; absorb `Lake` | 6, 7, 9, 10 | goldens green or argued |
 | **4** compute doors under `execute`; cache removed; `measurements` keyed by the pin | 5, 8 | SPEC + corpus diff lands here |
+| **4½** `glossary` crosses; sqlx drops | 9 | goldens green; the strike ruling (§8) gates it |
 | **5** function ports, one per commit against its golden; each rhai file deleted as its port passes | 3, 4, 11, 12, 13 | golden per function |
 | **6** pre-warm at the landing | — | — |
 | **7** scale: land the large corpora (§7) and re-measure | — | the ratios hold, or we learn where they stop |
@@ -278,11 +279,65 @@ than template strings. Fixing it in rhai first would change the goldens
 that were just captured, and for no lasting code. The rule this follows:
 the golden diff at stage 5 is *expected and argued*, not discovered.
 
+## 7b. Stage 3 landed (2026-08-17), and the roadmap reordered
+
+The original stage 3 ended "`glossary` last; drop sqlx" — impossible
+before stage 4, because a glossary strike executes raw SQL against
+sqlite and every gloss write feeds the cache sweeps stage 4 deletes.
+The order above is the correction: sqlite now holds exactly `glossary`
+and `cache`, and both leave together after the cache machinery is gone.
+
+What landed, and the decisions it carries:
+
+- **One namespace, `glossql`; the dataset is a key column.** The
+  2026-08-16 §5 `<dataset>_meta` pairing was built and reversed the same
+  day: a workspace holds many datasets, which scopes rows by a key, not
+  by a namespace layout — the physical per-dataset split is the format's
+  own identity partition, declared per relation. The pairing's whole
+  justification is per-dataset REST grants; access rights are held open,
+  and if that ruling wants namespace grants, the pairing returns by
+  re-bootstrap.
+- **`sources`, `aspects`, `functions`, `witnesses` are lake rows**,
+  latest-per-name by `(seq, pos)`. Every cross-relation SQL join in the
+  store decomposed into one typed scan plus a rule — the shape stage 1
+  started, finished.
+- **`datasets` are the namespaces, `recipes` are table properties,
+  `imports` are the snapshots.** The landing commits through
+  iceberg-rust's `fast_append` with its three source-side facts as
+  snapshot properties — DataFusion's INSERT cannot carry them. Two
+  consequences, taken with eyes open: a dataset's settings are
+  set-at-create (as ruled), and a re-land starts the import record over,
+  because the substrate has no overwrite — replacing the table replaces
+  its record. The old "history survives re-land" behavior was the sqlite
+  shadow's artifact.
+- **`Lake` absorbed:** `data_version` and the version-keyed read cache
+  deleted; the read context rebuilds per read from the catalog. Sessions
+  take the lake from the store — the lakeless session mode and
+  `with_lake` are gone, and a test fixture registers tables through the
+  same landing path a recipe takes.
+- **The fin fixture migrated in place**: its authored vocabulary rides
+  `goldens/fin/setup.glossql`, idempotently per capture. Its baseline
+  was re-captured — the migration's re-declares sweep cached rows once —
+  and the other three corpora reproduce byte-identically on the new
+  stack.
+
 ## 8. Still open
 
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.
+- **The glossary strike, postponed** (project lead, 2026-08-17: "I have
+  to dig into that first"). The facts it waits on, verified in the
+  pinned sources: DataFusion 54.1 has the seam —
+  `TableProvider::delete_from`, called by the default planner for
+  `Dml(Delete)` — but iceberg-rust main cannot commit a row removal at
+  all: `fast_append` is the only data-touching action and it rejects
+  delete files ("Only data content type is allowed for fast append",
+  transaction/snapshot.rs:139), no overwrite/rewrite action exists, and
+  custom actions are sealed (`TransactionAction` is `pub(crate)`). The
+  read side already applies deletes other engines write. `glossary`'s
+  crossing (stage 4½) gates on this ruling.
 - **Contributing upstream** — the `_row_id` read path is the obvious
-  first contribution, and it is what unblocks batching. Premature until
-  this architecture is worth defending.
+  first contribution, and it is what unblocks batching; a delete-capable
+  transaction action is the second, and the strike wants it. Premature
+  until this architecture is worth defending.

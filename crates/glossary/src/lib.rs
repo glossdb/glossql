@@ -18,7 +18,8 @@ pub use schemas::{GROUNDING_SCHEMA, grounding_schema};
 pub use glossql_catalog::{Lake, Relations, Row};
 pub use rules::{admit_grain, grain_of};
 pub use store::{
-    BriefCounts, ReadContext, Relation, Scope, Store, accepts_relation, relation_columns,
+    BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, ReadContext,
+    Relation, Scope, Store, accepts_relation, relation_columns,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CacheRow, CollapsedRow, Error, FunctionRow, RawRow,

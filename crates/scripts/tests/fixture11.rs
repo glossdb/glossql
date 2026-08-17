@@ -59,7 +59,7 @@ fn runtime() -> Arc<RhaiRuntime> {
     Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR")))
 }
 
-fn session_for(kind: ActorKind, id: &str, store: &Store, lake: &Lake) -> Session {
+fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
     Session::new(
         store.clone(),
         Actor {
@@ -68,7 +68,7 @@ fn session_for(kind: ActorKind, id: &str, store: &Store, lake: &Lake) -> Session
         },
     )
     .unwrap()
-    .with_lake(lake.clone())
+    
     .with_runtime(runtime())
 }
 
@@ -148,8 +148,8 @@ async fn fixture_11_with_real_scripts() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
-    let agent = session_for(ActorKind::Agent, "agent-1", &store, &lake);
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let agent = session_for(ActorKind::Agent, "agent-1", &store);
 
     agent
         .execute(&format!(
@@ -349,7 +349,7 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert_eq!(one(&band), "green");
 
-    let human = session_for(ActorKind::Human, "philipp", &store, &lake);
+    let human = session_for(ActorKind::Human, "philipp", &store);
     human.execute("USE fin;").await.unwrap();
     human
         .execute(r#"GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;"#)

@@ -29,7 +29,7 @@ async fn count(plane: &Plane, sql: &str) -> String {
 async fn a_fresh_workspace_receives_the_shipped_system() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_memory().await.unwrap();
-    let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
 
     bootstrap(&store, &plane, human())
         .await

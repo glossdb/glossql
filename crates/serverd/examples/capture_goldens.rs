@@ -177,17 +177,45 @@ async fn cell(session: &Session, sql: &str) -> Vec<Vec<String>> {
     rows
 }
 
+/// One statement per `;` — but not inside a dollar-quoted body, where a
+/// rhai script's own semicolons live, and not on a comment line, where
+/// prose punctuation is not syntax.
+fn split_statements(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let comment = !inside && line.trim_start().starts_with("--");
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '$' && chars.peek() == Some(&'$') {
+                chars.next();
+                cur.push_str("$$");
+                inside = !inside;
+                continue;
+            }
+            cur.push(c);
+            if c == ';' && !inside && !comment {
+                out.push(std::mem::take(&mut cur));
+            }
+        }
+        cur.push('\n');
+    }
+    out.push(cur);
+    out
+}
+
 /// Run a `.glossql` setup file statement by statement, reporting what the
 /// door refuses rather than stopping — a refusal is worth seeing.
 async fn run_setup(session: &Session, path: &Path) -> usize {
     let text = std::fs::read_to_string(path).expect("setup file");
     let mut n = 0;
-    for stmt in text.split(";\n") {
+    for stmt in split_statements(&text) {
         let stmt = stmt.trim();
         if stmt.is_empty() || stmt.lines().all(|l| l.trim_start().starts_with("--")) {
             continue;
         }
-        match session.execute(&format!("{stmt};")).await {
+        match session.execute(stmt).await {
             Ok(_) => n += 1,
             Err(e) => println!("  REFUSED setup: {e}"),
         }
@@ -245,7 +273,7 @@ async fn main() {
         id: "goldens".into(),
     };
     let runtime = Arc::new(RhaiRuntime::new(ws.clone()));
-    let plane = Plane::new(store.clone(), Some(lake), runtime);
+    let plane = Plane::new(store.clone(), runtime);
     bootstrap(&store, &plane, actor.clone()).await.expect("bootstrap");
     let session = plane.session(actor).await.expect("session");
 

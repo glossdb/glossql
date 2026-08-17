@@ -174,7 +174,7 @@ async fn every_skill_function_body_compiles() {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
     let store = Store::open_memory().await.unwrap();
-    let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&store, &plane, human())
         .await
         .unwrap();

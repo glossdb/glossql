@@ -71,7 +71,7 @@ async fn the_generator_grades_the_discriminator() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -80,7 +80,6 @@ async fn the_generator_grades_the_discriminator() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -195,7 +194,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -204,7 +203,6 @@ async fn document_keyed_events_reconcile_at_month_grain() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session

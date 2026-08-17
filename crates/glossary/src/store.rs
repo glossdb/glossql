@@ -175,43 +175,6 @@ fn like_escape(s: &str) -> String {
 /// databases to migrate (ruled 2026-08-06): a store predating a schema
 /// change is wiped and re-bootstrapped, never patched in place.
 const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS sources (
-  name TEXT PRIMARY KEY,
-  settings TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS datasets (
-  name TEXT PRIMARY KEY,
-  settings TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS recipes (
-  dataset TEXT NOT NULL,
-  table_name TEXT NOT NULL,
-  source TEXT NOT NULL,
-  sql TEXT NOT NULL,
-  PRIMARY KEY (dataset, table_name)
-);
-CREATE TABLE IF NOT EXISTS aspects (
-  name TEXT PRIMARY KEY,
-  schema TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  grains TEXT,
-  condition_aspect TEXT,
-  condition_value TEXT
-);
-CREATE TABLE IF NOT EXISTS functions (
-  name TEXT PRIMARY KEY,
-  scope_dataset TEXT,
-  script TEXT NOT NULL,
-  accepts TEXT,
-  returns TEXT
-);
-CREATE TABLE IF NOT EXISTS witnesses (
-  name TEXT PRIMARY KEY,
-  aspect TEXT NOT NULL,
-  speakers TEXT NOT NULL,
-  detector TEXT,
-  threshold REAL
-);
 CREATE TABLE IF NOT EXISTS glossary (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   dataset TEXT NOT NULL,
@@ -257,15 +220,18 @@ pub struct Relation {
     pub name: &'static str,
     pub columns: &'static [&'static str],
     /// The sqlite select, `None` once the relation has crossed to the
-    /// lake — see [`WORKSPACE_NAMESPACE`]. A moved relation is served by
+    /// lake — see [`STORE_NAMESPACE`]. A moved relation is served by
     /// scanning history and applying the rule, which is the same shape
     /// the `ORDER BY` used to hand-roll.
     sql: Option<&'static str>,
-    /// Dataset-scoped relations lead with a `dataset` column and, once
-    /// crossed, store under `<dataset>_meta` — the namespace carries the
-    /// dataset (2026-08-16 §5). Workspace-wide relations store under
-    /// [`WORKSPACE_NAMESPACE`].
-    dataset_scoped: bool,
+    /// Columns the lake table is identity-partitioned by — `["dataset"]`
+    /// on the relations keyed by one, so each dataset's rows land in
+    /// their own files. The format's split, not a layout of ours.
+    partition: &'static [&'static str],
+    /// The supersession key: serving keeps the latest row per key, in
+    /// `(seq, pos)` order. Empty means the whole row — re-declaring the
+    /// same content collapses, differing content stands beside it.
+    key: &'static [&'static str],
 }
 
 /// Every relation [`Store::relation_rows`] serves — the glossary, the
@@ -287,7 +253,8 @@ pub const RELATIONS: &[Relation] = &[
         sql: Some("SELECT dataset, subject, aspect, actor_kind, actor_id, body, written_at, \
                      CAST(snapshot_id AS TEXT) AS snapshot_id \
               FROM glossary ORDER BY id"),
-        dataset_scoped: true,
+        partition: &["dataset"],
+        key: &[],
     },
     Relation {
         name: "cache",
@@ -303,7 +270,8 @@ pub const RELATIONS: &[Relation] = &[
         sql: Some("SELECT dataset, subject, function, witness, body, computed_at, \
                      CAST(snapshot_id AS TEXT) AS snapshot_id \
               FROM cache ORDER BY id"),
-        dataset_scoped: true,
+        partition: &["dataset"],
+        key: &[],
     },
     Relation {
         name: "imports",
@@ -316,60 +284,51 @@ pub const RELATIONS: &[Relation] = &[
             "cast_failures",
             "imported_at",
         ],
-        // `dropped_rows_count` is decided at the landing and stored, not
-        // re-derived here: only the import knows the recipe's shape, and
-        // a NULL is the honest answer often enough to be a column value
-        // rather than a CASE. `source_scans` is the JSON list it was
-        // decided from — each relation the recipe read and the rows it
-        // held — deliberately not summed, because the sum across a join
-        // looks like "what was read" and is not (found 2026-08-12, when
-        // the sum reported 16,817 phantom dropped rows; fixed
-        // 2026-08-15 by giving the store the shape instead of a proxy
-        // for it).
-        sql: Some("SELECT dataset, table_name, source_scans, \
-                     CAST(landed_rows AS TEXT) AS landed_rows, \
-                     CAST(dropped_rows_count AS TEXT) AS dropped_rows_count, \
-                     cast_failures, imported_at \
-              FROM imports ORDER BY id"),
-        dataset_scoped: true,
+        // Served from snapshots and their properties. `dropped_rows_count`
+        // is decided at the landing, never re-derived: only the import
+        // knows the recipe's shape, and NULL is the honest answer often
+        // enough to be a value. `source_scans` is per-scan deliberately —
+        // a sum across a join reads as "what was read" and is not
+        // (found 2026-08-12: 16,817 phantom dropped rows).
+        sql: None,
+        partition: &[],
+        key: &[],
     },
     Relation {
         name: "functions",
         columns: &["name", "scope", "script", "accepts", "returns"],
-        sql: Some("SELECT name, COALESCE(scope_dataset, 'GLOBAL') AS scope, script, \
-                     accepts, returns \
-              FROM functions ORDER BY name"),
-        dataset_scoped: false,
+        sql: None,
+        partition: &[],
+        key: &["name"],
     },
     Relation {
         name: "aspects",
         columns: &["name", "kind", "grains", "condition", "schema"],
-        sql: Some("SELECT name, kind, grains, \
-                     CASE WHEN condition_aspect IS NULL THEN NULL \
-                          ELSE condition_aspect || ' = ''' || condition_value || '''' \
-                     END AS condition, \
-                     schema FROM aspects ORDER BY name"),
-        dataset_scoped: false,
+        sql: None,
+        partition: &[],
+        key: &["name"],
     },
     Relation {
         name: "witnesses",
         columns: &["name", "aspect", "speakers", "detector", "threshold"],
-        sql: Some("SELECT name, aspect, speakers, detector, \
-                     CAST(threshold AS TEXT) AS threshold \
-              FROM witnesses ORDER BY name"),
-        dataset_scoped: false,
+        sql: None,
+        partition: &[],
+        key: &["name"],
     },
     Relation {
         name: "sources",
         columns: &["name", "settings"],
-        sql: Some("SELECT name, settings FROM sources ORDER BY name"),
-        dataset_scoped: false,
+        sql: None,
+        partition: &[],
+        key: &["name"],
     },
+    // Served from the namespace list; settings ride as a property.
     Relation {
         name: "datasets",
         columns: &["name", "settings"],
-        sql: Some("SELECT name, settings FROM datasets ORDER BY name"),
-        dataset_scoped: false,
+        sql: None,
+        partition: &[],
+        key: &[],
     },
     // First across (2026-08-17): no supersession of its own, one writer,
     // one reader.
@@ -377,7 +336,8 @@ pub const RELATIONS: &[Relation] = &[
         name: "relationships",
         columns: &["dataset", "left_path", "op", "right_path"],
         sql: None,
-        dataset_scoped: true,
+        partition: &["dataset"],
+        key: &[],
     },
 ];
 
@@ -397,13 +357,24 @@ pub fn accepts_relation(name: &str) -> bool {
     matches!(name, "relationships" | "imports" | "glossary")
 }
 
-/// Where the crossed workspace-wide relations live (`sources`,
-/// `aspects`, `functions`, `witnesses`, and source-grain glossary rows
-/// when their relation crosses). Dataset-scoped relations live in
-/// `<dataset>_meta` instead — a workspace holds many datasets, and the
-/// pairing is what lets a REST catalog grant a dataset and its record
-/// as a unit (2026-08-16 §5).
-const WORKSPACE_NAMESPACE: &str = "glossql";
+/// Where every crossed relation lives: one namespace, one table per
+/// relation. A workspace holds many datasets — that scopes rows by a
+/// `dataset` KEY column, with the physical per-dataset split supplied by
+/// the format (identity partition), not by a namespace layout of ours.
+/// The 2026-08-16 §5 `<dataset>_meta` pairing was built and reversed on
+/// 2026-08-17: its whole justification is per-dataset REST grants, and
+/// access rights are held open — if that decision lands on
+/// namespace-level grants, the pairing returns then, by re-bootstrap.
+const STORE_NAMESPACE: &str = "glossql";
+
+/// Facts ride what they describe: a dataset's settings on its namespace,
+/// a recipe on its table, a landing's source-side facts on its snapshot.
+const SETTINGS_PROP: &str = "glossql.settings";
+const RECIPE_SOURCE_PROP: &str = "glossql.recipe.source";
+const RECIPE_SQL_PROP: &str = "glossql.recipe.sql";
+pub const LANDING_SCANS_PROP: &str = "glossql.source-scans";
+pub const LANDING_DROPPED_PROP: &str = "glossql.dropped-rows";
+pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
 
 /// The seam over a workspace's lake, carrying every relation that has
 /// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
@@ -415,18 +386,18 @@ async fn lake_relations(lake: Lake) -> Result<Arc<dyn Relations>> {
         .map(|r| glossql_catalog::RelationSpec {
             name: r.name,
             columns: r.columns,
-            dataset_scoped: r.dataset_scoped,
+            partition: r.partition,
         })
         .collect();
-    let relations = glossql_catalog::IcebergRelations::open(lake, WORKSPACE_NAMESPACE, &moved)
-        .await
-        .map_err(|e| Error::Backend(e.to_string()))?;
+    let relations = glossql_catalog::IcebergRelations::open(lake, STORE_NAMESPACE, &moved)
+        .await?;
     Ok(Arc::new(relations))
 }
 
 #[derive(Debug, Clone)]
 pub struct Store {
     pool: SqlitePool,
+    lake: Lake,
     relations: Arc<dyn Relations>,
     /// Held for its lifetime, not read: [`Store::open_memory`] puts the
     /// lake in a temp dir, and dropping the handle would delete it out
@@ -464,32 +435,46 @@ impl Store {
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
         Ok(Store {
             pool,
-            relations: lake_relations(lake).await?,
+            relations: lake_relations(lake.clone()).await?,
+            lake,
             _scratch: None,
         })
     }
 
-    /// A throwaway store: sqlite in memory, the lake in a temp dir that
-    /// goes when the store does. One sqlite connection, or every pool
-    /// checkout would see a different empty database.
-    pub async fn open_memory() -> Result<Self> {
+    /// The one lake behind this store — sessions and doors share it.
+    pub fn lake(&self) -> Lake {
+        self.lake.clone()
+    }
+
+    /// A throwaway store over a caller's lake: sqlite in memory. One
+    /// connection, or every pool checkout would see a different empty
+    /// database.
+    pub async fn open_scratch(lake: Lake) -> Result<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+        Ok(Store {
+            pool,
+            relations: lake_relations(lake.clone()).await?,
+            lake,
+            _scratch: None,
+        })
+    }
+
+    /// A throwaway store with its own lake, in a temp dir that goes when
+    /// the store does.
+    pub async fn open_memory() -> Result<Self> {
         let scratch = tempfile::tempdir().map_err(|e| Error::Backend(e.to_string()))?;
         let lake = Lake::open(
             &scratch.path().join("catalog.sqlite"),
             &scratch.path().join("warehouse"),
         )
-        .await
-        .map_err(|e| Error::Backend(e.to_string()))?;
-        Ok(Store {
-            pool,
-            relations: lake_relations(lake).await?,
-            _scratch: Some(Arc::new(scratch)),
-        })
+        .await?;
+        let mut store = Self::open_scratch(lake).await?;
+        store._scratch = Some(Arc::new(scratch));
+        Ok(store)
     }
 
     /// The connect-time brief's raw counts (ruled 2026-08-12, delivery
@@ -502,19 +487,33 @@ impl Store {
         )
         .fetch_one(&self.pool)
         .await?;
+        // An approval is pending while its table has no landing at or
+        // after the ruling was written; landings read from the lake.
         let approvals = sqlx::query(
-            "SELECT count(*) AS n FROM glossary h \
+            "SELECT body, written_at FROM glossary h \
              WHERE h.aspect = 'recipe_change' AND h.actor_kind = 'human' \
-               AND json_extract(h.body, '$.table') IS NOT NULL \
                AND NOT EXISTS (SELECT 1 FROM glossary h2 \
                                WHERE h2.subject = h.subject AND h2.aspect = h.aspect \
-                                 AND h2.actor_kind = 'human' AND h2.written_at > h.written_at) \
-               AND NOT EXISTS (SELECT 1 FROM imports i \
-                               WHERE i.table_name = json_extract(h.body, '$.table') \
-                                 AND i.imported_at >= h.written_at)",
+                                 AND h2.actor_kind = 'human' AND h2.written_at > h.written_at)",
         )
-        .fetch_one(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
+        let landings = self.import_rows().await?;
+        let approvals_pending = approvals
+            .iter()
+            .filter(|r| {
+                let body: Value =
+                    serde_json::from_str(&r.get::<String, _>("body")).unwrap_or(Value::Null);
+                let Some(table) = body["table"].as_str() else {
+                    return false;
+                };
+                let written: String = r.get("written_at");
+                !landings.iter().any(|l| {
+                    l[1].as_deref() == Some(table)
+                        && l[6].as_deref().is_some_and(|at| at >= written.as_str())
+                })
+            })
+            .count() as i64;
         // A ruling awaits its fold-in while the assumption it rules —
         // named by its `key`, the agent-declared identity that survives
         // rephrasing (ruled 2026-08-14: prose is never a join column) —
@@ -545,7 +544,7 @@ impl Store {
         Ok(BriefCounts {
             human_writings: humans.get::<i64, _>("n"),
             latest_human_at: humans.get::<Option<String>, _>("latest"),
-            approvals_pending: approvals.get::<i64, _>("n"),
+            approvals_pending,
             rulings_owed: rulings.get::<i64, _>("n"),
         })
     }
@@ -553,19 +552,31 @@ impl Store {
     // -- declarations ----------------------------------------------------
 
     pub async fn declare_source(&self, decl: &SourceDecl) -> Result<()> {
-        sqlx::query("INSERT OR REPLACE INTO sources (name, settings) VALUES (?, ?)")
-            .bind(decl.name.value.as_str())
-            .bind(settings_json(&decl.settings))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.put(
+            "sources",
+            vec![
+                Some(decl.name.value.clone()),
+                Some(settings_json(&decl.settings)),
+            ],
+        )
+        .await
     }
 
+    /// A dataset is its namespace; the settings ride it as a property,
+    /// set at create and not changed afterwards (ruled 2026-08-16).
     pub async fn declare_dataset(&self, decl: &DatasetDecl) -> Result<()> {
-        sqlx::query("INSERT OR REPLACE INTO datasets (name, settings) VALUES (?, ?)")
-            .bind(decl.name.value.as_str())
-            .bind(settings_json(&decl.settings))
-            .execute(&self.pool)
+        let name = decl.name.value.as_str();
+        if name == STORE_NAMESPACE {
+            return Err(Error::ReservedTableName(name.into()));
+        }
+        self.lake
+            .ensure_namespace(
+                name,
+                std::collections::HashMap::from([(
+                    SETTINGS_PROP.to_string(),
+                    settings_json(&decl.settings),
+                )]),
+            )
             .await?;
         Ok(())
     }
@@ -584,9 +595,18 @@ impl Store {
     pub async fn recipe_admission(&self, decl: &RecipeDecl) -> Result<RecipeAdmission> {
         let dataset = decl.dataset.value.as_str();
         let table = decl.table.value.as_str();
-        self.require("dataset", "datasets", dataset).await?;
-        self.require("source", "sources", decl.source.value.as_str())
-            .await?;
+        if !self.dataset_exists(dataset).await? {
+            return Err(Error::Unknown {
+                what: "dataset",
+                name: dataset.into(),
+            });
+        }
+        if self.source_settings(decl.source.value.as_str()).await?.is_none() {
+            return Err(Error::Unknown {
+                what: "source",
+                name: decl.source.value.clone(),
+            });
+        }
         // A landed table is readable under its bare name; the store's own
         // relations answer to those names first, so the table would be
         // unreachable and the relation would look like data.
@@ -602,42 +622,49 @@ impl Store {
         })
     }
 
+    /// The recipe rides its table as properties: one per (dataset,
+    /// table), outright replacement, no actor — and it cannot outlive or
+    /// precede the table it describes (ruled 2026-08-16).
     pub async fn put_recipe(&self, decl: &RecipeDecl) -> Result<()> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO recipes (dataset, table_name, source, sql) VALUES (?, ?, ?, ?)",
-        )
-        .bind(decl.dataset.value.as_str())
-        .bind(decl.table.value.as_str())
-        .bind(decl.source.value.as_str())
-        .bind(decl.sql.as_str())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.lake
+            .set_table_properties(
+                decl.dataset.value.as_str(),
+                decl.table.value.as_str(),
+                std::collections::HashMap::from([
+                    (RECIPE_SOURCE_PROP.to_string(), decl.source.value.clone()),
+                    (RECIPE_SQL_PROP.to_string(), decl.sql.clone()),
+                ]),
+            )
+            .await
+            .map_err(Error::from)
     }
 
     pub async fn recipe(&self, dataset: &str, table: &str) -> Result<Option<RecipeRow>> {
-        let row =
-            sqlx::query("SELECT source, sql FROM recipes WHERE dataset = ? AND table_name = ?")
-                .bind(dataset)
-                .bind(table)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.map(|r| RecipeRow {
-            source: r.get("source"),
-            sql: r.get("sql"),
-        }))
+        let Some(props) = self
+            .lake
+            .table_properties(dataset, table)
+            .await?
+        else {
+            return Ok(None);
+        };
+        match (props.get(RECIPE_SOURCE_PROP), props.get(RECIPE_SQL_PROP)) {
+            (Some(source), Some(sql)) => Ok(Some(RecipeRow {
+                source: source.clone(),
+                sql: sql.clone(),
+            })),
+            _ => Ok(None),
+        }
     }
 
     pub async fn source_settings(&self, name: &str) -> Result<Option<Value>> {
-        let row = sqlx::query("SELECT settings FROM sources WHERE name = ?")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
-        row.map(|r| {
-            serde_json::from_str(&r.get::<String, _>("settings"))
-                .map_err(|e| Error::Corrupt(e.to_string()))
-        })
-        .transpose()
+        self.sources_all()
+            .await?
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, settings)| {
+                serde_json::from_str(&settings).map_err(|e| Error::Corrupt(e.to_string()))
+            })
+            .transpose()
     }
 
     /// Endpoints arrive canonical (dataset-relative `table.column`); the
@@ -664,8 +691,7 @@ impl Store {
                     Some(right.to_string()),
                 ]],
             )
-            .await
-            .map_err(|e| Error::Backend(e.to_string()))?;
+            .await?;
         // A new edge invalidates dataset-wide through the same ACCEPTS
         // machinery an aspect value uses (ruled 2026-08-05): an edge can
         // change any subject's evidence, and the next call repopulates.
@@ -714,26 +740,18 @@ impl Store {
                 });
             }
         }
-        if let Some((schema, kind, grains)) = self.aspect(name).await? {
-            let existing_condition: Option<(String, String)> = sqlx::query(
-                "SELECT condition_aspect, condition_value FROM aspects WHERE name = ?",
-            )
-            .bind(name)
-            .fetch_optional(&self.pool)
+        let existing = self
+            .aspects_all()
             .await?
-            .and_then(|r| {
-                match (
-                    r.get::<Option<String>, _>("condition_aspect"),
-                    r.get::<Option<String>, _>("condition_value"),
-                ) {
-                    (Some(a), Some(v)) => Some((a, v)),
-                    _ => None,
-                }
-            });
+            .into_iter()
+            .find(|a| a.name == name);
+        if let Some(a) = existing {
+            let schema: Value = serde_json::from_str(&a.schema)
+                .map_err(|e| Error::Corrupt(format!("aspect `{name}` schema: {e}")))?;
             if schema == decl.schema.value
-                && kind == kind_str(decl.kind)
-                && grains == declared_grains
-                && existing_condition == declared_condition
+                && a.kind == kind_str(decl.kind)
+                && a.grains == declared_grains
+                && a.condition == declared_condition
             {
                 return Ok(());
             }
@@ -752,35 +770,43 @@ impl Store {
             // and a MEASUREMENT aspect can only ever hold those, since
             // glossing one is refused. Without this the schema could change
             // under values that were validated against the old one.
-            let values: i64 = sqlx::query(
-                "SELECT count(*) AS n FROM cache WHERE witness IS NULL AND function IN \
-                 (SELECT name FROM functions WHERE returns = ?)",
-            )
-            .bind(name)
-            .fetch_one(&self.pool)
-            .await?
-            .get("n");
-            if values > 0 {
-                return Err(Error::AspectValued {
-                    name: name.into(),
-                    values,
-                });
+            let producers: Vec<String> = self
+                .functions_all()
+                .await?
+                .into_iter()
+                .filter(|f| f.returns.as_deref() == Some(name))
+                .map(|f| f.name)
+                .collect();
+            if !producers.is_empty() {
+                let marks = vec!["?"; producers.len()].join(", ");
+                let sql = format!(
+                    "SELECT count(*) AS n FROM cache \
+                     WHERE witness IS NULL AND function IN ({marks})"
+                );
+                let mut q = sqlx::query(&sql);
+                for p in &producers {
+                    q = q.bind(p.as_str());
+                }
+                let values: i64 = q.fetch_one(&self.pool).await?.get("n");
+                if values > 0 {
+                    return Err(Error::AspectValued {
+                        name: name.into(),
+                        values,
+                    });
+                }
             }
         }
-        sqlx::query(
-            "INSERT OR REPLACE INTO aspects \
-             (name, schema, kind, grains, condition_aspect, condition_value) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+        self.put(
+            "aspects",
+            vec![
+                Some(decl.name.value.clone()),
+                Some(kind_str(decl.kind).to_string()),
+                declared_grains,
+                condition_text(declared_condition.as_ref()),
+                Some(decl.schema.raw.clone()),
+            ],
         )
-        .bind(decl.name.value.as_str())
-        .bind(decl.schema.raw.as_str())
-        .bind(kind_str(decl.kind))
-        .bind(declared_grains)
-        .bind(declared_condition.as_ref().map(|(a, _)| a.as_str()))
-        .bind(declared_condition.as_ref().map(|(_, v)| v.as_str()))
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        .await
     }
 
     /// `ACCEPTS` names declared aspects — the context the server assembles
@@ -793,8 +819,12 @@ impl Store {
             if accepts_relation(aspect.value.as_str()) {
                 continue;
             }
-            self.require("aspect", "aspects", aspect.value.as_str())
-                .await?;
+            if self.aspect(aspect.value.as_str()).await?.is_none() {
+                return Err(Error::Unknown {
+                    what: "aspect",
+                    name: aspect.value.clone(),
+                });
+            }
         }
         // RETURNS mirrors ACCEPTS (ruled 2026-08-04): it names the aspect
         // the output fills. A MEASUREMENT aspect has one producer; a FACT
@@ -823,17 +853,13 @@ impl Store {
                     });
                 }
                 "measurement" => {
-                    let taken: Option<String> =
-                        sqlx::query("SELECT name FROM functions WHERE returns = ? AND name != ?")
-                            .bind(aspect)
-                            .bind(decl.name.value.as_str())
-                            .fetch_optional(&self.pool)
-                            .await?
-                            .map(|r| r.get("name"));
+                    let taken = self.functions_all().await?.into_iter().find(|f| {
+                        f.returns.as_deref() == Some(aspect) && f.name != decl.name.value
+                    });
                     if let Some(existing) = taken {
                         return Err(Error::MeasurementProducerTaken {
                             aspect: aspect.into(),
-                            existing,
+                            existing: existing.name,
                         });
                     }
                 }
@@ -851,20 +877,19 @@ impl Store {
             Some(Value::Array(names).to_string())
         };
         let scope = match &decl.scope {
-            FunctionScope::Dataset(d) => Some(d.value.clone()),
-            FunctionScope::Global => None,
+            FunctionScope::Dataset(d) => d.value.clone(),
+            FunctionScope::Global => "GLOBAL".to_string(),
         };
-        sqlx::query(
-            "INSERT OR REPLACE INTO functions \
-             (name, scope_dataset, script, accepts, returns) \
-             VALUES (?, ?, ?, ?, ?)",
+        self.put(
+            "functions",
+            vec![
+                Some(decl.name.value.clone()),
+                Some(scope),
+                Some(decl.script.clone()),
+                accepts,
+                decl.returns.as_ref().map(|a| a.value.clone()),
+            ],
         )
-        .bind(decl.name.value.as_str())
-        .bind(scope)
-        .bind(decl.script.as_str())
-        .bind(accepts)
-        .bind(decl.returns.as_ref().map(|a| a.value.clone()))
-        .execute(&self.pool)
         .await?;
         // A re-declared function is a different function; its cached results
         // no longer describe anything.
@@ -933,18 +958,17 @@ impl Store {
             }
         };
 
-        sqlx::query(
-            "INSERT OR REPLACE INTO witnesses (name, aspect, speakers, detector, threshold) \
-             VALUES (?, ?, ?, ?, ?)",
+        self.put(
+            "witnesses",
+            vec![
+                Some(decl.name.value.clone()),
+                Some(aspect.to_string()),
+                Some(Value::Array(speakers).to_string()),
+                decl.detector.as_ref().map(|d| d.value.clone()),
+                threshold.map(|t: f64| t.to_string()),
+            ],
         )
-        .bind(decl.name.value.as_str())
-        .bind(aspect)
-        .bind(Value::Array(speakers).to_string())
-        .bind(decl.detector.as_ref().map(|d| d.value.clone()))
-        .bind(threshold)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        .await
     }
 
     // -- glosses ---------------------------------------------------------
@@ -1049,37 +1073,11 @@ impl Store {
         Ok(())
     }
 
-    /// One import, recorded (project lead, 2026-08-04): rows the recipe
-    /// filtered away are the author's to judge, on the files — the engine
-    /// keeps the counts, readable through the `imports` relation.
-    /// `dropped_rows` is `None` where the recipe's shape makes no single
-    /// count true; the caller decides that, because the caller ran it.
-    pub async fn import_put(
-        &self,
-        dataset: &str,
-        table: &str,
-        source_scans: &str,
-        landed_rows: i64,
-        dropped_rows: Option<i64>,
-        cast_failures: &str,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO imports \
-               (dataset, table_name, source_scans, landed_rows, dropped_rows_count, cast_failures) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(dataset)
-        .bind(table)
-        .bind(source_scans)
-        .bind(landed_rows)
-        .bind(dropped_rows)
-        .bind(cast_failures)
-        .execute(&self.pool)
-        .await?;
-        // A landed table widens what dataset-sweeping measurements can
-        // see; the `imports` ACCEPTS edge invalidates them dataset-wide.
-        self.invalidate(dataset, "imports", dataset).await?;
-        Ok(())
+    /// A landed table widens what dataset-sweeping measurements can see;
+    /// the `imports` ACCEPTS edge invalidates them dataset-wide. The
+    /// landing itself is the snapshot — nothing else is recorded.
+    pub async fn landing_invalidates(&self, dataset: &str) -> Result<()> {
+        self.invalidate(dataset, "imports", dataset).await
     }
 
     /// Glosses at or under a table — what `DROP TABLE` refuses on.
@@ -1111,40 +1109,15 @@ impl Store {
         Ok(())
     }
 
-    pub async fn drop_table_records(&self, dataset: &str, table: &str) -> Result<()> {
-        sqlx::query("DELETE FROM recipes WHERE dataset = ? AND table_name = ?")
-            .bind(dataset)
-            .bind(table)
-            .execute(&self.pool)
-            .await?;
-        let (pred, binds) = Scope::Subject(table.to_string()).predicate("subject");
-        let sql = format!("DELETE FROM cache WHERE dataset = ? AND {pred}");
-        let mut q = sqlx::query(&sql).bind(dataset);
-        for b in &binds {
-            q = q.bind(b);
-        }
-        q.execute(&self.pool).await?;
-        sqlx::query("DELETE FROM imports WHERE dataset = ? AND table_name = ?")
-            .bind(dataset)
-            .bind(table)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 
     async fn functions_accepting(&self, aspect: &str) -> Result<Vec<String>> {
-        let rows = sqlx::query("SELECT name, accepts FROM functions WHERE accepts IS NOT NULL")
-            .fetch_all(&self.pool)
-            .await?;
-        let mut names = Vec::new();
-        for r in rows {
-            let accepts: Vec<String> = serde_json::from_str(&r.get::<String, _>("accepts"))
-                .map_err(|e| Error::Corrupt(format!("ACCEPTS: {e}")))?;
-            if accepts.iter().any(|a| a == aspect) {
-                names.push(r.get("name"));
-            }
-        }
-        Ok(names)
+        Ok(self
+            .functions_all()
+            .await?
+            .into_iter()
+            .filter(|f| f.accepts.iter().any(|a| a == aspect))
+            .map(|f| f.name)
+            .collect())
     }
 
     /// `(function, aspect)` for every function whose `RETURNS` names an
@@ -1152,14 +1125,12 @@ impl Store {
     /// binding is what wires a function's cache into the slots (ruled
     /// 2026-08-04; the function witnesses it replaced were ceremony).
     async fn returning(&self, aspect: Option<&str>) -> Result<Vec<(String, String)>> {
-        let q = match aspect {
-            Some(a) => sqlx::query("SELECT name, returns FROM functions WHERE returns = ?").bind(a),
-            None => sqlx::query("SELECT name, returns FROM functions WHERE returns IS NOT NULL"),
-        };
-        Ok(q.fetch_all(&self.pool)
+        Ok(self
+            .functions_all()
             .await?
             .into_iter()
-            .map(|r| (r.get("name"), r.get("returns")))
+            .filter_map(|f| f.returns.map(|r| (f.name, r)))
+            .filter(|(_, r)| aspect.is_none_or(|a| a == r))
             .collect())
     }
 
@@ -1213,23 +1184,14 @@ impl Store {
         } else {
             ""
         };
-        // A source-grain row: its subject names a declared source and its
-        // aspect opted into SOURCE grain. Such rows read and supersede
-        // workspace-wide (ruled 2026-08-12) — the deposit the next
-        // dataset reads — while every other row stays dataset-scoped.
-        // NULL grains (no ON clause) never qualify: the sweep is opt-in.
-        //
         // The query fetches history; `rules::latest_by` picks the current
-        // row (stage 1, 2026-08-17). Supersession used to live in a SQL
-        // `NOT EXISTS ... n.id > g.id`, which meant every backend carrying
-        // the store had to reimplement it. Only the ordering column is
-        // backend-shaped, and it is a closure now.
+        // row. A source-grain row — its subject names a declared source
+        // and its aspect opted into SOURCE grain — reads and supersedes
+        // workspace-wide (ruled 2026-08-12); every other row stays
+        // dataset-scoped. NULL grains (no ON clause) never qualify.
         let sql = format!(
             "SELECT g.id, g.dataset, g.subject, g.aspect, g.actor_kind, g.actor_id, g.body, \
-                    g.written_at, g.snapshot_id, \
-                    (g.subject IN (SELECT name FROM sources) \
-                     AND EXISTS (SELECT 1 FROM aspects a WHERE a.name = g.aspect \
-                       AND (',' || a.grains || ',') LIKE '%,source,%')) AS source_grain \
+                    g.written_at, g.snapshot_id \
              FROM glossary g \
              WHERE {pred} {aspect_clause}"
         );
@@ -1240,6 +1202,19 @@ impl Store {
         if let Some(a) = aspect {
             q = q.bind(a);
         }
+        let source_names: std::collections::HashSet<String> = self
+            .sources_all()
+            .await?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let source_aspects: std::collections::HashSet<String> = self
+            .aspects_all()
+            .await?
+            .into_iter()
+            .filter(AspectRow::source_grain)
+            .map(|a| a.name)
+            .collect();
         let witnesses = self.witnesses_all().await?;
         let witness_on = |aspect: &str| {
             witnesses
@@ -1255,13 +1230,14 @@ impl Store {
             .map(|r| {
                 let aspect: String = r.get("aspect");
                 let actor_kind: String = r.get("actor_kind");
+                let subject: String = r.get("subject");
                 (
                     r.get::<i64, _>("id"),
-                    r.get::<i64, _>("source_grain") != 0,
+                    source_names.contains(&subject) && source_aspects.contains(&aspect),
                     r.get::<String, _>("dataset"),
                     actor_kind.clone(),
                     Slot {
-                        subject: r.get("subject"),
+                        subject,
                         rank: rank_of(&actor_kind),
                         actor: r.get("actor_id"),
                         witness: witness_on(&aspect),
@@ -1364,12 +1340,11 @@ impl Store {
     }
 
     async fn aspect_kinds(&self) -> Result<std::collections::HashMap<String, String>> {
-        let rows = sqlx::query("SELECT name, kind FROM aspects")
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows
+        Ok(self
+            .aspects_all()
+            .await?
             .into_iter()
-            .map(|r| (r.get("name"), r.get("kind")))
+            .map(|a| (a.name, a.kind))
             .collect())
     }
 
@@ -1491,19 +1466,10 @@ impl Store {
             std::collections::HashMap::new();
         let mut condition_map: std::collections::HashMap<String, (String, String)> =
             std::collections::HashMap::new();
-        for row in sqlx::query(
-            "SELECT name, grains, condition_aspect, condition_value FROM aspects",
-        )
-        .fetch_all(&self.pool)
-        .await?
-        {
-            let name: String = row.get("name");
-            grain_map.insert(name.clone(), row.get("grains"));
-            if let (Some(a), Some(v)) = (
-                row.get::<Option<String>, _>("condition_aspect"),
-                row.get::<Option<String>, _>("condition_value"),
-            ) {
-                condition_map.insert(name, (a, v));
+        for a in self.aspects_all().await? {
+            grain_map.insert(a.name.clone(), a.grains);
+            if let Some(condition) = a.condition {
+                condition_map.insert(a.name, condition);
             }
         }
         // Conditional relevance (ruled 2026-08-14): a conditioned aspect
@@ -1532,13 +1498,12 @@ impl Store {
         // Declared sources join the subject universe: a source-grain
         // aspect nobody spoke to is owed on every declared source
         // (ruled 2026-08-12), in whichever dataset the read runs.
-        let source_names: std::collections::BTreeSet<String> =
-            sqlx::query("SELECT name FROM sources")
-                .fetch_all(&self.pool)
-                .await?
-                .into_iter()
-                .map(|r| r.get("name"))
-                .collect();
+        let source_names: std::collections::BTreeSet<String> = self
+            .sources_all()
+            .await?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         let subjects: Vec<&String> = ctx
             .universe
             .iter()
@@ -1693,11 +1658,10 @@ impl Store {
         // A function's new value invalidates like a gloss would: through
         // the aspect its RETURNS names. Detectors return no aspect, so
         // their verdicts invalidate nothing.
-        let returns: Option<String> = sqlx::query("SELECT returns FROM functions WHERE name = ?")
-            .bind(function)
-            .fetch_optional(&self.pool)
+        let returns = self
+            .function(function, None)
             .await?
-            .and_then(|r| r.get("returns"));
+            .and_then(|f| f.returns);
         if let Some(aspect) = returns {
             self.invalidate(dataset, &aspect, subject).await?;
         }
@@ -1804,12 +1768,22 @@ impl Store {
                     sqlx::query("DELETE FROM cache").execute(&self.pool).await?;
                 }
             }
-            sqlx::query(
-                "DELETE FROM cache WHERE function IN \
-                 (SELECT name FROM functions WHERE returns IS NULL)",
-            )
-            .execute(&self.pool)
-            .await?;
+            let detectors: Vec<String> = self
+                .functions_all()
+                .await?
+                .into_iter()
+                .filter(|f| f.returns.is_none())
+                .map(|f| f.name)
+                .collect();
+            if !detectors.is_empty() {
+                let marks = vec!["?"; detectors.len()].join(", ");
+                let sql = format!("DELETE FROM cache WHERE function IN ({marks})");
+                let mut q = sqlx::query(&sql);
+                for d in &detectors {
+                    q = q.bind(d.as_str());
+                }
+                q.execute(&self.pool).await?;
+            }
             // Functions sweeping the glossary whole (`ACCEPTS (glossary)`)
             // read what the delete just changed — same edge as the write
             // side, applied on removal (2026-08-06).
@@ -1823,24 +1797,34 @@ impl Store {
         if target == "cache" {
             match doomed_cache {
                 Some(triples) => {
+                    // A struck function voice makes the slot set older,
+                    // never newer, so a cached verdict would pass the
+                    // freshness check and keep withholding — the same
+                    // hazard the glossary side closed (2026-08-05),
+                    // applied to the cache target. The witnesses whose
+                    // aspect the function RETURNS lose their verdicts
+                    // for the struck subject.
+                    let functions = self.functions_all().await?;
+                    let witnesses = self.witnesses_all().await?;
                     for (dataset, subject, function) in &triples {
-                        // A struck function voice makes the slot set older,
-                        // never newer, so a cached verdict would pass the
-                        // freshness check and keep withholding — the same
-                        // hazard the glossary side closed (2026-08-05),
-                        // applied to the cache target. The witnesses whose
-                        // aspect the function RETURNS lose their verdicts
-                        // for the struck subject.
-                        sqlx::query(
-                            "DELETE FROM cache WHERE dataset = ? AND subject = ? \
-                             AND witness IN (SELECT w.name FROM witnesses w \
-                               JOIN functions f ON f.returns = w.aspect WHERE f.name = ?)",
-                        )
-                        .bind(dataset)
-                        .bind(subject)
-                        .bind(function)
-                        .execute(&self.pool)
-                        .await?;
+                        let returns = functions
+                            .iter()
+                            .find(|f| &f.name == function)
+                            .and_then(|f| f.returns.as_deref());
+                        for w in witnesses
+                            .iter()
+                            .filter(|w| returns == Some(w.aspect.as_str()))
+                        {
+                            sqlx::query(
+                                "DELETE FROM cache WHERE dataset = ? AND subject = ? \
+                                 AND witness = ?",
+                            )
+                            .bind(dataset)
+                            .bind(subject)
+                            .bind(w.name.as_str())
+                            .execute(&self.pool)
+                            .await?;
+                        }
                     }
                 }
                 // Blunt but correct: which voices died is unknown, so every
@@ -1893,26 +1877,47 @@ impl Store {
         )
     }
 
-    /// A moved relation, served from the lake. Two things the sqlite
-    /// select did for free have to be said out loud here:
-    ///
-    /// - **the collapse.** A primary key made a re-declaration a no-op;
-    ///   an append cannot, so [`rules::latest_by`] keyed on the whole row
-    ///   keeps the last write of each distinct row. Where a relation has
-    ///   a narrower key, that key is the rule and belongs here.
-    /// - **the order.** A scan returns rows in file order. The doors
-    ///   compared dumps, so the order is part of the answer; sorting by
-    ///   the cells is what every moved relation's `ORDER BY` spelled.
-    async fn lake_rows(&self, table: &str) -> Result<Vec<Vec<Option<String>>>> {
-        let rows = self
-            .relations
-            .scan(table)
+    /// One appended row into a crossed relation.
+    async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
+        self.relations
+            .append(relation, vec![cells])
             .await
-            .map_err(|e| Error::Backend(e.to_string()))?;
-        let mut rows = rules::latest_by(rows, |r| r.cells.clone(), |r| r.seq)
-            .into_iter()
-            .map(|r| r.cells)
-            .collect::<Vec<_>>();
+            .map_err(Error::from)
+    }
+
+    /// A crossed relation's current rows: latest per [`Relation`] key in
+    /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
+    /// and `ORDER BY` used to do.
+    async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
+        let history = self
+            .relations
+            .scan(relation.name)
+            .await?;
+        let key: Vec<usize> = relation
+            .key
+            .iter()
+            .map(|k| {
+                relation
+                    .columns
+                    .iter()
+                    .position(|c| c == k)
+                    .expect("a key names one of its relation's columns")
+            })
+            .collect();
+        let mut rows: Vec<_> = rules::latest_by(
+            history,
+            |r| {
+                if key.is_empty() {
+                    r.cells.clone()
+                } else {
+                    key.iter().map(|&i| r.cells[i].clone()).collect()
+                }
+            },
+            |r| r.seq,
+        )
+        .into_iter()
+        .map(|r| r.cells)
+        .collect();
         rows.sort();
         Ok(rows)
     }
@@ -1923,8 +1928,15 @@ impl Store {
         let Some(relation) = RELATIONS.iter().find(|r| r.name == table) else {
             return Err(Error::ForwardRejected(table.into()));
         };
+        // Two relations are the lake's own record, composed rather than
+        // stored: datasets are the namespaces, imports are the snapshots.
+        match relation.name {
+            "datasets" => return self.dataset_rows().await,
+            "imports" => return self.import_rows().await,
+            _ => {}
+        }
         let Some(sql) = relation.sql else {
-            return self.lake_rows(table).await;
+            return self.lake_rows(relation).await;
         };
         let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
         Ok(rows
@@ -1940,61 +1952,123 @@ impl Store {
     // -- lookups the session needs ---------------------------------------
 
     pub async fn dataset_exists(&self, name: &str) -> Result<bool> {
-        Ok(sqlx::query("SELECT 1 FROM datasets WHERE name = ?")
-            .bind(name)
-            .fetch_optional(&self.pool)
+        if name == STORE_NAMESPACE {
+            return Ok(false);
+        }
+        Ok(self
+            .lake
+            .namespaces()
             .await?
-            .is_some())
+            .iter()
+            .any(|(n, _)| n == name))
+    }
+
+    async fn dataset_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
+        let mut rows: Vec<_> = self
+            .lake
+            .namespaces()
+            .await?
+            .into_iter()
+            .filter(|(name, _)| name != STORE_NAMESPACE)
+            .map(|(name, props)| {
+                vec![
+                    Some(name),
+                    Some(props.get(SETTINGS_PROP).cloned().unwrap_or_else(|| "{}".into())),
+                ]
+            })
+            .collect();
+        rows.sort();
+        Ok(rows)
+    }
+
+    async fn import_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
+        let mut rows = Vec::new();
+        for (dataset, _) in self
+            .lake
+            .namespaces()
+            .await?
+        {
+            if dataset == STORE_NAMESPACE {
+                continue;
+            }
+            for l in self
+                .lake
+                .landings(&dataset)
+                .await?
+            {
+                rows.push(vec![
+                    Some(l.dataset),
+                    Some(l.table),
+                    l.properties.get(LANDING_SCANS_PROP).cloned(),
+                    l.added_records.map(|n| n.to_string()),
+                    l.properties.get(LANDING_DROPPED_PROP).cloned(),
+                    l.properties.get(LANDING_CASTS_PROP).cloned(),
+                    Some(l.committed_at),
+                ]);
+            }
+        }
+        rows.sort();
+        Ok(rows)
+    }
+
+    // -- the crossed declarations, read whole (each is a handful of rows)
+
+    async fn sources_all(&self) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .lake_rows(relation("sources"))
+            .await?
+            .into_iter()
+            .map(|r| (text(&r, 0), text(&r, 1)))
+            .collect())
+    }
+
+    async fn aspects_all(&self) -> Result<Vec<AspectRow>> {
+        Ok(self
+            .lake_rows(relation("aspects"))
+            .await?
+            .iter()
+            .map(AspectRow::from_cells)
+            .collect())
+    }
+
+    async fn functions_all(&self) -> Result<Vec<FunctionRow>> {
+        self.lake_rows(relation("functions"))
+            .await?
+            .iter()
+            .map(function_row)
+            .collect()
+    }
+
+    pub async fn witnesses_all(&self) -> Result<Vec<WitnessRow>> {
+        self.lake_rows(relation("witnesses"))
+            .await?
+            .iter()
+            .map(witness_row)
+            .collect()
     }
 
     /// `(schema, kind, grains)` — grains is the declared `ON` list
     /// (comma-joined, lowercase), `None` when the aspect speaks to all
     /// grains.
     pub async fn aspect(&self, name: &str) -> Result<Option<(Value, String, Option<String>)>> {
-        let Some(row) = sqlx::query("SELECT schema, kind, grains FROM aspects WHERE name = ?")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?
-        else {
+        let Some(a) = self.aspects_all().await?.into_iter().find(|a| a.name == name) else {
             return Ok(None);
         };
-        let schema: Value = serde_json::from_str(&row.get::<String, _>("schema"))
+        let schema = serde_json::from_str(&a.schema)
             .map_err(|e| Error::Corrupt(format!("aspect `{name}` schema: {e}")))?;
-        Ok(Some((schema, row.get("kind"), row.get("grains"))))
+        Ok(Some((schema, a.kind, a.grains)))
     }
 
     /// Resolve a function visible from `dataset` (`FOR` scope or GLOBAL,
     /// SPEC.md §6). `None` skips the visibility check.
     pub async fn function(&self, name: &str, dataset: Option<&str>) -> Result<Option<FunctionRow>> {
-        let Some(row) = sqlx::query(
-            "SELECT name, scope_dataset, script, accepts, returns \
-             FROM functions WHERE name = ?",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?
-        else {
+        let Some(f) = self.functions_all().await?.into_iter().find(|f| f.name == name) else {
             return Ok(None);
         };
-        let scope_dataset: Option<String> = row.get("scope_dataset");
-        if let (Some(d), Some(scope)) = (dataset, &scope_dataset)
-            && scope != d
-        {
-            return Ok(None);
+        match (dataset, &f.scope_dataset) {
+            (Some(d), Some(scope)) if scope != d => Ok(None),
+            _ => Ok(Some(f)),
         }
-        let returns: Option<String> = row.get("returns");
-        let accepts = match row.get::<Option<String>, _>("accepts") {
-            None => Vec::new(),
-            Some(text) => serde_json::from_str::<Vec<String>>(&text)
-                .map_err(|e| Error::Corrupt(format!("function `{name}` ACCEPTS: {e}")))?,
-        };
-        Ok(Some(FunctionRow {
-            name: row.get("name"),
-            scope_dataset,
-            script: row.get("script"),
-            accepts,
-            returns,
-        }))
     }
 
     pub async fn witnesses_on(&self, aspect: &str) -> Result<Vec<WitnessRow>> {
@@ -2005,45 +2079,93 @@ impl Store {
             .filter(|w| w.aspect == aspect)
             .collect())
     }
+}
 
-    pub async fn witnesses_all(&self) -> Result<Vec<WitnessRow>> {
-        let rows = sqlx::query(
-            "SELECT name, aspect, speakers, detector, threshold FROM witnesses ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|r| {
-                let speakers: Value = serde_json::from_str(&r.get::<String, _>("speakers"))
-                    .map_err(|e| Error::Corrupt(format!("witness speakers: {e}")))?;
-                let list = speakers.as_array().cloned().unwrap_or_default();
-                Ok(WitnessRow {
-                    name: r.get("name"),
-                    aspect: r.get("aspect"),
-                    admits_agent: list.iter().any(|s| s.as_str() == Some("agent")),
-                    admits_human: list.iter().any(|s| s.as_str() == Some("human")),
-                    detector: r.get("detector"),
-                    threshold: r.get("threshold"),
-                })
-            })
-            .collect()
-    }
+fn relation(name: &str) -> &'static Relation {
+    RELATIONS
+        .iter()
+        .find(|r| r.name == name)
+        .expect("a declared relation")
+}
 
-    async fn require(&self, what: &'static str, table: &str, name: &str) -> Result<()> {
-        let sql = format!("SELECT 1 FROM {table} WHERE name = ?");
-        if sqlx::query(&sql)
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?
-            .is_none()
-        {
-            return Err(Error::Unknown {
-                what,
-                name: name.into(),
-            });
+fn text(cells: &[Option<String>], i: usize) -> String {
+    cells.get(i).cloned().flatten().unwrap_or_default()
+}
+
+fn cell(cells: &[Option<String>], i: usize) -> Option<String> {
+    cells.get(i).cloned().flatten()
+}
+
+/// An `aspects` row, cells parsed once. `condition` round-trips through
+/// the served `aspect = 'value'` text — one renderer, one parser.
+struct AspectRow {
+    name: String,
+    kind: String,
+    grains: Option<String>,
+    condition: Option<(String, String)>,
+    schema: String,
+}
+
+impl AspectRow {
+    fn from_cells(cells: &Vec<Option<String>>) -> AspectRow {
+        AspectRow {
+            name: text(cells, 0),
+            kind: text(cells, 1),
+            grains: cell(cells, 2),
+            condition: cell(cells, 3).as_deref().and_then(parse_condition),
+            schema: text(cells, 4),
         }
-        Ok(())
     }
+
+    fn source_grain(&self) -> bool {
+        self.grains
+            .as_deref()
+            .is_some_and(|g| g.split(',').any(|g| g == "source"))
+    }
+}
+
+fn condition_text(condition: Option<&(String, String)>) -> Option<String> {
+    condition.map(|(aspect, value)| format!("{aspect} = '{value}'"))
+}
+
+fn parse_condition(text: &str) -> Option<(String, String)> {
+    let (aspect, rest) = text.split_once(" = '")?;
+    Some((aspect.to_string(), rest.strip_suffix('\'')?.to_string()))
+}
+
+fn function_row(cells: &Vec<Option<String>>) -> Result<FunctionRow> {
+    let name = text(cells, 0);
+    let accepts = match cell(cells, 3) {
+        None => Vec::new(),
+        Some(t) => serde_json::from_str(&t)
+            .map_err(|e| Error::Corrupt(format!("function `{name}` ACCEPTS: {e}")))?,
+    };
+    Ok(FunctionRow {
+        scope_dataset: cell(cells, 1).filter(|s| s != "GLOBAL"),
+        script: text(cells, 2),
+        returns: cell(cells, 4),
+        accepts,
+        name,
+    })
+}
+
+fn witness_row(cells: &Vec<Option<String>>) -> Result<WitnessRow> {
+    let speakers: Vec<String> = serde_json::from_str(&text(cells, 2))
+        .map_err(|e| Error::Corrupt(format!("witness speakers: {e}")))?;
+    let threshold = cell(cells, 4)
+        .map(|t| {
+            t.parse()
+                .map_err(|_| Error::Corrupt(format!("witness threshold `{t}`")))
+        })
+        .transpose()?;
+    Ok(WitnessRow {
+        name: text(cells, 0),
+        aspect: text(cells, 1),
+        admits_agent: speakers.iter().any(|s| s == "agent"),
+        admits_human: speakers.iter().any(|s| s == "human"),
+        detector: cell(cells, 3),
+        threshold,
+    })
 }
 
 /// The table a subject's snapshot rides on: its first path segment. Pair

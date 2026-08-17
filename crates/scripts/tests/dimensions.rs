@@ -171,7 +171,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -180,7 +180,6 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session

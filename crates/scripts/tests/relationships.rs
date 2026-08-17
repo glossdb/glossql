@@ -102,7 +102,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -111,7 +111,6 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -245,7 +244,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -254,7 +253,6 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session

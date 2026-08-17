@@ -3006,6 +3006,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
