@@ -7,9 +7,16 @@ description: Speak glossql through the server's MCP door — the statement set, 
 
 glossql is one SQL-shaped surface for a workspace's data *and* its
 context. Data lands in tables; context is JSON attached to subjects
-(`table` or `table.column`) under declared aspects. Everything below is
-the working truth of that surface — and everything *live* is read
-through the language itself, never assumed.
+(`table` or `table.column`) under declared aspects. Two artifacts are
+normative — read them, don't reconstruct them:
+
+- `SPEC.md` — the language specification. §3 sources, recipes, tables;
+  §4 subjects and relationships; §5 the glossary (aspects, glosses,
+  reading); §6 the function library; §7 witnesses and attestation.
+- `grammar.ebnf` — the machine-readable syntax.
+
+Everything *live* — the declared vocabulary, the tables, the record —
+is read through the language itself, never assumed.
 
 ## The door
 
