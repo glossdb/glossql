@@ -636,6 +636,19 @@ Run it whenever you run the walk — a grounding write or a landed
 import stales both caches. A dimension the cube should slice must be a
 served column of the extract.
 
+Dimension admission is wide, and wide axes bucket instead of dropping
+out: a served column with 2–512 distinct members can enter (fewest
+members first, up to four dimensions). Up to 24 members every one is
+named; above that the axis serves its top 23 by weight — summed value,
+a ratio by its denominator — and the rest fold into an `'other'`
+member. Each metric's `bucketed` field names the axes this happened
+to: never read `'other'` as a business member. Past 512 distinct
+values a column reads as an identifier, not a dimension, and stays
+out. If a bucketed axis is too coarse for the question at hand, that
+is a grounding decision, not a cap to fight — serve a narrower or
+derived column (a region for the country, a group for the org) from
+the metric's own SQL.
+
 Where every metric stands, in one read:
 
 ```sql
