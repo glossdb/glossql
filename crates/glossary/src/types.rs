@@ -4,6 +4,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A backend could not serve or accept rows. The store's rules never
+    /// produce this — only the IO behind [`crate::MetadataBackend`] does.
+    #[error("store backend: {0}")]
+    Backend(String),
     #[error("unknown {what} `{name}` — declare it first")]
     Unknown { what: &'static str, name: String },
     #[error("aspect `{0}` is MEASUREMENT — measurements are computed by functions, never glossed")]
@@ -45,16 +49,12 @@ pub enum Error {
         grain: &'static str,
         declared: String,
     },
-    #[error("statement targets `{0}` — only the glossary and cache relations accept forwarded SQL")]
+    #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(
-        "forwarded delete carries a `{char}` outside a quoted literal — one statement is forwarded, never a sequence"
+        "the strike is parked: the substrate cannot remove rows until iceberg-rust 0.11 lands the delete write path — supersede the slot, or rebuild the workspace (reports/2026-08-17-delete-in-iceberg-v3.md)"
     )]
-    ForwardUnsafe { char: char },
-    #[error(
-        "aspect `{name}` has {values} cached function value(s) under it — delete them before re-declaring it differently"
-    )]
-    AspectValued { name: String, values: i64 },
+    StrikeParked,
     #[error(
         "function `{function}` both ACCEPTS and RETURNS `{aspect}` — a function cannot be its own input"
     )]
@@ -65,8 +65,12 @@ pub enum Error {
     ReservedTableName(String),
     #[error("stored JSON is corrupt: {0}")]
     Corrupt(String),
-    #[error(transparent)]
-    Db(#[from] sqlx::Error),
+}
+
+impl From<glossql_catalog::Error> for Error {
+    fn from(e: glossql_catalog::Error) -> Self {
+        Error::Backend(e.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,15 +150,64 @@ pub struct AttestRow {
     pub computed_at: String,
 }
 
-/// A cached extraction result (SPEC.md §6): one row per (subject,
-/// function); re-running is `DELETE FROM cache WHERE …` and selecting again.
+/// A measurement served from the `measurements` relation: one function's
+/// output at one pin.
 #[derive(Debug, Clone)]
-pub struct CacheRow {
+pub struct MeasurementRow {
     pub subject: String,
     pub function: String,
     pub body: String,
     pub computed_at: String,
 }
+
+/// One glossary row, with the format's write order — the store's read
+/// rules run over these.
+#[derive(Debug, Clone)]
+pub struct GlossRow {
+    pub dataset: String,
+    pub subject: String,
+    pub aspect: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub body: String,
+    pub written_at: String,
+    pub snapshot_id: Option<i64>,
+    pub seq: (i64, i64),
+}
+
+/// A declared aspect, parsed once.
+#[derive(Debug, Clone)]
+pub struct AspectRow {
+    pub name: String,
+    pub kind: String,
+    pub grains: Option<String>,
+    pub condition: Option<(String, String)>,
+    pub schema: String,
+}
+
+impl AspectRow {
+    pub fn source_grain(&self) -> bool {
+        self.grains
+            .as_deref()
+            .is_some_and(|g| g.split(',').any(|g| g == "source"))
+    }
+}
+
+/// One witness's verdict over one subject, computed at read and never
+/// stored (ruled 2026-08-16). The collapse withholds when a score
+/// crosses its own witness's threshold — never a neighbour's.
+#[derive(Debug, Clone)]
+pub struct Verdict {
+    pub witness: String,
+    pub band: String,
+    pub score: f64,
+    pub threshold: Option<f64>,
+    pub computed_at: String,
+}
+
+/// Verdicts keyed (subject, aspect) — the session computes them (it
+/// holds the script runtime), the collapse consumes them.
+pub type Verdicts = std::collections::HashMap<(String, String), Vec<Verdict>>;
 
 /// A declared function (SPEC.md §6), as the session's extraction executor
 /// needs it.

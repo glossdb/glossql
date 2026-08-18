@@ -13,7 +13,21 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub mod metadata;
+pub use metadata::{IcebergMetadata, MetadataBackend, RelationSpec, Row};
+
+use datafusion::arrow::array::RecordBatch;
+use iceberg::arrow::FieldMatchMode;
 use iceberg::io::LocalFsStorageFactory;
+use iceberg::spec::DataFileFormat;
+use iceberg::transaction::{ApplyTransactionAction, Transaction};
+use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
+use iceberg::writer::file_writer::ParquetWriterBuilder;
+use iceberg::writer::file_writer::location_generator::{
+    DefaultFileNameGenerator, DefaultLocationGenerator,
+};
+use iceberg::writer::file_writer::rolling_writer::RollingFileWriterBuilder;
+use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
 pub use iceberg_datafusion::IcebergCatalogProvider;
@@ -28,6 +42,26 @@ pub enum Error {
     Iceberg(#[from] iceberg::Error),
 }
 
+/// One table pinned at its current snapshot: every scan reads that
+/// snapshot whatever lands after — the statement's consistent view, and
+/// a durable key, since a snapshot stays addressable after later
+/// commits (spike 3, 2026-08-17).
+pub struct PinnedTable {
+    pub name: String,
+    pub snapshot_id: Option<i64>,
+    pub provider: Arc<dyn datafusion::catalog::TableProvider>,
+}
+
+/// One append snapshot on a data table, with the facts that rode it.
+#[derive(Debug, Clone)]
+pub struct Landing {
+    pub dataset: String,
+    pub table: String,
+    pub committed_at: String,
+    pub added_records: Option<i64>,
+    pub properties: HashMap<String, String>,
+}
+
 /// The workspace's Iceberg side: catalog + warehouse.
 #[derive(Debug, Clone)]
 pub struct Lake {
@@ -39,11 +73,6 @@ pub struct Lake {
     /// [`IcebergCatalogProvider`] freezes); table lookups inside a
     /// namespace go to the catalog live and need no rebuild.
     provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
-    /// Monotonic counter over data-plane changes (namespace created,
-    /// table landed or dropped). Sessions tag their read context with
-    /// it, so one channel's landing stales every channel's snapshot
-    /// view — not only the writer's (found 2026-08-12).
-    data_version: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Lake {
@@ -80,22 +109,7 @@ impl Lake {
             catalog: Arc::new(catalog),
             warehouse,
             provider: Arc::new(std::sync::RwLock::new(None)),
-            data_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
-    }
-
-    /// The current data-plane version; changes whenever a namespace,
-    /// table, or snapshot may have (see `bump_data_version`).
-    pub fn data_version(&self) -> u64 {
-        self.data_version.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// Writers call this after any data-plane change a cached read
-    /// context could go stale on: materialization, `DROP TABLE`.
-    /// Namespace creation bumps internally.
-    pub fn bump_data_version(&self) {
-        self.data_version
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn catalog(&self) -> Arc<dyn Catalog> {
@@ -107,17 +121,69 @@ impl Lake {
     }
 
     /// Create the dataset's namespace if it is missing; `true` = created.
-    /// A create invalidates the shared provider — the next `provider()`
-    /// rebuilds over the current namespace list.
-    pub async fn ensure_namespace(&self, dataset: &str) -> Result<bool> {
+    /// Properties apply at create only — an existing namespace keeps its
+    /// own (set-at-create, ruled 2026-08-16). A create invalidates the
+    /// shared provider — the next `provider()` rebuilds over the current
+    /// namespace list.
+    pub async fn ensure_namespace(
+        &self,
+        dataset: &str,
+        properties: HashMap<String, String>,
+    ) -> Result<bool> {
         let ns = NamespaceIdent::new(dataset.to_string());
         if self.catalog.namespace_exists(&ns).await? {
             return Ok(false);
         }
-        self.catalog.create_namespace(&ns, HashMap::new()).await?;
+        self.catalog.create_namespace(&ns, properties).await?;
         self.invalidate_provider();
-        self.bump_data_version();
         Ok(true)
+    }
+
+    /// Append Arrow batches to `dataset.table` as one commit, with the
+    /// given facts riding it as snapshot properties. This is the landing
+    /// path: DataFusion's own INSERT commits a `fast_append` that never
+    /// sets properties, and facts about a write ride the write.
+    pub async fn append_batches(
+        &self,
+        dataset: &str,
+        table: &str,
+        batches: &[RecordBatch],
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
+        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
+        let table = self.catalog.load_table(&ident).await?;
+        let table_props = table.metadata().table_properties()?;
+        // Landed batches carry no field-id metadata; match by name, as
+        // iceberg-datafusion's own write path does.
+        let parquet = ParquetWriterBuilder::from_table_properties(
+            &table_props,
+            table.metadata().current_schema().clone(),
+        )?
+        .with_match_mode(FieldMatchMode::Name);
+        let rolling = RollingFileWriterBuilder::new(
+            parquet,
+            table_props.write_target_file_size_bytes,
+            table.file_io().clone(),
+            DefaultLocationGenerator::new(table.metadata())?,
+            DefaultFileNameGenerator::new(
+                uuid::Uuid::now_v7().to_string(),
+                None,
+                DataFileFormat::Parquet,
+            ),
+        );
+        let mut writer = DataFileWriterBuilder::new(rolling).build(None).await?;
+        for batch in batches {
+            writer.write(batch.clone()).await?;
+        }
+        let files = writer.close().await?;
+        Transaction::new(&table)
+            .fast_append()
+            .add_data_files(files)
+            .set_snapshot_properties(properties)
+            .apply(Transaction::new(&table))?
+            .commit(self.catalog.as_ref())
+            .await?;
+        Ok(())
     }
 
     /// The shared catalog provider — built over the current namespace
@@ -139,6 +205,114 @@ impl Lake {
         *self.provider.write().expect("provider lock") = None;
     }
 
+    /// Every table of the dataset, pinned at its current snapshot — one
+    /// catalog resolution per statement, everything derived computed
+    /// against that set. The catalog-backed provider always reads
+    /// current, so two scans in one query could otherwise straddle a
+    /// landing.
+    pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
+        let ns = NamespaceIdent::new(dataset.to_string());
+        let mut out = Vec::new();
+        for ident in self.catalog.list_tables(&ns).await? {
+            let table = self.catalog.load_table(&ident).await?;
+            let snapshot_id = table.metadata().current_snapshot_id();
+            let provider: Arc<dyn datafusion::catalog::TableProvider> = match snapshot_id {
+                Some(id) => Arc::new(
+                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table_snapshot(
+                        table, id,
+                    )
+                    .await?,
+                ),
+                None => Arc::new(
+                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table)
+                        .await?,
+                ),
+            };
+            out.push(PinnedTable {
+                name: ident.name,
+                snapshot_id,
+                provider,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Single-part namespaces with their properties.
+    pub async fn namespaces(&self) -> Result<Vec<(String, HashMap<String, String>)>> {
+        let mut out = Vec::new();
+        for ns in self.catalog.list_namespaces(None).await? {
+            let parts: &Vec<String> = ns.as_ref();
+            let [name] = parts.as_slice() else { continue };
+            let got = self.catalog.get_namespace(&ns).await?;
+            out.push((name.clone(), got.properties().clone()));
+        }
+        Ok(out)
+    }
+
+    /// Every landing on the dataset's tables: one entry per append
+    /// snapshot, its facts read back from the snapshot it rode.
+    pub async fn landings(&self, dataset: &str) -> Result<Vec<Landing>> {
+        let ns = NamespaceIdent::new(dataset.to_string());
+        let mut out = Vec::new();
+        for ident in self.catalog.list_tables(&ns).await? {
+            let table = self.catalog.load_table(&ident).await?;
+            for snapshot in table.metadata().snapshots() {
+                let summary = snapshot.summary();
+                if summary.operation != iceberg::spec::Operation::Append {
+                    continue;
+                }
+                out.push(Landing {
+                    dataset: dataset.to_string(),
+                    table: ident.name.clone(),
+                    committed_at: snapshot
+                        .timestamp()?
+                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .to_string(),
+                    added_records: summary
+                        .additional_properties
+                        .get("added-records")
+                        .and_then(|v| v.parse().ok()),
+                    properties: summary.additional_properties.clone(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// A table's properties; `None` when the table does not exist.
+    pub async fn table_properties(
+        &self,
+        dataset: &str,
+        table: &str,
+    ) -> Result<Option<HashMap<String, String>>> {
+        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
+        if !self.catalog.table_exists(&ident).await? {
+            return Ok(None);
+        }
+        let table = self.catalog.load_table(&ident).await?;
+        Ok(Some(table.metadata().properties().clone()))
+    }
+
+    /// Set properties on a table, one commit.
+    pub async fn set_table_properties(
+        &self,
+        dataset: &str,
+        table: &str,
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
+        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
+        let table = self.catalog.load_table(&ident).await?;
+        let mut action = Transaction::new(&table).update_table_properties();
+        for (k, v) in properties {
+            action = action.set(k, v);
+        }
+        action
+            .apply(Transaction::new(&table))?
+            .commit(self.catalog.as_ref())
+            .await?;
+        Ok(())
+    }
+
     /// Current snapshot id of `dataset.table`; `None` when the table does
     /// not exist (a subject may be glossed before its recipe lands) or has
     /// no snapshot yet.
@@ -149,6 +323,13 @@ impl Lake {
         }
         let table = self.catalog.load_table(&ident).await?;
         Ok(table.metadata().current_snapshot_id())
+    }
+
+    pub async fn namespace_exists(&self, name: &str) -> Result<bool> {
+        Ok(self
+            .catalog
+            .namespace_exists(&NamespaceIdent::new(name.to_string()))
+            .await?)
     }
 
     /// Data tables in the dataset's namespace.

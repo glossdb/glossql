@@ -18,7 +18,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
@@ -102,7 +102,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -111,7 +111,6 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -181,8 +180,21 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         .unwrap());
     assert_eq!(right, "customers.id");
 
-    // The reject was not declared — and not erased: it stays visible
-    // in the measurement.
+    // The declaration moved the pin — a declared edge is an input, so
+    // the measurement is owed again — and the recompute still carries
+    // the reject: not declared, and not erased.
+    let gone = one(&session
+        .execute(
+            "SELECT count(*) FROM GLOSSARY(fin::relationship_candidates) \
+             WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(gone, "0", "the old pin's row is unreachable");
+    session
+        .execute("SELECT detect_relationships() FROM fin;")
+        .await
+        .unwrap();
     let after = one(&session
         .execute(
             "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
@@ -245,7 +257,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -254,7 +266,6 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session

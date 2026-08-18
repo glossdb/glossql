@@ -21,7 +21,7 @@ async fn app() -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_memory().await.unwrap();
     let runtime = Arc::new(RhaiRuntime::new(dir.path().to_path_buf()));
-    let plane = Arc::new(Plane::new(store.clone(), None, runtime));
+    let plane = Arc::new(Plane::new(store.clone(), runtime));
     bootstrap(
         &store,
         &plane,
@@ -87,6 +87,22 @@ async fn human(app: &Router, statements: &str) -> Value {
     let text = String::from_utf8_lossy(&bytes);
     assert_eq!(status, StatusCode::OK, "{text}");
     serde_json::from_str(&text).unwrap()
+}
+
+/// The human's door when the statement is expected to refuse: the wire
+/// error text, for asserting the refusal's own words.
+async fn human_refused(app: &Router, statements: &str) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/query")
+                .body(Body::from(statements.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    String::from_utf8_lossy(&bytes).to_string()
 }
 
 /// The shared opening: dataset, the `behavior` vocabulary with the
@@ -191,12 +207,11 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn closure_by_striking_the_disputed_slot_recomputes_the_verdict() {
+async fn closure_by_concession_while_the_strike_is_parked() {
     let (app, _dir) = app().await;
     agent_glosses(&app, "trial_balance.credit_balance").await;
 
-    // The disagreement, and a read so the red verdict is actually cached
-    // — the trap this test guards is that verdict outliving its slots.
+    // The disagreement withholds the value.
     human(
         &app,
         r#"USE fin; GLOSS behavior ON trial_balance.credit_balance AS $${"value": "stock"}$$;"#,
@@ -214,28 +229,38 @@ async fn closure_by_striking_the_disputed_slot_recomputes_the_verdict() {
         "{glossary}"
     );
 
-    // Closure by authority: the human strikes the agent's slot. Deletion
-    // makes the slot set smaller, never newer — the strike itself must
-    // invalidate the verdict, or the read would keep withholding a value
-    // nobody disputes anymore.
-    human(
+    // Closure by authority is parked (ruled 2026-08-17): the substrate
+    // cannot remove rows until iceberg-rust 0.11, and the refusal says
+    // so by name instead of pretending.
+    let refusal = human_refused(
         &app,
         "USE fin; DELETE FROM glossary \
          WHERE subject = 'trial_balance.credit_balance' \
          AND aspect = 'behavior' AND actor_kind = 'agent';",
     )
     .await;
+    assert!(refusal.contains("0.11"), "{refusal}");
+    assert!(refusal.contains("parked"), "{refusal}");
 
-    let attest = agent(
+    // Closure by concession — the other taught path: the agent
+    // re-grounds, agrees, and supersedes its own slot. Converged voices
+    // turn the verdict green and the collapse serves again.
+    agent(
         &app,
         3,
+        r#"GLOSS behavior ON trial_balance.credit_balance AS $${"value": "stock"}$$;"#,
+    )
+    .await;
+    let attest = agent(
+        &app,
+        4,
         "SELECT band, score FROM ATTEST(trial_balance.credit_balance::behavior);",
     )
     .await;
     assert_eq!(attest[0]["rows"][0]["band"], json!("green"), "{attest}");
     let glossary = agent(
         &app,
-        4,
+        5,
         "SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
     )
     .await;
@@ -249,6 +274,6 @@ async fn closure_by_striking_the_disputed_slot_recomputes_the_verdict() {
             .as_str()
             .unwrap()
             .contains("stock"),
-        "the human's voice stands alone: {glossary}"
+        "the converged voices serve: {glossary}"
     );
 }

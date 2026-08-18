@@ -18,12 +18,9 @@
 //! mechanical recomputation at the declared factors — the arithmetic
 //! half — beside the model's bands, so both halves stay visible.
 //!
-//! Cache: extract semantics (SPEC.md §6) under function name `whatif`,
-//! witness = the scenario aspect — recomputed when any slot the
-//! computation reads (the scenario's, or any QUERY aspect's) is newer
-//! than the cached read, forced by `DELETE FROM cache` like any
-//! function value. Data landing after the cache was cut is the reader's
-//! delete until snapshot stamping joins (same posture as extraction).
+//! Recomputed per read, never stored: the replay is a search inside one
+//! plan set, and an in-memory pin-keyed cache is a later, measured
+//! question (2026-08-16 §10).
 
 use std::sync::Arc;
 
@@ -39,9 +36,9 @@ use datafusion::sql::sqlparser::ast::Statement as SQLStatement;
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
 use glossql_glossary::Scope;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::reads::{Shared, ensure_verdicts};
+use crate::reads::{Shared, verdicts};
 use crate::session::SessionError;
 
 const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
@@ -67,30 +64,9 @@ struct Row {
     basis: String,
 }
 
-impl Row {
-    fn to_json(&self) -> Value {
-        json!({
-            "concept": self.concept, "month": self.month, "replay": self.replay,
-            "q": self.q.map(|q| q.to_vec()), "basis": self.basis,
-        })
-    }
-
-    fn from_json(v: &Value) -> Option<Row> {
-        Some(Row {
-            concept: v["concept"].as_str()?.to_string(),
-            month: v["month"].as_str().map(str::to_string),
-            replay: v["replay"].as_f64(),
-            q: v["q"].as_array().and_then(|a| {
-                let q: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
-                q.try_into().ok()
-            }),
-            basis: v["basis"].as_str()?.to_string(),
-        })
-    }
-}
 
 pub(crate) async fn whatif_batch(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     scenario: &str,
 ) -> Result<RecordBatch, SessionError> {
     let dataset = shared
@@ -114,16 +90,9 @@ pub(crate) async fn whatif_batch(
     // The scenario's collapsed current body, witness-gated and judged
     // like any read.
     let scope = Scope::Subject(dataset.clone());
-    ensure_verdicts(shared, &dataset, &scope, Some(scenario)).await?;
-    let collapsed = shared
-        .store
-        .collapsed_read(
-            &dataset,
-            &scope,
-            Some(scenario),
-            &shared.read_context().await?,
-        )
-        .await?;
+    let ctx = shared.read_context().await?;
+    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(scenario)).await?;
+    let collapsed = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts);
     let current = collapsed
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == scenario)
@@ -140,50 +109,10 @@ pub(crate) async fn whatif_batch(
         .and_then(|v| serde_json::from_str(v).ok())
         .ok_or_else(|| bad("the scenario body is not JSON".into()))?;
     let overrides = decode_overrides(&body).map_err(bad)?;
-    // Freshness spans every slot the computation reads: the scenario's
-    // and each QUERY aspect's — a superseded concept grounding stales
-    // the cache exactly as a revised scenario does (2026-08-12).
-    let newest = shared
-        .store
-        .raw_read(&dataset, &scope, None)
-        .await?
-        .into_iter()
-        .filter(|r| r.aspect == scenario || r.kind == "query")
-        .map(|r| r.written_at)
-        .max()
-        .unwrap_or_default();
-
-    let cached = shared
-        .store
-        .cache_get(&dataset, &dataset, "whatif", Some(scenario))
-        .await?
-        .filter(|c| c.computed_at >= newest);
-    let rows: Vec<Row> = match cached {
-        Some(c) => serde_json::from_str::<Value>(&c.body)
-            .ok()
-            .and_then(|v| {
-                v["rows"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(Row::from_json).collect())
-            })
-            .ok_or_else(|| bad("the cached read does not decode — DELETE FROM cache".into()))?,
-        None => {
-            let rows = compute(shared, &dataset, scenario, &overrides).await?;
-            let body: Vec<Value> = rows.iter().map(Row::to_json).collect();
-            shared
-                .store
-                .cache_put(
-                    &dataset,
-                    &dataset,
-                    "whatif",
-                    Some(scenario),
-                    &json!({ "rows": body }).to_string(),
-                    None,
-                )
-                .await?;
-            rows
-        }
-    };
+    // Recomputed per read: the replay stays inside one plan set, and
+    // whether repeated identical work earns an in-memory, pin-keyed
+    // cache is a later, measured question (2026-08-16 §10).
+    let rows = compute(shared, &dataset, scenario, &overrides).await?;
     Ok(row_batch(rows))
 }
 
@@ -222,7 +151,7 @@ fn decode_overrides(body: &Value) -> Result<Vec<Override>, String> {
 /// worlds, banded by the runtime's kernel. One `Row` per (concept,
 /// month) — or one refusal row per concept, with the reason.
 async fn compute(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     dataset: &str,
     scenario: &str,
     overrides: &[Override],
@@ -283,7 +212,6 @@ async fn compute(
 
     // Latest current QUERY grounding per concept, judgment included.
     let scope = Scope::Subject(dataset.to_string());
-    ensure_verdicts(shared, dataset, &scope, None).await?;
     let kinds: std::collections::HashMap<String, String> = shared
         .store
         .relation_rows("aspects")
@@ -291,10 +219,9 @@ async fn compute(
         .into_iter()
         .filter_map(|r| Some((r[0].clone()?, r[1].clone()?)))
         .collect();
-    let collapsed = shared
-        .store
-        .collapsed_read(dataset, &scope, None, &shared.read_context().await?)
-        .await?;
+    let read_ctx = shared.read_context().await?;
+    let all_verdicts = verdicts(shared, &read_ctx, dataset, &scope, None).await?;
+    let collapsed = glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
 
     let mut out = Vec::new();
     for c in collapsed {
@@ -355,7 +282,7 @@ async fn compute(
 /// refusal row, not a failed read.
 #[allow(clippy::too_many_arguments)]
 async fn concept_rows(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     concept: &str,
     sql: &str,
@@ -370,7 +297,7 @@ async fn concept_rows(
     // The grounding's shape: a `value` column and a time axis, found by
     // dtype exactly as any reader finds them (the metric_bands probe) —
     // from the plan's schema, nothing scanned.
-    let probe = build_plan(ctx, sql).await?;
+    let probe = build_plan(shared, ctx, sql).await?;
     let fields: Fields = probe.schema().fields().clone();
     if !fields.iter().any(|f| f.name() == "value") {
         return Err(refuse(
@@ -425,7 +352,7 @@ async fn concept_rows(
         )
     };
 
-    let base = run_series(ctx, &series_sql, None).await?;
+    let base = run_series(shared, ctx, &series_sql, None).await?;
     let post: Vec<usize> = (0..base.len())
         .filter(|i| base[*i].0.as_str() >= from_month)
         .collect();
@@ -456,7 +383,7 @@ async fn concept_rows(
     // factors. Identical to baseline on every post month = the
     // overrides never reach this grounding — refused, never served
     // as a silently unchanged number.
-    let joint = run_series(ctx, &series_sql, Some((overrides, declared))).await?;
+    let joint = run_series(shared, ctx, &series_sql, Some((overrides, declared))).await?;
     if !same_roster(&joint, &base) {
         return Err(refuse(
             "not served: the replay changed the month roster — the grounding is not \
@@ -493,7 +420,7 @@ async fn concept_rows(
         let s = if w.iter().all(|f| (*f - 1.0).abs() < 1e-9) {
             &base
         } else {
-            owned = run_series(ctx, &series_sql, Some((overrides, w))).await?;
+            owned = run_series(shared, ctx, &series_sql, Some((overrides, w))).await?;
             &owned
         };
         if !same_roster(s, &base) {
@@ -591,6 +518,7 @@ async fn concept_rows(
 /// re-enters the relation planner. The `misfit.` door plans its frame
 /// through the same gate.
 pub(crate) async fn build_plan(
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<LogicalPlan, SessionError> {
@@ -602,7 +530,9 @@ pub(crate) async fn build_plan(
         })?;
     let statement =
         datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
-    ctx.state()
+    // A grounding body may name `read.<x>()`; resolve before planning.
+    let resolved = crate::prepass::resolve_sql(shared, ctx, sql).await?;
+    crate::reads::state_with(ctx, shared, resolved)
         .statement_to_plan(statement)
         .await
         .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
@@ -611,11 +541,12 @@ pub(crate) async fn build_plan(
 /// A monthly series: Vec<(period "YYYY-MM", value)>, optionally with
 /// the override rewrite applied at the given strengths.
 async fn run_series(
+    shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
     overlay: Option<(&[Override], &[f64])>,
 ) -> Result<Vec<(String, f64)>, SessionError> {
-    let mut plan = build_plan(ctx, sql).await?;
+    let mut plan = build_plan(shared, ctx, sql).await?;
     if let Some((overrides, factors)) = overlay {
         plan = apply_overrides(plan, overrides, factors)
             .map_err(|e| SessionError::Runtime(format!("the override rewrite failed: {e}")))?;

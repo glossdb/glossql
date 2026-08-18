@@ -25,7 +25,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use glossql_glossary::Scope;
 use serde_json::Value;
 
-use crate::reads::{Shared, ensure_verdicts};
+use crate::reads::{Shared, verdicts};
 use crate::session::SessionError;
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
@@ -38,7 +38,7 @@ pub(crate) const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     frame: &str,
 ) -> Result<RecordBatch, SessionError> {
     let dataset = shared
@@ -62,11 +62,9 @@ pub(crate) async fn misfit_batch(
     // The frame's collapsed current grounding, witness-gated and judged
     // like any read.
     let scope = Scope::Subject(dataset.clone());
-    ensure_verdicts(shared, &dataset, &scope, Some(frame)).await?;
-    let collapsed = shared
-        .store
-        .collapsed_read(&dataset, &scope, Some(frame), &shared.read_context().await?)
-        .await?;
+    let ctx = shared.read_context().await?;
+    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(frame)).await?;
+    let collapsed = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(frame), &ctx, &verdicts);
     let current = collapsed
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == frame)
@@ -96,7 +94,7 @@ pub(crate) async fn misfit_batch(
     // The frame's rows, capped one past the stated limit so the refusal
     // can say "more than" without materializing the excess.
     let capped = format!("SELECT * FROM ({sql}) LIMIT {}", ROW_CAP + 1);
-    let plan = crate::whatif::build_plan(&ctx, &capped).await?;
+    let plan = crate::whatif::build_plan(shared, &ctx, &capped).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await

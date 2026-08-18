@@ -10,11 +10,13 @@ context. Data lands in tables; context is JSON attached to subjects
 (`table` or `table.column`) under declared aspects. Two artifacts are
 normative — read them, don't reconstruct them:
 
-- `SPEC.md` — the language specification. §2 records the vocabulary's
-  origins; §3 sources, recipes, tables; §4 subjects and
-  relationships; §5 the glossary (aspects, glosses, reading); §6 the
-  function library; §7 witnesses and attestation.
+- `SPEC.md` — the language specification. §3 sources, recipes, tables;
+  §4 subjects and relationships; §5 the glossary (aspects, glosses,
+  reading); §6 the function library; §7 witnesses and attestation.
 - `grammar.ebnf` — the machine-readable syntax.
+
+Everything *live* — the declared vocabulary, the tables, the record —
+is read through the language itself, never assumed.
 
 ## The door
 
@@ -43,30 +45,29 @@ calls: the server keeps one session per actor.
 
 ## The statement set
 
-| statement | does | SPEC |
-|---|---|---|
-| `USE fin;` | pick the dataset for this session | §3 |
-| `DECLARE DATASET fin SET (…);` | create a dataset | §3 |
-| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root directory, globs belong in recipe SQL | §3 |
-| `PROBE erp AS $$sql$$;` | run recipe-shaped SQL at the source, landing nothing | §3 |
-| `DECLARE RECIPE orders ON fin FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table | §3 |
-| `DROP TABLE orders;` | remove a table — refused while it holds data | §3 |
-| `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple: `a.(x, y) -> b.(x, y)` | §4 |
-| `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets | §5.1 |
-| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot | §5.2 |
-| `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot | §5.3 |
-| `DECLARE FUNCTION f FOR fin\|GLOBAL AS $$rhai$$ [ACCEPTS (…)] [RETURNS aspect];` | register a script — the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) | §6 |
-| `SELECT f() FROM orders.amount;` | extract — first run computes and caches, later selects read the cache; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped | §6 |
-| `DELETE FROM cache WHERE …;` | force recomputation at the WHERE clause's grain | §6 |
-| `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication | §7.1 |
-| `SELECT … FROM ATTEST(subject \| fin::aspect);` | bands and scores; sweeps are WHERE clauses | §7.2 |
+| statement | does |
+|---|---|
+| `USE ops;` | pick the dataset for this session |
+| `DECLARE DATASET ops SET (…);` | create a dataset |
+| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root directory, globs belong in recipe SQL |
+| `PROBE erp AS $$sql$$;` | run recipe-shaped SQL at the source, landing nothing |
+| `DECLARE RECIPE work_orders ON ops FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table |
+| `DROP TABLE work_orders;` | remove a table — refused while it holds data |
+| `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple: `a.(x, y) -> b.(x, y)` |
+| `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets |
+| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot |
+| `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot |
+| `DECLARE FUNCTION f FOR ops\|GLOBAL AS $$body$$ [RETURNS aspect];` | register a function — with `RETURNS` the body is one SQL query the engine plans, without it a detector script; the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) |
+| `SELECT f() FROM work_orders.duration_min;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; a body carrying a `summary` object serves the summary alone (the cube, the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped |
+| `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
+| `SELECT … FROM ATTEST(subject \| ops::aspect);` | bands and scores; sweeps are WHERE clauses |
 
 There is no ordering surface: send statements in the order you need
 them, one call or several.
 
-Schema-altering substrate DDL — `CREATE VIEW` included — is closed
-(SPEC §3): tables come from recipes, and a composite edge is declared
-as a tuple, never cured through a view.
+Schema-altering substrate DDL — `CREATE VIEW` included — is closed:
+tables come from recipes, and a composite edge is declared as a tuple,
+never cured through a view.
 
 ## Reading live state
 
@@ -78,10 +79,10 @@ witnesses) are declared at boot; read them back before declaring
 anything.
 
 - `SELECT * FROM glossary` / `aspects` / `witnesses` / `functions` /
-  `cache` / `imports` / `relationships` — the store's relations as
-  plain tables (who said what; the declared vocabulary and its
-  speaker gates; what is computed; source rows vs landed rows; the
-  declared join edges).
+  `measurements` / `imports` / `relationships` — the store's relations
+  as plain tables (who said what; the declared vocabulary and its
+  speaker gates; what was measured at which pin; source rows vs landed
+  rows; the declared join edges).
 - `GLOSSARY(subject)` — the collapsed read, columns
   `(subject, aspect, value, band, score, state)` with `state` in
   `current | stale | contested | unassessed`; a contested value is
@@ -135,8 +136,8 @@ anything else, sweep what changed:
 ```glossql
 SELECT subject, aspect, actor_id, written_at FROM glossary
 WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 20;
-SELECT subject, aspect FROM GLOSSARY(fin) WHERE state = 'contested';
-SELECT subject, band, score FROM ATTEST(fin) WHERE band = 'red';
+SELECT subject, aspect FROM GLOSSARY(ops) WHERE state = 'contested';
+SELECT subject, band, score FROM ATTEST(ops) WHERE band = 'red';
 ```
 
 The brief the door serves at connect counts what stands — human
@@ -148,13 +149,13 @@ It also rides any tool result whose call moved it, as a
 without reconnecting; a call that carries no brief block changed
 nothing.
 While that count is above zero, sweep the round. Forms ride record
-reads (the cadence ruling, 2026-08-14): a call that reads the
+reads: a call that reads the
 glossary — `GLOSSARY()`, `ATTEST()`, the store relations — and
 writes nothing carries one question form; landing calls and plain
 data reads run uninterrupted. So the sweep is exactly the brief's
 own reads, repeated until the round stays quiet.
 
-An answer lands as a **ruling** (ruled 2026-08-14): the judgment
+An answer lands as a **ruling**: the judgment
 alone — confirmed or corrected, naming the claim by its `key` — in
 the human's `ruling` slot on the subject, never a copy of your body.
 A ruling holds its question closed and the round moves on; your
@@ -175,21 +176,20 @@ FROM open_questions ORDER BY conf ASC;
 
 `open_questions` is the derivation itself, not a summary of it — the
 same rows the forms serve and the app's docket renders. Filter it like
-any table (`WHERE aspect = 'dso'`); order it where you read it, since
-a read carries no ordering of its own. `ruling_entries` is what the
-human has ruled; both build on it.
+any table (`WHERE aspect = 'cycle_time'`); order it where you read it,
+since a read carries no ordering of its own. `ruling_entries` is what
+the human has ruled; both build on it.
 
 **One key ruled two ways is yours to reconcile.** `ruling_conflicts`
-reports a claim confirmed on one aspect and corrected on another — it
-happened in a real run (`goods-only` confirmed on `purchases`,
-corrected on `dpo`). Nothing asks you about it and nothing resolves
+reports a claim confirmed on one aspect and corrected on another.
+Nothing asks you about it and nothing resolves
 it: read the rows, decide whether the aspects genuinely differ, and
 record the reconciliation in the groundings themselves. Folding both
 in literally is how a ruled component ends up contradicting the metric
 that composes it.
 
 **Every disclosed assumption carries a `key`** — a short slug you
-write at disclosure (`goods-only`, `full-payment-settles`). The key
+write at disclosure (`business-days-only`, `completed-only`). The key
 is the claim's identity and the only thing the record joins on:
 rulings, question closure, and the fold-in debt all match
 `(aspect, key)`. Assumption prose is what the human reads, never what
@@ -202,10 +202,9 @@ stated plainly:
   instead. Your record shows it, no human is ever served it.
 - **The same claim under two different keys reads as two claims.**
   Nothing detects it. If you disclose one decision on two aspects,
-  use one key for it — or better, compose both from a shared concept
-  so the decision lives in one place (the honest cure: run 2 did
-  exactly this, declaring `supplier_invoices` and re-composing `dpo`
-  from it).
+  use one key for it — or better, declare the shared concept as its
+  own metric and compose both from it, so the decision lives in one
+  place.
 - **Dropping a key from your body clears its debt.** The claim is no
   longer disclosed, so nothing stands below full confidence. Drop a
   key only when you truly no longer rest on the claim.
@@ -220,12 +219,17 @@ Then close what owes an act, in the same session:
   until then the ruling keeps the question closed for you both. Keep
   the key and rewrite the prose as freely as the correction requires
   — the join is on the key alone. **Fold in every standing ruling
-  before re-reading the cube or the walk** — each grounding write
-  stales both derived caches, so one batch of fold-ins then one
-  recompute, never a recompute per ruling. Read the ruling notes as
+  before re-reading the cube or the walk** — each grounding write moves
+  the pin, so one batch of fold-ins then one recompute, never a
+  recompute per ruling. Read the ruling notes as
   you fold: a note naming a sibling aspect ("differs from … by
   design", or a slip re-ruled) is the human's cross-aspect judgment —
-  carry it into the grounding's assumption text.
+  carry it into the grounding's assumption text. A ruling whose stance
+  is **`unclear` is a refusal of the question, not of the claim**: the
+  human could not tell what you were asking. Its fold-in is a
+  reformulation — rewrite the assumption plainly (its note says what
+  confused them) **under a new key** and re-record; the clearer wording
+  derives its own question, and dropping the old key clears the debt.
 - **A human formula answer newer than the metric's recorded gloss**:
   the two are one definition in two forms — re-record the
   materialization to match (or carry the difference as a disclosed
@@ -250,7 +254,7 @@ stay in the measurement, visible and undeclared; never delete them to
 
 ## Never ask a human for a statistic
 
-Ruled 2026-08-13, from the first live run: a question the shipped
+A question the shipped
 functions can settle is *your* work, and asking the human for it —
 "is this a stock or a flow?" — is asking them to do statistics by
 hand. The round and your chat relays carry judgment only: definitions,
@@ -263,7 +267,7 @@ question leaves the workspace, walk this map and run what answers it:
 | outliers on a numeric column | `outliers()` (profile first) |
 | a date column's grain, span, gaps | `temporal()` |
 | **stock or flow — may it be summed** | `behavior_evidence()` over declared edges; its anchors carry the verdict, alternatives, and Wilson support |
-| **a sign convention** (ledger-signed vs natural) | the `sign` partition on a `behavior_evidence` anchor — primary/mirror counts, never column names |
+| **a sign convention** (source-signed vs natural) | the `sign` partition on a `behavior_evidence` anchor — primary/mirror counts, never column names |
 | which columns join, and how well | `detect_relationships()`, then your anti-join judging; standing health is `relationship_coherence()` |
 | whether a column derives from siblings (a = b × c) | `detect_derivations()` |
 | which axes are worth slicing | `dimension_relevance()` (profiles first) |
@@ -276,12 +280,12 @@ question leaves the workspace, walk this map and run what answers it:
 
 What remains askable after the map is walked is exactly what the
 round serves: an assumption whose basis is your judgment, held below
-full confidence. The round enforces the boundary (2026-08-14): it
+full confidence. The round enforces the boundary: it
 never serves an assumption whose `dimension` is `behavior`, `sign`,
 or `grain` — those are the functions' work, so record them at 1.0
 citing the measurement. When a measurement *abstains*, the
 abstention names why — close the claim on your strongest remaining
-ground (a mirror table, the GL, the data's own shape) and cite it;
+ground (a mirror table, a reference system, the data's own shape) and cite it;
 relay it as a judgment question only if it stays load-bearing, never
 as a raw "which is it?".
 
@@ -353,6 +357,7 @@ never adjudicated for you. Read the slots
 and re-gloss only if the evidence moved you: your new gloss supersedes
 your old one, and converged voices turn the band green. If the evidence
 still says you were right, leave the slot contested — a human closes
-it, by conceding in their own slot or by striking one
-(`DELETE FROM glossary WHERE subject = '…' AND aspect = '…'
-AND actor_kind = 'agent'`). Never change a gloss just to end a contest.
+it by conceding in their own slot. (Closure by striking a slot —
+`DELETE FROM glossary WHERE …` — is parked until the substrate can
+remove rows, iceberg-rust 0.11; the statement refuses and names this.)
+Never change a gloss just to end a contest.

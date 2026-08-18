@@ -165,55 +165,46 @@ DECLARE ASPECT metric_cube WITH $${
         "dims": {"type": "array", "items": {"type": "string"}},
         "alternative": {"type": "string"},
         "alternative_error": {"type": "string"},
-        "rows": {"type": "array", "items": {"type": "array"}}}}}
+        "rows": {"type": "array", "items": {"type": "object"}}}}}
   }
 }$$ AS MEASUREMENT ON DATASET;
 
-DECLARE FUNCTION profile FOR GLOBAL AS $$profile.rhai$$
+DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 
-DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
 
-DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
+DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
   RETURNS temporal_profile;
 
-DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$relationships.rhai$$
-  ACCEPTS (imports)
+DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$relationships.sql$$
   RETURNS relationship_candidates;
 
-DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$behavior_evidence.rhai$$
-  ACCEPTS (relationships, imports)
+DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$behavior_evidence.sql$$
   RETURNS behavior_evidence;
 
-DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.sql$$
   RETURNS dimension_relevance;
 
-DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.rhai$$
+DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.sql$$
   RETURNS hierarchy_candidates;
 
-DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.rhai$$
-  ACCEPTS (imports)
+DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.sql$$
   RETURNS derivation_candidates;
 
-DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.rhai$$
-  ACCEPTS (relationships, imports)
+DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.sql$$
   RETURNS relationship_coherence;
 
-DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.rhai$$
-  ACCEPTS (glossary, imports)
+DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.sql$$
   RETURNS grounding_collisions;
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
 
-DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.rhai$$
-  ACCEPTS (glossary, imports)
+DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
   RETURNS metric_bands;
 
-DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.rhai$$
-  ACCEPTS (glossary, imports)
+DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.sql$$
   RETURNS metric_cube;
 
 DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.rhai$$;

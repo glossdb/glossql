@@ -1,7 +1,7 @@
-//! The band plane end to end at the runtime seam: the shipped
-//! metric_bands.rhai walked over a synthetic monthly series through a
-//! query-routing fake door, and the band_breach detector over
-//! fabricated slots. The kernel's model loads from a weights directory
+//! The band plane end to end: the shipped metric_bands body walked
+//! over synthetic monthly series through a real session — since
+//! stage 5 the walk is the metric_band_walk door and the body is SQL —
+//! and the band_breach detector over fabricated slots. The kernel's model loads from a weights directory
 //! symlinked from the sibling port checkout — tests that need it skip
 //! with a message when the sibling has no converted weights, and cost
 //! ~3s each on Metal (measured 2026-08-13). The numeric fidelity of
@@ -11,11 +11,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Float64Array, RecordBatch, StringArray};
+use datafusion::arrow::array::{Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_glossary::FunctionRow;
 use glossql_scripts::RhaiRuntime;
-use glossql_session::{FunctionRuntime, SqlDoor};
+use glossql_session::FunctionRuntime;
 use serde_json::{Value, json};
 
 fn sibling() -> &'static Path {
@@ -52,89 +52,6 @@ fn have_weights() -> bool {
         .exists()
 }
 
-/// Routes the three queries metric_bands.rhai sends: the glossary
-/// collapse, the extract probe, and the monthly series.
-struct MetricDoor;
-
-impl SqlDoor for MetricDoor {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
-        if query.contains("FROM glossary") {
-            let schema = Arc::new(Schema::new(vec![
-                Field::new("subject", DataType::Utf8, false),
-                Field::new("aspect", DataType::Utf8, false),
-                Field::new("actor_kind", DataType::Utf8, false),
-                Field::new("body", DataType::Utf8, false),
-            ]));
-            return Ok(vec![
-                RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(StringArray::from(vec!["fin", "fin"])),
-                        Arc::new(StringArray::from(vec!["revenue", "inventory"])),
-                        Arc::new(StringArray::from(vec!["agent", "agent"])),
-                        Arc::new(StringArray::from(vec![
-                            r#"{"sql": "SELECT date, value FROM lines"}"#,
-                            r#"{"sql": "SELECT date, value FROM levels", "behavior": "stock"}"#,
-                        ])),
-                    ],
-                )
-                .unwrap(),
-            ]);
-        }
-        // A year and a half of a rising monthly flow with seasonality;
-        // the last month is an obvious breach. The stock series is a
-        // rising level whose last month collapses — a lower breach.
-        let months = 18usize;
-        let (mut periods, mut values) = (Vec::new(), Vec::new());
-        let stock = query.contains("rank()");
-        for i in 0..months {
-            periods.push(format!(
-                "20{:02}-{:02}-01T00:00:00",
-                24 + i / 12,
-                1 + i % 12
-            ));
-            if stock {
-                values.push(1000.0 + 5.0 * i as f64);
-            } else {
-                let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
-                values.push(100.0 + 3.0 * i as f64 + seasonal);
-            }
-        }
-        *values.last_mut().unwrap() = if stock { 200.0 } else { 500.0 }; // the breach
-        if query.contains("date_trunc") {
-            let schema = Arc::new(Schema::new(vec![
-                Field::new("period", DataType::Utf8, false),
-                Field::new("value", DataType::Float64, false),
-            ]));
-            return Ok(vec![
-                RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(StringArray::from(periods)),
-                        Arc::new(Float64Array::from(values)),
-                    ],
-                )
-                .unwrap(),
-            ]);
-        }
-        // the probe: one row of the raw extract, date-typed time axis
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new("value", DataType::Float64, false),
-        ]));
-        Ok(vec![
-            RecordBatch::try_new(
-                schema,
-                vec![
-                    Arc::new(datafusion::arrow::array::Date32Array::from(vec![19000])),
-                    Arc::new(Float64Array::from(vec![1.0])),
-                ],
-            )
-            .unwrap(),
-        ])
-    }
-}
-
 fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
     let rt = RhaiRuntime::new(dir);
     rt.invoke(
@@ -149,20 +66,137 @@ fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
         },
         subject,
         &context,
-        Arc::new(MetricDoor),
     )
     .unwrap()
 }
 
-#[test]
-fn metric_bands_walks_and_reads_the_breach() {
+/// Date32 day offsets for each month's first day, 2024-01 through
+/// 2025-06 (2024 is a leap year); 19723 = 2024-01-01.
+const FIRSTS: [i32; 18] = [
+    0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366, 397, 425, 456, 486, 517,
+];
+
+/// A session over a lake in `dir`, the walk declared from the shipped
+/// body, `lines` and `levels` landed from the given rows.
+async fn walk_session(
+    dir: &Path,
+    tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
+    glosses: &[&str],
+) -> glossql_session::Session {
+    use datafusion::datasource::MemTable;
+    use glossql_catalog::Lake;
+    use glossql_glossary::{Actor, ActorKind, Store};
+
+    let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
+        .await
+        .unwrap();
+    let store = Store::open_scratch(lake).await.unwrap();
+    let session = glossql_session::Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "t".into(),
+        },
+    )
+    .unwrap()
+    .with_runtime(Arc::new(RhaiRuntime::new(dir)));
+    session
+        .execute("DECLARE DATASET fin SET (purpose: 'band walks'); USE fin;")
+        .await
+        .unwrap();
+    for (name, dates, values) in tables {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("date", DataType::Date32, false),
+            Field::new("value", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(datafusion::arrow::array::Date32Array::from(dates)),
+                Arc::new(Float64Array::from(values)),
+            ],
+        )
+        .unwrap();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let declarations = glossql_scripts::library::splice(
+        r#"DECLARE ASPECT metric_bands WITH $${
+             "type": "object", "required": ["applicable"],
+             "properties": {"applicable": {"type": "boolean"},
+                            "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
+             RETURNS metric_bands;"#,
+    )
+    .expect("shipped body splices");
+    session.execute(&declarations).await.unwrap();
+    for g in glosses {
+        session.execute(g).await.unwrap();
+    }
+    session
+        .execute("SELECT metric_bands() FROM fin;")
+        .await
+        .unwrap();
+    session
+}
+
+async fn walked(session: &glossql_session::Session) -> Value {
+    let outcomes = session
+        .execute("SELECT value FROM GLOSSARY(fin::metric_bands) WHERE state = 'current';")
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("a value row")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let text =
+        datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metric_bands_walks_and_reads_the_breach() {
     if !have_weights() {
         eprintln!("skipping: no converted weights in the sibling checkout");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
     workspace(dir.path());
-    let out = invoke(dir.path(), "metric_bands", "fin", json!({}));
+
+    // A year and a half of a rising monthly flow with seasonality; the
+    // last month is an obvious breach. The stock series is a rising
+    // level whose last month collapses — a lower breach.
+    let months = 18usize;
+    let (mut flow, mut stock) = (Vec::new(), Vec::new());
+    for i in 0..months {
+        let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
+        flow.push(100.0 + 3.0 * i as f64 + seasonal);
+        stock.push(1000.0 + 5.0 * i as f64);
+    }
+    *flow.last_mut().unwrap() = 500.0;
+    *stock.last_mut().unwrap() = 200.0;
+    let dates: Vec<i32> = FIRSTS.iter().map(|f| 19723 + f).collect();
+
+    let session = walk_session(
+        dir.path(),
+        vec![
+            ("lines", dates.clone(), flow),
+            ("levels", dates, stock),
+        ],
+        &[
+            r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
+            r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+        ],
+    )
+    .await;
+    let out = walked(&session).await;
 
     assert_eq!(out["applicable"], json!(true));
     let by_name = |name: &str| -> Value {
@@ -209,57 +243,12 @@ fn metric_bands_walks_and_reads_the_breach() {
     assert!(stock_last < 0.05, "stock breach month, pit {stock_last}");
 }
 
-/// Real execution over multi-row months: routes the glossary read to a
-/// canned inventory grounding and everything else to DataFusion.
-struct LiveDoor {
-    rt: tokio::runtime::Runtime,
-    ctx: datafusion::prelude::SessionContext,
-}
-
-impl SqlDoor for LiveDoor {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
-        if query.contains("FROM glossary") {
-            let schema = Arc::new(Schema::new(vec![
-                Field::new("subject", DataType::Utf8, false),
-                Field::new("aspect", DataType::Utf8, false),
-                Field::new("actor_kind", DataType::Utf8, false),
-                Field::new("body", DataType::Utf8, false),
-            ]));
-            let inventory = json!({
-                "sql": "SELECT date, value FROM levels",
-                "behavior": "stock"
-            });
-            return Ok(vec![
-                RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(StringArray::from(vec!["fin"])),
-                        Arc::new(StringArray::from(vec!["inventory"])),
-                        Arc::new(StringArray::from(vec!["agent"])),
-                        Arc::new(StringArray::from(vec![inventory.to_string()])),
-                    ],
-                )
-                .unwrap(),
-            ]);
-        }
-        self.rt.block_on(async {
-            self.ctx
-                .sql(query)
-                .await
-                .map_err(|e| e.to_string())?
-                .collect()
-                .await
-                .map_err(|e| e.to_string())
-        })
-    }
-}
-
 /// The 2026-08-14 regression: a multi-row stock's walk actuals must be
 /// the month's latest-date SUM, not one arbitrary row. Three product
 /// rows stand at each month's day 25 (sum 1750 + 30·m); a day-5 decoy
 /// snapshot per month must be excluded by the latest-date rank.
-#[test]
-fn the_stock_walk_sums_the_months_latest_snapshot() {
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stock_walk_sums_the_months_latest_snapshot() {
     if !have_weights() {
         eprintln!("skipping: no converted weights in the sibling checkout");
         return;
@@ -268,14 +257,9 @@ fn the_stock_walk_sums_the_months_latest_snapshot() {
     workspace(dir.path());
 
     let months = 18usize;
-    // Date32 days since epoch for each month's first day; 19723 =
-    // 2024-01-01 (leap year), 2025 starts at +366.
-    let firsts: [i32; 18] = [
-        0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366, 397, 425, 456, 486, 517,
-    ];
     let (mut dates, mut values) = (Vec::new(), Vec::new());
     for m in 0..months {
-        let month_start = 19723 + firsts[m];
+        let month_start = 19723 + FIRSTS[m];
         for v in [1000.0, 500.0, 250.0] {
             dates.push(month_start + 24);
             values.push(v + 10.0 * m as f64);
@@ -283,39 +267,17 @@ fn the_stock_walk_sums_the_months_latest_snapshot() {
         dates.push(month_start + 4);
         values.push(9_000_000.0);
     }
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("date", DataType::Date32, false),
-        Field::new("value", DataType::Float64, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(datafusion::arrow::array::Date32Array::from(dates)),
-            Arc::new(Float64Array::from(values)),
+
+    let session = walk_session(
+        dir.path(),
+        vec![("levels", dates, values)],
+        &[
+            r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
         ],
     )
-    .unwrap();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let ctx = datafusion::prelude::SessionContext::new();
-    ctx.register_batch("levels", batch).unwrap();
-
-    let runtime = RhaiRuntime::new(dir.path());
-    let out = runtime
-        .invoke(
-            &FunctionRow {
-                name: "metric_bands".into(),
-                scope_dataset: None,
-                script: glossql_scripts::library::script("metric_bands.rhai")
-                    .expect("shipped")
-                    .into(),
-                accepts: vec![],
-                returns: None,
-            },
-            "fin",
-            &json!({}),
-            Arc::new(LiveDoor { rt, ctx }),
-        )
-        .unwrap();
+    .await;
+    let out = walked(&session).await;
 
     let metric = out["metrics"]
         .as_array()

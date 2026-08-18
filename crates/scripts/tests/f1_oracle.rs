@@ -16,11 +16,11 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.sql");
 /// The shipped body, so the declaration carries what runs.
-const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
-const RELATIONSHIPS: &str = include_str!("../functions/relationships.rhai");
+const RELATIONSHIPS: &str = include_str!("../functions/relationships.sql");
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
@@ -109,7 +109,7 @@ async fn rel_f1_grades_the_planes_at_scale() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -118,7 +118,6 @@ async fn rel_f1_grades_the_planes_at_scale() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     let mut setup = format!(
@@ -139,12 +138,12 @@ async fn rel_f1_grades_the_planes_at_scale() {
          }}$$ AS MEASUREMENT ON COLUMN;\n\
          DECLARE FUNCTION detect_relationships FOR GLOBAL \
          AS $${RELATIONSHIPS}$$ \
-         ACCEPTS (imports) RETURNS relationship_candidates;\n\
+ RETURNS relationship_candidates;\n\
          DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
          AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
          DECLARE FUNCTION behavior_evidence FOR GLOBAL \
          AS $${BEHAVIOR_EVIDENCE}$$ \
-         ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n",
+ RETURNS behavior_evidence;\n",
         data.display()
     );
     for t in TABLES {

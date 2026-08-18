@@ -3,7 +3,7 @@
 //! grid, banded through the runtime's kernel seam. The kernel here is a
 //! fake — deterministic linear interpolation over the factor axis — so
 //! these tests pin the door's mechanics (dispatch, plan rewrite, the
-//! unmoved refusal, cache semantics), while the real ensemble kernel is
+//! unmoved refusal, replay semantics), while the real ensemble kernel is
 //! graded in the sibling's fidelity suite and wired in `glossql-scripts`.
 
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::Value;
 
 /// A kernel that interpolates linearly along the factor axis within each
@@ -31,7 +31,6 @@ impl FunctionRuntime for LinearKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }
@@ -171,14 +170,15 @@ const SCENARIO: &str = r##"GLOSS price_hike ON fin AS $${"overrides": [
 
 async fn scenario_session() -> (Session, Arc<LinearKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     run(&session, SCENARIO).await;
     (session, kernel)
 }
@@ -224,18 +224,19 @@ async fn the_whatif_door_replays_and_bands() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_scenario_read_caches_and_supersession_recomputes() {
+async fn the_scenario_read_recomputes_per_read() {
     let (session, kernel) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
     let fits = kernel.fits.load(Ordering::SeqCst);
     assert!(fits > 0, "the first read fits the kernel");
 
-    // The second read serves the cache — extract semantics.
+    // Nothing is stored: every read replays (an in-memory, pin-keyed
+    // cache is a later, measured question — 2026-08-16 §10).
     run(&session, "SELECT * FROM whatif.price_hike();").await;
-    assert_eq!(kernel.fits.load(Ordering::SeqCst), fits, "cache served");
+    assert!(kernel.fits.load(Ordering::SeqCst) > fits, "recomputed");
 
-    // Superseding the scenario stales the cache; the next read replays.
+    // Superseding the scenario changes what the next read replays.
     run(
         &session,
         r##"GLOSS price_hike ON fin AS $${"overrides": [
@@ -282,14 +283,15 @@ async fn the_door_refuses_what_is_not_a_scenario() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
     let (session, _) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     run(
         &session,
         r##"GLOSS price_hike ON fin AS $${"overrides": [
@@ -306,12 +308,18 @@ async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
 
 async fn session_with_sales(rows: &[(f64, i32)]) -> (Session, Arc<LinearKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'scenario flows');\nUSE fin;",
+    )
+    .await;
     let (schema, batch) = sales_batch(rows);
     session
         .register_table(
             "sales",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     (session, kernel)
 }
@@ -326,17 +334,13 @@ DECLARE ASPECT price_hike WITH $${"type": "object", "required": ["overrides"]}$$
 "##;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn superseding_a_concept_grounding_recomputes_the_cached_read() {
-    let (session, kernel) = scenario_session().await;
+async fn a_superseded_concept_grounding_replays_in_the_next_read() {
+    let (session, _) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
-    let fits = kernel.fits.load(Ordering::SeqCst);
-    run(&session, "SELECT * FROM whatif.price_hike();").await;
-    assert_eq!(kernel.fits.load(Ordering::SeqCst), fits, "cache served");
 
     // Superseding a concept's QUERY grounding — not the scenario —
-    // stales the cache: the computation replayed that grounding
-    // (finding 4, 2026-08-12).
+    // changes what the next read replays (finding 4, 2026-08-12).
     run(
         &session,
         r##"GLOSS revenue ON fin AS $${"sql": "SELECT order_date, units * unit_price + 1000 AS value FROM sales"}$$;"##,
@@ -348,10 +352,6 @@ async fn superseding_a_concept_grounding_recomputes_the_cached_read() {
          AND month = '2026-08';",
     )
     .await;
-    assert!(
-        kernel.fits.load(Ordering::SeqCst) > fits,
-        "a superseded grounding recomputes"
-    );
     assert!(revenue.contains("2150.0"), "{revenue}");
 }
 
@@ -545,12 +545,18 @@ async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
     // A stock is 30, never 10 or 20. A ratio is 400/2000 = 0.2, never
     // the 0.4 its two rows add up to.
     let (session, _) = session_with_kernel().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'the stock and ratio verbs');\nUSE fin;",
+    )
+    .await;
     let (schema, batch) = cells_table();
     session
         .register_table(
             "cells",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     run(
         &session,

@@ -1,0 +1,294 @@
+//! The language's rules, as pure functions over rows.
+//!
+//! Nothing here touches a database, a runtime, or a clock. Supersession,
+//! precedence, staleness, grain and conditional relevance are decisions
+//! about rows, and a decision that needs a store to be tested is a
+//! decision nobody can read.
+//!
+//! This is stage 1 of `reports/2026-08-17-the-foundation.md` §6, and it
+//! is what makes stage 3 possible: [`latest_by`] takes the ordering
+//! column as a closure, so the same rule serves SQLite's
+//! `id AUTOINCREMENT` today and Iceberg v3's
+//! `_last_updated_sequence_number` after the move, without being
+//! rewritten. While the rule lives inside a SQL `NOT EXISTS`, it has to
+//! be reimplemented for every backend that carries it.
+
+use serde_json::Value;
+
+use crate::{Error, Result};
+
+/// Precedence, as the collapse orders it: a human outranks an agent,
+/// and both outrank a computed value (SPEC.md §5.3).
+///
+/// A measurement never competes here — the store admits exactly one
+/// producer per measurement aspect, so its group holds one slot and the
+/// rank has nothing to sort against
+/// (`reports/2026-08-17-functions-split.md` §3).
+pub const RANK_HUMAN: u8 = 0;
+pub const RANK_AGENT: u8 = 1;
+pub const RANK_FUNCTION: u8 = 2;
+
+pub fn rank_of(actor_kind: &str) -> u8 {
+    match actor_kind {
+        "human" => RANK_HUMAN,
+        _ => RANK_AGENT,
+    }
+}
+
+/// One current slot under (subject, aspect): a gloss, or a witness-bound
+/// function's output. The collapse and the raw read both build on these.
+#[derive(Debug, Clone)]
+pub struct Slot {
+    pub subject: String,
+    pub aspect: String,
+    /// 0 = human, 1 = agent, 2 = function.
+    pub rank: u8,
+    pub actor: String,
+    pub witness: Option<String>,
+    pub body: String,
+    pub written_at: String,
+    pub snapshot_id: Option<i64>,
+}
+
+/// **Supersession.** Of rows sharing a key, the one written last stands;
+/// the rest are history. `seq` is whatever the store orders by.
+///
+/// Order is not preserved — callers sort for their own purposes.
+pub fn latest_by<T, K, S>(rows: Vec<T>, key: impl Fn(&T) -> K, seq: impl Fn(&T) -> S) -> Vec<T>
+where
+    K: std::hash::Hash + Eq,
+    S: PartialOrd,
+{
+    let mut winners: std::collections::HashMap<K, T> = std::collections::HashMap::new();
+    for row in rows {
+        match winners.get(&key(&row)) {
+            Some(held) if seq(held) >= seq(&row) => {}
+            _ => {
+                winners.insert(key(&row), row);
+            }
+        }
+    }
+    winners.into_values().collect()
+}
+
+/// **Precedence.** The slot that serves: the lowest rank in the group.
+/// Ties keep the first, which is the store's own order.
+pub fn serving(group: &[&Slot]) -> Option<usize> {
+    group
+        .iter()
+        .enumerate()
+        .min_by_key(|(i, s)| (s.rank, *i))
+        .map(|(i, _)| i)
+}
+
+/// **Contest.** A detector crossing withholds a value only where voices
+/// could actually differ (2026-08-14, found live: a single-speaker
+/// measurement whose detector crossed read as `contested`, and the
+/// withholding hid the body at its most interesting moment). One slot
+/// cannot contest — the crossing still shows as its band, beside the
+/// value.
+pub fn contested(crossing: bool, voices: usize) -> bool {
+    crossing && voices >= 2
+}
+
+/// **Serve and mark** (project lead, 2026-08-04): staleness never
+/// suppresses a value, it shows beside it. A slot written against a
+/// snapshot the table has since moved past is `stale`, and still served.
+pub fn state(seen: Option<i64>, current: Option<i64>) -> &'static str {
+    match (seen, current) {
+        (Some(seen), Some(current)) if seen != current => "stale",
+        _ => "current",
+    }
+}
+
+/// The grain of a canonical subject spelling: the dataset itself, a pair
+/// path, `table.column` (a composite endpoint's tuple counts as its
+/// pair's grain, never a column), or a bare table.
+pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
+    if subject == dataset {
+        "dataset"
+    } else if subject.contains(" -> ") || subject.contains(" <-> ") {
+        "relationship"
+    } else if subject.contains('.') {
+        "column"
+    } else {
+        "table"
+    }
+}
+
+/// **Grain admission** (ruled 2026-08-05): an aspect declared `ON grain,
+/// …` only accepts subjects of those grains; `None` (no clause) admits
+/// all. A bare name is table-shaped unless it names a declared source —
+/// then it is SOURCE grain, satisfying `source` and only `source`: the
+/// 2026-08-12 ruling admitted it there, and the 2026-08-14 run showed
+/// the other half — a table-grain aspect accepting `GLOSS entity ON erp`
+/// put unfillable rows in the backlog. `is_source` is the caller's
+/// lookup against the `sources` relation.
+pub fn admit_grain(
+    aspect: &str,
+    grains: Option<&str>,
+    dataset: &str,
+    subject: &str,
+    is_source: bool,
+) -> Result<()> {
+    let Some(declared) = grains else {
+        return Ok(());
+    };
+    let grain = grain_of(dataset, subject);
+    let effective = if is_source && grain == "table" {
+        "source"
+    } else {
+        grain
+    };
+    if declared.split(',').any(|g| g == effective) {
+        return Ok(());
+    }
+    Err(Error::GrainRefused {
+        aspect: aspect.into(),
+        subject: subject.into(),
+        grain: effective,
+        declared: declared.to_uppercase().replace(',', ", "),
+    })
+}
+
+/// **Conditional relevance** (ruled 2026-08-14): a conditioned aspect is
+/// owed on a subject only while the named sibling aspect's winning slot
+/// carries the declared value. **Absence is decisive** — no sibling slot
+/// spoken means nothing is owed yet, rather than everything.
+pub fn condition_holds(condition_value: &str, sibling_value: Option<&str>) -> bool {
+    sibling_value == Some(condition_value)
+}
+
+/// The winning value of a sibling aspect per subject, for
+/// [`condition_holds`] to read: lowest rank wins, and a body with no
+/// `/value` string says nothing.
+pub fn sibling_winners(slots: &[Slot]) -> std::collections::HashMap<String, String> {
+    let mut winners: std::collections::HashMap<String, (u8, String)> = Default::default();
+    for slot in slots {
+        let Some(value) = serde_json::from_str::<Value>(&slot.body)
+            .ok()
+            .and_then(|b| b.pointer("/value").and_then(|v| v.as_str().map(String::from)))
+        else {
+            continue;
+        };
+        match winners.get(&slot.subject) {
+            Some((rank, _)) if *rank <= slot.rank => {}
+            _ => {
+                winners.insert(slot.subject.clone(), (slot.rank, value));
+            }
+        }
+    }
+    winners.into_iter().map(|(s, (_, v))| (s, v)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slot(subject: &str, rank: u8, body: &str) -> Slot {
+        Slot {
+            subject: subject.into(),
+            aspect: "role".into(),
+            rank,
+            actor: "a".into(),
+            witness: None,
+            body: body.into(),
+            written_at: "2026-08-17".into(),
+            snapshot_id: None,
+        }
+    }
+
+    #[test]
+    fn the_last_write_supersedes_its_key_and_no_other() {
+        let rows = vec![
+            ("a", "human", 1),
+            ("a", "human", 7),
+            ("a", "agent", 3),
+            ("b", "human", 2),
+        ];
+        let mut kept = latest_by(
+            rows,
+            |r: &(&str, &str, i64)| (r.0.to_string(), r.1.to_string()),
+            |r| r.2,
+        );
+        kept.sort();
+        assert_eq!(kept, vec![("a", "agent", 3), ("a", "human", 7), ("b", "human", 2)]);
+    }
+
+    #[test]
+    fn an_equal_sequence_keeps_the_row_already_held() {
+        // Ties cannot happen while ids autoincrement, but they can once
+        // ordering is a commit sequence number shared by a batch — so the
+        // rule is stated rather than left to chance.
+        let kept = latest_by(vec![("k", 5, "first"), ("k", 5, "second")], |r| r.0, |r| r.1);
+        assert_eq!(kept, vec![("k", 5, "first")]);
+    }
+
+    #[test]
+    fn a_human_outranks_an_agent_and_both_outrank_a_function() {
+        assert_eq!(rank_of("human"), RANK_HUMAN);
+        assert_eq!(rank_of("agent"), RANK_AGENT);
+        assert!(RANK_AGENT < RANK_FUNCTION);
+        let (h, a) = (slot("t.c", RANK_HUMAN, "{}"), slot("t.c", RANK_AGENT, "{}"));
+        assert_eq!(serving(&[&a, &h]), Some(1));
+        assert_eq!(serving(&[&h, &a]), Some(0));
+        assert_eq!(serving(&[]), None);
+    }
+
+    #[test]
+    fn one_voice_cannot_contest_itself() {
+        assert!(!contested(true, 1), "a lone measurement shows its band, not a withheld body");
+        assert!(contested(true, 2));
+        assert!(!contested(false, 5));
+    }
+
+    #[test]
+    fn staleness_marks_and_never_suppresses() {
+        assert_eq!(state(Some(1), Some(2)), "stale");
+        assert_eq!(state(Some(2), Some(2)), "current");
+        // Nothing to compare against is not evidence of staleness.
+        assert_eq!(state(None, Some(2)), "current");
+        assert_eq!(state(Some(1), None), "current");
+    }
+
+    #[test]
+    fn grain_reads_the_subject_spelling() {
+        assert_eq!(grain_of("fin", "fin"), "dataset");
+        assert_eq!(grain_of("fin", "orders"), "table");
+        assert_eq!(grain_of("fin", "orders.amount"), "column");
+        assert_eq!(grain_of("fin", "orders.id -> customers.id"), "relationship");
+        // A composite endpoint is its pair's grain, never a column.
+        assert_eq!(
+            grain_of("fin", "t.(a, b) -> u.(a, b)"),
+            "relationship"
+        );
+    }
+
+    #[test]
+    fn a_bare_name_is_source_grain_only_when_it_names_a_source() {
+        assert!(admit_grain("entity", Some("source"), "fin", "erp", true).is_ok());
+        assert!(admit_grain("entity", Some("source"), "fin", "erp", false).is_err());
+        assert!(admit_grain("role", Some("table"), "fin", "erp", true).is_err());
+        // No ON clause admits everything.
+        assert!(admit_grain("free", None, "fin", "anything.at.all", false).is_ok());
+    }
+
+    #[test]
+    fn absence_of_the_sibling_is_decisive() {
+        assert!(condition_holds("measure", Some("measure")));
+        assert!(!condition_holds("measure", Some("dimension")));
+        assert!(!condition_holds("measure", None), "nothing spoken, nothing owed");
+    }
+
+    #[test]
+    fn the_sibling_winner_is_the_human_and_bodies_without_a_value_say_nothing() {
+        let slots = vec![
+            slot("t.c", RANK_AGENT, r#"{"value":"dimension"}"#),
+            slot("t.c", RANK_HUMAN, r#"{"value":"measure"}"#),
+            slot("t.d", RANK_AGENT, r#"{"note":"no value here"}"#),
+        ];
+        let winners = sibling_winners(&slots);
+        assert_eq!(winners.get("t.c").map(String::as_str), Some("measure"));
+        assert_eq!(winners.get("t.d"), None);
+    }
+}

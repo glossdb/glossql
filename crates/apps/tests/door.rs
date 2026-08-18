@@ -11,9 +11,43 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Float64Array;
 use glossql_catalog::Lake;
-use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{NoRuntime, Plane};
+use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
+use glossql_session::{FunctionRuntime, Plane};
 use tower::ServiceExt;
+
+/// Verdicts compute at read, so a frame that reads ATTEST invokes the
+/// witness's detector live — this stub is that detector.
+#[derive(Debug)]
+struct StubDetector;
+
+impl FunctionRuntime for StubDetector {
+    fn invoke(
+        &self,
+        _: &FunctionRow,
+        subject: &str,
+        context: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "subject": subject,
+            "aspect": context["aspect"],
+            "witness": context["witness"],
+            "band": "orange",
+            "score": 0.42,
+            "computed_at": "2026-08-17T00:00:00.000Z",
+        }))
+    }
+}
+
+async fn current_pin(store: &Store, dataset: &str) -> glossql_glossary::Pin {
+    let lake = store.lake();
+    let mut snaps = std::collections::HashMap::new();
+    for t in lake.table_names(dataset).await.unwrap() {
+        if let Some(s) = lake.snapshot_id(dataset, &t).await.unwrap() {
+            snaps.insert(t, s);
+        }
+    }
+    store.pin(dataset, &snaps).await.unwrap()
+}
 
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -23,14 +57,14 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     )
     .unwrap();
 
-    let store = Store::open_memory().await.unwrap();
     let lake = Lake::open(
         &dir.path().join("catalog.db"),
         &dir.path().join("warehouse"),
     )
     .await
     .unwrap();
-    let plane = Arc::new(Plane::new(store, Some(lake), Arc::new(NoRuntime)));
+    let store = Store::open_scratch(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store, Arc::new(StubDetector)));
     let session = plane
         .session(Actor {
             kind: ActorKind::Agent,
@@ -404,6 +438,47 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
+    // Metadata and data are not one pile (ruled 2026-08-18): every
+    // frame response carries `glossql-frame-class`, derived by the
+    // session's pre-pass from what the frame's expansion actually
+    // resolves — never a curated list. `record` frames read the
+    // glossary somewhere and can change under a ruling; `data` frames
+    // provably cannot, so the browser's store keeps them across
+    // rulings. The stale banner is record on purpose: staleness is a
+    // fact about the record, read through workspace_next.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    for (frame, expected) in [
+        ("open", "record"),
+        ("settled", "record"),
+        ("owed", "record"),
+        ("assumptions", "record"),
+        ("stale", "record"),
+        ("metric", "record"),
+        ("trend", "data"),
+        ("slices", "data"),
+        ("dims", "data"),
+    ] {
+        let response = get(
+            &app,
+            &format!("/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "{frame}");
+        assert_eq!(
+            response
+                .headers()
+                .get("glossql-frame-class")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected),
+            "frame `{frame}`"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_dossier_faces_survive_a_second_dataset() {
     // Found live by the lead (2026-08-12): with two datasets in the
     // workspace, frames that scanned the `datasets` relation fanned
@@ -659,12 +734,21 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
 
     assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 1);
 
-    // A correction with the human's own words.
+    // A correction with the human's own words. The answer is the write
+    // event, not a navigation: 204 with the trigger header the store
+    // and every component listen for.
     let response = post(
         "subject=perf&aspect=dso&key=per-line&stance=corrected&note=per+order,+not+per+line",
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER, "{:?}", response);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "{:?}", response);
+    assert_eq!(
+        response
+            .headers()
+            .get("HX-Trigger")
+            .and_then(|v| v.to_str().ok()),
+        Some("glossql:written")
+    );
 
     // The question closes and the ruling stands in the human's words.
     assert_eq!(
@@ -677,15 +761,78 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
     assert!(settled.contains("corrected"), "{settled}");
 
     // The same post again: the question no longer derives, so the door
-    // refuses instead of writing a second ruling from a stale page.
+    // refuses instead of writing a second ruling from a stale page —
+    // and the refusal carries the trigger too, so the stale tab's
+    // panels re-derive to the current state on their own.
     let response =
         post("subject=perf&aspect=dso&key=per-line&stance=confirmed").await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("HX-Trigger")
+            .and_then(|v| v.to_str().ok()),
+        Some("glossql:written")
+    );
 
     // A correction has to say what is right — closing a question with
     // "wrong" and nothing else tells the agent nothing.
     let response = post("subject=perf&aspect=dso&key=per-line&stance=corrected").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
+    // The third stance (ruled 2026-08-18): the human refuses the
+    // QUESTION, not the claim. A sloppily worded question could
+    // previously only be deferred, which re-asks the same words
+    // forever. `unclear` lands like any ruling — this key closes, what
+    // confused the reader rides as the note — and what the agent owes
+    // is a reformulation under a NEW key (whose clearer wording derives
+    // its own question), never a fold-in.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let human = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    human
+        .execute(
+            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/app/docket/rule")
+                .header(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(Body::from(
+                    "subject=perf&aspect=dso&key=per-line&stance=unclear&note=which+lines%3F",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "{response:?}");
+
+    // The question closes — the refusal holds this key, and only a
+    // re-record with a clearer assumption asks again.
+    assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 0);
+    let settled = body_text(get(&app, "/app/docket/frames/settled").await).await;
+    assert!(settled.contains("unclear"), "{settled}");
+    assert!(settled.contains("which lines?"), "{settled}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -715,22 +862,14 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
         )
         .await
         .unwrap();
-    // The verdict, planted fresh as the detector would cache it.
-    plane
-        .store()
-        .cache_put(
-            "perf",
-            "perf",
-            "probe_check",
-            Some("dso_w"),
-            r#"{"band": "orange", "score": 0.42}"#,
-            None,
-        )
-        .await
-        .unwrap();
+    // The verdict computes at read — the stub detector answers.
 
     let checks = get(&app, "/app/docket/frames/checks").await;
-    assert_eq!(checks.status(), StatusCode::OK);
+    let status = checks.status();
+    if status != StatusCode::OK {
+        let body = to_bytes(checks.into_body(), usize::MAX).await.unwrap();
+        panic!("checks frame: {status} — {}", String::from_utf8_lossy(&body));
+    }
     assert_eq!(
         row_count(checks).await,
         1,
@@ -739,7 +878,7 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_metrics_faces_serve_the_cached_cube() {
+async fn the_metrics_faces_serve_the_measured_cube() {
     // The business surface end to end from the cube cache: the pulse
     // carries the latest month and the admitted axes, the picker lists
     // them, a picked slice serves its members, and the trend carries
@@ -756,17 +895,20 @@ async fn the_metrics_faces_serve_the_cached_cube() {
             "metric": "dso", "applicable": true, "behavior": "flow",
             "dims": ["cohort"], "alternative": "days on billings",
             "rows": [
-                ["", "", "2026-01", 12.5], ["", "", "2026-02", 4.0],
-                ["cohort", "a", "2026-01", 10.5], ["cohort", "a", "2026-02", 4.0],
-                ["cohort", "b", "2026-01", 2.0],
-                ["alternative", "days on billings", "2026-01", 11.0],
-                ["alternative", "days on billings", "2026-02", 5.0]
+                {"dimension": "", "member": "", "period": "2026-01", "value": 12.5},
+                {"dimension": "", "member": "", "period": "2026-02", "value": 4.0},
+                {"dimension": "cohort", "member": "a", "period": "2026-01", "value": 10.5},
+                {"dimension": "cohort", "member": "a", "period": "2026-02", "value": 4.0},
+                {"dimension": "cohort", "member": "b", "period": "2026-01", "value": 2.0},
+                {"dimension": "alternative", "member": "days on billings", "period": "2026-01", "value": 11.0},
+                {"dimension": "alternative", "member": "days on billings", "period": "2026-02", "value": 5.0}
             ]
         }]
     });
+    let pin = current_pin(plane.store(), "perf").await;
     plane
         .store()
-        .cache_put("perf", "perf", "metric_cube", None, &cube.to_string(), None)
+        .measurement_put("perf", "metric_cube", "perf", "metric_cube", &pin, &cube.to_string())
         .await
         .unwrap();
 
@@ -820,13 +962,13 @@ async fn the_metrics_pages_render_both_states() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_ruling_returns_the_reader_to_the_page_they_ruled_from() {
-    // Two halves of one complaint (project lead, 2026-08-15): a write in
-    // the docket did not show until a manual reload. The redirect was
-    // always correct — the browser was serving the target from cache,
-    // because a page carried no Cache-Control at all and heuristic
-    // freshness applies. And the redirect went to the index, so ruling
-    // from a metric's page lost the reader's place as well.
+async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
+    // Signed off 2026-08-18, retiring the 303-to-Referer machinery: a
+    // 303's job is to send the reader somewhere else to see the result,
+    // and the reader never leaves this page — the docket is
+    // client-rendered, so the response is an event. Success is 204 with
+    // `HX-Trigger: glossql:written`, never a Location; the Referer is
+    // ignored entirely, so there is nothing a forged one can steer.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
     plane
@@ -901,32 +1043,31 @@ async fn a_ruling_returns_the_reader_to_the_page_they_ruled_from() {
             .unwrap()
         }
     };
-    let location = |r: &Response<Body>| {
-        r.headers()
-            .get(axum::http::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string()
-    };
 
-    // Ruled from a metric's page: the reader lands back on it, query and
-    // all, rather than on the index.
-    let response = post("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/app/docket/p/metrics?metric=dso");
-
-    // Everything that is not a path under this app falls back to the
-    // index — a forged Referer can never send a reader off the site.
-    for (key, forged) in [
-        ("k1", "http://evil.example/steal"),
-        ("k2", "//evil.example/steal"),
-        ("k3", "/app/other/p/metrics"),
-        ("k4", "not a url at all"),
+    // The same contract wherever the reader ruled from — a metric's
+    // page, a forged Referer, no Referer at all: 204, the trigger, and
+    // no Location for anything to follow.
+    for (key, referer) in [
+        ("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")),
+        ("k1", Some("http://evil.example/steal")),
+        ("k2", Some("//evil.example/steal")),
+        ("k3", Some("/app/other/p/metrics")),
+        ("k4", Some("not a url at all")),
+        ("k5", None),
     ] {
-        let response = post(key, Some(forged)).await;
-        assert_eq!(response.status(), StatusCode::SEE_OTHER, "referer {forged}");
-        assert_eq!(location(&response), "/app/docket", "referer {forged}");
+        let response = post(key, referer).await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT, "referer {referer:?}");
+        assert_eq!(
+            response
+                .headers()
+                .get("HX-Trigger")
+                .and_then(|v| v.to_str().ok()),
+            Some("glossql:written"),
+            "referer {referer:?}"
+        );
+        assert!(
+            response.headers().get(axum::http::header::LOCATION).is_none(),
+            "referer {referer:?}"
+        );
     }
-    let response = post("k5", None).await;
-    assert_eq!(location(&response), "/app/docket", "no referer at all");
 }

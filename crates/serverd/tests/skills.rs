@@ -155,7 +155,13 @@ async fn every_skill_function_body_compiles() {
             let after = &part[open + 5..];
             let Some(close) = after.find("$$") else { continue };
             checked += 1;
-            if let Err(e) = runtime.compiles(&after[..close]) {
+            let body = &after[..close];
+            // Role by shape (§7e): a body that parses as one SQL query
+            // is a measurement the engine runs; anything else must
+            // compile as a script.
+            let is_sql = glossql_parser::GlossqlParser::parse_sql(body)
+                .is_ok_and(|statements| statements.len() == 1);
+            if !is_sql && let Err(e) = runtime.compiles(body) {
                 broken.push(format!("{}:{} — {e}", b.skill, b.line));
             }
         }
@@ -174,7 +180,7 @@ async fn every_skill_function_body_compiles() {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
     let store = Store::open_memory().await.unwrap();
-    let plane = Arc::new(Plane::new(store.clone(), None, Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&store, &plane, human())
         .await
         .unwrap();
@@ -183,7 +189,7 @@ async fn every_skill_read_names_columns_that_exist() {
     // examples actually spell, so a read reaches its columns instead of
     // stopping at the binding.
     let session = plane.session(human()).await.unwrap();
-    for name in ["fin", "orders", "erp_export"] {
+    for name in ["ops", "orders", "erp_export"] {
         session
             .execute(&format!(
                 "DECLARE DATASET {name} SET (purpose: 'the skills harness');"
@@ -191,7 +197,7 @@ async fn every_skill_read_names_columns_that_exist() {
             .await
             .unwrap();
     }
-    session.execute("USE fin;").await.unwrap();
+    session.execute("USE ops;").await.unwrap();
 
     let mut broken = Vec::new();
     let mut planned = 0usize;

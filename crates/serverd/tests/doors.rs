@@ -18,7 +18,7 @@ use tower::ServiceExt;
 
 async fn app_with(doors: DoorConfig) -> Router {
     let store = Store::open_memory().await.unwrap();
-    let plane = Arc::new(Plane::new(store, None, Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
     router(plane, doors, std::env::temp_dir())
 }
@@ -324,17 +324,17 @@ async fn the_round_never_asks_the_human_for_statistics() {
         "month,value\n2026-01-01,10.5\n2026-02-01,4.0\n",
     )
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
     let lake = glossql_catalog::Lake::open(
         &dir.path().join("catalog.db"),
         &dir.path().join("warehouse"),
     )
     .await
     .unwrap();
+    let store = Store::open_scratch(lake).await.unwrap();
     // The kit's witnesses carry detectors (slot_entropy), and reads
     // adjudicate — this test needs the real script runtime.
     let runtime = Arc::new(glossql_scripts::RhaiRuntime::new(dir.path().to_path_buf()));
-    let plane = Arc::new(Plane::new(store.clone(), Some(lake), runtime));
+    let plane = Arc::new(Plane::new(store.clone(), runtime));
     let human = Actor {
         kind: ActorKind::Human,
         id: HUMAN.into(),
@@ -1545,6 +1545,7 @@ async fn the_workspace_says_what_it_affords() {
         "apps",
         "aspects",
         "claims",
+        "cube",
         "functions",
         "metrics",
         "relationships",

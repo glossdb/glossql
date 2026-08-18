@@ -11,47 +11,49 @@
 //! test suites which run library functions compose the same
 //! declarations the door does, from the same text.
 
-/// Every reference script the binary carries: file name, body.
+/// Every reference body the binary carries: file name, text. `.sql` is
+/// a measurement the engine runs, `.rhai` a script the runtime runs —
+/// role by shape (§7e), visible in the extension.
 pub const SCRIPTS: &[(&str, &str)] = &[
-    ("profile.rhai", include_str!("../functions/profile.rhai")),
-    ("outliers.rhai", include_str!("../functions/outliers.rhai")),
-    ("temporal.rhai", include_str!("../functions/temporal.rhai")),
+    ("profile.sql", include_str!("../functions/profile.sql")),
+    ("outliers.sql", include_str!("../functions/outliers.sql")),
+    ("temporal.sql", include_str!("../functions/temporal.sql")),
     (
-        "relationships.rhai",
-        include_str!("../functions/relationships.rhai"),
+        "relationships.sql",
+        include_str!("../functions/relationships.sql"),
     ),
     (
-        "behavior_evidence.rhai",
-        include_str!("../functions/behavior_evidence.rhai"),
+        "behavior_evidence.sql",
+        include_str!("../functions/behavior_evidence.sql"),
     ),
     (
-        "dimension_relevance.rhai",
-        include_str!("../functions/dimension_relevance.rhai"),
+        "dimension_relevance.sql",
+        include_str!("../functions/dimension_relevance.sql"),
     ),
     (
-        "hierarchies.rhai",
-        include_str!("../functions/hierarchies.rhai"),
+        "hierarchies.sql",
+        include_str!("../functions/hierarchies.sql"),
     ),
     (
-        "grounding_collisions.rhai",
-        include_str!("../functions/grounding_collisions.rhai"),
+        "grounding_collisions.sql",
+        include_str!("../functions/grounding_collisions.sql"),
     ),
     (
-        "derivations.rhai",
-        include_str!("../functions/derivations.rhai"),
+        "derivations.sql",
+        include_str!("../functions/derivations.sql"),
     ),
-    ("coherence.rhai", include_str!("../functions/coherence.rhai")),
+    ("coherence.sql", include_str!("../functions/coherence.sql")),
     (
         "slot_entropy.rhai",
         include_str!("../functions/slot_entropy.rhai"),
     ),
     (
-        "metric_bands.rhai",
-        include_str!("../functions/metric_bands.rhai"),
+        "metric_bands.sql",
+        include_str!("../functions/metric_bands.sql"),
     ),
     (
-        "metric_cube.rhai",
-        include_str!("../functions/metric_cube.rhai"),
+        "metric_cube.sql",
+        include_str!("../functions/metric_cube.sql"),
     ),
     (
         "band_breach.rhai",
@@ -108,11 +110,13 @@ pub fn splice(statements: &str) -> Result<String, String> {
         }
         out = out.replace(&format!("$${name}$$"), &format!("$${text}$$"));
     }
-    if let Some(at) = out.find(".rhai$$") {
-        return Err(format!(
-            "a script marker had no embedded body: …{}",
-            &out[at.saturating_sub(40)..at + 7]
-        ));
+    for marker in [".rhai$$", ".sql$$"] {
+        if let Some(at) = out.find(marker) {
+            return Err(format!(
+                "a script marker had no embedded body: …{}",
+                &out[at.saturating_sub(40)..at + marker.len()]
+            ));
+        }
     }
     Ok(out)
 }

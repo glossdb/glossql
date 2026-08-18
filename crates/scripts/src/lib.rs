@@ -1,18 +1,20 @@
-//! The rhai runtime behind [`FunctionRuntime`] (SPEC.md §6): measurements
-//! and detectors as scripts, composing vectorized kernels on zero-copy
-//! column handles — scripts orchestrate, they never iterate rows
-//! (reports/2026-08-03-poc-substrate.md, the spike).
+//! The rhai runtime behind [`FunctionRuntime`] (SPEC.md §6): judges as
+//! scripts, pure over their context — since stage 5 a measurement's body
+//! is SQL the engine runs, and the script door died with the last shipped
+//! script measurement. The statistical kernels stay here in Rust, behind
+//! the engine's aggregate registrations and the runtime's typed methods.
 //!
-//! Invocation contract: the script file evaluates with three scope
-//! constants — `subject` (the extraction's subject path), `context` (the
-//! `ACCEPTS` document, or slots + threshold for a detector), `db` (the SQL
-//! door; a detector's door refuses) — and its final expression is the
-//! result, converted to JSON and validated against `RETURNS` by the session.
+//! Invocation contract: the script file evaluates with two scope
+//! constants — `subject` (the subject path) and `context` (a detector's
+//! slots + threshold, or a legacy measurement's `ACCEPTS` document) —
+//! and its final expression is the result, converted to JSON and
+//! validated by the session.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 pub mod library;
+mod statistics;
 use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
@@ -21,10 +23,10 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options};
-use datafusion::arrow::datatypes::{DataType, TimeUnit};
+use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
 use glossql_glossary::FunctionRow;
-use glossql_session::{FunctionRuntime, SqlDoor};
+use glossql_session::FunctionRuntime;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, Scope};
 use serde_json::Value;
 
@@ -48,16 +50,9 @@ impl std::fmt::Debug for RhaiRuntime {
     }
 }
 
-/// A table of batches, from the door.
+/// A table of batches — the reconcile kernel's input shape.
 #[derive(Debug, Clone)]
 pub struct Table(Arc<Vec<RecordBatch>>);
-
-/// A zero-copy column handle: cloning bumps the Arc, never the buffer.
-#[derive(Debug, Clone)]
-pub struct Col(ArrayRef);
-
-#[derive(Clone)]
-struct Door(Arc<dyn SqlDoor>);
 
 type ScriptResult<T> = Result<T, Box<EvalAltResult>>;
 
@@ -214,16 +209,47 @@ impl BandModel {
         let y: Vec<f64> = train_y.iter().map(&number).collect::<Result<_, _>>()?;
         let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
 
+        let (q, pit) = self.bands_core(&x, rows, cols, &y, &test, &levels, actual)?;
+        let mut out = rhai::Map::new();
+        out.insert(
+            "q".into(),
+            Dynamic::from(q.into_iter().map(Dynamic::from).collect::<rhai::Array>()),
+        );
+        out.insert("pit".into(), Dynamic::from(pit));
+        Ok(out)
+    }
+
+    /// The typed core of the band kernel — one fit, quantiles at the
+    /// levels, and the PIT read off the monotone quantile grid. Ordinal
+    /// by construction; raw densities never leave here. Serves the rhai
+    /// wrapper above and the metric-bands walk door through
+    /// [`FunctionRuntime::band_point`].
+    fn bands_core(
+        &self,
+        x: &[f64],
+        rows: usize,
+        cols: usize,
+        y: &[f64],
+        test: &[f64],
+        levels: &[f64],
+        actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        if rows < 2 || x.len() != rows * cols || y.len() != rows || test.len() != cols {
+            return Err(format!(
+                "band_point: {rows} rows x {cols} features against {} values and {} test features",
+                y.len(),
+                test.len()
+            ));
+        }
         let model = self.get()?;
-        let pred =
-            compute_pool()
-                .install(|| {
-                    tabicl_candle::regressor::TabIclRegressor::fit(&model, &x, rows, cols, &y)
-                        .predict(&test, 1, &self.device)
-                })
-                .map_err(|e| e.to_string())?;
+        let pred = compute_pool()
+            .install(|| {
+                tabicl_candle::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
+                    .predict(test, 1, &self.device)
+            })
+            .map_err(|e| e.to_string())?;
         let q: Vec<f32> = pred
-            .quantiles(&levels)
+            .quantiles(levels)
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
             .map_err(|e| e.to_string())?;
         let grid: Vec<f32> = pred
@@ -231,21 +257,10 @@ impl BandModel {
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
             .map_err(|e| e.to_string())?;
         let below = grid.iter().filter(|v| f64::from(**v) <= actual).count();
-
-        let mut out = rhai::Map::new();
-        out.insert(
-            "q".into(),
-            Dynamic::from(
-                q.iter()
-                    .map(|v| Dynamic::from(f64::from(*v)))
-                    .collect::<rhai::Array>(),
-            ),
-        );
-        out.insert(
-            "pit".into(),
-            Dynamic::from(below as f64 / (grid.len() + 1) as f64),
-        );
-        Ok(out)
+        Ok((
+            q.into_iter().map(f64::from).collect(),
+            below as f64 / (grid.len() + 1) as f64,
+        ))
     }
 }
 
@@ -274,375 +289,6 @@ impl RhaiRuntime {
         // parse in release and fail under `cargo test`. Pin the release
         // defaults so both builds run the same contract.
         engine.set_max_expr_depths(64, 32);
-
-        engine
-            .register_type_with_name::<Table>("Table")
-            .register_fn("num_rows", |t: &mut Table| -> i64 {
-                t.0.iter().map(|b| b.num_rows() as i64).sum()
-            })
-            .register_fn("columns", |t: &mut Table| -> rhai::Array {
-                match t.0.first() {
-                    Some(b) => b
-                        .schema()
-                        .fields()
-                        .iter()
-                        .map(|f| Dynamic::from(f.name().clone()))
-                        .collect(),
-                    None => rhai::Array::new(),
-                }
-            })
-            .register_fn("col", |t: &mut Table, name: &str| -> ScriptResult<Col> {
-                let Some(first) = t.0.first() else {
-                    return fail(format!("no rows carry a column `{name}`"));
-                };
-                let Some((index, _)) = first.schema().column_with_name(name) else {
-                    return fail(format!("no column `{name}` in the result"));
-                };
-                if t.0.len() == 1 {
-                    return Ok(Col(Arc::clone(first.column(index))));
-                }
-                let arrays: Vec<&dyn Array> =
-                    t.0.iter().map(|b| b.column(index).as_ref()).collect();
-                datafusion::arrow::compute::concat(&arrays)
-                    .map(Col)
-                    .map_err(|e| e.to_string().into())
-            })
-            // The first row's value in a named column — the one-row
-            // aggregate read every script does; () for NULL or no rows.
-            .register_fn(
-                "cell",
-                |t: &mut Table, name: &str| -> ScriptResult<Dynamic> {
-                    let Some(first) = t.0.first() else {
-                        return fail(format!("no rows carry a column `{name}`"));
-                    };
-                    let Some((index, _)) = first.schema().column_with_name(name) else {
-                        return fail(format!("no column `{name}` in the result"));
-                    };
-                    let Some(batch) = t.0.iter().find(|b| b.num_rows() > 0) else {
-                        return Ok(Dynamic::UNIT);
-                    };
-                    let column = batch.column(index);
-                    if column.is_null(0) {
-                        return Ok(Dynamic::UNIT);
-                    }
-                    Ok(Dynamic::from(
-                        array_value_to_string(column, 0).map_err(|e| e.to_string())?,
-                    ))
-                },
-            );
-
-        engine
-            .register_type_with_name::<Col>("Col")
-            // The column's Arrow type name ("Float64", "Date32", …) — the
-            // door's empty results still carry schema, so a LIMIT 0 query
-            // types a column without scanning it.
-            .register_fn("dtype", |c: &mut Col| -> String {
-                c.0.data_type().to_string()
-            })
-            .register_fn("count", |c: &mut Col| -> i64 { c.0.len() as i64 })
-            .register_fn("null_count", |c: &mut Col| -> i64 {
-                c.0.null_count() as i64
-            })
-            .register_fn("distinct", |c: &mut Col| -> ScriptResult<i64> {
-                let mut seen = std::collections::HashSet::new();
-                for i in 0..c.0.len() {
-                    if c.0.is_null(i) {
-                        continue;
-                    }
-                    seen.insert(array_value_to_string(&c.0, i).map_err(|e| e.to_string())?);
-                }
-                Ok(seen.len() as i64)
-            })
-            .register_fn("entropy", |c: &mut Col| -> ScriptResult<f64> {
-                // Shannon entropy (nats) of the non-null value
-                // distribution, exact — one pass over typed cell keys,
-                // never display buckets. The profile's top_k stays a
-                // display cap; this scalar is what a score may read
-                // (the 2026-08-06 f1 lesson: a display cap must not
-                // become a statistics cap).
-                let mut counts: HashMap<u64, i64> = HashMap::new();
-                for key in cell_keys(&c.0)?.into_iter().flatten() {
-                    *counts.entry(key).or_insert(0) += 1;
-                }
-                let n: i64 = counts.values().sum();
-                if n == 0 {
-                    return Ok(0.0);
-                }
-                let n = n as f64;
-                Ok(counts
-                    .values()
-                    .map(|&count| {
-                        let p = count as f64 / n;
-                        -p * p.ln()
-                    })
-                    .sum())
-            })
-            .register_fn("min", |c: &mut Col| -> ScriptResult<Dynamic> {
-                extremum(c, true)
-            })
-            .register_fn("max", |c: &mut Col| -> ScriptResult<Dynamic> {
-                extremum(c, false)
-            })
-            .register_fn("sum", |c: &mut Col| -> ScriptResult<Dynamic> {
-                if !numeric_like(c.0.data_type()) {
-                    return Ok(Dynamic::UNIT);
-                }
-                let floats = as_floats(&c.0)?;
-                Ok(aggregate::sum(&floats)
-                    .map(Dynamic::from)
-                    .unwrap_or(Dynamic::UNIT))
-            })
-            .register_fn("mean", |c: &mut Col| -> ScriptResult<Dynamic> {
-                let v = valid_floats(&c.0)?;
-                if v.is_empty() {
-                    return Ok(Dynamic::UNIT);
-                }
-                Ok(Dynamic::from(v.iter().sum::<f64>() / v.len() as f64))
-            })
-            .register_fn("stddev", |c: &mut Col| -> ScriptResult<Dynamic> {
-                // Sample standard deviation, matching SQL STDDEV.
-                let v = valid_floats(&c.0)?;
-                if v.len() < 2 {
-                    return Ok(Dynamic::UNIT);
-                }
-                let mean = v.iter().sum::<f64>() / v.len() as f64;
-                let var =
-                    v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
-                Ok(Dynamic::from(var.sqrt()))
-            })
-            .register_fn(
-                "percentile",
-                |c: &mut Col, p: f64| -> ScriptResult<Dynamic> {
-                    // Linear interpolation, matching SQL PERCENTILE_CONT.
-                    if !(0.0..=1.0).contains(&p) {
-                        return fail("percentile wants p in [0, 1]");
-                    }
-                    let mut v = valid_floats(&c.0)?;
-                    if v.is_empty() {
-                        return Ok(Dynamic::UNIT);
-                    }
-                    v.sort_by(f64::total_cmp);
-                    Ok(Dynamic::from(interpolate(&v, p)))
-                },
-            )
-            .register_fn("mad", |c: &mut Col| -> ScriptResult<Dynamic> {
-                // Median absolute deviation — the robust spread the modified
-                // Z-score fences ride on.
-                let mut v = valid_floats(&c.0)?;
-                if v.is_empty() {
-                    return Ok(Dynamic::UNIT);
-                }
-                v.sort_by(f64::total_cmp);
-                let median = interpolate(&v, 0.5);
-                let mut deviations: Vec<f64> = v.iter().map(|x| (x - median).abs()).collect();
-                deviations.sort_by(f64::total_cmp);
-                Ok(Dynamic::from(interpolate(&deviations, 0.5)))
-            })
-            .register_fn(
-                "top_k",
-                |c: &mut Col, k: i64| -> ScriptResult<rhai::Array> {
-                    let mut counts: HashMap<String, i64> = HashMap::new();
-                    for i in 0..c.0.len() {
-                        if c.0.is_null(i) {
-                            continue;
-                        }
-                        let value = array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
-                        *counts.entry(value).or_insert(0) += 1;
-                    }
-                    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
-                    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                    pairs.truncate(k.max(0) as usize);
-                    Ok(pairs
-                        .into_iter()
-                        .map(|(value, count)| {
-                            let mut row = rhai::Map::new();
-                            row.insert("value".into(), Dynamic::from(value));
-                            row.insert("count".into(), Dynamic::from(count));
-                            Dynamic::from_map(row)
-                        })
-                        .collect())
-                },
-            )
-            .register_fn("len_stats", |c: &mut Col| -> ScriptResult<Dynamic> {
-                let Some(values) = c.0.as_any().downcast_ref::<StringArray>() else {
-                    return Ok(Dynamic::UNIT);
-                };
-                let (mut min, mut max, mut total, mut n) = (i64::MAX, 0i64, 0i64, 0i64);
-                for i in 0..values.len() {
-                    if values.is_null(i) {
-                        continue;
-                    }
-                    let len = values.value(i).chars().count() as i64;
-                    min = min.min(len);
-                    max = max.max(len);
-                    total += len;
-                    n += 1;
-                }
-                if n == 0 {
-                    return Ok(Dynamic::UNIT);
-                }
-                let mut stats = rhai::Map::new();
-                stats.insert("min".into(), Dynamic::from(min));
-                stats.insert("max".into(), Dynamic::from(max));
-                stats.insert("avg".into(), Dynamic::from(total as f64 / n as f64));
-                Ok(Dynamic::from_map(stats))
-            })
-            .register_fn(
-                "match_rate",
-                |c: &mut Col, pattern: &str| -> ScriptResult<f64> {
-                    let re = regex::Regex::new(pattern).map_err(|e| e.to_string())?;
-                    let Some(values) = c.0.as_any().downcast_ref::<StringArray>() else {
-                        return fail("match_rate reads a string column");
-                    };
-                    let mut total = 0u64;
-                    let mut matched = 0u64;
-                    for i in 0..values.len() {
-                        if values.is_null(i) {
-                            continue;
-                        }
-                        total += 1;
-                        if re.is_match(values.value(i)) {
-                            matched += 1;
-                        }
-                    }
-                    Ok(if total == 0 {
-                        0.0
-                    } else {
-                        matched as f64 / total as f64
-                    })
-                },
-            )
-            .register_fn(
-                "parse_rate",
-                |c: &mut Col, target: &str| -> ScriptResult<f64> {
-                    let to = sql_type(target).ok_or_else(|| {
-                        format!("`{target}` is not a cast target the substrate accepts")
-                    })?;
-                    let non_null = (c.0.len() - c.0.null_count()) as f64;
-                    if non_null == 0.0 {
-                        return Ok(1.0);
-                    }
-                    let cast = cast_with_options(
-                        &c.0,
-                        &to,
-                        &CastOptions {
-                            safe: true,
-                            ..Default::default()
-                        },
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let parsed = (cast.len() - cast.null_count()) as f64;
-                    Ok(parsed / non_null)
-                },
-            )
-            .register_fn("value_at", |c: &mut Col, i: i64| -> ScriptResult<Dynamic> {
-                let i = i as usize;
-                if i >= c.0.len() || c.0.is_null(i) {
-                    return Ok(Dynamic::UNIT);
-                }
-                Ok(Dynamic::from(
-                    array_value_to_string(&c.0, i).map_err(|e| e.to_string())?,
-                ))
-            })
-            // The whole column as floats, one vectorized Arrow cast — no
-            // per-cell display strings (2026-08-06: the string round-trip
-            // was the seam tax that made hot loops interpreter-bound).
-            // NULL and unparseable cells arrive as ().
-            .register_fn("floats", |c: &mut Col| -> ScriptResult<rhai::Array> {
-                let cast = as_floats(&c.0)?;
-                Ok((0..cast.len())
-                    .map(|i| {
-                        if cast.is_null(i) {
-                            Dynamic::UNIT
-                        } else {
-                            Dynamic::from(cast.value(i))
-                        }
-                    })
-                    .collect())
-            })
-            // The column's distinct values as sorted typed keys — built
-            // once, intersected many times (the SPIDER substrate; see the
-            // statistical-kernels section).
-            .register_fn("key_vec", |c: &mut Col| -> ScriptResult<KeyVec> {
-                Ok(key_vec_from(cell_keys(&c.0)?))
-            });
-
-        engine
-            .register_type_with_name::<KeyVec>("KeyVec")
-            .register_fn("count", |k: &mut KeyVec| -> i64 { k.0.len() as i64 })
-            // |A ∩ B| by linear merge of two sorted key vectors — the
-            // containment numerator, at hash-probe-free speed.
-            .register_fn("matched", |a: &mut KeyVec, b: KeyVec| -> i64 {
-                merge_matched(&a.0, &b.0)
-            });
-
-        engine
-            // Two columns' rows as combined keys (both non-null) — the
-            // composite rescue's pair domain, deduplicated and sorted.
-            .register_fn(
-                "pair_keys",
-                |t: &mut Table, c1: &str, c2: &str| -> ScriptResult<KeyVec> {
-                    let k1 = cell_keys(&column_of(t, c1)?)?;
-                    let k2 = cell_keys(&column_of(t, c2)?)?;
-                    let keys = k1
-                        .into_iter()
-                        .zip(k2)
-                        .map(|pair| match pair {
-                            (Some(a), Some(b)) => {
-                                let mut h = fnv1a(FNV_SEED, &a.to_le_bytes());
-                                h = fnv1a(h, &b.to_le_bytes());
-                                Some(h)
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    Ok(key_vec_from(keys))
-                },
-            )
-            // The stock/flow discriminator over two grouped results —
-            // see the statistical-kernels section for the contract.
-            .register_fn(
-                "reconcile",
-                |y: Table, m: Table, terms: rhai::Array| -> ScriptResult<rhai::Map> {
-                    let terms: Vec<String> = terms
-                        .into_iter()
-                        .map(|t| {
-                            t.into_string()
-                                .map_err(|t| format!("reconcile takes term names, got {t}"))
-                        })
-                        .collect::<Result<_, _>>()?;
-                    reconcile_kernel(&y, &m, terms)
-                },
-            );
-
-        engine
-            .register_type_with_name::<Door>("Door")
-            .register_fn("query", |d: &mut Door, sql: &str| -> ScriptResult<Table> {
-                d.0.sql(sql).map(|b| Table(Arc::new(b))).map_err(Into::into)
-            })
-            // Many queries at once, answered in order — the door overlaps
-            // them below the seam (2026-08-06). One failed query fails the
-            // call, named by its position: a batch is one measurement step.
-            .register_fn(
-                "query_all",
-                |d: &mut Door, queries: rhai::Array| -> ScriptResult<rhai::Array> {
-                    let sqls: Vec<String> = queries
-                        .into_iter()
-                        .map(|q| {
-                            q.into_string()
-                                .map_err(|t| format!("query_all takes strings, got {t}"))
-                        })
-                        .collect::<Result<_, _>>()?;
-                    let mut out = rhai::Array::with_capacity(sqls.len());
-                    for (i, r) in d.0.sql_all(&sqls).into_iter().enumerate() {
-                        match r {
-                            Ok(b) => out.push(Dynamic::from(Table(Arc::new(b)))),
-                            Err(e) => return fail(format!("query_all[{i}]: {e}")),
-                        }
-                    }
-                    Ok(out)
-                },
-            );
 
         engine
             // SQL text as an identity: parse and re-render, so spelling
@@ -748,12 +394,18 @@ impl RhaiRuntime {
 }
 
 impl FunctionRuntime for RhaiRuntime {
+    /// The shipped statistics (`profile`, `mad`, `entropy`), registered
+    /// when the runtime attaches — a measurement body and an agent's own
+    /// SQL name the same aggregates (stage 5, §7e).
+    fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
+        statistics::udafs()
+    }
+
     fn invoke(
         &self,
         function: &FunctionRow,
         subject: &str,
         context: &Value,
-        door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         let ast = self.ast(&function.name, &function.script)?;
         let mut scope = Scope::new();
@@ -762,7 +414,6 @@ impl FunctionRuntime for RhaiRuntime {
             "context",
             rhai::serde::to_dynamic(context).map_err(|e| e.to_string())?,
         );
-        scope.push_constant("db", Door(door));
         let result: Dynamic = self
             .engine
             .eval_ast_with_scope(&mut scope, &ast)
@@ -837,6 +488,40 @@ impl FunctionRuntime for RhaiRuntime {
             .map_err(|e| e.to_string())
     }
 
+    /// The behavior-evidence door's kernel (stage 5): the same
+    /// discriminator the `reconcile` script kernel serves, over batches.
+    fn reconcile(
+        &self,
+        y: &[RecordBatch],
+        m: &[RecordBatch],
+        terms: &[String],
+    ) -> Result<Value, String> {
+        let out = reconcile_kernel(
+            &Table(Arc::new(y.to_vec())),
+            &Table(Arc::new(m.to_vec())),
+            terms.to_vec(),
+        )
+        .map_err(|e| e.to_string())?;
+        serde_json::to_value(Dynamic::from_map(out))
+            .map_err(|e| format!("reconcile returned something JSON cannot carry: {e}"))
+    }
+
+    /// The metric-bands walk's kernel (stage 5): the same one-fit read
+    /// the `tabicl_bands` script kernel serves, typed.
+    fn band_point(
+        &self,
+        train_x: &[f64],
+        rows: usize,
+        cols: usize,
+        train_y: &[f64],
+        test_x: &[f64],
+        alphas: &[f64],
+        actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        self.band_model
+            .bands_core(train_x, rows, cols, train_y, test_x, alphas, actual)
+    }
+
     /// The `misfit.` door's kernel (ruled 2026-08-11, fixture 20): the
     /// chain-rule density read, fit on the frame and scored on the same
     /// frame (self-fit — measured protocol-robust for this model).
@@ -906,34 +591,39 @@ fn numeric_like(dt: &DataType) -> bool {
         )
 }
 
-fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
-    if let Some(values) = c.0.as_any().downcast_ref::<StringArray>() {
+/// A column's smallest or largest value under the scripts' type rules.
+pub(crate) enum Extremum {
+    Num(f64),
+    Text(String),
+}
+
+/// min/max with the scripts' type rules: strings compare as strings,
+/// numeric-readable columns as floats, everything else by its display
+/// form — ISO spellings sort chronologically, so min/max stay truthful.
+pub(crate) fn extremum_of(a: &ArrayRef, min: bool) -> ScriptResult<Option<Extremum>> {
+    if let Some(values) = a.as_any().downcast_ref::<StringArray>() {
         let v = if min {
             aggregate::min_string(values)
         } else {
             aggregate::max_string(values)
         };
-        return Ok(v
-            .map(|s| Dynamic::from(s.to_string()))
-            .unwrap_or(Dynamic::UNIT));
+        return Ok(v.map(|s| Extremum::Text(s.to_string())));
     }
-    if numeric_like(c.0.data_type()) {
-        let floats = as_floats(&c.0)?;
+    if numeric_like(a.data_type()) {
+        let floats = as_floats(a)?;
         let v = if min {
             aggregate::min(&floats)
         } else {
             aggregate::max(&floats)
         };
-        return Ok(v.map(Dynamic::from).unwrap_or(Dynamic::UNIT));
+        return Ok(v.map(Extremum::Num));
     }
-    // Dates, timestamps, and the rest order by their display form — ISO
-    // spellings sort chronologically, so min/max stay truthful.
     let mut best: Option<String> = None;
-    for i in 0..c.0.len() {
-        if c.0.is_null(i) {
+    for i in 0..a.len() {
+        if a.is_null(i) {
             continue;
         }
-        let value = array_value_to_string(&c.0, i).map_err(|e| e.to_string())?;
+        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
         best = Some(match best {
             None => value,
             Some(b) => {
@@ -945,7 +635,106 @@ fn extremum(c: &mut Col, min: bool) -> ScriptResult<Dynamic> {
             }
         });
     }
-    Ok(best.map(Dynamic::from).unwrap_or(Dynamic::UNIT))
+    Ok(best.map(Extremum::Text))
+}
+
+/// Distinct non-null values, counted by display form — the reading a
+/// human would count.
+pub(crate) fn distinct_of(a: &ArrayRef) -> ScriptResult<i64> {
+    let mut seen = HashSet::new();
+    for i in 0..a.len() {
+        if a.is_null(i) {
+            continue;
+        }
+        seen.insert(array_value_to_string(a, i).map_err(|e| e.to_string())?);
+    }
+    Ok(seen.len() as i64)
+}
+
+/// Shannon entropy (nats) of the non-null value distribution, exact —
+/// one pass over typed cell keys, never display buckets. `top_k` stays
+/// a display cap; this scalar is what a score may read (the 2026-08-06
+/// f1 lesson: a display cap must not become a statistics cap).
+pub(crate) fn entropy_of(a: &ArrayRef) -> ScriptResult<f64> {
+    let mut counts: HashMap<u64, i64> = HashMap::new();
+    for key in cell_keys(a)?.into_iter().flatten() {
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    let n: i64 = counts.values().sum();
+    if n == 0 {
+        return Ok(0.0);
+    }
+    let n = n as f64;
+    Ok(counts
+        .values()
+        .map(|&count| {
+            let p = count as f64 / n;
+            -p * p.ln()
+        })
+        .sum())
+}
+
+/// The k most frequent display values, count descending then value
+/// ascending — deterministic buckets for a judge to read.
+pub(crate) fn top_k_of(a: &ArrayRef, k: usize) -> ScriptResult<Vec<(String, i64)>> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for i in 0..a.len() {
+        if a.is_null(i) {
+            continue;
+        }
+        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
+        *counts.entry(value).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    pairs.truncate(k);
+    Ok(pairs)
+}
+
+/// (min, max, avg) of string lengths in characters; `None` off strings
+/// or when nothing is there.
+pub(crate) fn len_stats_of(a: &ArrayRef) -> Option<(i64, i64, f64)> {
+    let values = a.as_any().downcast_ref::<StringArray>()?;
+    let (mut min, mut max, mut total, mut n) = (i64::MAX, 0i64, 0i64, 0i64);
+    for i in 0..values.len() {
+        if values.is_null(i) {
+            continue;
+        }
+        let len = values.value(i).chars().count() as i64;
+        min = min.min(len);
+        max = max.max(len);
+        total += len;
+        n += 1;
+    }
+    (n > 0).then(|| (min, max, total as f64 / n as f64))
+}
+
+pub(crate) fn mean_of(v: &[f64]) -> Option<f64> {
+    (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
+}
+
+/// Sample standard deviation, matching SQL STDDEV.
+pub(crate) fn stddev_of(v: &[f64]) -> Option<f64> {
+    if v.len() < 2 {
+        return None;
+    }
+    let mean = v.iter().sum::<f64>() / v.len() as f64;
+    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
+    Some(var.sqrt())
+}
+
+/// Median absolute deviation — the robust spread the modified Z-score
+/// fences ride on.
+pub(crate) fn mad_of(v: &[f64]) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    let median = interpolate(&v, 0.5);
+    let mut deviations: Vec<f64> = v.iter().map(|x| (x - median).abs()).collect();
+    deviations.sort_by(f64::total_cmp);
+    Some(interpolate(&deviations, 0.5))
 }
 
 /// The parseable values as floats — safe-cast semantics, so on a raw
@@ -1145,34 +934,6 @@ fn column_of(t: &Table, name: &str) -> ScriptResult<ArrayRef> {
     }
     let arrays: Vec<&dyn Array> = t.0.iter().map(|b| b.column(index).as_ref()).collect();
     datafusion::arrow::compute::concat(&arrays).map_err(|e| e.to_string().into())
-}
-
-/// A column's distinct values as sorted keys — built once, intersected
-/// many times.
-#[derive(Debug, Clone)]
-pub struct KeyVec(Arc<Vec<u64>>);
-
-fn key_vec_from(keys: Vec<Option<u64>>) -> KeyVec {
-    let mut v: Vec<u64> = keys.into_iter().flatten().collect();
-    v.sort_unstable();
-    v.dedup();
-    KeyVec(Arc::new(v))
-}
-
-fn merge_matched(a: &[u64], b: &[u64]) -> i64 {
-    let (mut i, mut j, mut n) = (0usize, 0usize, 0i64);
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                n += 1;
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    n
 }
 
 // ---- the reconcile kernel: v0.3's stock/flow discriminator ----------
@@ -1504,81 +1265,6 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
     Ok(out)
 }
 
-/// The SQL cast-target spellings the substrate accepts, mapped to arrow for
-/// trial casts — one arm per family of datafusion-sql 53.1's planner
-/// (planner.rs:662-763, decimal defaults utils.rs:289-317), so a trial and
-/// the served `TRY_CAST` agree on what exists. One dialect, one list:
-/// spellings DataFusion rejects (`TIMESTAMP_NS`, `DATETIME`, `DEC`,
-/// `HUGEINT`) are refused here too, loudly, instead of trialing a type the
-/// view could never serve. Format-parsed types trial through SQL
-/// (`try_to_date`), not here.
-fn sql_type(spelling: &str) -> Option<DataType> {
-    let upper = spelling.trim().to_uppercase();
-    // `HEAD(params)TAIL` — family words around the parameters, so
-    // `DECIMAL(18,2)`, `TIMESTAMP(6)`, and `TIMESTAMP(3) WITH TIME ZONE`
-    // all resolve.
-    let (head, params, tail) = match upper.split_once('(') {
-        Some((head, rest)) => {
-            let (inside, tail) = rest.split_once(')')?;
-            let params: Vec<u64> = inside
-                .split(',')
-                .map(|p| p.trim().parse().ok())
-                .collect::<Option<_>>()?;
-            (head, params, tail)
-        }
-        None => (upper.as_str(), Vec::new(), ""),
-    };
-    let family = format!("{head} {tail}");
-    let family = family.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(match family.as_str() {
-        "BOOLEAN" | "BOOL" => DataType::Boolean,
-        "TINYINT" => DataType::Int8,
-        "SMALLINT" | "INT2" => DataType::Int16,
-        "INT" | "INTEGER" | "INT4" => DataType::Int32,
-        "BIGINT" | "INT8" => DataType::Int64,
-        "TINYINT UNSIGNED" => DataType::UInt8,
-        "SMALLINT UNSIGNED" | "INT2 UNSIGNED" => DataType::UInt16,
-        "INT UNSIGNED" | "INTEGER UNSIGNED" | "INT4 UNSIGNED" => DataType::UInt32,
-        "BIGINT UNSIGNED" | "INT8 UNSIGNED" => DataType::UInt64,
-        "FLOAT" | "REAL" | "FLOAT4" => DataType::Float32,
-        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" => DataType::Float64,
-        "CHAR" | "VARCHAR" | "TEXT" | "STRING" => DataType::Utf8,
-        "DATE" => DataType::Date32,
-        "TIME" | "TIME WITHOUT TIME ZONE" => DataType::Time64(TimeUnit::Nanosecond),
-        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" => {
-            // The session's zone rides the real cast; parseability, which is
-            // all a trial measures, does not depend on it.
-            DataType::Timestamp(
-                match params.first() {
-                    Some(0) => TimeUnit::Second,
-                    Some(3) => TimeUnit::Millisecond,
-                    Some(6) => TimeUnit::Microsecond,
-                    None | Some(9) => TimeUnit::Nanosecond,
-                    _ => return None,
-                },
-                None,
-            )
-        }
-        "DECIMAL" | "NUMERIC" => {
-            let (precision, scale) = match (params.first(), params.get(1)) {
-                (Some(&p), Some(&s)) => (p, s),
-                (Some(&p), None) => (p, 0),
-                (None, _) => (38, 10),
-            };
-            if precision == 0 || precision > 76 || scale > precision {
-                return None;
-            }
-            if precision > 38 {
-                DataType::Decimal256(precision as u8, scale as i8)
-            } else {
-                DataType::Decimal128(precision as u8, scale as i8)
-            }
-        }
-        "BYTEA" => DataType::Binary,
-        "INTERVAL" => DataType::Interval(datafusion::arrow::datatypes::IntervalUnit::MonthDayNano),
-        _ => return None,
-    })
-}
 
 #[cfg(test)]
 mod band_grid_filter {

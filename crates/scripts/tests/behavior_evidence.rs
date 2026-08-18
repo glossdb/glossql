@@ -18,7 +18,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
@@ -192,7 +192,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -201,7 +201,6 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -216,7 +215,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE ledgers ON fin FROM erp_export AS \
              $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
              DECLARE RECIPE positions ON fin FROM erp_export AS \
@@ -303,7 +302,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -312,7 +311,6 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
     session
         .execute(&format!(
@@ -326,7 +324,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              {recipes}",
             root.display()
         ))

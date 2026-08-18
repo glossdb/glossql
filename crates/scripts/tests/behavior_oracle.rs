@@ -17,7 +17,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.sql");
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
@@ -71,7 +71,7 @@ async fn the_generator_grades_the_discriminator() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -80,7 +80,6 @@ async fn the_generator_grades_the_discriminator() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -95,7 +94,7 @@ async fn the_generator_grades_the_discriminator() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE chart_of_accounts ON fin FROM finance AS \
              $$SELECT TRY_CAST(account_id AS BIGINT) AS account_id, name \
              FROM read_csv('chart_of_accounts.csv')$$;\n\
@@ -195,7 +194,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -204,7 +203,6 @@ async fn document_keyed_events_reconcile_at_month_grain() {
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -219,7 +217,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
              }}$$ AS MEASUREMENT ON COLUMN;\n\
              DECLARE FUNCTION behavior_evidence FOR GLOBAL \
              AS $${BEHAVIOR_EVIDENCE}$$ \
-             ACCEPTS (relationships, imports) RETURNS behavior_evidence;\n\
+ RETURNS behavior_evidence;\n\
              DECLARE RECIPE customers ON fin FROM finance AS \
              $$SELECT customer_id, name FROM read_csv('customers.csv')$$;\n\
              DECLARE RECIPE ar_invoices ON fin FROM finance AS \

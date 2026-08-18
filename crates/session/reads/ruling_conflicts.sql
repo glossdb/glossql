@@ -36,9 +36,13 @@ SELECT a.subject AS subject,
        b.stance AS older_stance,
        a.dimension AS dimension,
        a.assumption AS assumption
+-- Only positional stances can conflict: `unclear` refuses the question
+-- and takes no side, so it never pairs (2026-08-18, with the stance).
 FROM ruling_entries a
 JOIN ruling_entries b
   ON a.subject = b.subject AND a.key = b.key
  AND a.aspect <> b.aspect AND a.stance <> b.stance AND a.idx > b.idx
 WHERE a.key IS NOT NULL
+  AND a.stance IN ('confirmed', 'corrected')
+  AND b.stance IN ('confirmed', 'corrected')
   AND NOT (a.folded_in AND b.folded_in)

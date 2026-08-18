@@ -137,36 +137,38 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
                     [ "ACCEPTS", "(", name, { ",", name }, ")" ],
                     [ "RETURNS", name ] ;
-                    (* the engine's analytical machinery as rhai scripts; never
-                       a metric (metrics are QUERY aspects run as their SQL).
-                       AS carries the script itself (ruled 2026-08-15, fixture
+                    (* the engine's analytical machinery; never a metric
+                       (metrics are QUERY aspects run as their SQL).
+                       AS carries the body itself (ruled 2026-08-15, fixture
                        24): a body on disk was a body an agent over MCP could
                        neither write nor read, so the store keeps it and
                        `SELECT script FROM functions` serves the library as
                        examples. `FROM 'path'` is retired, not deprecated —
                        two homes for one body is the staleness the registry
-                       rulings exist against. ACCEPTS names the aspects whose
-                       current values the server hands the script as context —
-                       settings are context, never call arguments. RETURNS
-                       mirrors ACCEPTS (ruled 2026-08-04): it names the aspect
-                       the output fills, validated against that aspect's
-                       schema; a MEASUREMENT aspect has one returning function,
-                       a FACT aspect's returning functions are voices in its
-                       slots. No RETURNS declares a detector — role by shape;
-                       the attest contract is the engine's. Every function
-                       implicitly receives its subject with schema and
-                       neighborhood; scripts may run any SQL. Results land in
-                       the cache relation *)
+                       rulings exist against. The role picks the body's
+                       language (ruled 2026-08-17): a RETURNS body is one SQL
+                       query the engine plans — read-only, at the statement's
+                       pin; a detector body is a rhai script over slots, never
+                       table data. ACCEPTS names the aspects whose current
+                       values the server hands a script body as context —
+                       settings are context, never call arguments; a SQL body
+                       composes inline instead. RETURNS mirrors ACCEPTS (ruled
+                       2026-08-04): it names the aspect the output fills,
+                       validated against that aspect's schema; a MEASUREMENT
+                       aspect has one returning function, a FACT aspect's
+                       returning functions are voices in its slots. No RETURNS
+                       declares a detector — role by shape; the attest
+                       contract is the engine's. Results land in the
+                       measurements relation *)
 
 extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
-                    (* calls are bare — settings reach scripts as context
+                    (* calls are bare — settings reach a script as context
                        (ACCEPTS), never as arguments (dropped 2026-08-04).
-                       first run computes and caches; later selects read the
-                       cache; re-running = deleting the cached rows (ordinary
-                       SQL, like glossary removal) and selecting again —
-                       REFRESH dropped 2026-08-03. Functions never write the
-                       glossary. *)
+                       extraction computes at the read's pin and lands a
+                       measurements row; the same pin serves it back, any
+                       input moving recomputes — REFRESH dropped 2026-08-03.
+                       Functions never write the glossary. *)
 
 (* -- witnesses ---------------------------------------------------------- *)
 

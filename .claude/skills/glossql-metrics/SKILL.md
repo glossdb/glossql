@@ -26,21 +26,21 @@ through. Read the one you need.
 
 ## Agree the topic before anything lands
 
-A dataset has a topic — working capital, sales performance, cost
-control — and the topic is what makes every later choice decidable:
+A dataset has a topic — on-time delivery, capacity, cost control —
+and the topic is what makes every later choice decidable:
 which tables to land, which metrics to propose, which questions
 matter. Propose one in prose from what you can see, let the user shape
 it, then declare it:
 
 ```glossql
-DECLARE DATASET fin SET (purpose: 'working capital — where cash sits and how fast it moves');
+DECLARE DATASET ops SET (purpose: 'service delivery — what gets done, how fast, and where it stalls');
 ```
 
 **Then propose the metric cohort** — what the topic implies, including
-the heavy ones (a cash conversion cycle, real margins), not just what
-looks easy to compute. The user prunes and extends in prose. That
+the heavy ones (an end-to-end cycle time, real utilization), not just
+what looks easy to compute. The user prunes and extends in prose. That
 conversation is where scope questions surface while they are cheap:
-"DSO over which receivables?" costs one sentence now and a wrong
+"cycle time from which timestamp?" costs one sentence now and a wrong
 dashboard later. Aim high deliberately — **a cohort metric the data
 cannot ground is a finding, not a failure.** Name what is missing and
 which tables would close it; surfacing that gap is the product
@@ -61,8 +61,10 @@ cohort needs, take only the columns the recipe's SELECT list earns,
 filter wide tables in the recipe's WHERE. Leaving something out costs
 one later `DECLARE RECIPE`; landing everything costs attention on
 every read after — more slots to gloss, more owed claims, more noise
-between you and the questions that matter. The first live run measured
-it: the deep scope questions drowned in a 109-column long tail.
+between you and the questions that matter, until the deep scope
+questions drown in a hundred-column long tail. Width also costs
+compute: the structure searches scale with a table's column pairs, so
+a wide table landed whole is the one thing that makes them slow.
 
 **Read the source's conventions before probing.** Source-grain slots
 serve in every dataset, so what an earlier onboarding learned about
@@ -83,8 +85,7 @@ at source grain; dataset-local evidence stays in dataset glosses.
 recipe.** A zero-row probe still carries every `(name, type)`, which
 is its whole point. Row probes cannot replace it — probe rows omit
 null fields, so a column that is null in your sample is invisible
-there. The first validated run lost three columns that way, one of
-them a join key, and the missed relationship rode the missed column.
+there, and a missed join key carries a missed relationship with it.
 
 ```glossql
 PROBE erp_export AS $$SELECT order_id,
@@ -93,12 +94,17 @@ PROBE erp_export AS $$SELECT order_id,
 FROM read_parquet('orders/*.parquet') LIMIT 0$$;
 ```
 
+**Name the columns — never `SELECT *`.** A star recipe survives a
+schema change in the source and fails later, somewhere downstream where
+nothing points back at the source; a named SELECT list fails at the
+re-import, which is where the drift is and where you can fix it.
+
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
 NULL — a kept row with a NULL cell, not a dropped row.
 
 ```glossql
-DECLARE RECIPE orders ON fin FROM erp_export AS $$
+DECLARE RECIPE orders ON ops FROM erp_export AS $$
   SELECT order_id,
          try_cast(amount AS DOUBLE) AS amount,
          try_to_date(order_date, '%d.%m.%Y') AS order_date
@@ -121,9 +127,8 @@ rows: `02/03/2025` is March 2nd under `%d/%m/%Y` and February 3rd under
 `%m/%d/%Y`, and whichever you name first wins. Name the unambiguous
 formats first. Where two readings both parse and the count matters,
 measure it (`substr` the parts and count which are impossible under
-each) and disclose the residual with a key — run 4 found 2,466 payment
-dates of 14,928 that no evidence could decide, and said so rather than
-picking quietly.
+each) and disclose the residual with a key — say how many rows no
+evidence could decide, rather than picking quietly.
 
 The outcome carries the **cast account** at the decision moment: for
 every `try_*`, how many cells the cast nulled and the top such values.
@@ -161,8 +166,8 @@ verdict, and it is judged from the data, never from the name.
   Attribute dates (due_date, hire_date) are not an axis; one at most.
 
 ```glossql
-GLOSS entity ON orders AS $${"value": "sales order line", "role": "fact",
-  "grain": ["order_id", "line_no"], "time_axis": "order_date"}$$;
+GLOSS entity ON work_orders AS $${"value": "one site visit on a work order", "role": "fact",
+  "grain": ["order_id", "visit_no"], "time_axis": "completed_at"}$$;
 ```
 
 ## Judge the join structure
@@ -172,8 +177,8 @@ included, you are the precision. Per candidate, before declaring:
 
 - **Anti-join both directions and *read* what doesn't resolve.** An
   orphan count is a question, not a verdict: orphans that are exactly
-  a business population (the cancelled invoices, the pre-migration
-  accounts) confirm the edge; random misses argue against it.
+  a business population (the cancelled orders, the pre-migration
+  records) confirm the edge; random misses argue against it.
 - **Distrust coincidence.** Two unique integer columns overlap
   perfectly without meaning it — parallel row-number sequences are the
   classic false positive. Names, values and business objects must all
@@ -187,10 +192,10 @@ included, you are the precision. Per candidate, before declaring:
   wrong causal story misleads everyone reading the grounds later.
 
 ```glossql
-DECLARE RELATIONSHIP orders.customer_id -> customers.id;
-DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, account_name);
-GLOSS meaning ON orders.customer_id -> customers.id AS
-  $${"value": "each order belongs to one customer; 140 orphans are the cancelled orders, never posted"}$$;
+DECLARE RELATIONSHIP work_orders.site_id -> sites.id;
+DECLARE RELATIONSHIP visits.(region_id, site_code) -> sites.(region_id, site_code);
+GLOSS meaning ON work_orders.site_id -> sites.id AS
+  $${"value": "each order serves one site; the orphans are the cancelled orders, never dispatched"}$$;
 ```
 
 Rejected candidates stay in the measurement — visible and undeclared
@@ -222,16 +227,16 @@ the rest of the backlog derives from it.
   reconciles the column against period movements over *declared*
   edges. Each anchor is served raw and year-scoped: a cumulative that
   resets abstains at raw grain and reconciles as a stock on the year
-  anchor; read the pair together. Names lie either way — a "trial
-  balance" column can carry period turnover.
+  anchor; read the pair together. Names lie either way — a column
+  called "total" can carry a per-period movement.
 - **unit** — where a magnitude has one; `source_column` names the
   column carrying it when it rides beside the value.
 
 **When `behavior_evidence` starves** — every anchor abstains, no
 entity persists across periods — climb the ladder: land the missing
-dimension (an AP side whose vendor has no table starves only for lack
-of a declared edge; `SELECT DISTINCT vendor_id FROM …` is a legitimate
-recipe); then your own data test, cited as the basis; and last, on an
+dimension (a fact whose counterparty has no table starves only for
+lack of a declared edge; `SELECT DISTINCT site_id FROM …` is a
+legitimate recipe); then your own data test, cited as the basis; and last, on an
 installation where a whole family of columns needs it, author a
 workspace-scoped function that decides behavior the way *this* dataset
 demands. That function is the installation's recorded thinking —
@@ -257,8 +262,8 @@ constants.
 Judge each:
 
 - **λ < 0.5 is the vacuous-skew signature.** A ≥98%-dominant dependent
-  passes the screen vacuously. Measured: a λ floor killed 48 false
-  positives with zero truth lost.
+  passes the screen vacuously; the floor kills those in bulk with no
+  truth lost — treat it as binding.
 - **A perfect 1:1 is a relabeling or a coincidence, and only meaning
   separates them.** A code↔label bijection collapses to one axis; an
   entity key that happens to align with a timestamp must not.
@@ -281,7 +286,7 @@ gloss where a correction supersedes with actor and timestamp. A field
 lives in exactly one place, never both.
 
 ```glossql
-DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "measure"}$$ AS QUERY ON DATASET;
+DECLARE ASPECT throughput WITH $${"title": "Throughput", "x-kind": "measure"}$$ AS QUERY ON DATASET;
 ```
 
 **Two registries ship with the kit — gloss into them, never redeclare.**
@@ -295,10 +300,10 @@ none, and it is the ruled definition — the recorded SQL is one
 evaluation of it, not a replacement for it.
 
 ```glossql
-GLOSS formulas ON fin AS $${"formulas": {
-  "dso": "accounts_receivable[end of w] / revenue[w] * days[w]",
-  "gross_profit": "revenue[w] - cogs[w]",
-  "revenue_growth": "(revenue[w] - revenue[w-1]) / revenue[w-1]"
+GLOSS formulas ON ops AS $${"formulas": {
+  "backlog_days": "backlog[end of w] / throughput[w] * days[w]",
+  "net_completions": "completions[w] - reopens[w]",
+  "throughput_growth": "(throughput[w] - throughput[w-1]) / throughput[w-1]"
 }}$$;
 ```
 
@@ -317,11 +322,11 @@ and the `x-kind` tooling flag. A field lives in exactly one place,
 never both — a unit written in both copies goes stale in one.
 
 ```glossql
-GLOSS definitions ON fin AS $${"definitions": {
-  "revenue": {"meaning": "invoiced amounts less credit notes; recognized at invoice date",
-              "unit": "currency", "owner": "Finance", "source": "KPI handbook v3 §2"},
-  "dso": {"meaning": "receivables outstanding expressed in days of revenue",
-          "unit": "days", "owner": "Finance", "source": "KPI handbook v3 §2"}
+GLOSS definitions ON ops AS $${"definitions": {
+  "throughput": {"meaning": "work completed and accepted; counted at completion date",
+                 "unit": "hours", "owner": "Operations", "source": "KPI handbook v3 §2"},
+  "backlog_days": {"meaning": "open work expressed in days of current throughput",
+                   "unit": "days", "owner": "Operations", "source": "KPI handbook v3 §2"}
 }}$$;
 ```
 
@@ -341,11 +346,11 @@ served as a row-grain relation with the time axis and the judged
 dimensions as columns.
 
 ```glossql
-GLOSS revenue ON fin AS $${
-  "sql": "-- recognized revenue: credit minus debit on revenue-typed accounts\nSELECT e.date, l.credit - l.debit AS value, l.cost_center FROM journal_lines l JOIN journal_entries e ON l.entry_id = e.entry_id JOIN chart_of_accounts a ON l.account_id = a.account_id WHERE a.account_type = 'revenue'",
+GLOSS throughput ON ops AS $${
+  "sql": "-- completed work: hours per closed order, at completion date, with its judged axes\nSELECT w.completed_at AS date, w.duration_min / 60.0 AS value, w.region, s.service_line FROM work_orders w JOIN sites s ON w.site_id = s.id WHERE w.status = 'closed'",
   "assumptions": [
-    {"dimension": "scope", "key": "revenue-accounts-only", "assumption": "revenue-typed accounts only, service lines included", "basis": "chart_of_accounts + judgment", "confidence": 0.7},
-    {"dimension": "behavior", "key": "revenue-is-a-flow", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on journal_lines.credit", "confidence": 1.0}
+    {"dimension": "scope", "key": "closed-only", "assumption": "closed orders only; cancelled and reopened excluded", "basis": "status values + judgment", "confidence": 0.7},
+    {"dimension": "behavior", "key": "throughput-is-a-flow", "assumption": "a flow: sums valid over any partition", "basis": "behavior_evidence on work_orders.duration_min", "confidence": 1.0}
   ]
 }$$;
 ```
@@ -356,18 +361,18 @@ the query the way a separate description can.
 
 **A composed ratio serves only the axes its composition carries.** The
 cube slices on the dimension columns an extract *serves*, so a ratio
-that groups to `(date, value)` can never be sliced — run 4 grounded six
-composed metrics and every one of them reported "no axes admitted",
+that groups to `(date, value)` can never be sliced — a cohort grounded
+entirely that way reports "no axes admitted" on every metric,
 which is the headline numbers being the only ones nobody can cut.
 
-A ratio is never drilled from its output rows. Drilling DSO by segment
-means **re-scoping its components per the `formulas` gloss** — each
-operand evaluated at the new scope, then the formula applied per
-member. The recorded SQL below is that recomposition written down for
-one choice of axis; the formula is what it was written down from:
+A ratio is never drilled from its output rows. Drilling backlog days
+by region means **re-scoping its components per the `formulas` gloss**
+— each operand evaluated at the new scope, then the formula applied
+per member. The recorded SQL below is that recomposition written down
+for one choice of axis; the formula is what it was written down from:
 
 ```glossql
-GLOSS dso ON fin AS $${"sql": "-- DSO by customer segment as well as in total.\nWITH ar AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS bal FROM read.accounts_receivable() GROUP BY date_trunc('month', date), segment), rev AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS rev FROM read.revenue() GROUP BY date_trunc('month', date), segment) SELECT CAST(ar.m AS DATE) AS date, ar.bal / nullif(rev.rev, 0) * 30.0 AS value, ar.segment FROM ar JOIN rev ON ar.m = rev.m AND ar.segment = rev.segment"}$$;
+GLOSS backlog_days ON ops AS $${"sql": "-- backlog days by region as well as in total.\nWITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM read.backlog() GROUP BY date_trunc('month', date), region), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM read.throughput() GROUP BY date_trunc('month', date), region) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * 30.0 AS value, bl.region FROM bl JOIN th ON bl.m = th.m AND bl.region = th.region"}$$;
 ```
 
 Two things this is not: it is not a roll-up (each member's ratio is
@@ -378,19 +383,18 @@ the axes the question actually needs rather than every one available.
 **A ratio must serve `num` and `den` beside `value`.** They are how the
 cube and the bands walk total it — `sum(num)/sum(den)` at every grain,
 which is right for the headline and for every member. Without them a
-ratio takes the flow verb and is **summed**: a run on 2026-08-15
-grounded DSO across segment and region and the cube reported 928.3 days
-for a month whose true DSO was 75.6, because twelve member ratios were
-added together. Nothing infers this from the SQL — serve the columns.
+ratio takes the flow verb and is **summed** — a dozen member ratios
+added into one absurd headline, an order of magnitude off its true
+value. Nothing infers this from the SQL — serve the columns.
 
 ```glossql
-GLOSS dso ON fin AS $${"sql": "WITH ar AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS bal FROM read.accounts_receivable() GROUP BY 1, 2), rev AS (SELECT date_trunc('month', date) AS m, segment, sum(value) AS rev FROM read.revenue() GROUP BY 1, 2) SELECT CAST(ar.m AS DATE) AS date, ar.bal / nullif(rev.rev, 0) * date_part('day', ar.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, ar.bal AS num, rev.rev * (1.0 / date_part('day', ar.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, ar.segment FROM ar JOIN rev ON rev.m = ar.m AND rev.segment = ar.segment"}$$;
+GLOSS backlog_days ON ops AS $${"sql": "WITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM read.backlog() GROUP BY 1, 2), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM read.throughput() GROUP BY 1, 2) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, bl.bal AS num, th.th * (1.0 / date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, bl.region FROM bl JOIN th ON th.m = bl.m AND th.region = bl.region"}$$;
 ```
 
-`value` stays each row's own ratio — that is what `read.dso()` serves
-and what a drill shows. `num` and `den` are the same division's halves,
-scaled so their quotient is the metric in its own unit: here the day
-factor rides the denominator, so `sum(num)/sum(den)` is days.
+`value` stays each row's own ratio — that is what `read.backlog_days()`
+serves and what a drill shows. `num` and `den` are the same division's
+halves, scaled so their quotient is the metric in its own unit: here
+the day factor rides the denominator, so `sum(num)/sum(den)` is days.
 
 **`behavior`, `sign` and `grain` assumptions carry 1.0, always.** The
 round never serves them to a human — statistics are your work — so a
@@ -412,11 +416,11 @@ from inside your own judgment; it shows only against an alternative.
 An assumption may carry one:
 
 ```json
-{"dimension": "definition", "key": "gross-profit-basis",
- "assumption": "gross_profit = revenue - COGS",
- "alternative": "revenue - all expenses",
- "alternative_sql": "SELECT e.date, ... FROM ...",
- "basis": "textbook convention", "confidence": 0.7}
+{"dimension": "definition", "key": "cycle-time-basis",
+ "assumption": "cycle_time runs from dispatch to completion",
+ "alternative": "from order creation to completion",
+ "alternative_sql": "SELECT w.completed_at AS date, ... FROM ...",
+ "basis": "operations convention", "confidence": 0.7}
 ```
 
 The cube runs the rival monthly and the docket draws both lines, so
@@ -481,13 +485,13 @@ WINDOW w AS (PARTITION BY driver ORDER BY period)
 **`QUALIFY` filters on a window result** — top-N per period with no
 subquery. It runs after windows, before ORDER BY and LIMIT. Give the
 ORDER BY a full tiebreaker or `row_number` reshuffles on every
-refresh. `ntile` splits row *count*, not value mass — a revenue-decile
-question is cumulative share, `sum(value) OVER (ORDER BY value DESC) /
-sum(value) OVER ()`.
+refresh. `ntile` splits row *count*, not value mass — a
+top-decile-by-value question is cumulative share,
+`sum(value) OVER (ORDER BY value DESC) / sum(value) OVER ()`.
 
 ```sql
-SELECT period, customer, value FROM billings
-QUALIFY rank() OVER (PARTITION BY period ORDER BY value DESC, customer) <= 10
+SELECT period, site, value FROM completions
+QUALIFY rank() OVER (PARTITION BY period ORDER BY value DESC, site) <= 10
 ```
 
 **Densify before you lag.** `generate_series` works as a table
@@ -557,7 +561,7 @@ nondeterministic and must never feed a sparkline.
 **Record what a read proves.** A composed evaluation you verified may
 land as the metric's own QUERY gloss — durable executable knowledge,
 served by `read.<aspect>()` from then on. Compose it `FROM
-read.revenue()` where you can, so a re-ruled component propagates
+read.throughput()` where you can, so a re-ruled component propagates
 through every metric built on it.
 
 ## Stand up validations
@@ -567,20 +571,20 @@ voice on the same aspect; a detector bands across both slots;
 `ATTEST` is the verdict surface.
 
 ```glossql
-DECLARE ASPECT journal_balanced WITH $${
+DECLARE ASPECT hours_reconcile WITH $${
   "type": "object", "required": ["outcome"],
   "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
                  "breach_rate": {"type": "number"}}
-}$$ AS FACT ON TABLE WHEN entity = 'journal line';
-GLOSS journal_balanced ON journal_lines AS $${
-  "outcome": "Total debits equal total credits, exactly.", "tolerance": 0.0}$$;
-DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
+}$$ AS FACT ON TABLE WHEN entity = 'work log line';
+GLOSS hours_reconcile ON work_logs AS $${
+  "outcome": "Logged minutes match the order's recorded duration, exactly.", "tolerance": 0.0}$$;
+DECLARE WITNESS hours_w ON hours_reconcile BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
 - **Scope the check with `WHEN`.** A check declared bare `ON TABLE`
-  owes an unassessed row on every table — three checks on a 14-table
-  workspace put 39 unfillable rows in the backlog.
+  owes an unassessed row on every table in the workspace — a handful
+  of unscoped checks fills the backlog with unfillable rows.
 - **`breach_rate` is the violation share.** 0.0 is fully passing, and
   it is compared against `tolerance` upward. Reporting a pass rate
   under that key bands red.
@@ -593,20 +597,19 @@ DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
 
 **The check half is a function, and you write it here** — the body
 rides its declaration, so an expectation without a measuring voice is
-now a choice rather than a limit (it was a `.rhai` file on disk until
-2026-08-15, which the door could not author). `glossql-functions` has
+a choice rather than a limit. `glossql-functions` has
 the contract, the kernels and the abstention rule; `rate_tolerance` is
 the detector that bands an authored expectation against a check voice:
 
 ```glossql
-DECLARE FUNCTION journal_balanced_check FOR fin AS $$
-  let m = db.query("SELECT sum(debit) AS d, sum(credit) AS c FROM journal_lines");
-  let d = m.cell("d").parse_float();
-  #{
-    "outcome": "measured: debits against credits",
-    "breach_rate": if d > 0.0 { (d - m.cell("c").parse_float()).abs() / d } else { 0.0 }
-  }
-$$ ACCEPTS (imports) RETURNS journal_balanced;
+DECLARE FUNCTION hours_reconcile_check FOR ops AS $$
+  SELECT 'measured: logged minutes against recorded durations' AS outcome,
+         CASE WHEN count(*) = 0 THEN 0.0
+              ELSE CAST(count(*) FILTER (WHERE abs(logged - recorded) > 0.5) AS DOUBLE) / count(*)
+         END AS breach_rate
+  FROM (SELECT order_id, sum(minutes) AS logged, max(duration_min) AS recorded
+        FROM work_logs GROUP BY order_id)
+$$ RETURNS hours_reconcile;
 ```
 
 A voice speaks the aspect's own schema — `outcome` like any slot, the
@@ -633,6 +636,19 @@ Run it whenever you run the walk — a grounding write or a landed
 import stales both caches. A dimension the cube should slice must be a
 served column of the extract.
 
+Dimension admission is wide, and wide axes bucket instead of dropping
+out: a served column with 2–512 distinct members can enter (fewest
+members first, up to four dimensions). Up to 24 members every one is
+named; above that the axis serves its top 23 by weight — summed value,
+a ratio by its denominator — and the rest fold into an `'other'`
+member. Each metric's `bucketed` field names the axes this happened
+to: never read `'other'` as a business member. Past 512 distinct
+values a column reads as an identifier, not a dimension, and stays
+out. If a bucketed axis is too coarse for the question at hand, that
+is a grounding decision, not a cap to fight — serve a narrower or
+derived column (a region for the country, a group for the org) from
+the metric's own SQL.
+
 Where every metric stands, in one read:
 
 ```sql
@@ -643,16 +659,28 @@ FROM metric_surfaces ORDER BY metric
 And the cube's own numbers read back through `metric_series()` — one
 row per metric, dimension, member and period. `dimension = ''` is the
 metric's own total, `'alternative'` is the disclosed rival, anything
-else is a served dimension. This is what an app frame charts:
+else is a served dimension; a wide dimension serves its top members
+plus an `'other'` bucket, and the cube's fact row names which ones
+were bucketed. This is what an app frame charts:
 
 ```sql
 SELECT metric, period, value FROM metric_series()
 WHERE dimension = '' ORDER BY metric, period
 ```
 
+A workspace write does not blank the series — it serves the last
+landed cube with `current = false` on every row, and the docket shows
+the same numbers marked stale. The recompute is yours to pull, and
+`workspace_next`'s `cube` surface shows `open = 1` while it is owed:
+
+```sql
+SELECT DISTINCT current FROM metric_series()
+```
+
 **Fold in every standing ruling before recomputing either.** Each
 grounding write stales both caches, so one batch of fold-ins then one
-recompute, never a recompute per ruling.
+recompute, never a recompute per ruling — run the cube LAST, after
+your final write, or you hand the docket a stale flag on your way out.
 
 ## Asking what would happen — the scenario door
 
@@ -661,8 +689,8 @@ declared form is versioned, witness-gated and reproducible. One FACT
 aspect per scenario, exactly as one QUERY aspect is one metric.
 
 ```glossql
-DECLARE ASPECT price_hike WITH $${
-  "title": "Price +15% from Jan 2027",
+DECLARE ASPECT demand_surge WITH $${
+  "title": "Orders +15% from Jan 2027",
   "x-kind": "scenario",
   "type": "object", "required": ["overrides"],
   "properties": {"overrides": {"type": "array", "items": {
@@ -678,12 +706,12 @@ behavioral response no history ever saw is not guessed: declare it as
 its own override and say so, or leave it out and let the read name it.
 
 ```glossql
-GLOSS price_hike ON fin AS $${
+GLOSS demand_surge ON ops AS $${
   "overrides": [
-    {"column": "sales_order_lines.unit_price", "factor": 1.15, "from": "2027-01",
+    {"column": "work_orders.order_count", "factor": 1.15, "from": "2027-01",
      "basis": "the declared lever"},
-    {"column": "sales_order_lines.units", "factor": 0.95, "from": "2027-01",
-     "basis": "assumed demand response, hand-declared; not in any history"}
+    {"column": "work_orders.duration_min", "factor": 1.05, "from": "2027-01",
+     "basis": "assumed congestion response, hand-declared; not in any history"}
   ]
 }$$;
 ```
@@ -694,7 +722,7 @@ form:
 
 ```sql
 SELECT concept, month, replay, p05, p50, p95, basis
-FROM whatif.price_hike() WHERE concept = 'revenue' ORDER BY month
+FROM whatif.demand_surge() WHERE concept = 'throughput' ORDER BY month
 ```
 
 - **Read `basis` before the numbers.** A concept no declared path
@@ -736,9 +764,9 @@ expectation gloss above owes. **`glossql-functions` teaches it**: the
 declaration carries the body, so a check is writable over the door and
 the shipped library reads back as worked examples
 (`SELECT script FROM functions WHERE name = 'rate_tolerance'`). The
-short version: `ACCEPTS` is both the context and the invalidation
-edge, no `RETURNS` declares a detector, and a script abstains
-(`#{applicable: false}`) rather than throwing.
+short version: a measurement's body is one SQL query the engine plans,
+no `RETURNS` declares a detector (a script over slots), and a function
+abstains (`applicable: false` with a reason) rather than throwing.
 
 **An app** when someone needs to look at this — a standalone page at
 `/app/<name>` whose URL is its whole state, so a filtered view is a

@@ -59,7 +59,7 @@ fn runtime() -> Arc<RhaiRuntime> {
     Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR")))
 }
 
-fn session_for(kind: ActorKind, id: &str, store: &Store, lake: &Lake) -> Session {
+fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
     Session::new(
         store.clone(),
         Actor {
@@ -68,7 +68,7 @@ fn session_for(kind: ActorKind, id: &str, store: &Store, lake: &Lake) -> Session
         },
     )
     .unwrap()
-    .with_lake(lake.clone())
+    
     .with_runtime(runtime())
 }
 
@@ -122,12 +122,11 @@ DECLARE ASPECT temporal_profile WITH $${
                  "completeness": {"type": "object"}, "gaps": {"type": "object"}}
 }$$ AS MEASUREMENT;
 
-DECLARE FUNCTION profile FOR GLOBAL AS $$profile.rhai$$
+DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
-DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
-DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.rhai$$
+DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
   RETURNS temporal_profile;
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
 
@@ -148,8 +147,8 @@ async fn fixture_11_with_real_scripts() {
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
-    let agent = session_for(ActorKind::Agent, "agent-1", &store, &lake);
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let agent = session_for(ActorKind::Agent, "agent-1", &store);
 
     agent
         .execute(&format!(
@@ -250,36 +249,32 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert_eq!(one(&dropped), "0", "this author kept every row");
 
-    // An agent using functions wildly: outliers before its ACCEPTS
-    // dependency exists. The abstention names what to produce first —
-    // "run the dependency" is a different fact from "never applicable" —
-    // and the profile's landing heals it through the declared edge.
-    agent
+    // Fixture 11's "outliers before profile" sequence, after §7e: the
+    // SQL body composes its dependency inline — the same `profile`
+    // aggregate the profile measurement lands — so the first ask
+    // computes and lands. The missing_aspects abstention this sequence
+    // used to produce is gone with the stored intermediate it named.
+    let early = agent
         .execute("SELECT outliers() FROM orders.amount;")
         .await
         .unwrap();
-    let early = agent
-        .execute("SELECT value FROM GLOSSARY(orders.amount::outlier_profile);")
-        .await
-        .unwrap();
-    assert!(
-        one(&early).contains("\"applicable\":false"),
-        "{}",
-        one(&early)
-    );
-    assert!(
-        one(&early).contains("\"missing_aspects\":[\"column_profile\"]"),
-        "{}",
-        one(&early)
-    );
+    let Some(Outcome::Rows(batches)) = early.last() else {
+        panic!("extraction serves rows")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let body = batch
+        .column(batch.schema().index_of("body").unwrap())
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap()
+        .value(0)
+        .to_string();
+    assert!(body.contains("\"applicable\":true"), "{body}");
 
-    // The measurement plane runs on the served table; outliers chains on
-    // the profile through ACCEPTS.
+    // The profile measurement still lands its own full body, and the
+    // outlier read serves the landed row at the pin.
     agent
-        .execute(
-            "SELECT profile() FROM orders.amount;\n\
-             SELECT outliers() FROM orders.amount;",
-        )
+        .execute("SELECT profile() FROM orders.amount;")
         .await
         .unwrap();
     let outlier = agent
@@ -322,20 +317,21 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert!(one(&na).contains("\"applicable\":false"), "{}", one(&na));
 
-    // The ACCEPTS edge is the one declared invalidation: a fresh profile
-    // kills the outlier cache.
+    // Same pin, same answer: a repeated extraction serves the landed
+    // measurement — nothing recomputes, nothing sweeps. Any input moving
+    // makes a new pin, and that is the whole invalidation story.
     agent
+        .execute("SELECT profile() FROM orders.amount;")
+        .await
+        .unwrap();
+    let landed = agent
         .execute(
-            "DELETE FROM cache WHERE function = 'profile';\n\
-             SELECT profile() FROM orders.amount;",
+            "SELECT count(*) FROM measurements \
+             WHERE function = 'profile' AND subject = 'orders.amount';",
         )
         .await
         .unwrap();
-    let stale = agent
-        .execute("SELECT count(*) FROM cache WHERE function = 'outliers';")
-        .await
-        .unwrap();
-    assert_eq!(one(&stale), "0", "a re-profile invalidated its dependent");
+    assert_eq!(one(&landed), "1", "a hit at the pin lands nothing new");
 
     // Semantic glosses and the detector at read: one slot green, a human
     // disagreement turns it red and the collapsed value withholds.
@@ -349,7 +345,7 @@ async fn fixture_11_with_real_scripts() {
         .unwrap();
     assert_eq!(one(&band), "green");
 
-    let human = session_for(ActorKind::Human, "philipp", &store, &lake);
+    let human = session_for(ActorKind::Human, "philipp", &store);
     human.execute("USE fin;").await.unwrap();
     human
         .execute(r#"GLOSS behavior ON orders.amount AS $${"value": "stock"}$$;"#)

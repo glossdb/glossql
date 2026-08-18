@@ -11,7 +11,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::{Value, json};
 
 #[derive(Debug, Default)]
@@ -26,7 +26,6 @@ impl FunctionRuntime for Fake {
         function: &FunctionRow,
         _: &str,
         context: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         self.invocations.fetch_add(1, Ordering::SeqCst);
         *self.last_context.lock().unwrap() = Some(context.clone());
@@ -54,16 +53,19 @@ impl FunctionRuntime for Fake {
             // suite's business; here the contract is the serving read.
             "metric_cube" => json!({
                 "applicable": true,
-                "caps": {"dims": 2, "members": 24, "months": 24},
+                "caps": {"dims": 4, "members": 24, "months": 48},
                 "metrics": [{
                     "metric": "revenue", "applicable": true, "behavior": "flow",
                     "dims": ["region"], "alternative": "all invoiced",
                     "rows": [
-                        ["", "", "2026-01", 100.0], ["", "", "2026-02", 130.0],
-                        ["region", "EMEA", "2026-01", 60.0], ["region", "EMEA", "2026-02", 70.0],
-                        ["region", "AMER", "2026-01", 40.0], ["region", "AMER", "2026-02", 60.0],
-                        ["alternative", "all invoiced", "2026-01", 90.0],
-                        ["alternative", "all invoiced", "2026-02", 95.0]
+                        {"dimension": "", "member": "", "period": "2026-01", "value": 100.0},
+                        {"dimension": "", "member": "", "period": "2026-02", "value": 130.0},
+                        {"dimension": "region", "member": "EMEA", "period": "2026-01", "value": 60.0},
+                        {"dimension": "region", "member": "EMEA", "period": "2026-02", "value": 70.0},
+                        {"dimension": "region", "member": "AMER", "period": "2026-01", "value": 40.0},
+                        {"dimension": "region", "member": "AMER", "period": "2026-02", "value": 60.0},
+                        {"dimension": "alternative", "member": "all invoiced", "period": "2026-01", "value": 90.0},
+                        {"dimension": "alternative", "member": "all invoiced", "period": "2026-02", "value": 95.0}
                     ]
                 }]
             }),
@@ -210,7 +212,7 @@ async fn the_human_slot_outranks_the_agent_slot_in_collapse() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn extraction_computes_once_then_reads_the_cache() {
+async fn extraction_computes_once_then_serves_the_pin() {
     let (session, fake) = agent_session().await;
     run(&session, SETUP).await;
     run(
@@ -228,12 +230,16 @@ async fn extraction_computes_once_then_reads_the_cache() {
     assert_eq!(
         fake.invocations.load(Ordering::SeqCst),
         1,
-        "second run reads the cache"
+        "the second run serves the measurement at the same pin"
     );
 
-    // Re-running is removal (SPEC.md §6): drop this function's cache rows.
-    let outcomes = run(&session, "DELETE FROM cache WHERE function = 'outliers';").await;
-    assert!(matches!(outcomes[0], Outcome::Affected(1)));
+    // Any input moving makes a new pin — a gloss moves the glossary head,
+    // so the next extraction recomputes. No sweep, only a miss.
+    run(
+        &session,
+        r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#,
+    )
+    .await;
     run(&session, "SELECT outliers() FROM fin;").await;
     assert_eq!(fake.invocations.load(Ordering::SeqCst), 2);
 }
@@ -325,7 +331,7 @@ async fn attest_serves_detector_outputs_in_the_fixed_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn glossary_and_cache_are_plain_readable_relations() {
+async fn the_glossary_is_a_plain_readable_relation_and_the_strike_is_parked() {
     let (session, _) = agent_session().await;
     run(&session, SETUP).await;
     run(
@@ -347,12 +353,14 @@ async fn glossary_and_cache_are_plain_readable_relations() {
     +---------------+--------+------------+
     ");
 
-    let outcomes = run(
-        &session,
-        "DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';",
-    )
-    .await;
-    assert!(matches!(outcomes[0], Outcome::Affected(1)));
+    // The strike routes, and refuses by name until iceberg-rust 0.11
+    // can remove rows (ruled 2026-08-17).
+    let e = session
+        .execute("DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("parked"), "{e}");
+    assert!(e.to_string().contains("0.11"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -377,6 +385,7 @@ async fn substrate_sql_runs_against_registered_tables() {
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
 
     let rows = table(
@@ -600,7 +609,7 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
         }$$ AS FACT ON TABLE;
         GLOSS journal_balanced ON fin.trial_balance AS $${"outcome": "debits equal credits, exactly", "tolerance": 0.0}$$;
         DECLARE FUNCTION journal_check FOR fin AS $$#{}$$
-          ACCEPTS (imports) RETURNS journal_balanced;
+ RETURNS journal_balanced;
         DECLARE FUNCTION framework_bands FOR fin AS $$#{}$$;
         DECLARE WITNESS journal_w ON journal_balanced BY (AGENT, HUMAN)
           DETECTOR framework_bands THRESHOLD 0.5;
@@ -691,6 +700,7 @@ async fn the_serve_door_runs_the_current_grounding() {
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
 
     run(
@@ -925,54 +935,6 @@ async fn a_self_referential_frame_errors_instead_of_recursing() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_forwarded_delete_carries_one_statement_only() {
-    // SQLite reads `$tag$` as a bind parameter, not a quote, so a
-    // dollar-quoted body carrying a `;` used to arrive as a statement
-    // sequence and execute — that payload promoted an agent's gloss to
-    // human rank (found 2026-08-06). The delete now renders from the AST
-    // with its literals normalized, so the payload is what it always
-    // claimed to be: a string nobody's body matches.
-    let (session, _) = agent_session().await;
-    run(&session, SETUP).await;
-    run(
-        &session,
-        r#"GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
-    )
-    .await;
-    let outcomes = session
-        .execute(
-            "DELETE FROM glossary WHERE body = $q$ ; UPDATE glossary SET actor_kind='human'; --$q$;",
-        )
-        .await
-        .unwrap();
-    assert!(
-        matches!(outcomes.first(), Some(Outcome::Affected(0))),
-        "the payload matched nothing and ran as nothing: {outcomes:?}"
-    );
-
-    // The gloss is untouched, and it is still an agent's — the rank the
-    // collapse turns on.
-    let rows = table(
-        &session,
-        "SELECT actor_kind, body FROM glossary WHERE subject = 'orders.amount';",
-    )
-    .await;
-    assert!(rows.contains("agent"), "{rows}");
-    assert!(!rows.contains("human"), "{rows}");
-
-    // A dollar-quoted body without the trick still deletes: normalizing it
-    // to a single-quoted string keeps the value identical.
-    let outcomes = session
-        .execute(r#"DELETE FROM glossary WHERE body = $q${"value": "EUR"}$q$;"#)
-        .await
-        .unwrap();
-    assert!(
-        matches!(outcomes.first(), Some(Outcome::Affected(1))),
-        "{outcomes:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_source_conventions_gloss_reads_from_another_dataset() {
     // `AS FACT ON SOURCE` (ruled 2026-08-12): a declared source's name
     // is a subject, and its slots serve in every dataset — the deposit
@@ -1062,4 +1024,256 @@ async fn metric_series_serves_the_cached_cube() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("no arguments"), "{e}");
+
+    // A later write orphans the cube: the series still serves — the
+    // last landed cube, marked stale — and a recompute brings it back
+    // current (ruled 2026-08-18; before that every chart went blank
+    // after any gloss).
+    run(
+        &session,
+        r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET;
+           GLOSS note ON fin AS $${"text": "a write that moves the pin"}$$;"#,
+    )
+    .await;
+    let stale = table(
+        &session,
+        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
+    )
+    .await;
+    assert!(stale.contains("false"), "{stale}");
+    run(&session, "SELECT metric_cube() FROM fin;").await;
+    let fresh = table(
+        &session,
+        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
+    )
+    .await;
+    assert!(fresh.contains("true"), "{fresh}");
+}
+
+/// A measurement is a query (stage 5, §7e): the skill's own
+/// quick-validation flow, end to end — declare the aspect and a
+/// SQL-bodied function, extract, read the landed value back. No script
+/// runtime is involved: the Fake would panic on an unknown name, and
+/// the assertion on `invocations` proves it was never asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_measurement_body_is_sql() {
+    let (session, fake) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("billed", DataType::Float64, true),
+        Field::new("settled", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Float64Array::from(vec![100.0, 200.0, 50.0])),
+            Arc::new(Float64Array::from(vec![100.0, 150.0, 50.0])),
+        ],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    run(
+        &session,
+        r#"DECLARE ASPECT ar_check WITH $${"type": "object",
+             "required": ["outcome", "breach_rate"],
+             "properties": {"outcome": {"type": "string"},
+                            "breach_rate": {"type": "number"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION ar_settles_in_full FOR fin AS $$
+             SELECT
+               'a receipt settles its invoice in full' AS outcome,
+               CASE WHEN count(*) = 0 THEN 0.0
+                    ELSE CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*)
+               END AS breach_rate
+             FROM settlements
+           $$ RETURNS ar_check;
+           SELECT ar_settles_in_full() FROM settlements;"#,
+    )
+    .await;
+    assert_eq!(
+        fake.invocations.load(Ordering::SeqCst),
+        0,
+        "the engine ran the body; the script runtime was never asked"
+    );
+
+    let read = table(
+        &session,
+        "SELECT aspect, value FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(
+        read.contains("0.3333333333333333") && read.contains("settles its invoice"),
+        "{read}"
+    );
+}
+
+/// `subject_column($subject)` — the column-grain primitive: the body is
+/// declared once, the subject varies per extraction, and a one-column
+/// one-row result lands as the bare value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_subject_binds_through_the_column_door() {
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "billed",
+        DataType::Float64,
+        true,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Float64Array::from(vec![
+            Some(100.0),
+            None,
+            Some(50.0),
+        ]))],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    run(
+        &session,
+        r#"DECLARE ASPECT filled WITH $${"type": "integer"}$$ AS MEASUREMENT;
+           DECLARE FUNCTION filled_count FOR fin AS $$
+             SELECT count(v) FROM subject_column($subject)
+           $$ RETURNS filled;
+           SELECT filled_count() FROM settlements.billed;"#,
+    )
+    .await;
+    let read = table(
+        &session,
+        "SELECT subject, value FROM GLOSSARY(settlements.billed::filled);",
+    )
+    .await;
+    assert!(read.contains("| 2"), "the two non-null cells: {read}");
+
+    // A malformed argument is refused with the door's own sentence.
+    let e = session
+        .execute("SELECT * FROM subject_column(billed);")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("one quoted subject"), "{e}");
+}
+
+/// A CTE shadows a same-named table — SQL's precedence. The planner seam
+/// runs before DataFusion's own CTE lookup, so without declining these
+/// names the pin arm (a landed table) and the batch arm (a store
+/// relation) would both capture them silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cte_shadows_a_same_named_table() {
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "amount",
+        DataType::Float64,
+        true,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "cells",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    // The landed `cells` has no `marker`; only the CTE serves this.
+    let read = table(
+        &session,
+        "WITH cells AS (SELECT 42 AS marker) SELECT marker FROM cells;",
+    )
+    .await;
+    assert!(read.contains("42"), "{read}");
+
+    // Same precedence over a store relation.
+    let read = table(
+        &session,
+        "WITH functions AS (SELECT 7 AS seven) SELECT seven FROM functions;",
+    )
+    .await;
+    assert!(read.contains("| 7"), "{read}");
+}
+
+/// A measurement landed on one channel is visible on every other the
+/// moment it commits. The pin covers inputs only, so a landing moves no
+/// pin — a cached context checked by pin alone would keep serving the
+/// view from before the landing on every channel but the one that
+/// computed it (found 2026-08-18: the docket's charts stayed empty
+/// while the agent's channel served the cube it had just landed).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_landing_reaches_a_channel_that_already_read() {
+    let store = Store::open_memory().await.unwrap();
+    let agent = session_with(ActorKind::Agent, "agent-1", &store).await;
+    let human = session_with(ActorKind::Human, "phil", &store).await;
+    run(&agent, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("billed", DataType::Float64, true),
+        Field::new("settled", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Float64Array::from(vec![100.0, 200.0, 50.0])),
+            Arc::new(Float64Array::from(vec![100.0, 150.0, 50.0])),
+        ],
+    )
+    .unwrap();
+    agent
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+    run(
+        &agent,
+        r#"DECLARE ASPECT ar_check WITH $${"type": "object",
+             "required": ["outcome", "breach_rate"],
+             "properties": {"outcome": {"type": "string"},
+                            "breach_rate": {"type": "number"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION ar_settles_in_full FOR fin AS $$
+             SELECT 'short receipts counted' AS outcome,
+               CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*) AS breach_rate
+             FROM settlements
+           $$ RETURNS ar_check;"#,
+    )
+    .await;
+
+    // The other channel reads first, so its context caches at the
+    // current pin — before anything is measured.
+    run(&human, "USE fin;").await;
+    let before = table(
+        &human,
+        "SELECT aspect, state FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(before.contains("unassessed"), "{before}");
+
+    // The agent's channel lands the measurement; the pin does not move.
+    run(&agent, "SELECT ar_settles_in_full() FROM settlements;").await;
+
+    let after = table(
+        &human,
+        "SELECT aspect, value FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(
+        after.contains("0.3333333333333333"),
+        "the landing must reach the channel that cached first: {after}"
+    );
 }

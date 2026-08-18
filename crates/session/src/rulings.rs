@@ -41,9 +41,14 @@ pub struct Ruling<'a> {
     pub dimension: &'a str,
     pub key: &'a str,
     pub assumption: &'a str,
-    /// `confirmed` or `corrected`.
+    /// `confirmed`, `corrected`, or `unclear` — the last takes no
+    /// position on the claim: the human could not tell what was being
+    /// asked, and the agent owes a reformulation under a NEW key (the
+    /// entry holds this key closed; a clearer assumption with its own
+    /// key derives a fresh question on its own).
     pub stance: &'a str,
-    /// The human's own words, when they corrected something.
+    /// The human's own words, when they corrected something — or, on
+    /// `unclear`, what confused them.
     pub note: Option<String>,
 }
 
@@ -148,10 +153,19 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
         .execute(&format!("GLOSS ruling ON {subject} AS $${body}$$;"))
         .await
         .map(|_| {
-            format!(
-                "ruled ({stance}) on `{key}` — the fold-in is yours: \
-                 re-record `{aspect}` carrying that key, citing the ruling"
-            )
+            if stance == "unclear" {
+                format!(
+                    "ruled (unclear) on `{key}` — the question missed: \
+                     reformulate the assumption in `{aspect}` under a new \
+                     key and re-record; the clearer wording derives its \
+                     own question"
+                )
+            } else {
+                format!(
+                    "ruled ({stance}) on `{key}` — the fold-in is yours: \
+                     re-record `{aspect}` carrying that key, citing the ruling"
+                )
+            }
         })
         .map_err(|e| e.to_string())
 }

@@ -50,7 +50,19 @@
   }
 
   class GlRows extends HTMLElement {
-    async connectedCallback() {
+    connectedCallback() {
+      // A write refreshes the panel in place: the store hears the same
+      // event first (capture) and has already dropped its caches.
+      this._written = () => this.load();
+      document.addEventListener('glossql:written', this._written);
+      this.load();
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener('glossql:written', this._written);
+    }
+
+    async load() {
       // Upgrade during the initial parse runs before the children
       // exist — wait for the document when the template isn't there
       // yet. htmx swaps insert fully-parsed trees and skip this.
@@ -65,17 +77,28 @@
         this.replaceChildren(glStore.errorBox('gl-rows needs a <template> child'));
         return;
       }
+      // A frame the write could not change keeps its cache entry, and
+      // the identical promise says so — same rows, nothing to redraw.
+      const pending = glStore.rows(this.getAttribute('frame'));
+      if (pending === this._rendered) return;
+      this._rendered = pending;
       this.setAttribute('aria-busy', 'true');
       try {
-        const rows = await glStore.rows(this.getAttribute('frame'));
+        const rows = await pending;
         if (!this.isConnected) return;
         const cap = Number(this.getAttribute('rows')) || 200;
         const out = [];
         if (rows.length === 0) {
-          const note = document.createElement('p');
-          note.className = 'rows-empty';
-          note.textContent = this.getAttribute('empty') || 'nothing here';
-          out.push(note);
+          // `empty=""` states nothing on purpose — a banner frame that
+          // serves rows only while its condition holds stays silent
+          // otherwise. Only an absent or worded attribute gets a note.
+          const stated = this.getAttribute('empty');
+          if (stated !== '') {
+            const note = document.createElement('p');
+            note.className = 'rows-empty';
+            note.textContent = stated || 'nothing here';
+            out.push(note);
+          }
         }
         const shown = Math.min(rows.length, cap);
         for (let i = 0; i < shown; i++) {
@@ -94,6 +117,8 @@
         // tree so boosted row links keep the shell's navigation.
         if (window.htmx) window.htmx.process(this);
       } catch (e) {
+        // A failed fetch is not rendered state — retry on the next load.
+        this._rendered = null;
         this.replaceChildren(template, glStore.errorBox(e.message || String(e)));
       } finally {
         this.removeAttribute('aria-busy');

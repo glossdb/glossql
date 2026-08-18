@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::Value;
 
 /// A kernel that scores each row by its summed deviation from the
@@ -32,7 +32,6 @@ impl FunctionRuntime for MeanKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }
@@ -75,7 +74,6 @@ impl FunctionRuntime for NanKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }
@@ -165,14 +163,15 @@ GLOSS suspects ON fin AS $${"sql": "SELECT * FROM orders"}$$;
 
 async fn frame_session() -> (Session, Arc<MeanKernel>) {
     let (session, kernel) = session_with_kernel().await;
+    run(&session, SETUP).await;
     let (schema, batch) = orders_table();
     session
         .register_table(
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
     (session, kernel)
 }
 
@@ -259,6 +258,7 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
             "big",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
     run(
         &session,
@@ -318,14 +318,15 @@ async fn a_non_finite_score_refuses_the_read() {
     )
     .expect("session builds")
     .with_runtime(Arc::new(NanKernel));
+    run(&session, SETUP).await;
     let (schema, batch) = orders_table();
     session
         .register_table(
             "orders",
             Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
         )
+        .await
         .unwrap();
-    run(&session, SETUP).await;
 
     let e = session
         .execute("SELECT * FROM misfit.suspects();")

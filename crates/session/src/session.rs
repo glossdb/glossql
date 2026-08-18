@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider, TableProvider};
-use datafusion::common::{DataFusionError, ParamValues, TableReference};
+use datafusion::common::{DataFusionError, ParamValues};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -104,39 +104,27 @@ pub enum Outcome {
     Affected(u64),
 }
 
-/// The query capability every measurement invocation receives (SPEC.md §6 —
-/// scripts run any SQL against the dataset). Sync because scripts are; the
-/// session implements it over its context with the block-in-place bridge
-/// the reads already use. Detectors get a door that refuses (§7.1).
-///
-/// Contract: an empty result still ships one empty batch carrying the
-/// schema — the PROBE rule (§3), so a `LIMIT 0` through the door types
-/// columns without scanning them.
-pub trait SqlDoor: Send + Sync {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String>;
-
-    /// Many statements, answered in order. The default runs them one by
-    /// one; doors backed by a runtime overlap them — the script stays a
-    /// sequential orchestrator, the fan-out lives below the seam
-    /// (2026-08-06: v0.3 ran its pair scans on a thread pool; rhai has no
-    /// threads, so the door carries the parallelism instead).
-    fn sql_all(&self, queries: &[String]) -> Vec<Result<Vec<RecordBatch>, String>> {
-        queries.iter().map(|q| self.sql(q)).collect()
-    }
-}
-
 /// The seam scripts plug into (rhai + arrow kernels, `glossql-scripts`).
-/// `context` is the document the server assembled from the function's
-/// `ACCEPTS` aspects (SPEC.md §6) — or, for a detector, its slots and
-/// threshold (§7.1). Tests inject fakes.
+/// Since stage 5 a script is a judge: it receives its `context` — a
+/// detector's slots and threshold (§7.1), or a legacy measurement's
+/// `ACCEPTS` document — and computes; the SQL door died with the last
+/// shipped script measurement, so a script never re-enters the engine.
+/// Tests inject fakes.
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     fn invoke(
         &self,
         function: &FunctionRow,
         subject: &str,
         context: &Value,
-        door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String>;
+
+    /// The aggregate statistics the runtime ships (`profile`, `mad`,
+    /// `entropy` — the shapes SQL lacks). Registered on the session's
+    /// context when the runtime attaches, so a measurement body and an
+    /// agent's own SQL name the same functions.
+    fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
+        Vec::new()
+    }
 
     /// The band kernel behind the `whatif.` door (ruled 2026-08-11):
     /// fit one estimator on the replayed worlds, quantiles at `alphas`
@@ -168,19 +156,49 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     fn misfit_scores(&self, _x: &[f64], _rows: usize, _cols: usize) -> Result<Vec<f64>, String> {
         Err("this runtime carries no misfit kernel".into())
     }
+
+    /// The stock/flow discriminator behind the behavior-evidence door
+    /// (stage 5): alignment by hash join on typed keys, conventions —
+    /// each term and every ordered pair difference — as one matrix
+    /// product over the stacked entity series, residuals and gates per
+    /// entity. `y` rows are `(e, b, yv)`, `m` rows `(e, b, s_<term>…)`,
+    /// both ordered by (e, b). Returns `{n_common, summaries}` as the
+    /// script kernel did. The runtime that carries the kernel overrides
+    /// this; the default refuses.
+    fn reconcile(
+        &self,
+        _y: &[RecordBatch],
+        _m: &[RecordBatch],
+        _terms: &[String],
+    ) -> Result<Value, String> {
+        Err("this runtime carries no reconcile kernel".into())
+    }
+
+    /// One TabICL fit and read, behind the metric-bands walk (stage 5):
+    /// train on `rows` × `cols` features (row-major), predict one test
+    /// row, return the band value per alpha in order and the PIT — the
+    /// quantile at which `actual` lands in the predicted distribution.
+    /// The runtime that carries the model overrides this; the default
+    /// refuses, and the door reports why.
+    fn band_point(
+        &self,
+        _train_x: &[f64],
+        _rows: usize,
+        _cols: usize,
+        _train_y: &[f64],
+        _test_x: &[f64],
+        _alphas: &[f64],
+        _actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        Err("this runtime carries no band kernel".into())
+    }
 }
 
 #[derive(Debug)]
 pub struct NoRuntime;
 
 impl FunctionRuntime for NoRuntime {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        _: &str,
-        _: &Value,
-        _: Arc<dyn SqlDoor>,
-    ) -> Result<Value, String> {
+    fn invoke(&self, function: &FunctionRow, _: &str, _: &Value) -> Result<Value, String> {
         Err(format!(
             "no function runtime configured — `{}` cannot run without scripts",
             function.name
@@ -188,11 +206,15 @@ impl FunctionRuntime for NoRuntime {
     }
 }
 
-/// The session's own door: statements run against its context, so scripts
-/// see the mounted lake tables, the derived views, and the read relations.
-struct CtxDoor {
-    ctx: SessionContext,
-    handle: tokio::runtime::Handle,
+/// One substrate statement out of a SQL string — the internal reads
+/// (the drop-table emptiness probe) plan through the same pre-pass as
+/// everything else.
+fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
+    let mut statements = GlossqlParser::parse_sql(sql)?;
+    match statements.pop() {
+        Some(Statement::Substrate(statement)) => Ok(*statement),
+        _ => Err(SessionError::NotOneRead),
+    }
 }
 
 /// A script reads; it never writes. `SessionContext::sql` permits DDL, DML
@@ -203,66 +225,6 @@ pub(crate) fn read_only() -> datafusion::prelude::SQLOptions {
         .with_allow_ddl(false)
         .with_allow_dml(false)
         .with_allow_statements(false)
-}
-
-impl SqlDoor for CtxDoor {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
-        tokio::task::block_in_place(|| {
-            self.handle.block_on(async {
-                let df = self
-                    .ctx
-                    .sql_with_options(query, read_only())
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let schema = Arc::new(df.schema().as_arrow().clone());
-                let mut batches = df.collect().await.map_err(|e| e.to_string())?;
-                if batches.is_empty() {
-                    batches.push(RecordBatch::new_empty(schema));
-                }
-                Ok(batches)
-            })
-        })
-    }
-
-    fn sql_all(&self, queries: &[String]) -> Vec<Result<Vec<RecordBatch>, String>> {
-        // Waves of 4: enough overlap to hide per-query latency, small
-        // enough that concurrent scans stay inside the process fd
-        // budget. 16 crossed it (booksql run, 2026-08-07): every query
-        // in a wave scans in parallel and a parquet scan holds around
-        // target_partitions files open, so 16 dataset-grain queries
-        // peaked the process past the macOS launchd soft limit of 256
-        // (sampled 22→236→32 across one burst) and the sweep died on
-        // "Too many open files". 4 concurrent scans leave that headroom
-        // without serializing the batch.
-        tokio::task::block_in_place(|| {
-            self.handle.block_on(async {
-                let mut out = Vec::with_capacity(queries.len());
-                for wave in queries.chunks(4) {
-                    let mut handles = Vec::with_capacity(wave.len());
-                    for q in wave {
-                        let ctx = self.ctx.clone();
-                        let q = q.clone();
-                        handles.push(tokio::spawn(async move {
-                            let df = ctx
-                                .sql_with_options(&q, read_only())
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            let schema = Arc::new(df.schema().as_arrow().clone());
-                            let mut batches = df.collect().await.map_err(|e| e.to_string())?;
-                            if batches.is_empty() {
-                                batches.push(RecordBatch::new_empty(schema));
-                            }
-                            Ok(batches)
-                        }));
-                    }
-                    for h in handles {
-                        out.push(h.await.unwrap_or_else(|e| Err(e.to_string())));
-                    }
-                }
-                out
-            })
-        })
-    }
 }
 
 pub struct Session {
@@ -279,16 +241,12 @@ pub struct Session {
 }
 
 impl Session {
-    /// Must be called inside a multi-thread tokio runtime — read planning
-    /// blocks in place on store queries.
     pub fn new(store: Store, actor: Actor) -> Result<Self, SessionError> {
         let shared = Arc::new(Shared {
             store,
             dataset: RwLock::new(None),
-            handle: tokio::runtime::Handle::current(),
-            lake: RwLock::new(None),
             runtime: RwLock::new(Arc::new(NoRuntime)),
-            read_cache: RwLock::new(None),
+            context: RwLock::new(None),
             ctx: RwLock::new(None),
         });
         let config = SessionConfig::new()
@@ -305,8 +263,12 @@ impl Session {
         let state = SessionStateBuilder::new()
             .with_default_features()
             .with_config(config)
+            // The base planner resolves nothing: every statement builds its
+            // own state carrying its own pre-pass result (`reads::state_with`).
+            // This one only serves paths that name no SQL-bodied door.
             .with_relation_planners(vec![Arc::new(GlossqlReads {
                 shared: Arc::clone(&shared),
+                resolved: Arc::new(Default::default()),
             })])
             .build();
         let mut ctx = SessionContext::new_with_state(state);
@@ -338,36 +300,51 @@ impl Session {
     }
 
     pub fn with_runtime(self, runtime: Arc<dyn FunctionRuntime>) -> Self {
+        for udaf in runtime.udafs() {
+            self.ctx.register_udaf(udaf);
+        }
         *self.shared.runtime.write().expect("runtime lock") = runtime;
         self
     }
 
-    /// Attach the workspace data plane: recipes materialize, `USE` mounts
-    /// the dataset's tables, gloss and cache writes carry snapshot ids.
-    pub fn with_lake(self, lake: Lake) -> Self {
-        *self.shared.lake.write().expect("lake lock") = Some(lake);
-        self
-    }
-
-    fn lake(&self) -> Option<Lake> {
+    fn lake(&self) -> Lake {
         self.shared.lake()
     }
 
-    fn door(&self) -> CtxDoor {
-        CtxDoor {
-            ctx: self.ctx.clone(),
-            handle: self.shared.handle.clone(),
-        }
-    }
-
-    /// Data-plane tables come from recipes at M3; until then (and in tests)
-    /// they are registered directly.
-    pub fn register_table(
+    /// A fixture landing for tests: the same storage path a recipe takes,
+    /// without the recipe — the table is created in the bound dataset's
+    /// namespace and the rows commit as one snapshot.
+    pub async fn register_table(
         &self,
         name: &str,
         provider: Arc<dyn TableProvider>,
     ) -> Result<(), SessionError> {
-        self.ctx.register_table(name, provider)?;
+        let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+        let schema = provider.schema();
+        let batches = self.ctx.read_table(provider)?.collect().await?;
+        self.land(&dataset, name, schema, &batches, Default::default())
+            .await
+    }
+
+    /// One landing: the table created through the mounted schema (the
+    /// framework's front door), the batches committed through iceberg-rust
+    /// so `facts` ride the snapshot — DataFusion's INSERT cannot carry
+    /// them, and facts about a write ride the write.
+    async fn land(
+        &self,
+        dataset: &str,
+        table: &str,
+        schema: Arc<datafusion::arrow::datatypes::Schema>,
+        batches: &[RecordBatch],
+        facts: std::collections::HashMap<String, String>,
+    ) -> Result<(), SessionError> {
+        let lake = self.lake();
+        lake.ensure_namespace(dataset, Default::default()).await?;
+        let mounted = self.mount_schema(dataset).await?;
+        let empty = RecordBatch::new_empty(Arc::clone(&schema));
+        let shape = MemTable::try_new(schema, vec![vec![empty]])?;
+        mounted.register_table(table.to_string(), Arc::new(shape))?;
+        lake.append_batches(dataset, table, batches, facts).await?;
         Ok(())
     }
 
@@ -422,68 +399,53 @@ impl Session {
             }
             Declaration::Dataset(d) => {
                 store.declare_dataset(d).await?;
-                if let Some(lake) = self.lake() {
-                    lake.ensure_namespace(&d.name.value).await?;
-                    self.mount_schema(&d.name.value).await?;
-                }
+                self.mount_schema(&d.name.value).await?;
                 format!("DECLARE DATASET {}", d.name.value)
             }
             Declaration::Recipe(d) => {
                 let admission = store.recipe_admission(d).await?;
                 let (dataset, table) = (d.dataset.value.as_str(), d.table.value.as_str());
-                match self.lake() {
-                    None => {
-                        store.put_recipe(d).await?;
-                        format!("DECLARE RECIPE {table} ON {dataset}")
+                let lake = self.lake();
+                if admission == RecipeAdmission::Unchanged
+                    && lake.table_exists(dataset, table).await?
+                {
+                    format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
+                } else {
+                    // Supersede-and-reland (ruled 2026-08-06): a changed
+                    // recipe drops the old landing and its
+                    // evidence, then lands fresh. Glosses stay — the
+                    // snapshot id discloses their age.
+                    //
+                    // The new recipe runs *first*: until its SQL has
+                    // produced batches there is nothing to replace the
+                    // old landing with, and a recipe that errors must
+                    // not have destroyed the table it was replacing.
+                    let replaced = admission == RecipeAdmission::Replaced
+                        && lake.table_exists(dataset, table).await?;
+                    let landed = glossql_import::run_recipe(
+                        &self.source_spec(&d.source.value).await?,
+                        &d.sql,
+                    )
+                    .await?;
+                    if replaced {
+                        let mounted = self.mount_schema(dataset).await?;
+                        mounted.deregister_table(table)?;
                     }
-                    Some(lake)
-                        if admission == RecipeAdmission::Unchanged
-                            && lake.table_exists(dataset, table).await? =>
-                    {
-                        format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
-                    }
-                    Some(lake) => {
-                        // Supersede-and-reland (ruled 2026-08-06): a changed
-                        // recipe drops the old landing and its cached
-                        // evidence, then lands fresh. Glosses stay — the
-                        // snapshot id discloses their age.
-                        //
-                        // The new recipe runs *first*: until its SQL has
-                        // produced batches there is nothing to replace the
-                        // old landing with, and a recipe that errors must
-                        // not have destroyed the table it was replacing.
-                        let replaced = admission == RecipeAdmission::Replaced
-                            && lake.table_exists(dataset, table).await?;
-                        let landed = glossql_import::run_recipe(
-                            &self.source_spec(&d.source.value).await?,
-                            &d.sql,
-                        )
-                        .await?;
-                        if replaced {
-                            let mounted = self.mount_schema(dataset).await?;
-                            mounted.deregister_table(table)?;
-                            self.shared
-                                .store
-                                .invalidate_table_evidence(dataset, table)
-                                .await?;
-                        }
-                        let (summary, casts) =
-                            self.materialize(dataset, table, landed).await?;
-                        store.put_recipe(d).await?;
-                        // The counts arrive at the decision moment: whether
-                        // the dropped rows — and the cells the casts nulled
-                        // — are acceptable is the author's call, made now.
-                        // A multi-source recipe reports per-scan counts
-                        // instead of a misleading difference (found
-                        // 2026-08-12: the sum across providers read as one
-                        // source's drop count).
-                        let verb = if replaced {
-                            "superseded and re-landed: "
-                        } else {
-                            ""
-                        };
-                        format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts})")
-                    }
+                    let (summary, casts) = self.materialize(dataset, table, landed).await?;
+                    store.put_recipe(d).await?;
+                    // The counts arrive at the decision moment: whether
+                    // the dropped rows — and the cells the casts nulled
+                    // — are acceptable is the author's call, made now.
+                    // A multi-source recipe reports per-scan counts
+                    // instead of a misleading difference (found
+                    // 2026-08-12: the sum across providers read as one
+                    // source's drop count).
+                    let verb = if replaced {
+                        "superseded and re-landed: "
+                    } else {
+                        ""
+                    };
+                    format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts})")
                 }
             }
             Declaration::Relationship(d) => {
@@ -537,96 +499,55 @@ impl Session {
                 name: name.into(),
             }));
         }
-        if let Some(lake) = self.lake() {
-            // A dataset declared while no lake was attached has no
-            // namespace yet; creating it here keeps `USE` self-healing.
-            lake.ensure_namespace(name).await?;
-            self.mount_schema(name).await?;
-            self.ctx
-                .state_ref()
-                .write()
-                .config_mut()
-                .options_mut()
-                .catalog
-                .default_schema = name.to_string();
-        }
+        self.mount_schema(name).await?;
+        self.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .catalog
+            .default_schema = name.to_string();
         *self.shared.dataset.write().expect("state lock") = Some(name.to_string());
-        *self.shared.read_cache.write().expect("read cache") = None;
         Ok(())
     }
 
     /// Land what a recipe produced as its table: create the table through
-    /// the mounted schema (live — no rebuild), append the batches through
-    /// DataFusion's INSERT path, one snapshot per materialization. The
-    /// recipe already ran at its source; the caller holds the result.
+    /// the mounted schema (live — no rebuild), then commit the batches
+    /// through iceberg-rust with the landing's source-side facts riding
+    /// the snapshot as properties — DataFusion's INSERT cannot carry
+    /// them. One snapshot per materialization; the `imports` relation is
+    /// these snapshots read back.
     async fn materialize(
         &self,
         dataset: &str,
         table: &str,
         landed: glossql_import::Landed,
     ) -> Result<(String, String), SessionError> {
-        // The doors cannot guarantee statement order (M3 report), so the
-        // staged name is unique per materialization, never per session.
-        static STAGED_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let staged = format!(
-            "__glossql_staged_{}",
-            STAGED_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
-        let lake = self.lake().expect("caller holds a lake");
         let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
         let summary = landed.row_summary(rows);
-        // Both read the whole `Landed`, so both are taken before the
-        // batches move into the staging table below.
-        let dropped = landed.dropped_rows(rows).map(|d| d as i64);
-        let scans = serde_json::Value::Array(
-            landed
-                .source_scans
-                .iter()
-                .map(|(relation, held)| serde_json::json!({"relation": relation, "rows": held}))
-                .collect(),
-        )
-        .to_string();
-
-        lake.ensure_namespace(dataset).await?;
-        let mounted = self.mount_schema(dataset).await?;
-        let empty = RecordBatch::new_empty(Arc::clone(&landed.schema));
-        let shape = MemTable::try_new(Arc::clone(&landed.schema), vec![vec![empty]])?;
-        mounted.register_table(table.to_string(), Arc::new(shape))?;
-
-        if rows > 0 {
-            let batches = MemTable::try_new(Arc::clone(&landed.schema), vec![landed.batches])?;
-            // Qualified into the session's staging schema: a bound
-            // session's bare names resolve into the dataset's schema,
-            // where a registration would create a real lake table.
-            let staged_ref = TableReference::partial("glossql_stage", staged.as_str());
-            self.ctx
-                .register_table(staged_ref.clone(), Arc::new(batches))?;
-            let insert = format!(
-                "INSERT INTO \"{dataset}\".\"{table}\" SELECT * FROM glossql_stage.{staged}"
-            );
-            let inserted = async {
-                self.ctx.sql(&insert).await?.collect().await?;
-                Ok::<(), DataFusionError>(())
-            }
-            .await;
-            let _ = self.ctx.deregister_table(staged_ref);
-            inserted?;
-        }
-        self.shared
-            .store
-            .import_put(
-                dataset,
-                table,
-                &scans,
-                rows as i64,
-                dropped,
-                &landed.casts.to_json().to_string(),
+        let mut facts = std::collections::HashMap::from([(
+            glossql_glossary::LANDING_SCANS_PROP.to_string(),
+            serde_json::Value::Array(
+                landed
+                    .source_scans
+                    .iter()
+                    .map(|(relation, held)| serde_json::json!({"relation": relation, "rows": held}))
+                    .collect(),
             )
+            .to_string(),
+        )]);
+        if let Some(dropped) = landed.dropped_rows(rows) {
+            facts.insert(
+                glossql_glossary::LANDING_DROPPED_PROP.to_string(),
+                dropped.to_string(),
+            );
+        }
+        facts.insert(
+            glossql_glossary::LANDING_CASTS_PROP.to_string(),
+            landed.casts.to_json().to_string(),
+        );
+        self.land(dataset, table, Arc::clone(&landed.schema), &landed.batches, facts)
             .await?;
-        // Every channel's read context, not only this session's: the
-        // snapshot comparison behind serve-and-mark rides it.
-        lake.bump_data_version();
-        *self.shared.read_cache.write().expect("read cache") = None;
         Ok((summary, cast_summary(&landed.casts)))
     }
 
@@ -663,7 +584,7 @@ impl Session {
     /// (found 2026-08-12 — a table landed on the new generation was
     /// invisible to channels mounted before the invalidation).
     async fn mount_schema(&self, dataset: &str) -> Result<Arc<dyn SchemaProvider>, SessionError> {
-        let lake = self.lake().expect("caller holds a lake");
+        let lake = self.lake();
         let current = lake.provider().await?;
         let default = self.ctx.catalog("datafusion").expect("default catalog");
         let same_generation = self
@@ -700,9 +621,6 @@ impl Session {
     /// rebuilt since this session mounted. Cheap when nothing changed:
     /// one lock read and an Arc pointer compare.
     async fn refresh_mount(&self) -> Result<(), SessionError> {
-        if self.lake().is_none() {
-            return Ok(());
-        }
         let dataset = self.shared.dataset.read().expect("state lock").clone();
         if let Some(dataset) = dataset {
             self.mount_schema(&dataset).await?;
@@ -711,14 +629,12 @@ impl Session {
     }
 
     /// The subject's table snapshot at write time — `None` for dataset-level
-    /// subjects, pair paths, tables the lake does not hold, or no lake.
+    /// subjects, pair paths, or tables the lake does not hold.
     async fn stamp(&self, resolved: &Resolved) -> Result<Option<i64>, SessionError> {
-        let Some(lake) = self.lake() else {
-            return Ok(None);
-        };
         if resolved.subject == resolved.dataset || resolved.subject.contains(' ') {
             return Ok(None);
         }
+        let lake = self.lake();
         let table = resolved
             .subject
             .split('.')
@@ -747,14 +663,16 @@ impl Session {
         )))
     }
 
-    /// Extraction (SPEC.md §6): first run computes and caches, later runs
-    /// read the cache; re-running is `DELETE FROM cache WHERE …`. The
-    /// context document holds one entry per `ACCEPTS` aspect: the nearest
-    /// value walking up from the subject (subject, parent, dataset), null
-    /// when nothing is glossed.
+    /// Extraction (SPEC.md §6): the compute act. A hit at the statement's
+    /// pin serves; a miss computes, validates against the RETURNS
+    /// aspect's schema, and lands one `measurements` row — the drift
+    /// record's next point. The context document holds one entry per
+    /// `ACCEPTS` aspect: the nearest value walking up from the subject
+    /// (subject, parent, dataset), null when nothing is glossed.
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
         let resolved = self.subject(&extract.subject).await?;
+        let ctx = self.shared.read_context().await?;
         let mut results = Vec::new();
         for call in &extract.calls {
             let name = call.value.clone();
@@ -767,36 +685,43 @@ impl Session {
             let Some(returns) = function.returns.clone() else {
                 return Err(SessionError::DetectorNotExtractable(name.clone()));
             };
-            let cached = store
-                .cache_get(&resolved.dataset, &resolved.subject, &name, None)
-                .await?;
-            let row = match cached {
+            let measured = glossql_glossary::Store::measurement_in(
+                &ctx,
+                &resolved.dataset,
+                &resolved.subject,
+                &name,
+            );
+            let row = match measured {
                 Some(row) => row,
                 None => {
                     let mut context = serde_json::Map::new();
                     for aspect in &function.accepts {
-                        // A declaration relation in ACCEPTS is an
-                        // invalidation edge only (ruled 2026-08-05): the
-                        // script reads it as a table, no context entry.
-                        if glossql_glossary::accepts_relation(aspect) {
-                            continue;
-                        }
-                        let value =
-                            context_value(&store, &resolved.dataset, &resolved.subject, aspect)
-                                .await?;
+                        let value = context_value(
+                            &self.shared,
+                            &ctx,
+                            &resolved.dataset,
+                            &resolved.subject,
+                            aspect,
+                        )
+                        .await?;
                         context.insert(aspect.clone(), value);
                     }
                     let context = Value::Object(context);
-                    let output = self
-                        .shared
-                        .runtime()
-                        .invoke(
-                            &function,
-                            &resolved.subject,
-                            &context,
-                            Arc::new(self.door()),
-                        )
-                        .map_err(SessionError::Runtime)?;
+                    // Role by shape, extended to the body (ruled
+                    // 2026-08-17, §7e): a RETURNS function whose body is
+                    // one SQL query is a measurement the engine runs. A
+                    // script body still invokes — a legacy authored
+                    // measurement computes from its context alone, and
+                    // one that reaches for the dead SQL door fails with
+                    // the runtime's own message.
+                    let output = match crate::measure::sql_body(&function.script) {
+                        Some(body) => self.compute_sql(body, &resolved.subject).await?,
+                        None => self
+                            .shared
+                            .runtime()
+                            .invoke(&function, &resolved.subject, &context)
+                            .map_err(SessionError::Runtime)?,
+                    };
                     // The aspect's schema is the one contract: nothing lands
                     // under an aspect without validating against it.
                     let (schema, _, grains) = store.aspect(&returns).await?.ok_or_else(|| {
@@ -825,31 +750,59 @@ impl Session {
                             detail,
                         }
                     })?;
-                    let snapshot = self.stamp(&resolved).await?;
-                    store
-                        .cache_put(
-                            &resolved.dataset,
-                            &resolved.subject,
-                            &name,
-                            None,
-                            &output.to_string(),
-                            snapshot,
-                        )
-                        .await?;
-                    store
-                        .cache_get(&resolved.dataset, &resolved.subject, &name, None)
-                        .await?
-                        .ok_or_else(|| {
-                            SessionError::Runtime(format!(
-                                "`{name}` wrote a value that was invalidated before it could be \
-                                 read — check what it ACCEPTS"
-                            ))
-                        })?
+                    // An abstention naming absent inputs is an answer
+                    // about the context, not a measurement of the
+                    // subject (ruled 2026-08-04/16) — it serves without
+                    // landing, so the retry recomputes once the
+                    // producer has run.
+                    if output.get("missing_aspects").is_some() {
+                        glossql_glossary::MeasurementRow {
+                            subject: resolved.subject.clone(),
+                            function: name.clone(),
+                            body: output.to_string(),
+                            computed_at: chrono::Utc::now()
+                                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                                .to_string(),
+                        }
+                    } else {
+                        // No cache to forget: the landing moves the
+                        // store's version, so every channel — this one
+                        // included — misses on its next read.
+                        store
+                            .measurement_put(
+                                &resolved.dataset,
+                                &name,
+                                &resolved.subject,
+                                &returns,
+                                &ctx.pin,
+                                &output.to_string(),
+                            )
+                            .await?
+                    }
                 }
             };
             results.push(row);
         }
         Ok(Outcome::Rows(vec![crate::reads::extraction_batch(results)]))
+    }
+
+    /// A SQL measurement body: the subject bound into the AST, planned
+    /// through the statement pre-pass — same pin, same doors, same
+    /// read-only guard as any read — executed, and shaped by the result
+    /// rule (`measure::body_value`).
+    async fn compute_sql(
+        &self,
+        mut statement: DFStatement,
+        subject: &str,
+    ) -> Result<Value, SessionError> {
+        crate::measure::bind_subject(&mut statement, subject);
+        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let plan = crate::reads::state_with(&self.ctx, &self.shared, resolved)
+            .statement_to_plan(statement)
+            .await?;
+        read_only().verify_plan(&plan)?;
+        let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
+        crate::measure::body_value(&batches)
     }
 
     /// One query, streaming (project lead, 2026-08-04): batches flow as
@@ -860,6 +813,30 @@ impl Session {
     /// [`SessionError::NotOneRead`] and belongs in [`Session::execute`].
     /// The result says whether the query reads only the store's
     /// relations — the doors' cap policy wants to know.
+    /// Plan one statement: resolve its doors asynchronously, then run the
+    /// sync planner over a state that already holds them. Nothing blocks a
+    /// planner thread, and nothing re-enters — the two defects the
+    /// expansion stack existed to survive.
+    pub(crate) async fn plan_statement(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<datafusion::logical_expr::LogicalPlan, SessionError> {
+        Ok(self.plan_statement_classed(statement).await?.0)
+    }
+
+    /// [`Session::plan_statement`] plus what resolution learned: whether
+    /// the statement reads the glossary anywhere in its expansion — the
+    /// frame class the app door serves (ruled 2026-08-18).
+    pub(crate) async fn plan_statement_classed(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
+        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let record = resolved.touches_record();
+        let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
+        Ok((state.statement_to_plan(statement).await?, record))
+    }
+
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
         self.query_stream_with_params(sql, None).await
     }
@@ -896,7 +873,7 @@ impl Session {
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
-        let mut plan = self.ctx.state().statement_to_plan(*statement).await?;
+        let (mut plan, record) = self.plan_statement_classed(*statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
@@ -908,6 +885,7 @@ impl Session {
                 .execute_stream()
                 .await?,
             metadata_only,
+            record,
         })
     }
 
@@ -976,7 +954,7 @@ impl Session {
                 other => return Err(SessionError::SubstrateClosed(verb_of(other))),
             }
         }
-        let plan = self.ctx.state().statement_to_plan(statement).await?;
+        let plan = self.plan_statement(statement).await?;
         let frame = self.ctx.execute_logical_plan(plan).await?;
         // Bounded like the streaming door, for the same reason: the reader
         // sees at most its cap, so the engine should not be asked for more
@@ -1006,7 +984,7 @@ impl Session {
     /// `DROP TABLE` (PoC rules, project lead 2026-08-04): refused while the
     /// table holds data or glosses — replacement is postponed, so this only
     /// ever removes a mis-declared table. What it removes, it removes
-    /// whole: the lake table, the recipe row, the cached evidence, the
+    /// whole: the lake table, its recipe property, its landings, the
     /// import records.
     async fn drop_table(&self, name: &str) -> Result<Outcome, SessionError> {
         let dataset = self
@@ -1017,21 +995,24 @@ impl Session {
             .clone()
             .ok_or(SessionError::NoDataset)?;
         let table = name.rsplit('.').next().unwrap_or(name).trim_matches('"');
-        let Some(lake) = self.lake() else {
-            return Err(SessionError::BadSubject(format!(
-                "no lake — nothing to drop for `{table}`"
-            )));
-        };
+        let lake = self.lake();
         if !lake.table_exists(&dataset, table).await? {
             return Err(SessionError::Store(glossql_glossary::Error::Unknown {
                 what: "table",
                 name: table.into(),
             }));
         }
-        let rows = self
-            .door()
-            .sql(&format!("SELECT count(*) FROM \"{dataset}\".\"{table}\""));
-        let has_data = match rows {
+        let count = async {
+            let plan = self
+                .plan_statement(one_query(&format!(
+                    "SELECT count(*) FROM \"{dataset}\".\"{table}\""
+                ))?)
+                .await?;
+            let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
+            Ok::<_, SessionError>(batches)
+        }
+        .await;
+        let has_data = match count {
             Ok(batches) => batches.iter().any(|b| {
                 b.column(0)
                     .as_any()
@@ -1058,12 +1039,9 @@ impl Session {
         // move (iceberg-datafusion-0.10.1 schema.rs:215-236).
         let mounted = self.mount_schema(&dataset).await?;
         mounted.deregister_table(table)?;
-        self.shared
-            .store
-            .drop_table_records(&dataset, table)
-            .await?;
-        lake.bump_data_version();
-        *self.shared.read_cache.write().expect("read cache") = None;
+        // The recipe and the import record die with the table (its
+        // properties and snapshots); measurements that read it sit at
+        // pins that no longer resolve.
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }
 
@@ -1127,7 +1105,8 @@ fn endpoint_parts(side: &glossql_parser::RelSide) -> (Vec<String>, Vec<String>) 
 /// the subject itself, its parent, then the dataset. Null when nothing is
 /// glossed — scripts are deterministic and handle absence themselves.
 async fn context_value(
-    store: &glossql_glossary::Store,
+    shared: &Arc<Shared>,
+    ctx: &glossql_glossary::ReadContext,
     dataset: &str,
     subject: &str,
     aspect: &str,
@@ -1139,9 +1118,8 @@ async fn context_value(
         } else {
             glossql_glossary::Scope::Subject(current.clone())
         };
-        let rows = store
-            .collapsed_read(dataset, &scope, Some(aspect), &Default::default())
-            .await?;
+        let verdicts = crate::reads::verdicts(shared, ctx, dataset, &scope, Some(aspect)).await?;
+        let rows = glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), ctx, &verdicts);
         let target = if current == dataset {
             dataset
         } else {
@@ -1177,6 +1155,14 @@ fn parent_of(subject: &str, dataset: &str) -> Option<String> {
 pub struct QueryStream {
     pub stream: SendableRecordBatchStream,
     pub metadata_only: bool,
+    /// Whether the statement reads the glossary anywhere in its
+    /// expansion — derived by the pre-pass, not curated. The app door
+    /// serves it as the frame class (`record`/`data`): a record frame
+    /// can change under a glossary write, a data frame cannot, so the
+    /// browser's frame store evicts only record entries on a ruling
+    /// (ruled 2026-08-18). Distinct from `metadata_only`, which is
+    /// syntactic and cannot see through shipped reads.
+    pub record: bool,
 }
 
 /// Every relation the query touches is a store read — and there is at
@@ -1324,7 +1310,7 @@ fn selects_into(query: &Query) -> bool {
     body_selects_into(&query.body)
 }
 
-/// `DELETE FROM glossary … | DELETE FROM cache …` → (target, SQL for the
+/// `DELETE FROM glossary …` → (target, SQL for the
 /// store). The text is rendered from the AST with dollar-quoted literals
 /// normalized to single quotes: the store speaks SQLite, which reads
 /// `$tag$` as a bind parameter rather than a quote, so a dollar-quoted body
@@ -1363,5 +1349,5 @@ fn store_delete(statement: &DFStatement) -> Option<(String, String)> {
         return None;
     }
     let target = name.0[0].as_ident()?.value.to_lowercase();
-    (target == "glossary" || target == "cache").then(|| (target, normalized.to_string()))
+    (target == "glossary").then(|| (target, normalized.to_string()))
 }

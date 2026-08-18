@@ -46,7 +46,7 @@ async fn workspace(dir: &std::path::Path) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake).await.unwrap();
     Session::new(
         store,
         Actor {
@@ -55,7 +55,6 @@ async fn workspace(dir: &std::path::Path) -> Session {
         },
     )
     .unwrap()
-    .with_lake(lake)
 }
 
 fn done(outcome: &Outcome) -> &str {
@@ -211,8 +210,9 @@ async fn fixture_11_add_source_flow() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("amount"), "{err}");
-    // …while the glosses survive as knowledge, and the import history
-    // keeps both landings.
+    // …while the glosses survive as knowledge. The import record is the
+    // table's own snapshots now, and a re-land replaces the table whole —
+    // the substrate has no overwrite — so the record starts over with it.
     let kept = session
         .execute("SELECT count(*) FROM glossary WHERE subject = 'fin';")
         .await
@@ -222,7 +222,7 @@ async fn fixture_11_add_source_flow() {
         .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
         .await
         .unwrap();
-    assert_eq!(single_value(&landings), "2");
+    assert_eq!(single_value(&landings), "1");
 
     // A re-land that cannot run leaves the landing it was replacing
     // (found 2026-08-06: the old table was dropped before the new recipe
@@ -239,13 +239,14 @@ async fn fixture_11_add_source_flow() {
         "3",
         "the live landing is untouched by a recipe that never ran"
     );
-    // And the recipe row still describes what actually landed, so the
-    // retry does not answer `unchanged` over a table that was never made.
+    // And the record still describes what actually landed — the standing
+    // table's own snapshot — so the retry does not answer `unchanged`
+    // over a table that was never made.
     let recipes = session
         .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
         .await
         .unwrap();
-    assert_eq!(single_value(&recipes), "2");
+    assert_eq!(single_value(&recipes), "1");
 
     // The substrate allowlist: schema-altering SQL is refused at the door.
     let err = session

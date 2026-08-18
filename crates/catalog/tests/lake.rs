@@ -37,8 +37,8 @@ async fn front_door_roundtrip() {
     .await
     .unwrap();
 
-    assert!(lake.ensure_namespace("fin").await.unwrap());
-    assert!(!lake.ensure_namespace("fin").await.unwrap());
+    assert!(lake.ensure_namespace("fin", Default::default()).await.unwrap());
+    assert!(!lake.ensure_namespace("fin", Default::default()).await.unwrap());
 
     let ctx = SessionContext::new();
     let schema = mounted(&lake, &ctx, "fin").await;
@@ -117,7 +117,7 @@ async fn provider_is_shared_until_a_namespace_lands() {
     )
     .await
     .unwrap();
-    lake.ensure_namespace("fin").await.unwrap();
+    lake.ensure_namespace("fin", Default::default()).await.unwrap();
 
     // Every touch is the same mounted representation — an Arc clone,
     // never a rebuild — and clones of the Lake share it.
@@ -130,7 +130,7 @@ async fn provider_is_shared_until_a_namespace_lands() {
     // A namespace create invalidates: the next touch rebuilds over the
     // current list, and the new dataset is visible.
     assert!(first.schema("ops").is_none());
-    lake.ensure_namespace("ops").await.unwrap();
+    lake.ensure_namespace("ops", Default::default()).await.unwrap();
     let rebuilt = lake.provider().await.unwrap();
     assert!(!Arc::ptr_eq(&first, &rebuilt));
     assert!(rebuilt.schema("ops").is_some());

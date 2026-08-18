@@ -1,7 +1,7 @@
 //! The dimensions plane's two measurements on data whose truth is by
 //! construction. Relevance: a known bucket distribution scores exactly
 //! coverage × Pielou, gates abstain near-keys, and the missing-profile
-//! abstention heals through the ACCEPTS edge once the profile lands.
+//! profile composes inline, so the first ask scores (§7e).
 //! Hierarchies: a strict zip → city → state nest arrives with g3 = 0
 //! and λ = 1, the reverse directions are screened, a code↔label
 //! bijection arrives as an alias candidate, and a 98%-dominant flag —
@@ -20,11 +20,11 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
+const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.sql");
 /// The shipped body, so the declaration carries what runs.
-const HIERARCHIES: &str = include_str!("../functions/hierarchies.rhai");
+const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
-const PROFILE: &str = include_str!("../functions/profile.rhai");
+const PROFILE: &str = include_str!("../functions/profile.sql");
 
 async fn write_table(root: &std::path::Path, name: &str, batch: RecordBatch) {
     let ctx = SessionContext::new();
@@ -115,35 +115,27 @@ async fn fixture(root: &std::path::Path) {
     .await;
 }
 
-fn one(outcomes: &[Outcome]) -> String {
-    match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
-            let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-            assert_eq!(rows, 1, "expected one row");
-            let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
-            datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap()
-        }
-        other => panic!("expected Rows, got {other:?}"),
-    }
-}
 
+/// The extraction's own outcome: the served body. An abstention naming
+/// missing inputs never lands, so it exists only here — a landed value
+/// also reads back through `GLOSSARY(subject::aspect)`.
 async fn measure(session: &Session, function: &str, subject: &str) -> serde_json::Value {
-    session
+    let outcomes = session
         .execute(&format!("SELECT {function}() FROM {subject};"))
         .await
         .unwrap();
-    let aspect = match function {
-        "dimension_relevance" => "dimension_relevance",
-        "detect_hierarchies" => "hierarchy_candidates",
-        other => other,
+    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("extraction serves rows");
     };
-    let value = one(&session
-        .execute(&format!(
-            "SELECT value FROM GLOSSARY({subject}::{aspect}) WHERE state = 'current';"
-        ))
-        .await
-        .unwrap());
-    serde_json::from_str(&value).unwrap()
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    let body = batch
+        .column(batch.schema().index_of("body").unwrap())
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap()
+        .value(0)
+        .to_string();
+    serde_json::from_str(&body).unwrap()
 }
 
 fn candidate<'a>(
@@ -171,7 +163,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
     )
     .await
     .unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let store = Store::open_scratch(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -180,7 +172,6 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         },
     )
     .unwrap()
-    .with_lake(lake)
     .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
@@ -203,8 +194,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
              DECLARE FUNCTION profile FOR GLOBAL \
              AS $${PROFILE}$$ RETURNS column_profile;\n\
              DECLARE FUNCTION dimension_relevance FOR GLOBAL \
-             AS $${DIMENSION_RELEVANCE}$$ \
-             ACCEPTS (column_profile) RETURNS dimension_relevance;\n\
+             AS $${DIMENSION_RELEVANCE}$$ RETURNS dimension_relevance;\n\
              DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
              AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
              DECLARE RECIPE survey ON fin FROM erp_export AS \
@@ -216,19 +206,9 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         .await
         .unwrap();
 
-    // Without a profile the score abstains and names its input; the
-    // profile's landing heals the cached abstention through ACCEPTS.
-    let unhealed = measure(&session, "dimension_relevance", "survey.segment").await;
-    assert_eq!(unhealed["applicable"], false, "{unhealed}");
-    assert_eq!(
-        unhealed["missing_aspects"][0], "column_profile",
-        "{unhealed}"
-    );
-
-    session
-        .execute("SELECT profile() FROM survey.segment;")
-        .await
-        .unwrap();
+    // The profile composes inline (§7e): the first ask scores — the
+    // missing_aspects abstention went with the stored intermediate it
+    // named.
     let scored = measure(&session, "dimension_relevance", "survey.segment").await;
     assert_eq!(scored["applicable"], true, "{scored}");
     let relevance = scored["relevance"].as_f64().unwrap();

@@ -51,18 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let warehouse = args.workspace.join("warehouse");
     std::fs::create_dir_all(&warehouse)?;
 
-    let store_url = format!(
-        "sqlite://{}?mode=rwc",
-        args.workspace.join("glossary.sqlite").display()
-    );
-    let store = Store::open(&store_url).await?;
     let lake = Lake::open(&args.workspace.join("catalog.sqlite"), &warehouse).await?;
-    // The runtime's root is the workspace, so declarations reference
-    // scripts the way the corpus spells them: 'functions/profile.rhai'.
+    let store = Store::open(lake).await?;
+    // The runtime's root is the workspace — the band model's weights
+    // live under it (bodies ride their declarations, fixture 24).
     let runtime = Arc::new(RhaiRuntime::new(args.workspace.clone()));
 
     let plane =
-        Arc::new(Plane::new(store.clone(), Some(lake), runtime).with_row_cap(args.doors.row_cap));
+        Arc::new(Plane::new(store.clone(), runtime).with_row_cap(args.doors.row_cap));
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
         &store,
