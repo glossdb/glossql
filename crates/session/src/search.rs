@@ -2257,12 +2257,16 @@ fn band_shape() -> Vec<Field> {
 }
 
 /// A member series at a verb: the monthly shapes of [`monthly_sql`]
-/// sliced along one dimension column, NULL members excluded.
-fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, verb: &str) -> String {
+/// sliced along one dimension column, NULL members excluded. `member`
+/// is the member expression — the cast column plainly, or the bucketing
+/// CASE. The stock rank still partitions by the *raw* column, so a
+/// bucket's value is the sum of its raw members' own latest
+/// observations, never one arbitrary latest row of the whole bucket.
+fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, member: &str, verb: &str) -> String {
     match verb {
         "ratio" => format!(
             "SELECT date_trunc('month', \"{tcol}\") AS period, \
-                    CAST(\"{dcol}\" AS VARCHAR) AS member, \
+                    {member} AS member, \
                     sum(num) / nullif(sum(den), 0) AS value \
              FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL \
              GROUP BY 1, 2 ORDER BY 1, 2"
@@ -2270,7 +2274,7 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, verb: &str) -> String {
         "stock" => format!(
             "SELECT period, member, sum(value) AS value FROM (\
                 SELECT date_trunc('month', \"{tcol}\") AS period, \
-                       CAST(\"{dcol}\" AS VARCHAR) AS member, value, \
+                       {member} AS member, value, \
                        rank() OVER (\
                            PARTITION BY date_trunc('month', \"{tcol}\"), \"{dcol}\" \
                            ORDER BY \"{tcol}\" DESC) AS rk \
@@ -2279,7 +2283,7 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, verb: &str) -> String {
         ),
         _ => format!(
             "SELECT date_trunc('month', \"{tcol}\") AS period, \
-                    CAST(\"{dcol}\" AS VARCHAR) AS member, sum(value) AS value \
+                    {member} AS member, sum(value) AS value \
              FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL \
              GROUP BY 1, 2 ORDER BY 1, 2"
         ),
@@ -2293,12 +2297,19 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, verb: &str) -> String {
 /// turns metric names into rows once and the `metric_series()` read
 /// serves them to any frame with plain value filters.
 ///
-/// Caps, recorded here: at most 2 dimension columns per metric (a
-/// served column is admitted at 2..24 distinct members; fewest members
-/// win), every member of an admitted dimension, the last 24 months. A
-/// grounding assumption carrying `alternative_sql` (the metrics skill's
-/// named-rival convention) contributes one more series under dimension
-/// 'alternative'. The rival SQL is authored but never
+/// Caps, recorded here: at most 4 dimension columns per metric, the
+/// last 48 months. A served column is admitted at 2..512 distinct
+/// members, fewest members first; up to 24 members every member is
+/// named, above that the dimension is *bucketed* — the top 23 by
+/// weight (summed value; a ratio weighs by its denominator) keep their
+/// names and the rest fold into 'other', so a wide axis enters instead
+/// of falling off a cliff (ruled 2026-08-18, the rel-salt run: 34
+/// sales orgs could never enter at a hard 24). Beyond 512 a column
+/// reads as an identifier, not a dimension. The fact row names its
+/// bucketed dimensions so 'other' is never read as a business member.
+/// A grounding assumption carrying `alternative_sql` (the metrics
+/// skill's named-rival convention) contributes one more series under
+/// dimension 'alternative'. The rival SQL is authored but never
 /// admission-validated — it runs behind a guard and a failure is
 /// reported, not thrown. The monthly verbs are [`monthly_sql`]'s three,
 /// the ratio verb because summing a ratio was wrong: DSO for one month
@@ -2314,9 +2325,10 @@ pub(crate) async fn metric_cube_slices(
     shared: &Arc<Shared>,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
-    const DIMS_CAP: usize = 2;
+    const DIMS_CAP: usize = 4;
     const MEMBERS_CAP: i64 = 24;
-    const MONTHS_CAP: usize = 24;
+    const MEMBERS_ADMIT_CAP: i64 = 512;
+    const MONTHS_CAP: usize = 48;
 
     let ctx = shared
         .ctx
@@ -2418,18 +2430,22 @@ pub(crate) async fn metric_cube_slices(
             }
         }
         let mut dims: Vec<String> = Vec::new();
+        let mut bucketed: Vec<String> = Vec::new();
         while dims.len() < DIMS_CAP {
             let mut best: Option<(&str, i64)> = None;
             for (c, n) in &counts {
-                if *n < 2 || *n > MEMBERS_CAP || dims.iter().any(|d| d == c) {
+                if *n < 2 || *n > MEMBERS_ADMIT_CAP || dims.iter().any(|d| d == c) {
                     continue;
                 }
                 if best.is_none_or(|(_, bn)| *n < bn) {
                     best = Some((c, *n));
                 }
             }
-            let Some((c, _)) = best else { break };
+            let Some((c, n)) = best else { break };
             dims.push(c.to_string());
+            if n > MEMBERS_CAP {
+                bucketed.push(c.to_string());
+            }
         }
 
         // The total series bounds the window: the last MONTHS_CAP
@@ -2450,7 +2466,48 @@ pub(crate) async fn metric_cube_slices(
 
         // Member series per admitted dimension, same verb, same window.
         for dcol in &dims {
-            let q = monthly_member_sql(sql, &tcol, dcol, verb);
+            // A bucketed dimension names its top members by weight and
+            // folds the rest into 'other'. The set is resolved here and
+            // spliced as literals — deterministic (weight, then name)
+            // so two computations at one pin agree.
+            let member = if bucketed.iter().any(|b| b == dcol) {
+                let weight = if verb == "ratio" { "sum(den)" } else { "sum(value)" };
+                let q = format!(
+                    "SELECT CAST(\"{dcol}\" AS VARCHAR) AS mc_member FROM ({sql}) \
+                     WHERE \"{dcol}\" IS NOT NULL GROUP BY 1 \
+                     ORDER BY {weight} DESC NULLS LAST, mc_member LIMIT {}",
+                    MEMBERS_CAP - 1
+                );
+                let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
+                let batches = ctx
+                    .execute_logical_plan(plan)
+                    .await
+                    .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                    .collect()
+                    .await
+                    .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+                let mut named = Vec::new();
+                for b in batches.iter().filter(|b| b.num_rows() > 0) {
+                    let col = b
+                        .schema()
+                        .index_of("mc_member")
+                        .map(|i| b.column(i).clone())
+                        .map_err(|e| SessionError::Runtime(e.to_string()))?;
+                    for i in 0..b.num_rows() {
+                        let m = array_value_to_string(&col, i)
+                            .map_err(|e| SessionError::Runtime(e.to_string()))?;
+                        named.push(format!("'{}'", m.replace('\'', "''")));
+                    }
+                }
+                format!(
+                    "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
+                     THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
+                    named.join(", ")
+                )
+            } else {
+                format!("CAST(\"{dcol}\" AS VARCHAR)")
+            };
+            let q = monthly_member_sql(sql, &tcol, dcol, &member, verb);
             let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
             let batches = ctx
                 .execute_logical_plan(plan)
@@ -2502,6 +2559,7 @@ pub(crate) async fn metric_cube_slices(
         extra.insert("applicable".into(), json!(true));
         extra.insert("behavior".into(), json!(verb));
         extra.insert("dims".into(), json!(dims));
+        extra.insert("bucketed".into(), json!(bucketed));
         if let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) {
             for a in assumptions {
                 let Some(alt_sql) = a.get("alternative_sql").and_then(Value::as_str) else {
@@ -2595,6 +2653,11 @@ fn cube_shape() -> Vec<Field> {
         Field::new("behavior", DataType::Utf8, true),
         Field::new(
             "dims",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
+            "bucketed",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),

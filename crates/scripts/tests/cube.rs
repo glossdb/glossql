@@ -99,7 +99,8 @@ fn rows_of<'v>(metric: &'v Value, dimension: &str) -> Vec<&'v Value> {
 async fn the_cube_slices_windows_and_carries_the_rival() {
     let dir = tempfile::tempdir().unwrap();
     // 30 months of a flow: 15 rows per month (3 regions × 5 channels),
-    // with a 40-distinct note column that must fail dimension admission.
+    // with a 40-distinct note column that exceeds the named-member cap
+    // and must come back bucketed — top members plus 'other'.
     let (mut dates, mut values, mut regions, mut channels, mut notes) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (i, start) in MONTH_STARTS.iter().enumerate() {
@@ -183,25 +184,47 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     let out = cube(&session).await;
 
     assert_eq!(out["applicable"], json!(true));
-    assert_eq!(out["caps"]["months"], json!(24));
+    assert_eq!(out["caps"]["months"], json!(48));
     let metrics = out["metrics"].as_array().unwrap();
     assert_eq!(metrics.len(), 2);
 
     let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
-    // admission by member count, fewest first; the 40-member column is out
-    assert_eq!(revenue["dims"], json!(["region", "channel"]));
+    // admission by member count, fewest first; the 40-member column
+    // enters last, bucketed
+    assert_eq!(revenue["dims"], json!(["region", "channel", "note"]));
+    assert_eq!(revenue["bucketed"], json!(["note"]));
     assert_eq!(revenue["behavior"], json!("flow"));
     assert_eq!(revenue["alternative"], json!("all invoiced"));
 
-    // the window: 30 generated months serve as the last 24
+    // the window: all 30 generated months fit under the 48 cap
     let total = rows_of(revenue, "");
-    assert_eq!(total.len(), 24);
-    assert_eq!(total[0]["period"], json!("2024-07"));
-    assert_eq!(rows_of(revenue, "region").len(), 3 * 24);
-    assert_eq!(rows_of(revenue, "channel").len(), 5 * 24);
+    assert_eq!(total.len(), 30);
+    assert_eq!(total[0]["period"], json!("2024-01"));
+    assert_eq!(rows_of(revenue, "region").len(), 3 * 30);
+    assert_eq!(rows_of(revenue, "channel").len(), 5 * 30);
     let rival = rows_of(revenue, "alternative");
-    assert_eq!(rival.len(), 24);
+    assert_eq!(rival.len(), 30);
     assert_eq!(rival[0]["member"], json!("all invoiced"));
+
+    // the bucketed dimension: at most 24 members counting 'other', and
+    // bucketing loses nothing — each month's note slices still sum to
+    // the month's 15 rows
+    let notes = rows_of(revenue, "note");
+    let members: std::collections::HashSet<&str> = notes
+        .iter()
+        .map(|r| r["member"].as_str().unwrap())
+        .collect();
+    assert!(members.len() <= 24, "{} members", members.len());
+    assert!(members.contains("other"));
+    let mut by_month: std::collections::HashMap<&str, f64> = Default::default();
+    for r in &notes {
+        *by_month.entry(r["period"].as_str().unwrap()).or_default() +=
+            r["value"].as_f64().unwrap();
+    }
+    assert_eq!(by_month.len(), 30);
+    for (period, sum) in by_month {
+        assert!((sum - 15.0).abs() < 1e-9, "{period}: {sum}");
+    }
 
     // the stock: no served dimensions, its own 18-month window
     let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();

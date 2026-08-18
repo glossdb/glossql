@@ -53,7 +53,7 @@ impl FunctionRuntime for Fake {
             // suite's business; here the contract is the serving read.
             "metric_cube" => json!({
                 "applicable": true,
-                "caps": {"dims": 2, "members": 24, "months": 24},
+                "caps": {"dims": 4, "members": 24, "months": 48},
                 "metrics": [{
                     "metric": "revenue", "applicable": true, "behavior": "flow",
                     "dims": ["region"], "alternative": "all invoiced",

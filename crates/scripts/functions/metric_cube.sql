@@ -17,7 +17,7 @@
 -- (found at the port's own suite, 2026-08-18).
 WITH mc_d AS (SELECT * FROM metric_cube_slices($subject)),
 mc_facts AS (
-  SELECT seq, metric, applicable, reason, behavior, dims,
+  SELECT seq, metric, applicable, reason, behavior, dims, bucketed,
          alternative, alternative_error
   FROM mc_d WHERE fact
 ),
@@ -32,17 +32,17 @@ mc_cells AS (
 ),
 mc_m AS (
   SELECT f.seq, f.metric, f.applicable, f.reason, f.behavior, f.dims,
-         f.alternative, f.alternative_error,
+         f.bucketed, f.alternative, f.alternative_error,
          CASE WHEN f.applicable THEN c.rows END AS rows,
          c.cell_count
   FROM mc_facts f JOIN mc_cells c ON f.seq = c.seq
 )
 SELECT
   count(metric) > 0 AS applicable,
-  named_struct('dims', 2, 'members', 24, 'months', 24) AS caps,
+  named_struct('dims', 4, 'members', 24, 'months', 48) AS caps,
   coalesce(array_agg(named_struct(
     'metric', metric, 'applicable', applicable, 'reason', reason,
-    'behavior', behavior, 'dims', dims, 'rows', rows,
+    'behavior', behavior, 'dims', dims, 'bucketed', bucketed, 'rows', rows,
     'alternative', alternative, 'alternative_error', alternative_error
   ) ORDER BY seq) FILTER (WHERE metric IS NOT NULL), []) AS metrics,
   named_struct(
