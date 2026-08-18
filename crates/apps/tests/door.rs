@@ -438,6 +438,47 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
+    // Metadata and data are not one pile (ruled 2026-08-18): every
+    // frame response carries `glossql-frame-class`, derived by the
+    // session's pre-pass from what the frame's expansion actually
+    // resolves — never a curated list. `record` frames read the
+    // glossary somewhere and can change under a ruling; `data` frames
+    // provably cannot, so the browser's store keeps them across
+    // rulings. The stale banner is record on purpose: staleness is a
+    // fact about the record, read through workspace_next.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    for (frame, expected) in [
+        ("open", "record"),
+        ("settled", "record"),
+        ("owed", "record"),
+        ("assumptions", "record"),
+        ("stale", "record"),
+        ("metric", "record"),
+        ("trend", "data"),
+        ("slices", "data"),
+        ("dims", "data"),
+    ] {
+        let response = get(
+            &app,
+            &format!("/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "{frame}");
+        assert_eq!(
+            response
+                .headers()
+                .get("glossql-frame-class")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected),
+            "frame `{frame}`"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_dossier_faces_survive_a_second_dataset() {
     // Found live by the lead (2026-08-12): with two datasets in the
     // workspace, frames that scanned the `datasets` relation fanned

@@ -73,7 +73,7 @@ pub async fn frame(
         .query_stream_with_params(&sql, Some(ParamValues::from(values)))
         .await
     {
-        Ok(query) => stream(query.stream),
+        Ok(query) => stream(query.stream, query.record),
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }
 }
@@ -177,11 +177,18 @@ pub(crate) async fn bound_dataset(
     names.into_iter().next()
 }
 
+/// The frame-class header: `record` when the frame's expansion reads
+/// the glossary anywhere (derived by the session's pre-pass, never
+/// curated), `data` when it provably does not. The browser's frame
+/// store evicts record entries on a ruling and keeps data entries —
+/// the cube survives every glossary write (ruled 2026-08-18).
+pub const FRAME_CLASS: &str = "glossql-frame-class";
+
 /// Encode into a chunked body as batches arrive — the same shape as
 /// serverd's `/query` door (crates/serverd/src/query.rs): the channel
 /// capacity is the backpressure, an error after bytes flowed truncates
 /// the stream, and a client hanging up cancels the engine's work.
-fn stream(mut batches: SendableRecordBatchStream) -> Response {
+fn stream(mut batches: SendableRecordBatchStream, record: bool) -> Response {
     let schema = batches.schema();
     let (mut tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(2);
     tokio::spawn(async move {
@@ -214,7 +221,10 @@ fn stream(mut batches: SendableRecordBatchStream) -> Response {
         let _ = ship(&mut writer, &mut tx).await;
     });
     (
-        [(header::CONTENT_TYPE, ARROW_STREAM)],
+        [
+            (header::CONTENT_TYPE.as_str(), ARROW_STREAM),
+            (FRAME_CLASS, if record { "record" } else { "data" }),
+        ],
         Body::from_stream(rx),
     )
         .into_response()

@@ -13,6 +13,11 @@
   const tables = new Map(); // frame url -> Promise<Arrow.Table>
   const rowSets = new Map(); // frame url -> Promise<Array<Object>>
   const specs = new Map(); // spec url -> Promise<Object>
+  // frame url -> 'record' | 'data', from the server's derived
+  // glossql-frame-class header: `record` frames read the glossary
+  // somewhere in their expansion and can change under a ruling; `data`
+  // frames provably cannot. Metadata and data are not one pile.
+  const classes = new Map();
 
   function approot() {
     return new URL(document.body.dataset.approot || '/app/', document.location.origin);
@@ -40,6 +45,8 @@
       } catch (_) { /* not json — keep the status line */ }
       throw new Error(message);
     }
+    // Absent header reads as record — evict-on-write is the safe side.
+    classes.set(url, res.headers.get('glossql-frame-class') || 'record');
     return Arrow.tableFromIPC(new Uint8Array(await res.arrayBuffer()));
   }
 
@@ -106,23 +113,24 @@
     return el;
   }
 
-  // A write invalidates the store. The server announces every write
-  // with `HX-Trigger: glossql:written` (the ruling's 204, and the
-  // stale-tab 409 whose cause is someone else's write); htmx dispatches
-  // the event on the posting form and it bubbles. Checked by URL alone,
-  // the store kept serving the view from before the write until a hard
-  // reload (found 2026-08-18, the open panel after a ruling; the
-  // server's channel cache had the same defect the same week). Capture
-  // phase, so the caches are empty before anything refetches. Only the
-  // record panels (gl-rows) re-load on the event — a ruling changes
-  // the record, not the instruments; charts, tables and numbers keep
-  // their DOM and simply read fresh whenever they next load. Specs
+  // A write evicts what it can change, nothing else. The server
+  // announces every write with `HX-Trigger: glossql:written` (the
+  // ruling's 204, and the stale-tab 409 whose cause is someone else's
+  // write), and it classifies every frame it serves: `record` frames
+  // read the glossary somewhere in their expansion, `data` frames
+  // provably do not — so the cube, the trend and the slices survive a
+  // ruling untouched, in cache and on screen. Capture phase, so the
+  // evictions land before any panel's own listener refetches. Specs
   // stay: they are static files.
   document.addEventListener(
     'glossql:written',
     () => {
-      tables.clear();
-      rowSets.clear();
+      for (const url of new Set([...tables.keys(), ...rowSets.keys()])) {
+        if ((classes.get(url) || 'record') === 'record') {
+          tables.delete(url);
+          rowSets.delete(url);
+        }
+      }
     },
     { capture: true }
   );

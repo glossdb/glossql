@@ -363,6 +363,33 @@ impl RelationPlanner for GlossqlReads {
     }
 }
 
+/// Whether a factor [`compute_batch`] resolves reads the glossary —
+/// directly (`glossary`, `GLOSSARY()`, `ATTEST()`) or through collapsed
+/// slots (the metric doors read groundings, collisions and anchors read
+/// claims). The pre-pass derives the statement's frame class from this
+/// (`record`/`data`, ruled 2026-08-18): a `record` answer can change
+/// under a glossary write, a `data` answer cannot. A new arm in the
+/// match below decides its class here, in the same file.
+pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
+    let TableFactor::Table { name, .. } = f else {
+        return false;
+    };
+    let [part] = name.0.as_slice() else {
+        return false;
+    };
+    part.as_ident().is_some_and(|i| {
+        matches!(
+            i.value.to_lowercase().as_str(),
+            "glossary"
+                | "attest"
+                | "grounding_collisions"
+                | "metric_cube_slices"
+                | "metric_band_walk"
+                | "behavior_anchors"
+        )
+    })
+}
+
 /// The one quoted string argument of a door, if that is what the args
 /// hold.
 fn single_string_arg(a: &datafusion::sql::sqlparser::ast::TableFunctionArgs) -> Option<String> {

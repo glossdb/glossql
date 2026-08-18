@@ -49,6 +49,15 @@ pub(crate) struct Resolved {
     pins: HashMap<String, Arc<dyn TableProvider>>,
     batches: HashMap<String, RecordBatch>,
     ctes: HashSet<String>,
+    /// Whether anything this statement resolved — at any expansion
+    /// depth — reads the glossary: the relation itself, the GLOSSARY/
+    /// ATTEST doors, a served grounding, or a compute door over slots.
+    /// Derived here because resolution is the one place every name
+    /// passes through; nothing curates a list of frames. The app door
+    /// serves it as the frame class (`record`/`data`, ruled
+    /// 2026-08-18): a `record` frame can change under a glossary write
+    /// (a ruling), a `data` frame provably cannot.
+    record: bool,
 }
 
 impl Resolved {
@@ -74,6 +83,12 @@ impl Resolved {
     /// [`shadowed`].
     pub(crate) fn shadowed(&self, f: &TableFactor) -> bool {
         shadowed(&self.ctes, f)
+    }
+
+    /// Whether the statement reads the glossary anywhere in its
+    /// expansion — the frame class, derived during resolution.
+    pub(crate) fn touches_record(&self) -> bool {
+        self.record
     }
 }
 
@@ -313,6 +328,9 @@ async fn compute_batches(
             continue;
         }
         if let Some(batch) = crate::reads::compute_batch(shared, &factor, resolved).await? {
+            if crate::reads::reads_the_record(&factor) {
+                resolved.record = true;
+            }
             resolved.batches.insert(key, batch);
         }
     }
@@ -338,6 +356,12 @@ async fn resolve_door(
     }
     if done.contains(&key) {
         return Ok(());
+    }
+    // A served grounding and a replayed body both come from the
+    // glossary — the statement's answer can change under a glossary
+    // write, whatever the body then reads.
+    if matches!(door, Door::Serve(_) | Door::Replay(..)) {
+        resolved.record = true;
     }
     // The column door has no SQL behind it: one projection of a pinned
     // table, aliased `v`, built right here.

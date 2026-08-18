@@ -77,9 +77,14 @@
         this.replaceChildren(glStore.errorBox('gl-rows needs a <template> child'));
         return;
       }
+      // A frame the write could not change keeps its cache entry, and
+      // the identical promise says so — same rows, nothing to redraw.
+      const pending = glStore.rows(this.getAttribute('frame'));
+      if (pending === this._rendered) return;
+      this._rendered = pending;
       this.setAttribute('aria-busy', 'true');
       try {
-        const rows = await glStore.rows(this.getAttribute('frame'));
+        const rows = await pending;
         if (!this.isConnected) return;
         const cap = Number(this.getAttribute('rows')) || 200;
         const out = [];
@@ -112,6 +117,8 @@
         // tree so boosted row links keep the shell's navigation.
         if (window.htmx) window.htmx.process(this);
       } catch (e) {
+        // A failed fetch is not rendered state — retry on the next load.
+        this._rendered = null;
         this.replaceChildren(template, glStore.errorBox(e.message || String(e)));
       } finally {
         this.removeAttribute('aria-busy');

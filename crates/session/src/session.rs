@@ -821,9 +821,20 @@ impl Session {
         &self,
         statement: datafusion::sql::parser::Statement,
     ) -> Result<datafusion::logical_expr::LogicalPlan, SessionError> {
+        Ok(self.plan_statement_classed(statement).await?.0)
+    }
+
+    /// [`Session::plan_statement`] plus what resolution learned: whether
+    /// the statement reads the glossary anywhere in its expansion — the
+    /// frame class the app door serves (ruled 2026-08-18).
+    pub(crate) async fn plan_statement_classed(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let record = resolved.touches_record();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
-        Ok(state.statement_to_plan(statement).await?)
+        Ok((state.statement_to_plan(statement).await?, record))
     }
 
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
@@ -862,7 +873,7 @@ impl Session {
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
-        let mut plan = self.plan_statement(*statement).await?;
+        let (mut plan, record) = self.plan_statement_classed(*statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
@@ -874,6 +885,7 @@ impl Session {
                 .execute_stream()
                 .await?,
             metadata_only,
+            record,
         })
     }
 
@@ -1143,6 +1155,14 @@ fn parent_of(subject: &str, dataset: &str) -> Option<String> {
 pub struct QueryStream {
     pub stream: SendableRecordBatchStream,
     pub metadata_only: bool,
+    /// Whether the statement reads the glossary anywhere in its
+    /// expansion — derived by the pre-pass, not curated. The app door
+    /// serves it as the frame class (`record`/`data`): a record frame
+    /// can change under a glossary write, a data frame cannot, so the
+    /// browser's frame store evicts only record entries on a ruling
+    /// (ruled 2026-08-18). Distinct from `metadata_only`, which is
+    /// syntactic and cannot see through shipped reads.
+    pub record: bool,
 }
 
 /// Every relation the query touches is a store read — and there is at
