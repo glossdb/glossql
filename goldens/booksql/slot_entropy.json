@@ -1,5 +1,0 @@
-{
-  "books": {
-    "error": "function `slot_entropy` has no RETURNS — a detector runs through its witness, never through extraction"
-  }
-}
