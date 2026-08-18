@@ -509,10 +509,10 @@ golden; the door died with the last one. What stands:
   with the standing fixture; and outliers' cast needed the display
   bridge on date columns.
 
-Still owed from the stage: the SPEC diff ("functions are scripts with
-JSON contracts" → measurement bodies are SQL, judges are scripts) is
-proposed to the project lead, not applied; stage 6 (pre-warm at the
-landing) and stage 7 (scale) follow.
+The SPEC diff ("functions are scripts with JSON contracts" → measurement
+bodies are SQL, judges are scripts) was ratified by the project lead and
+applied 2026-08-18, grammar comments and the two work skills with it.
+Stage 6 (pre-warm at the landing) and stage 7 (scale) follow.
 
 ## 8. Still open
 
