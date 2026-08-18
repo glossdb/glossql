@@ -224,7 +224,12 @@ Then close what owes an act, in the same session:
   recompute per ruling. Read the ruling notes as
   you fold: a note naming a sibling aspect ("differs from … by
   design", or a slip re-ruled) is the human's cross-aspect judgment —
-  carry it into the grounding's assumption text.
+  carry it into the grounding's assumption text. A ruling whose stance
+  is **`unclear` is a refusal of the question, not of the claim**: the
+  human could not tell what you were asking. Its fold-in is a
+  reformulation — rewrite the assumption plainly (its note says what
+  confused them) **under a new key** and re-record; the clearer wording
+  derives its own question, and dropping the old key clears the debt.
 - **A human formula answer newer than the metric's recorded gloss**:
   the two are one definition in two forms — re-record the
   materialization to match (or carry the difference as a disclosed

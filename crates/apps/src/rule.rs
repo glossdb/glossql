@@ -28,7 +28,9 @@ pub struct Answer {
     subject: String,
     aspect: String,
     key: String,
-    /// `confirmed` or `corrected` — the two stances the round serves.
+    /// `confirmed`, `corrected`, or `unclear` — the stances the round
+    /// serves. `unclear` refuses the question rather than the claim:
+    /// the agent owes a reformulation, not a fold-in.
     stance: String,
     /// The human's own words. Required in practice for a correction:
     /// "wrong" without saying what is right closes a question and
@@ -78,7 +80,7 @@ pub async fn rule(
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = match answer.stance.as_str() {
-        "confirmed" | "corrected" => answer.stance.as_str(),
+        "confirmed" | "corrected" | "unclear" => answer.stance.as_str(),
         other => return plain(StatusCode::BAD_REQUEST, format!("unknown stance `{other}`")),
     };
     if stance == "corrected" && answer.note.trim().is_empty() {

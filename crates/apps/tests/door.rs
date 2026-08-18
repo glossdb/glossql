@@ -723,6 +723,60 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
+    // The third stance (ruled 2026-08-18): the human refuses the
+    // QUESTION, not the claim. A sloppily worded question could
+    // previously only be deferred, which re-asks the same words
+    // forever. `unclear` lands like any ruling — this key closes, what
+    // confused the reader rides as the note — and what the agent owes
+    // is a reformulation under a NEW key (whose clearer wording derives
+    // its own question), never a fold-in.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let human = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    human
+        .execute(
+            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
+                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/app/docket/rule")
+                .header(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(Body::from(
+                    "subject=perf&aspect=dso&key=per-line&stance=unclear&note=which+lines%3F",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER, "{response:?}");
+
+    // The question closes — the refusal holds this key, and only a
+    // re-record with a clearer assumption asks again.
+    assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 0);
+    let settled = body_text(get(&app, "/app/docket/frames/settled").await).await;
+    assert!(settled.contains("unclear"), "{settled}");
+    assert!(settled.contains("which lines?"), "{settled}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
     // Rebuilt 2026-08-14: a standing check is an ATTEST row — a
     // detector's live verdict beside its witness's expectation. A

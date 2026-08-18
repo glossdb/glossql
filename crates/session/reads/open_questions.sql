@@ -48,6 +48,8 @@ FROM agent_assumptions o
 JOIN aspects a ON a.name = o.aspect AND a.kind = 'query'
 LEFT JOIN ruling_entries s
   ON s.subject = o.subject AND s.key = o.key AND s.aspect <> o.aspect
+ -- `unclear` is not a judgment, so it is never offered back as one
+ AND s.stance IN ('confirmed', 'corrected')
 WHERE o.conf < 1.0 AND o.key IS NOT NULL
   AND coalesce(o.dimension, '-') NOT IN ('behavior', 'sign', 'grain')
   AND NOT EXISTS (SELECT 1 FROM ruling_entries r

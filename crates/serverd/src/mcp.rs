@@ -402,6 +402,27 @@ impl GlossqlMcp {
                     .await;
                 format!("{note} — repeated from the ruling already standing on that key")
             }
+            // The question itself missed — the human refuses it rather
+            // than the claim. The entry holds this key closed; the
+            // agent owes a reformulation under a new key, which derives
+            // its own question (ruled 2026-08-18, after a run where a
+            // sloppily worded fold-in question could only be deferred).
+            Some("unclear — ask differently") => {
+                let note = content
+                    .get("correction")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.trim().to_string());
+                self.land_ruling(
+                    session,
+                    RulingEntry {
+                        stance: "unclear",
+                        note,
+                        ..entry
+                    },
+                )
+                .await
+            }
             Some("wrong") => {
                 let correction = content
                     .get("correction")
@@ -682,7 +703,11 @@ impl Question {
         // must not cost is a re-reading: where they already ruled this
         // key next door, that ruling is offered back as a third answer,
         // so agreeing is one choice and differing is still open.
-        let mut stances = vec!["stands as stated".to_string(), "wrong".to_string()];
+        let mut stances = vec![
+            "stands as stated".to_string(),
+            "wrong".to_string(),
+            "unclear — ask differently".to_string(),
+        ];
         if let Some(s) = sibling {
             stances.push(format!("{SAME_AS} ({s})"));
         }
@@ -702,7 +727,8 @@ impl Question {
             message: format!(
                 "{subject} · {aspect} — {dimension}: \"{assumption}\" \
                  (confidence {confidence}).{pointer} Does this stand? If wrong, \
-                 say what is right. Decline to defer."
+                 say what is right. If the question itself is unclear, say so — \
+                 it will be reformulated and asked again. Decline to defer."
             ),
             requested_schema: schema,
         })
