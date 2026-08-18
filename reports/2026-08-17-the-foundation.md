@@ -526,6 +526,58 @@ extreme and it was *width* (129 columns, 110 in one table) — recipes
 filter each imported dataset to its relevant columns, so width is the
 lever and depth the lesser issue.
 
+## 7h. Stage 7, first pass (2026-08-18): the ratios hold; the stop is wide-table width
+
+The full walk, release build, fresh workspace per corpus, every shipped
+function over every subject of its grain — the same harness that took
+the stage-0 baseline, now timing itself (`_timings.json` beside the
+values; runs under the session scratchpad, not kept):
+
+| corpus | size | rows | tables × cols | land | capture | relationships | hierarchies |
+|---|---|---|---|---|---|---|---|
+| rel-f1 | 1.2 MB | 97 k | 9 × 67 | 0.4 s | 50 s | 1.2 s | 0.9 s |
+| rel-salt | 85 MB | 4.4 M | 4 × 31 | 1.0 s | 91 s | 15.1 s | 7.8 s |
+| rel-hm | 111 MB | 3.5 M | 3 × 37 | 0.8 s | 51 s | 1.7 s | 3.0 s |
+| rel-event | 116 MB | 6.1 M | 5 × 131 | 3.0 s | 954 s | 243 s | 214 s |
+| rel-avito | 187 MB | 8.4 M | 8 × 42 | 1.7 s | 197 s | 22.7 s | 5.3 s |
+| booksql (CSV) | 192 MB | 1.0 M | 7 × 73 | 0.9 s | 118 s | 89.6 s | 9.1 s |
+| rel-trial | 642 MB | 5.8 M | 15 × 140 | 5.5 s | 280 s | 33.2 s | 33.6 s |
+| rel-stack | 993 MB | 5.4 M | 7 × 51 | 6.8 s | 302 s | 35.3 s | 22.9 s |
+
+- **Landing is linear and never the cost**: 85–150 MB/s, parquet and
+  CSV alike; the gigabyte corpus lands in 6.8 s. A landed workspace
+  costs about its source size on disk.
+- **Where the ratios stop: wide-table width.** The two searches scale
+  with within-table column pairs × that table's rows, not with the
+  workspace. rel-trial carries the same total width as rel-event
+  (140 vs 131 columns) but spread over 15 tables: 33 s against 243 s.
+  One 110-column × 2 M-row table is the whole rel-event bill —
+  exactly the case the project lead named (2026-08-18): recipes filter
+  an import to its relevant columns, so width is the lever and depth
+  the lesser issue.
+- **A correction to the record**: the stage-0 goldens for rel-f1,
+  rel-event and booksql were taken on these same full corpora — there
+  never was a smaller subset. So old-vs-new compares directly:
+  rel-event went 8 min → 16 min, but the old 8 min *refused* the
+  searches (the interpreter's 50 M-op cap) and crawled
+  `behavior_evidence` at ~1 s/column; the new run computes everything —
+  behavior 3× faster, and the added 8 min is the searches' actual
+  answer, not regression. booksql 30 s → 118 s, of which 90 s is the
+  composite rescue genuinely computing over 810 k rows.
+- **Determinism at scale**: a fresh rel-event workspace reproduces the
+  golden candidate set exactly — 1876 edges, set-identical.
+- **Recall at depth**: rel-salt's declared-truth FK edges appear 6/6 at
+  overlap 1.0 under 2 M rows (in a 66-candidate recall set whose false
+  positives are the judge's business, as taught).
+- **Optimisation potential, recorded and not taken** (each needs its
+  own ruling against "every change must simplify"): (a) a landed
+  measurement costs ~0.1–0.15 s, dominated by the store commit as
+  snapshot history accumulates — the parked batching item is the same
+  lever; (b) `outliers` re-derives its profile aggregates inline at
+  roughly twice `profile`'s scan cost; (c) the searches take no
+  column-pair pruning before scanning — the wide-table quadratic above.
+  Memory was not instrumented; nothing strained at 993 MB.
+
 ## 8. Still open
 
 - ~~**A pinned table shadows a same-named CTE.**~~ Closed 2026-08-18.
