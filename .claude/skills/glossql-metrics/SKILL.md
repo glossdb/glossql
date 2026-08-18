@@ -94,6 +94,11 @@ PROBE erp_export AS $$SELECT order_id,
 FROM read_parquet('orders/*.parquet') LIMIT 0$$;
 ```
 
+**Name the columns — never `SELECT *`.** A star recipe survives a
+schema change in the source and fails later, somewhere downstream where
+nothing points back at the source; a named SELECT list fails at the
+re-import, which is where the drift is and where you can fix it.
+
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
 NULL — a kept row with a NULL cell, not a dropped row.
