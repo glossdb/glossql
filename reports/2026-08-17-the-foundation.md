@@ -462,6 +462,14 @@ question — how would agents extend this? The answer is the final state:
 
 ## 8. Still open
 
+- **A pinned table shadows a same-named CTE.** The planner seam
+  (`RelationPlanner`) sees every table factor before default planning,
+  and the pin arm resolves any bare name the dataset owns — including a
+  name the query defined as a CTE. Found 2026-08-18 when the cube
+  body's `cells` CTE lost to a workspace table named `cells`; the
+  shipped bodies carry prefixed CTE names as the local cure. The right
+  fix is to ask the planning context whether the name is a CTE before
+  pinning — check what `RelationPlannerContext` exposes.
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.

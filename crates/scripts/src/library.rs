@@ -52,8 +52,8 @@ pub const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../functions/metric_bands.sql"),
     ),
     (
-        "metric_cube.rhai",
-        include_str!("../functions/metric_cube.rhai"),
+        "metric_cube.sql",
+        include_str!("../functions/metric_cube.sql"),
     ),
     (
         "band_breach.rhai",

@@ -783,11 +783,13 @@ async fn the_metrics_faces_serve_the_measured_cube() {
             "metric": "dso", "applicable": true, "behavior": "flow",
             "dims": ["cohort"], "alternative": "days on billings",
             "rows": [
-                ["", "", "2026-01", 12.5], ["", "", "2026-02", 4.0],
-                ["cohort", "a", "2026-01", 10.5], ["cohort", "a", "2026-02", 4.0],
-                ["cohort", "b", "2026-01", 2.0],
-                ["alternative", "days on billings", "2026-01", 11.0],
-                ["alternative", "days on billings", "2026-02", 5.0]
+                {"dimension": "", "member": "", "period": "2026-01", "value": 12.5},
+                {"dimension": "", "member": "", "period": "2026-02", "value": 4.0},
+                {"dimension": "cohort", "member": "a", "period": "2026-01", "value": 10.5},
+                {"dimension": "cohort", "member": "a", "period": "2026-02", "value": 4.0},
+                {"dimension": "cohort", "member": "b", "period": "2026-01", "value": 2.0},
+                {"dimension": "alternative", "member": "days on billings", "period": "2026-01", "value": 11.0},
+                {"dimension": "alternative", "member": "days on billings", "period": "2026-02", "value": 5.0}
             ]
         }]
     });

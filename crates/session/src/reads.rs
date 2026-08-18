@@ -450,6 +450,18 @@ pub(crate) async fn compute_batch(
                 crate::search::derivation_candidates(shared, resolved, &table).await?,
             ))
         }
+        ("metric_cube_slices", Some(a)) => {
+            let dataset = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "metric_cube_slices takes one quoted dataset: \
+                     metric_cube_slices('dataset')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::search::metric_cube_slices(shared, &dataset).await?,
+            ))
+        }
         ("metric_band_walk", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(
@@ -650,11 +662,13 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
                 continue;
             };
             for r in m["rows"].as_array().into_iter().flatten() {
+                // Cube rows are records since stage 5 — the tuple form
+                // was a script-ism arrow could not carry.
                 let (Some(dim), Some(member), Some(period), Some(value)) = (
-                    r[0].as_str(),
-                    r[1].as_str(),
-                    r[2].as_str(),
-                    r[3].as_f64(),
+                    r["dimension"].as_str(),
+                    r["member"].as_str(),
+                    r["period"].as_str(),
+                    r["value"].as_f64(),
                 ) else {
                     continue;
                 };

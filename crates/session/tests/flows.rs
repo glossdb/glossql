@@ -59,11 +59,14 @@ impl FunctionRuntime for Fake {
                     "metric": "revenue", "applicable": true, "behavior": "flow",
                     "dims": ["region"], "alternative": "all invoiced",
                     "rows": [
-                        ["", "", "2026-01", 100.0], ["", "", "2026-02", 130.0],
-                        ["region", "EMEA", "2026-01", 60.0], ["region", "EMEA", "2026-02", 70.0],
-                        ["region", "AMER", "2026-01", 40.0], ["region", "AMER", "2026-02", 60.0],
-                        ["alternative", "all invoiced", "2026-01", 90.0],
-                        ["alternative", "all invoiced", "2026-02", 95.0]
+                        {"dimension": "", "member": "", "period": "2026-01", "value": 100.0},
+                        {"dimension": "", "member": "", "period": "2026-02", "value": 130.0},
+                        {"dimension": "region", "member": "EMEA", "period": "2026-01", "value": 60.0},
+                        {"dimension": "region", "member": "EMEA", "period": "2026-02", "value": 70.0},
+                        {"dimension": "region", "member": "AMER", "period": "2026-01", "value": 40.0},
+                        {"dimension": "region", "member": "AMER", "period": "2026-02", "value": 60.0},
+                        {"dimension": "alternative", "member": "all invoiced", "period": "2026-01", "value": 90.0},
+                        {"dimension": "alternative", "member": "all invoiced", "period": "2026-02", "value": 95.0}
                     ]
                 }]
             }),

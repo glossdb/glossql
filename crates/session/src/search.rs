@@ -2255,3 +2255,355 @@ fn band_shape() -> Vec<Field> {
         Field::new("pit", DataType::Float64, true),
     ]
 }
+
+/// A member series at a verb: the monthly shapes of [`monthly_sql`]
+/// sliced along one dimension column, NULL members excluded.
+fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, verb: &str) -> String {
+    match verb {
+        "ratio" => format!(
+            "SELECT date_trunc('month', \"{tcol}\") AS period, \
+                    CAST(\"{dcol}\" AS VARCHAR) AS member, \
+                    sum(num) / nullif(sum(den), 0) AS value \
+             FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL \
+             GROUP BY 1, 2 ORDER BY 1, 2"
+        ),
+        "stock" => format!(
+            "SELECT period, member, sum(value) AS value FROM (\
+                SELECT date_trunc('month', \"{tcol}\") AS period, \
+                       CAST(\"{dcol}\" AS VARCHAR) AS member, value, \
+                       rank() OVER (\
+                           PARTITION BY date_trunc('month', \"{tcol}\"), \"{dcol}\" \
+                           ORDER BY \"{tcol}\" DESC) AS rk \
+                FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL\
+             ) WHERE rk = 1 GROUP BY period, member ORDER BY period, member"
+        ),
+        _ => format!(
+            "SELECT date_trunc('month', \"{tcol}\") AS period, \
+                    CAST(\"{dcol}\" AS VARCHAR) AS member, sum(value) AS value \
+             FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL \
+             GROUP BY 1, 2 ORDER BY 1, 2"
+        ),
+    }
+}
+
+/// `metric_cube_slices('dataset')` — every grounded metric's monthly
+/// series: the total, the slices along its served dimension columns,
+/// and the named rival where a grounding discloses one. What it exists
+/// for: a static frame cannot name a metric in FROM, but this door
+/// turns metric names into rows once and the `metric_series()` read
+/// serves them to any frame with plain value filters.
+///
+/// Caps, recorded here: at most 2 dimension columns per metric (a
+/// served column is admitted at 2..24 distinct members; fewest members
+/// win), every member of an admitted dimension, the last 24 months. A
+/// grounding assumption carrying `alternative_sql` (the metrics skill's
+/// named-rival convention) contributes one more series under dimension
+/// 'alternative'. The rival SQL is authored but never
+/// admission-validated — it runs behind a guard and a failure is
+/// reported, not thrown. The monthly verbs are [`monthly_sql`]'s three,
+/// the ratio verb because summing a ratio was wrong: DSO for one month
+/// came back 928.3 days against a true 75.6 when twelve member ratios
+/// were added together (2026-08-15). This is the division node of the
+/// formula evaluator that would eventually read the `formulas` gloss
+/// directly; the grounding already computes both halves and used to
+/// discard them.
+///
+/// Two row kinds come back: one fact row per metric (`fact` true,
+/// carrying dims and the rival outcome), and one row per cube cell.
+pub(crate) async fn metric_cube_slices(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<RecordBatch, SessionError> {
+    const DIMS_CAP: usize = 2;
+    const MEMBERS_CAP: i64 = 24;
+    const MONTHS_CAP: usize = 24;
+
+    let ctx = shared
+        .ctx
+        .read()
+        .expect("ctx lock")
+        .clone()
+        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let rctx = shared.read_context().await?;
+
+    let mut out = Vec::new();
+    let mut seq = 0i64;
+    for slot in current_query_slots(&rctx, dataset) {
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+            continue;
+        };
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+        let name = &slot.aspect;
+        let fact = |seq: i64, extra: serde_json::Map<String, Value>| {
+            let mut row = serde_json::Map::new();
+            row.insert("seq".into(), json!(seq));
+            row.insert("fact".into(), json!(true));
+            row.insert("metric".into(), json!(name));
+            row.extend(extra);
+            Value::Object(row)
+        };
+        let abstain = |seq: i64, reason: &str| {
+            json!({
+                "seq": seq, "fact": true, "metric": name,
+                "applicable": false, "reason": reason,
+            })
+        };
+
+        let probe = Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await?;
+        let fields = probe.schema();
+        let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
+        if !has("value") {
+            out.push(abstain(seq, "no value column"));
+            seq += 1;
+            continue;
+        }
+        let Some(tcol) = fields.fields().iter().find_map(|f| {
+            let d = f.data_type().to_string();
+            (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
+        }) else {
+            out.push(abstain(seq, "no time column"));
+            seq += 1;
+            continue;
+        };
+        // A ratio declares itself by serving both halves of its
+        // division — checked before the stock marker so a ratio over
+        // stock components cannot be mistaken for a stock.
+        let is_ratio = has("num") && has("den");
+        let verb = if is_ratio {
+            "ratio"
+        } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
+            "stock"
+        } else {
+            "flow"
+        };
+
+        // Served dimension candidates: every column that is neither the
+        // value nor time-typed (nor a ratio's own halves). Admission is
+        // by member count, one aggregate pass.
+        let cand: Vec<String> = fields
+            .fields()
+            .iter()
+            .filter(|f| {
+                let n = f.name().as_str();
+                if n == "value" || (is_ratio && (n == "num" || n == "den")) {
+                    return false;
+                }
+                let d = f.data_type().to_string();
+                !(d.contains("Date") || d.contains("Timestamp"))
+            })
+            .map(|f| f.name().clone())
+            .collect();
+        let mut counts: Vec<(String, i64)> = Vec::new();
+        if !cand.is_empty() {
+            let parts: Vec<String> = cand
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("count(DISTINCT \"{c}\") AS \"n_{i}\""))
+                .collect();
+            let q = format!("SELECT {} FROM ({sql})", parts.join(", "));
+            let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
+            let batches = ctx
+                .execute_logical_plan(plan)
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                .collect()
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+            for (i, c) in cand.iter().enumerate() {
+                let n = int_column(&batches, &format!("n_{i}"))
+                    .map_err(SessionError::Runtime)?[0];
+                counts.push((c.clone(), n));
+            }
+        }
+        let mut dims: Vec<String> = Vec::new();
+        while dims.len() < DIMS_CAP {
+            let mut best: Option<(&str, i64)> = None;
+            for (c, n) in &counts {
+                if *n < 2 || *n > MEMBERS_CAP || dims.iter().any(|d| d == c) {
+                    continue;
+                }
+                if best.is_none_or(|(_, bn)| *n < bn) {
+                    best = Some((c, *n));
+                }
+            }
+            let Some((c, _)) = best else { break };
+            dims.push(c.to_string());
+        }
+
+        // The total series bounds the window: the last MONTHS_CAP
+        // periods, held as a set every other series filters against.
+        let total = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
+        let start = total.len().saturating_sub(MONTHS_CAP);
+        let keep: HashSet<String> = total[start..]
+            .iter()
+            .map(|(p, _)| p[..7].to_string())
+            .collect();
+        let mut cells: Vec<(String, String, String, f64)> = Vec::new();
+        for (p, v) in &total {
+            let Some(v) = v else { continue };
+            if keep.contains(&p[..7]) {
+                cells.push((String::new(), String::new(), p[..7].to_string(), *v));
+            }
+        }
+
+        // Member series per admitted dimension, same verb, same window.
+        for dcol in &dims {
+            let q = monthly_member_sql(sql, &tcol, dcol, verb);
+            let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
+            let batches = ctx
+                .execute_logical_plan(plan)
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                .collect()
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+            for b in batches.iter().filter(|b| b.num_rows() > 0) {
+                let get = |n: &str| {
+                    b.schema()
+                        .index_of(n)
+                        .map(|i| b.column(i).clone())
+                        .map_err(|e| SessionError::Runtime(e.to_string()))
+                };
+                let (period, member, value) = (get("period")?, get("member")?, get("value")?);
+                let floats = datafusion::arrow::compute::cast_with_options(
+                    &value,
+                    &DataType::Float64,
+                    &datafusion::arrow::compute::CastOptions {
+                        safe: true,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| SessionError::Runtime(e.to_string()))?;
+                let floats = floats
+                    .as_any()
+                    .downcast_ref::<datafusion::arrow::array::Float64Array>()
+                    .ok_or_else(|| SessionError::Runtime("value is not numeric".into()))?;
+                for i in 0..b.num_rows() {
+                    if floats.is_null(i) {
+                        continue;
+                    }
+                    let p = array_value_to_string(&period, i)
+                        .map_err(|e| SessionError::Runtime(e.to_string()))?;
+                    let p = p[..7].to_string();
+                    if !keep.contains(&p) {
+                        continue;
+                    }
+                    let m = array_value_to_string(&member, i)
+                        .map_err(|e| SessionError::Runtime(e.to_string()))?;
+                    cells.push((dcol.clone(), m, p, floats.value(i)));
+                }
+            }
+        }
+
+        // The named rival, when a grounding assumption discloses one.
+        let mut extra = serde_json::Map::new();
+        extra.insert("applicable".into(), json!(true));
+        extra.insert("behavior".into(), json!(verb));
+        extra.insert("dims".into(), json!(dims));
+        if let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) {
+            for a in assumptions {
+                let Some(alt_sql) = a.get("alternative_sql").and_then(Value::as_str) else {
+                    continue;
+                };
+                let rival = a
+                    .get("alternative")
+                    .and_then(Value::as_str)
+                    .unwrap_or("(rival)");
+                match rival_series(shared, &ctx, alt_sql, verb).await {
+                    Ok(Some(series)) => {
+                        for (p, v) in series {
+                            let Some(v) = v else { continue };
+                            let p = p[..7].to_string();
+                            if keep.contains(&p) {
+                                cells.push(("alternative".into(), rival.to_string(), p, v));
+                            }
+                        }
+                        extra.insert("alternative".into(), json!(rival));
+                    }
+                    Ok(None) => {
+                        extra.insert(
+                            "alternative_error".into(),
+                            json!("rival SQL serves no value/time column"),
+                        );
+                    }
+                    Err(e) => {
+                        extra.insert(
+                            "alternative_error".into(),
+                            json!(format!("rival SQL failed: {e}")),
+                        );
+                    }
+                }
+                break;
+            }
+        }
+        out.push(fact(seq, extra));
+        for (cell_seq, (dimension, member, period, value)) in cells.iter().enumerate() {
+            out.push(json!({
+                "seq": seq, "cell_seq": cell_seq as i64,
+                "dimension": dimension, "member": member,
+                "period": period, "value": value,
+            }));
+        }
+        seq += 1;
+    }
+    if out.is_empty() {
+        out.push(json!({}));
+    }
+    rows_batch(out, cube_shape())
+}
+
+/// The rival's monthly series at its own verb: a rival that serves
+/// num/den totals as a ratio even where the chosen reading does not,
+/// and the reverse. `None` = no value or time column.
+async fn rival_series(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    sql: &str,
+    chosen_verb: &str,
+) -> Result<Option<Vec<(String, Option<f64>)>>, SessionError> {
+    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let fields = probe.schema();
+    let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
+    let Some(tcol) = fields.fields().iter().find_map(|f| {
+        let d = f.data_type().to_string();
+        (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
+    }) else {
+        return Ok(None);
+    };
+    if !has("value") {
+        return Ok(None);
+    }
+    let verb = if has("num") && has("den") {
+        "ratio"
+    } else if chosen_verb == "ratio" {
+        "flow"
+    } else {
+        chosen_verb
+    };
+    Ok(Some(run_monthly(shared, ctx, sql, &tcol, verb).await?))
+}
+
+fn cube_shape() -> Vec<Field> {
+    vec![
+        Field::new("seq", DataType::Int64, true),
+        Field::new("fact", DataType::Boolean, true),
+        Field::new("metric", DataType::Utf8, true),
+        Field::new("applicable", DataType::Boolean, true),
+        Field::new("reason", DataType::Utf8, true),
+        Field::new("behavior", DataType::Utf8, true),
+        Field::new(
+            "dims",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new("alternative", DataType::Utf8, true),
+        Field::new("alternative_error", DataType::Utf8, true),
+        Field::new("cell_seq", DataType::Int64, true),
+        Field::new("dimension", DataType::Utf8, true),
+        Field::new("member", DataType::Utf8, true),
+        Field::new("period", DataType::Utf8, true),
+        Field::new("value", DataType::Float64, true),
+    ]
+}
