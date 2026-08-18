@@ -173,7 +173,7 @@ down and never up.
 | **4** compute doors under `execute`; cache removed; `measurements` keyed by the pin | 5, 8 | SPEC + corpus diff lands here |
 | **4½** `glossary` crosses; sqlx drops | 9 | goldens green; the strike ruling (§8) gates it |
 | **5** function ports, one per commit against its golden; each rhai file deleted as its port passes | 3, 4, 11, 12, 13 | golden per function |
-| **6** pre-warm at the landing | — | — |
+| **6** ~~pre-warm at the landing~~ closed by ruling, see §7g | — | — |
 | **7** scale: land the large corpora (§7) and re-measure | — | the ratios hold, or we learn where they stop |
 
 Stage 7 is deliberately last. Optimising against the current stack would
@@ -512,7 +512,19 @@ golden; the door died with the last one. What stands:
 The SPEC diff ("functions are scripts with JSON contracts" → measurement
 bodies are SQL, judges are scripts) was ratified by the project lead and
 applied 2026-08-18, grammar comments and the two work skills with it.
-Stage 6 (pre-warm at the landing) and stage 7 (scale) follow.
+Stage 6 closed by ruling (§7g); stage 7 (scale) follows.
+
+## 7g. Stage 6 closed by concession (project lead, 2026-08-18)
+
+No pre-calculation: the server never computes uninvited — an actor that
+wants a warm workspace runs the extractions itself, in the background if
+it likes. The dependency defect pre-warm existed to cure (§7c: cold
+captures goldened `outliers`/`dimension_relevance` abstentions because
+alphabetical extraction outran `profile`) died with ACCEPTS in stage 5.
+Two notes carried to stage 7: rel-event's 208 s relationship sweep was
+extreme and it was *width* (129 columns, 110 in one table) — recipes
+filter each imported dataset to its relevant columns, so width is the
+lever and depth the lesser issue.
 
 ## 8. Still open
 
