@@ -3,7 +3,7 @@
     "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 56\")"
   },
   "event_attendees.event": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_attendees.start_time": [
     {
@@ -22,19 +22,19 @@
     }
   ],
   "event_attendees.user_id": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_interest.event": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_interest.interested": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_interest.invited": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_interest.not_interested": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "event_interest.timestamp": [
     {
@@ -45,7 +45,7 @@
     }
   ],
   "event_interest.user": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "events.c_1": [
     {
@@ -931,10 +931,10 @@
     "error": "SQL error: ParserError(\"Expected: end of statement (`;`), found: : at Line: 1, Column: 53\")"
   },
   "user_friends.friend": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "user_friends.user": {
-    "error": "function runtime: `behavior_evidence`: Runtime error: more than 64 movement terms — the validity mask is a u64 (line 455, position 39)"
+    "error": "function runtime: Runtime error: more than 64 movement terms — the validity mask is a u64"
   },
   "users.birthyear": [
     {

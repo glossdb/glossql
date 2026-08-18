@@ -450,6 +450,18 @@ pub(crate) async fn compute_batch(
                 crate::search::derivation_candidates(shared, resolved, &table).await?,
             ))
         }
+        ("behavior_anchors", Some(a)) => {
+            let subject = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "behavior_anchors takes one quoted subject: \
+                     behavior_anchors('table.column')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::behavior::behavior_anchors(shared, resolved, &subject).await?,
+            ))
+        }
         ("metric_cube_slices", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(

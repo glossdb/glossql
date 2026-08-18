@@ -17,7 +17,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.rhai");
+const BEHAVIOR_EVIDENCE: &str = include_str!("../functions/behavior_evidence.sql");
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {

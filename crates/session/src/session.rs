@@ -177,6 +177,23 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Err("this runtime carries no misfit kernel".into())
     }
 
+    /// The stock/flow discriminator behind the behavior-evidence door
+    /// (stage 5): alignment by hash join on typed keys, conventions —
+    /// each term and every ordered pair difference — as one matrix
+    /// product over the stacked entity series, residuals and gates per
+    /// entity. `y` rows are `(e, b, yv)`, `m` rows `(e, b, s_<term>…)`,
+    /// both ordered by (e, b). Returns `{n_common, summaries}` as the
+    /// script kernel did. The runtime that carries the kernel overrides
+    /// this; the default refuses.
+    fn reconcile(
+        &self,
+        _y: &[RecordBatch],
+        _m: &[RecordBatch],
+        _terms: &[String],
+    ) -> Result<Value, String> {
+        Err("this runtime carries no reconcile kernel".into())
+    }
+
     /// One TabICL fit and read, behind the metric-bands walk (stage 5):
     /// train on `rows` × `cols` features (row-major), predict one test
     /// row, return the band value per alpha in order and the PIT — the

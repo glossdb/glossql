@@ -793,6 +793,24 @@ impl FunctionRuntime for RhaiRuntime {
             .map_err(|e| e.to_string())
     }
 
+    /// The behavior-evidence door's kernel (stage 5): the same
+    /// discriminator the `reconcile` script kernel serves, over batches.
+    fn reconcile(
+        &self,
+        y: &[RecordBatch],
+        m: &[RecordBatch],
+        terms: &[String],
+    ) -> Result<Value, String> {
+        let out = reconcile_kernel(
+            &Table(Arc::new(y.to_vec())),
+            &Table(Arc::new(m.to_vec())),
+            terms.to_vec(),
+        )
+        .map_err(|e| e.to_string())?;
+        serde_json::to_value(Dynamic::from_map(out))
+            .map_err(|e| format!("reconcile returned something JSON cannot carry: {e}"))
+    }
+
     /// The metric-bands walk's kernel (stage 5): the same one-fit read
     /// the `tabicl_bands` script kernel serves, typed.
     fn band_point(

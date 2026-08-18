@@ -16,6 +16,7 @@
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 
+mod behavior;
 mod library;
 mod measure;
 mod misfit;

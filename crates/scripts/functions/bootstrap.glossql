@@ -181,7 +181,7 @@ DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
 DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$relationships.sql$$
   RETURNS relationship_candidates;
 
-DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$behavior_evidence.rhai$$
+DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$behavior_evidence.sql$$
   RETURNS behavior_evidence;
 
 DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.sql$$

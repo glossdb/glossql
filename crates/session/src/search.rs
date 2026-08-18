@@ -631,7 +631,7 @@ fn plan_pairs(
 }
 
 /// A named Int64 column of a one-batch result, materialized.
-fn int_column(batches: &[RecordBatch], name: &str) -> Result<Vec<i64>, String> {
+pub(crate) fn int_column(batches: &[RecordBatch], name: &str) -> Result<Vec<i64>, String> {
     let b = batches
         .iter()
         .find(|b| b.num_rows() > 0)
@@ -684,7 +684,7 @@ fn derivation_shape() -> Vec<Field> {
 /// A door's fixed shape, decoded from JSON rows through the format's
 /// own decoder — the same trick the profile aggregate uses, so there is
 /// no hand-built array assembly to drift.
-fn rows_batch(rows: Vec<Value>, fields: Vec<Field>) -> Result<RecordBatch, SessionError> {
+pub(crate) fn rows_batch(rows: Vec<Value>, fields: Vec<Field>) -> Result<RecordBatch, SessionError> {
     let schema = Arc::new(Schema::new(fields));
     let mut decoder = arrow_json::ReaderBuilder::new(schema)
         .build_decoder()
