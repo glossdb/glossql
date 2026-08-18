@@ -201,7 +201,7 @@ DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collision
 
 DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
 
-DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.rhai$$
+DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
   RETURNS metric_bands;
 
 DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.rhai$$

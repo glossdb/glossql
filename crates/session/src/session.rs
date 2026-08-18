@@ -176,6 +176,25 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     fn misfit_scores(&self, _x: &[f64], _rows: usize, _cols: usize) -> Result<Vec<f64>, String> {
         Err("this runtime carries no misfit kernel".into())
     }
+
+    /// One TabICL fit and read, behind the metric-bands walk (stage 5):
+    /// train on `rows` × `cols` features (row-major), predict one test
+    /// row, return the band value per alpha in order and the PIT — the
+    /// quantile at which `actual` lands in the predicted distribution.
+    /// The runtime that carries the model overrides this; the default
+    /// refuses, and the door reports why.
+    fn band_point(
+        &self,
+        _train_x: &[f64],
+        _rows: usize,
+        _cols: usize,
+        _train_y: &[f64],
+        _test_x: &[f64],
+        _alphas: &[f64],
+        _actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        Err("this runtime carries no band kernel".into())
+    }
 }
 
 #[derive(Debug)]

@@ -1357,68 +1357,14 @@ pub(crate) async fn grounding_collisions(
         .clone()
         .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
     let rctx = shared.read_context().await?;
-
-    // The collapse done over the statement's snapshot: latest row per
-    // (subject, aspect, actor kind) — the supersession key — QUERY
-    // aspects only, then human over agent per (subject, aspect).
-    let query_aspects: HashSet<&str> = rctx
-        .aspects
-        .iter()
-        .filter(|a| a.kind == "query")
-        .map(|a| a.name.as_str())
-        .collect();
-    let mut latest: BTreeMap<(&str, &str, &str), &glossql_glossary::GlossRow> = BTreeMap::new();
-    for row in rctx.glossary.iter() {
-        if row.dataset != dataset || !query_aspects.contains(row.aspect.as_str()) {
-            continue;
-        }
-        let key = (
-            row.subject.as_str(),
-            row.aspect.as_str(),
-            row.actor_kind.as_str(),
-        );
-        match latest.get(&key) {
-            Some(have) if have.written_at > row.written_at => {}
-            _ => {
-                latest.insert(key, row);
-            }
-        }
-    }
-    struct Slot<'a> {
-        subject: &'a str,
-        aspect: &'a str,
-        body: &'a str,
-        human: bool,
-    }
-    let mut slots: BTreeMap<String, Slot> = BTreeMap::new();
-    let mut ordered: Vec<&&glossql_glossary::GlossRow> = latest.values().collect();
-    ordered.sort_by_key(|r| r.seq);
-    for row in ordered {
-        let key = format!("{} {}", row.subject, row.aspect);
-        // Human over agent: a filled human slot is never displaced by
-        // another kind; anything else overwrites in row order.
-        if row.actor_kind != "human"
-            && slots.get(&key).is_some_and(|s| s.human)
-        {
-            continue;
-        }
-        slots.insert(
-            key,
-            Slot {
-                subject: &row.subject,
-                aspect: &row.aspect,
-                body: &row.body,
-                human: row.actor_kind == "human",
-            },
-        );
-    }
+    let slots = current_query_slots(&rctx, dataset);
 
     // Bucket by canonical SQL.
     let mut buckets: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
     let mut groundings = 0i64;
-    let mut grounded: Vec<(&Slot, Value, String)> = Vec::new();
-    for slot in slots.values() {
-        let Ok(body) = serde_json::from_str::<Value>(slot.body) else {
+    let mut grounded: Vec<(&QuerySlot, Value, String)> = Vec::new();
+    for slot in &slots {
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
         let Some(sql) = body.get("sql").and_then(Value::as_str) else {
@@ -1429,7 +1375,7 @@ pub(crate) async fn grounding_collisions(
         buckets
             .entry(canon.clone())
             .or_default()
-            .push((slot.aspect, slot.subject));
+            .push((slot.aspect.as_str(), slot.subject.as_str()));
         grounded.push((slot, body.clone(), canon));
     }
 
@@ -1479,7 +1425,7 @@ pub(crate) async fn grounding_collisions(
         series_buckets
             .entry(fp)
             .or_default()
-            .push((slot.aspect, slot.subject, canon.as_str()));
+            .push((slot.aspect.as_str(), slot.subject.as_str(), canon.as_str()));
     }
     let mut series_collisions: Vec<Collision> = Vec::new();
     for (fp, members) in &series_buckets {
@@ -1511,6 +1457,80 @@ pub(crate) async fn grounding_collisions(
         out.push(json!({ "groundings": groundings }));
     }
     rows_batch(out, collision_shape())
+}
+
+/// One current QUERY grounding — a collapsed slot.
+pub(crate) struct QuerySlot {
+    pub subject: String,
+    pub aspect: String,
+    pub body: String,
+}
+
+/// The latest QUERY grounding per (subject, aspect), human over agent —
+/// the collapse grounding_collisions, metric_bands and metric_cube all
+/// run, over the statement's snapshot: latest row per (subject, aspect,
+/// actor kind) — the supersession key — QUERY aspects only, then human
+/// over agent per (subject, aspect). Returned in slot-key order, which
+/// is the iteration order the scripts had.
+pub(crate) fn current_query_slots(
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+) -> Vec<QuerySlot> {
+    use std::collections::BTreeMap;
+
+    let query_aspects: HashSet<&str> = rctx
+        .aspects
+        .iter()
+        .filter(|a| a.kind == "query")
+        .map(|a| a.name.as_str())
+        .collect();
+    let mut latest: BTreeMap<(&str, &str, &str), &glossql_glossary::GlossRow> = BTreeMap::new();
+    for row in rctx.glossary.iter() {
+        if row.dataset != dataset || !query_aspects.contains(row.aspect.as_str()) {
+            continue;
+        }
+        let key = (
+            row.subject.as_str(),
+            row.aspect.as_str(),
+            row.actor_kind.as_str(),
+        );
+        match latest.get(&key) {
+            Some(have) if have.written_at > row.written_at => {}
+            _ => {
+                latest.insert(key, row);
+            }
+        }
+    }
+    struct Slot<'a> {
+        row: &'a glossql_glossary::GlossRow,
+        human: bool,
+    }
+    let mut slots: BTreeMap<String, Slot> = BTreeMap::new();
+    let mut ordered: Vec<&&glossql_glossary::GlossRow> = latest.values().collect();
+    ordered.sort_by_key(|r| r.seq);
+    for row in ordered {
+        let key = format!("{} {}", row.subject, row.aspect);
+        // Human over agent: a filled human slot is never displaced by
+        // another kind; anything else overwrites in row order.
+        if row.actor_kind != "human" && slots.get(&key).is_some_and(|s| s.human) {
+            continue;
+        }
+        slots.insert(
+            key,
+            Slot {
+                row,
+                human: row.actor_kind == "human",
+            },
+        );
+    }
+    slots
+        .into_values()
+        .map(|s| QuerySlot {
+            subject: s.row.subject.clone(),
+            aspect: s.row.aspect.clone(),
+            body: s.row.body.clone(),
+        })
+        .collect()
 }
 
 /// One grounding's monthly fingerprint, `None` when it cannot serve a
@@ -1909,5 +1929,329 @@ fn coherence_shape() -> Vec<Field> {
         Field::new("joined", DataType::Int64, true),
         Field::new("precedes", DataType::Int64, true),
         Field::new("precedes_rate", DataType::Float64, true),
+    ]
+}
+
+/// The three monthly verbs, shared by the metric doors: flows sum per
+/// month; a marked stock sums the rows standing at the month's LATEST
+/// observed date — one arbitrary last row read a 480-row inventory as
+/// 94k against a true 12.4M (the 2026-08-14 run); a ratio serves `num`
+/// and `den` and the month reads as sum(num)/sum(den), because a walk
+/// or a slice over a summed ratio bands an artefact (2026-08-15, DSO at
+/// 928.3 days against a true 75.6).
+fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
+    match verb {
+        "ratio" => format!(
+            "SELECT date_trunc('month', \"{tcol}\") AS period, \
+                    sum(num) / nullif(sum(den), 0) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+        ),
+        "stock" => format!(
+            "SELECT period, sum(value) AS value FROM (\
+                SELECT date_trunc('month', \"{tcol}\") AS period, value, \
+                       rank() OVER (\
+                           PARTITION BY date_trunc('month', \"{tcol}\") \
+                           ORDER BY \"{tcol}\" DESC) AS rk \
+                FROM ({sql})\
+             ) WHERE rk = 1 GROUP BY period ORDER BY period"
+        ),
+        _ => format!(
+            "SELECT date_trunc('month', \"{tcol}\") AS period, sum(value) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+        ),
+    }
+}
+
+/// A grounding's monthly series, NULL months kept — the walk and the
+/// cube index by position. Periods come back in the column's display
+/// form; callers cut the YYYY-MM head as the scripts did.
+async fn run_monthly(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    sql: &str,
+    tcol: &str,
+    verb: &str,
+) -> Result<Vec<(String, Option<f64>)>, SessionError> {
+    use datafusion::arrow::array::Float64Array;
+    use datafusion::arrow::compute::{CastOptions, cast_with_options};
+
+    let q = monthly_sql(sql, tcol, verb);
+    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
+    let batches = ctx
+        .execute_logical_plan(plan)
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .collect()
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+    let mut out = Vec::new();
+    for b in batches.iter().filter(|b| b.num_rows() > 0) {
+        let period = b.column(
+            b.schema()
+                .index_of("period")
+                .map_err(|e| SessionError::Runtime(e.to_string()))?,
+        );
+        let value = b.column(
+            b.schema()
+                .index_of("value")
+                .map_err(|e| SessionError::Runtime(e.to_string()))?,
+        );
+        let floats = cast_with_options(
+            value,
+            &DataType::Float64,
+            &CastOptions {
+                safe: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| SessionError::Runtime(e.to_string()))?;
+        let floats = floats
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .ok_or_else(|| SessionError::Runtime("value did not read as a number".into()))?;
+        for i in 0..b.num_rows() {
+            out.push((
+                array_value_to_string(period, i).map_err(|e| SessionError::Runtime(e.to_string()))?,
+                (!floats.is_null(i)).then(|| floats.value(i)),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// `metric_band_walk('dataset')` — for every grounded metric, walk the
+/// recent months and ask the TabICL forward what range each month
+/// should have landed in, given everything before it. The protocol —
+/// monthly read at the grounding's verb, the feature recipe, the
+/// point-in-time fills, the walk — is authored policy; the model call
+/// is one kernel behind the runtime seam, never reimplemented.
+/// Evaluated against generated ground truth before it shipped
+/// (dataraum-tabicl README, stage 3; the E2.1 walk).
+///
+/// The feature recipe and the fill tracked back to the graded protocol
+/// on 2026-08-12 — three drifts had entered in the port (raw t-3 lag
+/// for the trailing mean, a whole-series fill that was not
+/// point-in-time, a fabricated month-0 training row). Change it only
+/// against `../tfmeval/experiments/e2_1_bands.py`, which is what the
+/// coverage figures in that repo's FINDINGS.md were measured on.
+///
+/// Each walked point records its bands and its PIT — the quantile at
+/// which the actual landed, 0..1 and ordinal by construction (raw
+/// densities never leave the kernel). The band_breach detector
+/// adjudicates PITs; this door only reports.
+pub(crate) async fn metric_band_walk(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<RecordBatch, SessionError> {
+    const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
+    const MIN_TRAIN: usize = 5;
+    const MAX_WALK: usize = 6;
+
+    let ctx = shared
+        .ctx
+        .read()
+        .expect("ctx lock")
+        .clone()
+        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let rctx = shared.read_context().await?;
+    let runtime = shared.runtime();
+
+    // Median over the present values of one feature column. Even counts
+    // average the two middles, as the graded protocol's pandas median
+    // does.
+    fn col_median(mut values: Vec<f64>) -> Option<f64> {
+        if values.is_empty() {
+            return None;
+        }
+        values.sort_by(f64::total_cmp);
+        let k = values.len();
+        Some(if k % 2 == 1 {
+            values[k / 2]
+        } else {
+            (values[k / 2 - 1] + values[k / 2]) / 2.0
+        })
+    }
+
+    let mut out = Vec::new();
+    let mut seq = 0i64;
+    for slot in current_query_slots(&rctx, dataset) {
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+            continue;
+        };
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+
+        // The grounding is a grain-free extract with a time axis and a
+        // `value` column; the time column by dtype, as any reader finds
+        // it. A grounding that does not plan fails the walk whole, as
+        // the script it replaces did.
+        let probe = Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await?;
+        let fields = probe.schema();
+        let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
+        if !has("value") {
+            continue;
+        }
+        let Some(tcol) = fields.fields().iter().find_map(|f| {
+            let d = f.data_type().to_string();
+            (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
+        }) else {
+            continue;
+        };
+        let is_ratio = has("num") && has("den");
+        let is_stock = !is_ratio
+            && body.get("behavior").and_then(Value::as_str) == Some("stock");
+        let verb = if is_ratio {
+            "ratio"
+        } else if is_stock {
+            "stock"
+        } else {
+            "flow"
+        };
+        let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
+        let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
+        let n = v.len();
+        // Feature rows start at month 1 — month 0 has no lag of its own
+        // and the graded protocol builds no row for it — so a walk point
+        // at t trains on t-1 rows and the earliest walkable t is
+        // MIN_TRAIN + 1.
+        if n < MIN_TRAIN + 2 {
+            out.push(json!({
+                "seq": seq, "metric": slot.aspect, "applicable": false,
+                "reason": format!("{n} months, need {}", MIN_TRAIN + 2),
+            }));
+            seq += 1;
+            continue;
+        }
+
+        // Features for month i (row i-1): index, month-of-year, the 1-
+        // and 12-month lags, and the trailing 3-month MEAN — `lag3m` in
+        // the graded protocol (tfmeval e2_1_bands.py:71-77), not the raw
+        // t-3 value. Absent features stay absent; they fill per walk
+        // step from training rows only.
+        let mut feats: Vec<[Option<f64>; 5]> = Vec::new();
+        let mut labels: Vec<Option<f64>> = Vec::new();
+        for i in 1..n {
+            let moy: f64 = series[i].0[5..7]
+                .parse::<i64>()
+                .map_err(|e| SessionError::Runtime(format!("period parse: {e}")))?
+                as f64;
+            let lag1 = v[i - 1];
+            let lo = i.saturating_sub(3);
+            let present: Vec<f64> = (lo..i).filter_map(|j| v[j]).collect();
+            let lag3m = (!present.is_empty())
+                .then(|| present.iter().sum::<f64>() / present.len() as f64);
+            let lag12 = if i >= 12 { v[i - 12] } else { None };
+            feats.push([Some(i as f64), Some(moy), lag1, lag3m, lag12]);
+            labels.push(v[i]);
+        }
+
+        let mut points: Vec<Value> = Vec::new();
+        let floor = MIN_TRAIN + 1;
+        let start = if n.saturating_sub(MAX_WALK) > floor {
+            n - MAX_WALK
+        } else {
+            floor
+        };
+        for t in start..n {
+            let Some(actual) = v[t] else { continue };
+            // Absent features fill from the training rows only, per
+            // feature, recomputed at this step — so the fit stays
+            // point-in-time. A feature absent throughout fills 0.0.
+            let mut fills = [0.0f64; 5];
+            for (c, fill) in fills.iter_mut().enumerate() {
+                let col: Vec<f64> = (0..t.saturating_sub(1))
+                    .filter_map(|r| feats[r][c])
+                    .collect();
+                if let Some(m) = col_median(col) {
+                    *fill = m;
+                }
+            }
+            let filled =
+                |row: &[Option<f64>; 5]| -> Vec<f64> {
+                    row.iter()
+                        .enumerate()
+                        .map(|(c, v)| v.unwrap_or(fills[c]))
+                        .collect()
+                };
+            let mut train_x = Vec::new();
+            let mut train_y = Vec::new();
+            for r in 0..t.saturating_sub(1) {
+                let Some(label) = labels[r] else { continue };
+                train_x.extend(filled(&feats[r]));
+                train_y.push(label);
+            }
+            if train_y.len() < MIN_TRAIN {
+                continue;
+            }
+            let (q, pit) = runtime
+                .band_point(
+                    &train_x,
+                    train_y.len(),
+                    5,
+                    &train_y,
+                    &filled(&feats[t - 1]),
+                    &ALPHAS,
+                    actual,
+                )
+                .map_err(SessionError::Runtime)?;
+            points.push(json!({
+                "period": &series[t].0[..7], "actual": actual,
+                "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
+                "pit": pit,
+            }));
+        }
+
+        for (point_seq, p) in points.iter().enumerate() {
+            let mut row = serde_json::Map::new();
+            row.insert("seq".into(), json!(seq));
+            row.insert("metric".into(), json!(slot.aspect));
+            row.insert("applicable".into(), json!(true));
+            row.insert("grain".into(), json!("month"));
+            row.insert(
+                "aggregation".into(),
+                json!(if is_stock { "latest-sum" } else { "sum" }),
+            );
+            row.insert("trained_on".into(), json!(n as i64));
+            row.insert("point_seq".into(), json!(point_seq as i64));
+            for (k, val) in p.as_object().expect("point object") {
+                row.insert(k.clone(), val.clone());
+            }
+            out.push(Value::Object(row));
+        }
+        if points.is_empty() {
+            out.push(json!({
+                "seq": seq, "metric": slot.aspect, "applicable": true,
+                "grain": "month",
+                "aggregation": if is_stock { "latest-sum" } else { "sum" },
+                "trained_on": n as i64,
+            }));
+        }
+        seq += 1;
+    }
+    if out.is_empty() {
+        out.push(json!({}));
+    }
+    rows_batch(out, band_shape())
+}
+
+fn band_shape() -> Vec<Field> {
+    vec![
+        Field::new("seq", DataType::Int64, true),
+        Field::new("metric", DataType::Utf8, true),
+        Field::new("applicable", DataType::Boolean, true),
+        Field::new("reason", DataType::Utf8, true),
+        Field::new("grain", DataType::Utf8, true),
+        Field::new("aggregation", DataType::Utf8, true),
+        Field::new("trained_on", DataType::Int64, true),
+        Field::new("point_seq", DataType::Int64, true),
+        Field::new("period", DataType::Utf8, true),
+        Field::new("actual", DataType::Float64, true),
+        Field::new("p05", DataType::Float64, true),
+        Field::new("p10", DataType::Float64, true),
+        Field::new("p50", DataType::Float64, true),
+        Field::new("p90", DataType::Float64, true),
+        Field::new("p95", DataType::Float64, true),
+        Field::new("pit", DataType::Float64, true),
     ]
 }

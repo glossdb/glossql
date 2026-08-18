@@ -450,6 +450,18 @@ pub(crate) async fn compute_batch(
                 crate::search::derivation_candidates(shared, resolved, &table).await?,
             ))
         }
+        ("metric_band_walk", Some(a)) => {
+            let dataset = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "metric_band_walk takes one quoted dataset: \
+                     metric_band_walk('dataset')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::search::metric_band_walk(shared, &dataset).await?,
+            ))
+        }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(

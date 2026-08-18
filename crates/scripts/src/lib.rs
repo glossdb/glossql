@@ -215,16 +215,47 @@ impl BandModel {
         let y: Vec<f64> = train_y.iter().map(&number).collect::<Result<_, _>>()?;
         let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
 
+        let (q, pit) = self.bands_core(&x, rows, cols, &y, &test, &levels, actual)?;
+        let mut out = rhai::Map::new();
+        out.insert(
+            "q".into(),
+            Dynamic::from(q.into_iter().map(Dynamic::from).collect::<rhai::Array>()),
+        );
+        out.insert("pit".into(), Dynamic::from(pit));
+        Ok(out)
+    }
+
+    /// The typed core of the band kernel — one fit, quantiles at the
+    /// levels, and the PIT read off the monotone quantile grid. Ordinal
+    /// by construction; raw densities never leave here. Serves the rhai
+    /// wrapper above and the metric-bands walk door through
+    /// [`FunctionRuntime::band_point`].
+    fn bands_core(
+        &self,
+        x: &[f64],
+        rows: usize,
+        cols: usize,
+        y: &[f64],
+        test: &[f64],
+        levels: &[f64],
+        actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        if rows < 2 || x.len() != rows * cols || y.len() != rows || test.len() != cols {
+            return Err(format!(
+                "band_point: {rows} rows x {cols} features against {} values and {} test features",
+                y.len(),
+                test.len()
+            ));
+        }
         let model = self.get()?;
-        let pred =
-            compute_pool()
-                .install(|| {
-                    tabicl_candle::regressor::TabIclRegressor::fit(&model, &x, rows, cols, &y)
-                        .predict(&test, 1, &self.device)
-                })
-                .map_err(|e| e.to_string())?;
+        let pred = compute_pool()
+            .install(|| {
+                tabicl_candle::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
+                    .predict(test, 1, &self.device)
+            })
+            .map_err(|e| e.to_string())?;
         let q: Vec<f32> = pred
-            .quantiles(&levels)
+            .quantiles(levels)
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
             .map_err(|e| e.to_string())?;
         let grid: Vec<f32> = pred
@@ -232,21 +263,10 @@ impl BandModel {
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
             .map_err(|e| e.to_string())?;
         let below = grid.iter().filter(|v| f64::from(**v) <= actual).count();
-
-        let mut out = rhai::Map::new();
-        out.insert(
-            "q".into(),
-            Dynamic::from(
-                q.iter()
-                    .map(|v| Dynamic::from(f64::from(*v)))
-                    .collect::<rhai::Array>(),
-            ),
-        );
-        out.insert(
-            "pit".into(),
-            Dynamic::from(below as f64 / (grid.len() + 1) as f64),
-        );
-        Ok(out)
+        Ok((
+            q.into_iter().map(f64::from).collect(),
+            below as f64 / (grid.len() + 1) as f64,
+        ))
     }
 }
 
@@ -771,6 +791,22 @@ impl FunctionRuntime for RhaiRuntime {
                 est.predict_quantiles(test_x, test_rows, alphas, self.band_model.device())
             })
             .map_err(|e| e.to_string())
+    }
+
+    /// The metric-bands walk's kernel (stage 5): the same one-fit read
+    /// the `tabicl_bands` script kernel serves, typed.
+    fn band_point(
+        &self,
+        train_x: &[f64],
+        rows: usize,
+        cols: usize,
+        train_y: &[f64],
+        test_x: &[f64],
+        alphas: &[f64],
+        actual: f64,
+    ) -> Result<(Vec<f64>, f64), String> {
+        self.band_model
+            .bands_core(train_x, rows, cols, train_y, test_x, alphas, actual)
     }
 
     /// The `misfit.` door's kernel (ruled 2026-08-11, fixture 20): the
