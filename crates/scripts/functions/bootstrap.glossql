@@ -165,7 +165,7 @@ DECLARE ASPECT metric_cube WITH $${
         "dims": {"type": "array", "items": {"type": "string"}},
         "alternative": {"type": "string"},
         "alternative_error": {"type": "string"},
-        "rows": {"type": "array", "items": {"type": "array"}}}}}
+        "rows": {"type": "array", "items": {"type": "object"}}}}}
   }
 }$$ AS MEASUREMENT ON DATASET;
 

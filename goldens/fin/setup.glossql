@@ -50,38 +50,32 @@ DECLARE ASPECT price_rise WITH $${
 }$$ AS FACT ON DATASET;
 DECLARE ASPECT revenue WITH $${"title": "Revenue", "x-kind": "metric"}$$ AS QUERY ON DATASET;
 DECLARE FUNCTION ap_ties_check FOR fin AS $$
-  let m = db.query(`WITH oi AS (SELECT date AS d, sum(value) AS ap FROM read.accounts_payable() GROUP BY 1),
-                         gl AS (SELECT period_start AS d, -sum(ending_balance) AS gl FROM account_balances
-                                WHERE account_id IN ('2110','2120') GROUP BY 1)
-                    SELECT count(*) AS n, count(*) FILTER (WHERE abs(oi.ap - gl.gl) > 0.01) AS bad
-                    FROM oi JOIN gl ON gl.d = oi.d`);
-  let n = m.cell("n").parse_float();
-  #{
-    "outcome": "measured: the payables grounding against the ledger balance, per month",
-    "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 1.0 }
-  }
+  WITH oi AS (SELECT date AS d, sum(value) AS ap FROM read.accounts_payable() GROUP BY 1),
+       gl AS (SELECT period_start AS d, -sum(ending_balance) AS gl FROM account_balances
+              WHERE account_id IN ('2110','2120') GROUP BY 1)
+  SELECT 'measured: the payables grounding against the ledger balance, per month' AS outcome,
+         CASE WHEN count(*) = 0 THEN 1.0
+              ELSE CAST(count(*) FILTER (WHERE abs(oi.ap - gl.gl) > 0.01) AS DOUBLE) / count(*)
+         END AS breach_rate
+  FROM oi JOIN gl ON gl.d = oi.d
 $$ RETURNS ap_ties_to_ledger;
 DECLARE FUNCTION ar_ties_check FOR fin AS $$
-  let m = db.query(`WITH oi AS (SELECT date AS d, sum(value) AS ar FROM read.accounts_receivable() GROUP BY 1),
-                         gl AS (SELECT period_start AS d, sum(ending_balance) AS gl FROM account_balances
-                                WHERE account_id IN ('1210','1220') GROUP BY 1)
-                    SELECT count(*) AS n, count(*) FILTER (WHERE abs(oi.ar - gl.gl) > 0.01) AS bad
-                    FROM oi JOIN gl ON gl.d = oi.d`);
-  let n = m.cell("n").parse_float();
-  #{
-    "outcome": "measured: the receivables grounding against the ledger balance, per month",
-    "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 1.0 }
-  }
+  WITH oi AS (SELECT date AS d, sum(value) AS ar FROM read.accounts_receivable() GROUP BY 1),
+       gl AS (SELECT period_start AS d, sum(ending_balance) AS gl FROM account_balances
+              WHERE account_id IN ('1210','1220') GROUP BY 1)
+  SELECT 'measured: the receivables grounding against the ledger balance, per month' AS outcome,
+         CASE WHEN count(*) = 0 THEN 1.0
+              ELSE CAST(count(*) FILTER (WHERE abs(oi.ar - gl.gl) > 0.01) AS DOUBLE) / count(*)
+         END AS breach_rate
+  FROM oi JOIN gl ON gl.d = oi.d
 $$ RETURNS ar_ties_to_ledger;
 DECLARE FUNCTION journal_balanced_check FOR fin AS $$
-  let m = db.query(`SELECT count(*) AS n, count(*) FILTER (WHERE abs(d - c) > 0.005) AS bad
-                    FROM (SELECT entry_id, sum(debit) AS d, sum(credit) AS c
-                          FROM journal_lines GROUP BY entry_id)`);
-  let n = m.cell("n").parse_float();
-  #{
-    "outcome": "measured: per-entry debits against credits, tolerance 0.005 for float noise",
-    "breach_rate": if n > 0.0 { m.cell("bad").parse_float() / n } else { 0.0 }
-  }
+  SELECT 'measured: per-entry debits against credits, tolerance 0.005 for float noise' AS outcome,
+         CASE WHEN count(*) = 0 THEN 0.0
+              ELSE CAST(count(*) FILTER (WHERE abs(d - c) > 0.005) AS DOUBLE) / count(*)
+         END AS breach_rate
+  FROM (SELECT entry_id, sum(debit) AS d, sum(credit) AS c
+        FROM journal_lines GROUP BY entry_id)
 $$ RETURNS journal_balanced;
 DECLARE WITNESS ap_ties_w ON ap_ties_to_ledger BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0;
 DECLARE WITNESS ar_ties_w ON ar_ties_to_ledger BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0;
