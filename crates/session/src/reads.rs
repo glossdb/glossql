@@ -119,8 +119,15 @@ impl Shared {
             universe.push(table);
         }
         let pin = self.store.pin(&dataset, &snapshots).await?;
+        // Freshness is the pin AND the measurements relation's own
+        // snapshot: the pin covers inputs only, so a measurement landed
+        // on another channel moves neither — checked by pin alone, the
+        // cached context would keep serving the view from before that
+        // landing (found 2026-08-18: the docket's charts stayed empty
+        // while the agent's channel served the cube it had computed).
+        let measured = self.store.measurements_snapshot().await?;
         let cached = self.context.read().expect("context lock").clone();
-        if let Some(mut ctx) = cached.filter(|c| c.pin == pin) {
+        if let Some(mut ctx) = cached.filter(|c| c.pin == pin && c.measured == measured) {
             ctx.universe = universe;
             ctx.snapshots = snapshots;
             return Ok(ctx);

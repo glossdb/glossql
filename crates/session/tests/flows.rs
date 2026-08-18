@@ -1184,3 +1184,72 @@ async fn a_cte_shadows_a_same_named_table() {
     .await;
     assert!(read.contains("| 7"), "{read}");
 }
+
+/// A measurement landed on one channel is visible on every other the
+/// moment it commits. The pin covers inputs only, so a landing moves no
+/// pin — a cached context checked by pin alone would keep serving the
+/// view from before the landing on every channel but the one that
+/// computed it (found 2026-08-18: the docket's charts stayed empty
+/// while the agent's channel served the cube it had just landed).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_landing_reaches_a_channel_that_already_read() {
+    let store = Store::open_memory().await.unwrap();
+    let agent = session_with(ActorKind::Agent, "agent-1", &store).await;
+    let human = session_with(ActorKind::Human, "phil", &store).await;
+    run(&agent, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("billed", DataType::Float64, true),
+        Field::new("settled", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Float64Array::from(vec![100.0, 200.0, 50.0])),
+            Arc::new(Float64Array::from(vec![100.0, 150.0, 50.0])),
+        ],
+    )
+    .unwrap();
+    agent
+        .register_table(
+            "settlements",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+    run(
+        &agent,
+        r#"DECLARE ASPECT ar_check WITH $${"type": "object",
+             "required": ["outcome", "breach_rate"],
+             "properties": {"outcome": {"type": "string"},
+                            "breach_rate": {"type": "number"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION ar_settles_in_full FOR fin AS $$
+             SELECT 'short receipts counted' AS outcome,
+               CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*) AS breach_rate
+             FROM settlements
+           $$ RETURNS ar_check;"#,
+    )
+    .await;
+
+    // The other channel reads first, so its context caches at the
+    // current pin — before anything is measured.
+    run(&human, "USE fin;").await;
+    let before = table(
+        &human,
+        "SELECT aspect, state FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(before.contains("unassessed"), "{before}");
+
+    // The agent's channel lands the measurement; the pin does not move.
+    run(&agent, "SELECT ar_settles_in_full() FROM settlements;").await;
+
+    let after = table(
+        &human,
+        "SELECT aspect, value FROM GLOSSARY(settlements::ar_check);",
+    )
+    .await;
+    assert!(
+        after.contains("0.3333333333333333"),
+        "the landing must reach the channel that cached first: {after}"
+    );
+}

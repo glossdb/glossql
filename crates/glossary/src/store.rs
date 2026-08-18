@@ -44,6 +44,12 @@ pub struct ReadContext {
     /// The statement's pin — what every measurement this read serves or
     /// computes is keyed by.
     pub pin: Pin,
+    /// The measurements relation's snapshot when this context was built.
+    /// The pin deliberately excludes it (a measurement is an output, not
+    /// an input), so a cached context checked by pin alone would keep a
+    /// landing invisible to every channel but the one that computed it —
+    /// found 2026-08-18, the docket's charts. Freshness compares this.
+    pub measured: Option<i64>,
     /// The store, resolved once with the pin: one statement, one read of
     /// every relation — the rules below do no IO of their own.
     pub glossary: std::sync::Arc<Vec<GlossRow>>,
@@ -1333,7 +1339,14 @@ impl Store {
             universe,
             snapshots,
             pin,
+            measured: self.measurements_snapshot().await?,
         })
+    }
+
+    /// The measurements relation's current snapshot — the freshness key
+    /// a cached [`ReadContext`] is checked against beside its pin.
+    pub async fn measurements_snapshot(&self) -> Result<Option<i64>> {
+        Ok(self.lake.snapshot_id(STORE_NAMESPACE, "measurements").await?)
     }
 
     // -- the pin, and the measurements it keys -------------------------
