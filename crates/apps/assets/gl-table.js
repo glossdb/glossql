@@ -20,7 +20,19 @@
   }
 
   class GlTable extends HTMLElement {
-    async connectedCallback() {
+    connectedCallback() {
+      // A write refreshes the table in place — the store's capture
+      // listener has already dropped its caches.
+      this._written = () => this.load();
+      document.addEventListener('glossql:written', this._written);
+      this.load();
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener('glossql:written', this._written);
+    }
+
+    async load() {
       this.setAttribute('aria-busy', 'true');
       try {
         const t = await glStore.table(this.getAttribute('frame'));

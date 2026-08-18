@@ -50,7 +50,19 @@
   }
 
   class GlRows extends HTMLElement {
-    async connectedCallback() {
+    connectedCallback() {
+      // A write refreshes the panel in place: the store hears the same
+      // event first (capture) and has already dropped its caches.
+      this._written = () => this.load();
+      document.addEventListener('glossql:written', this._written);
+      this.load();
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener('glossql:written', this._written);
+    }
+
+    async load() {
       // Upgrade during the initial parse runs before the children
       // exist — wait for the document when the template isn't there
       // yet. htmx swaps insert fully-parsed trees and skip this.

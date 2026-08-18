@@ -106,19 +106,37 @@
     return el;
   }
 
-  // A write invalidates the store. A boosted form post (the ruling)
-  // changes what frames serve, but no frame URL moves — and checked
-  // by URL alone, the store kept serving the view from before the
-  // write until a hard reload (found 2026-08-18, the open panel after
-  // a ruling; the server's channel cache had the same defect the same
-  // week). Cleared before the swap, so components reconnecting after
-  // it fetch fresh. Specs stay: they are static files.
-  document.addEventListener('htmx:beforeSwap', (e) => {
-    const verb = e.detail && e.detail.requestConfig && e.detail.requestConfig.verb;
-    if (verb && verb !== 'get') {
+  // A write invalidates the store. The server announces every write
+  // with `HX-Trigger: glossql:written` (the ruling's 204, and the
+  // stale-tab 409 whose cause is someone else's write); htmx dispatches
+  // the event on the posting form and it bubbles. Checked by URL alone,
+  // the store kept serving the view from before the write until a hard
+  // reload (found 2026-08-18, the open panel after a ruling; the
+  // server's channel cache had the same defect the same week). Capture
+  // phase, so the caches are empty before any component's own listener
+  // refetches. Specs stay: they are static files.
+  document.addEventListener(
+    'glossql:written',
+    () => {
       tables.clear();
       rowSets.clear();
-    }
+    },
+    { capture: true }
+  );
+
+  // A refused write states its reason beside the form that posted it.
+  // The note lives inside a panel a later refetch replaces, which is
+  // the right lifetime: the refreshed truth supersedes the complaint.
+  document.addEventListener('htmx:responseError', (e) => {
+    const elt = e.detail && e.detail.elt;
+    const xhr = e.detail && e.detail.xhr;
+    if (!elt || !xhr) return;
+    const prior = elt.parentNode && elt.parentNode.querySelector('.frame-error');
+    if (prior) prior.remove();
+    elt.insertAdjacentElement(
+      'afterend',
+      errorBox(xhr.responseText || xhr.status + ' ' + xhr.statusText)
+    );
   });
 
   window.glStore = { table, rows, json, frameUrl, converter, errorBox };

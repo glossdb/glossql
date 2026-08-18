@@ -25,7 +25,19 @@
   }
 
   class GlValue extends HTMLElement {
-    async connectedCallback() {
+    connectedCallback() {
+      // A write refreshes the number in place — the store's capture
+      // listener has already dropped its caches.
+      this._written = () => this.load();
+      document.addEventListener('glossql:written', this._written);
+      this.load();
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener('glossql:written', this._written);
+    }
+
+    async load() {
       this.setAttribute('aria-busy', 'true');
       try {
         const rows = await glStore.rows(this.getAttribute('frame'));

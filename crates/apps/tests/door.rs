@@ -693,12 +693,21 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
 
     assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 1);
 
-    // A correction with the human's own words.
+    // A correction with the human's own words. The answer is the write
+    // event, not a navigation: 204 with the trigger header the store
+    // and every component listen for.
     let response = post(
         "subject=perf&aspect=dso&key=per-line&stance=corrected&note=per+order,+not+per+line",
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER, "{:?}", response);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "{:?}", response);
+    assert_eq!(
+        response
+            .headers()
+            .get("HX-Trigger")
+            .and_then(|v| v.to_str().ok()),
+        Some("glossql:written")
+    );
 
     // The question closes and the ruling stands in the human's words.
     assert_eq!(
@@ -711,10 +720,19 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
     assert!(settled.contains("corrected"), "{settled}");
 
     // The same post again: the question no longer derives, so the door
-    // refuses instead of writing a second ruling from a stale page.
+    // refuses instead of writing a second ruling from a stale page —
+    // and the refusal carries the trigger too, so the stale tab's
+    // panels re-derive to the current state on their own.
     let response =
         post("subject=perf&aspect=dso&key=per-line&stance=confirmed").await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("HX-Trigger")
+            .and_then(|v| v.to_str().ok()),
+        Some("glossql:written")
+    );
 
     // A correction has to say what is right — closing a question with
     // "wrong" and nothing else tells the agent nothing.
@@ -766,7 +784,7 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SEE_OTHER, "{response:?}");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "{response:?}");
 
     // The question closes — the refusal holds this key, and only a
     // re-record with a clearer assumption asks again.
@@ -903,13 +921,13 @@ async fn the_metrics_pages_render_both_states() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_ruling_returns_the_reader_to_the_page_they_ruled_from() {
-    // Two halves of one complaint (project lead, 2026-08-15): a write in
-    // the docket did not show until a manual reload. The redirect was
-    // always correct — the browser was serving the target from cache,
-    // because a page carried no Cache-Control at all and heuristic
-    // freshness applies. And the redirect went to the index, so ruling
-    // from a metric's page lost the reader's place as well.
+async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
+    // Signed off 2026-08-18, retiring the 303-to-Referer machinery: a
+    // 303's job is to send the reader somewhere else to see the result,
+    // and the reader never leaves this page — the docket is
+    // client-rendered, so the response is an event. Success is 204 with
+    // `HX-Trigger: glossql:written`, never a Location; the Referer is
+    // ignored entirely, so there is nothing a forged one can steer.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
     plane
@@ -984,32 +1002,31 @@ async fn a_ruling_returns_the_reader_to_the_page_they_ruled_from() {
             .unwrap()
         }
     };
-    let location = |r: &Response<Body>| {
-        r.headers()
-            .get(axum::http::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string()
-    };
 
-    // Ruled from a metric's page: the reader lands back on it, query and
-    // all, rather than on the index.
-    let response = post("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/app/docket/p/metrics?metric=dso");
-
-    // Everything that is not a path under this app falls back to the
-    // index — a forged Referer can never send a reader off the site.
-    for (key, forged) in [
-        ("k1", "http://evil.example/steal"),
-        ("k2", "//evil.example/steal"),
-        ("k3", "/app/other/p/metrics"),
-        ("k4", "not a url at all"),
+    // The same contract wherever the reader ruled from — a metric's
+    // page, a forged Referer, no Referer at all: 204, the trigger, and
+    // no Location for anything to follow.
+    for (key, referer) in [
+        ("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")),
+        ("k1", Some("http://evil.example/steal")),
+        ("k2", Some("//evil.example/steal")),
+        ("k3", Some("/app/other/p/metrics")),
+        ("k4", Some("not a url at all")),
+        ("k5", None),
     ] {
-        let response = post(key, Some(forged)).await;
-        assert_eq!(response.status(), StatusCode::SEE_OTHER, "referer {forged}");
-        assert_eq!(location(&response), "/app/docket", "referer {forged}");
+        let response = post(key, referer).await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT, "referer {referer:?}");
+        assert_eq!(
+            response
+                .headers()
+                .get("HX-Trigger")
+                .and_then(|v| v.to_str().ok()),
+            Some("glossql:written"),
+            "referer {referer:?}"
+        );
+        assert!(
+            response.headers().get(axum::http::header::LOCATION).is_none(),
+            "referer {referer:?}"
+        );
     }
-    let response = post("k5", None).await;
-    assert_eq!(location(&response), "/app/docket", "no referer at all");
 }

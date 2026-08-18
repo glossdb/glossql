@@ -11,11 +11,20 @@
 //! Nothing else about the page changes. It still holds no other write,
 //! and the ruling lands exactly where the round's would — the human's
 //! own slot, on the human's own channel, witnessed by this server.
+//!
+//! The response is an event, not a navigation (signed off 2026-08-18,
+//! replacing a 303 back to the Referer — PRG bent out of shape, since
+//! the reader never leaves the page and the docket is client-rendered
+//! anyway). Success is 204 with `HX-Trigger: glossql:written`; the
+//! store hears the event, drops its frame caches, and every connected
+//! component refetches in place. The stale-tab 409 carries the same
+//! trigger, so a tab that ruled a dead question re-derives to the
+//! current state instead of asking for a reload.
 
 use axum::Form;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::rulings::{self, Ruling};
 use serde::Deserialize;
@@ -39,44 +48,13 @@ pub struct Answer {
     note: String,
 }
 
-/// Where to send the browser back to: the page the form was posted
-/// from, or the app's index when that cannot be established.
-///
-/// Only the path and query of the Referer are ever used, and only when
-/// the path is under this app — so a forged header can redirect a user
-/// to another page of the same docket at worst, never off the site.
-/// Without this a ruling made on a metric's page bounced the reader to
-/// the index, which reads as the page losing their place.
-fn back_to(headers: &HeaderMap, app: &str) -> String {
-    let home = format!("/app/{app}");
-    headers
-        .get(header::REFERER)
-        .and_then(|r| r.to_str().ok())
-        .map(|r| {
-            // Drop scheme and authority if the Referer is absolute, and
-            // any fragment. What is left is path and query.
-            let rest = match r.split_once("://") {
-                Some((_, after)) => match after.find('/') {
-                    Some(slash) => &after[slash..],
-                    None => "/",
-                },
-                None => r,
-            };
-            rest.split('#').next().unwrap_or("/")
-        })
-        // The whole guard: whatever the header said, the redirect is a
-        // path under this app or it is the app's index. A protocol-
-        // relative `//host/…` fails this too, since it does not begin
-        // with `/app/<app>`.
-        .filter(|p| *p == home || p.starts_with(&format!("{home}/")))
-        .map(str::to_string)
-        .unwrap_or(home)
-}
+/// The write announced: htmx dispatches this on the posting form and it
+/// bubbles — the store clears on it, components refetch on it.
+const WRITTEN: [(&str, &str); 1] = [("HX-Trigger", "glossql:written")];
 
 pub async fn rule(
     State(door): State<AppDoor>,
     Path(app): Path<String>,
-    headers: HeaderMap,
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = match answer.stance.as_str() {
@@ -122,10 +100,14 @@ pub async fn rule(
     {
         Ok(Some(standing)) => standing,
         Ok(None) => {
-            return plain(
+            // The trigger rides the refusal too: the stale tab's panels
+            // re-derive to the current state on their own.
+            return (
                 StatusCode::CONFLICT,
-                "that question no longer stands — reload the docket".to_string(),
-            );
+                WRITTEN,
+                "that question no longer stands — the page has re-derived".to_string(),
+            )
+                .into_response();
         }
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
@@ -145,7 +127,7 @@ pub async fn rule(
     )
     .await
     {
-        Ok(_) => Redirect::to(&back_to(&headers, &app)).into_response(),
+        Ok(_) => (StatusCode::NO_CONTENT, WRITTEN).into_response(),
         Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e),
     }
 }

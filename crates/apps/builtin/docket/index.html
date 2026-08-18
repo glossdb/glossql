@@ -45,8 +45,11 @@
           {# The one write the door takes. Only the claim's identity is
              posted; the door re-derives the prose from the same read
              that drew this row, so a stale tab is refused rather than
-             believed. #}
-          <form class="rule" method="post" action="/app/docket/rule">
+             believed. The post is an htmx request with no swap: the
+             server answers 204 + HX-Trigger glossql:written, the store
+             drops its caches, and every panel refetches in place —
+             no navigation, nothing to go back to. #}
+          <form class="rule" hx-post="/app/docket/rule" hx-swap="none">
             <input type="hidden" name="subject" value="{subj_id}">
             <input type="hidden" name="aspect" value="{asp_id}">
             <input type="hidden" name="key" value="{key_id}">
