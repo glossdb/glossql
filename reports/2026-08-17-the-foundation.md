@@ -573,7 +573,9 @@ values; runs under the session scratchpad, not kept):
   own ruling against "every change must simplify"): (a) a landed
   measurement costs ~0.1–0.15 s, dominated by the store commit as
   snapshot history accumulates — the parked batching item is the same
-  lever; (b) `outliers` re-derives its profile aggregates inline at
+  lever, and it stays parked (project lead, 2026-08-18: writing
+  measurements dominates the ramp-up phase only, not the normal
+  state); (b) `outliers` re-derives its profile aggregates inline at
   roughly twice `profile`'s scan cost; (c) the searches take no
   column-pair pruning before scanning — the wide-table quadratic above.
   Memory was not instrumented; nothing strained at 993 MB.
