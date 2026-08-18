@@ -113,8 +113,11 @@
   // the store kept serving the view from before the write until a hard
   // reload (found 2026-08-18, the open panel after a ruling; the
   // server's channel cache had the same defect the same week). Capture
-  // phase, so the caches are empty before any component's own listener
-  // refetches. Specs stay: they are static files.
+  // phase, so the caches are empty before anything refetches. Only the
+  // record panels (gl-rows) re-load on the event — a ruling changes
+  // the record, not the instruments; charts, tables and numbers keep
+  // their DOM and simply read fresh whenever they next load. Specs
+  // stay: they are static files.
   document.addEventListener(
     'glossql:written',
     () => {

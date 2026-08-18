@@ -33,19 +33,7 @@
   };
 
   class GlChart extends HTMLElement {
-    connectedCallback() {
-      // A write refreshes the chart in place — the store's capture
-      // listener has already dropped its caches.
-      this._written = () => this.load();
-      document.addEventListener('glossql:written', this._written);
-      this.load();
-    }
-
-    async load() {
-      if (this._view) {
-        this._view.finalize();
-        this._view = null;
-      }
+    async connectedCallback() {
       const mount = document.createElement('div');
       mount.className = 'chart-mount';
       this.replaceChildren(mount);
@@ -93,7 +81,6 @@
     }
 
     disconnectedCallback() {
-      document.removeEventListener('glossql:written', this._written);
       if (this._view) {
         this._view.finalize();
         this._view = null;
