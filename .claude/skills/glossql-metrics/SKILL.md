@@ -600,13 +600,11 @@ the detector that bands an authored expectation against a check voice:
 
 ```glossql
 DECLARE FUNCTION journal_balanced_check FOR fin AS $$
-  let m = db.query("SELECT sum(debit) AS d, sum(credit) AS c FROM journal_lines");
-  let d = m.cell("d").parse_float();
-  #{
-    "outcome": "measured: debits against credits",
-    "breach_rate": if d > 0.0 { (d - m.cell("c").parse_float()).abs() / d } else { 0.0 }
-  }
-$$ ACCEPTS (imports) RETURNS journal_balanced;
+  SELECT 'measured: total debits against total credits' AS outcome,
+         CASE WHEN sum(debit) > 0 THEN abs(sum(debit) - sum(credit)) / sum(debit)
+              ELSE 0.0 END AS breach_rate
+  FROM journal_lines
+$$ RETURNS journal_balanced;
 ```
 
 A voice speaks the aspect's own schema — `outcome` like any slot, the
@@ -736,9 +734,9 @@ expectation gloss above owes. **`glossql-functions` teaches it**: the
 declaration carries the body, so a check is writable over the door and
 the shipped library reads back as worked examples
 (`SELECT script FROM functions WHERE name = 'rate_tolerance'`). The
-short version: `ACCEPTS` is both the context and the invalidation
-edge, no `RETURNS` declares a detector, and a script abstains
-(`#{applicable: false}`) rather than throwing.
+short version: a measurement's body is one SQL query the engine plans,
+no `RETURNS` declares a detector (a script over slots), and a function
+abstains (`applicable: false` with a reason) rather than throwing.
 
 **An app** when someone needs to look at this — a standalone page at
 `/app/<name>` whose URL is its whole state, so a filtered view is a
