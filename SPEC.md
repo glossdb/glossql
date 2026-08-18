@@ -30,11 +30,12 @@ Ground rules:
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
   key is (subject, aspect, actor kind).
-- **Functions are scripts.** The engine's analytical machinery — profiling,
-  quality checks, detection, adjudication — lives in registered rhai scripts with
-  JSON contracts; a function is either a measurement or a detector, never a
-  metric. Metrics are concepts: QUERY aspects, run as their SQL (§5.1).
-  Analytical logic does not live in the grammar.
+- **A measurement is a query; a judge is a script.** A function with
+  `RETURNS` carries one SQL query the engine plans and runs; a detector
+  carries a rhai script over its witness's slots and never table data. A
+  function is either a measurement or a detector, never a metric. Metrics
+  are concepts: QUERY aspects, run as their SQL (§5.1). Analytical logic
+  does not live in the grammar.
 
 ## 2. Origins
 
@@ -333,38 +334,43 @@ SELECT * FROM GLOSSARY(fin::dso);
 
 ## 6. The function library
 
-Scripts registered as functions, with name, contract and body. A function
-is either a **measurement** — it
-fills a MEASUREMENT aspect through that aspect's witness (§7) — or a
-**detector** (§7.1). The library is the engine's analytical machinery
-(profiling, quality checks, detection) moved into the server as rhai
-scripts; metrics are not functions (§5.1). Typing is not in it — the
-recipe carries the casts (§3).
+Functions registered with name, contract and body. A function is either
+a **measurement** — it fills a MEASUREMENT aspect through that aspect's
+witness (§7), and its body is one SQL query — or a **detector** (§7.1),
+whose body is a rhai script over slots. The library is the engine's
+analytical machinery (profiling, quality checks, detection) shipped as
+declarations; metrics are not functions (§5.1). Typing is not in it —
+the recipe carries the casts (§3).
 
 ```sql
-DECLARE FUNCTION profile_min_max FOR fin AS $$/* min and max per column */$$
-  RETURNS min_max;
-
-DECLARE FUNCTION outliers FOR GLOBAL AS $$/* iqr and z-score fences over the profile */$$
-  ACCEPTS (column_profile)
-  RETURNS outlier_profile;
+DECLARE FUNCTION profile FOR GLOBAL AS $$
+  SELECT profile(v) FROM subject_column($subject)
+$$ RETURNS column_profile;
 
 DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
 ```
 
 - `FOR` scopes the function to a dataset, or `GLOBAL`.
-- `AS` carries the script itself (ruled 2026-08-15, fixture 24). It was a
+- `AS` carries the body itself (ruled 2026-08-15, fixture 24). It was a
   path until then, which put the body outside the language: an agent
   connected over the MCP door has statements and no filesystem, so it
   could neither author a function nor read the library's own. The
   declaration supersedes on re-declare like any other, and
   `SELECT script FROM functions` serves the shipped library as worked
   examples.
-- `ACCEPTS` names the aspects whose current values the server hands the
-  script as its context document — settings are context, never call
-  arguments; calls are always bare `f()`. Absent `ACCEPTS`, the script
-  receives no context. A script that wants a declaration relation reads
-  it as a table, which needs no naming.
+- **The role picks the body's language** (ruled 2026-08-17). A `RETURNS`
+  body is SQL, planned and run by the engine — read-only, at the
+  statement's pin, composing everything a read can. `$subject` arrives
+  as a string literal; `subject_column($subject)` is the subject's
+  column as a relation named `v`. The result lands by shape: one row and
+  one column is the value, one row is an object of its columns, many
+  rows are an array of row objects.
+- `ACCEPTS` names the aspects whose current values the server hands a
+  script body as its context document — settings are context, never call
+  arguments; calls are always bare `f()`. A SQL body composes inline
+  instead: a landed value is a read over `measurements`, a statistic is
+  the same aggregate computed in place. A declaration relation reads as
+  a table, which needs no naming.
 - `RETURNS` names the aspect the function's output fills, mirroring
   `ACCEPTS`: functions read aspects and write an aspect, and the aspect's
   schema is the one contract — output is validated against it at
@@ -376,10 +382,9 @@ DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliat
   named only in a witness's `DETECTOR` clause; it receives the witness's
   slots and threshold, never table data, and its output must satisfy the
   standard attest schema (§7.2) — the engine's contract, not authored.
-- Every function implicitly receives its subject, with its SQL schema and
-  neighborhood (parent, siblings, children) as metadata. Scripts run
-  against the dataset — any SQL; determinism is the script's contract, the
-  workspace its boundary.
+- Every function receives its subject — `$subject` in a SQL body, the
+  `subject` constant in a script. A script computes from its slots and
+  context alone; anything that reads data is a measurement.
 
 Extraction:
 
@@ -473,7 +478,7 @@ takes statements and returns outcomes, and everything an agent must *learn*
 ships as skills sourced from this repository's artifacts — the language
 (this document, `grammar.ebnf`), the flows (corpus fixtures 11 and 12),
 and function authoring (the reference
-scripts and their kernels). Everything *live* — declared functions, the
+library). Everything *live* — declared functions, the
 glossary, the tables — is read through the language, never taught.
 
 ## 9. Open
