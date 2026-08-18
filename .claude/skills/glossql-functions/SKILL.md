@@ -18,11 +18,9 @@ told apart by shape, and the shape also picks the body's language:
 - **A detector** — no `RETURNS`. A rhai script named in a witness's
   `DETECTOR` clause; it sees the slots and never the table data.
 
-Normative prose: SPEC.md §6 (functions) and §7 (witnesses, detectors).
-
 ## Read the closest one first
 
-Fifteen reference functions ship in every workspace and the body is a
+The reference library ships in every workspace and the body is a
 column, so the library is readable through the door:
 
 ```sql
@@ -48,18 +46,17 @@ Read the one nearest your task before writing:
 
 The body rides the statement. There is no path and no file: an agent
 over the door has statements, so a function is written the way
-everything else is (ruled 2026-08-15, fixture 24). A measurement's body
-is one SQL query:
+everything else is. A measurement's body is one SQL query:
 
 ```glossql
-DECLARE FUNCTION ap_settles_in_full_check FOR fin AS $$
+DECLARE FUNCTION on_time_check FOR ops AS $$
   SELECT
-    'a receipt settles its invoice in full; a short receipt is the exception' AS outcome,
+    'a work order completes by its promised date; a late close is the exception' AS outcome,
     CASE WHEN count(*) = 0 THEN 0.0
-         ELSE CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*)
+         ELSE CAST(count(*) FILTER (WHERE completed_at > promised_at) AS DOUBLE) / count(*)
     END AS breach_rate
-  FROM ar_settlement
-$$ RETURNS ar_settles_in_full;
+  FROM work_orders
+$$ RETURNS on_time_completion;
 ```
 
 - `FOR` scopes to a dataset, or `GLOBAL`.
@@ -96,9 +93,9 @@ name.
 ## The script contract
 
 Two constants are in scope; the script's last expression is its
-result, a map that must serialize as JSON. A script never queries —
-the SQL door died with the last shipped script measurement; anything
-that reads data is a measurement, and a measurement's body is SQL.
+result, a map that must serialize as JSON. A script never queries:
+anything that reads data is a measurement, and a measurement's body
+is SQL.
 
 - `subject` — a string, `"table"` or `"table.column"`.
 - `context` — a map. A detector gets `slots` (one per speaker, each
@@ -144,7 +141,7 @@ Judgment lives in detectors and in read policy, never in results — no
 measurement writes a verdict into data.
 
 ```glossql
-DECLARE WITNESS ap_settles_w ON ar_settles_in_full BY (AGENT, HUMAN)
+DECLARE WITNESS on_time_w ON on_time_completion BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
 ```
 
@@ -161,7 +158,7 @@ library's.
 ## Running
 
 ```glossql
-SELECT outliers() FROM orders.amount;
+SELECT outliers() FROM work_orders.duration_min;
 ```
 
 Extraction computes at the read's pin — the data and declarations the

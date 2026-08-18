@@ -34,11 +34,11 @@ No forms anywhere in this flow — this is the conversation register.
 1. **The job, in one sentence.** Who opens this page, and what single
    question does it answer? An app has a topic exactly as a dataset
    does, and every tile earns its place against that job or gets cut.
-   This is where "a monitoring dashboard" becomes "the Monday cash
-   meeting page".
+   This is where "a monitoring dashboard" becomes "the Monday
+   operations review page".
 2. **The tile list, as a proposal.** Each tile named with its read, its
-   slice and its chip — "DSO trend with the rival line · billings by
-   region, top 8 · the open-questions count". Propose from what the
+   slice and its chip — "cycle-time trend with the rival line ·
+   throughput by region, top 8 · the open-questions count". Propose from what the
    glossary already ranks: the judged axes, the grounded surfaces.
    The user prunes and extends in words.
 3. **Author, then hand over the URL.** The rendered page *is* the
@@ -56,15 +56,15 @@ kind of file it is; the subject says where it goes.
 
 | aspect | subject | becomes |
 |---|---|---|
-| `app` | `cash` | the manifest |
-| `app_page` | `cash.index` | `index.html` |
-| `app_frame` | `cash.monthly` | `frames/monthly.sql` |
-| `app_spec` | `cash.trend` | `specs/trend.vl.json` |
+| `app` | `delivery` | the manifest |
+| `app_page` | `delivery.index` | `index.html` |
+| `app_frame` | `delivery.monthly` | `frames/monthly.sql` |
+| `app_spec` | `delivery.trend` | `specs/trend.vl.json` |
 
 ```glossql
-GLOSS app ON cash AS $${"title": "Monday cash"}$$;
-GLOSS app_frame ON cash.monthly AS $${"sql":
-  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM read.revenue() GROUP BY 1 ORDER BY 1"}$$;
+GLOSS app ON delivery AS $${"title": "Monday operations"}$$;
+GLOSS app_frame ON delivery.monthly AS $${"sql":
+  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM read.throughput() GROUP BY 1 ORDER BY 1"}$$;
 ```
 
 A manifest with no `dataset` binds to the workspace's sole dataset at
@@ -103,7 +103,7 @@ total, `'alternative'` the disclosed rival), and `whatif.<scenario>()`
 for a declared what-if beside the real books:
 
 ```sql
-SELECT month, replay, p05, p50, p95 FROM whatif.price_hike()
+SELECT month, replay, p05, p50, p95 FROM whatif.capacity_shift()
 WHERE concept = CAST($concept AS VARCHAR) ORDER BY month
 ```
 
@@ -124,7 +124,7 @@ vocabulary. Four macros and a prose block:
   {{ tiles::value(frame="frames/front", field="open", label="Open questions",
        chip="open_questions", note="what the door would ask a human") }}
   {{ tiles::chart(frame="frames/monthly", spec="specs/trend.vl.json",
-       title="Revenue by month", chip="read.revenue()") }}
+       title="Throughput by month", chip="read.throughput()") }}
   {{ tiles::table(frame="frames/monthly", title="The months", rows=24) }}
 </div>
 {% endblock %}
@@ -155,9 +155,9 @@ re-renders.
 them thin: encodings and marks. A spec that filters or aggregates is
 doing the frame's job in a place nobody can test.
 
-Read the vendored version out of `crates/apps/assets/vendor/README.md`
-and pin `$schema` to its major — a spec still claiming `v5` against a
-v6 library renders but logs a version warning on every load, which
+Pin `$schema` to the vega-lite major the door serves (the rendered
+shell's vendor script names it) — a spec claiming an older major
+renders but logs a version warning on every load, which
 teaches readers to ignore the console. `{"data": {"name": "frame"}}` is
 how the spec names the frame the tile bound.
 

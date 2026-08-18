@@ -189,7 +189,7 @@ async fn every_skill_read_names_columns_that_exist() {
     // examples actually spell, so a read reaches its columns instead of
     // stopping at the binding.
     let session = plane.session(human()).await.unwrap();
-    for name in ["fin", "orders", "erp_export"] {
+    for name in ["ops", "orders", "erp_export"] {
         session
             .execute(&format!(
                 "DECLARE DATASET {name} SET (purpose: 'the skills harness');"
@@ -197,7 +197,7 @@ async fn every_skill_read_names_columns_that_exist() {
             .await
             .unwrap();
     }
-    session.execute("USE fin;").await.unwrap();
+    session.execute("USE ops;").await.unwrap();
 
     let mut broken = Vec::new();
     let mut planned = 0usize;
