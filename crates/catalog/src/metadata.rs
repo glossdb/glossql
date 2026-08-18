@@ -1,4 +1,13 @@
-//! The store's relations, on Iceberg v3.
+//! The metadata backend: where the store's relations live.
+//!
+//! The glossary, the declarations (functions, aspects, witnesses,
+//! sources, relationships) and the measurements are each one Iceberg v3
+//! table; [`MetadataBackend`] is the two-method seam they cross the
+//! lake through — scan history, append rows. Named for what it holds:
+//! the workspace's metadata, as opposed to the data plane the recipes
+//! land into. (It was called `Relations` until 2026-08-18, which
+//! collided with the `relationships` relation and read as a collection
+//! rather than a backend.)
 //!
 //! Stage 3 of `reports/2026-08-17-the-foundation.md` §6. Three decisions
 //! make this smaller than it looks:
@@ -91,7 +100,7 @@ pub struct RelationSpec {
 /// relation nothing has written is empty, never an act: reads never
 /// write, so tables are created by the first append alone.
 #[async_trait::async_trait]
-pub trait Relations: Send + Sync + std::fmt::Debug {
+pub trait MetadataBackend: Send + Sync + std::fmt::Debug {
     /// Every row ever written to the relation, in no guaranteed order —
     /// callers order by [`Row::seq`] because that is the rule.
     async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>>;
@@ -115,16 +124,16 @@ const POS: &str = "_pos";
 
 /// The relations seam over a workspace's lake: every crossed relation is
 /// one table in the store's namespace.
-pub struct IcebergRelations {
+pub struct IcebergMetadata {
     lake: Lake,
     namespace: String,
     specs: HashMap<String, RelationSpec>,
     ctx: SessionContext,
 }
 
-impl std::fmt::Debug for IcebergRelations {
+impl std::fmt::Debug for IcebergMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IcebergRelations")
+        f.debug_struct("IcebergMetadata")
             .field("namespace", &self.namespace)
             .finish_non_exhaustive()
     }
@@ -139,13 +148,13 @@ fn arrow_schema(columns: &[&str]) -> Arc<Schema> {
     ))
 }
 
-impl IcebergRelations {
+impl IcebergMetadata {
     pub async fn open(
         lake: Lake,
         namespace: &str,
         relations: &[RelationSpec],
     ) -> crate::Result<Self> {
-        Ok(IcebergRelations {
+        Ok(IcebergMetadata {
             lake,
             namespace: namespace.to_string(),
             specs: relations
@@ -314,7 +323,7 @@ impl IcebergRelations {
 }
 
 #[async_trait::async_trait]
-impl Relations for IcebergRelations {
+impl MetadataBackend for IcebergMetadata {
     async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>> {
         self.scan_filtered(relation, None).await
     }

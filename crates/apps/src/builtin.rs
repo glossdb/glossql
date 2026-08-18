@@ -46,6 +46,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/pulse.sql"),
         docket!("frames/settled.sql"),
         docket!("frames/slices.sql"),
+        docket!("frames/stale.sql"),
         docket!("frames/trend.sql"),
         docket!("specs/series.vl.json"),
     ],

@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub mod relations;
-pub use relations::{IcebergRelations, RelationSpec, Relations, Row};
+pub mod metadata;
+pub use metadata::{IcebergMetadata, MetadataBackend, RelationSpec, Row};
 
 use datafusion::arrow::array::RecordBatch;
 use iceberg::arrow::FieldMatchMode;
@@ -323,6 +323,13 @@ impl Lake {
         }
         let table = self.catalog.load_table(&ident).await?;
         Ok(table.metadata().current_snapshot_id())
+    }
+
+    pub async fn namespace_exists(&self, name: &str) -> Result<bool> {
+        Ok(self
+            .catalog
+            .namespace_exists(&NamespaceIdent::new(name.to_string()))
+            .await?)
     }
 
     /// Data tables in the dataset's namespace.

@@ -5,7 +5,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A backend could not serve or accept rows. The store's rules never
-    /// produce this — only the IO behind [`crate::Relations`] does.
+    /// produce this — only the IO behind [`crate::MetadataBackend`] does.
     #[error("store backend: {0}")]
     Backend(String),
     #[error("unknown {what} `{name}` — declare it first")]

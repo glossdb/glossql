@@ -84,15 +84,6 @@ impl Shared {
             .collect())
     }
 
-    /// A landing at the same pin is the one write the pin cannot see —
-    /// the session forgets its own context after landing a measurement.
-    /// Another channel's landing stays invisible until this pin moves;
-    /// the duplicate computation that allows is harmless and
-    /// uncoordinated by design (§4).
-    pub fn forget_context(&self) {
-        *self.context.write().expect("context lock") = None;
-    }
-
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
@@ -119,15 +110,17 @@ impl Shared {
             universe.push(table);
         }
         let pin = self.store.pin(&dataset, &snapshots).await?;
-        // Freshness is the pin AND the measurements relation's own
-        // snapshot: the pin covers inputs only, so a measurement landed
-        // on another channel moves neither — checked by pin alone, the
-        // cached context would keep serving the view from before that
+        // Freshness is the pin AND the store's derived version: the pin
+        // covers inputs only, so a measurement landed on any channel
+        // moves neither its pin nor this cache — checked by pin alone,
+        // the cached context kept serving the view from before that
         // landing (found 2026-08-18: the docket's charts stayed empty
         // while the agent's channel served the cube it had computed).
-        let measured = self.store.measurements_snapshot().await?;
+        // The version is enumerated from the catalog, so every store
+        // write — today's relations and any added later — misses here.
+        let version = self.store.version().await?;
         let cached = self.context.read().expect("context lock").clone();
-        if let Some(mut ctx) = cached.filter(|c| c.pin == pin && c.measured == measured) {
+        if let Some(mut ctx) = cached.filter(|c| c.pin == pin && c.version == version) {
             ctx.universe = universe;
             ctx.snapshots = snapshots;
             return Ok(ctx);
@@ -652,13 +645,17 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     }
 }
 
-/// The cube flattened: `(metric, dimension, member, period, value)`.
-/// Dimension `''` is the monthly total, `'alternative'` the disclosed
-/// rival reading, anything else a served dimension column with its
-/// member in `member`. Served from the `measurements` relation at the
-/// current pin — an empty relation means the cube has not been measured
-/// at this pin (`SELECT metric_cube() FROM <dataset>` lands it), the
-/// same honesty the bands tile keeps; nothing computes at page load.
+/// The cube flattened: `(metric, dimension, member, period, value,
+/// current)`. Dimension `''` is the monthly total, `'alternative'` the
+/// disclosed rival reading, anything else a served dimension column
+/// with its member in `member`. Served from the `measurements`
+/// relation: the NEWEST landed cube whatever its pin, with `current`
+/// saying whether it was computed at the standing pin — a workspace
+/// write no longer blanks every chart, it marks them stale (ruled
+/// 2026-08-18; before that the docket went empty after any gloss).
+/// Recomputing stays a pull: `SELECT metric_cube() FROM <dataset>`
+/// lands a fresh one, and nothing computes at page load. An empty
+/// relation still serves nothing — the cube has never been measured.
 async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError> {
     let dataset = shared
         .dataset
@@ -668,9 +665,13 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         .ok_or(SessionError::NoDataset)?;
     let ctx = shared.read_context().await?;
     let mut rows: Vec<(String, String, String, String, f64)> = Vec::new();
-    if let Some(measured) =
-        glossql_glossary::Store::measurement_in(&ctx, &dataset, &dataset, "metric_cube")
+    let mut current = true;
+    if let Some((measured, is_current)) = shared
+        .store
+        .measurement_latest(&ctx, &dataset, &dataset, "metric_cube")
+        .await?
     {
+        current = is_current;
         let body: Value = serde_json::from_str(&measured.body).map_err(|e| {
             SessionError::BadSubject(format!("metric_series(): the measured cube is not JSON: {e}"))
         })?;
@@ -705,6 +706,7 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         utf8("member"),
         utf8("period"),
         Field::new("value", DataType::Float64, false),
+        Field::new("current", DataType::Boolean, false),
     ]));
     Ok(batch(
         schema,
@@ -722,6 +724,10 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
                 rows.iter().map(|r| r.3.as_str()),
             )),
             Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.4))),
+            Arc::new(datafusion::arrow::array::BooleanArray::from(vec![
+                current;
+                rows.len()
+            ])),
         ],
     ))
 }

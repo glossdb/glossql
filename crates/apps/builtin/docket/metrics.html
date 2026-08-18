@@ -18,6 +18,10 @@
   <span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
+  <gl-rows frame="frames/stale" empty="">
+    <template><p class="hint">{note}</p></template>
+  </gl-rows>
+
   {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
        note="The measured cube's total series at the grounding's own verb, and the disclosed rival beside it where the grounding names one.") }}
@@ -41,9 +45,9 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Slice</span>
-      <code class="chip" title="The axes the cube admitted: served dimension columns with 2–24 members.">metric_series()</code></header>
+      <code class="chip" title="The axes the cube admitted: served dimension columns, fewest members first; a wide axis serves its top members by weight plus 'other'.">metric_series()</code></header>
     <p class="hint">pick an axis — the slice rides the URL, so what you look at is shareable and re-derivable.</p>
-    <gl-rows frame="frames/dims" empty="no axes admitted — the grounding serves no dimension column with 2–24 members, or the cube has not run">
+    <gl-rows frame="frames/dims" empty="no axes admitted — the grounding serves no usable dimension column, or the cube has not run">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:1fr auto">
           <span class="r-subj">{dimension}</span>
@@ -99,6 +103,10 @@
   <a href="/app/docket/p/record">Record</a>
 </nav>
 <div class="tiles">
+  <gl-rows frame="frames/stale" empty="">
+    <template><p class="hint">{note}</p></template>
+  </gl-rows>
+
   <section class="tile">
     <header><span class="eyebrow">Metric surfaces</span>
       <code class="chip" title="Every declared QUERY aspect with its latest cube month, the move into it, the admitted axes, and where its judgment stands. The open count is the docket's own.">metric_surfaces</code></header>

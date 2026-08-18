@@ -765,7 +765,10 @@ impl Session {
                                 .to_string(),
                         }
                     } else {
-                        let row = store
+                        // No cache to forget: the landing moves the
+                        // store's version, so every channel — this one
+                        // included — misses on its next read.
+                        store
                             .measurement_put(
                                 &resolved.dataset,
                                 &name,
@@ -774,9 +777,7 @@ impl Session {
                                 &ctx.pin,
                                 &output.to_string(),
                             )
-                            .await?;
-                        self.shared.forget_context();
-                        row
+                            .await?
                     }
                 }
             };

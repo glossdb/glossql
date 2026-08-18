@@ -3,7 +3,7 @@
 //! dataset-scoped relation is one table with `dataset` as a key column —
 //! partitioned by the format, never routed by a layout of ours.
 
-use glossql_catalog::{IcebergRelations, Lake, RelationSpec, Relations};
+use glossql_catalog::{IcebergMetadata, Lake, RelationSpec, MetadataBackend};
 use iceberg::{NamespaceIdent, TableIdent};
 
 const RELATIONSHIPS: RelationSpec = RelationSpec {
@@ -16,11 +16,11 @@ fn row(v: &[&str]) -> Vec<Option<String>> {
     v.iter().map(|s| Some((*s).to_string())).collect()
 }
 
-async fn open(dir: &std::path::Path) -> (Lake, IcebergRelations) {
+async fn open(dir: &std::path::Path) -> (Lake, IcebergMetadata) {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let rel = IcebergRelations::open(lake.clone(), "glossql", &[RELATIONSHIPS])
+    let rel = IcebergMetadata::open(lake.clone(), "glossql", &[RELATIONSHIPS])
         .await
         .unwrap();
     (lake, rel)

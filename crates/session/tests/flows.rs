@@ -1024,6 +1024,30 @@ async fn metric_series_serves_the_cached_cube() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("no arguments"), "{e}");
+
+    // A later write orphans the cube: the series still serves — the
+    // last landed cube, marked stale — and a recompute brings it back
+    // current (ruled 2026-08-18; before that every chart went blank
+    // after any gloss).
+    run(
+        &session,
+        r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET;
+           GLOSS note ON fin AS $${"text": "a write that moves the pin"}$$;"#,
+    )
+    .await;
+    let stale = table(
+        &session,
+        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
+    )
+    .await;
+    assert!(stale.contains("false"), "{stale}");
+    run(&session, "SELECT metric_cube() FROM fin;").await;
+    let fresh = table(
+        &session,
+        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
+    )
+    .await;
+    assert!(fresh.contains("true"), "{fresh}");
 }
 
 /// A measurement is a query (stage 5, §7e): the skill's own

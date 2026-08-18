@@ -46,6 +46,16 @@ ruled AS (
   FROM ruling_entries
 ),
 apps AS (SELECT count(DISTINCT app) AS n FROM app_parts),
+-- The cube stands once landed and is open while stale: any workspace
+-- write orphans it (its pin covers the glossary too — a new grounding
+-- IS a cube input), metric_series() keeps serving the last landed one
+-- marked `current = false`, and the recompute is a pull that belongs
+-- to whoever reads this row (ruled 2026-08-18).
+cube AS (
+  SELECT count(DISTINCT metric) AS metrics,
+         coalesce(bool_and(current), true) AS is_current
+  FROM metric_series()
+),
 -- A landing is open work when its casts nulled cells: kept rows with
 -- holes in them, which is the one thing about an import that wants an
 -- author's attention. Run 4 read 11 of 11 clean tables as open, because
@@ -105,7 +115,9 @@ counts AS (
             AND NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = a.name)) AS open_samples,
          (SELECT n FROM ruled) AS n_rulings,
          (SELECT owed FROM ruled) AS open_rulings,
-         (SELECT n FROM apps) AS n_apps
+         (SELECT n FROM apps) AS n_apps,
+         (SELECT metrics FROM cube) AS n_cube,
+         (SELECT CASE WHEN is_current THEN 0 ELSE 1 END FROM cube) AS open_cube
 )
 SELECT s.surface AS surface,
        s.how AS how,
@@ -120,6 +132,7 @@ SELECT s.surface AS surface,
          WHEN 'scenarios' THEN c.n_scenarios
          WHEN 'samples' THEN c.n_samples
          WHEN 'rulings' THEN c.n_rulings
+         WHEN 'cube' THEN c.n_cube
          ELSE c.n_apps
        END AS stands,
        CASE s.surface
@@ -130,6 +143,7 @@ SELECT s.surface AS surface,
          WHEN 'scenarios' THEN c.open_scenarios
          WHEN 'samples' THEN c.open_samples
          WHEN 'rulings' THEN c.open_rulings
+         WHEN 'cube' THEN c.open_cube
          ELSE 0
        END AS open
 FROM counts c
@@ -144,5 +158,6 @@ CROSS JOIN (VALUES
   ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its column overrides and their basis — whatif.<name>() then replays the recipes and bands the result'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
+  ('cube', 'SELECT metric_cube() FROM <dataset> — one recompute, last; metric_series() serves the landed cube to every chart, marked current = false once a later write orphans it'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')
 ) AS s(surface, how)

@@ -16,7 +16,7 @@ mod store;
 mod types;
 
 pub use schemas::{GROUNDING_SCHEMA, grounding_schema};
-pub use glossql_catalog::{Lake, Relations, Row};
+pub use glossql_catalog::{Lake, MetadataBackend, Row};
 pub use rules::{admit_grain, grain_of};
 pub use store::{
     BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, ReadContext,

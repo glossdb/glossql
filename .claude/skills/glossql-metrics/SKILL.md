@@ -646,16 +646,28 @@ FROM metric_surfaces ORDER BY metric
 And the cube's own numbers read back through `metric_series()` — one
 row per metric, dimension, member and period. `dimension = ''` is the
 metric's own total, `'alternative'` is the disclosed rival, anything
-else is a served dimension. This is what an app frame charts:
+else is a served dimension; a wide dimension serves its top members
+plus an `'other'` bucket, and the cube's fact row names which ones
+were bucketed. This is what an app frame charts:
 
 ```sql
 SELECT metric, period, value FROM metric_series()
 WHERE dimension = '' ORDER BY metric, period
 ```
 
+A workspace write does not blank the series — it serves the last
+landed cube with `current = false` on every row, and the docket shows
+the same numbers marked stale. The recompute is yours to pull, and
+`workspace_next`'s `cube` surface shows `open = 1` while it is owed:
+
+```sql
+SELECT DISTINCT current FROM metric_series()
+```
+
 **Fold in every standing ruling before recomputing either.** Each
 grounding write stales both caches, so one batch of fold-ins then one
-recompute, never a recompute per ruling.
+recompute, never a recompute per ruling — run the cube LAST, after
+your final write, or you hand the docket a stale flag on your way out.
 
 ## Asking what would happen — the scenario door
 

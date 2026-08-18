@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use glossql_catalog::{Lake, Relations};
+use glossql_catalog::{Lake, MetadataBackend};
 use serde_json::Value;
 
 use glossql_parser::{
@@ -44,12 +44,16 @@ pub struct ReadContext {
     /// The statement's pin — what every measurement this read serves or
     /// computes is keyed by.
     pub pin: Pin,
-    /// The measurements relation's snapshot when this context was built.
-    /// The pin deliberately excludes it (a measurement is an output, not
-    /// an input), so a cached context checked by pin alone would keep a
-    /// landing invisible to every channel but the one that computed it —
-    /// found 2026-08-18, the docket's charts. Freshness compares this.
-    pub measured: Option<i64>,
+    /// The store's version when this context was built — every relation
+    /// table at its snapshot, derived from the catalog. The pin is the
+    /// *semantic* input key (measurements deliberately excluded: an
+    /// output, not an input) and a curated list; checking freshness by
+    /// pin alone kept a landed measurement invisible to every channel
+    /// but the one that computed it (found 2026-08-18, the docket's
+    /// charts). Freshness compares this instead, and because it is
+    /// enumerated rather than listed, a relation added later can never
+    /// be missed the same way.
+    pub version: String,
     /// The store, resolved once with the pin: one statement, one read of
     /// every relation — the rules below do no IO of their own.
     pub glossary: std::sync::Arc<Vec<GlossRow>>,
@@ -252,7 +256,7 @@ pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
 /// The seam over a workspace's lake, carrying every relation that has
 /// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
 /// setting its `sql` to `None` and nothing else.
-async fn lake_relations(lake: Lake) -> Result<Arc<dyn Relations>> {
+async fn lake_metadata(lake: Lake) -> Result<Arc<dyn MetadataBackend>> {
     // `datasets` and `imports` are the lake's own record, composed at
     // read — no table of ours carries them.
     let moved: Vec<glossql_catalog::RelationSpec> = RELATIONS
@@ -264,7 +268,7 @@ async fn lake_relations(lake: Lake) -> Result<Arc<dyn Relations>> {
             partition: r.partition,
         })
         .collect();
-    let relations = glossql_catalog::IcebergRelations::open(lake, STORE_NAMESPACE, &moved)
+    let relations = glossql_catalog::IcebergMetadata::open(lake, STORE_NAMESPACE, &moved)
         .await?;
     Ok(Arc::new(relations))
 }
@@ -272,7 +276,7 @@ async fn lake_relations(lake: Lake) -> Result<Arc<dyn Relations>> {
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
-    relations: Arc<dyn Relations>,
+    metadata: Arc<dyn MetadataBackend>,
     /// Held for its lifetime, not read: [`Store::open_memory`] puts the
     /// lake in a temp dir, and dropping the handle would delete it out
     /// from under an open store.
@@ -299,7 +303,7 @@ impl Store {
     /// lives; SQLite remains only as the catalog's own backend.
     pub async fn open(lake: Lake) -> Result<Self> {
         Ok(Store {
-            relations: lake_relations(lake.clone()).await?,
+            metadata: lake_metadata(lake.clone()).await?,
             lake,
             _scratch: None,
         })
@@ -1200,7 +1204,7 @@ impl Store {
 
     /// One appended row into a crossed relation.
     async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
-        self.relations
+        self.metadata
             .append(relation, vec![cells])
             .await
             .map_err(Error::from)
@@ -1211,7 +1215,7 @@ impl Store {
     /// and `ORDER BY` used to do.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
         let history = self
-            .relations
+            .metadata
             .scan(relation.name)
             .await?;
         let key: Vec<usize> = relation
@@ -1339,14 +1343,30 @@ impl Store {
             universe,
             snapshots,
             pin,
-            measured: self.measurements_snapshot().await?,
+            version: self.version().await?,
         })
     }
 
-    /// The measurements relation's current snapshot — the freshness key
-    /// a cached [`ReadContext`] is checked against beside its pin.
-    pub async fn measurements_snapshot(&self) -> Result<Option<i64>> {
-        Ok(self.lake.snapshot_id(STORE_NAMESPACE, "measurements").await?)
+    /// The store's version: every table currently in the store namespace
+    /// at its snapshot, sorted and joined — the freshness key a cached
+    /// [`ReadContext`] is checked against beside its pin. Enumerated
+    /// from the catalog, never curated, so any store write moves it.
+    pub async fn version(&self) -> Result<String> {
+        // A fresh workspace has no store namespace until the first
+        // write crosses; its version is empty, not an error.
+        if !self.lake.namespace_exists(STORE_NAMESPACE).await? {
+            return Ok(String::new());
+        }
+        let mut parts = Vec::new();
+        for table in self.lake.table_names(STORE_NAMESPACE).await? {
+            let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
+            parts.push(format!(
+                "{table}:{}",
+                snap.map_or_else(|| "-".into(), |s| s.to_string())
+            ));
+        }
+        parts.sort();
+        Ok(parts.join(","))
     }
 
     // -- the pin, and the measurements it keys -------------------------
@@ -1383,7 +1403,7 @@ impl Store {
     /// scan, so the drift record's history is never read to serve today.
     pub async fn measurements_at(&self, pin: &Pin) -> Result<Vec<glossql_catalog::Row>> {
         Ok(self
-            .relations
+            .metadata
             .scan_where("measurements", "pin_digest", &pin.digest)
             .await?)
     }
@@ -1412,6 +1432,45 @@ impl Store {
                 body: text(&r.cells, 6),
                 computed_at: text(&r.cells, 7),
             })
+    }
+
+    /// The newest measurement whatever its pin, with whether it is
+    /// `current` (computed at the context's pin) — the serving rule for
+    /// surfaces that should show the last computed state marked stale
+    /// rather than go blank (ruled 2026-08-18: the docket after any
+    /// workspace write). Recomputing stays a pull —
+    /// `SELECT <function>() FROM <dataset>` — and the flag is what
+    /// tells a reader to ask. The context already holds the current
+    /// pin's rows, so history is only scanned when nothing stands
+    /// there; a row found that way is stale by construction.
+    pub async fn measurement_latest(
+        &self,
+        ctx: &ReadContext,
+        dataset: &str,
+        subject: &str,
+        function: &str,
+    ) -> Result<Option<(MeasurementRow, bool)>> {
+        if let Some(row) = Self::measurement_in(ctx, dataset, subject, function) {
+            return Ok(Some((row, true)));
+        }
+        Ok(self
+            .metadata
+            .scan_where("measurements", "function", function)
+            .await?
+            .iter()
+            .filter(|r| r.get(0) == Some(dataset) && r.get(2) == Some(subject))
+            .max_by_key(|r| r.seq)
+            .map(|r| {
+                (
+                    MeasurementRow {
+                        subject: subject.to_string(),
+                        function: function.to_string(),
+                        body: text(&r.cells, 6),
+                        computed_at: text(&r.cells, 7),
+                    },
+                    false,
+                )
+            }))
     }
 
     /// Land one measurement; the served row comes back so the caller
@@ -1451,7 +1510,7 @@ impl Store {
     /// The glossary, read whole: hundreds of rows, filtered by rules.
     async fn glossary_history(&self) -> Result<Vec<GlossRow>> {
         Ok(self
-            .relations
+            .metadata
             .scan("glossary")
             .await?
             .into_iter()
