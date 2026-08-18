@@ -11,9 +11,6 @@
 //! function path rejects named arguments
 //! (`datafusion-sql-53.1.0/src/relation/mod.rs:163`).
 //!
-//! Callers must run inside a multi-thread tokio runtime: read planning
-//! executes store queries via `tokio::task::block_in_place`.
-//!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 
 mod behavior;
@@ -31,5 +28,5 @@ mod whatif;
 
 pub use plane::Plane;
 pub use session::{
-    CallShape, FunctionRuntime, NoRuntime, Outcome, Session, SessionError, SqlDoor, call_shape,
+    CallShape, FunctionRuntime, NoRuntime, Outcome, Session, SessionError, call_shape,
 };

@@ -11,11 +11,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Float64Array, RecordBatch, StringArray};
+use datafusion::arrow::array::{Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_glossary::FunctionRow;
 use glossql_scripts::RhaiRuntime;
-use glossql_session::{FunctionRuntime, SqlDoor};
+use glossql_session::FunctionRuntime;
 use serde_json::{Value, json};
 
 fn sibling() -> &'static Path {
@@ -52,16 +52,6 @@ fn have_weights() -> bool {
         .exists()
 }
 
-/// A refusing door for detector invocations — a detector sees slots
-/// and threshold, never table data.
-struct NoDoor;
-
-impl SqlDoor for NoDoor {
-    fn sql(&self, _query: &str) -> Result<Vec<RecordBatch>, String> {
-        Err("no door in this test".into())
-    }
-}
-
 fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
     let rt = RhaiRuntime::new(dir);
     rt.invoke(
@@ -76,7 +66,6 @@ fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
         },
         subject,
         &context,
-        Arc::new(NoDoor),
     )
     .unwrap()
 }

@@ -27,7 +27,7 @@ use glossql_catalog::Lake;
 use glossql_glossary::{AttestRow, CollapsedRow, RawRow, ReadContext, Scope, Store, schemas};
 use serde_json::{Value, json};
 
-use crate::session::{FunctionRuntime, SessionError, SqlDoor};
+use crate::session::{FunctionRuntime, SessionError};
 use crate::subject::{pair_subject, resolve_column_endpoint, resolve_path};
 
 /// State the planner shares with the router: the `USE`'d dataset, the data
@@ -35,7 +35,6 @@ use crate::subject::{pair_subject, resolve_column_endpoint, resolve_path};
 pub(crate) struct Shared {
     pub store: Store,
     pub dataset: RwLock<Option<String>>,
-    pub handle: tokio::runtime::Handle,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
     /// The statement context, reused while the pin holds: same pin, same
     /// contents — the §10-sanctioned shape (in-memory, read-path, keyed
@@ -132,16 +131,6 @@ impl Shared {
     }
 }
 
-/// What a detector gets instead of a SQL door: a refusal (SPEC.md §7.1 — a
-/// detector receives the witness's slots and threshold, never table data).
-struct DeniedDoor;
-
-impl SqlDoor for DeniedDoor {
-    fn sql(&self, _query: &str) -> Result<Vec<RecordBatch>, String> {
-        Err("a detector sees slots and threshold, never table data (SPEC.md §7.1)".into())
-    }
-}
-
 /// Detector verdicts, computed at read (SPEC.md §7.2) and never stored
 /// (ruled 2026-08-16). Keyed by the witness, not the detector alone: one
 /// detector serving two witnesses answers for each, from its own slots
@@ -197,7 +186,7 @@ pub(crate) async fn verdicts(
             });
             let output = shared
                 .runtime()
-                .invoke(&function, subject, &context, Arc::new(DeniedDoor))
+                .invoke(&function, subject, &context)
                 .map_err(SessionError::Runtime)?;
             // A detector's output answers to the engine's attest contract
             // (SPEC.md §7.2) — role by shape, nothing authored.

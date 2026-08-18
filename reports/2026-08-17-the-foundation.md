@@ -460,6 +460,60 @@ question — how would agents extend this? The answer is the final state:
   "functions are scripts with JSON contracts" line is proposed as a
   diff after the first body survives its golden — corpus first.
 
+## 7f. Stage 5 landed (2026-08-18): the door is dead, the engine is the runtime
+
+Thirteen shipped measurements crossed, one commit each against its
+golden; the door died with the last one. What stands:
+
+- **A measurement is a query.** Twelve declarations carry SQL bodies;
+  `metric_bands`' walk and the searches are Rust doors the bodies read
+  as relations — `subject_column`, `derivation_candidates`,
+  `hierarchy_candidates`, `relationship_candidates`,
+  `relationship_checks`, `grounding_collisions`, `metric_band_walk`,
+  `metric_cube_slices`, `behavior_anchors` — computed in the pre-pass
+  over the statement's pins like every compute door. The judgment
+  constants live in the bodies where anyone reads them; the doors
+  optimize recall. `profile`, `mad` and `entropy` register as
+  aggregates through the runtime seam, so a measurement body and an
+  agent's own SQL name the same functions.
+- **The script surface is judges.** `SqlDoor`, `CtxDoor`, the
+  block-in-place bridge, the waves-of-4 governor, `db.query`, and the
+  query kernels (Table/Col/KeyVec) are gone; a script receives subject
+  and context and computes. The model kernels ride the runtime trait
+  (`band_point`, `reconcile` joined `band_grid`/`misfit_scores`).
+  Ratchet: block_in_place 5→3, block_on 3→1, spawn 4→3 — every
+  remainder named (the sync ADBC driver; serving fire-and-forget).
+- **The composite fix (§7a) landed in both consumers**: coherence joins
+  every leg of a tuple endpoint (booksql's golden now holds the
+  measurement the corpus was built for — orphan rates 0.997/0.99999/
+  0.739 against 810k tuples), and behavior_evidence enumerates tuple
+  edges (booksql unchanged there, honestly: its dimension tables carry
+  no time axis).
+- **Abstentions shrank as ruled**: `missing_aspects` went with the
+  stored intermediates (outliers and dimension_relevance compose their
+  profile inline and land at first ask — 213 cold-corpus subjects
+  flipped from abstention to value); `applicable: false` stays a
+  durable finding.
+- **The argued diffs, complete**: the abstention→value flips; rel-f1's
+  one gap-sample tie order (deterministic now); rel-event's
+  detect_relationships computing where the rhai interpreter's 50M-op
+  backstop refused (1876 candidates, declared-truth edges on top), and
+  its nine >64-terms kernel refusals re-rendered; cube rows as records
+  (a tuple is a script-ism arrow cannot carry) with metric_series
+  reading the record form; fin re-baselined whole on the rebuilt
+  fixture.
+- **The fixture rebuild** (its own commit) surfaced: the sqlite-era
+  sources/recipes never crossed; replay order is supersession order;
+  a workspace does not relocate (absolute paths in iceberg metadata);
+  re-landing shifts float sums in the last digits, so the golden pairs
+  with the standing fixture; and outliers' cast needed the display
+  bridge on date columns.
+
+Still owed from the stage: the SPEC diff ("functions are scripts with
+JSON contracts" → measurement bodies are SQL, judges are scripts) is
+proposed to the project lead, not applied; stage 6 (pre-warm at the
+landing) and stage 7 (scale) follow.
+
 ## 8. Still open
 
 - **A pinned table shadows a same-named CTE.** The planner seam

@@ -12,7 +12,7 @@ use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Float64Array;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Plane, SqlDoor};
+use glossql_session::{FunctionRuntime, Plane};
 use tower::ServiceExt;
 
 /// Verdicts compute at read, so a frame that reads ATTEST invokes the
@@ -26,7 +26,6 @@ impl FunctionRuntime for StubDetector {
         _: &FunctionRow,
         subject: &str,
         context: &serde_json::Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<serde_json::Value, String> {
         Ok(serde_json::json!({
             "subject": subject,

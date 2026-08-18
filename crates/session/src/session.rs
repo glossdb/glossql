@@ -104,38 +104,18 @@ pub enum Outcome {
     Affected(u64),
 }
 
-/// The query capability every measurement invocation receives (SPEC.md §6 —
-/// scripts run any SQL against the dataset). Sync because scripts are; the
-/// session implements it over its context with the block-in-place bridge
-/// the reads already use. Detectors get a door that refuses (§7.1).
-///
-/// Contract: an empty result still ships one empty batch carrying the
-/// schema — the PROBE rule (§3), so a `LIMIT 0` through the door types
-/// columns without scanning them.
-pub trait SqlDoor: Send + Sync {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String>;
-
-    /// Many statements, answered in order. The default runs them one by
-    /// one; doors backed by a runtime overlap them — the script stays a
-    /// sequential orchestrator, the fan-out lives below the seam
-    /// (2026-08-06: v0.3 ran its pair scans on a thread pool; rhai has no
-    /// threads, so the door carries the parallelism instead).
-    fn sql_all(&self, queries: &[String]) -> Vec<Result<Vec<RecordBatch>, String>> {
-        queries.iter().map(|q| self.sql(q)).collect()
-    }
-}
-
 /// The seam scripts plug into (rhai + arrow kernels, `glossql-scripts`).
-/// `context` is the document the server assembled from the function's
-/// `ACCEPTS` aspects (SPEC.md §6) — or, for a detector, its slots and
-/// threshold (§7.1). Tests inject fakes.
+/// Since stage 5 a script is a judge: it receives its `context` — a
+/// detector's slots and threshold (§7.1), or a legacy measurement's
+/// `ACCEPTS` document — and computes; the SQL door died with the last
+/// shipped script measurement, so a script never re-enters the engine.
+/// Tests inject fakes.
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     fn invoke(
         &self,
         function: &FunctionRow,
         subject: &str,
         context: &Value,
-        door: Arc<dyn SqlDoor>,
     ) -> Result<Value, String>;
 
     /// The aggregate statistics the runtime ships (`profile`, `mad`,
@@ -218,13 +198,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
 pub struct NoRuntime;
 
 impl FunctionRuntime for NoRuntime {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        _: &str,
-        _: &Value,
-        _: Arc<dyn SqlDoor>,
-    ) -> Result<Value, String> {
+    fn invoke(&self, function: &FunctionRow, _: &str, _: &Value) -> Result<Value, String> {
         Err(format!(
             "no function runtime configured — `{}` cannot run without scripts",
             function.name
@@ -232,35 +206,15 @@ impl FunctionRuntime for NoRuntime {
     }
 }
 
-/// The session's own door: statements run against its context, so scripts
-/// see the mounted lake tables, the derived views, and the read relations.
-struct CtxDoor {
-    ctx: SessionContext,
-    handle: tokio::runtime::Handle,
-    /// A script's SQL names doors like anyone else's, so it needs the same
-    /// pre-pass. It runs inside the door's existing `block_on` — the door
-    /// is blocking because `SqlDoor` is sync, which is `db.query`'s
-    /// re-entrancy and stage 5's to remove, not a new cost here.
-    shared: Arc<Shared>,
-}
-
-/// Plan one script query with its doors resolved first.
-async fn door_plan(
-    shared: &Arc<Shared>,
-    ctx: &SessionContext,
-    query: &str,
-) -> Result<datafusion::logical_expr::LogicalPlan, SessionError> {
-    let mut statements = GlossqlParser::parse_sql(query)?;
-    let Some(Statement::Substrate(statement)) = statements.pop() else {
-        return Err(SessionError::NotOneRead);
-    };
-    let resolved = crate::prepass::resolve(shared, ctx, &statement).await?;
-    let plan = crate::reads::state_with(ctx, shared, resolved)
-        .statement_to_plan(*statement)
-        .await?;
-    // A script reads; it never writes.
-    read_only().verify_plan(&plan)?;
-    Ok(plan)
+/// One substrate statement out of a SQL string — the internal reads
+/// (the drop-table emptiness probe) plan through the same pre-pass as
+/// everything else.
+fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
+    let mut statements = GlossqlParser::parse_sql(sql)?;
+    match statements.pop() {
+        Some(Statement::Substrate(statement)) => Ok(*statement),
+        _ => Err(SessionError::NotOneRead),
+    }
 }
 
 /// A script reads; it never writes. `SessionContext::sql` permits DDL, DML
@@ -271,73 +225,6 @@ pub(crate) fn read_only() -> datafusion::prelude::SQLOptions {
         .with_allow_ddl(false)
         .with_allow_dml(false)
         .with_allow_statements(false)
-}
-
-impl SqlDoor for CtxDoor {
-    fn sql(&self, query: &str) -> Result<Vec<RecordBatch>, String> {
-        tokio::task::block_in_place(|| {
-            self.handle.block_on(async {
-                let plan = door_plan(&self.shared, &self.ctx, query)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let df = self
-                    .ctx
-                    .execute_logical_plan(plan)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let schema = Arc::new(df.schema().as_arrow().clone());
-                let mut batches = df.collect().await.map_err(|e| e.to_string())?;
-                if batches.is_empty() {
-                    batches.push(RecordBatch::new_empty(schema));
-                }
-                Ok(batches)
-            })
-        })
-    }
-
-    fn sql_all(&self, queries: &[String]) -> Vec<Result<Vec<RecordBatch>, String>> {
-        // Waves of 4: enough overlap to hide per-query latency, small
-        // enough that concurrent scans stay inside the process fd
-        // budget. 16 crossed it (booksql run, 2026-08-07): every query
-        // in a wave scans in parallel and a parquet scan holds around
-        // target_partitions files open, so 16 dataset-grain queries
-        // peaked the process past the macOS launchd soft limit of 256
-        // (sampled 22→236→32 across one burst) and the sweep died on
-        // "Too many open files". 4 concurrent scans leave that headroom
-        // without serializing the batch.
-        tokio::task::block_in_place(|| {
-            self.handle.block_on(async {
-                let mut out = Vec::with_capacity(queries.len());
-                for wave in queries.chunks(4) {
-                    let mut handles = Vec::with_capacity(wave.len());
-                    for q in wave {
-                        let ctx = self.ctx.clone();
-                        let shared = Arc::clone(&self.shared);
-                        let q = q.clone();
-                        handles.push(tokio::spawn(async move {
-                            let plan = door_plan(&shared, &ctx, &q)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            let df = ctx
-                                .execute_logical_plan(plan)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            let schema = Arc::new(df.schema().as_arrow().clone());
-                            let mut batches = df.collect().await.map_err(|e| e.to_string())?;
-                            if batches.is_empty() {
-                                batches.push(RecordBatch::new_empty(schema));
-                            }
-                            Ok(batches)
-                        }));
-                    }
-                    for h in handles {
-                        out.push(h.await.unwrap_or_else(|e| Err(e.to_string())));
-                    }
-                }
-                out
-            })
-        })
-    }
 }
 
 pub struct Session {
@@ -354,13 +241,10 @@ pub struct Session {
 }
 
 impl Session {
-    /// Must be called inside a multi-thread tokio runtime — read planning
-    /// blocks in place on store queries.
     pub fn new(store: Store, actor: Actor) -> Result<Self, SessionError> {
         let shared = Arc::new(Shared {
             store,
             dataset: RwLock::new(None),
-            handle: tokio::runtime::Handle::current(),
             runtime: RwLock::new(Arc::new(NoRuntime)),
             context: RwLock::new(None),
             ctx: RwLock::new(None),
@@ -425,14 +309,6 @@ impl Session {
 
     fn lake(&self) -> Lake {
         self.shared.lake()
-    }
-
-    fn door(&self) -> CtxDoor {
-        CtxDoor {
-            ctx: self.ctx.clone(),
-            handle: self.shared.handle.clone(),
-            shared: Arc::clone(&self.shared),
-        }
     }
 
     /// A fixture landing for tests: the same storage path a recipe takes,
@@ -833,20 +709,17 @@ impl Session {
                     let context = Value::Object(context);
                     // Role by shape, extended to the body (ruled
                     // 2026-08-17, §7e): a RETURNS function whose body is
-                    // one SQL query is a measurement the engine runs; a
-                    // script body rides the legacy runtime path until its
-                    // declaration crosses.
+                    // one SQL query is a measurement the engine runs. A
+                    // script body still invokes — a legacy authored
+                    // measurement computes from its context alone, and
+                    // one that reaches for the dead SQL door fails with
+                    // the runtime's own message.
                     let output = match crate::measure::sql_body(&function.script) {
                         Some(body) => self.compute_sql(body, &resolved.subject).await?,
                         None => self
                             .shared
                             .runtime()
-                            .invoke(
-                                &function,
-                                &resolved.subject,
-                                &context,
-                                Arc::new(self.door()),
-                            )
+                            .invoke(&function, &resolved.subject, &context)
                             .map_err(SessionError::Runtime)?,
                     };
                     // The aspect's schema is the one contract: nothing lands
@@ -1116,10 +989,17 @@ impl Session {
                 name: table.into(),
             }));
         }
-        let rows = self
-            .door()
-            .sql(&format!("SELECT count(*) FROM \"{dataset}\".\"{table}\""));
-        let has_data = match rows {
+        let count = async {
+            let plan = self
+                .plan_statement(one_query(&format!(
+                    "SELECT count(*) FROM \"{dataset}\".\"{table}\""
+                ))?)
+                .await?;
+            let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
+            Ok::<_, SessionError>(batches)
+        }
+        .await;
+        let has_data = match count {
             Ok(batches) => batches.iter().any(|b| {
                 b.column(0)
                     .as_any()

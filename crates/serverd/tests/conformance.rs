@@ -12,26 +12,28 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Today's counts, and what removes them.
+/// Today's counts, and what owns them.
 ///
 /// `block_in_place` / `block_on` — sync code bridging to async. Stage 2's
 /// pre-pass removed the expansion path's; stage 4 removed the compute
-/// doors' (they evaluate in the pre-pass now). What remains has a named
-/// owner: the two `db.query` bridge sites in `session.rs` go with the
-/// script re-entrancy (stage 5); the `glossql-import` ones bridge a
-/// genuinely sync ADBC driver and are argued separately.
+/// doors'; stage 5 removed the script door's with the door itself. What
+/// remains is one named owner: `glossql-import` bridges a genuinely
+/// sync ADBC driver, argued in place.
 ///
 /// `thread_local` — was the door expansion stack. Stage 2 deleted it by
 /// deleting the re-entrancy: nothing re-plans through the same context,
 /// so there is no stack to guard. At zero, and it stays there.
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
-/// partition; stage 5 removes the read path's (`sql_all`).
+/// partition; the read path's waves went with the door. What remains is
+/// fire-and-forget serving work in the doors crate (the brief refresh,
+/// the response stream driver) and the apps frame stream — not
+/// engine-work scheduling.
 const CEILING: [(&str, usize); 4] = [
-    ("block_in_place", 5),
-    ("block_on", 3),
+    ("block_in_place", 3),
+    ("block_on", 1),
     ("thread_local!", 0),
-    ("tokio::spawn", 4),
+    ("tokio::spawn", 3),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::Value;
 
 /// A kernel that scores each row by its summed deviation from the
@@ -32,7 +32,6 @@ impl FunctionRuntime for MeanKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }
@@ -75,7 +74,6 @@ impl FunctionRuntime for NanKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }

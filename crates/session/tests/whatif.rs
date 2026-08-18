@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::Value;
 
 /// A kernel that interpolates linearly along the factor axis within each
@@ -31,7 +31,6 @@ impl FunctionRuntime for LinearKernel {
         function: &FunctionRow,
         _: &str,
         _: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         Err(format!("no scripts in this test (`{}`)", function.name))
     }

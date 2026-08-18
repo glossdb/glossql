@@ -11,7 +11,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session, SqlDoor};
+use glossql_session::{FunctionRuntime, Outcome, Session};
 use serde_json::{Value, json};
 
 #[derive(Debug, Default)]
@@ -26,7 +26,6 @@ impl FunctionRuntime for Fake {
         function: &FunctionRow,
         _: &str,
         context: &Value,
-        _: Arc<dyn SqlDoor>,
     ) -> Result<Value, String> {
         self.invocations.fetch_add(1, Ordering::SeqCst);
         *self.last_context.lock().unwrap() = Some(context.clone());
