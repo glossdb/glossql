@@ -394,8 +394,10 @@ a.rrow:hover { background: var(--panel); }
   cursor: pointer;
 }
 .rule button:hover { color: var(--ground); background: var(--open); border-color: var(--open); }
-/* Two stances share the details row — correction and unclear. */
-.rule details button + button { margin-left: 2px; }
+/* Two stances share the details block and stack in its narrow column —
+   correction above, unclear below (watched live, 2026-08-18: they wrap,
+   so a left margin gapped nothing). */
+.rule details button + button { margin-top: 2px; }
 .rule details summary {
   cursor: pointer;
   font-size: var(--step);

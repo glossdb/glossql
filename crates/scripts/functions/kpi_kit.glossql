@@ -134,7 +134,7 @@ DECLARE ASPECT ruling WITH $${
                    "dimension": {"type": "string"},
                    "key": {"type": "string"},
                    "assumption": {"type": "string"},
-                   "stance": {"enum": ["confirmed", "corrected"]},
+                   "stance": {"enum": ["confirmed", "corrected", "unclear"]},
                    "note": {"type": "string"}}}}}
 }$$ AS FACT;
 

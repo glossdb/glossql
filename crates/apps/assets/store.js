@@ -135,19 +135,20 @@
     { capture: true }
   );
 
-  // A refused write states its reason beside the form that posted it.
-  // The note lives inside a panel a later refetch replaces, which is
-  // the right lifetime: the refreshed truth supersedes the complaint.
+  // A refused write states its reason inside the form that posted it —
+  // appended as a child, so it lays out as one of the form's own rows
+  // (inserted beside the form it became a grid item of the row's
+  // template columns and rendered one character wide — found live,
+  // 2026-08-18). The note lives inside a panel a later refetch
+  // replaces, which is the right lifetime: the refreshed truth
+  // supersedes the complaint.
   document.addEventListener('htmx:responseError', (e) => {
     const elt = e.detail && e.detail.elt;
     const xhr = e.detail && e.detail.xhr;
     if (!elt || !xhr) return;
-    const prior = elt.parentNode && elt.parentNode.querySelector('.frame-error');
+    const prior = elt.querySelector('.frame-error');
     if (prior) prior.remove();
-    elt.insertAdjacentElement(
-      'afterend',
-      errorBox(xhr.responseText || xhr.status + ' ' + xhr.statusText)
-    );
+    elt.appendChild(errorBox(xhr.responseText || xhr.status + ' ' + xhr.statusText));
   });
 
   window.glStore = { table, rows, json, frameUrl, converter, errorBox };

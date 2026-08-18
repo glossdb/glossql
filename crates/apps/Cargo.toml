@@ -19,6 +19,7 @@ toml = "0.8"
 [dev-dependencies]
 glossql-catalog = { path = "../catalog" }
 glossql-parser = { path = "../parser" }
+glossql-scripts = { path = "../scripts" }
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 

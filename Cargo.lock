@@ -2982,6 +2982,7 @@ dependencies = [
  "glossql-catalog",
  "glossql-glossary",
  "glossql-parser",
+ "glossql-scripts",
  "glossql-session",
  "serde",
  "serde_json",
