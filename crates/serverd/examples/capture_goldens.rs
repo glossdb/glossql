@@ -293,7 +293,7 @@ async fn main() {
         }
         let names = lake_tables(&session, &dataset).await;
         println!("existing workspace: {} tables", names.len());
-        capture(&session, &dataset, names, &only, &out).await;
+        capture(&session, &dataset, names, &only, &out, Vec::new()).await;
         return;
     }
     session
@@ -307,18 +307,39 @@ async fn main() {
         .expect("dataset, source");
 
     let mut landed = Vec::new();
+    let mut landings = Vec::new();
     for f in &files {
         let Some((name, reader)) = table_of(f) else { continue };
         let file = f.file_name().unwrap().to_str().unwrap();
         let sql = format!(
             "DECLARE RECIPE {name} ON {dataset} FROM src AS $$SELECT * FROM {reader}('{file}')$$;"
         );
+        let t = std::time::Instant::now();
         match session.execute(&sql).await {
             Ok(o) => {
-                println!("  landed {name}: {}", o.last().map(render).unwrap_or_default());
+                let secs = t.elapsed().as_secs_f64();
+                println!(
+                    "  landed {name} in {secs:.1}s: {}",
+                    o.last().map(render).unwrap_or_default()
+                );
+                landings.push(serde_json::json!({ "table": name, "seconds": secs }));
                 landed.push(name);
             }
             Err(e) => println!("  REFUSED {name}: {e}"),
+        }
+    }
+    // Row counts land beside the timings so the ratios read directly.
+    for r in cell(
+        &session,
+        &format!("SELECT table_name, landed_rows FROM imports WHERE dataset = '{dataset}';"),
+    )
+    .await
+    {
+        if let Some(l) = landings
+            .iter_mut()
+            .find(|l| l["table"].as_str() == Some(r[0].as_str()))
+        {
+            l["rows"] = serde_json::Value::String(r[1].clone());
         }
     }
     // RelBench ships the FK truth beside the tables; declaring it is what
@@ -374,7 +395,7 @@ async fn main() {
         println!("nothing landed — stopping before the goldens");
         return;
     }
-    capture(&session, &dataset, landed, &only, &out).await;
+    capture(&session, &dataset, landed, &only, &out, landings).await;
 }
 
 /// Table names in the dataset, for a workspace we did not land ourselves.
@@ -399,6 +420,7 @@ async fn capture(
     landed: Vec<String>,
     only: &Option<Vec<String>>,
     out: &Path,
+    landings: Vec<serde_json::Value>,
 ) {
     // ---- the subject grid ----------------------------------------------
     let mut columns: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -421,6 +443,7 @@ async fn capture(
 
     let mut goldens: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     let mut calls = 0usize;
+    let mut timings: Vec<serde_json::Value> = Vec::new();
     let t0 = std::time::Instant::now();
 
     for row in &fns {
@@ -445,22 +468,31 @@ async fn capture(
         }
 
         let mut per_subject = serde_json::Map::new();
+        let f0 = std::time::Instant::now();
         for s in subjects {
             let sql = format!("SELECT {name}() FROM {s};");
             calls += 1;
-            let entry = match session.execute(&sql).await {
+            let t = std::time::Instant::now();
+            let (entry, ok) = match session.execute(&sql).await {
                 Ok(o) => {
                     let mut v = o.last().map(render).unwrap_or(serde_json::Value::Null);
                     scrub(&mut v);
-                    v
+                    (v, true)
                 }
-                Err(e) => serde_json::json!({ "error": e.to_string() }),
+                Err(e) => (serde_json::json!({ "error": e.to_string() }), false),
             };
+            timings.push(serde_json::json!({
+                "function": name,
+                "subject": s,
+                "seconds": t.elapsed().as_secs_f64(),
+                "ok": ok,
+            }));
             per_subject.insert(s, entry);
         }
         println!(
-            "  {name}: {} subject(s) [{grains}]",
-            per_subject.len()
+            "  {name}: {} subject(s) [{grains}] in {:.1}s",
+            per_subject.len(),
+            f0.elapsed().as_secs_f64()
         );
         goldens.insert(name, serde_json::Value::Object(per_subject));
     }
@@ -494,6 +526,19 @@ async fn capture(
     )
     .unwrap();
     println!("  {} computed values dumped", measured.len());
+
+    // The stage-7 record: what each landing and each call cost, beside
+    // the values. A re-run overwrites; the report quotes from here.
+    std::fs::write(
+        dir.join("_timings.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "landings": landings,
+            "calls": timings,
+            "capture_seconds": t0.elapsed().as_secs_f64(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 
     println!(
         "captured {} functions, {calls} calls, {:.1}s → {}",

@@ -545,6 +545,12 @@ lever and depth the lesser issue.
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.
+- **The ADBC bridge waits on async ADBC in Rust.** ADBC C++ grew an
+  async stream (apache/arrow#43632, lengthy discussion, noted by the
+  project lead 2026-08-18); the Rust API has not. Until it crosses, the
+  three `block_in_place` + one `block_on` in `glossql-import` are the
+  bridge's cost, pinned by the conformance ratchet as the last
+  sync-async seam we own.
 - **The strike and batch commits are one parked item: iceberg-rust
   0.11** (ruled 2026-08-17 — "none of the 3 mentioned [strike] flows is
   mission critical for the immediate future of this prototype"). The
