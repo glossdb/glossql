@@ -1141,3 +1141,46 @@ async fn the_subject_binds_through_the_column_door() {
         .unwrap_err();
     assert!(e.to_string().contains("one quoted subject"), "{e}");
 }
+
+/// A CTE shadows a same-named table — SQL's precedence. The planner seam
+/// runs before DataFusion's own CTE lookup, so without declining these
+/// names the pin arm (a landed table) and the batch arm (a store
+/// relation) would both capture them silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cte_shadows_a_same_named_table() {
+    let (session, _) = agent_session().await;
+    run(&session, SETUP).await;
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "amount",
+        DataType::Float64,
+        true,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "cells",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    // The landed `cells` has no `marker`; only the CTE serves this.
+    let read = table(
+        &session,
+        "WITH cells AS (SELECT 42 AS marker) SELECT marker FROM cells;",
+    )
+    .await;
+    assert!(read.contains("42"), "{read}");
+
+    // Same precedence over a store relation.
+    let read = table(
+        &session,
+        "WITH functions AS (SELECT 7 AS seven) SELECT seven FROM functions;",
+    )
+    .await;
+    assert!(read.contains("| 7"), "{read}");
+}

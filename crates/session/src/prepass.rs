@@ -29,8 +29,8 @@ use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, Query, Statement as SQLStatement, TableFactor,
-    Value as SqlValue, VisitMut, VisitorMut,
+    Expr, FunctionArg, FunctionArgExpr, Ident, Query, Statement as SQLStatement, TableFactor,
+    Value as SqlValue, Visit, VisitMut, Visitor, VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
@@ -48,6 +48,7 @@ pub(crate) struct Resolved {
     plans: HashMap<String, Arc<LogicalPlan>>,
     pins: HashMap<String, Arc<dyn TableProvider>>,
     batches: HashMap<String, RecordBatch>,
+    ctes: HashSet<String>,
 }
 
 impl Resolved {
@@ -68,6 +69,66 @@ impl Resolved {
     pub(crate) fn batch(&self, key: &str) -> Option<&RecordBatch> {
         self.batches.get(key)
     }
+
+    /// Whether this factor is a name the statement binds as a CTE — see
+    /// [`shadowed`].
+    pub(crate) fn shadowed(&self, f: &TableFactor) -> bool {
+        shadowed(&self.ctes, f)
+    }
+}
+
+/// An identifier as DataFusion's normalizer will read it: quoted stays
+/// exact, unquoted folds to lowercase.
+fn normal(i: &Ident) -> String {
+    if i.quote_style.is_some() {
+        i.value.clone()
+    } else {
+        i.value.to_lowercase()
+    }
+}
+
+/// Every CTE name the query binds, at any depth. This planner seam runs
+/// *before* DataFusion's own CTE lookup and `RelationPlannerContext`
+/// cannot ask about CTE scope, so these names must decline the pin or
+/// the seam silently inverts SQL's precedence (a CTE shadows a table).
+/// Depth is not scope — a name bound only in some subquery declines the
+/// pin everywhere and out-of-scope uses fall through to the live
+/// provider, which is the honest limit without re-tracking scope.
+fn ctes_in(q: &Query) -> HashSet<String> {
+    struct Collect(HashSet<String>);
+    impl Visitor for Collect {
+        type Break = ();
+        fn pre_visit_query(&mut self, q: &Query) -> ControlFlow<()> {
+            if let Some(with) = &q.with {
+                self.0
+                    .extend(with.cte_tables.iter().map(|c| normal(&c.alias.name)));
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut c = Collect(HashSet::new());
+    let _ = q.visit(&mut c);
+    c.0
+}
+
+/// Whether the factor is a bare reference to one of the statement's CTE
+/// names — the planner leaves it alone so DataFusion's CTE lookup serves
+/// it. Shipped read names stay reserved over both tables and CTEs
+/// (ruled 2026-08-14).
+fn shadowed(ctes: &HashSet<String>, f: &TableFactor) -> bool {
+    let TableFactor::Table {
+        name, args: None, ..
+    } = f
+    else {
+        return false;
+    };
+    let [part] = name.0.as_slice() else {
+        return false;
+    };
+    let Some(ident) = part.as_ident() else {
+        return false;
+    };
+    ctes.contains(&normal(ident)) && crate::library::read_sql(&ident.value.to_lowercase()).is_none()
 }
 
 /// A door reference this pass knows how to resolve ahead of planning:
@@ -245,9 +306,10 @@ async fn compute_batches(
     q: &mut Query,
     resolved: &mut Resolved,
 ) -> Result<(), SessionError> {
+    let ctes = ctes_in(q);
     for factor in factors_in(q) {
         let key = factor.to_string();
-        if resolved.batches.contains_key(&key) {
+        if resolved.batches.contains_key(&key) || shadowed(&ctes, &factor) {
             continue;
         }
         if let Some(batch) = crate::reads::compute_batch(shared, &factor, resolved).await? {
@@ -323,9 +385,12 @@ async fn resolve_door(
     }
     // Planned with everything it depends on already resolved — nested
     // doors, compute batches and pinned tables all in the map — so the
-    // sync planner finds instead of fetching.
+    // sync planner finds instead of fetching. The body is its own CTE
+    // scope, not the outer statement's.
     Box::pin(compute_batches(shared, &mut body, resolved)).await?;
-    let state = crate::reads::state_with(ctx, shared, resolved.clone());
+    let mut scoped = resolved.clone();
+    scoped.ctes = ctes_in(&body);
+    let state = crate::reads::state_with(ctx, shared, scoped);
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(body))));
     let plan = state
         .statement_to_plan(stmt)
@@ -353,6 +418,7 @@ pub(crate) async fn resolve(
     let mut q = (**q).clone();
     let mut resolved = Resolved {
         pins: shared.statement_pins().await?,
+        ctes: ctes_in(&q),
         ..Resolved::default()
     };
     let mut done = HashSet::new();

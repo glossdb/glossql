@@ -287,6 +287,15 @@ impl RelationPlanner for GlossqlReads {
             }
             return self.planned(&format!("read.{aspect}"), alias.clone());
         }
+        // A name the statement binds as a CTE is not ours to plan. This
+        // seam runs *before* DataFusion's own CTE lookup (datafusion-sql
+        // 54.1, src/relation/mod.rs:190) and RelationPlannerContext
+        // cannot ask about CTE scope, so declining here is what keeps a
+        // CTE shadowing a same-named table — SQL's precedence, which the
+        // pin and batch arms below would otherwise silently invert.
+        if self.resolved.shadowed(&relation) {
+            return Ok(RelationPlanning::Original(Box::new(relation)));
+        }
         // A compute door the pre-pass evaluated — `whatif.<x>()`,
         // `misfit.<x>()`, `glossary(...)`, `attest(...)`,
         // `metric_series()`, the store's relations. Keyed by the factor's

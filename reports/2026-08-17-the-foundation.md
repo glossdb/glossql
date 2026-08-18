@@ -516,14 +516,20 @@ landing) and stage 7 (scale) follow.
 
 ## 8. Still open
 
-- **A pinned table shadows a same-named CTE.** The planner seam
-  (`RelationPlanner`) sees every table factor before default planning,
-  and the pin arm resolves any bare name the dataset owns — including a
-  name the query defined as a CTE. Found 2026-08-18 when the cube
-  body's `cells` CTE lost to a workspace table named `cells`; the
-  shipped bodies carry prefixed CTE names as the local cure. The right
-  fix is to ask the planning context whether the name is a CTE before
-  pinning — check what `RelationPlannerContext` exposes.
+- ~~**A pinned table shadows a same-named CTE.**~~ Closed 2026-08-18.
+  The planner seam (`RelationPlanner`) sees every table factor before
+  DataFusion's own CTE lookup (datafusion-sql 54.1,
+  `src/relation/mod.rs:190`), and `RelationPlannerContext` exposes no
+  CTE scope to ask (datafusion-expr 54.1, `src/planner.rs:400`) — so
+  the pin and batch arms silently inverted SQL's precedence. Cure: the
+  pre-pass collects the query's CTE names (`ctes_in`, per body scope)
+  and the seam declines those names, letting the engine's CTE lookup
+  win — no error, the same silent shadowing SQL itself does, just in
+  the ruled direction. Shipped read names stay reserved over both
+  (2026-08-14). The shipped bodies keep their `mc_`/`be_` prefixes
+  (changing a body supersedes a declaration, which existing workspaces
+  would not receive). Upstream, `RelationPlannerContext` growing a CTE
+  probe would make the skip unnecessary — worth an issue.
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.
