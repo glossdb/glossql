@@ -129,6 +129,23 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     (router, plane, dir)
 }
 
+/// The SHIPPED ruling aspect, cut from the KPI kit the binary
+/// bootstraps — so the ruling tests exercise the schema a real
+/// workspace enforces. The hand-rolled permissive copy this replaces
+/// hid a real refusal: the shipped enum lacked the `unclear` stance
+/// and the docket's button answered 422 (found live, 2026-08-18).
+fn shipped_ruling_declaration() -> &'static str {
+    let kit = glossql_scripts::library::KIT;
+    let start = kit
+        .find("DECLARE ASPECT ruling")
+        .expect("the kit ships the ruling aspect");
+    let len = kit[start..]
+        .find("AS FACT;")
+        .expect("the declaration closes")
+        + "AS FACT;".len();
+    &kit[start..start + len]
+}
+
 async fn get(app: &Router, uri: &str) -> Response<Body> {
     app.clone()
         .oneshot(Request::get(uri).body(Body::empty()).unwrap())
@@ -662,11 +679,10 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
         )
         .await
         .unwrap();
+    human.execute(shipped_ruling_declaration()).await.unwrap();
     human
         .execute(
-            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
-                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
-               GLOSS ruling ON perf AS $${"rulings": [
+            r#"GLOSS ruling ON perf AS $${"rulings": [
                  {"aspect": "dso", "dimension": "definition", "key": "per-line",
                   "assumption": "per line", "stance": "confirmed"}]}$$;"#,
         )
@@ -709,8 +725,7 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
         .unwrap();
     human
         .execute(
-            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
-                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+            shipped_ruling_declaration(),
         )
         .await
         .unwrap();
@@ -804,8 +819,7 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
         .unwrap();
     human
         .execute(
-            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
-                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+            shipped_ruling_declaration(),
         )
         .await
         .unwrap();
@@ -982,8 +996,7 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
         .await
         .unwrap()
         .execute(
-            r#"DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
-                 "properties": {"rulings": {"type": "array"}}}$$ AS FACT;"#,
+            shipped_ruling_declaration(),
         )
         .await
         .unwrap();

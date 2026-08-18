@@ -595,7 +595,8 @@ values; runs under the session scratchpad, not kept):
   (2026-08-14). The shipped bodies keep their `mc_`/`be_` prefixes
   (changing a body supersedes a declaration, which existing workspaces
   would not receive). Upstream, `RelationPlannerContext` growing a CTE
-  probe would make the skip unnecessary — worth an issue.
+  probe would make the skip unnecessary — filed 2026-08-18,
+  apache/datafusion#24460.
 - **`SELECT _pos FROM …` in user SQL does not work** — metadata columns
   are readable through iceberg-rust's scan only. Expected not to matter;
   find out rather than design for it.

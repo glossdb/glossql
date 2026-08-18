@@ -11,6 +11,19 @@
 -- business: metric_series() slices it, GLOSSARY reads it whole. Cube
 -- rows are records since stage 5 — the tuple form was a script-ism
 -- arrow could not carry.
+-- `members` is a bucketing target, NOT a cutoff (ruled 2026-08-18, on
+-- the rel-salt run, where 34 sales orgs could never enter at a hard
+-- 24). A served column is admitted at 2..512 distinct members, fewest
+-- first; at 24 or under every member is named, and above that the top
+-- 23 by weight keep their names while the rest fold into 'other' — so
+-- a wide axis enters bucketed instead of falling off. Only past 512
+-- does a column drop out, reading as an identifier and not a
+-- dimension. Each metric's `bucketed` field names the dimensions this
+-- happened to, so 'other' is never mistaken for a business member.
+-- Bucketing loses nothing: a bucketed flow or stock axis still sums
+-- to the metric's own total, and a ratio member — 'other' included —
+-- divides its own summed halves (member ratios never sum to the
+-- total; that is the defect the ratio verb exists for).
 -- CTE names carry the mc_ prefix: the planner seam resolves a
 -- pinned workspace table ahead of a same-named CTE, so a dataset
 -- carrying a table named `cells` would otherwise capture the join
@@ -48,6 +61,6 @@ SELECT
   named_struct(
     'metrics', coalesce(array_agg(metric ORDER BY seq) FILTER (WHERE metric IS NOT NULL), []),
     'rows', coalesce(sum(cell_count), 0),
-    'note', 'cached — slice with metric_series(); the whole cube reads back via GLOSSARY(<dataset>::metric_cube)'
+    'note', 'cached — slice with metric_series(); the whole cube reads back via GLOSSARY(<dataset>::metric_cube). A dimension wider than 24 members is bucketed to its top 23 by weight plus an "other" member — read the bucketed field on each metric before taking "other" for a business member'
   ) AS summary
 FROM mc_m
