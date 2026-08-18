@@ -15,7 +15,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const COHERENCE: &str = include_str!("../functions/coherence.rhai");
+const COHERENCE: &str = include_str!("../functions/coherence.sql");
 /// The shipped body, so the declaration carries what runs.
 const DERIVATIONS: &str = include_str!("../functions/derivations.sql");
 
@@ -275,4 +275,115 @@ async fn coherence_reads_what_the_declared_join_asserts() {
         .expect("the date pair is measured");
     assert_eq!(pair["joined"], 18);
     assert_eq!(pair["precedes"], 3);
+}
+
+/// The composite fix (foundation report §7a): a declared tuple endpoint
+/// joins on every leg — the multi-tenant shape, where a name is a key
+/// only inside its business. The script this door replaced dropped any
+/// endpoint containing `(` and was blind to the whole declared graph of
+/// the composite corpus.
+#[tokio::test(flavor = "multi_thread")]
+async fn coherence_joins_composite_endpoints() {
+    use datafusion::arrow::array::StringArray;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // Two businesses share the name 'ann'; 'bob' exists only under
+    // business 1. Singly, neither leg is a key.
+    let parties = Arc::new(Schema::new(vec![
+        Field::new("business_id", DataType::Int64, true),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("since", DataType::Date32, true),
+    ]));
+    write_table(
+        &root,
+        "parties",
+        RecordBatch::try_new(
+            parties,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 1, 2])),
+                Arc::new(StringArray::from(vec!["ann", "bob", "ann"])),
+                Arc::new(Date32Array::from(vec![100, 110, 120])),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+    // (2, 'bob') exists in no business — the tuple orphan a single-leg
+    // join could never see ('bob' resolves, 2 resolves, the pair does
+    // not). The first txn is dated before its party existed.
+    let txns = Arc::new(Schema::new(vec![
+        Field::new("business_id", DataType::Int64, true),
+        Field::new("party", DataType::Utf8, true),
+        Field::new("txn_date", DataType::Date32, true),
+    ]));
+    write_table(
+        &root,
+        "txns",
+        RecordBatch::try_new(
+            txns,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 2, 1])),
+                Arc::new(StringArray::from(vec!["ann", "ann", "bob", "bob"])),
+                Arc::new(Date32Array::from(vec![90, 200, 210, 220])),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+
+    let session = session_over(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'composite coherence');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp SET (type: parquet, location: '{}');\n\
+             DECLARE ASPECT relationship_coherence WITH $${{\n\
+               \"type\": \"object\", \"required\": [\"applicable\"],\n\
+               \"properties\": {{\"applicable\": {{\"type\": \"boolean\"}},\n\
+                               \"relationships\": {{\"type\": \"array\"}}}}\n\
+             }}$$ AS MEASUREMENT ON DATASET;\n\
+             DECLARE FUNCTION relationship_coherence FOR GLOBAL \
+             AS $${COHERENCE}$$ RETURNS relationship_coherence;\n\
+             DECLARE RECIPE parties ON fin FROM erp AS \
+             $$SELECT * FROM read_parquet('parties/*.parquet')$$;\n\
+             DECLARE RECIPE txns ON fin FROM erp AS \
+             $$SELECT * FROM read_parquet('txns/*.parquet')$$;\n\
+             DECLARE RELATIONSHIP txns.(business_id, party) -> parties.(business_id, name);",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    session
+        .execute("SELECT relationship_coherence() FROM fin;")
+        .await
+        .unwrap();
+    let value = one(&session
+        .execute("SELECT value FROM GLOSSARY(fin::relationship_coherence) WHERE state = 'current';")
+        .await
+        .unwrap());
+    let doc: serde_json::Value = serde_json::from_str(&value).unwrap();
+    assert_eq!(doc["applicable"], true, "{doc}");
+    let rels = doc["relationships"].as_array().unwrap();
+    assert_eq!(rels.len(), 1, "{doc}");
+    let rel = &rels[0];
+    assert!(
+        rel["relationship"]
+            .as_str()
+            .unwrap()
+            .contains("txns.(business_id, party)"),
+        "{rel}"
+    );
+    assert_eq!(rel["filled"], 4, "{rel}");
+    assert_eq!(rel["orphans"], 1, "the tuple orphan (2, 'bob'): {rel}");
+    let temporal = rel["temporal"].as_array().unwrap();
+    let pair = temporal
+        .iter()
+        .find(|t| t["child_column"] == "txn_date" && t["parent_column"] == "since")
+        .expect("the date pair is measured across the tuple join");
+    assert_eq!(pair["joined"], 3, "{pair}");
+    assert_eq!(pair["precedes"], 1, "the txn before its party existed: {pair}");
 }

@@ -193,7 +193,7 @@ DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.sql$$
 DECLARE FUNCTION detect_derivations FOR GLOBAL AS $$derivations.sql$$
   RETURNS derivation_candidates;
 
-DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.rhai$$
+DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.sql$$
   RETURNS relationship_coherence;
 
 DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.sql$$

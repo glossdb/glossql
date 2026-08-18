@@ -450,6 +450,18 @@ pub(crate) async fn compute_batch(
                 crate::search::derivation_candidates(shared, resolved, &table).await?,
             ))
         }
+        ("relationship_checks", Some(a)) => {
+            let dataset = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "relationship_checks takes one quoted dataset: \
+                     relationship_checks('dataset')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                crate::search::relationship_checks(shared, resolved, &dataset).await?,
+            ))
+        }
         ("grounding_collisions", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(

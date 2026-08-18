@@ -42,7 +42,7 @@ pub const SCRIPTS: &[(&str, &str)] = &[
         "derivations.sql",
         include_str!("../functions/derivations.sql"),
     ),
-    ("coherence.rhai", include_str!("../functions/coherence.rhai")),
+    ("coherence.sql", include_str!("../functions/coherence.sql")),
     (
         "slot_entropy.rhai",
         include_str!("../functions/slot_entropy.rhai"),
