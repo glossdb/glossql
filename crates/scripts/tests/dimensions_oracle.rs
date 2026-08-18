@@ -16,7 +16,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
+const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.sql");
 /// The shipped body, so the declaration carries what runs.
 const PROFILE: &str = include_str!("../functions/profile.sql");
 
@@ -94,7 +94,7 @@ async fn the_generator_grades_the_relevance_score() {
              AS $${PROFILE}$$ RETURNS column_profile;\n\
              DECLARE FUNCTION dimension_relevance FOR GLOBAL \
              AS $${DIMENSION_RELEVANCE}$$ \
-             ACCEPTS (column_profile) RETURNS dimension_relevance;\n\
+             RETURNS dimension_relevance;\n\
              DECLARE RECIPE invoices ON fin FROM finance AS \
              $$SELECT invoice_id, status FROM read_csv('invoices.csv')$$;\n\
              DECLARE RECIPE bank_transactions ON fin FROM finance AS \

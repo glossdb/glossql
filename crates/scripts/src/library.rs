@@ -27,8 +27,8 @@ pub const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../functions/behavior_evidence.rhai"),
     ),
     (
-        "dimension_relevance.rhai",
-        include_str!("../functions/dimension_relevance.rhai"),
+        "dimension_relevance.sql",
+        include_str!("../functions/dimension_relevance.sql"),
     ),
     (
         "hierarchies.sql",

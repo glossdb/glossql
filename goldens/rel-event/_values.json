@@ -1,4 +1,11 @@
 {
+  "event_attendees.event::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.994216,
+    "evenness": 0.90306956,
+    "groups": 22046,
+    "relevance": 0.89784621
+  },
   "event_attendees.event::outliers": {
     "applicable": true,
     "iqr": {
@@ -127,6 +134,13 @@
   },
   "event_attendees.start_time::behavior_evidence": {
     "applicable": false
+  },
+  "event_attendees.start_time::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.994216,
+    "evenness": 0.8368114,
+    "groups": 5738,
+    "relevance": 0.83197128
   },
   "event_attendees.start_time::outliers": {
     "applicable": false
@@ -385,6 +399,13 @@
   "event_attendees.status::behavior_evidence": {
     "applicable": false
   },
+  "event_attendees.status::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.44445794,
+    "groups": 4,
+    "relevance": 0.44445794
+  },
   "event_attendees.status::outliers": {
     "applicable": false
   },
@@ -429,6 +450,10 @@
   "event_attendees.status::temporal": {
     "applicable": false,
     "reason": "column type is Utf8, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "event_attendees.user_id::dimension_relevance": {
+    "applicable": false,
+    "reason": "nulls dominate (ratio > 0.5)"
   },
   "event_attendees.user_id::outliers": {
     "applicable": true,
@@ -612,6 +637,13 @@
     ],
     "rows": 2000000
   },
+  "event_interest.event::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.91814947,
+    "groups": 8846,
+    "relevance": 0.91814947
+  },
   "event_interest.event::outliers": {
     "applicable": true,
     "iqr": {
@@ -738,6 +770,13 @@
     "applicable": false,
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
+  "event_interest.interested::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.83898801,
+    "groups": 2,
+    "relevance": 0.83898801
+  },
   "event_interest.interested::outliers": {
     "applicable": true,
     "iqr": {
@@ -792,6 +831,13 @@
     "applicable": false,
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
   },
+  "event_interest.invited::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.25351834,
+    "groups": 2,
+    "relevance": 0.25351834
+  },
   "event_interest.invited::outliers": {
     "applicable": true,
     "iqr": {
@@ -845,6 +891,13 @@
   "event_interest.invited::temporal": {
     "applicable": false,
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "event_interest.not_interested::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.21107361,
+    "groups": 2,
+    "relevance": 0.21107361
   },
   "event_interest.not_interested::outliers": {
     "applicable": true,
@@ -902,6 +955,13 @@
   },
   "event_interest.timestamp::behavior_evidence": {
     "applicable": false
+  },
+  "event_interest.timestamp::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.96568621,
+    "groups": 4671,
+    "relevance": 0.96568621
   },
   "event_interest.timestamp::outliers": {
     "applicable": false
@@ -1156,6 +1216,13 @@
     "max": "2012-12-12T12:33:32.985",
     "min": "2012-04-27T21:41:02.227",
     "span_days": 228.61979
+  },
+  "event_interest.user::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.98678389,
+    "groups": 2034,
+    "relevance": 0.98678389
   },
   "event_interest.user::outliers": {
     "applicable": true,
@@ -2355,6 +2422,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_100::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.092060858,
+    "groups": 19,
+    "relevance": 0.092060858
+  },
   "events.c_100::outliers": {
     "applicable": true,
     "iqr": {
@@ -3392,6 +3466,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_10::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.28513633,
+    "groups": 42,
+    "relevance": 0.28513633
   },
   "events.c_10::outliers": {
     "applicable": true,
@@ -4435,6 +4516,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_11::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.25980841,
+    "groups": 46,
+    "relevance": 0.25980841
+  },
   "events.c_11::outliers": {
     "applicable": true,
     "iqr": {
@@ -5476,6 +5564,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_12::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.24377922,
+    "groups": 53,
+    "relevance": 0.24377922
   },
   "events.c_12::outliers": {
     "applicable": true,
@@ -6519,6 +6614,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_13::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.25468238,
+    "groups": 42,
+    "relevance": 0.25468238
+  },
   "events.c_13::outliers": {
     "applicable": true,
     "iqr": {
@@ -7560,6 +7662,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_14::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.23238041,
+    "groups": 56,
+    "relevance": 0.23238041
   },
   "events.c_14::outliers": {
     "applicable": true,
@@ -8603,6 +8712,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_15::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.22357437,
+    "groups": 43,
+    "relevance": 0.22357437
+  },
   "events.c_15::outliers": {
     "applicable": true,
     "iqr": {
@@ -9644,6 +9760,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_16::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.23804585,
+    "groups": 42,
+    "relevance": 0.23804585
   },
   "events.c_16::outliers": {
     "applicable": true,
@@ -10687,6 +10810,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_17::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.22656019,
+    "groups": 41,
+    "relevance": 0.22656019
+  },
   "events.c_17::outliers": {
     "applicable": true,
     "iqr": {
@@ -11728,6 +11858,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_18::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.20019974,
+    "groups": 48,
+    "relevance": 0.20019974
   },
   "events.c_18::outliers": {
     "applicable": true,
@@ -12771,6 +12908,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_19::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.21427138,
+    "groups": 35,
+    "relevance": 0.21427138
+  },
   "events.c_19::outliers": {
     "applicable": true,
     "iqr": {
@@ -13812,6 +13956,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_1::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.39730257,
+    "groups": 148,
+    "relevance": 0.39730257
   },
   "events.c_1::outliers": {
     "applicable": true,
@@ -14855,6 +15006,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_20::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.18287868,
+    "groups": 47,
+    "relevance": 0.18287868
+  },
   "events.c_20::outliers": {
     "applicable": true,
     "iqr": {
@@ -15896,6 +16054,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_21::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.18754989,
+    "groups": 50,
+    "relevance": 0.18754989
   },
   "events.c_21::outliers": {
     "applicable": true,
@@ -16939,6 +17104,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_22::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.18766194,
+    "groups": 36,
+    "relevance": 0.18766194
+  },
   "events.c_22::outliers": {
     "applicable": true,
     "iqr": {
@@ -17980,6 +18152,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_23::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.17611479,
+    "groups": 42,
+    "relevance": 0.17611479
   },
   "events.c_23::outliers": {
     "applicable": true,
@@ -19023,6 +19202,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_24::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.22856931,
+    "groups": 19,
+    "relevance": 0.22856931
+  },
   "events.c_24::outliers": {
     "applicable": true,
     "iqr": {
@@ -20060,6 +20246,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_25::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.17544881,
+    "groups": 34,
+    "relevance": 0.17544881
   },
   "events.c_25::outliers": {
     "applicable": true,
@@ -21103,6 +21296,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_26::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.16617497,
+    "groups": 35,
+    "relevance": 0.16617497
+  },
   "events.c_26::outliers": {
     "applicable": true,
     "iqr": {
@@ -22144,6 +22344,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_27::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.17171836,
+    "groups": 33,
+    "relevance": 0.17171836
   },
   "events.c_27::outliers": {
     "applicable": true,
@@ -23187,6 +23394,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_28::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.17437158,
+    "groups": 32,
+    "relevance": 0.17437158
+  },
   "events.c_28::outliers": {
     "applicable": true,
     "iqr": {
@@ -24228,6 +24442,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_29::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.15640411,
+    "groups": 23,
+    "relevance": 0.15640411
   },
   "events.c_29::outliers": {
     "applicable": true,
@@ -25271,6 +25492,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_2::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.37013114,
+    "groups": 107,
+    "relevance": 0.37013114
+  },
   "events.c_2::outliers": {
     "applicable": true,
     "iqr": {
@@ -26312,6 +26540,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_30::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.16011849,
+    "groups": 33,
+    "relevance": 0.16011849
   },
   "events.c_30::outliers": {
     "applicable": true,
@@ -27355,6 +27590,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_31::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.1489943,
+    "groups": 39,
+    "relevance": 0.1489943
+  },
   "events.c_31::outliers": {
     "applicable": true,
     "iqr": {
@@ -28396,6 +28638,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_32::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10602746,
+    "groups": 61,
+    "relevance": 0.10602746
   },
   "events.c_32::outliers": {
     "applicable": true,
@@ -29439,6 +29688,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_33::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.17289112,
+    "groups": 26,
+    "relevance": 0.17289112
+  },
   "events.c_33::outliers": {
     "applicable": true,
     "iqr": {
@@ -30480,6 +30736,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_34::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.1477923,
+    "groups": 45,
+    "relevance": 0.1477923
   },
   "events.c_34::outliers": {
     "applicable": true,
@@ -31523,6 +31786,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_35::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.16326173,
+    "groups": 25,
+    "relevance": 0.16326173
+  },
   "events.c_35::outliers": {
     "applicable": true,
     "iqr": {
@@ -32564,6 +32834,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_36::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13511074,
+    "groups": 53,
+    "relevance": 0.13511074
   },
   "events.c_36::outliers": {
     "applicable": true,
@@ -33607,6 +33884,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_37::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.16805846,
+    "groups": 26,
+    "relevance": 0.16805846
+  },
   "events.c_37::outliers": {
     "applicable": true,
     "iqr": {
@@ -34648,6 +34932,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_38::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.099193323,
+    "groups": 51,
+    "relevance": 0.099193323
   },
   "events.c_38::outliers": {
     "applicable": true,
@@ -35691,6 +35982,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_39::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.16230627,
+    "groups": 24,
+    "relevance": 0.16230627
+  },
   "events.c_39::outliers": {
     "applicable": true,
     "iqr": {
@@ -36732,6 +37030,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_3::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.34871575,
+    "groups": 97,
+    "relevance": 0.34871575
   },
   "events.c_3::outliers": {
     "applicable": true,
@@ -37775,6 +38080,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_40::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.14008262,
+    "groups": 32,
+    "relevance": 0.14008262
+  },
   "events.c_40::outliers": {
     "applicable": true,
     "iqr": {
@@ -38816,6 +39128,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_41::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.14104863,
+    "groups": 27,
+    "relevance": 0.14104863
   },
   "events.c_41::outliers": {
     "applicable": true,
@@ -39859,6 +40178,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_42::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.14683101,
+    "groups": 24,
+    "relevance": 0.14683101
+  },
   "events.c_42::outliers": {
     "applicable": true,
     "iqr": {
@@ -40900,6 +41226,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_43::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13975467,
+    "groups": 28,
+    "relevance": 0.13975467
   },
   "events.c_43::outliers": {
     "applicable": true,
@@ -41943,6 +42276,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_44::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11289239,
+    "groups": 44,
+    "relevance": 0.11289239
+  },
   "events.c_44::outliers": {
     "applicable": true,
     "iqr": {
@@ -42984,6 +43324,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_45::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.15085299,
+    "groups": 24,
+    "relevance": 0.15085299
   },
   "events.c_45::outliers": {
     "applicable": true,
@@ -44027,6 +44374,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_46::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.14944295,
+    "groups": 23,
+    "relevance": 0.14944295
+  },
   "events.c_46::outliers": {
     "applicable": true,
     "iqr": {
@@ -45069,6 +45423,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_47::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.15722461,
+    "groups": 18,
+    "relevance": 0.15722461
+  },
   "events.c_47::outliers": {
     "applicable": true,
     "iqr": {
@@ -46102,6 +46463,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_48::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11158977,
+    "groups": 50,
+    "relevance": 0.11158977
   },
   "events.c_48::outliers": {
     "applicable": true,
@@ -47145,6 +47513,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_49::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13809933,
+    "groups": 24,
+    "relevance": 0.13809933
+  },
   "events.c_49::outliers": {
     "applicable": true,
     "iqr": {
@@ -48186,6 +48561,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_4::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.32747345,
+    "groups": 74,
+    "relevance": 0.32747345
   },
   "events.c_4::outliers": {
     "applicable": true,
@@ -49229,6 +49611,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_50::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.15351021,
+    "groups": 18,
+    "relevance": 0.15351021
+  },
   "events.c_50::outliers": {
     "applicable": true,
     "iqr": {
@@ -50262,6 +50651,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_51::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13438052,
+    "groups": 26,
+    "relevance": 0.13438052
   },
   "events.c_51::outliers": {
     "applicable": true,
@@ -51305,6 +51701,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_52::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11599565,
+    "groups": 43,
+    "relevance": 0.11599565
+  },
   "events.c_52::outliers": {
     "applicable": true,
     "iqr": {
@@ -52346,6 +52749,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_53::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12058501,
+    "groups": 28,
+    "relevance": 0.12058501
   },
   "events.c_53::outliers": {
     "applicable": true,
@@ -53389,6 +53799,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_54::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13544114,
+    "groups": 23,
+    "relevance": 0.13544114
+  },
   "events.c_54::outliers": {
     "applicable": true,
     "iqr": {
@@ -54430,6 +54847,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_55::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.1202595,
+    "groups": 28,
+    "relevance": 0.1202595
   },
   "events.c_55::outliers": {
     "applicable": true,
@@ -55473,6 +55897,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_56::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13154926,
+    "groups": 22,
+    "relevance": 0.13154926
+  },
   "events.c_56::outliers": {
     "applicable": true,
     "iqr": {
@@ -56515,6 +56946,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_57::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13423023,
+    "groups": 19,
+    "relevance": 0.13423023
+  },
   "events.c_57::outliers": {
     "applicable": true,
     "iqr": {
@@ -57552,6 +57990,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_58::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12808838,
+    "groups": 20,
+    "relevance": 0.12808838
   },
   "events.c_58::outliers": {
     "applicable": true,
@@ -58595,6 +59040,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_59::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.14856651,
+    "groups": 15,
+    "relevance": 0.14856651
+  },
   "events.c_59::outliers": {
     "applicable": true,
     "iqr": {
@@ -59616,6 +60068,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_5::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.30488035,
+    "groups": 94,
+    "relevance": 0.30488035
   },
   "events.c_5::outliers": {
     "applicable": true,
@@ -60659,6 +61118,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_60::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11802211,
+    "groups": 27,
+    "relevance": 0.11802211
+  },
   "events.c_60::outliers": {
     "applicable": true,
     "iqr": {
@@ -61700,6 +62166,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_61::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.089523963,
+    "groups": 35,
+    "relevance": 0.089523963
   },
   "events.c_61::outliers": {
     "applicable": true,
@@ -62743,6 +63216,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_62::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11564167,
+    "groups": 26,
+    "relevance": 0.11564167
+  },
   "events.c_62::outliers": {
     "applicable": true,
     "iqr": {
@@ -63784,6 +64264,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_63::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10321062,
+    "groups": 36,
+    "relevance": 0.10321062
   },
   "events.c_63::outliers": {
     "applicable": true,
@@ -64827,6 +65314,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_64::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11211309,
+    "groups": 26,
+    "relevance": 0.11211309
+  },
   "events.c_64::outliers": {
     "applicable": true,
     "iqr": {
@@ -65868,6 +66362,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_65::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10001105,
+    "groups": 34,
+    "relevance": 0.10001105
   },
   "events.c_65::outliers": {
     "applicable": true,
@@ -66911,6 +67412,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_66::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.087142168,
+    "groups": 21,
+    "relevance": 0.087142168
+  },
   "events.c_66::outliers": {
     "applicable": true,
     "iqr": {
@@ -67953,6 +68461,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_67::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.09945559,
+    "groups": 17,
+    "relevance": 0.09945559
+  },
   "events.c_67::outliers": {
     "applicable": true,
     "iqr": {
@@ -68983,6 +69498,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_68::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.13091832,
+    "groups": 15,
+    "relevance": 0.13091832
+  },
   "events.c_68::outliers": {
     "applicable": true,
     "iqr": {
@@ -70004,6 +70526,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_69::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12379086,
+    "groups": 18,
+    "relevance": 0.12379086
   },
   "events.c_69::outliers": {
     "applicable": true,
@@ -71038,6 +71567,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_6::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.22726624,
+    "groups": 195,
+    "relevance": 0.22726624
   },
   "events.c_6::outliers": {
     "applicable": true,
@@ -72081,6 +72617,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_70::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12941541,
+    "groups": 16,
+    "relevance": 0.12941541
+  },
   "events.c_70::outliers": {
     "applicable": true,
     "iqr": {
@@ -73106,6 +73649,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_71::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.087042445,
+    "groups": 32,
+    "relevance": 0.087042445
   },
   "events.c_71::outliers": {
     "applicable": true,
@@ -74149,6 +74699,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_72::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12182003,
+    "groups": 16,
+    "relevance": 0.12182003
+  },
   "events.c_72::outliers": {
     "applicable": true,
     "iqr": {
@@ -75174,6 +75731,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_73::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10664072,
+    "groups": 23,
+    "relevance": 0.10664072
   },
   "events.c_73::outliers": {
     "applicable": true,
@@ -76217,6 +76781,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_74::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10896399,
+    "groups": 21,
+    "relevance": 0.10896399
+  },
   "events.c_74::outliers": {
     "applicable": true,
     "iqr": {
@@ -77259,6 +77830,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_75::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.093718829,
+    "groups": 16,
+    "relevance": 0.093718829
+  },
   "events.c_75::outliers": {
     "applicable": true,
     "iqr": {
@@ -78284,6 +78862,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_76::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.086117887,
+    "groups": 32,
+    "relevance": 0.086117887
   },
   "events.c_76::outliers": {
     "applicable": true,
@@ -79327,6 +79912,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_77::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10673311,
+    "groups": 19,
+    "relevance": 0.10673311
+  },
   "events.c_77::outliers": {
     "applicable": true,
     "iqr": {
@@ -80364,6 +80956,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_78::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.088821159,
+    "groups": 36,
+    "relevance": 0.088821159
   },
   "events.c_78::outliers": {
     "applicable": true,
@@ -81407,6 +82006,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_79::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.092197528,
+    "groups": 30,
+    "relevance": 0.092197528
+  },
   "events.c_79::outliers": {
     "applicable": true,
     "iqr": {
@@ -82448,6 +83054,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_7::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.31479095,
+    "groups": 54,
+    "relevance": 0.31479095
   },
   "events.c_7::outliers": {
     "applicable": true,
@@ -83491,6 +84104,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_80::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.096186531,
+    "groups": 25,
+    "relevance": 0.096186531
+  },
   "events.c_80::outliers": {
     "applicable": true,
     "iqr": {
@@ -84533,6 +85153,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_81::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.080424807,
+    "groups": 13,
+    "relevance": 0.080424807
+  },
   "events.c_81::outliers": {
     "applicable": true,
     "iqr": {
@@ -85546,6 +86173,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_82::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10028029,
+    "groups": 22,
+    "relevance": 0.10028029
   },
   "events.c_82::outliers": {
     "applicable": true,
@@ -86589,6 +87223,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_83::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.096988249,
+    "groups": 23,
+    "relevance": 0.096988249
+  },
   "events.c_83::outliers": {
     "applicable": true,
     "iqr": {
@@ -87630,6 +88271,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_84::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.09610965,
+    "groups": 22,
+    "relevance": 0.09610965
   },
   "events.c_84::outliers": {
     "applicable": true,
@@ -88673,6 +89321,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_85::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.12053052,
+    "groups": 14,
+    "relevance": 0.12053052
+  },
   "events.c_85::outliers": {
     "applicable": true,
     "iqr": {
@@ -89690,6 +90345,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_86::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.07742352,
+    "groups": 34,
+    "relevance": 0.07742352
   },
   "events.c_86::outliers": {
     "applicable": true,
@@ -90733,6 +91395,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_87::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.11911056,
+    "groups": 13,
+    "relevance": 0.11911056
+  },
   "events.c_87::outliers": {
     "applicable": true,
     "iqr": {
@@ -91746,6 +92415,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_88::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.08609187,
+    "groups": 29,
+    "relevance": 0.08609187
   },
   "events.c_88::outliers": {
     "applicable": true,
@@ -92789,6 +93465,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_89::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10189009,
+    "groups": 20,
+    "relevance": 0.10189009
+  },
   "events.c_89::outliers": {
     "applicable": true,
     "iqr": {
@@ -93830,6 +94513,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_8::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.25703877,
+    "groups": 62,
+    "relevance": 0.25703877
   },
   "events.c_8::outliers": {
     "applicable": true,
@@ -94873,6 +95563,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_90::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10688128,
+    "groups": 17,
+    "relevance": 0.10688128
+  },
   "events.c_90::outliers": {
     "applicable": true,
     "iqr": {
@@ -95902,6 +96599,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_91::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.092021694,
+    "groups": 23,
+    "relevance": 0.092021694
   },
   "events.c_91::outliers": {
     "applicable": true,
@@ -96945,6 +97649,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_92::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.095529747,
+    "groups": 18,
+    "relevance": 0.095529747
+  },
   "events.c_92::outliers": {
     "applicable": true,
     "iqr": {
@@ -97978,6 +98689,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_93::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.094699683,
+    "groups": 20,
+    "relevance": 0.094699683
   },
   "events.c_93::outliers": {
     "applicable": true,
@@ -99021,6 +99739,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_94::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.078865996,
+    "groups": 20,
+    "relevance": 0.078865996
+  },
   "events.c_94::outliers": {
     "applicable": true,
     "iqr": {
@@ -100063,6 +100788,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_95::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.097257686,
+    "groups": 19,
+    "relevance": 0.097257686
+  },
   "events.c_95::outliers": {
     "applicable": true,
     "iqr": {
@@ -101100,6 +101832,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_96::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.081082977,
+    "groups": 27,
+    "relevance": 0.081082977
   },
   "events.c_96::outliers": {
     "applicable": true,
@@ -102143,6 +102882,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_97::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.092445922,
+    "groups": 20,
+    "relevance": 0.092445922
+  },
   "events.c_97::outliers": {
     "applicable": true,
     "iqr": {
@@ -103185,6 +103931,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_98::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.10243359,
+    "groups": 15,
+    "relevance": 0.10243359
+  },
   "events.c_98::outliers": {
     "applicable": true,
     "iqr": {
@@ -104206,6 +104959,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.c_99::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.075548293,
+    "groups": 29,
+    "relevance": 0.075548293
   },
   "events.c_99::outliers": {
     "applicable": true,
@@ -105249,6 +106009,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_9::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.26683106,
+    "groups": 70,
+    "relevance": 0.26683106
+  },
   "events.c_9::outliers": {
     "applicable": true,
     "iqr": {
@@ -106291,6 +107058,13 @@
       "verdict": "abstain"
     }
   },
+  "events.c_other::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.68123536,
+    "groups": 994,
+    "relevance": 0.68123536
+  },
   "events.c_other::outliers": {
     "applicable": true,
     "iqr": {
@@ -106420,6 +107194,13 @@
   "events.city::behavior_evidence": {
     "applicable": false
   },
+  "events.city::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.5036895,
+    "evenness": 0.72650941,
+    "groups": 27235,
+    "relevance": 0.36593516
+  },
   "events.city::outliers": {
     "applicable": false
   },
@@ -106531,6 +107312,13 @@
   },
   "events.country::behavior_evidence": {
     "applicable": false
+  },
+  "events.country::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.511318,
+    "evenness": 0.31640962,
+    "groups": 204,
+    "relevance": 0.16178593
   },
   "events.country::outliers": {
     "applicable": false
@@ -107556,6 +108344,10 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "events.event_id::dimension_relevance": {
+    "applicable": false,
+    "reason": "near-key axis (distinct/filled >= 0.9)"
   },
   "events.event_id::outliers": {
     "applicable": true,
@@ -108599,6 +109391,13 @@
       "verdict": "abstain"
     }
   },
+  "events.lat::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.5753395,
+    "evenness": 0.90214433,
+    "groups": 57452,
+    "relevance": 0.51903927
+  },
   "events.lat::outliers": {
     "applicable": true,
     "iqr": {
@@ -109641,6 +110440,13 @@
       "verdict": "abstain"
     }
   },
+  "events.lng::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.5753395,
+    "evenness": 0.90721707,
+    "groups": 100849,
+    "relevance": 0.52195781
+  },
   "events.lng::outliers": {
     "applicable": true,
     "iqr": {
@@ -109769,6 +110575,13 @@
   },
   "events.start_time::behavior_evidence": {
     "applicable": false
+  },
+  "events.start_time::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.999999,
+    "evenness": 0.80084798,
+    "groups": 76700,
+    "relevance": 0.80084718
   },
   "events.start_time::outliers": {
     "applicable": false
@@ -110026,6 +110839,10 @@
   },
   "events.state::behavior_evidence": {
     "applicable": false
+  },
+  "events.state::dimension_relevance": {
+    "applicable": false,
+    "reason": "nulls dominate (ratio > 0.5)"
   },
   "events.state::outliers": {
     "applicable": false
@@ -111052,6 +111869,10 @@
       "verdict": "abstain"
     }
   },
+  "events.user_id::dimension_relevance": {
+    "applicable": false,
+    "reason": "nulls dominate (ratio > 0.5)"
+  },
   "events.user_id::outliers": {
     "applicable": true,
     "iqr": {
@@ -111180,6 +112001,10 @@
   },
   "events.zip::behavior_evidence": {
     "applicable": false
+  },
+  "events.zip::dimension_relevance": {
+    "applicable": false,
+    "reason": "nulls dominate (ratio > 0.5)"
   },
   "events.zip::outliers": {
     "applicable": true,
@@ -142866,6 +143691,10 @@
       }
     ]
   },
+  "user_friends.friend::dimension_relevance": {
+    "applicable": false,
+    "reason": "nulls dominate (ratio > 0.5)"
+  },
   "user_friends.friend::outliers": {
     "applicable": true,
     "iqr": {
@@ -142991,6 +143820,13 @@
   "user_friends.friend::temporal": {
     "applicable": false,
     "reason": "column type is Int64, not Date/Timestamp — a date landed as text needs typing in the recipe"
+  },
+  "user_friends.user::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.95210701,
+    "groups": 36593,
+    "relevance": 0.95210701
   },
   "user_friends.user::outliers": {
     "applicable": true,
@@ -143573,6 +144409,13 @@
       "verdict": "abstain"
     }
   },
+  "users.birthyear::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.96089926,
+    "evenness": 0.68559829,
+    "groups": 95,
+    "relevance": 0.6587909
+  },
   "users.birthyear::outliers": {
     "applicable": true,
     "iqr": {
@@ -143702,6 +144545,13 @@
   "users.gender::behavior_evidence": {
     "applicable": false
   },
+  "users.gender::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.99714727,
+    "evenness": 0.96478261,
+    "groups": 2,
+    "relevance": 0.96203034
+  },
   "users.gender::outliers": {
     "applicable": false
   },
@@ -143741,6 +144591,10 @@
   },
   "users.joinedAt::behavior_evidence": {
     "applicable": false
+  },
+  "users.joinedAt::dimension_relevance": {
+    "applicable": false,
+    "reason": "near-key axis (distinct/filled >= 0.9)"
   },
   "users.joinedAt::outliers": {
     "applicable": false
@@ -143999,6 +144853,13 @@
   "users.locale::behavior_evidence": {
     "applicable": false
   },
+  "users.locale::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.40947474,
+    "groups": 64,
+    "relevance": 0.40947474
+  },
   "users.locale::outliers": {
     "applicable": false
   },
@@ -144110,6 +144971,13 @@
   },
   "users.location::behavior_evidence": {
     "applicable": false
+  },
+  "users.location::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.85697087,
+    "evenness": 0.61554192,
+    "groups": 2803,
+    "relevance": 0.5275015
   },
   "users.location::outliers": {
     "applicable": false
@@ -144651,6 +145519,13 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "users.timezone::dimension_relevance": {
+    "applicable": true,
+    "coverage": 0.98858908,
+    "evenness": 0.56879159,
+    "groups": 52,
+    "relevance": 0.56230115
   },
   "users.timezone::outliers": {
     "applicable": true,
@@ -145209,6 +146084,10 @@
       "reason": "fewer than two entities carry 4+ periods on this alignment",
       "verdict": "abstain"
     }
+  },
+  "users.user_id::dimension_relevance": {
+    "applicable": false,
+    "reason": "near-key axis (distinct/filled >= 0.9)"
   },
   "users.user_id::outliers": {
     "applicable": true,

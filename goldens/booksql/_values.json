@@ -2,6 +2,13 @@
   "Master_txn_table.Account::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Account::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.64709206,
+    "groups": 323,
+    "relevance": 0.64709206
+  },
   "Master_txn_table.Account::outliers": {
     "applicable": false
   },
@@ -113,6 +120,13 @@
   },
   "Master_txn_table.Amount::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Amount::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.76027722,
+    "groups": 107,
+    "relevance": 0.76027722
   },
   "Master_txn_table.Amount::outliers": {
     "applicable": true,
@@ -248,6 +262,10 @@
   "Master_txn_table.Billable::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Billable::dimension_relevance": {
+    "applicable": false,
+    "reason": "constant axis: one bucket, NULL included"
+  },
   "Master_txn_table.Billable::outliers": {
     "applicable": false
   },
@@ -283,6 +301,13 @@
   },
   "Master_txn_table.Cleared::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Cleared::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.69731287,
+    "groups": 2,
+    "relevance": 0.69731287
   },
   "Master_txn_table.Cleared::outliers": {
     "applicable": false
@@ -323,6 +348,13 @@
   },
   "Master_txn_table.Credit::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Credit::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.71312885,
+    "groups": 190,
+    "relevance": 0.71312885
   },
   "Master_txn_table.Credit::outliers": {
     "applicable": true,
@@ -458,6 +490,13 @@
   "Master_txn_table.Debit::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Debit::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.27376958,
+    "groups": 108,
+    "relevance": 0.27376958
+  },
   "Master_txn_table.Debit::outliers": {
     "applicable": true,
     "iqr": {
@@ -592,6 +631,10 @@
   "Master_txn_table.Invoiced::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Invoiced::dimension_relevance": {
+    "applicable": false,
+    "reason": "constant axis: one bucket, NULL included"
+  },
   "Master_txn_table.Invoiced::outliers": {
     "applicable": false
   },
@@ -627,6 +670,13 @@
   },
   "Master_txn_table.Product_Service::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Product_Service::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.39307714,
+    "groups": 267,
+    "relevance": 0.39307714
   },
   "Master_txn_table.Product_Service::outliers": {
     "applicable": false
@@ -740,6 +790,13 @@
   "Master_txn_table.Purchase::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Purchase::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.040775801,
+    "groups": 2,
+    "relevance": 0.040775801
+  },
   "Master_txn_table.Purchase::outliers": {
     "applicable": false
   },
@@ -779,6 +836,13 @@
   },
   "Master_txn_table.Quantity::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Quantity::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.71583858,
+    "groups": 72,
+    "relevance": 0.71583858
   },
   "Master_txn_table.Quantity::outliers": {
     "applicable": true,
@@ -914,6 +978,13 @@
   "Master_txn_table.Rate::behavior_evidence": {
     "applicable": false
   },
+  "Master_txn_table.Rate::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.75629,
+    "groups": 137,
+    "relevance": 0.75629
+  },
   "Master_txn_table.Rate::outliers": {
     "applicable": true,
     "iqr": {
@@ -1047,6 +1118,13 @@
   },
   "Master_txn_table.Sale::behavior_evidence": {
     "applicable": false
+  },
+  "Master_txn_table.Sale::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.040775801,
+    "groups": 2,
+    "relevance": 0.040775801
   },
   "Master_txn_table.Sale::outliers": {
     "applicable": false
@@ -5575,6 +5653,10 @@
   "customer_table.Balance::behavior_evidence": {
     "applicable": false
   },
+  "customer_table.Balance::dimension_relevance": {
+    "applicable": false,
+    "reason": "constant axis: one bucket, NULL included"
+  },
   "customer_table.Balance::outliers": {
     "applicable": false
   },
@@ -5863,6 +5945,13 @@
   "employee_table.Deleted::behavior_evidence": {
     "applicable": false
   },
+  "employee_table.Deleted::dimension_relevance": {
+    "applicable": true,
+    "coverage": 1.0,
+    "evenness": 0.99999434,
+    "groups": 2,
+    "relevance": 0.99999434
+  },
   "employee_table.Deleted::outliers": {
     "applicable": false
   },
@@ -5932,6 +6021,10 @@
   },
   "product_service_table.Product_Service::behavior_evidence": {
     "applicable": false
+  },
+  "product_service_table.Product_Service::dimension_relevance": {
+    "applicable": false,
+    "reason": "near-key axis (distinct/filled >= 0.9)"
   },
   "product_service_table.Product_Service::outliers": {
     "applicable": false
@@ -6045,6 +6138,10 @@
   "product_service_table.Product_Service_Type::behavior_evidence": {
     "applicable": false
   },
+  "product_service_table.Product_Service_Type::dimension_relevance": {
+    "applicable": false,
+    "reason": "constant axis: one bucket, NULL included"
+  },
   "product_service_table.Product_Service_Type::outliers": {
     "applicable": false
   },
@@ -6101,6 +6198,10 @@
   },
   "vendor_table.Balance::behavior_evidence": {
     "applicable": false
+  },
+  "vendor_table.Balance::dimension_relevance": {
+    "applicable": false,
+    "reason": "constant axis: one bucket, NULL included"
   },
   "vendor_table.Balance::outliers": {
     "applicable": false

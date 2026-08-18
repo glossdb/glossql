@@ -1,7 +1,7 @@
 //! The dimensions plane's two measurements on data whose truth is by
 //! construction. Relevance: a known bucket distribution scores exactly
 //! coverage × Pielou, gates abstain near-keys, and the missing-profile
-//! abstention heals through the ACCEPTS edge once the profile lands.
+//! profile composes inline, so the first ask scores (§7e).
 //! Hierarchies: a strict zip → city → state nest arrives with g3 = 0
 //! and λ = 1, the reverse directions are screened, a code↔label
 //! bijection arrives as an alias candidate, and a 98%-dominant flag —
@@ -20,7 +20,7 @@ use glossql_scripts::RhaiRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
-const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.rhai");
+const DIMENSION_RELEVANCE: &str = include_str!("../functions/dimension_relevance.sql");
 /// The shipped body, so the declaration carries what runs.
 const HIERARCHIES: &str = include_str!("../functions/hierarchies.sql");
 /// The shipped body, so the declaration carries what runs.
@@ -194,8 +194,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
              DECLARE FUNCTION profile FOR GLOBAL \
              AS $${PROFILE}$$ RETURNS column_profile;\n\
              DECLARE FUNCTION dimension_relevance FOR GLOBAL \
-             AS $${DIMENSION_RELEVANCE}$$ \
-             ACCEPTS (column_profile) RETURNS dimension_relevance;\n\
+             AS $${DIMENSION_RELEVANCE}$$ RETURNS dimension_relevance;\n\
              DECLARE FUNCTION detect_hierarchies FOR GLOBAL \
              AS $${HIERARCHIES}$$ RETURNS hierarchy_candidates;\n\
              DECLARE RECIPE survey ON fin FROM erp_export AS \
@@ -207,19 +206,9 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         .await
         .unwrap();
 
-    // Without a profile the score abstains and names its input; the
-    // profile's landing heals the cached abstention through ACCEPTS.
-    let unhealed = measure(&session, "dimension_relevance", "survey.segment").await;
-    assert_eq!(unhealed["applicable"], false, "{unhealed}");
-    assert_eq!(
-        unhealed["missing_aspects"][0], "column_profile",
-        "{unhealed}"
-    );
-
-    session
-        .execute("SELECT profile() FROM survey.segment;")
-        .await
-        .unwrap();
+    // The profile composes inline (§7e): the first ask scores — the
+    // missing_aspects abstention went with the stored intermediate it
+    // named.
     let scored = measure(&session, "dimension_relevance", "survey.segment").await;
     assert_eq!(scored["applicable"], true, "{scored}");
     let relevance = scored["relevance"].as_f64().unwrap();

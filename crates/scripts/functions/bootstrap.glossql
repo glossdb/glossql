@@ -184,8 +184,7 @@ DECLARE FUNCTION detect_relationships FOR GLOBAL AS $$relationships.sql$$
 DECLARE FUNCTION behavior_evidence FOR GLOBAL AS $$behavior_evidence.rhai$$
   RETURNS behavior_evidence;
 
-DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.rhai$$
-  ACCEPTS (column_profile)
+DECLARE FUNCTION dimension_relevance FOR GLOBAL AS $$dimension_relevance.sql$$
   RETURNS dimension_relevance;
 
 DECLARE FUNCTION detect_hierarchies FOR GLOBAL AS $$hierarchies.sql$$

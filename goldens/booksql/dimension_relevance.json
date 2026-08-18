@@ -10,7 +10,7 @@
   },
   "Master_txn_table.Account": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.64709206,\"groups\":323,\"relevance\":0.64709206}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Account"
@@ -18,7 +18,7 @@
   ],
   "Master_txn_table.Amount": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.76027722,\"groups\":107,\"relevance\":0.76027722}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Amount"
@@ -26,7 +26,7 @@
   ],
   "Master_txn_table.Billable": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"constant axis: one bucket, NULL included\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Billable"
@@ -34,7 +34,7 @@
   ],
   "Master_txn_table.Cleared": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.69731287,\"groups\":2,\"relevance\":0.69731287}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Cleared"
@@ -48,7 +48,7 @@
   },
   "Master_txn_table.Credit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.71312885,\"groups\":190,\"relevance\":0.71312885}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Credit"
@@ -59,7 +59,7 @@
   },
   "Master_txn_table.Debit": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.27376958,\"groups\":108,\"relevance\":0.27376958}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Debit"
@@ -73,7 +73,7 @@
   },
   "Master_txn_table.Invoiced": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"constant axis: one bucket, NULL included\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Invoiced"
@@ -90,7 +90,7 @@
   },
   "Master_txn_table.Product_Service": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.39307714,\"groups\":267,\"relevance\":0.39307714}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Product_Service"
@@ -98,7 +98,7 @@
   ],
   "Master_txn_table.Purchase": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.040775801,\"groups\":2,\"relevance\":0.040775801}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Purchase"
@@ -106,7 +106,7 @@
   ],
   "Master_txn_table.Quantity": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.71583858,\"groups\":72,\"relevance\":0.71583858}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Quantity"
@@ -114,7 +114,7 @@
   ],
   "Master_txn_table.Rate": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.75629,\"groups\":137,\"relevance\":0.75629}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Rate"
@@ -122,7 +122,7 @@
   ],
   "Master_txn_table.Sale": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.040775801,\"groups\":2,\"relevance\":0.040775801}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "Master_txn_table.Sale"
@@ -175,7 +175,7 @@
   },
   "customer_table.Balance": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"constant axis: one bucket, NULL included\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "customer_table.Balance"
@@ -225,7 +225,7 @@
   },
   "employee_table.Deleted": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99999434,\"groups\":2,\"relevance\":0.99999434}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "employee_table.Deleted"
@@ -260,7 +260,7 @@
   },
   "product_service_table.Product_Service": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "product_service_table.Product_Service"
@@ -268,7 +268,7 @@
   ],
   "product_service_table.Product_Service_Type": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"constant axis: one bucket, NULL included\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "product_service_table.Product_Service_Type"
@@ -279,7 +279,7 @@
   },
   "vendor_table.Balance": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"constant axis: one bucket, NULL included\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "vendor_table.Balance"

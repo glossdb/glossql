@@ -1621,3 +1621,4 @@ fn collision_shape() -> Vec<Field> {
         ),
     ]
 }
+

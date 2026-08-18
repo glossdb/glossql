@@ -1,7 +1,7 @@
 {
   "circuits.alt": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":0.96103896,\"evenness\":0.98898127,\"groups\":65,\"relevance\":0.95044953}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.alt"
@@ -9,7 +9,7 @@
   ],
   "circuits.circuitId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.circuitId"
@@ -17,7 +17,7 @@
   ],
   "circuits.circuitRef": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.circuitRef"
@@ -25,7 +25,7 @@
   ],
   "circuits.country": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.90721271,\"groups\":35,\"relevance\":0.90721271}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.country"
@@ -33,7 +33,7 @@
   ],
   "circuits.lat": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.lat"
@@ -41,7 +41,7 @@
   ],
   "circuits.lng": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.lng"
@@ -49,7 +49,7 @@
   ],
   "circuits.location": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.location"
@@ -57,7 +57,7 @@
   ],
   "circuits.name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "circuits.name"
@@ -65,7 +65,7 @@
   ],
   "constructor_results.constructorId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.78508731,\"groups\":175,\"relevance\":0.78508731}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_results.constructorId"
@@ -73,7 +73,7 @@
   ],
   "constructor_results.constructorResultsId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_results.constructorResultsId"
@@ -81,7 +81,7 @@
   ],
   "constructor_results.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99542712,\"groups\":1028,\"relevance\":0.99542712}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_results.date"
@@ -89,7 +89,7 @@
   ],
   "constructor_results.points": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.49206483,\"groups\":57,\"relevance\":0.49206483}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_results.points"
@@ -97,7 +97,7 @@
   ],
   "constructor_results.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99542712,\"groups\":1028,\"relevance\":0.99542712}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_results.raceId"
@@ -105,7 +105,7 @@
   ],
   "constructor_standings.constructorId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.82369389,\"groups\":159,\"relevance\":0.82369389}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.constructorId"
@@ -113,7 +113,7 @@
   ],
   "constructor_standings.constructorStandingsId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.constructorStandingsId"
@@ -121,7 +121,7 @@
   ],
   "constructor_standings.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99544676,\"groups\":1027,\"relevance\":0.99544676}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.date"
@@ -129,7 +129,7 @@
   ],
   "constructor_standings.points": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.61295263,\"groups\":541,\"relevance\":0.61295263}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.points"
@@ -137,7 +137,7 @@
   ],
   "constructor_standings.position": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.89983797,\"groups\":22,\"relevance\":0.89983797}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.position"
@@ -145,7 +145,7 @@
   ],
   "constructor_standings.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99544676,\"groups\":1027,\"relevance\":0.99544676}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.raceId"
@@ -153,7 +153,7 @@
   ],
   "constructor_standings.wins": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.31629215,\"groups\":20,\"relevance\":0.31629215}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructor_standings.wins"
@@ -161,7 +161,7 @@
   ],
   "constructors.constructorId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructors.constructorId"
@@ -169,7 +169,7 @@
   ],
   "constructors.constructorRef": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructors.constructorRef"
@@ -177,7 +177,7 @@
   ],
   "constructors.name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructors.name"
@@ -185,7 +185,7 @@
   ],
   "constructors.nationality": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.62994615,\"groups\":24,\"relevance\":0.62994615}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "constructors.nationality"
@@ -193,7 +193,7 @@
   ],
   "drivers.code": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.19498191,\"groups\":95,\"relevance\":0.19498191}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.code"
@@ -201,7 +201,7 @@
   ],
   "drivers.dob": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.dob"
@@ -209,7 +209,7 @@
   ],
   "drivers.driverId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.driverId"
@@ -217,7 +217,7 @@
   ],
   "drivers.driverRef": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.driverRef"
@@ -225,7 +225,7 @@
   ],
   "drivers.forename": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.95069185,\"groups\":476,\"relevance\":0.95069185}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.forename"
@@ -233,7 +233,7 @@
   ],
   "drivers.nationality": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.7386761,\"groups\":42,\"relevance\":0.7386761}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.nationality"
@@ -241,7 +241,7 @@
   ],
   "drivers.surname": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "drivers.surname"
@@ -249,7 +249,7 @@
   ],
   "qualifying.constructorId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.86017428,\"groups\":46,\"relevance\":0.86017428}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.constructorId"
@@ -257,7 +257,7 @@
   ],
   "qualifying.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99942911,\"groups\":460,\"relevance\":0.99942911}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.date"
@@ -265,7 +265,7 @@
   ],
   "qualifying.driverId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.87877962,\"groups\":168,\"relevance\":0.87877962}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.driverId"
@@ -273,7 +273,7 @@
   ],
   "qualifying.number": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.88870929,\"groups\":54,\"relevance\":0.88870929}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.number"
@@ -281,7 +281,7 @@
   ],
   "qualifying.position": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.94215378,\"groups\":28,\"relevance\":0.94215378}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.position"
@@ -289,7 +289,7 @@
   ],
   "qualifying.qualifyId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.qualifyId"
@@ -297,7 +297,7 @@
   ],
   "qualifying.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99942911,\"groups\":460,\"relevance\":0.99942911}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "qualifying.raceId"
@@ -305,7 +305,7 @@
   ],
   "races.circuitId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.87254907,\"groups\":77,\"relevance\":0.87254907}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.circuitId"
@@ -313,7 +313,7 @@
   ],
   "races.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.date"
@@ -321,7 +321,7 @@
   ],
   "races.name": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.85768858,\"groups\":54,\"relevance\":0.85768858}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.name"
@@ -329,7 +329,7 @@
   ],
   "races.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.raceId"
@@ -337,7 +337,7 @@
   ],
   "races.round": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.94667118,\"groups\":22,\"relevance\":0.94667118}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.round"
@@ -345,7 +345,7 @@
   ],
   "races.time": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.4336056,\"groups\":34,\"relevance\":0.4336056}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.time"
@@ -353,7 +353,7 @@
   ],
   "races.year": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99078618,\"groups\":74,\"relevance\":0.99078618}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "races.year"
@@ -361,7 +361,7 @@
   ],
   "results.constructorId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.76339827,\"groups\":210,\"relevance\":0.76339827}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.constructorId"
@@ -369,7 +369,7 @@
   ],
   "results.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99718752,\"groups\":1091,\"relevance\":0.99718752}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.date"
@@ -377,7 +377,7 @@
   ],
   "results.driverId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.84944676,\"groups\":857,\"relevance\":0.84944676}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.driverId"
@@ -385,7 +385,7 @@
   ],
   "results.fastestLap": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"nulls dominate (ratio > 0.5)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.fastestLap"
@@ -393,7 +393,7 @@
   ],
   "results.grid": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.91963242,\"groups\":35,\"relevance\":0.91963242}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.grid"
@@ -401,7 +401,7 @@
   ],
   "results.laps": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.82767295,\"groups\":172,\"relevance\":0.82767295}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.laps"
@@ -409,7 +409,7 @@
   ],
   "results.milliseconds": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"nulls dominate (ratio > 0.5)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.milliseconds"
@@ -417,7 +417,7 @@
   ],
   "results.number": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":0.99976994,\"evenness\":0.76347552,\"groups\":129,\"relevance\":0.76329988}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.number"
@@ -425,7 +425,7 @@
   ],
   "results.points": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.36884998,\"groups\":39,\"relevance\":0.36884998}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.points"
@@ -433,7 +433,7 @@
   ],
   "results.position": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":0.58309049,\"evenness\":0.82339676,\"groups\":33,\"relevance\":0.48011482}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.position"
@@ -441,7 +441,7 @@
   ],
   "results.positionOrder": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.91707055,\"groups\":39,\"relevance\":0.91707055}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.positionOrder"
@@ -449,7 +449,7 @@
   ],
   "results.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.99718752,\"groups\":1091,\"relevance\":0.99718752}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.raceId"
@@ -457,7 +457,7 @@
   ],
   "results.rank": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"nulls dominate (ratio > 0.5)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.rank"
@@ -465,7 +465,7 @@
   ],
   "results.resultId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.resultId"
@@ -473,7 +473,7 @@
   ],
   "results.statusId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.59408476,\"groups\":137,\"relevance\":0.59408476}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "results.statusId"
@@ -481,7 +481,7 @@
   ],
   "standings.date": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.98600997,\"groups\":1091,\"relevance\":0.98600997}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.date"
@@ -489,7 +489,7 @@
   ],
   "standings.driverId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.904145,\"groups\":850,\"relevance\":0.904145}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.driverId"
@@ -497,7 +497,7 @@
   ],
   "standings.driverStandingsId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":false,\"reason\":\"near-key axis (distinct/filled >= 0.9)\"}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.driverStandingsId"
@@ -505,7 +505,7 @@
   ],
   "standings.points": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.46335827,\"groups\":418,\"relevance\":0.46335827}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.points"
@@ -513,7 +513,7 @@
   ],
   "standings.position": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.83825161,\"groups\":108,\"relevance\":0.83825161}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.position"
@@ -521,7 +521,7 @@
   ],
   "standings.raceId": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.98600997,\"groups\":1091,\"relevance\":0.98600997}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.raceId"
@@ -529,7 +529,7 @@
   ],
   "standings.wins": [
     {
-      "body": "{\"applicable\":false,\"missing_aspects\":[\"column_profile\"]}",
+      "body": "{\"applicable\":true,\"coverage\":1.0,\"evenness\":0.19714864,\"groups\":16,\"relevance\":0.19714864}",
       "computed_at": "<volatile>",
       "function": "dimension_relevance",
       "subject": "standings.wins"
