@@ -106,5 +106,20 @@
     return el;
   }
 
+  // A write invalidates the store. A boosted form post (the ruling)
+  // changes what frames serve, but no frame URL moves — and checked
+  // by URL alone, the store kept serving the view from before the
+  // write until a hard reload (found 2026-08-18, the open panel after
+  // a ruling; the server's channel cache had the same defect the same
+  // week). Cleared before the swap, so components reconnecting after
+  // it fetch fresh. Specs stay: they are static files.
+  document.addEventListener('htmx:beforeSwap', (e) => {
+    const verb = e.detail && e.detail.requestConfig && e.detail.requestConfig.verb;
+    if (verb && verb !== 'get') {
+      tables.clear();
+      rowSets.clear();
+    }
+  });
+
   window.glStore = { table, rows, json, frameUrl, converter, errorBox };
 })();

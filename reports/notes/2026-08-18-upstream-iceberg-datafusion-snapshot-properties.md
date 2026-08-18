@@ -1,7 +1,7 @@
 # Upstream issue draft — apache/iceberg-rust
 
-Ready to file. Repo: `apache/iceberg-rust`. Line references are against
-main @ `a500a2e7`; the same shape ships in 0.10.x.
+**Filed 2026-08-18 as apache/iceberg-rust#3019.** Line references are
+against main @ `a500a2e7`; the same shape ships in 0.10.x.
 
 ---
 

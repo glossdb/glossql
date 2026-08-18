@@ -616,3 +616,10 @@ values; runs under the session scratchpad, not kept):
   and a glossed aspect's re-declaration waits or rebuilds the
   workspace. Check upstream main every few days; contribute when this
   architecture is worth defending.
+- **`append_batches` hand-rolls the landing write** because
+  iceberg-datafusion's insert path cannot set snapshot summary
+  properties, and facts about a write ride the write. Filed upstream
+  2026-08-18 as apache/iceberg-rust#3019 (draft kept in
+  `reports/notes/`); when a provider-level
+  `with_snapshot_properties` lands, the landing path collapses to the
+  integration's own `INSERT INTO` and the low-level writer goes.

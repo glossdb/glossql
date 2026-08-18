@@ -72,10 +72,16 @@
         const cap = Number(this.getAttribute('rows')) || 200;
         const out = [];
         if (rows.length === 0) {
-          const note = document.createElement('p');
-          note.className = 'rows-empty';
-          note.textContent = this.getAttribute('empty') || 'nothing here';
-          out.push(note);
+          // `empty=""` states nothing on purpose — a banner frame that
+          // serves rows only while its condition holds stays silent
+          // otherwise. Only an absent or worded attribute gets a note.
+          const stated = this.getAttribute('empty');
+          if (stated !== '') {
+            const note = document.createElement('p');
+            note.className = 'rows-empty';
+            note.textContent = stated || 'nothing here';
+            out.push(note);
+          }
         }
         const shown = Math.min(rows.length, cap);
         for (let i = 0; i < shown; i++) {
