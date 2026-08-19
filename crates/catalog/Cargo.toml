@@ -3,10 +3,6 @@ name = "glossql-catalog"
 version = "0.1.0"
 edition.workspace = true
 
-[lib]
-name = "glossql_catalog"
-path = "src/lib.rs"
-
 [dependencies]
 datafusion = { workspace = true }
 iceberg = { workspace = true }
@@ -15,14 +11,13 @@ iceberg-catalog-sql = { workspace = true }
 # iceberg-catalog-sql (see the workspace Cargo.toml).
 sqlx = { workspace = true }
 iceberg-datafusion = { workspace = true }
-async-trait = "0.1"
-futures = "0.3"
-uuid = { version = "1", features = ["v7"] }
+futures.workspace = true
+uuid.workspace = true
 thiserror = { workspace = true }
-tokio = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tokio.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

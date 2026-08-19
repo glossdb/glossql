@@ -4,12 +4,12 @@
 -- a human writing outranks the agent slot (the supersession key holds
 -- one slot per actor kind, so the anti-join below is total). The json
 -- chains stay in place on the base scan: a dynamic extraction parked
--- in a CTE column comes back null (measured 2026-08-12).
+-- in a CTE column comes back null.
 SELECT q.aspect,
   coalesce(json_get_str(a.schema, 'title'), q.aspect) AS title,
   -- `unit` and `meaning` ride the `definitions` registry, never the
   -- aspect blob: a declaration cannot be superseded, and both are the
-  -- company's to revise (ruled 2026-08-12, forced by a stale `x-unit`).
+  -- company's to revise (the blob's `x-unit` goes stale on revision).
   arrow_cast(coalesce(
     json_get_str(json_get(json_get(d.value, 'definitions'), q.aspect), 'unit'),
     ''), 'Utf8') AS unit,

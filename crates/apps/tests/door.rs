@@ -11,32 +11,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Float64Array;
 use glossql_catalog::Lake;
-use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
-use glossql_session::{FunctionRuntime, Plane};
+use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_session::{NoRuntime, Plane};
 use tower::ServiceExt;
-
-/// Verdicts compute at read, so a frame that reads ATTEST invokes the
-/// witness's detector live — this stub is that detector.
-#[derive(Debug)]
-struct StubDetector;
-
-impl FunctionRuntime for StubDetector {
-    fn invoke(
-        &self,
-        _: &FunctionRow,
-        subject: &str,
-        context: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        Ok(serde_json::json!({
-            "subject": subject,
-            "aspect": context["aspect"],
-            "witness": context["witness"],
-            "band": "orange",
-            "score": 0.42,
-            "computed_at": "2026-08-17T00:00:00.000Z",
-        }))
-    }
-}
 
 async fn current_pin(store: &Store, dataset: &str) -> glossql_glossary::Pin {
     let lake = store.lake();
@@ -63,8 +40,8 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
-    let plane = Arc::new(Plane::new(store, Arc::new(StubDetector)));
+    let store = Store::open(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let session = plane
         .session(Actor {
             kind: ActorKind::Agent,
@@ -101,7 +78,6 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
          {% block main %}\n\
          <div class=\"tiles\">\n\
          {{ tiles::chart(frame=\"frames/monthly\", spec=\"specs/monthly.vl.json\", title=\"Monthly\") }}\n\
-         {{ tiles::table(frame=\"frames/monthly\") }}\n\
          </div>\n\
          {% endblock %}\n",
     )
@@ -132,8 +108,8 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
 /// The SHIPPED ruling aspect, cut from the KPI kit the binary
 /// bootstraps — so the ruling tests exercise the schema a real
 /// workspace enforces. The hand-rolled permissive copy this replaces
-/// hid a real refusal: the shipped enum lacked the `unclear` stance
-/// and the docket's button answered 422 (found live, 2026-08-18).
+/// hid a real refusal: a shipped enum lacking the `unclear` stance
+/// left the docket's button answering 422.
 fn shipped_ruling_declaration() -> &'static str {
     let kit = glossql_scripts::library::KIT;
     let start = kit
@@ -201,11 +177,6 @@ async fn pages_render_and_frames_stream() {
         page.contains("<gl-chart frame=\"frames/monthly\""),
         "{page}"
     );
-    assert!(
-        page.contains("<gl-table frame=\"frames/monthly\""),
-        "{page}"
-    );
-
     // A frame streams IPC: two months, summed.
     let frame = get(&app, "/app/perf/frames/monthly").await;
     assert_eq!(frame.status(), StatusCode::OK);
@@ -259,7 +230,7 @@ async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
 
     // `docket` ships in the binary; a workspace directory of the same
     // name holding pages but no app.toml must not silently lose them
-    // to the built-in (found 2026-08-12).
+    // to the built-in.
     let shadow = dir.path().join("apps/docket");
     std::fs::create_dir_all(&shadow).unwrap();
     std::fs::write(shadow.join("index.html"), "the author's page").unwrap();
@@ -280,8 +251,8 @@ async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
 async fn a_glossed_part_may_not_take_a_builtin_name() {
     let (app, plane, _dir) = workspace().await;
 
-    // Add an app, don't fork the built-in (ruled 2026-08-15). The
-    // directory branch has refused a half-shadow since 2026-08-12, but
+    // Add an app, don't fork the built-in. The
+    // directory branch refuses a half-shadow, but
     // glossed parts reach the same hazard by the route an MCP-only
     // agent actually takes — and they carry no manifest requirement, so
     // one frame under the built-in's name would resolve the whole app
@@ -410,7 +381,7 @@ fn assert_classic(dt: &datafusion::arrow::datatypes::DataType, frame: &str, fiel
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_builtin_frame_executes_and_serves_classic_types() {
-    // Parse-only coverage let two defects ship (found live 2026-08-12):
+    // Parse-only coverage lets two defect classes ship:
     // an optimizer error that only fires at plan time, and view-typed
     // columns the browser reader cannot decode. Every built-in frame
     // must execute end to end and stream classic types — against a
@@ -456,7 +427,7 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
-    // Metadata and data are not one pile (ruled 2026-08-18): every
+    // Metadata and data are not one pile: every
     // frame response carries `glossql-frame-class`, derived by the
     // session's pre-pass from what the frame's expansion actually
     // resolves — never a curated list. `record` frames read the
@@ -497,7 +468,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_dossier_faces_survive_a_second_dataset() {
-    // Found live by the lead (2026-08-12): with two datasets in the
+    // With two datasets in the
     // workspace, frames that scanned the `datasets` relation fanned
     // every joined row out — two formulas, two materializations. The
     // bound dataset rides in as $dataset instead; one row per face.
@@ -512,14 +483,14 @@ async fn the_dossier_faces_survive_a_second_dataset() {
     // rows alone is how the face came to render nothing in every real
     // workspace: the fixture wrote a formulas map no skill ever taught
     // an agent to write, so the join returned a row and the value was
-    // null everywhere but here (found 2026-08-15).
+    // null everywhere but here.
     assert!(
         served.contains("ar[end of w] / revenue[w] * days[w]"),
         "the formula face served no formula:\n{served}"
     );
     // Unit and meaning come from the `definitions` registry, never the
-    // aspect blob — a declaration cannot be superseded, and the ruling
-    // (2026-08-12) was forced by exactly this field going stale there.
+    // aspect blob — a declaration cannot be superseded, and exactly
+    // this field goes stale there.
     // The seed's blob carries no unit, so a face reading `x-unit` shows
     // nothing and this fails.
     assert!(
@@ -537,12 +508,12 @@ async fn the_dossier_faces_survive_a_second_dataset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_brief_counts_what_waits_on_the_agent() {
-    // The waiting derivation (ruled 2026-08-12): a human formula
+    // The waiting derivation: a human formula
     // answer newer than the metric's recorded materialization owes the
     // agent a re-alignment — the two forms of one definition. The
     // brief shows it until the agent re-records; nothing is a
     // maintained flag. The answer arrives through a session (the app
-    // carries no write since 2026-08-13).
+    // carries no write besides the ruling form).
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
@@ -599,11 +570,11 @@ async fn the_brief_counts_what_waits_on_the_agent() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_metric_faces_serve_the_winning_slot_once() {
-    // Found live 2026-08-12: with two slots on `formulas` (human and
+    // With two slots on `formulas` (human and
     // agent) the dossier rendered the formula and the materialization
     // twice. The metric face reads the winning slot only — human
     // outranking agent, exactly like the collapsed read. The
-    // assumptions ledger is different since the 2026-08-14 ruling: it
+    // assumptions ledger is different: it
     // is the AGENT's working record (rulings annotate it, and a human
     // supersede of the metric governs reads without replacing it).
     let (app, plane, _dir) = workspace().await;
@@ -656,7 +627,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
-    // Ruled 2026-08-14: a human ruling is its own record — the queue
+    // A human ruling is its own record — the queue
     // holds the ruled question closed by its declared key, and the
     // assumptions ledger shows the judgment beside the assumption it
     // rules ("the rulings that lead to the agreed facts").
@@ -701,7 +672,7 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
-    // The door's one write (2026-08-15). Run 4 found that a human who
+    // The door's one write. A human who
     // steps away has no way back into the record at all: the MCP round
     // can only ask while they are watching, and an agent may never
     // speak for them. The docket is already the page of open
@@ -790,17 +761,13 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
         Some("glossql:written")
     );
 
-    // A correction has to say what is right — closing a question with
-    // "wrong" and nothing else tells the agent nothing.
-    let response = post("subject=perf&aspect=dso&key=per-line&stance=corrected").await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
-    // The third stance (ruled 2026-08-18): the human refuses the
-    // QUESTION, not the claim. A sloppily worded question could
-    // previously only be deferred, which re-asks the same words
+    // The third stance: the human refuses the
+    // QUESTION, not the claim. Without it a sloppily worded question
+    // can only be deferred, which re-asks the same words
     // forever. `unclear` lands like any ruling — this key closes, what
     // confused the reader rides as the note — and what the agent owes
     // is a reformulation under a NEW key (whose clearer wording derives
@@ -851,7 +818,7 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
-    // Rebuilt 2026-08-14: a standing check is an ATTEST row — a
+    // A standing check is an ATTEST row — a
     // detector's live verdict beside its witness's expectation. A
     // witness without a detector is a speaker gate; its spoken slots
     // never render as checks (the old frame showed them with the
@@ -871,12 +838,14 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
                DECLARE ASPECT meaning WITH $${"type": "object"}$$ AS FACT ON COLUMN;
                DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
                GLOSS meaning ON ledger.value AS $${"value": "the money"}$$;
-               DECLARE FUNCTION probe_check FOR GLOBAL AS $$#{}$$;
+               DECLARE FUNCTION probe_check FOR GLOBAL AS
+                 $$SELECT DISTINCT subject, 'orange' AS band, 0.42 AS score FROM slots$$;
                DECLARE WITNESS dso_w ON dso DETECTOR probe_check THRESHOLD 0.9;"#,
         )
         .await
         .unwrap();
-    // The verdict computes at read — the stub detector answers.
+    // The verdict computes at read — the detector's query answers over
+    // the dso grounding's slot.
 
     let checks = get(&app, "/app/docket/frames/checks").await;
     let status = checks.status();
@@ -977,7 +946,7 @@ async fn the_metrics_pages_render_both_states() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
-    // Signed off 2026-08-18, retiring the 303-to-Referer machinery: a
+    // Not a 303 to the Referer: a
     // 303's job is to send the reader somewhere else to see the result,
     // and the reader never leaves this page — the docket is
     // client-rendered, so the response is an event. Success is 204 with

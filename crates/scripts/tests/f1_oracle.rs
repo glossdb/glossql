@@ -1,5 +1,5 @@
 //! The RelBench rel-f1 oracle (declared-FK truth) — and the regression
-//! record for the 2026-08-06 performance rework. Three claims: the
+//! record for the performance rework. Three claims: the
 //! relationship sweep finishes on an id-heavy schema (34 Int64 columns;
 //! it previously timed out) and its candidates cover all 13 declared
 //! FKs; detect_hierarchies sees the one real nest (circuits.location →
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -109,7 +109,7 @@ async fn rel_f1_grades_the_planes_at_scale() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -118,7 +118,7 @@ async fn rel_f1_grades_the_planes_at_scale() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     let mut setup = format!(
         "DECLARE DATASET f1 SET (purpose: 'relbench oracle');\n\

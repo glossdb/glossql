@@ -1,6 +1,6 @@
-//! Stage 0: land a corpus as a workspace and capture what every shipped
-//! function answers on it — the regression baseline the port is measured
-//! against (`reports/2026-08-17-the-foundation.md` §6).
+//! Land a corpus as a workspace and capture what every shipped
+//! function answers on it — the regression baseline ports are measured
+//! against.
 //!
 //! A refusal or an abstention is behaviour too, so errors are captured
 //! verbatim beside values. Volatile fields are stripped so a re-run
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Plane, Session};
 use glossql_serverd::bootstrap;
 
@@ -178,8 +178,8 @@ async fn cell(session: &Session, sql: &str) -> Vec<Vec<String>> {
 }
 
 /// One statement per `;` — but not inside a dollar-quoted body, where a
-/// rhai script's own semicolons live, and not on a comment line, where
-/// prose punctuation is not syntax.
+/// SQL body's own semicolons could live, and not on a comment line,
+/// where prose punctuation is not syntax.
 fn split_statements(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -264,9 +264,9 @@ async fn main() {
         kind: ActorKind::Agent,
         id: "goldens".into(),
     };
-    let runtime = Arc::new(RhaiRuntime::new(ws.clone()));
+    let runtime = Arc::new(KernelRuntime::new(ws.clone()));
     let plane = Plane::new(store.clone(), runtime);
-    bootstrap(&store, &plane, actor.clone()).await.expect("bootstrap");
+    bootstrap(&plane, actor.clone()).await.expect("bootstrap");
     let session = plane.session(actor).await.expect("session");
 
     // ---- land ----------------------------------------------------------

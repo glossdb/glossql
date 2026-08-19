@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use datafusion::arrow::array::{ArrayRef, Float64Array, StringArray};
+use datafusion::arrow::array::{Array, ArrayRef, Float64Array, StringArray, StructArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result as DFResult};
@@ -88,6 +88,16 @@ impl Shared {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
 
+    /// The session's own context — set right after construction, so
+    /// absence is a construction bug, never a runtime state.
+    pub fn session_ctx(&self) -> SessionContext {
+        self.ctx
+            .read()
+            .expect("ctx lock")
+            .clone()
+            .expect("the session context is set at construction")
+    }
+
     /// What the store cannot know (SPEC.md §5.3): the subjects that exist —
     /// the recipe tables and their columns — and each table's current
     /// snapshot. Rebuilt per read from the catalog, so every channel sees
@@ -114,8 +124,8 @@ impl Shared {
         // covers inputs only, so a measurement landed on any channel
         // moves neither its pin nor this cache — checked by pin alone,
         // the cached context kept serving the view from before that
-        // landing (found 2026-08-18: the docket's charts stayed empty
-        // while the agent's channel served the cube it had computed).
+        // landing — the docket's charts stayed empty
+        // while the agent's channel served the cube it had computed.
         // The version is enumerated from the catalog, so every store
         // write — today's relations and any added later — misses here.
         let version = self.store.version().await?;
@@ -131,10 +141,11 @@ impl Shared {
     }
 }
 
-/// Detector verdicts, computed at read (SPEC.md §7.2) and never stored
-/// (ruled 2026-08-16). Keyed by the witness, not the detector alone: one
+/// Detector verdicts, computed at read (SPEC.md §7.2) and never
+/// stored. Keyed by the witness, not the detector alone: one
 /// detector serving two witnesses answers for each, from its own slots
-/// against its own threshold (defect found 2026-08-06).
+/// against its own threshold. A detector's body is one SQL query over
+/// the `slots` relation (§6), answering every subject in one plan.
 pub(crate) async fn verdicts(
     shared: &Shared,
     ctx: &ReadContext,
@@ -153,6 +164,11 @@ pub(crate) async fn verdicts(
             continue;
         };
         let slots = glossql_glossary::Store::raw_read(dataset, scope, Some(&w.aspect), ctx);
+        // No slots, no question to adjudicate — and no rows to shape the
+        // relation the body would plan over.
+        if slots.is_empty() {
+            continue;
+        }
         let function = ctx
             .functions
             .iter()
@@ -161,65 +177,182 @@ pub(crate) async fn verdicts(
             })
             .cloned()
             .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
-        let subjects: std::collections::BTreeSet<&str> =
-            slots.iter().map(|s| s.subject.as_str()).collect();
-        for subject in subjects {
-            let doc: Vec<Value> = slots
-                .iter()
-                .filter(|s| s.subject == subject)
-                .map(|s| {
-                    json!({
-                        "speaker": s.speaker,
-                        "actor": s.actor,
-                        "body": serde_json::from_str::<Value>(&s.body)
-                            .unwrap_or_else(|_| Value::String(s.body.clone())),
-                        "written_at": s.written_at,
-                    })
-                })
-                .collect();
-            let context = json!({
-                "subject": subject,
-                "aspect": w.aspect,
-                "witness": w.name,
-                "slots": doc,
-                "threshold": w.threshold,
-            });
-            let output = shared
-                .runtime()
-                .invoke(&function, subject, &context)
-                .map_err(SessionError::Runtime)?;
-            // A detector's output answers to the engine's attest contract
-            // (SPEC.md §7.2) — role by shape, nothing authored.
-            schemas::validate_instance(&schemas::attest_contract(), &output).map_err(|detail| {
-                SessionError::OutputRejected {
-                    function: detector.clone(),
-                    detail,
-                }
-            })?;
-            let missing = |what: &str| {
-                SessionError::Runtime(format!("`{detector}` output has no {what}"))
-            };
-            out.entry((subject.to_string(), w.aspect.clone()))
+        let statement = crate::measure::sql_body(&function.script).ok_or_else(|| {
+            SessionError::Runtime(format!(
+                "`{detector}`: a detector's body is one SQL query over `slots`"
+            ))
+        })?;
+        let rows = run_detector(&detector, statement, slots_batch(slots), w.threshold).await?;
+        let computed_at = chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        for (subject, band, score) in rows {
+            out.entry((subject, w.aspect.clone()))
                 .or_default()
                 .push(glossql_glossary::Verdict {
                     witness: w.name.clone(),
-                    band: output
-                        .pointer("/band")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| missing("band"))?
-                        .to_string(),
-                    score: output
-                        .pointer("/score")
-                        .and_then(Value::as_f64)
-                        .ok_or_else(|| missing("score"))?,
+                    band,
+                    score,
                     threshold: w.threshold,
-                    computed_at: chrono::Utc::now()
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string(),
+                    computed_at: computed_at.clone(),
                 });
         }
     }
     Ok(out)
+}
+
+/// One detector run: its query planned over a fresh context holding
+/// the witness's `slots` relation. `$threshold` binds as a
+/// typed value through the plan. Each returned row answers to the §7.2
+/// contract: `(subject, band, score)`; the engine completes the attest
+/// row with witness, aspect, and its own clock.
+async fn run_detector(
+    detector: &str,
+    statement: datafusion::sql::parser::Statement,
+    slots: RecordBatch,
+    threshold: Option<f64>,
+) -> Result<Vec<(String, String, f64)>, SessionError> {
+    use datafusion::common::{ParamValues, ScalarValue};
+    let fail = |e: DataFusionError| SessionError::Runtime(format!("`{detector}`: {e}"));
+    let ctx = SessionContext::new();
+    ctx.register_batch("slots", slots).map_err(fail)?;
+    let plan = ctx
+        .state()
+        .statement_to_plan(statement)
+        .await
+        .map_err(fail)?
+        .with_param_values(ParamValues::from(std::collections::HashMap::from([(
+            "threshold".to_string(),
+            ScalarValue::Float64(threshold),
+        )])))
+        .map_err(fail)?;
+    for column in ["subject", "band", "score"] {
+        if plan.schema().field_with_unqualified_name(column).is_err() {
+            return Err(SessionError::Runtime(format!(
+                "`{detector}` output has no {column}"
+            )));
+        }
+    }
+    let batches = ctx
+        .execute_logical_plan(plan)
+        .await
+        .map_err(fail)?
+        .collect()
+        .await
+        .map_err(fail)?;
+    let contract = schemas::attest_contract();
+    let mut out = Vec::new();
+    for batch in &batches {
+        let column = |name: &str, to: &DataType| -> Result<ArrayRef, SessionError> {
+            let array = batch
+                .column_by_name(name)
+                .expect("checked on the plan schema");
+            datafusion::arrow::compute::cast(array, to).map_err(|e| {
+                SessionError::Runtime(format!("`{detector}` output: {name} {e}"))
+            })
+        };
+        let subjects = column("subject", &DataType::Utf8)?;
+        let bands = column("band", &DataType::Utf8)?;
+        let scores = column("score", &DataType::Float64)?;
+        let subjects = subjects.as_any().downcast_ref::<StringArray>().expect("cast");
+        let bands = bands.as_any().downcast_ref::<StringArray>().expect("cast");
+        let scores = scores.as_any().downcast_ref::<Float64Array>().expect("cast");
+        for i in 0..batch.num_rows() {
+            let row = json!({
+                "subject": (!subjects.is_null(i)).then(|| subjects.value(i)),
+                "band": (!bands.is_null(i)).then(|| bands.value(i)),
+                "score": (!scores.is_null(i)).then(|| scores.value(i)),
+            });
+            schemas::validate_instance(&contract, &row).map_err(|detail| {
+                SessionError::OutputRejected {
+                    function: detector.to_string(),
+                    detail,
+                }
+            })?;
+            out.push((
+                subjects.value(i).to_string(),
+                bands.value(i).to_string(),
+                scores.value(i),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// The `slots` relation a detector plans over: the §5.3 raw shape plus
+/// `speaker`, one row per slot. `body` arrives shredded — typed nested
+/// columns through arrow's own JSON reader — when every body is a JSON
+/// object (an aspect's slots share its schema, so they shred together);
+/// anything else keeps `body` as the text it is.
+fn slots_batch(rows: Vec<RawRow>) -> RecordBatch {
+    let body = shredded_bodies(&rows).unwrap_or_else(|| {
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.body.as_str()),
+        )) as ArrayRef
+    });
+    let schema = Arc::new(Schema::new(vec![
+        utf8("subject"),
+        utf8("aspect"),
+        utf8("kind"),
+        utf8("witness"),
+        utf8("actor"),
+        utf8("speaker"),
+        utf8("written_at"),
+        Field::new("body", body.data_type().clone(), true),
+    ]));
+    batch(
+        schema,
+        vec![
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.subject.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.aspect.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.kind.as_str()),
+            )),
+            Arc::new(StringArray::from_iter(
+                rows.iter().map(|r| r.witness.as_deref()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.actor.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.speaker.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.written_at.as_str()),
+            )),
+            body,
+        ],
+    )
+}
+
+/// Every body as one typed struct column, or `None` when the slot set
+/// does not shred: a body that is not JSON, not an object, or an empty
+/// object falls back to text, deterministically for the whole set.
+fn shredded_bodies(rows: &[RawRow]) -> Option<ArrayRef> {
+    let values: Vec<Value> = rows
+        .iter()
+        .map(|r| serde_json::from_str::<Value>(&r.body).ok())
+        .collect::<Option<Vec<_>>>()?;
+    if !values.iter().all(Value::is_object) {
+        return None;
+    }
+    let schema =
+        arrow_json::reader::infer_json_schema_from_iterator(values.iter().map(|v| Ok(v.clone())))
+            .ok()?;
+    if schema.fields().is_empty() {
+        return None;
+    }
+    let mut decoder = arrow_json::ReaderBuilder::new(Arc::new(schema))
+        .build_decoder()
+        .ok()?;
+    decoder.serialize(&values).ok()?;
+    let decoded = decoder.flush().ok()??;
+    (decoded.num_rows() == rows.len())
+        .then(|| Arc::new(StructArray::from(decoded)) as ArrayRef)
 }
 
 #[derive(Debug)]
@@ -260,8 +393,7 @@ impl RelationPlanner for GlossqlReads {
             return Ok(RelationPlanning::Original(Box::new(relation)));
         };
         // `read.<aspect>()` — the serve door, one generic prefix over
-        // every QUERY gloss (value-at-read ruled 2026-08-06, bound
-        // 2026-08-07; renamed from `metric.` 2026-08-11 — serving
+        // every QUERY gloss (serving
         // declared SQL is one operation whatever flavor sits behind it,
         // the flavor lives in `x-kind`): the aspect's collapsed current
         // QUERY grounding expanded as a derived relation through the
@@ -367,7 +499,7 @@ impl RelationPlanner for GlossqlReads {
 /// directly (`glossary`, `GLOSSARY()`, `ATTEST()`) or through collapsed
 /// slots (the metric doors read groundings, collisions and anchors read
 /// claims). The pre-pass derives the statement's frame class from this
-/// (`record`/`data`, ruled 2026-08-18): a `record` answer can change
+/// (`record`/`data`): a `record` answer can change
 /// under a glossary write, a `data` answer cannot. A new arm in the
 /// match below decides its class here, in the same file.
 pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
@@ -678,8 +810,8 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 /// with its member in `member`. Served from the `measurements`
 /// relation: the NEWEST landed cube whatever its pin, with `current`
 /// saying whether it was computed at the standing pin — a workspace
-/// write no longer blanks every chart, it marks them stale (ruled
-/// 2026-08-18; before that the docket went empty after any gloss).
+/// write marks every chart stale instead of blanking it —
+/// blanking would empty the docket after any gloss.
 /// Recomputing stays a pull: `SELECT metric_cube() FROM <dataset>`
 /// lands a fresh one, and nothing computes at page load. An empty
 /// relation still serves nothing — the cube has never been measured.
@@ -1063,7 +1195,7 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
 /// the measurement at the read's pin (whether this run landed it or an
 /// earlier one did).
 /// Extraction serves the function-authored `summary` when the body
-/// carries one (ruled 2026-08-14: metric_cube's 54 KB body was
+/// carries one (metric_cube's 54 KB body was
 /// write-only through the door, and 65 profiles pushed their whole
 /// bodies through the agent while warming). The full body stays in
 /// the measurement, read back uncapped via `GLOSSARY(subject::aspect)`.
@@ -1114,4 +1246,157 @@ fn relation_batch(table: &str, rows: Vec<Vec<Option<String>>>) -> RecordBatch {
         .map(|i| Arc::new(StringArray::from_iter(rows.iter().map(|r| r[i].as_deref()))) as ArrayRef)
         .collect();
     batch(schema, columns)
+}
+
+#[cfg(test)]
+mod detector_tests {
+    //! The shipped detector bodies against fabricated slots — the
+    //! banding contract without a lake or weights. The bodies are the
+    //! scripts crate's files, included by path: the harness lives here
+    //! because the slots relation and the run are this module's.
+
+    use super::*;
+
+    const BAND_BREACH: &str = include_str!("../../scripts/functions/band_breach.sql");
+    const RATE_TOLERANCE: &str = include_str!("../../scripts/functions/rate_tolerance.sql");
+    const SLOT_ENTROPY: &str = include_str!("../../scripts/functions/slot_entropy.sql");
+
+    fn slot(subject: &str, body: Value) -> RawRow {
+        RawRow {
+            subject: subject.into(),
+            aspect: "a".into(),
+            kind: "FACT".into(),
+            witness: Some("w".into()),
+            actor: "t".into(),
+            body: body.to_string(),
+            written_at: "2026-01-01T00:00:00.000Z".into(),
+            speaker: "agent".into(),
+        }
+    }
+
+    async fn detect(
+        body: &str,
+        rows: Vec<RawRow>,
+        threshold: Option<f64>,
+    ) -> Result<Vec<(String, String, f64)>, SessionError> {
+        let statement = crate::measure::sql_body(body).expect("one query");
+        run_detector("t", statement, slots_batch(rows), threshold).await
+    }
+
+    fn pits(values: &[f64]) -> Value {
+        json!({"applicable": true, "metrics": values
+            .iter()
+            .map(|p| json!({"metric": "m", "points": [{"pit": p}]}))
+            .collect::<Vec<_>>()})
+    }
+
+    #[tokio::test]
+    async fn band_breach_adjudicates_the_worst_pit() {
+        let read = |values: &'static [f64]| async {
+            let rows = detect(BAND_BREACH, vec![slot("fin", pits(values))], None)
+                .await
+                .unwrap();
+            rows.into_iter().next().expect("one subject, one verdict")
+        };
+
+        let (subject, band, score) = read(&[0.5, 0.62]).await;
+        assert_eq!((subject.as_str(), band.as_str()), ("fin", "green"));
+        assert!(score < 0.3);
+
+        let (_, band, _) = read(&[0.5, 0.93]).await;
+        assert_eq!(band, "yellow");
+
+        let (_, band, score) = read(&[0.996, 0.5]).await;
+        assert_eq!(band, "red");
+        assert!(score > 0.98);
+    }
+
+    #[tokio::test]
+    async fn band_breach_scores_zero_when_nothing_walked() {
+        // A slot whose walk covered nothing (the measurement always
+        // lands `metrics`, empty when no metric walked) is green at
+        // 0.0 — nothing breached — not an absent verdict.
+        let body = json!({"applicable": false, "metrics": []});
+        let rows = detect(BAND_BREACH, vec![slot("fin", body)], None)
+            .await
+            .unwrap();
+        assert_eq!(rows, vec![("fin".into(), "green".into(), 0.0)]);
+    }
+
+    #[tokio::test]
+    async fn slot_entropy_scores_the_disagreement() {
+        let agree = vec![
+            slot("t.c", json!({"value": "flow"})),
+            slot("t.c", json!({"value": "flow"})),
+        ];
+        let rows = detect(SLOT_ENTROPY, agree, Some(0.7)).await.unwrap();
+        assert_eq!(rows, vec![("t.c".into(), "green".into(), 0.0)]);
+
+        let split = vec![
+            slot("t.c", json!({"value": "flow"})),
+            slot("t.c", json!({"value": "stock"})),
+        ];
+        let rows = detect(SLOT_ENTROPY, split, Some(0.7)).await.unwrap();
+        assert_eq!(rows, vec![("t.c".into(), "red".into(), 1.0)]);
+
+        let leaning = vec![
+            slot("t.c", json!({"value": "flow"})),
+            slot("t.c", json!({"value": "flow"})),
+            slot("t.c", json!({"value": "stock"})),
+        ];
+        let rows = detect(SLOT_ENTROPY, leaning, Some(0.7)).await.unwrap();
+        assert_eq!(rows, vec![("t.c".into(), "yellow".into(), 0.5)]);
+    }
+
+    #[tokio::test]
+    async fn rate_tolerance_reads_the_voice_against_the_expectation() {
+        // Within tolerance: the authored 0.5 admits a 0.2 rate.
+        let slots = vec![
+            slot("v", json!({"tolerance": 0.5})),
+            slot("v", json!({"breach_rate": 0.2})),
+        ];
+        let rows = detect(RATE_TOLERANCE, slots, None).await.unwrap();
+        assert_eq!(rows, vec![("v".into(), "green".into(), 0.2)]);
+
+        // The witness's THRESHOLD overrides the authored tolerance when
+        // set — the wired judgment outranks the expectation prose.
+        let slots = vec![
+            slot("v", json!({"tolerance": 0.5})),
+            slot("v", json!({"breach_rate": 0.2})),
+        ];
+        let rows = detect(RATE_TOLERANCE, slots, Some(0.05)).await.unwrap();
+        assert_eq!(rows, vec![("v".into(), "red".into(), 0.2)]);
+    }
+
+    #[tokio::test]
+    async fn rate_tolerance_without_a_voice_is_yellow() {
+        // The expectation stands, the check has not spoken: yellow,
+        // never green.
+        let slots = vec![
+            slot("v", json!({"tolerance": 0.1, "breach_rate": null})),
+        ];
+        let rows = detect(RATE_TOLERANCE, slots, None).await.unwrap();
+        assert_eq!(rows, vec![("v".into(), "yellow".into(), 0.0)]);
+    }
+
+    #[test]
+    fn bodies_shred_only_when_uniformly_objects() {
+        let shredded = slots_batch(vec![
+            slot("s", json!({"value": "a"})),
+            slot("s", json!({"value": "b", "grounds": "seen"})),
+        ]);
+        assert!(matches!(
+            shredded.column_by_name("body").unwrap().data_type(),
+            DataType::Struct(_)
+        ));
+
+        let mixed = slots_batch(vec![
+            slot("s", json!({"value": "a"})),
+            slot("s", json!("bare prose")),
+        ]);
+        assert_eq!(
+            mixed.column_by_name("body").unwrap().data_type(),
+            &DataType::Utf8
+        );
+    }
 }

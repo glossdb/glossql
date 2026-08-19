@@ -72,8 +72,8 @@ A Rust workspace (`crates/`) on DataFusion and Iceberg: `parser`
 (the grammar over DataFusion's parser), `glossary` (the store —
 slots, supersession, admission, collapse), `session` (statement
 routing, one session per actor and dataset), `catalog` + `import`
-(the Iceberg lake and recipe execution), `scripts` (the rhai function
-runtime and the reference library), `apps` (server-rendered data
+(the Iceberg lake and recipe execution), `scripts` (the native
+kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
 One listener, three doors:

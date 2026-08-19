@@ -28,14 +28,20 @@ async fn count(plane: &Plane, sql: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_fresh_workspace_receives_the_shipped_system() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open_memory().await.unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
 
-    bootstrap(&store, &plane, human())
+    bootstrap(&plane, human())
         .await
         .unwrap();
     // Every boot calls it; the second changes nothing.
-    bootstrap(&store, &plane, human())
+    bootstrap(&plane, human())
         .await
         .unwrap();
 
@@ -59,13 +65,13 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         )
         .await;
         assert!(!stored.is_empty(), "{name} is not stored whole");
-        assert!(!stored.ends_with(".rhai"), "{name} stored as a path");
+        assert!(!stored.ends_with(".sql"), "{name} stored as a path");
     }
 
     assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");
     // 11 measurement contracts + the KPI kit's 10 semantic aspects
-    // + the ruling channel (2026-08-14) + the four app parts an agent
-    // authors a surface with (2026-08-15).
+    // + the ruling channel + the four app parts an agent
+    // authors a surface with.
     assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "27");
     // The functions without RETURNS are the detectors.
     assert_eq!(

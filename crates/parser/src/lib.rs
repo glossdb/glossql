@@ -9,9 +9,15 @@
 //! functions.
 //!
 //! The corpus under `corpus/` is this crate's acceptance suite — the
-//! standing invariant. Spelling constraints (dollar-quoted bodies, string
-//! schema pointers, dollar-quoted recipe tails) and their rationale:
-//! `reports/2026-08-03-sqlparser-respell.md`.
+//! standing invariant. The spelling constraints (dollar-quoted bodies,
+//! string schema pointers, dollar-quoted recipe tails) exist because
+//! `DFParser` tokenizes the entire input up front with stock sqlparser:
+//! anything the tokenizer mangles is unrecoverable, so every byte of
+//! glossql must lex as stock tokens. Bare-brace JSON dies in the
+//! tokenizer (`\"` ends a double-quoted region), `#/` pointers lex
+//! differently per dialect, and one alien lexeme in a foreign-dialect
+//! recipe tail fails the whole script — dollar quotes carry all three
+//! byte-exact, with no escaping.
 
 mod ast;
 mod parser;

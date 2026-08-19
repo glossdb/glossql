@@ -1,12 +1,11 @@
-# 22 · The question loop — RULED 2026-08-13: no question object; GLOSS + actor kind is the whole record
+# 22 · The question loop — RULED: no question object; GLOSS + actor kind is the whole record
 
-Source: our own runs. The agenda half is the pin-queue onboarding run
-(`reports/2026-08-12-onboarding-run-pin-queue.md`); the answer half is
-the elicitation spike (`reports/2026-08-13-elicitation-spike.md`:
-Claude Code rendered the door's form via MRTR and the accepted answer
+Source: our own runs. The agenda half is a pin-queue onboarding run;
+the answer half is the elicitation spike (Claude Code rendered the
+door's form via MRTR and the accepted answer
 landed as a HUMAN gloss). The fork this fixture carried (A agenda
 gloss · B per-subject gloss · C `ASK` statement · D alternatives in
-bodies) closed by the project lead's verdict, same day: **all four
+bodies) closed by the project lead's verdict: **all four
 were ledgers.** The ruled model:
 
 - `GLOSS` is the only write.
@@ -49,8 +48,7 @@ ASK definitions ON fin WITH $${"question": "revenue scope: which accounts?"}$$;
 - **Agenda artifacts are pin-shaped.** The dataset-grain
   `pin_questions` array existed so a queue frame had one slot to
   render; the body-per-option existed so a pin button had a prepared
-  statement to post. Both retire with the pin surface (removal
-  recorded in `reports/2026-08-13-pin-retirement.md`).
+  statement to post. Both retired with the pin surface.
 
 DROPPED BY DESIGN: `pin_questions`, alternatives-in-body, `ASK` — the
 question never enters the store in any form.

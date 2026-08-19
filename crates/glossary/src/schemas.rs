@@ -32,19 +32,18 @@ pub fn grounding_schema() -> Value {
     serde_json::from_str(GROUNDING_SCHEMA).expect("SPEC §5.2 schema is valid JSON")
 }
 
-/// The standard attest schema, verbatim from SPEC.md §7.2 — the engine's
-/// contract for detector output. A detector is a function without RETURNS
-/// (role by shape, ruled 2026-08-04); nobody authors this shape.
+/// The standard attest contract, verbatim from SPEC.md §7.2 — the
+/// engine's contract for each row a detector's query returns. A detector
+/// is a function without RETURNS (role by shape); the engine completes
+/// the attest row with witness, aspect, and its own clock, so nobody
+/// authors those.
 pub const ATTEST_CONTRACT: &str = r#"{
   "type": "object",
-  "required": ["subject", "aspect", "witness", "band", "score", "computed_at"],
+  "required": ["subject", "band", "score"],
   "properties": {
     "subject": {"type": "string"},
-    "aspect": {"type": "string"},
-    "witness": {"type": "string"},
     "band": {"enum": ["green", "yellow", "orange", "red"]},
-    "score": {"type": "number", "minimum": 0, "maximum": 1},
-    "computed_at": {"type": "string"}
+    "score": {"type": "number", "minimum": 0, "maximum": 1}
   }
 }"#;
 

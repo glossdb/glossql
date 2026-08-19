@@ -3,9 +3,9 @@
 //! One map: `compat` folds Arrow types Iceberg 0.10.1 rejects or would
 //! promote to format-v3 types onto their v2 equivalents (ns timestamps →
 //! µs, `UInt64` → `Int64`, …). Nothing else touches the schema — the
-//! recipe's authored casts are the landed types (ruled 2026-08-04; the
-//! `force_utf8` refold was retired raw-twin machinery, deleted 2026-08-05
-//! after the first agent run landed eight string-typed tables).
+//! recipe's authored casts are the landed types (a `force_utf8`
+//! refold is retired raw-twin machinery — it once landed eight
+//! string-typed tables in a single run).
 
 use std::sync::Arc;
 
@@ -30,15 +30,15 @@ fn compat_type(t: &DataType) -> DataType {
     }
 }
 
-fn recast(
-    schema: &SchemaRef,
+/// Fold types Iceberg v2 cannot hold onto their nearest v2 shape.
+pub fn compat(
+    schema: SchemaRef,
     batches: Vec<RecordBatch>,
-    target: impl Fn(&Field) -> DataType,
 ) -> Result<(SchemaRef, Vec<RecordBatch>)> {
     let fields: Vec<Field> = schema
         .fields()
         .iter()
-        .map(|f| Field::new(f.name(), target(f), f.is_nullable()))
+        .map(|f| Field::new(f.name(), compat_type(f.data_type()), f.is_nullable()))
         .collect();
     let out_schema = Arc::new(Schema::new(fields));
     if out_schema.fields() == schema.fields() {
@@ -59,12 +59,4 @@ fn recast(
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((out_schema, out_batches))
-}
-
-/// Fold types Iceberg v2 cannot hold onto their nearest v2 shape.
-pub fn compat(
-    schema: SchemaRef,
-    batches: Vec<RecordBatch>,
-) -> Result<(SchemaRef, Vec<RecordBatch>)> {
-    recast(&schema, batches, |f| compat_type(f.data_type()))
 }

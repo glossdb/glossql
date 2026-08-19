@@ -2,17 +2,16 @@
 //! planner runs, so planning is sync over an AST with nothing left to
 //! fetch.
 //!
-//! This is stage 2 of `reports/2026-08-17-the-foundation.md` §6, and it
-//! copies DataFusion's own shape: `statement_to_plan` walks a statement
-//! for table references, awaits each one through the catalog into a map,
-//! and only then runs the sync `SqlToRel`. We did the opposite — a sync
-//! `RelationPlanner` reaching back into an async store through
-//! `block_in_place` — and paid for it three ways:
+//! This copies DataFusion's own shape: `statement_to_plan` walks a
+//! statement for table references, awaits each one through the catalog
+//! into a map, and only then runs the sync `SqlToRel`. The opposite
+//! shape — a sync `RelationPlanner` reaching back into an async store
+//! through `block_in_place` — costs three ways:
 //!
 //! - a blocked planner thread, which the guide names as the pitfall;
-//! - re-entrancy, since expansion re-planned through the same context,
-//!   which needed a `thread_local` stack to notice a cycle;
-//! - one stack for the whole nesting, which datafusion 54 overflowed.
+//! - re-entrancy, since expansion re-plans through the same context,
+//!   which needs a `thread_local` stack to notice a cycle;
+//! - one stack for the whole nesting, which datafusion 54 overflows.
 //!
 //! Resolution is depth-first and carries its path, so the cycle check is
 //! the traversal rather than a mechanism. A door reached twice on
@@ -54,8 +53,8 @@ pub(crate) struct Resolved {
     /// ATTEST doors, a served grounding, or a compute door over slots.
     /// Derived here because resolution is the one place every name
     /// passes through; nothing curates a list of frames. The app door
-    /// serves it as the frame class (`record`/`data`, ruled
-    /// 2026-08-18): a `record` frame can change under a glossary write
+    /// serves it as the frame class (`record`/`data`): a `record`
+    /// frame can change under a glossary write
     /// (a ruling), a `data` frame provably cannot.
     record: bool,
 }
@@ -128,8 +127,7 @@ fn ctes_in(q: &Query) -> HashSet<String> {
 
 /// Whether the factor is a bare reference to one of the statement's CTE
 /// names — the planner leaves it alone so DataFusion's CTE lookup serves
-/// it. Shipped read names stay reserved over both tables and CTEs
-/// (ruled 2026-08-14).
+/// it. Shipped read names stay reserved over both tables and CTEs.
 fn shadowed(ctes: &HashSet<String>, f: &TableFactor) -> bool {
     let TableFactor::Table {
         name, args: None, ..
@@ -158,8 +156,8 @@ enum Door {
     /// `subject_column('table.column')` — the named column of a pinned
     /// table, projected as `v`. The primitive a column-grain measurement
     /// body stands on: the body is declared once, the subject varies per
-    /// extraction, so the body cannot name the column itself (stage 5,
-    /// 2026-08-17). No SQL behind it — the plan is built here.
+    /// extraction, so the body cannot name the column itself.
+    /// No SQL behind it — the plan is built here.
     Column(String),
     /// `misfit.<frame>()` / `whatif.<scenario>()`. These still build their
     /// batch inside the planner (stage 4 moves them), so the pre-pass does

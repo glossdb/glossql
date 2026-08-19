@@ -26,8 +26,15 @@ fn gloss(sql: &str) -> Gloss {
     }
 }
 
-async fn store() -> Store {
-    let store = Store::open_memory().await.unwrap();
+async fn store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
     let Declaration::Aspect(unit) = decl(
         r#"DECLARE ASPECT unit WITH $${
             "type": "object",
@@ -39,7 +46,7 @@ async fn store() -> Store {
         unreachable!()
     };
     store.declare_aspect(&unit).await.unwrap();
-    store
+    (dir, store)
 }
 
 fn agent() -> Actor {
@@ -83,7 +90,7 @@ async fn write(store: &Store, actor: &Actor, statement: &str) -> Result<(), Erro
 
 #[tokio::test]
 async fn unknown_aspect_is_rejected() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let e = write(
         &s,
         &agent(),
@@ -96,7 +103,7 @@ async fn unknown_aspect_is_rejected() {
 
 #[tokio::test]
 async fn fact_body_must_match_the_with_schema() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let e = write(
         &s,
         &agent(),
@@ -116,7 +123,7 @@ async fn fact_body_must_match_the_with_schema() {
 
 #[tokio::test]
 async fn query_gloss_validates_against_the_grounding_schema() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Aspect(revenue) = decl(
         r#"DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;"#,
     ) else {
@@ -138,9 +145,8 @@ async fn query_gloss_validates_against_the_grounding_schema() {
     )
     .await
     .unwrap();
-    // The authored stock marker (ruled 2026-08-11 with the band walk;
-    // the schema learned it after the monitoring evaluation caught the
-    // rejection): "stock"/"flow" admitted, anything else refused.
+    // The authored stock marker:
+    // "stock"/"flow" admitted, anything else refused.
     write(
         &s,
         &agent(),
@@ -160,7 +166,7 @@ async fn query_gloss_validates_against_the_grounding_schema() {
 
 #[tokio::test]
 async fn measurement_aspects_are_never_glossed() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Aspect(m) =
         decl(r#"DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
     else {
@@ -181,7 +187,7 @@ async fn measurement_aspects_are_never_glossed() {
 
 #[tokio::test]
 async fn witness_by_list_gates_actor_kinds() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Witness(w) = decl("DECLARE WITNESS unit_w ON unit BY (HUMAN);") else {
         unreachable!()
     };
@@ -205,7 +211,7 @@ async fn witness_by_list_gates_actor_kinds() {
 
 #[tokio::test]
 async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Aspect(m) =
         decl(r#"DECLARE ASPECT min_max WITH $${"type": "object"}$$ AS MEASUREMENT;"#)
     else {
@@ -238,7 +244,7 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
 
 #[tokio::test]
 async fn a_detector_is_a_function_without_returns() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Function(f) =
         decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
     else {
@@ -264,7 +270,7 @@ async fn a_detector_is_a_function_without_returns() {
 
 #[tokio::test]
 async fn threshold_outside_unit_interval_is_rejected() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Witness(w) =
         decl("DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN) THRESHOLD 1.7;")
     else {
@@ -275,7 +281,7 @@ async fn threshold_outside_unit_interval_is_rejected() {
 
 #[tokio::test]
 async fn redeclaring_an_aspect_is_content_idempotent_but_refused_once_glossed() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     // Same content, different whitespace: a no-op, not a replace.
     let Declaration::Aspect(same) = decl(
         r#"DECLARE ASPECT unit WITH $${"type":"object","required":["value"],"properties":{"value":{"type":"string"}},"additionalProperties":false}$$ AS FACT;"#,
@@ -313,7 +319,7 @@ async fn redeclaring_an_aspect_is_content_idempotent_but_refused_once_glossed() 
 
 #[tokio::test]
 async fn supersession_is_per_subject_aspect_actor_kind() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     write(
         &s,
         &agent(),
@@ -349,7 +355,7 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
 
 #[tokio::test]
 async fn collapse_serves_by_precedence_human_over_agent() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let verdicts = Default::default();
     write(
         &s,
@@ -374,7 +380,7 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     assert_eq!(rows.len(), 1);
     assert!(
         rows[0].value.as_deref().unwrap().contains("USD"),
-        "the human slot outranks the agent slot (ruled 2026-08-04)"
+        "the human slot outranks the agent slot"
     );
 }
 
@@ -382,7 +388,7 @@ async fn collapse_serves_by_precedence_human_over_agent() {
 
 #[tokio::test]
 async fn accepts_names_must_be_declared_aspects() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Function(good) =
         decl(r#"DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS (unit);"#)
     else {
@@ -403,7 +409,7 @@ async fn accepts_names_must_be_declared_aspects() {
 
 #[tokio::test]
 async fn function_scope_gates_visibility() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin AS $$#{}$$;"#)
     else {
         unreachable!()
@@ -415,7 +421,7 @@ async fn function_scope_gates_visibility() {
 
 #[tokio::test]
 async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let pin = s.pin("fin", &Default::default()).await.unwrap();
     s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 1}"#)
         .await
@@ -441,18 +447,18 @@ async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
 
 #[tokio::test]
 async fn the_strike_is_parked_and_says_so() {
-    // Ruled 2026-08-17: the substrate cannot commit a row removal until
+    // The substrate cannot commit a row removal until
     // iceberg-rust 0.11, so `DELETE FROM glossary` refuses by name —
     // and anything but the glossary refuses as ever.
-    let s = store().await;
+    let (_dir, s) = store().await;
     let e = s
-        .forward_delete("glossary", "DELETE FROM glossary WHERE aspect = 'unit'")
+        .forward_delete("glossary")
         .await
         .unwrap_err();
     assert!(matches!(e, Error::StrikeParked), "{e}");
-    assert!(e.to_string().contains("0.11"), "{e}");
+    assert!(e.to_string().contains("delete write path"), "{e}");
     let e = s
-        .forward_delete("aspects", "DELETE FROM aspects")
+        .forward_delete("aspects")
         .await
         .unwrap_err();
     assert!(matches!(e, Error::ForwardRejected(_)), "{e}");
@@ -460,7 +466,7 @@ async fn the_strike_is_parked_and_says_so() {
 
 #[tokio::test]
 async fn grain_gates_glosses_and_bounds_disclosure() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Aspect(role) = decl(
         r#"DECLARE ASPECT role WITH $${
             "type": "object", "properties": {"value": {"type": "string"}}
@@ -519,11 +525,11 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
     );
 }
 
-// -- conditional relevance (ruled 2026-08-14) ------------------------------
+// -- conditional relevance -------------------------------------------------
 
 #[tokio::test]
 async fn a_condition_narrows_what_a_subject_owes() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Aspect(role) = decl(
         r#"DECLARE ASPECT role WITH $${
             "type": "object", "properties": {"value": {"enum": ["key", "measure"]}}
@@ -602,7 +608,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
 
 #[tokio::test]
 async fn a_condition_is_validated_at_declare() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     // Referencing an undeclared aspect is refused.
     let Declaration::Aspect(unanchored) = decl(
         r#"DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measure';"#,
@@ -612,7 +618,9 @@ async fn a_condition_is_validated_at_declare() {
     let e = s.declare_aspect(&unanchored).await.unwrap_err();
     assert!(matches!(e, Error::BadCondition { .. }), "{e}");
 
-    // With role declared, a literal outside its enum is a typo, refused.
+    // The literal itself is not judged: a value no slot ever carries
+    // makes a condition that never holds, the same as for any schema
+    // shape without an enum.
     let Declaration::Aspect(role) = decl(
         r#"DECLARE ASPECT role WITH $${
             "type": "object", "properties": {"value": {"enum": ["key", "measure"]}}
@@ -621,13 +629,6 @@ async fn a_condition_is_validated_at_declare() {
         unreachable!()
     };
     s.declare_aspect(&role).await.unwrap();
-    let Declaration::Aspect(typo) = decl(
-        r#"DECLARE ASPECT currency WITH $${"type": "object"}$$ AS FACT ON COLUMN WHEN role = 'measrue';"#,
-    ) else {
-        unreachable!()
-    };
-    let e = s.declare_aspect(&typo).await.unwrap_err();
-    assert!(matches!(e, Error::BadCondition { .. }), "{e}");
 
     // The spelled-right condition lands; identical redeclaration stays
     // a no-op.
@@ -645,7 +646,7 @@ async fn a_condition_is_validated_at_declare() {
 async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
     // `_` is LIKE's single-character wildcard, so `order_items` used to
     // sweep `orderxitems` with it.
-    let s = store().await;
+    let (_dir, s) = store().await;
     for subject in ["order_items.qty", "orderxitems.qty"] {
         let g = gloss(r#"GLOSS unit ON x AS $${"value": "EUR"}$$;"#);
         s.gloss("fin", &agent(), "unit", subject, &g.body, None)
@@ -665,7 +666,7 @@ async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
 
 #[tokio::test]
 async fn a_table_cannot_take_a_store_relation_name() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'test');") else {
         unreachable!()
     };
@@ -686,7 +687,7 @@ async fn a_table_cannot_take_a_store_relation_name() {
 
 #[tokio::test]
 async fn a_function_cannot_accept_the_aspect_it_returns() {
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Function(f) =
         decl("DECLARE FUNCTION refine FOR fin AS $$#{}$$ ACCEPTS (unit) RETURNS unit;")
     else {
@@ -699,7 +700,7 @@ async fn a_function_cannot_accept_the_aspect_it_returns() {
 #[tokio::test]
 async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     use glossql_glossary::{Verdict, Verdicts};
-    let s = store().await;
+    let (_dir, s) = store().await;
     let at = |witness: &str, band: &str, score: f64, threshold: f64| Verdict {
         witness: witness.into(),
         band: band.into(),
@@ -717,7 +718,7 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     // w_b's 0.7 crosses its own 0.5 but not w_a's 0.9 — the crossing
     // is judged against the RIGHT threshold (the cross-wiring
     // regression this test exists for). With one voice it shows as a
-    // red band beside the served value (ruled 2026-08-14: contested
+    // red band beside the served value (contested
     // needs voices that can differ); a second voice below turns the
     // same crossing into a contest.
     let mut verdicts = Verdicts::default();
@@ -772,10 +773,10 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
 
 #[tokio::test]
 async fn source_grain_slots_read_and_supersede_workspace_wide() {
-    // Ruled 2026-08-12 (the source-conventions proposal, fork B): an
+    // An
     // aspect ON SOURCE speaks to declared source names, and its slots
     // collapse across datasets — the deposit the next dataset reads.
-    let s = store().await;
+    let (_dir, s) = store().await;
     for d in [
         "DECLARE DATASET glos SET (purpose: 'p');",
         "DECLARE DATASET fin2 SET (purpose: 'p');",
@@ -837,8 +838,8 @@ async fn source_grain_slots_read_and_supersede_workspace_wide() {
 async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
     // Disclosure at SOURCE grain: a witnessed conventions aspect nobody
     // spoke to shows as an unassessed row on the declared source, in
-    // whichever dataset the read runs (ruled 2026-08-12).
-    let s = store().await;
+    // whichever dataset the read runs.
+    let (_dir, s) = store().await;
     let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'p');") else {
         unreachable!()
     };
@@ -872,12 +873,12 @@ async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
 
 #[tokio::test]
 async fn a_source_subject_is_refused_outside_source_grain() {
-    // The 2026-08-14 run: `GLOSS entity ON erp` — a table-grain aspect,
-    // a source subject — was accepted, and the unassessed grid carried
-    // rows that could never legitimately be filled. A source name is
+    // `GLOSS entity ON erp` — a table-grain aspect,
+    // a source subject — must refuse: accepted, the unassessed grid
+    // carries rows that can never legitimately be filled. A source name is
     // SOURCE grain, never table grain: table-grain writes refuse it and
     // the backlog stays clean.
-    let s = store().await;
+    let (_dir, s) = store().await;
     let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'p');") else {
         unreachable!()
     };

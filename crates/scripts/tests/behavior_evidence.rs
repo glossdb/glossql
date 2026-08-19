@@ -14,7 +14,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -192,7 +192,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -201,7 +201,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(
@@ -235,7 +235,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     assert_eq!(before["applicable"], false, "{before}");
 
     // Declaring the edges invalidates the cached abstention through the
-    // `relationships` ACCEPTS edge (ruled 2026-08-05) — the next call
+    // `relationships` ACCEPTS edge — the next call
     // recomputes, no manual cache delete.
     session
         .execute(
@@ -302,7 +302,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -311,7 +311,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
     session
         .execute(&format!(
             "DECLARE DATASET fin SET (purpose: 'behavior evidence');\n\

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use glossql_catalog::{Lake, MetadataBackend};
+use glossql_catalog::Lake;
 use serde_json::Value;
 
 use glossql_parser::{
@@ -49,8 +49,7 @@ pub struct ReadContext {
     /// *semantic* input key (measurements deliberately excluded: an
     /// output, not an input) and a curated list; checking freshness by
     /// pin alone kept a landed measurement invisible to every channel
-    /// but the one that computed it (found 2026-08-18, the docket's
-    /// charts). Freshness compares this instead, and because it is
+    /// but the one that computed it. Freshness compares this instead, and because it is
     /// enumerated rather than listed, a relation added later can never
     /// be missed the same way.
     pub version: String,
@@ -94,8 +93,8 @@ impl Pin {
 }
 
 impl Scope {
-    /// [`Scope::predicate`]'s twin for rows already in memory — the same
-    /// five shapes, in Rust.
+    /// Does the scope admit this subject — the same five shapes every
+    /// read applies.
     pub fn admits(&self, subject: &str) -> bool {
         match self {
             Scope::Dataset => true,
@@ -108,9 +107,7 @@ impl Scope {
             }
         }
     }
-
 }
-
 
 /// A store relation readable as a plain table through the doors. The
 /// one place its shape lives: every other list (the session's read
@@ -163,8 +160,8 @@ pub const RELATIONS: &[Relation] = &[
         // is decided at the landing, never re-derived: only the import
         // knows the recipe's shape, and NULL is the honest answer often
         // enough to be a value. `source_scans` is per-scan deliberately —
-        // a sum across a join reads as "what was read" and is not
-        // (found 2026-08-12: 16,817 phantom dropped rows).
+        // a sum across a join reads as "what was read" and is not —
+        // it fabricates phantom dropped rows.
         partition: &[],
         key: &[],
     },
@@ -199,7 +196,7 @@ pub const RELATIONS: &[Relation] = &[
         partition: &[],
         key: &[],
     },
-    // First across (2026-08-17): no supersession of its own, one writer,
+    // First across: no supersession of its own, one writer,
     // one reader.
     Relation {
         name: "relationships",
@@ -238,8 +235,8 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
 /// relation. A workspace holds many datasets — that scopes rows by a
 /// `dataset` KEY column, with the physical per-dataset split supplied by
 /// the format (identity partition), not by a namespace layout of ours.
-/// The 2026-08-16 §5 `<dataset>_meta` pairing was built and reversed on
-/// 2026-08-17: its whole justification is per-dataset REST grants, and
+/// A `<dataset>_meta` sibling-namespace pairing is deliberately
+/// absent: its whole justification is per-dataset REST grants, and
 /// access rights are held open — if that decision lands on
 /// namespace-level grants, the pairing returns then, by re-bootstrap.
 const STORE_NAMESPACE: &str = "glossql";
@@ -256,7 +253,7 @@ pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
 /// The seam over a workspace's lake, carrying every relation that has
 /// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
 /// setting its `sql` to `None` and nothing else.
-async fn lake_metadata(lake: Lake) -> Result<Arc<dyn MetadataBackend>> {
+async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadata>> {
     // `datasets` and `imports` are the lake's own record, composed at
     // read — no table of ours carries them.
     let moved: Vec<glossql_catalog::RelationSpec> = RELATIONS
@@ -276,18 +273,14 @@ async fn lake_metadata(lake: Lake) -> Result<Arc<dyn MetadataBackend>> {
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
-    metadata: Arc<dyn MetadataBackend>,
-    /// Held for its lifetime, not read: [`Store::open_memory`] puts the
-    /// lake in a temp dir, and dropping the handle would delete it out
-    /// from under an open store.
-    _scratch: Option<Arc<tempfile::TempDir>>,
+    metadata: Arc<glossql_catalog::IcebergMetadata>,
 }
 
 /// What the connect-time brief is composed from — see
 /// [`Store::brief_counts`]. `PartialEq` is load-bearing: the door
 /// decides "did the brief move" by comparing these counts, never by
 /// comparing rendered lines (string equality on non-keys is
-/// forbidden, ruled 2026-08-14).
+/// forbidden).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BriefCounts {
     pub human_writings: i64,
@@ -305,7 +298,6 @@ impl Store {
         Ok(Store {
             metadata: lake_metadata(lake.clone()).await?,
             lake,
-            _scratch: None,
         })
     }
 
@@ -314,53 +306,57 @@ impl Store {
         self.lake.clone()
     }
 
-    /// A throwaway store over a caller's lake.
-    pub async fn open_scratch(lake: Lake) -> Result<Self> {
-        Self::open(lake).await
-    }
 
-    /// A throwaway store with its own lake, in a temp dir that goes when
-    /// the store does.
-    pub async fn open_memory() -> Result<Self> {
-        let scratch = tempfile::tempdir().map_err(|e| Error::Backend(e.to_string()))?;
-        let lake = Lake::open(
-            &scratch.path().join("catalog.sqlite"),
-            &scratch.path().join("warehouse"),
-        )
-        .await?;
-        let mut store = Self::open_scratch(lake).await?;
-        store._scratch = Some(Arc::new(scratch));
-        Ok(store)
-    }
-
-    /// The connect-time brief's raw counts (ruled 2026-08-12, delivery
-    /// option B): what an agent connecting right now should know exists
+    /// The connect-time brief's raw counts: what an agent connecting
+    /// right now should know exists
     /// before it acts. Cheap by design — two queries, no collapse.
     pub async fn brief_counts(&self) -> Result<BriefCounts> {
         let history = self.glossary_history().await?;
         let humans: Vec<&GlossRow> = history.iter().filter(|g| g.actor_kind == "human").collect();
         let latest_human_at = humans.iter().map(|g| g.written_at.clone()).max();
         // An approval is pending while its table has no landing at or
-        // after the ruling was written; landings read from the lake.
-        let landings = self.import_rows().await?;
-        let approvals_pending = latest_rows(&history, |g| {
+        // after the ruling was written. Landings read from the lake —
+        // scoped to the datasets the standing approvals actually name,
+        // never a walk of every landing in the workspace.
+        let approvals: Vec<(String, String, String)> = latest_rows(&history, |g| {
             (g.actor_kind == "human" && g.aspect == "recipe_change").then(|| g.subject.clone())
         })
         .into_iter()
-        .filter(|g| {
+        .filter_map(|g| {
             let body: Value = serde_json::from_str(&g.body).unwrap_or(Value::Null);
-            let Some(table) = body["table"].as_str() else {
-                return false;
-            };
-            !landings.iter().any(|l| {
-                l[1].as_deref() == Some(table)
-                    && l[6].as_deref().is_some_and(|at| at >= g.written_at.as_str())
-            })
+            body["table"]
+                .as_str()
+                .map(|t| (g.dataset.clone(), t.to_string(), g.written_at.clone()))
         })
-        .count() as i64;
+        .collect();
+        let mut landed: std::collections::HashMap<String, Vec<(String, String)>> =
+            Default::default();
+        for dataset in approvals
+            .iter()
+            .map(|(d, _, _)| d.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let landings = self
+                .lake
+                .landings(&dataset)
+                .await?
+                .into_iter()
+                .map(|l| (l.table, l.committed_at))
+                .collect();
+            landed.insert(dataset, landings);
+        }
+        let approvals_pending = approvals
+            .iter()
+            .filter(|(dataset, table, at)| {
+                !landed.get(dataset).is_some_and(|ls| {
+                    ls.iter()
+                        .any(|(t, l_at)| t == table && l_at.as_str() >= at.as_str())
+                })
+            })
+            .count() as i64;
         // A ruling awaits its fold-in while the assumption it rules —
         // named by its `key`, the agent-declared identity that survives
-        // rephrasing (ruled 2026-08-14: prose is never a join column) —
+        // rephrasing (prose is never a join column) —
         // still stands below full confidence in the agent's current
         // body. The agent's re-record clears the debt and the round's
         // question at once.
@@ -409,7 +405,7 @@ impl Store {
     }
 
     /// A dataset is its namespace; the settings ride it as a property,
-    /// set at create and not changed afterwards (ruled 2026-08-16).
+    /// set at create and not changed afterwards.
     pub async fn declare_dataset(&self, decl: &DatasetDecl) -> Result<()> {
         let name = decl.name.value.as_str();
         if name == STORE_NAMESPACE {
@@ -428,9 +424,9 @@ impl Store {
     }
 
     /// Statement identity is content (SPEC.md §3): an unchanged recipe is a
-    /// no-op; a changed one **supersedes and re-lands** (project lead,
-    /// 2026-08-06 — the earlier refusal sent two consecutive runs into the
-    /// same dead end on a post-landing defect). The recipe row supersedes
+    /// no-op; a changed one **supersedes and re-lands** — refusing a
+    /// changed recipe dead-ends every cure of a post-landing
+    /// defect. The recipe row supersedes
     /// like any declaration; glosses stay — they are knowledge, and
     /// snapshot ids disclose their age against the fresh landing.
     /// What the declaration would do, decided before anything is written:
@@ -447,12 +443,9 @@ impl Store {
                 name: dataset.into(),
             });
         }
-        if self.source_settings(decl.source.value.as_str()).await?.is_none() {
-            return Err(Error::Unknown {
-                what: "source",
-                name: decl.source.value.clone(),
-            });
-        }
+        // The source is checked where it is read: the session resolves
+        // the spec on the same statement and refuses an unknown source
+        // with the same words.
         // A landed table is readable under its bare name; the store's own
         // relations answer to those names first, so the table would be
         // unreachable and the relation would look like data.
@@ -470,7 +463,7 @@ impl Store {
 
     /// The recipe rides its table as properties: one per (dataset,
     /// table), outright replacement, no actor — and it cannot outlive or
-    /// precede the table it describes (ruled 2026-08-16).
+    /// precede the table it describes.
     pub async fn put_recipe(&self, decl: &RecipeDecl) -> Result<()> {
         self.lake
             .set_table_properties(
@@ -542,35 +535,22 @@ impl Store {
         }
         let name = decl.name.value.as_str();
         let declared_grains = grains_str(&decl.grains);
-        // Conditional relevance (ruled 2026-08-14): the referenced
-        // sibling aspect must exist, and when its schema pins `value`
-        // to an enum the literal must be a member — a condition nobody
-        // could ever satisfy is a typo, refused at the door.
+        // Conditional relevance: the referenced
+        // sibling aspect must exist — nothing else ever errors on that.
+        // The literal itself is not judged: a value no slot ever
+        // carries makes a condition that never holds, exactly as it
+        // would for any schema shape without an enum.
         let declared_condition = decl
             .condition
             .as_ref()
             .map(|(a, v)| (a.value.clone(), v.clone()));
-        if let Some((cond_aspect, cond_value)) = &declared_condition {
-            let Some((cond_schema, _, _)) = self.aspect(cond_aspect).await? else {
-                return Err(Error::BadCondition {
-                    name: name.into(),
-                    detail: format!("WHEN references undeclared aspect `{cond_aspect}`"),
-                });
-            };
-            if let Some(allowed) = cond_schema
-                .pointer("/properties/value/enum")
-                .and_then(Value::as_array)
-                && !allowed
-                    .iter()
-                    .any(|v| v.as_str() == Some(cond_value.as_str()))
-            {
-                return Err(Error::BadCondition {
-                    name: name.into(),
-                    detail: format!(
-                        "'{cond_value}' is not among `{cond_aspect}`'s declared values {allowed:?}"
-                    ),
-                });
-            }
+        if let Some((cond_aspect, _)) = &declared_condition
+            && self.aspect(cond_aspect).await?.is_none()
+        {
+            return Err(Error::BadCondition {
+                name: name.into(),
+                detail: format!("WHEN references undeclared aspect `{cond_aspect}`"),
+            });
         }
         let existing = self
             .aspects_all()
@@ -618,8 +598,8 @@ impl Store {
 
     /// `ACCEPTS` names declared aspects — the context the server assembles
     /// for the script (SPEC.md §6); each must exist. Declaration relations
-    /// may ride the list too, as invalidation edges only (ruled
-    /// 2026-08-05): no context entry arrives, but a write to the relation
+    /// may ride the list too, as invalidation edges only: no context
+    /// entry arrives, but a write to the relation
     /// kills the cache like an aspect value would.
     pub async fn declare_function(&self, decl: &FunctionDecl) -> Result<()> {
         for aspect in &decl.accepts {
@@ -630,7 +610,7 @@ impl Store {
                 });
             }
         }
-        // RETURNS mirrors ACCEPTS (ruled 2026-08-04): it names the aspect
+        // RETURNS mirrors ACCEPTS: it names the aspect
         // the output fills. A MEASUREMENT aspect has one producer; a FACT
         // aspect's returning functions are voices; a QUERY aspect is never
         // function-filled. No RETURNS declares a detector.
@@ -709,8 +689,8 @@ impl Store {
             })?
             .1;
 
-        // BY gates actor glosses only — function voices arrive via RETURNS
-        // (ruled 2026-08-04). Measurements are never glossed, so a witness
+        // BY gates actor glosses only — function voices arrive via
+        // RETURNS. Measurements are never glossed, so a witness
         // on one carries only a detector; a witness naming neither BY nor
         // DETECTOR declares nothing.
         let speakers: Vec<Value> = decl
@@ -868,7 +848,7 @@ impl Store {
         // The history, then `rules::latest_by` picks the current row. A
         // source-grain row — its subject names a declared source and its
         // aspect opted into SOURCE grain — reads and supersedes
-        // workspace-wide (ruled 2026-08-12); every other row stays
+        // workspace-wide; every other row stays
         // dataset-scoped, and a dataset-scoped row from another dataset
         // is not in scope at all.
         let history: Vec<((i64, i64), bool, &str, &str, Slot)> = ctx
@@ -980,7 +960,6 @@ impl Store {
             .collect();
         Self::slots(dataset, scope, aspect, ctx)
             .into_iter()
-            .into_iter()
             .map(|s| RawRow {
                 kind: kinds
                     .get(s.aspect.as_str())
@@ -1026,7 +1005,7 @@ impl Store {
         // The verdicts arrive computed (the session holds the runtime;
         // detectors run at read, never stored). Each is judged against
         // its own witness's threshold — a score is never compared to a
-        // neighbour witness's (found 2026-08-12). Plural witnesses per
+        // neighbour witness's. Plural witnesses per
         // aspect are allowed; the slot is contested when ANY witness's
         // verdict crosses its own threshold — conservative withholding.
         let mut rows = Vec::new();
@@ -1041,10 +1020,10 @@ impl Store {
                 Some(v) => (Some(v.band.clone()), Some(v.score)),
                 None => (None, None),
             };
-            // Contested needs voices that can differ (2026-08-14, found
-            // live: a single-speaker measurement whose detector crossed
-            // read as `contested`, and the withholding hid the body at
-            // its most interesting moment). One slot cannot contest —
+            // Contested needs voices that can differ: a single-speaker
+            // measurement whose detector crossed would read as
+            // `contested`, and the withholding would hide the body at
+            // its most interesting moment. One slot cannot contest —
             // the crossing still shows as its band, beside the value.
             if rules::contested(crossing.is_some(), group.len()) {
                 rows.push(CollapsedRow {
@@ -1072,7 +1051,7 @@ impl Store {
         // Disclosure (fixture 09's benchmark): an aspect somebody is bound
         // to speak to — witnessed, or produced by a function's RETURNS —
         // that nobody spoke to is a visible row, not an omission. Grain
-        // (ruled 2026-08-05) bounds the grid: absence only shows on
+        // bounds the grid: absence only shows on
         // subjects the aspect is declared to speak to.
         let mut witnessed: std::collections::BTreeSet<String> = ctx
             .witnesses
@@ -1095,7 +1074,7 @@ impl Store {
                 condition_map.insert(a.name.clone(), condition.clone());
             }
         }
-        // Conditional relevance (ruled 2026-08-14): a conditioned aspect
+        // Conditional relevance: a conditioned aspect
         // is owed on a subject only while the named sibling aspect's
         // winning slot carries the declared value — the human slot
         // outranking the agent's, contest notwithstanding. Absence is
@@ -1119,8 +1098,8 @@ impl Store {
             .map(|r| (r.subject.clone(), r.aspect.clone()))
             .collect();
         // Declared sources join the subject universe: a source-grain
-        // aspect nobody spoke to is owed on every declared source
-        // (ruled 2026-08-12), in whichever dataset the read runs.
+        // aspect nobody spoke to is owed on every declared source,
+        // in whichever dataset the read runs.
         let source_names: std::collections::BTreeSet<String> =
             ctx.sources.iter().map(|(name, _)| name.clone()).collect();
         let subjects: Vec<&String> = ctx
@@ -1180,11 +1159,11 @@ impl Store {
 
     // -- SQL forwarded from the session ----------------------------------
 
-    /// `DELETE FROM glossary …` — the strike (SPEC.md §5.2). Parked
-    /// (ruled 2026-08-17): the substrate cannot commit a row removal
+    /// `DELETE FROM glossary …` — the strike (SPEC.md §5.2). Parked:
+    /// the substrate cannot commit a row removal
     /// until iceberg-rust 0.11 lands the delete write path, so the
     /// refusal names the item instead of pretending.
-    pub async fn forward_delete(&self, target: &str, _sql: &str) -> Result<u64> {
+    pub async fn forward_delete(&self, target: &str) -> Result<u64> {
         if target != "glossary" {
             return Err(Error::ForwardRejected(target.into()));
         }
@@ -1352,21 +1331,33 @@ impl Store {
     /// [`ReadContext`] is checked against beside its pin. Enumerated
     /// from the catalog, never curated, so any store write moves it.
     pub async fn version(&self) -> Result<String> {
-        // A fresh workspace has no store namespace until the first
-        // write crosses; its version is empty, not an error.
-        if !self.lake.namespace_exists(STORE_NAMESPACE).await? {
-            return Ok(String::new());
-        }
-        let mut parts = Vec::new();
-        for table in self.lake.table_names(STORE_NAMESPACE).await? {
-            let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
-            parts.push(format!(
-                "{table}:{}",
-                snap.map_or_else(|| "-".into(), |s| s.to_string())
-            ));
-        }
+        let mut parts: Vec<String> = self
+            .store_snapshots()
+            .await?
+            .into_iter()
+            .map(|(t, snap)| {
+                format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string()))
+            })
+            .collect();
         parts.sort();
         Ok(parts.join(","))
+    }
+
+    /// Every store-namespace table at its snapshot — the one catalog
+    /// walk both the version and the pin derive from, enumerated rather
+    /// than curated so a relation added later can never be missed. A
+    /// fresh workspace has no store namespace until the first write
+    /// crosses; its enumeration is empty, not an error.
+    async fn store_snapshots(&self) -> Result<Vec<(String, Option<i64>)>> {
+        if !self.lake.namespace_exists(STORE_NAMESPACE).await? {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for table in self.lake.table_names(STORE_NAMESPACE).await? {
+            let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
+            out.push((table, snap));
+        }
+        Ok(out)
     }
 
     // -- the pin, and the measurements it keys -------------------------
@@ -1382,15 +1373,14 @@ impl Store {
             .iter()
             .map(|(table, snap)| format!("{dataset}.{table}:{snap}"))
             .collect();
-        for relation in [
-            "sources",
-            "aspects",
-            "functions",
-            "witnesses",
-            "relationships",
-            "glossary",
-        ] {
-            let snap = self.lake.snapshot_id(STORE_NAMESPACE, relation).await?;
+        // The semantic inputs: every store relation except
+        // `measurements` — an output, not an input — from the same
+        // enumeration the version reads, so a relation added later
+        // joins the pin on its own.
+        for (relation, snap) in self.store_snapshots().await? {
+            if relation == "measurements" {
+                continue;
+            }
             parts.push(format!(
                 "{STORE_NAMESPACE}.{relation}:{}",
                 snap.map_or_else(|| "-".into(), |s| s.to_string())
@@ -1401,7 +1391,7 @@ impl Store {
 
     /// The measurements at one pin — the digest pushed into the format's
     /// scan, so the drift record's history is never read to serve today.
-    pub async fn measurements_at(&self, pin: &Pin) -> Result<Vec<glossql_catalog::Row>> {
+    async fn measurements_at(&self, pin: &Pin) -> Result<Vec<glossql_catalog::Row>> {
         Ok(self
             .metadata
             .scan_where("measurements", "pin_digest", &pin.digest)
@@ -1437,8 +1427,8 @@ impl Store {
     /// The newest measurement whatever its pin, with whether it is
     /// `current` (computed at the context's pin) — the serving rule for
     /// surfaces that should show the last computed state marked stale
-    /// rather than go blank (ruled 2026-08-18: the docket after any
-    /// workspace write). Recomputing stays a pull —
+    /// rather than go blank (the docket after any workspace
+    /// write). Recomputing stays a pull —
     /// `SELECT <function>() FROM <dataset>` — and the flag is what
     /// tells a reader to ask. The context already holds the current
     /// pin's rows, so history is only scanned when nothing stands
@@ -1588,7 +1578,7 @@ impl Store {
         }
     }
 
-    pub async fn witnesses_on(&self, aspect: &str) -> Result<Vec<WitnessRow>> {
+    async fn witnesses_on(&self, aspect: &str) -> Result<Vec<WitnessRow>> {
         Ok(self
             .witnesses_all()
             .await?

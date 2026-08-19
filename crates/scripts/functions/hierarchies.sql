@@ -1,7 +1,6 @@
 -- Hierarchy candidates: pairwise FD screens at high recall over one
 -- table's dimension-like columns — the cheap SQL core of v0.3's
--- dimension-identity stack (analysis/hierarchies, transcribed
--- 2026-08-05). Runs at table grain
+-- dimension-identity stack (analysis/hierarchies). Runs at table grain
 -- (`SELECT detect_hierarchies() FROM journal_lines`).
 --
 -- The measurement's job is recall; the judge removes false positives.

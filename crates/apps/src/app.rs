@@ -44,29 +44,13 @@ pub fn safe_segment(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// Fit to ride a `USE` statement verbatim.
-fn identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// The manifest fields both sources share. `dataset` is optional —
-/// absent means bind at request time.
+/// absent means bind at request time; an unknown name answers with the
+/// store's own refusal when the frame binds, never a pre-check here.
 fn manifest(origin: &str, text: &str) -> Result<(Option<String>, Option<String>), String> {
     let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
     let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    let dataset = field("dataset");
-    if let Some(dataset) = &dataset
-        && !identifier(dataset)
-    {
-        return Err(format!(
-            "{origin}: `dataset` must be a plain identifier, got `{dataset}`"
-        ));
-    }
-    Ok((field("title"), dataset))
+    Ok((field("title"), field("dataset")))
 }
 
 /// The manifest of a glossed app: the same two fields, arriving as the
@@ -75,15 +59,7 @@ fn manifest_json(origin: &str, text: &str) -> Result<(Option<String>, Option<Str
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
     let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    let dataset = field("dataset");
-    if let Some(dataset) = &dataset
-        && !identifier(dataset)
-    {
-        return Err(format!(
-            "{origin}: `dataset` must be a plain identifier, got `{dataset}`"
-        ));
-    }
-    Ok((field("title"), dataset))
+    Ok((field("title"), field("dataset")))
 }
 
 impl AppDef {
@@ -117,7 +93,7 @@ impl AppDef {
         }
         // A workspace directory without a manifest is an authored app
         // that cannot serve — never a silent fall-through to a built-in
-        // it half-shadows (found 2026-08-12).
+        // it half-shadows.
         if dir.is_dir() {
             return Err(format!(
                 "{} exists but has no app.toml — the workspace directory shadows \
@@ -126,12 +102,12 @@ impl AppDef {
             ));
         }
         let files = crate::glossed::files_of(glossed, name);
-        // Add an app, don't fork the built-in (ruled 2026-08-15). A
+        // Add an app, don't fork the built-in. A
         // glossed part carries no manifest requirement, so a single
         // `GLOSS app_frame ON docket.mine` would resolve the whole app
         // to that one file and 404 every page the built-in ships. The
-        // directory branch above has refused a half-shadow since
-        // 2026-08-12; the glossed branch is the same hazard reached by
+        // directory branch above refuses a half-shadow;
+        // the glossed branch is the same hazard reached by
         // the route an MCP-only agent actually takes.
         if !files.is_empty() && builtin::builtin(name).is_some() {
             return Err(format!(

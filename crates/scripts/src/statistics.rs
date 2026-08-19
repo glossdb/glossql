@@ -25,22 +25,20 @@ use datafusion::logical_expr::{
 use serde_json::{Value, json};
 
 use crate::{
-    Extremum, distinct_of, entropy_of, extremum_of, interpolate, len_stats_of, mad_of, mean_of,
-    numeric_like, stddev_of, top_k_of, valid_floats,
+    Extremum, display_counts, entropy_of, extremum_of, interpolate, len_stats_of, mad_of, mean_of,
+    numeric_like, stddev_of, top_k, valid_floats,
 };
 
-/// The three shipped aggregates, for registration when the runtime
-/// attaches to a session.
+/// The shipped aggregate, for registration when the runtime attaches
+/// to a session. `mad` and `entropy` ride inside its output —
+/// `profile(v)['numeric']['mad']`, `profile(v)['entropy']` — so a body
+/// or an agent's own SQL reads them off the one struct.
 pub fn udafs() -> Vec<AggregateUDF> {
-    vec![
-        AggregateUDF::from(Profile::new()),
-        AggregateUDF::from(Scalar::new("mad")),
-        AggregateUDF::from(Scalar::new("entropy")),
-    ]
+    vec![AggregateUDF::from(Profile::new())]
 }
 
-fn kernel(e: Box<rhai::EvalAltResult>) -> DataFusionError {
-    DataFusionError::Execution(e.to_string())
+fn kernel(e: String) -> DataFusionError {
+    DataFusionError::Execution(e)
 }
 
 /// The collected column: every accumulator here holds what it has seen
@@ -239,18 +237,19 @@ fn profile_fields(dt: &DataType) -> Fields {
     ])
 }
 
-/// The profile itself — the exact mirror of what `profile.rhai` computed
+/// The profile itself — the exact mirror of what the profile script computed
 /// until stage 5, kernel for kernel, so the crossing gates byte-identical
-/// against the goldens. `summary` is what extraction serves (ruled
-/// 2026-08-14: full bodies through the door were the fan-out tax); the
+/// against the goldens. `summary` is what extraction serves (full
+/// bodies through the door are the fan-out tax); the
 /// full body reads back via `GLOSSARY`.
-fn profile_value(a: &ArrayRef) -> Result<Value, Box<rhai::EvalAltResult>> {
+fn profile_value(a: &ArrayRef) -> Result<Value, String> {
     let n = a.len() as i64;
     let nulls = a.null_count() as i64;
     let non_null = n - nulls;
-    let distinct = distinct_of(a)?;
+    let counts = display_counts(a)?;
+    let distinct = counts.len() as i64;
     let null_ratio = if n == 0 { 0.0 } else { nulls as f64 / n as f64 };
-    let extremum = |min: bool| -> Result<Value, Box<rhai::EvalAltResult>> {
+    let extremum = |min: bool| -> Result<Value, String> {
         Ok(match extremum_of(a, min)? {
             Some(Extremum::Num(v)) => json!(v),
             Some(Extremum::Text(s)) => json!(s),
@@ -276,7 +275,7 @@ fn profile_value(a: &ArrayRef) -> Result<Value, Box<rhai::EvalAltResult>> {
     profile.insert(
         "top_values".into(),
         Value::Array(
-            top_k_of(a, 20)?
+            top_k(&counts, 20)
                 .into_iter()
                 .map(|(value, count)| json!({ "value": value, "count": count }))
                 .collect(),
@@ -330,85 +329,3 @@ fn struct_scalar(fields: &Fields, value: &Value) -> Result<ScalarValue> {
     Ok(ScalarValue::Struct(Arc::new(StructArray::from(batch))))
 }
 
-// ---- mad, entropy ----------------------------------------------------
-
-/// The two scalar statistics SQL lacks, one struct: which is which is
-/// the name, the shape is identical — collect the column, one float out.
-#[derive(PartialEq, Eq, Hash, Debug)]
-struct Scalar {
-    name: &'static str,
-    signature: Signature,
-}
-
-impl Scalar {
-    fn new(name: &'static str) -> Self {
-        Scalar {
-            name,
-            signature: Signature::any(1, Volatility::Immutable),
-        }
-    }
-}
-
-impl AggregateUDFImpl for Scalar {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn signature(&self) -> &Signature {
-        &self.signature
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Float64)
-    }
-
-    fn state_fields(&self, args: StateFieldsArgs) -> Result<Vec<FieldRef>> {
-        Ok(vec![Collected::state_field(
-            &format_state_name(args.name, self.name),
-            args.input_fields[0].data_type(),
-        )])
-    }
-
-    fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(ScalarAccumulator {
-            collected: Collected::new(acc_args.expr_fields[0].data_type().clone()),
-            mad: self.name == "mad",
-        }))
-    }
-}
-
-#[derive(Debug)]
-struct ScalarAccumulator {
-    collected: Collected,
-    mad: bool,
-}
-
-impl Accumulator for ScalarAccumulator {
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        self.collected.update(values);
-        Ok(())
-    }
-
-    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        self.collected.merge(states);
-        Ok(())
-    }
-
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        self.collected.state()
-    }
-
-    fn evaluate(&mut self) -> Result<ScalarValue> {
-        let a = self.collected.all()?;
-        let value = if self.mad {
-            mad_of(&valid_floats(&a).map_err(kernel)?)
-        } else {
-            Some(entropy_of(&a).map_err(kernel)?)
-        };
-        Ok(ScalarValue::Float64(value))
-    }
-
-    fn size(&self) -> usize {
-        self.collected.size()
-    }
-}

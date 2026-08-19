@@ -7,7 +7,7 @@
 -- written out six times before this file existed.
 --
 -- `key` names the claim and is the only join column: prose is never
--- matched against prose anywhere in this system (ruled 2026-08-14).
+-- matched against prose anywhere in this system.
 --
 -- `folded_in` is the debt, answered: the agent owes a re-record of the
 -- ruled grounding, and the ruling stands unfolded while that key is

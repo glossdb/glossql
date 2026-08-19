@@ -88,7 +88,7 @@ fn render(
     };
     // The shape survives an empty result — (name, type) is what a
     // LIMIT 0 rehearsal exists to learn, and types matter to agents on
-    // every read (ruled 2026-08-14).
+    // every read.
     let columns: Value = match schema {
         Some(s) => s
             .fields()

@@ -16,7 +16,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -163,7 +163,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -172,7 +172,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(

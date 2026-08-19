@@ -1,10 +1,10 @@
-//! The conformance ratchet (stage 0, `reports/2026-08-17-the-foundation.md`).
+//! The conformance ratchet.
 //!
 //! Four patterns mark places where we built beside DataFusion instead of
 //! inside it: blocking a planner thread, bridging sync to async by hand,
 //! keeping planner state in a thread-local, and scheduling our own tasks.
-//! Each has a count today and a stage that deletes it. This test fails if
-//! any count goes UP.
+//! Each has a count today, and every remaining count has a named owner.
+//! This test fails if any count goes UP.
 //!
 //! It is not a style rule. It is how we notice we have started building
 //! around the framework again — see `.claude/skills/glossql-substrate`.
@@ -14,21 +14,18 @@ use std::path::{Path, PathBuf};
 
 /// Today's counts, and what owns them.
 ///
-/// `block_in_place` / `block_on` — sync code bridging to async. Stage 2's
-/// pre-pass removed the expansion path's; stage 4 removed the compute
-/// doors'; stage 5 removed the script door's with the door itself. What
-/// remains is one named owner: `glossql-import` bridges a genuinely
-/// sync ADBC driver, argued in place.
+/// `block_in_place` / `block_on` — sync code bridging to async. One
+/// named owner: `glossql-import` bridges a genuinely sync ADBC driver,
+/// argued in place.
 ///
-/// `thread_local` — was the door expansion stack. Stage 2 deleted it by
-/// deleting the re-entrancy: nothing re-plans through the same context,
-/// so there is no stack to guard. At zero, and it stays there.
+/// `thread_local` — at zero, and it stays there. Nothing re-plans
+/// through the same context, so there is no door-expansion stack to
+/// guard.
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
-/// partition; the read path's waves went with the door. What remains is
-/// fire-and-forget serving work in the doors crate (the brief refresh,
-/// the response stream driver) and the apps frame stream — not
-/// engine-work scheduling.
+/// partition; what remains is fire-and-forget serving work in the doors
+/// crate (the brief refresh, the response stream driver) and the apps
+/// frame stream — not engine-work scheduling.
 const CEILING: [(&str, usize); 4] = [
     ("block_in_place", 3),
     ("block_on", 1),

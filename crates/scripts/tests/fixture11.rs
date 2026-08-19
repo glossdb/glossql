@@ -1,5 +1,5 @@
 //! The acceptance test: fixture 11 end-to-end with real scripts, under the
-//! authored-typing ruling (2026-08-04). The agent probes the source through
+//! authored-typing ruling. The agent probes the source through
 //! the statement door; the recipe carries the casts and the column choices;
 //! the landed table IS the typed table. The measurement plane runs on it
 //! (profile, outliers chained through ACCEPTS); semantic glosses and the
@@ -13,7 +13,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 async fn parquet_fixture(root: &std::path::Path) {
@@ -55,8 +55,8 @@ async fn parquet_fixture(root: &std::path::Path) {
         .unwrap();
 }
 
-fn runtime() -> Arc<RhaiRuntime> {
-    Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR")))
+fn runtime() -> Arc<KernelRuntime> {
+    Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
@@ -128,7 +128,7 @@ DECLARE FUNCTION outliers FOR GLOBAL AS $$outliers.sql$$
   RETURNS outlier_profile;
 DECLARE FUNCTION temporal FOR GLOBAL AS $$temporal.sql$$
   RETURNS temporal_profile;
-DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
+DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.sql$$;
 
 DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
   DETECTOR slot_entropy THRESHOLD 0.7;
@@ -147,7 +147,7 @@ async fn fixture_11_with_real_scripts() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let agent = session_for(ActorKind::Agent, "agent-1", &store);
 
     agent
@@ -384,8 +384,8 @@ async fn fixture_11_with_real_scripts() {
         "absence is a visible row, not an omission"
     );
 
-    // A typing correction is a recipe correction — supersede-and-reland
-    // (ruled 2026-08-06): the changed recipe drops the old landing and
+    // A typing correction is a recipe correction — supersede-and-reland:
+    // the changed recipe drops the old landing and
     // lands fresh. DROP TABLE stays refused while the table holds data.
     let outcomes = human
         .execute(

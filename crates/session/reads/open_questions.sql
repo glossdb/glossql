@@ -6,14 +6,14 @@
 -- three times, in three languages.
 --
 -- Derived from `agent_assumptions` — the agent's CURRENT body, never a
--- frozen copy (the 2026-08-14 run: deriving from the winning human
--- slot re-asked every answered question, because the copy kept the
--- stale confidences).
+-- frozen copy (deriving from the winning human
+-- slot would re-ask every answered question, because the copy keeps
+-- the stale confidences).
 -- Four gates beyond "below full confidence": the aspect is a grounding
 -- (query kind); the assumption carries a `key`, its declared identity
 -- (an unkeyed assumption cannot be closed, so it is never asked — a
 -- known, accepted gap); the dimension is not one the function map owns
--- (`behavior`, `sign`, `grain` are statistics, ruled 2026-08-13 — no
+-- (`behavior`, `sign`, `grain` are statistics — no
 -- human is asked for a number); and no standing ruling names the same
 -- (aspect, key). A ruling holds its question closed until the agent's
 -- fold-in raises that key to full confidence, at which point the row

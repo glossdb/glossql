@@ -1,7 +1,7 @@
 -- The standing counts, one row. `needs` is the one queue's honest
 -- total, and it is literally the queue: `open_questions`, the same
--- rows the docket lists and the door asks. Judgment only (ruled
--- 2026-08-13) — unassessed witnessed claims (behavior, unit) count
+-- rows the docket lists and the door asks. Judgment only
+-- — unassessed witnessed claims (behavior, unit) count
 -- under `waiting` instead, because a claim a measurement can settle
 -- waits on the agent's functions, never on a human answer.
 --

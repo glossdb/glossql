@@ -68,8 +68,7 @@ DECLARE ASPECT dimension_relevance WITH $${
   "properties": {
     "applicable": {"type": "boolean"},
     "relevance": {"type": "number"}, "coverage": {"type": "number"},
-    "evenness": {"type": "number"}, "groups": {"type": "integer"},
-    "truncated": {"type": "boolean"}
+    "evenness": {"type": "number"}, "groups": {"type": "integer"}
   }
 }$$ AS MEASUREMENT ON COLUMN;
 
@@ -157,7 +156,6 @@ DECLARE ASPECT metric_cube WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {
     "applicable": {"type": "boolean"},
-    "caps": {"type": "object"},
     "metrics": {"type": "array", "items": {"type": "object",
       "properties": {
         "metric": {"type": "string"}, "applicable": {"type": "boolean"},
@@ -199,7 +197,7 @@ DECLARE FUNCTION relationship_coherence FOR GLOBAL AS $$coherence.sql$$
 DECLARE FUNCTION detect_grounding_collisions FOR GLOBAL AS $$grounding_collisions.sql$$
   RETURNS grounding_collisions;
 
-DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.rhai$$;
+DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.sql$$;
 
 DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
   RETURNS metric_bands;
@@ -207,6 +205,6 @@ DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
 DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.sql$$
   RETURNS metric_cube;
 
-DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.rhai$$;
+DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
 
-DECLARE FUNCTION rate_tolerance FOR GLOBAL AS $$rate_tolerance.rhai$$;
+DECLARE FUNCTION rate_tolerance FOR GLOBAL AS $$rate_tolerance.sql$$;

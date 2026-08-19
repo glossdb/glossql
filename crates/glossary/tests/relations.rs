@@ -12,7 +12,7 @@ async fn edges(store: &Store) -> Vec<Vec<Option<String>>> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_re_declared_edge_collapses_the_way_the_primary_key_did() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
 
     for _ in 0..2 {
         store
@@ -36,7 +36,7 @@ async fn a_re_declared_edge_collapses_the_way_the_primary_key_did() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_op_is_part_of_the_key_so_a_second_op_stands_beside_the_first() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     store
         .declare_relationship("fin", "a.k", "->", "b.k")
         .await
@@ -55,7 +55,7 @@ async fn the_op_is_part_of_the_key_so_a_second_op_stands_beside_the_first() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_datasets_serve_as_one_relation() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     store
         .declare_relationship("fin", "orders.customer_id", "->", "customers.id")
         .await
@@ -73,7 +73,7 @@ async fn two_datasets_serve_as_one_relation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_dump_is_ordered_because_the_doors_compare_it() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     for (l, r) in [("z.k", "y.k"), ("a.k", "b.k"), ("m.k", "n.k")] {
         store.declare_relationship("fin", l, "->", r).await.unwrap();
     }
@@ -87,4 +87,17 @@ async fn the_dump_is_ordered_because_the_doors_compare_it() {
         vec!["a.k", "m.k", "z.k"],
         "a scan hands back file order; the ORDER BY it replaced is ours to keep"
     );
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

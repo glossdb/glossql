@@ -1,6 +1,6 @@
 ---
 source: crates/parser/tests/statements.rs
-expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION outliers FOR GLOBAL AS $$let p = context.column_profile; #{iqr: fences(p)}$$ ACCEPTS (column_profile) RETURNS outlier_profile;\").expect(\"must parse\")"
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION outliers FOR GLOBAL AS $$SELECT profile(v) FROM subject_column($subject)$$ ACCEPTS (column_profile) RETURNS outlier_profile;\").expect(\"must parse\")"
 ---
 [
     Declare(
@@ -12,19 +12,19 @@ expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION outliers FOR GLOBAL 
                     span: Span(Location(1,18)..Location(1,26)),
                 },
                 scope: Global,
-                script: "let p = context.column_profile; #{iqr: fences(p)}",
+                script: "SELECT profile(v) FROM subject_column($subject)",
                 accepts: [
                     Ident {
                         value: "column_profile",
                         quote_style: None,
-                        span: Span(Location(1,104)..Location(1,118)),
+                        span: Span(Location(1,102)..Location(1,116)),
                     },
                 ],
                 returns: Some(
                     Ident {
                         value: "outlier_profile",
                         quote_style: None,
-                        span: Span(Location(1,128)..Location(1,143)),
+                        span: Span(Location(1,126)..Location(1,141)),
                     },
                 ),
             },

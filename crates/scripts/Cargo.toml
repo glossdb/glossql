@@ -9,30 +9,17 @@ glossql-session = { path = "../session" }
 datafusion.workspace = true
 arrow-json.workspace = true
 serde_json.workspace = true
-# `sync` because the runtime lives in an Arc<dyn FunctionRuntime: Send+Sync>
-# and shares compiled ASTs across threads; `serde` is the JSON bridge both
-# ways (rhai-1.25.1: ast.rs:19, serde/ser.rs:83).
-rhai = { version = "1.25", features = ["sync", "serde"] }
-# The statistical kernels' algebra (reconcile's convention product); the
-# same substrate drivers will need (numeric-substrate report, 2026-08-05).
-faer = "0.22"
-regex = "1"
+# The statistical kernels' algebra (reconcile's convention product).
+faer.workspace = true
 # The TabICL forward for the band kernel (sibling link, see the workspace
 # manifest); the model loads lazily from the workspace's weights/.
 tabicl-candle = { workspace = true, features = ["metal"] }
-rayon = "1"
-
-[features]
-# rhai's registered-function reflection, for the kernel-mirror test only —
-# the self dev-dependency below turns it on under `cargo test`, so the
-# shipped library never carries it.
-kernel-audit = ["rhai/metadata"]
+rayon.workspace = true
 
 [dev-dependencies]
 glossql-catalog = { path = "../catalog" }
-glossql-scripts = { path = ".", features = ["kernel-audit"] }
 tokio.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 serde_json.workspace = true
 
 [lints]

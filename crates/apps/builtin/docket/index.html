@@ -3,8 +3,8 @@
 
 {% block main %}
 {# The docket: what stands open, what has been settled, what waits on
-   an act. The page carries no write — a ruling lands where the
-   conversation happens, through the agent's own session.
+   an act. Its one write is the ruling form — the human's own judgment,
+   landed under their own standing; everything else is a read.
 
    Each band is a matter list: the rail on the left says how firmly the
    claim is held, the middle column is language somebody authored, and
@@ -99,19 +99,5 @@
     </gl-rows>
   </section>
 
-  <section class="tile">
-    <header><span class="eyebrow">One claim ruled two ways</span>
-      <code class="chip" title="The same declared key confirmed on one aspect and corrected on another. Nothing resolves it here — the agent reconciles in its own groundings.">ruling_conflicts</code></header>
-    <gl-rows frame="frames/conflicts" empty="no claim is ruled two ways">
-      <template>
-        <a class="rrow" href="{link}" style="grid-template-columns:minmax(8rem,11rem) minmax(0,1fr) 9rem 9rem">
-          <span class="r-subj">{claim}</span>
-          <span class="r-what">{what}</span>
-          <span class="r-meta">{newer}</span>
-          <span class="r-meta">{older}</span>
-        </a>
-      </template>
-    </gl-rows>
-  </section>
 </div>
 {% endblock main %}

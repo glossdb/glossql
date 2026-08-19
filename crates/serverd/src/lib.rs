@@ -2,7 +2,7 @@
 //! MCP shim at `/mcp` (rmcp streamable HTTP; the 2026-07-28 protocol
 //! revision serves it statelessly, so session continuity lives in the
 //! [`Plane`]) and the cockpit's Arrow IPC query door at `/query`.
-//! Flight SQL is a future door, cut from M5 (project lead, 2026-08-04):
+//! Flight SQL is a future door:
 //! pyarrow reads the same HTTP stream.
 
 mod bootstrap;
@@ -24,8 +24,8 @@ use axum::routing::post;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
-/// The one anonymous human actor every door speaks for (ruled
-/// 2026-08-13): human standing is unsigned for now — human > agent >
+/// The one anonymous human actor every door speaks for:
+/// human standing is unsigned for now — human > agent >
 /// function holds, and how to identify *which* human is found out
 /// later, not faked by a flag.
 pub const HUMAN: &str = "human";
@@ -69,8 +69,8 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     let mut config = StreamableHttpServerConfig::default();
     config.json_response = true;
     // The connect-time brief: shared across handler instances, boot-
-    // filled, refreshed after every tool call (see mcp::refresh_brief).
-    // It carries its own facts and per-actor delivery state.
+    // filled, refreshed after every writing call (see
+    // mcp::refresh_brief). One shared baseline, no per-actor state.
     let brief = Arc::new(mcp::Brief::default());
     {
         let plane = Arc::clone(&plane);
@@ -80,9 +80,10 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf) -> Route
     // Declined questions defer for the server run — transport state,
     // shared across the per-request handler instances.
     let deferred = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
-    // One question in flight at a time, shared the same way: the ask no
-    // longer blocks the call that carried it, so this is what keeps the
-    // next read from asking again while a form is still on screen.
+    // One question in flight at a time, shared the same way: on the
+    // session lifecycle the ask awaits inside its carrying call, and
+    // this is what keeps a concurrent read from putting a second form
+    // on screen while one is up.
     let asking = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
     let mcp = StreamableHttpService::new(
         move || {

@@ -1,7 +1,7 @@
 -- Temporal profile (fixture 11): the deterministic temporal family as one
 -- measurement — window, cadence, completeness, gaps. Ported from v0.3's
--- analyze_basic_temporal (analysis/temporal/detection.py, verified
--- 2026-08-04). Cadence is the nearest named grain to the median gap
+-- analyze_basic_temporal (analysis/temporal/detection.py,
+-- verified). Cadence is the nearest named grain to the median gap
 -- between DISTINCT instants, so duplicate-heavy fact columns count each
 -- day once; the grain windows are disjoint, so "nearest wins" flattens
 -- to one CASE ladder. Completeness counts calendar buckets over the
@@ -73,10 +73,15 @@ conf AS (
     END AS confidence
   FROM grain
 ),
-sig AS (
-  SELECT count(*) AS n, max(gap_seconds) / 86400.0 AS largest_days
+big AS (
+  -- The "twice the median" rule, spelled once for the count and the
+  -- sample alike.
+  SELECT gap_start, gap_end, gap_seconds, med
   FROM gap CROSS JOIN g
   WHERE med IS NOT NULL AND med > 0.0 AND gap_seconds > med * 2.0
+),
+sig AS (
+  SELECT count(*) AS n, max(gap_seconds) / 86400.0 AS largest_days FROM big
 ),
 largest AS (
   -- The tie-breaker is new with the port: the old ORDER BY had none, so
@@ -84,8 +89,7 @@ largest AS (
   -- crossed the cap) was the engine's accident. Earliest-first is the
   -- rule now, and the sample stops moving between captures.
   SELECT gap_start, gap_end, gap_seconds, med
-  FROM gap CROSS JOIN g
-  WHERE med IS NOT NULL AND med > 0.0 AND gap_seconds > med * 2.0
+  FROM big
   ORDER BY gap_seconds DESC, gap_start LIMIT 20
 ),
 samp AS (

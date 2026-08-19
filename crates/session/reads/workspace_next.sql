@@ -50,7 +50,7 @@ apps AS (SELECT count(DISTINCT app) AS n FROM app_parts),
 -- write orphans it (its pin covers the glossary too — a new grounding
 -- IS a cube input), metric_series() keeps serving the last landed one
 -- marked `current = false`, and the recompute is a pull that belongs
--- to whoever reads this row (ruled 2026-08-18).
+-- to whoever reads this row.
 cube AS (
   SELECT count(DISTINCT metric) AS metrics,
          coalesce(bool_and(current), true) AS is_current
@@ -62,8 +62,8 @@ cube AS (
 -- this used to be `cast_failures > 0` on a column holding JSON text —
 -- '{' sorts above '0', so every landing qualified. The dropped-row
 -- count is deliberately not part of this: which rows a WHERE excluded
--- is the author's question answered on the files (project lead,
--- 2026-08-04), and the counter is only meaningful for a
+-- is the author's question answered on the files,
+-- and the counter is only meaningful for a
 -- single-relation row-preserving recipe anyway.
 nulled AS (
   SELECT count(DISTINCT i.table_name) AS n
@@ -81,11 +81,11 @@ counts AS (
          (SELECT count(*) FROM glossary) AS n_claims,
          (SELECT n FROM asked) AS open_claims,
          -- A function is never "open": it is called, and computes when a
-         -- read needs it (ruled 2026-08-16) — so this surface owes 0.
+         -- read needs it — so this surface owes 0.
          (SELECT count(*) FROM functions) AS n_functions,
-         -- A sample frame is a QUERY aspect too, so it counted as a
-         -- metric here until the two doors got their own surfaces
-         -- (2026-08-15). Narrowed by exclusion, not by requiring
+         -- A sample frame is a QUERY aspect too, and would count as a
+         -- metric here — the two doors have their own surfaces.
+         -- Narrowed by exclusion, not by requiring
          -- `x-kind = 'metric'`: a grounding declared without the tag is
          -- still a metric, and dropping it from the map would be worse
          -- than the miscount this fixes.

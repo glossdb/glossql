@@ -6,13 +6,13 @@
 -- metric_series() read serves them to any frame with plain value
 -- filters. Runs at dataset grain (`SELECT metric_cube() FROM fin`).
 -- The caps and the three monthly verbs are the door's; extraction
--- serves the summary alone (ruled 2026-08-14: the 54 KB body was
+-- serves the summary alone (the 54 KB body was
 -- write-only through the door) — the full cube is the landed value's
 -- business: metric_series() slices it, GLOSSARY reads it whole. Cube
 -- rows are records since stage 5 — the tuple form was a script-ism
 -- arrow could not carry.
--- `members` is a bucketing target, NOT a cutoff (ruled 2026-08-18, on
--- the rel-salt run, where 34 sales orgs could never enter at a hard
+-- `members` is a bucketing target, NOT a cutoff (34 sales orgs
+-- could never enter at a hard
 -- 24). A served column is admitted at 2..512 distinct members, fewest
 -- first; at 24 or under every member is named, and above that the top
 -- 23 by weight keep their names while the rest fold into 'other' — so
@@ -26,8 +26,7 @@
 -- total; that is the defect the ratio verb exists for).
 -- CTE names carry the mc_ prefix: the planner seam resolves a
 -- pinned workspace table ahead of a same-named CTE, so a dataset
--- carrying a table named `cells` would otherwise capture the join
--- (found at the port's own suite, 2026-08-18).
+-- carrying a table named `cells` would otherwise capture the join.
 WITH mc_d AS (SELECT * FROM metric_cube_slices($subject)),
 mc_facts AS (
   SELECT seq, metric, applicable, reason, behavior, dims, bucketed,
@@ -52,7 +51,6 @@ mc_m AS (
 )
 SELECT
   count(metric) > 0 AS applicable,
-  named_struct('dims', 4, 'members', 24, 'months', 48) AS caps,
   coalesce(array_agg(named_struct(
     'metric', metric, 'applicable', applicable, 'reason', reason,
     'behavior', behavior, 'dims', dims, 'bucketed', bucketed, 'rows', rows,

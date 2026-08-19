@@ -125,29 +125,20 @@ vocabulary. Four macros and a prose block:
        chip="open_questions", note="what the door would ask a human") }}
   {{ tiles::chart(frame="frames/monthly", spec="specs/trend.vl.json",
        title="Throughput by month", chip="read.throughput()") }}
-  {{ tiles::table(frame="frames/monthly", title="The months", rows=24) }}
 </div>
 {% endblock %}
 ```
 
-- `value(frame, field, label, …)` — one number, with `delta_field`,
-  `unit`, and `format` in `compact | days | raw | month | text`. Use
-  `text` for a word (a band name); the numeric formats render `NaN`
-  for it.
-- `chart(frame, spec, …)` — a vega-lite spec over the frame. Adding
-  `drill_field` and `drill_param` makes a click navigate: the datum's
-  value lands in the URL. **Drill is navigation, nothing else.**
-- `table(frame, rows=…)` — the frame as a grid.
+- `value(frame, field, label, …)` — one number, `format` in
+  `compact | text`. Use `text` for a word (a band name); the compact
+  format renders `NaN` for it.
+- `chart(frame, spec, …)` — a vega-lite spec over the frame.
 - `gl-rows` with your own `<template>` — a row surface where you place
   each field by name (`{subj}`, `{what}`), for anything that is a list
   of matters rather than a table of numbers.
 - The **chip** is the tile's provenance: which read the number comes
   from, with `note` as its hover text — a disclosed assumption, a
   composition rule. A tile without a chip is a number with no address.
-
-A tile given an `id` and a `seg_*` set renders a segmented control that
-writes the URL but swaps only itself — the rest of the page never
-re-renders.
 
 ## Specs draw, they do not decide
 

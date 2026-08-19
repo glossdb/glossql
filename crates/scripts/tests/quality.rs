@@ -1,4 +1,4 @@
-//! The quality pair from the 2026-08 evaluation (tfmeval): the
+//! The quality pair: the
 //! derivation a table's lineage carries, and what a declared join
 //! asserts. Both are recall-oriented measurements — the judge reads
 //! them; neither issues a verdict.
@@ -11,7 +11,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -48,7 +48,7 @@ async fn session_over(dir: &std::path::Path) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     Session::new(
         store,
         Actor {
@@ -57,7 +57,7 @@ async fn session_over(dir: &std::path::Path) -> Session {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))))
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))))
 }
 
 /// `line_amount = units * unit_price` with two silently scaled rows —

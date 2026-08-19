@@ -57,9 +57,9 @@ LEFT JOIN grounded g ON g.aspect = a.name
 -- `title` and `kind` come from the aspect blob — the display label and
 -- the tooling flag, which is all the blob keeps. `unit` and `meaning`
 -- come from `definitions`, because a declaration cannot be superseded
--- and the company revises both: the ruling (2026-08-12) was forced by a
--- stale `x-unit`, and this read went on serving `x-unit` anyway until
--- 2026-08-15. A field lives in exactly one place, never both.
+-- and the company revises both — serving `x-unit` from the blob
+-- goes stale on the first revision.
+-- A field lives in exactly one place, never both.
 LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
 LEFT JOIN GLOSSARY() d ON d.aspect = 'definitions'
 WHERE a.kind = 'query'

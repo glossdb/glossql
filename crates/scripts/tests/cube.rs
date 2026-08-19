@@ -32,7 +32,7 @@ async fn cube_session(
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     let session = Session::new(
         store,
         Actor {
@@ -184,7 +184,6 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     let out = cube(&session).await;
 
     assert_eq!(out["applicable"], json!(true));
-    assert_eq!(out["caps"]["months"], json!(48));
     let metrics = out["metrics"].as_array().unwrap();
     assert_eq!(metrics.len(), 2);
 
@@ -323,7 +322,7 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
-    // The defect this exists for (found 2026-08-15, in a run): a ratio
+    // The defect this exists for: a ratio
     // is neither stock nor flow, so it took the flow path and every
     // sliced ratio reported the SUM of its members. DSO for one month
     // came back 928.3 days against a true 75.6 — the grounding served

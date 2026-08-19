@@ -67,7 +67,7 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     .await
     .unwrap();
     assert_eq!(landed.source_scans, vec![("orders/*.parquet".to_string(), 2)]);
-    assert_eq!(landed.dropped_rows(2), Some(0), "SELECT * drops nothing");
+    assert_eq!(landed.dropped_rows(), Some(0), "SELECT * drops nothing");
     let (schema, batches) = (landed.schema, landed.batches);
 
     assert_eq!(schema.field(0).data_type(), &DataType::Int64);
@@ -117,8 +117,8 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
     );
 
     // Authored casts land typed: the landed table is the typed table
-    // (ruled 2026-08-04) — the schema the probe rehearsed, not a refold
-    // (the force_utf8 that discarded these casts died 2026-08-05).
+    // — the schema the probe rehearsed, not a refold
+    // (a force_utf8 refold would discard these casts).
     let landed = run_recipe(
         &spec("csv", dir.path()),
         "SELECT account_no, try_cast(balance AS DOUBLE) AS balance \
@@ -156,8 +156,8 @@ async fn recipe_paths_cannot_escape_the_source_root() {
             .contains("must stay under the source's location")
     );
 
-    // A symlink under the root is the same escape by another spelling
-    // (2026-08-06): the fence resolves the path before reading it.
+    // A symlink under the root is the same escape by another spelling:
+    // the fence resolves the path before reading it.
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("secret.csv"), "x\n9\n").unwrap();
     std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
@@ -173,7 +173,7 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     );
 }
 
-// -- row accounting per scanned source (found 2026-08-12) ------------------
+// -- row accounting per scanned source -------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_multi_provider_recipe_accounts_each_source() {
@@ -203,7 +203,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     // The bug this whole shape exists to prevent: 3 + 2 = 5 scanned
     // against 3 landed reads as "2 dropped", and nothing was dropped.
     assert_eq!(
-        landed.dropped_rows(3),
+        landed.dropped_rows(),
         None,
         "two scans: no single difference is true"
     );
@@ -215,7 +215,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
         ]
     );
     assert_eq!(
-        landed.row_summary(3),
+        landed.row_summary(),
         "3 rows landed; sources scanned: orders.csv 3 rows, customers.csv 2 rows"
     );
 
@@ -227,10 +227,10 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     .await
     .unwrap();
     assert_eq!(landed.source_scans, vec![("orders.csv".to_string(), 3)]);
-    assert_eq!(landed.row_summary(2), "2 rows landed, 1 dropped");
+    assert_eq!(landed.row_summary(), "2 rows landed, 1 dropped");
 }
 
-// -- cast accounting (cells, not rows — 2026-08-06) ------------------------
+// -- cast accounting (cells, not rows) -------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_landing_accounts_its_cast_nulled_cells() {
@@ -364,9 +364,9 @@ async fn accounting_discloses_what_it_cannot_account() {
     );
     // The same shape reading answers the row counts: two rows collapsed
     // to one dropped nothing, and saying so is the whole point of
-    // keeping the reading apart from the cast verdict (2026-08-15).
+    // keeping the reading apart from the cast verdict.
     assert!(!landed.row_preserving);
-    assert_eq!(landed.dropped_rows(1), None, "a GROUP BY drops no rows");
+    assert_eq!(landed.dropped_rows(), None, "a GROUP BY drops no rows");
 
     // No casts: the account is complete and empty.
     let landed = run_recipe(&s, "SELECT * FROM read_csv('t.csv')")
@@ -414,8 +414,8 @@ async fn a_relational_recipe_is_one_query_and_never_a_write() {
         assert!(e.to_string().contains("one SELECT"), "`{sql}`: {e}");
     }
     // A plain query passes the fence and fails only at driver load —
-    // where the error teaches the installable slugs (the 2026-08-07 run
-    // guessed `adbc_driver_sqlite` and got a bare NotFound).
+    // where the error teaches the installable slugs (a bare NotFound
+    // teaches nothing to whoever guessed `adbc_driver_sqlite`).
     let e = run_recipe(&s, "SELECT 1").await.unwrap_err();
     assert!(!e.to_string().contains("one SELECT"), "{e}");
     assert!(
@@ -501,7 +501,7 @@ async fn a_relational_recipe_lands_from_sqlite() {
         "the source computed the SQL — this side scanned nothing"
     );
     assert_eq!(
-        landed.dropped_rows(2),
+        landed.dropped_rows(),
         Some(0),
         "what came back is both what was read and what landed"
     );
@@ -534,7 +534,7 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     // Recipe and probe SQL runs in a scratch context that the statement
     // allowlist never sees, and DataFusion's default options permit DDL,
     // DML and COPY — a probe could write a parquet file anywhere the
-    // process can (found 2026-08-06).
+    // process can.
     let dir = tempfile::tempdir().unwrap();
     write_parquet_fixture(dir.path()).await;
     let spec = spec("parquet", dir.path());

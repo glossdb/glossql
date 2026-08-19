@@ -5,7 +5,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A backend could not serve or accept rows. The store's rules never
-    /// produce this — only the IO behind [`crate::MetadataBackend`] does.
+    /// produce this — only the IO behind the metadata seam does.
     #[error("store backend: {0}")]
     Backend(String),
     #[error("unknown {what} `{name}` — declare it first")]
@@ -52,7 +52,7 @@ pub enum Error {
     #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(
-        "the strike is parked: the substrate cannot remove rows until iceberg-rust 0.11 lands the delete write path — supersede the slot, or rebuild the workspace (reports/2026-08-17-delete-in-iceberg-v3.md)"
+        "the strike is parked: the substrate cannot remove rows until iceberg-rust lands the delete write path — supersede the slot, or rebuild the workspace"
     )]
     StrikeParked,
     #[error(
@@ -194,7 +194,7 @@ impl AspectRow {
 }
 
 /// One witness's verdict over one subject, computed at read and never
-/// stored (ruled 2026-08-16). The collapse withholds when a score
+/// stored. The collapse withholds when a score
 /// crosses its own witness's threshold — never a neighbour's.
 #[derive(Debug, Clone)]
 pub struct Verdict {
@@ -228,8 +228,8 @@ pub struct FunctionRow {
 /// What a `DECLARE RECIPE` amounted to (SPEC.md §3): the session
 /// materializes on `Created`, leaves `Unchanged` alone, and on
 /// `Replaced` drops the old landing before re-materializing
-/// (supersede-and-reland, ruled 2026-08-06 — runs 5 and 6 both hit
-/// the refusal wall on a post-landing defect with no way through).
+/// (supersede-and-reland: a post-landing defect needs a way through
+/// the refusal wall).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecipeAdmission {
     Created,
@@ -245,7 +245,7 @@ pub struct RecipeRow {
 }
 
 /// A declared witness (SPEC.md §7.1). Function voices are not here — they
-/// arrive through `RETURNS` (ruled 2026-08-04); `BY` gates actors only.
+/// arrive through `RETURNS`; `BY` gates actors only.
 #[derive(Debug, Clone)]
 pub struct WitnessRow {
     pub name: String,

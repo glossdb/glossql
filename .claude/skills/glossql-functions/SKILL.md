@@ -1,22 +1,22 @@
 ---
 name: glossql-functions
-description: Write a function for a glossql workspace — measurements (RETURNS an aspect, body is SQL the engine plans), check voices, and detectors (no RETURNS, body is a rhai script over slots). Use when a shipped measurement does not fit this dataset, when a validation needs its measuring half, or when debugging a function that abstains.
+description: Write a function for a glossql workspace — measurements (RETURNS an aspect, query over data), check voices, and detectors (no RETURNS, query over the witness's slots). Every body is one SQL query. Use when a shipped measurement does not fit this dataset, when a validation needs its measuring half, or when debugging a function that abstains.
 ---
 
 # Writing functions
 
-A function is declared over the door and run by the server. Two roles,
-told apart by shape, and the shape also picks the body's language:
+A function is declared over the door and run by the server. Every
+body is **one SQL query** the engine plans and runs (read-only). Two
+roles, told apart by shape:
 
 - **A measurement or a voice** — it `RETURNS` an aspect, and its output
-  is validated against that aspect's schema. Its body is **one SQL
-  query** the engine plans and runs (read-only, same doors as any
-  statement). Filling a MEASUREMENT aspect makes it a measurement;
-  filling a FACT aspect makes it a **voice** in that aspect's slots,
-  beside the agent's and the human's. The check half of a validation is
-  a voice.
-- **A detector** — no `RETURNS`. A rhai script named in a witness's
-  `DETECTOR` clause; it sees the slots and never the table data.
+  is validated against that aspect's schema. Its query runs over data,
+  composing everything a read can. Filling a MEASUREMENT aspect makes
+  it a measurement; filling a FACT aspect makes it a **voice** in that
+  aspect's slots, beside the agent's and the human's. The check half of
+  a validation is a voice.
+- **A detector** — no `RETURNS`. Named in a witness's `DETECTOR`
+  clause; its query runs over the witness's `slots` relation.
 
 ## Read the closest one first
 
@@ -62,14 +62,16 @@ $$ RETURNS on_time_completion;
 - `FOR` scopes to a dataset, or `GLOBAL`.
 - `RETURNS` names the aspect the output fills, validated against that
   aspect's JSON Schema at extraction.
-- `ACCEPTS` names aspects whose current values arrive as `context` — a
-  script-body mechanism. A SQL body composes inline instead: another
-  measurement's landed value is a read over `measurements`, and a
-  statistic it needs is the same aggregate, computed in place.
+- `ACCEPTS` names the aspects the contract declares as its judgment
+  context. The body composes them inline: a glossed value is a read
+  over the glossary, another measurement's landed value a read over
+  `measurements`, and a statistic it needs is the same aggregate,
+  computed in place.
 - The body composes anything a read can: tables, `read.<aspect>()`
   groundings, the declaration relations as plain tables, and the
-  shipped aggregates (`profile`, `mad`, `entropy` beside the engine's
-  own). `$subject` arrives as a string literal wherever the body writes
+  shipped `profile` aggregate beside the engine's own (`mad` and
+  `entropy` ride inside its struct: `profile(v)['numeric']['mad']`,
+  `profile(v)['entropy']`). `$subject` arrives as a string literal wherever the body writes
   it; `subject_column($subject)` is the subject's column as a relation
   named `v`, for column-grain functions whose body cannot know the
   column's name.
@@ -90,37 +92,6 @@ For a MEASUREMENT this is the only route (a second name
 returning the same aspect is refused); for anything else, use your own
 name.
 
-## The script contract
-
-Two constants are in scope; the script's last expression is its
-result, a map that must serialize as JSON. A script never queries:
-anything that reads data is a measurement, and a measurement's body
-is SQL.
-
-- `subject` — a string, `"table"` or `"table.column"`.
-- `context` — a map. A detector gets `slots` (one per speaker, each
-  with a `body`), `threshold`, and `subject`/`aspect`/`witness` to
-  echo back.
-
-## Kernels
-
-Three helpers ride beside the standard rhai package:
-
-- `parse_json(s)` turns a stored body (a gloss, a measurement) back
-  into a map and errors on text that is not JSON.
-- `canonical_sql(s)` reads SQL as an identity — parse and re-render,
-  so whitespace and keyword case collapse while identifiers survive. A
-  body the parser cannot read falls back to whitespace normalization,
-  which is weaker, and that is the honest limit.
-- `tabicl_bands(train_x, train_y, test_x, alphas, actual)` — one
-  TabICL fit and read: train on rows of features (arrays of numbers),
-  predict one test row, return `q` (a band value per alpha, in order)
-  and `pit` — the quantile at which `actual` lands, 0..1. What it buys
-  a judge: given these examples, the corridor a new value would have
-  to land in for nobody to be surprised, and where the actual fell.
-  The model is native and loads once from the workspace's `weights/`
-  directory; a fit needs at least 2 training rows.
-
 ## Abstain, never throw
 
 When the subject does not fit, the answer is a fact, not a failure:
@@ -133,9 +104,42 @@ data's shape.
 
 ## Detectors
 
-The output must satisfy the standard attest schema, which is
-engine-owned and not authored: `subject`, `aspect`, `witness`, `band`
-(green|yellow|orange|red), `score` (0..1), `computed_at`.
+A detector's query plans over the **`slots`** relation — one row per
+slot on the witness's aspect:
+`(subject, aspect, kind, witness, actor, speaker, written_at, body)`.
+`speaker` is `human` | `agent` | `function`. `body` arrives **typed**:
+when every slot body is a JSON object (an aspect's slots share its
+schema, so they do), the column is a struct and fields read as
+`body['tolerance']`, nested arrays through `unnest(body['metrics'])`;
+anything else leaves `body` as text. A field no slot carries is a
+plan-time error naming it — which is the read telling you what is owed
+(an expectation gloss, usually), not a case to code around.
+
+The witness's `THRESHOLD` binds as `$threshold` (NULL when the witness
+declares none — coalesce your default). The query returns one row per
+subject with `subject`, `band` (green|yellow|orange|red), and `score`
+(0..1); the engine completes the attest row with the witness, its
+aspect, and its own clock. One query answers every subject — group by
+`subject`, and keep a row for subjects whose slots say nothing (a
+LEFT JOIN back to `SELECT DISTINCT subject FROM slots`), because no
+row means no verdict, not green.
+
+```glossql
+DECLARE FUNCTION spread_bands FOR ops AS $$
+  WITH s AS (
+    SELECT subject,
+           CASE WHEN count(*) <= 1 THEN 0.0
+                ELSE (count(DISTINCT body['value']) - 1.0) / (count(*) - 1.0)
+           END AS score
+    FROM slots GROUP BY subject
+  )
+  SELECT subject, score,
+         CASE WHEN score = 0.0 THEN 'green'
+              WHEN score <= coalesce($threshold, 1.0) THEN 'yellow'
+              ELSE 'red' END AS band
+  FROM s
+$$;
+```
 
 Judgment lives in detectors and in read policy, never in results — no
 measurement writes a verdict into data.

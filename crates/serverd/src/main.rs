@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
@@ -55,13 +55,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store = Store::open(lake).await?;
     // The runtime's root is the workspace — the band model's weights
     // live under it (bodies ride their declarations, fixture 24).
-    let runtime = Arc::new(RhaiRuntime::new(args.workspace.clone()));
+    let runtime = Arc::new(KernelRuntime::new(args.workspace.clone()));
 
     let plane =
         Arc::new(Plane::new(store.clone(), runtime).with_row_cap(args.doors.row_cap));
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
-        &store,
         &plane,
         Actor {
             kind: ActorKind::Human,

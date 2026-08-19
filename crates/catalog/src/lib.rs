@@ -1,5 +1,5 @@
 //! The workspace data plane: iceberg-rust behind the `Catalog` trait
-//! (SPEC.md §3, reports/2026-08-03-poc-substrate.md).
+//! (SPEC.md §3).
 //!
 //! One `Lake` per workspace: a SQL catalog on a SQLite file plus a local
 //! warehouse directory. Datasets are namespaces. Tables are created and
@@ -10,11 +10,11 @@
 //! snapshot ids).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 pub mod metadata;
-pub use metadata::{IcebergMetadata, MetadataBackend, RelationSpec, Row};
+pub use metadata::{IcebergMetadata, RelationSpec, Row};
 
 use datafusion::arrow::array::RecordBatch;
 use iceberg::arrow::FieldMatchMode;
@@ -45,7 +45,7 @@ pub enum Error {
 /// One table pinned at its current snapshot: every scan reads that
 /// snapshot whatever lands after — the statement's consistent view, and
 /// a durable key, since a snapshot stays addressable after later
-/// commits (spike 3, 2026-08-17).
+/// commits.
 pub struct PinnedTable {
     pub name: String,
     pub snapshot_id: Option<i64>,
@@ -66,12 +66,12 @@ pub struct Landing {
 #[derive(Debug, Clone)]
 pub struct Lake {
     catalog: Arc<dyn Catalog>,
-    warehouse: PathBuf,
     /// The one mounted representation of the lake, shared by every
     /// session — `provider()` hands out Arc clones of it. A namespace
-    /// create invalidates it (the namespace list is the one thing
-    /// [`IcebergCatalogProvider`] freezes); table lookups inside a
-    /// namespace go to the catalog live and need no rebuild.
+    /// create invalidates it, and so does a table create:
+    /// [`IcebergCatalogProvider`] freezes the table map per namespace
+    /// at build (iceberg-datafusion schema.rs, `try_new`), so only a
+    /// rebuild or an explicit `register_table` sees a new table.
     provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
 }
 
@@ -107,7 +107,6 @@ impl Lake {
             .await?;
         Ok(Lake {
             catalog: Arc::new(catalog),
-            warehouse,
             provider: Arc::new(std::sync::RwLock::new(None)),
         })
     }
@@ -116,13 +115,9 @@ impl Lake {
         Arc::clone(&self.catalog)
     }
 
-    pub fn warehouse(&self) -> &Path {
-        &self.warehouse
-    }
-
     /// Create the dataset's namespace if it is missing; `true` = created.
     /// Properties apply at create only — an existing namespace keeps its
-    /// own (set-at-create, ruled 2026-08-16). A create invalidates the
+    /// own (set-at-create). A create invalidates the
     /// shared provider — the next `provider()` rebuilds over the current
     /// namespace list.
     pub async fn ensure_namespace(

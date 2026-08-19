@@ -3,8 +3,8 @@
 //! A recipe at a file source runs on the server: the recipe SQL executes in
 //! a scratch DataFusion context where `read_parquet` / `read_csv` /
 //! `read_json` resolve under the source's `location` root, and
-//! `try_to_date`/`try_to_timestamp` are registered — the recipe carries the
-//! casts (project lead, 2026-08-04). A probe is the same SQL surface
+//! `try_to_date`/`try_to_timestamp` are registered — the recipe carries
+//! the casts. A probe is the same SQL surface
 //! without a landing: paths' first segment names the source. A recipe at a
 //! relational source runs its SQL **at the source** over ADBC (`adbc`
 //! module): the driver returns Arrow batches, so what the source computed
@@ -119,9 +119,9 @@ impl SourceSpec {
     }
 }
 
-/// What a recipe run landed, plus what it read (project lead, 2026-08-04
-/// — which rows were dropped is the author's question, answered on the
-/// files; the engine keeps the count where it is honest).
+/// What a recipe run landed, plus what it read — which rows were
+/// dropped is the author's question, answered on the
+/// files; the engine keeps the count where it is honest.
 #[derive(Debug)]
 pub struct Landed {
     pub schema: SchemaRef,
@@ -148,7 +148,7 @@ pub struct Landed {
 
 impl Landed {
     /// How many source rows the recipe dropped, or `None` where no
-    /// single number is true (found 2026-08-12, fixed 2026-08-15).
+    /// single number is true.
     /// Three cases, and only the first has an answer:
     ///
     ///   * one relation scanned by a row-preserving recipe — the
@@ -164,20 +164,27 @@ impl Landed {
     /// source computed its own SQL, so what came back is both what was
     /// read and what landed. Which rows its WHERE excluded is a
     /// question for the source, not for this count.
-    pub fn dropped_rows(&self, landed_rows: usize) -> Option<u64> {
+    pub fn dropped_rows(&self) -> Option<u64> {
         let [(_, scanned)] = self.source_scans[..] else {
             return self.source_scans.is_empty().then_some(0);
         };
         if !self.row_preserving {
             return None;
         }
-        scanned.checked_sub(landed_rows as u64)
+        scanned.checked_sub(self.landed_rows() as u64)
+    }
+
+    /// What this landing holds — the one count every summary derives
+    /// from.
+    pub fn landed_rows(&self) -> usize {
+        self.batches.iter().map(|b| b.num_rows()).sum()
     }
 
     /// The outcome's row accounting, sized to what the counts can
     /// honestly say.
-    pub fn row_summary(&self, landed_rows: usize) -> String {
-        if let Some(dropped) = self.dropped_rows(landed_rows) {
+    pub fn row_summary(&self) -> String {
+        let landed_rows = self.landed_rows();
+        if let Some(dropped) = self.dropped_rows() {
             return format!("{landed_rows} rows landed, {dropped} dropped");
         }
         let scans = self
@@ -196,7 +203,7 @@ impl Landed {
 /// Run a recipe against its source and return the batches that will land
 /// as the table — exactly the schema the recipe's SQL produced (the
 /// probe's rehearsed identity), folded only where Iceberg v2 cannot hold
-/// a type. Typing is authored (ruled 2026-08-04): an uncast csv/json
+/// a type. Typing is authored: an uncast csv/json
 /// column is Utf8 because the read side is, never because the import
 /// refolds it.
 pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
@@ -216,25 +223,8 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
             ),
         });
     }
-    let root = canonical_root(spec)?;
-
-    let ctx = SessionContext::new();
-    casts::register_try_functions(&ctx);
     let seen: Scanned = Arc::default();
-    for (fn_name, kind) in [
-        ("read_parquet", SourceKind::Parquet),
-        ("read_csv", SourceKind::Csv),
-        ("read_json", SourceKind::Json),
-    ] {
-        ctx.register_udtf(
-            fn_name,
-            Arc::new(ReadFiles {
-                root: root.clone(),
-                kind,
-                seen: Some(Arc::clone(&seen)),
-            }),
-        );
-    }
+    let ctx = reader_ctx(spec, Some(Arc::clone(&seen)))?;
 
     let df = ctx.sql_with_options(sql, read_only()).await?;
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
@@ -285,6 +275,31 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
 /// failure count, then one grouped read per failing column for its top
 /// tokens. Costs one extra scan, plus one per column that actually
 /// failed.
+/// The file-source reader context: the try-cast functions plus the
+/// three read functions, path resolution rooted at the source. One
+/// builder serves the recipe (which counts scans) and the probe (which
+/// does not).
+fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext> {
+    let root = canonical_root(spec)?;
+    let ctx = SessionContext::new();
+    casts::register_try_functions(&ctx);
+    for (fn_name, kind) in [
+        ("read_parquet", SourceKind::Parquet),
+        ("read_csv", SourceKind::Csv),
+        ("read_json", SourceKind::Json),
+    ] {
+        ctx.register_udtf(
+            fn_name,
+            Arc::new(ReadFiles {
+                root: root.clone(),
+                kind,
+                seen: seen.clone(),
+            }),
+        );
+    }
+    Ok(ctx)
+}
+
 async fn account_casts(
     ctx: &SessionContext,
     counts_sql: &str,
@@ -297,20 +312,27 @@ async fn account_casts(
         .await?
         .collect()
         .await?;
+    // The companion is this module's own ungrouped SUM list: exactly
+    // one row of Int64s. A shape that fails to read is an error the
+    // caller reports as Unchecked — never a silent "0 cast failures".
+    let batch = one_row
+        .first()
+        .ok_or_else(|| Error::Batches("the cast companion returned no rows".into()))?;
     let counts: Vec<u64> = (0..targets.len())
         .map(|i| {
-            one_row
-                .first()
-                .and_then(|b| b.column(i).as_any().downcast_ref::<Int64Array>())
-                .map_or(0, |a| {
-                    if a.is_empty() || a.is_null(0) {
-                        0
-                    } else {
-                        a.value(0) as u64
-                    }
+            batch
+                .column(i)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .filter(|a| !a.is_empty() && !a.is_null(0))
+                .map(|a| a.value(0) as u64)
+                .ok_or_else(|| {
+                    Error::Batches(format!(
+                        "the cast companion's column {i} does not read as a count"
+                    ))
                 })
         })
-        .collect();
+        .collect::<Result<Vec<u64>>>()?;
 
     let mut checks = Vec::with_capacity(targets.len());
     for (target, failed) in targets.iter().zip(counts) {
@@ -362,23 +384,7 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
         }
         return Ok(batches);
     }
-    let root = canonical_root(spec)?;
-    let ctx = SessionContext::new();
-    casts::register_try_functions(&ctx);
-    for (fn_name, kind) in [
-        ("read_parquet", SourceKind::Parquet),
-        ("read_csv", SourceKind::Csv),
-        ("read_json", SourceKind::Json),
-    ] {
-        ctx.register_udtf(
-            fn_name,
-            Arc::new(ReadFiles {
-                root: root.clone(),
-                kind,
-                seen: None,
-            }),
-        );
-    }
+    let ctx = reader_ctx(spec, None)?;
     let df = ctx
         .sql_with_options(sql, read_only())
         .await
@@ -409,7 +415,7 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
 /// Recipe and probe SQL is a read at its source: it selects from the
 /// `read_*` table functions and nothing else. Without this, DataFusion's
 /// default options let a body `COPY` to any path the process can write
-/// (found 2026-08-06) — the statement allowlist never sees this SQL.
+/// — the statement allowlist never sees this SQL.
 fn read_only() -> datafusion::prelude::SQLOptions {
     datafusion::prelude::SQLOptions::new()
         .with_allow_ddl(false)

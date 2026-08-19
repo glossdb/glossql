@@ -5,13 +5,11 @@
 //! about rows, and a decision that needs a store to be tested is a
 //! decision nobody can read.
 //!
-//! This is stage 1 of `reports/2026-08-17-the-foundation.md` §6, and it
-//! is what makes stage 3 possible: [`latest_by`] takes the ordering
-//! column as a closure, so the same rule serves SQLite's
-//! `id AUTOINCREMENT` today and Iceberg v3's
-//! `_last_updated_sequence_number` after the move, without being
-//! rewritten. While the rule lives inside a SQL `NOT EXISTS`, it has to
-//! be reimplemented for every backend that carries it.
+//! [`latest_by`] takes the ordering column as a closure, so the same
+//! rule serves any backend's ordering — Iceberg v3's
+//! `_last_updated_sequence_number` today — without being rewritten.
+//! While the rule lives inside a SQL `NOT EXISTS`, it has to be
+//! reimplemented for every backend that carries it.
 
 use serde_json::Value;
 
@@ -22,8 +20,7 @@ use crate::{Error, Result};
 ///
 /// A measurement never competes here — the store admits exactly one
 /// producer per measurement aspect, so its group holds one slot and the
-/// rank has nothing to sort against
-/// (`reports/2026-08-17-functions-split.md` §3).
+/// rank has nothing to sort against.
 pub const RANK_HUMAN: u8 = 0;
 pub const RANK_AGENT: u8 = 1;
 pub const RANK_FUNCTION: u8 = 2;
@@ -82,16 +79,16 @@ pub fn serving(group: &[&Slot]) -> Option<usize> {
 }
 
 /// **Contest.** A detector crossing withholds a value only where voices
-/// could actually differ (2026-08-14, found live: a single-speaker
-/// measurement whose detector crossed read as `contested`, and the
-/// withholding hid the body at its most interesting moment). One slot
-/// cannot contest — the crossing still shows as its band, beside the
-/// value.
+/// could actually differ: a single-speaker
+/// measurement whose detector crossed would read as `contested`, and the
+/// withholding would hide the body at its most interesting moment. One
+/// slot cannot contest — the crossing still shows as its band, beside
+/// the value.
 pub fn contested(crossing: bool, voices: usize) -> bool {
     crossing && voices >= 2
 }
 
-/// **Serve and mark** (project lead, 2026-08-04): staleness never
+/// **Serve and mark**: staleness never
 /// suppresses a value, it shows beside it. A slot written against a
 /// snapshot the table has since moved past is `stale`, and still served.
 pub fn state(seen: Option<i64>, current: Option<i64>) -> &'static str {
@@ -116,13 +113,12 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
     }
 }
 
-/// **Grain admission** (ruled 2026-08-05): an aspect declared `ON grain,
+/// **Grain admission**: an aspect declared `ON grain,
 /// …` only accepts subjects of those grains; `None` (no clause) admits
 /// all. A bare name is table-shaped unless it names a declared source —
-/// then it is SOURCE grain, satisfying `source` and only `source`: the
-/// 2026-08-12 ruling admitted it there, and the 2026-08-14 run showed
-/// the other half — a table-grain aspect accepting `GLOSS entity ON erp`
-/// put unfillable rows in the backlog. `is_source` is the caller's
+/// then it is SOURCE grain, satisfying `source` and only `source`: a
+/// table-grain aspect that accepted `GLOSS entity ON erp`
+/// would put unfillable rows in the backlog. `is_source` is the caller's
 /// lookup against the `sources` relation.
 pub fn admit_grain(
     aspect: &str,
@@ -151,7 +147,7 @@ pub fn admit_grain(
     })
 }
 
-/// **Conditional relevance** (ruled 2026-08-14): a conditioned aspect is
+/// **Conditional relevance**: a conditioned aspect is
 /// owed on a subject only while the named sibling aspect's winning slot
 /// carries the declared value. **Absence is decisive** — no sibling slot
 /// spoken means nothing is owed yet, rather than everything.

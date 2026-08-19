@@ -1,10 +1,11 @@
 //! The band plane end to end: the shipped metric_bands body walked
 //! over synthetic monthly series through a real session — since
 //! stage 5 the walk is the metric_band_walk door and the body is SQL —
-//! and the band_breach detector over fabricated slots. The kernel's model loads from a weights directory
+//! and the band_breach detector adjudicating the walk through its
+//! witness at the ATTEST read. The kernel's model loads from a weights directory
 //! symlinked from the sibling port checkout — tests that need it skip
 //! with a message when the sibling has no converted weights, and cost
-//! ~3s each on Metal (measured 2026-08-13). The numeric fidelity of
+//! ~3s each on Metal (measured). The numeric fidelity of
 //! the forward itself is the sibling repo's suite; here the contract
 //! is shape, ordering, and policy.
 
@@ -13,8 +14,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use glossql_glossary::FunctionRow;
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::FunctionRuntime;
 use serde_json::{Value, json};
 
@@ -52,24 +52,6 @@ fn have_weights() -> bool {
         .exists()
 }
 
-fn invoke(dir: &Path, script: &str, subject: &str, context: Value) -> Value {
-    let rt = RhaiRuntime::new(dir);
-    rt.invoke(
-        &FunctionRow {
-            name: script.into(),
-            scope_dataset: None,
-            script: glossql_scripts::library::script(&format!("{script}.rhai"))
-                .expect("shipped")
-                .into(),
-            accepts: vec![],
-            returns: None,
-        },
-        subject,
-        &context,
-    )
-    .unwrap()
-}
-
 /// Date32 day offsets for each month's first day, 2024-01 through
 /// 2025-06 (2024 is a leap year); 19723 = 2024-01-01.
 const FIRSTS: [i32; 18] = [
@@ -90,7 +72,7 @@ async fn walk_session(
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     let session = glossql_session::Session::new(
         store,
         Actor {
@@ -99,7 +81,7 @@ async fn walk_session(
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(dir)));
+    .with_runtime(Arc::new(KernelRuntime::new(dir)));
     session
         .execute("DECLARE DATASET fin SET (purpose: 'band walks'); USE fin;")
         .await
@@ -131,7 +113,9 @@ async fn walk_session(
              "properties": {"applicable": {"type": "boolean"},
                             "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
            DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
-             RETURNS metric_bands;"#,
+             RETURNS metric_bands;
+           DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
+           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;"#,
     )
     .expect("shipped body splices");
     session.execute(&declarations).await.unwrap();
@@ -241,9 +225,44 @@ async fn metric_bands_walks_and_reads_the_breach() {
     assert!(flow_last > 0.95, "flow breach month, pit {flow_last}");
     let stock_last = by_name("inventory")["points"][5]["pit"].as_f64().unwrap();
     assert!(stock_last < 0.05, "stock breach month, pit {stock_last}");
+
+    // The detector adjudicates the walk through its witness at the
+    // ATTEST read: score is the worst displacement |2·pit − 1| across
+    // each metric's latest walked point; band reads against the edges
+    // with the witness's 0.98 red line.
+    let worst = ["revenue", "inventory"]
+        .iter()
+        .map(|name| {
+            let pit = by_name(name)["points"][5]["pit"].as_f64().unwrap();
+            (2.0 * pit - 1.0).abs()
+        })
+        .fold(0.0f64, f64::max);
+    let outcomes = session
+        .execute("SELECT band, score FROM ATTEST(fin::metric_bands);")
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("attest rows")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a verdict");
+    let text = |c: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batch.column(c), 0).unwrap()
+    };
+    let (band, score) = (text(0), text(1).parse::<f64>().unwrap());
+    assert!(
+        (score - worst).abs() < 1e-9,
+        "verdict score {score} against the walk's worst displacement {worst}"
+    );
+    let expected = match worst {
+        w if w <= 0.8 => "green",
+        w if w <= 0.9 => "yellow",
+        w if w <= 0.98 => "orange",
+        _ => "red",
+    };
+    assert_eq!(band, expected, "band at score {score}");
 }
 
-/// The 2026-08-14 regression: a multi-row stock's walk actuals must be
+/// The multi-row stock regression: a stock's walk actuals must be
 /// the month's latest-date SUM, not one arbitrary row. Three product
 /// rows stand at each month's day 25 (sum 1750 + 30·m); a day-5 decoy
 /// snapshot per month must be excluded by the latest-date rank.
@@ -301,36 +320,8 @@ async fn the_stock_walk_sums_the_months_latest_snapshot() {
 }
 
 #[test]
-fn band_breach_adjudicates_the_worst_pit() {
-    let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
-    let slots = |pits: Vec<f64>| {
-        json!({
-            "subject": "fin", "aspect": "metric_bands", "witness": "w",
-            "threshold": null,
-            "slots": [{"body": {"applicable": true, "metrics": pits
-                .iter()
-                .map(|p| json!({"metric": "m", "points": [{"pit": p}]}))
-                .collect::<Vec<_>>()}}],
-        })
-    };
-    let read = |pits: Vec<f64>| invoke(dir.path(), "band_breach", "fin", slots(pits));
-
-    let calm = read(vec![0.5, 0.62]);
-    assert_eq!(calm["band"], json!("green"));
-    assert!(calm["score"].as_f64().unwrap() < 0.3);
-
-    let edge = read(vec![0.5, 0.93]);
-    assert_eq!(edge["band"], json!("yellow"));
-
-    let breach = read(vec![0.996, 0.5]);
-    assert_eq!(breach["band"], json!("red"));
-    assert!(breach["score"].as_f64().unwrap() > 0.98);
-}
-
-#[test]
 fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
-    // The whatif door's seam (ruled 2026-08-11) against the real model:
+    // The whatif door's seam against the real model:
     // the eval's frame shape — (factor, month_index) over bracketing
     // support worlds, y exactly linear in the factor — read at the
     // held-out declared point. The numeric fidelity of the ensemble is
@@ -342,7 +333,7 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
     }
     let dir = tempfile::tempdir().unwrap();
     workspace(dir.path());
-    let rt = RhaiRuntime::new(dir.path());
+    let rt = KernelRuntime::new(dir.path());
 
     let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
     let months = 6..12;
@@ -378,7 +369,7 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
 
 #[test]
 fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
-    // The misfit door's seam (ruled 2026-08-11, fixture 20) against the
+    // The misfit door's seam (fixture 20) against the
     // real chain-rule density: a frame whose columns cohere (y ≈ 2x,
     // z = x + y) with one planted row that betrays the relation while
     // every marginal value stays in range — the eval's shuffled-pairing
@@ -390,7 +381,7 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
     }
     let dir = tempfile::tempdir().unwrap();
     workspace(dir.path());
-    let rt = RhaiRuntime::new(dir.path());
+    let rt = KernelRuntime::new(dir.path());
 
     let n = 40;
     let mut x = Vec::with_capacity(n * 3);
@@ -427,7 +418,7 @@ fn misfit_timing_by_frame_size() {
     }
     let dir = tempfile::tempdir().unwrap();
     workspace(dir.path());
-    let rt = RhaiRuntime::new(dir.path());
+    let rt = KernelRuntime::new(dir.path());
 
     for rows in [128usize, 256, 512, 1024, 2048, 4096, 8192, 16384] {
         let cols = 4usize;

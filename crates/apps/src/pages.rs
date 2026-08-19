@@ -171,8 +171,8 @@ fn render(name: &str, ctx: tera::Context, tera: Result<Tera, tera::Error>) -> Re
         // Never cached. A page is a live view of a mutable record, and
         // with no Cache-Control at all the browser applies heuristic
         // freshness — so after a ruling POST redirected back here, the
-        // browser served the pre-ruling copy from cache and the change
-        // only appeared on a manual reload (project lead, 2026-08-15).
+        // browser would serve the pre-ruling copy from cache and the
+        // change would only appear on a manual reload.
         // The redirect was correct; the caching was the bug.
         Ok(html) => (
             [(header::CACHE_CONTROL, "no-store")],

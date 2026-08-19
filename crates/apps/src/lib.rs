@@ -35,7 +35,7 @@ use glossql_session::Plane;
 pub struct AppDoor {
     pub plane: Arc<Plane>,
     pub workspace: PathBuf,
-    /// Who a ruling is written as. Anonymous by ruling (2026-08-13):
+    /// Who a ruling is written as. Anonymous by ruling:
     /// standing comes from the server having witnessed the act, not
     /// from an identity it cannot check.
     pub human: String,

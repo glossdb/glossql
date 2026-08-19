@@ -1,6 +1,6 @@
 -- The metric's assumptions ledger: `agent_assumptions` narrowed to
 -- this metric, each row joined to its standing ruling on the declared
--- `key` — prose is display, never a join column (ruled 2026-08-14).
+-- `key` — prose is display, never a join column.
 -- The row shows the judgment behind the agreed fact and, while the
 -- assumption still sits below full confidence, that the fold-in is
 -- owed. Full confidence renders fixed (●), less renders loose (◐);

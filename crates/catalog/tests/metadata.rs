@@ -3,7 +3,7 @@
 //! dataset-scoped relation is one table with `dataset` as a key column —
 //! partitioned by the format, never routed by a layout of ours.
 
-use glossql_catalog::{IcebergMetadata, Lake, RelationSpec, MetadataBackend};
+use glossql_catalog::{IcebergMetadata, Lake, RelationSpec};
 use iceberg::{NamespaceIdent, TableIdent};
 
 const RELATIONSHIPS: RelationSpec = RelationSpec {

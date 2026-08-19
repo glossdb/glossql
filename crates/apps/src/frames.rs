@@ -47,9 +47,13 @@ pub async fn frame(
     // (actor, dataset). The binding is fixed at channel construction,
     // so concurrent frames never steer each other; an unknown dataset
     // fails the channel here, before any query runs.
-    let dataset = match resolve_dataset(&door, &def).await {
-        Ok(dataset) => dataset,
-        Err(response) => return response,
+    let Some(dataset) = bound_dataset(&door, &def).await else {
+        return fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no dataset in the workspace yet — the app binds once a source \
+             lands"
+                .to_string(),
+        );
     };
     let actor = Actor {
         kind: ActorKind::Human,
@@ -66,8 +70,7 @@ pub async fn frame(
     // The bound dataset, always available to frame SQL as `$dataset` —
     // reserved, so a URL cannot override what the app is bound to.
     // Frames must never scan the `datasets` relation for it: in a
-    // multi-dataset workspace that fans every joined row out (found
-    // live, 2026-08-12).
+    // multi-dataset workspace that fans every joined row out.
     values.insert("dataset".into(), ScalarValue::Utf8(Some(dataset.clone())));
     match session
         .query_stream_with_params(&sql, Some(ParamValues::from(values)))
@@ -75,28 +78,6 @@ pub async fn frame(
     {
         Ok(query) => stream(query.stream, query.record),
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
-    }
-}
-
-/// The app's dataset: the manifest's pin, or — for an app that pins
-/// none, like the built-in docket app — the first workspace dataset by
-/// name, resolved per request so the binding follows the workspace.
-/// Multi-dataset workspaces stay first-class (the lead, 2026-08-12:
-/// the one-container-one-dataset question is a deployment concern,
-/// held open) — an unpinned app shows the first and a selector is a
-/// later concern; pin `dataset` in app.toml to choose.
-async fn resolve_dataset(
-    door: &crate::AppDoor,
-    def: &AppDef,
-) -> Result<String, Response> {
-    match bound_dataset(door, def).await {
-        Some(dataset) => Ok(dataset),
-        None => Err(fail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "no dataset in the workspace yet — the app binds once a source \
-             lands"
-                .to_string(),
-        )),
     }
 }
 
@@ -181,7 +162,7 @@ pub(crate) async fn bound_dataset(
 /// the glossary anywhere (derived by the session's pre-pass, never
 /// curated), `data` when it provably does not. The browser's frame
 /// store evicts record entries on a ruling and keeps data entries —
-/// the cube survives every glossary write (ruled 2026-08-18).
+/// the cube survives every glossary write.
 pub const FRAME_CLASS: &str = "glossql-frame-class";
 
 /// Encode into a chunked body as batches arrive — the same shape as

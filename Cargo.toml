@@ -23,6 +23,10 @@ debug = "line-tables-only"
 debug = false
 
 [workspace.dependencies]
+adbc_core = "0.24"
+adbc_driver_manager = "0.24"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+futures = "0.3"
 # SPIKE 2026-08-17 — iceberg-rust main, to reach v3 row lineage on read
 # (`_last_updated_sequence_number`, PR #2966, merged 2026-08-10, in no
 # release; 0.10.1 was cut 2026-08-01). main pins datafusion 54.1 and the
@@ -53,3 +57,12 @@ jsonschema = { version = "0.49", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2"
 insta = "1"
+async-trait = "0.1"
+faer = "0.22"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+tera = { version = "1", default-features = false }
+toml = "0.8"
+uuid = { version = "1", features = ["v7"] }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

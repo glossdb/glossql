@@ -24,7 +24,7 @@ async fn temporal(values_sql: &str, subject: &str) -> Value {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     let session = Session::new(
         store,
         Actor {
@@ -189,7 +189,7 @@ async fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
 
     // A column that is not a point in time abstains — and the reason
     // names the type, so a date landed as text reads as a typing gap
-    // rather than a dead end (the SQLite run, 2026-08-07).
+    // rather than a dead end.
     let out = temporal(
         "SELECT * FROM (VALUES (1.5), (2.5)) AS t(d)",
         "events.d",

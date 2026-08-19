@@ -10,7 +10,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -19,11 +19,16 @@ use tower::ServiceExt;
 /// disk, the measurement library declared, `slot_entropy` ready to band.
 async fn app() -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open_memory().await.unwrap();
-    let runtime = Arc::new(RhaiRuntime::new(dir.path().to_path_buf()));
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    let runtime = Arc::new(KernelRuntime::new(dir.path().to_path_buf()));
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     bootstrap(
-        &store,
         &plane,
         Actor {
             kind: ActorKind::Human,
@@ -229,9 +234,9 @@ async fn closure_by_concession_while_the_strike_is_parked() {
         "{glossary}"
     );
 
-    // Closure by authority is parked (ruled 2026-08-17): the substrate
-    // cannot remove rows until iceberg-rust 0.11, and the refusal says
-    // so by name instead of pretending.
+    // Closure by authority is parked: the substrate cannot remove rows
+    // until iceberg-rust lands the delete write path, and the refusal
+    // says so by name instead of pretending.
     let refusal = human_refused(
         &app,
         "USE fin; DELETE FROM glossary \
@@ -239,7 +244,7 @@ async fn closure_by_concession_while_the_strike_is_parked() {
          AND aspect = 'behavior' AND actor_kind = 'agent';",
     )
     .await;
-    assert!(refusal.contains("0.11"), "{refusal}");
+    assert!(refusal.contains("delete write path"), "{refusal}");
     assert!(refusal.contains("parked"), "{refusal}");
 
     // Closure by concession — the other taught path: the agent

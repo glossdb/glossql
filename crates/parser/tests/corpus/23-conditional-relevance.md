@@ -1,10 +1,10 @@
-# 23 · Conditional relevance — RULED 2026-08-14: WHEN narrows what a subject owes
+# 23 · Conditional relevance — RULED: WHEN narrows what a subject owes
 
-Source: our own runs. The first validated onboarding run
-(`reports/2026-08-13-onboarding-run-medium.md`) landed ~109 columns
+Source: our own runs. A validated onboarding run
+landed ~109 columns
 against the kit's six column-grain vocabulary aspects and disclosed
 ~607 `unassessed` slots — behavior owed on text columns, dimension
-owed on keys. Grain (fixture: ruled 2026-08-05) answers *which
+owed on keys. Grain answers *which
 subject class* an aspect speaks to; nothing could answer *which
 subjects, given what the record already knows*. The relevance of
 `behavior`, `unit`, and `dimension` is conditional on `role` — and

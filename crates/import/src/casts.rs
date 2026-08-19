@@ -2,7 +2,7 @@
 //! failure — recipe vocabulary (SPEC.md §3: the recipe carries the casts,
 //! and one dirty value must cost a NULL cell, never the import). DataFusion
 //! 53's own `to_date`/`to_timestamp` abort the whole scan on one dirty
-//! value and ship no `try_` variants (verified in source, 2026-08-04), so
+//! value and ship no `try_` variants (verified in source), so
 //! these register in the recipe/probe context and in the session — usable
 //! in recipes, probes, scripts, and user SQL alike.
 

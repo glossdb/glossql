@@ -1,18 +1,16 @@
 # 19 · What-if: the declared scenario — TRANSCRIBES (scenario = FACT aspect; the `whatif.` door)
 
-Source: our own evaluation runs — the counterfactual walk in
-`../dataraum-eval/tfm/PHASE2_FINDINGS.md` (Leg B: the read across
-lever-varied support worlds, effect recovery 1.011 in support) and its
-independent reproduction in `../tfmeval` (E4; E4b/E4c measured the
-no-support regime and closed it — bare history cannot carry the read).
+Source: our own evaluation runs — the counterfactual walk across
+lever-varied support worlds (effect recovery 1.011 in support) and its
+independent reproduction (the no-support regime measured and closed —
+bare history cannot carry the read).
 The product shape is the proven pipeline applied to real rows: the
 scenario is declared, the server **replays the recipes** with the
 override applied at a small grid of strengths, and the conditional
 read runs across the replayed worlds with the factor as a feature.
-Presented and ruled 2026-08-11: each scenario is its own FACT aspect
+Ruled: each scenario is its own FACT aspect
 (Fork A); the shared-aspect form died on the supersession key, the
-arguments-at-the-door form on the bare-call rule. Evidence and the
-corrected verdict: `reports/2026-08-11-tabicl-integration.md`.
+arguments-at-the-door form on the bare-call rule.
 
 ## 1. The scenario declares like a metric — one aspect per scenario
 
@@ -96,14 +94,14 @@ GLOSS price_hike ON fin AS $${
 
 Removal is ordinary glossary SQL, as everywhere.
 
-## 5. The forks that died (ruled 2026-08-11)
+## 5. The forks that died
 
 - **One shared `scenario` aspect, each scenario one gloss** — dies on
   the store's own key: (subject, aspect, actor kind) keeps one
   current body, so a second scenario silently retires the first; and
   the scenario's name lives inside the body, invisible to the door.
 - **Overrides as arguments at the door** — dies on the bare-call rule
-  (settings are context, never call arguments, ruled 2026-08-04) and
+  (settings are context, never call arguments) and
   leaves no record: not superseded, not attested, not reproducible.
 
 ## 6. Machinery, not language

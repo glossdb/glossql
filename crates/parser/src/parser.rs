@@ -10,7 +10,7 @@ use crate::ast::*;
 
 // The postgres dialect is load-bearing: it lexes `<->` as one TwoWayArrow
 // token and supports dollar-quoted bodies; the session uses the same
-// dialect for planning (reports/2026-08-03-sqlparser-respell.md).
+// dialect for planning.
 static DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
 
 /// The glossql front parser: DataFusion's `DFParser` custom-statement
@@ -246,8 +246,8 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
             } else {
                 FunctionScope::Dataset(p.parse_identifier()?)
             };
-            // The body itself, not a path to it (ruled 2026-08-15,
-            // fixture 24): an agent over MCP has statements and no
+            // The body itself, not a path to it (fixture 24): an
+            // agent over MCP has statements and no
             // filesystem, so a function it cannot write is a validation
             // it cannot finish.
             expect_word(p, "AS")?;
@@ -258,7 +258,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                 Vec::new()
             };
             // `RETURNS aspect` mirrors `ACCEPTS`; a function without it is
-            // a detector (role by shape, project lead 2026-08-04).
+            // a detector (role by shape).
             let returns = if consume_word(p, "RETURNS") {
                 Some(p.parse_identifier()?)
             } else {

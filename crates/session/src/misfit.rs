@@ -1,4 +1,4 @@
-//! The `misfit.` door (ruled 2026-08-11, fixture 20): a declared sample
+//! The `misfit.` door (fixture 20): a declared sample
 //! frame — an ordinary QUERY aspect, `x-kind: "sample"` by convention —
 //! served back row by row with a `misfit` score: how badly each row fits
 //! the rest of the same frame. One frame ranked against itself (the
@@ -31,8 +31,8 @@ use crate::session::SessionError;
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
 /// The row cap bounds the kernel's context — a bigger population is
 /// sampled down in the frame SQL, never streamed through the model.
-/// 2000 is the measured bound (2026-08-12: 3.7s at 2048 on Metal with
-/// the parallel chain rule; the CPU-era cap was the whole problem).
+/// 2000 is the measured bound (3.7s at 2048 on Metal with
+/// the parallel chain rule).
 /// The `whatif.` door mirrors this cap on its replay frame.
 pub(crate) const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
@@ -84,12 +84,7 @@ pub(crate) async fn misfit_batch(
         return Err(bad("the frame grounding carries no `sql`".into()));
     };
 
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
 
     // The frame's rows, capped one past the stated limit so the refusal
     // can say "more than" without materializing the excess.
@@ -183,12 +178,6 @@ pub(crate) async fn misfit_batch(
         .runtime()
         .misfit_scores(&x, rows, cols)
         .map_err(|e| bad(format!("not served: the misfit kernel refused — {e}")))?;
-    if scores.len() != rows {
-        return Err(SessionError::Runtime(format!(
-            "the misfit kernel returned {} scores for {rows} rows",
-            scores.len()
-        )));
-    }
     // Complementary null patterns can make a conditioning column's
     // impute mean NaN inside the kernel, and NaN survives its unique
     // filter — a non-finite score carries no ranking, so the read

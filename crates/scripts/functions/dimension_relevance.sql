@@ -1,5 +1,5 @@
 -- Dimension relevance (transcribed from v0.3's
--- analysis/slicing/relevance.py, 2026-08-05):
+-- analysis/slicing/relevance.py):
 --
 --     relevance = coverage × evenness
 --
@@ -20,7 +20,7 @@
 --
 -- The profile composes inline (§7e), reading the EXACT entropy scalar
 -- over the full distribution — never the top_values display buckets
--- (2026-08-06: a display cap had silently become a statistics cap).
+-- (a display cap must not silently become a statistics cap).
 -- Admission gates are v0.3's recorded inventory: at least two buckets
 -- with NULL counted as one (a null-coded binary is a lane, not a
 -- silent constant-drop), null_ratio <= 0.5, and near-key as a FRACTION
@@ -41,28 +41,31 @@ g AS (
          CAST(total - CAST(round(CAST(total AS DOUBLE) * null_ratio) AS BIGINT) AS DOUBLE)
            / total AS coverage
   FROM f
+),
+-- The admission predicate, computed once — the gates below can never
+-- drift apart from `applicable`.
+a AS (
+  SELECT *,
+         (total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
+          AND cardinality_ratio < 0.9) AS ok
+  FROM g
 )
 SELECT
-  (total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
-   AND cardinality_ratio < 0.9) AS applicable,
+  ok AS applicable,
   CASE WHEN total = 0 THEN 'empty column'
        WHEN "distinct" + null_bucket < 2 THEN 'constant axis: one bucket, NULL included'
        WHEN null_ratio > 0.5 THEN 'nulls dominate (ratio > 0.5)'
        WHEN cardinality_ratio >= 0.9 THEN 'near-key axis (distinct/filled >= 0.9)'
   END AS reason,
-  CASE WHEN total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
-            AND cardinality_ratio < 0.9 THEN
+  CASE WHEN ok THEN
     CASE WHEN "distinct" < 2 THEN 0.0
          ELSE greatest(0.0, least(1.0,
                 coverage * (entropy / ln(CAST("distinct" AS DOUBLE))))) END
   END AS relevance,
-  CASE WHEN total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
-            AND cardinality_ratio < 0.9 THEN coverage END AS coverage,
-  CASE WHEN total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
-            AND cardinality_ratio < 0.9 THEN
+  CASE WHEN ok THEN coverage END AS coverage,
+  CASE WHEN ok THEN
     CASE WHEN "distinct" < 2 THEN 0.0
          ELSE entropy / ln(CAST("distinct" AS DOUBLE)) END
   END AS evenness,
-  CASE WHEN total <> 0 AND "distinct" + null_bucket >= 2 AND null_ratio <= 0.5
-            AND cardinality_ratio < 0.9 THEN "distinct" END AS groups
-FROM g
+  CASE WHEN ok THEN "distinct" END AS groups
+FROM a
