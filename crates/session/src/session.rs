@@ -648,9 +648,7 @@ impl Session {
     /// Extraction (SPEC.md §6): the compute act. A hit at the statement's
     /// pin serves; a miss computes, validates against the RETURNS
     /// aspect's schema, and lands one `measurements` row — the drift
-    /// record's next point. The context document holds one entry per
-    /// `ACCEPTS` aspect: the nearest value walking up from the subject
-    /// (subject, parent, dataset), null when nothing is glossed.
+    /// record's next point.
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
         let resolved = self.subject(&extract.subject).await?;

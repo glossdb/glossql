@@ -408,7 +408,6 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
 
 /// Not a gate — the measurement behind the row cap. Run explicitly:
 /// `cargo test -p glossql-scripts --test bands -- --ignored --nocapture`
-/// (GLOSSQL_DEVICE=cpu for the CPU numbers).
 #[test]
 #[ignore]
 fn misfit_timing_by_frame_size() {

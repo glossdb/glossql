@@ -39,14 +39,14 @@ DECLARE FUNCTION inventory_rollforward_check FOR fin AS $$
     FROM stock_levels s
     LEFT JOIN monthly_moves f
       ON f.product_id = s.product_id AND f.location = s.location AND f.period = s.period)
-$$ ACCEPTS (imports) RETURNS inventory_rollforward;
+$$ RETURNS inventory_rollforward;
 
 DECLARE FUNCTION ar_settles_in_full_check FOR fin AS $$
   SELECT 'a receipt settles its invoice in full; a short receipt is the exception' AS outcome,
          coalesce(CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE)
                     / nullif(count(*), 0), 0.0) AS breach_rate
   FROM ar_settlement
-$$ ACCEPTS (imports) RETURNS ar_settles_in_full;
+$$ RETURNS ar_settles_in_full;
 
 DECLARE WITNESS inventory_rollforward_w ON inventory_rollforward
   BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
@@ -70,7 +70,7 @@ DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
 
 ## Findings
 
-- **The body is the only thing that moved.** `FOR`, `ACCEPTS`,
+- **The body is the only thing that moved.** `FOR`,
   `RETURNS` and role-by-shape (no `RETURNS` declares a detector) are
   untouched. A declaration that named a path now carries what the path
   pointed at.

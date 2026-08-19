@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/statements.rs
+assertion_line: 76
 expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION slot_entropy FOR fin AS $$SELECT subject, 'green' AS band, 0.0 AS score FROM slots$$;\").expect(\"must parse\")"
 ---
 [
@@ -19,7 +20,6 @@ expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION slot_entropy FOR fin
                     },
                 ),
                 script: "SELECT subject, 'green' AS band, 0.0 AS score FROM slots",
-                accepts: [],
                 returns: None,
             },
         ),

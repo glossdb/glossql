@@ -134,7 +134,6 @@ gloss             = "GLOSS", name, "ON", subject, "AS", json ;
 
 function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
-                    [ "ACCEPTS", "(", name, { ",", name }, ")" ],
                     [ "RETURNS", name ] ;
                     (* the engine's analytical machinery; never a metric
                        (metrics are QUERY aspects run as their SQL).
@@ -148,11 +147,9 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                        the engine plans — read-only: a RETURNS body runs
                        over data at the statement's pin; a detector body
                        runs over its witness's `slots` relation.
-                       ACCEPTS names the aspects the contract
-                       declares as judgment context — settings are context,
-                       never call arguments; a SQL body composes them
-                       inline. RETURNS mirrors ACCEPTS:
-                       it names the aspect the output fills,
+                       Settings are context, never call arguments; a SQL
+                       body composes its context inline. RETURNS names
+                       the aspect the output fills,
                        validated against that aspect's schema; a MEASUREMENT
                        aspect has one returning function, a FACT aspect's
                        returning functions are voices in its slots. No RETURNS
@@ -162,7 +159,7 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
 
 extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
-                    (* calls are bare — settings are context (ACCEPTS),
+                    (* calls are bare — settings are context,
                        never arguments.
                        extraction computes at the read's pin and lands a
                        measurements row; the same pin serves it back, any

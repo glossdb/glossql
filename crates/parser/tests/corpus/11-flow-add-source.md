@@ -90,8 +90,9 @@ aspects, check functions, witnesses (fixtures 01, 02, 04); no construct.
 The deterministic profile plane — declared once (vertical/global), fanned
 out per column (extraction grain is the subject; the fan-out is the
 caller's loop, the grammar carries no ordering). The quality plane chains
-on it through `ACCEPTS`: the outlier fences reuse the profile's quartiles
-and MAD, and a re-profile kills the outlier cache. The temporal plane is
+on it in the body: the outlier fences read the profile's landed value
+from `measurements`, and a re-profile moves the pin the outlier cache
+sits at. The temporal plane is
 the same shape — window, cadence, completeness, gaps, all pure functions
 of the landed column's instants (v0.3's `temporal_column_profiles`, minus
 its one wall-clock field). An all-null column needs no machinery — the
@@ -123,7 +124,6 @@ DECLARE ASPECT outlier_profile WITH $${
                  "iqr": {"type": "object"}, "zscore": {"type": "object"}}
 }$$ AS MEASUREMENT;
 DECLARE FUNCTION outliers FOR GLOBAL AS $$/* iqr and z-score fences over the profile */$$
-  ACCEPTS (column_profile)
   RETURNS outlier_profile;
 
 DECLARE ASPECT temporal_profile WITH $${
@@ -202,8 +202,8 @@ that the grammar knows about.
   superseded 2026-08-06 — a changed recipe now supersedes and re-lands;
   the full deletion cascade stays future work — tricky through
   relations and actor-generated SQL. No
-  reactive invalidation of definitions anywhere: declared `ACCEPTS` edges
-  and snapshot staleness are the only freshness mechanisms.
+  reactive invalidation of definitions anywhere: the read's pin and
+  snapshot staleness are the only freshness mechanisms.
 - **Filtered rows are the author's judgment** (ruled 2026-08-04): the
   engine keeps one number, `dropped_rows_count` — source rows minus
   landed rows. It arrives twice, deliberately: in the `DECLARE RECIPE`
@@ -225,8 +225,8 @@ that the grammar knows about.
   measurement in the deterministic plane — and the only numpy/scipy
   dependency in it — consumed by nothing as a signal. It never ports;
   whoever wants it writes a script.
-- **`RETURNS` mirrors `ACCEPTS`** (ruled 2026-08-04): a function reads
-  aspects and fills an aspect — both clauses reference the vocabulary, and
+- **`RETURNS` references the vocabulary** (ruled 2026-08-04): a function
+  fills an aspect, and
   the aspect's schema became the single, live contract (shape-descriptive:
   `required` for what every value carries, `properties` for what readers
   consume, open beyond that). The function witnesses died as ceremony —

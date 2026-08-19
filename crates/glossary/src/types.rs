@@ -56,10 +56,6 @@ pub enum Error {
     )]
     StrikeParked,
     #[error(
-        "function `{function}` both ACCEPTS and RETURNS `{aspect}` — a function cannot be its own input"
-    )]
-    SelfAccepting { function: String, aspect: String },
-    #[error(
         "`{0}` is a store relation — a table cannot take its name, it would shadow the relation"
     )]
     ReservedTableName(String),
@@ -217,11 +213,8 @@ pub struct FunctionRow {
     /// `None` = GLOBAL.
     pub scope_dataset: Option<String>,
     pub script: String,
-    /// `ACCEPTS (aspect, …)` — the aspects whose current values the server
-    /// hands the script as its context document.
-    pub accepts: Vec<String>,
-    /// `RETURNS aspect` — the aspect the output fills, mirroring ACCEPTS;
-    /// output validates against that aspect's schema. `None` = detector.
+    /// `RETURNS aspect` — the aspect the output fills; output validates
+    /// against that aspect's schema. `None` = detector.
     pub returns: Option<String>,
 }
 

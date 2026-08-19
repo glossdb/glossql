@@ -167,7 +167,7 @@ pub const RELATIONS: &[Relation] = &[
     },
     Relation {
         name: "functions",
-        columns: &["name", "scope", "script", "accepts", "returns"],
+        columns: &["name", "scope", "script", "returns"],
         partition: &[],
         key: &["name"],
     },
@@ -596,35 +596,13 @@ impl Store {
         .await
     }
 
-    /// `ACCEPTS` names declared aspects — the context the server assembles
-    /// for the script (SPEC.md §6); each must exist. Declaration relations
-    /// may ride the list too, as invalidation edges only: no context
-    /// entry arrives, but a write to the relation
-    /// kills the cache like an aspect value would.
     pub async fn declare_function(&self, decl: &FunctionDecl) -> Result<()> {
-        for aspect in &decl.accepts {
-            if self.aspect(aspect.value.as_str()).await?.is_none() {
-                return Err(Error::Unknown {
-                    what: "aspect",
-                    name: aspect.value.clone(),
-                });
-            }
-        }
-        // RETURNS mirrors ACCEPTS: it names the aspect
-        // the output fills. A MEASUREMENT aspect has one producer; a FACT
-        // aspect's returning functions are voices; a QUERY aspect is never
-        // function-filled. No RETURNS declares a detector.
+        // RETURNS names the aspect the output fills. A MEASUREMENT aspect
+        // has one producer; a FACT aspect's returning functions are voices;
+        // a QUERY aspect is never function-filled. No RETURNS declares a
+        // detector.
         if let Some(aspect) = &decl.returns {
             let aspect = aspect.value.as_str();
-            // A self-edge: the function's own value would invalidate its own
-            // cache the moment it is written, and the write would never be
-            // readable. ACCEPTS and RETURNS name different aspects.
-            if decl.accepts.iter().any(|a| a.value == aspect) {
-                return Err(Error::SelfAccepting {
-                    function: decl.name.value.clone(),
-                    aspect: aspect.into(),
-                });
-            }
             let (_, kind, _) = self.aspect(aspect).await?.ok_or_else(|| Error::Unknown {
                 what: "aspect",
                 name: aspect.into(),
@@ -650,16 +628,6 @@ impl Store {
                 _fact => {}
             }
         }
-        let accepts = if decl.accepts.is_empty() {
-            None
-        } else {
-            let names: Vec<Value> = decl
-                .accepts
-                .iter()
-                .map(|a| Value::String(a.value.clone()))
-                .collect();
-            Some(Value::Array(names).to_string())
-        };
         let scope = match &decl.scope {
             FunctionScope::Dataset(d) => d.value.clone(),
             FunctionScope::Global => "GLOBAL".to_string(),
@@ -672,7 +640,6 @@ impl Store {
             Some(decl.name.value.clone()),
             Some(scope),
             Some(decl.script.clone()),
-            accepts,
             decl.returns.as_ref().map(|a| a.value.clone()),
         ];
         self.put_unless_current("functions", row).await
@@ -1539,11 +1506,12 @@ impl Store {
     }
 
     async fn functions_all(&self) -> Result<Vec<FunctionRow>> {
-        self.lake_rows(relation("functions"))
+        Ok(self
+            .lake_rows(relation("functions"))
             .await?
             .iter()
             .map(function_row)
-            .collect()
+            .collect())
     }
 
     pub async fn witnesses_all(&self) -> Result<Vec<WitnessRow>> {
@@ -1641,20 +1609,13 @@ fn parse_condition(text: &str) -> Option<(String, String)> {
     Some((aspect.to_string(), rest.strip_suffix('\'')?.to_string()))
 }
 
-fn function_row(cells: &Vec<Option<String>>) -> Result<FunctionRow> {
-    let name = text(cells, 0);
-    let accepts = match cell(cells, 3) {
-        None => Vec::new(),
-        Some(t) => serde_json::from_str(&t)
-            .map_err(|e| Error::Corrupt(format!("function `{name}` ACCEPTS: {e}")))?,
-    };
-    Ok(FunctionRow {
+fn function_row(cells: &Vec<Option<String>>) -> FunctionRow {
+    FunctionRow {
+        name: text(cells, 0),
         scope_dataset: cell(cells, 1).filter(|s| s != "GLOBAL"),
         script: text(cells, 2),
-        returns: cell(cells, 4),
-        accepts,
-        name,
-    })
+        returns: cell(cells, 3),
+    }
 }
 
 fn witness_row(cells: &Vec<Option<String>>) -> Result<WitnessRow> {

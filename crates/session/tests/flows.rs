@@ -167,17 +167,6 @@ async fn extraction_computes_once_then_serves_the_pin() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn accepts_must_name_declared_aspects() {
-    let (_dir, session) = agent_session().await;
-    run(&session, SETUP).await;
-    let e = session
-        .execute(r#"DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS (nope);"#)
-        .await
-        .unwrap_err();
-    assert!(e.to_string().contains("aspect"), "{e}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attest_serves_detector_outputs_in_the_fixed_shape() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
@@ -427,7 +416,6 @@ async fn the_declarations_read_as_plain_relations() {
         DECLARE ASPECT column_profile WITH $${"type": "object"}$$ AS MEASUREMENT;
         DECLARE ASPECT outlier_profile WITH $${"type": "object"}$$ AS MEASUREMENT;
         DECLARE FUNCTION outliers FOR GLOBAL AS $$#{}$$
-          ACCEPTS (column_profile)
           RETURNS outlier_profile;
         DECLARE FUNCTION checker FOR fin AS $$#{}$$;
         DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN);
@@ -439,16 +427,16 @@ async fn the_declarations_read_as_plain_relations() {
     // relations answer like glossary/cache/imports do.
     let functions = table(
         &session,
-        "SELECT name, scope, accepts, returns FROM functions ORDER BY name;",
+        "SELECT name, scope, returns FROM functions ORDER BY name;",
     )
     .await;
     insta::assert_snapshot!(functions, @r#"
-    +----------+--------+--------------------+-----------------+
-    | name     | scope  | accepts            | returns         |
-    +----------+--------+--------------------+-----------------+
-    | checker  | fin    |                    |                 |
-    | outliers | GLOBAL | ["column_profile"] | outlier_profile |
-    +----------+--------+--------------------+-----------------+
+    +----------+--------+-----------------+
+    | name     | scope  | returns         |
+    +----------+--------+-----------------+
+    | checker  | fin    |                 |
+    | outliers | GLOBAL | outlier_profile |
+    +----------+--------+-----------------+
     "#);
 
     let aspects = table(&session, "SELECT name, kind FROM aspects ORDER BY name;").await;

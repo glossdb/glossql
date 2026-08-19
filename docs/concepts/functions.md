@@ -39,14 +39,10 @@ declaration — there is no path and no file, so an agent over the door
 authors a function the way it writes anything else, and the shipped
 library reads back as worked examples: `SELECT script FROM functions`.
 
-`ACCEPTS` mirrors `RETURNS` on the input side: it names the aspects
-whose current values the server hands a script body as its context —
-settings are context, never call arguments; calls are always bare
-`f()`. A SQL body composes inline instead: a landed value is a read
-over `measurements`, a needed statistic is the same aggregate computed
-in place. A function whose ACCEPTS inputs are absent abstains and
-names them — `missing_aspects` — so the gap reads as owed context, not
-as an error.
+Settings are context, never call arguments; calls are always bare
+`f()`. The body composes its context inline: a glossed value is a read
+over the glossary, a landed value a read over `measurements`, a needed
+statistic is the same aggregate computed in place.
 
 ## Extraction and the pin
 

@@ -2,8 +2,8 @@
 //! authored-typing ruling. The agent probes the source through
 //! the statement door; the recipe carries the casts and the column choices;
 //! the landed table IS the typed table. The measurement plane runs on it
-//! (profile, outliers chained through ACCEPTS); semantic glosses and the
-//! detector adjudicate as before; the collapsed read discloses state.
+//! (profile, then outliers); semantic glosses and the detector
+//! adjudicate as before; the collapsed read discloses state.
 
 use std::sync::Arc;
 

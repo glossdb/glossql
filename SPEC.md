@@ -364,15 +364,12 @@ $$;
   literal, and `subject_column($subject)` is the subject's column as a
   relation named `v`. The result lands by shape: one row and one column
   is the value, one row is an object of its columns, many rows are an
-  array of row objects.
-- `ACCEPTS` names the aspects the function's contract declares as its
-  judgment context — settings are context, never call arguments; calls
-  are always bare `f()`. A SQL body composes them inline: a glossed
-  value is a read over the glossary, a landed value a read over
+  array of row objects. Settings are context, never call arguments —
+  calls are always bare `f()`. A body composes its context inline: a
+  glossed value is a read over the glossary, a landed value a read over
   `measurements`, a statistic the same aggregate computed in place. A
   declaration relation reads as a table, which needs no naming.
-- `RETURNS` names the aspect the function's output fills, mirroring
-  `ACCEPTS`: functions read aspects and write an aspect, and the aspect's
+- `RETURNS` names the aspect the function's output fills; the aspect's
   schema is the one contract — output is validated against it at
   extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT aspect has
   exactly one returning function (its producer); a FACT aspect may be

@@ -234,9 +234,9 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     let before = evidence(&session, "balance").await;
     assert_eq!(before["applicable"], false, "{before}");
 
-    // Declaring the edges invalidates the cached abstention through the
-    // `relationships` ACCEPTS edge — the next call
-    // recomputes, no manual cache delete.
+    // Declaring the edges moves the workspace pin, so the cached
+    // abstention no longer serves — the next call recomputes, no manual
+    // cache delete.
     session
         .execute(
             "DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\

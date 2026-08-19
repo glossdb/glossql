@@ -142,12 +142,8 @@ pub struct FunctionDecl {
     pub scope: FunctionScope,
     /// The script itself, carried by `AS $$…$$` (fixture 24).
     pub script: String,
-    /// `ACCEPTS (aspect, …)` — aspects whose current values the server
-    /// hands the script as its context document; empty = no context.
-    pub accepts: Vec<Ident>,
-    /// `RETURNS aspect` — the aspect this function's output fills,
-    /// mirroring `ACCEPTS`. Absent, the
-    /// function is a detector: role is declared by shape.
+    /// `RETURNS aspect` — the aspect this function's output fills.
+    /// Absent, the function is a detector: role is declared by shape.
     pub returns: Option<Ident>,
 }
 

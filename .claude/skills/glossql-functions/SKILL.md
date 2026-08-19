@@ -62,8 +62,7 @@ $$ RETURNS on_time_completion;
 - `FOR` scopes to a dataset, or `GLOBAL`.
 - `RETURNS` names the aspect the output fills, validated against that
   aspect's JSON Schema at extraction.
-- `ACCEPTS` names the aspects the contract declares as its judgment
-  context. The body composes them inline: a glossed value is a read
+- The body composes its context inline: a glossed value is a read
   over the glossary, another measurement's landed value a read over
   `measurements`, and a statistic it needs is the same aggregate,
   computed in place.

@@ -387,27 +387,6 @@ async fn collapse_serves_by_precedence_human_over_agent() {
 // -- functions and measurements --------------------------------------------
 
 #[tokio::test]
-async fn accepts_names_must_be_declared_aspects() {
-    let (_dir, s) = store().await;
-    let Declaration::Function(good) =
-        decl(r#"DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS (unit);"#)
-    else {
-        unreachable!()
-    };
-    s.declare_function(&good).await.unwrap();
-    let row = s.function("f", Some("fin")).await.unwrap().unwrap();
-    assert_eq!(row.accepts, vec!["unit"]);
-
-    let Declaration::Function(bad) =
-        decl(r#"DECLARE FUNCTION g FOR fin AS $$#{}$$ ACCEPTS (nope);"#)
-    else {
-        unreachable!()
-    };
-    let e = s.declare_function(&bad).await.unwrap_err();
-    assert!(matches!(e, Error::Unknown { what: "aspect", .. }), "{e}");
-}
-
-#[tokio::test]
 async fn function_scope_gates_visibility() {
     let (_dir, s) = store().await;
     let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin AS $$#{}$$;"#)
@@ -683,18 +662,6 @@ async fn a_table_cannot_take_a_store_relation_name() {
     };
     let e = s.recipe_admission(&r).await.unwrap_err();
     assert!(matches!(e, Error::ReservedTableName(_)), "{e}");
-}
-
-#[tokio::test]
-async fn a_function_cannot_accept_the_aspect_it_returns() {
-    let (_dir, s) = store().await;
-    let Declaration::Function(f) =
-        decl("DECLARE FUNCTION refine FOR fin AS $$#{}$$ ACCEPTS (unit) RETURNS unit;")
-    else {
-        unreachable!()
-    };
-    let e = s.declare_function(&f).await.unwrap_err();
-    assert!(matches!(e, Error::SelfAccepting { .. }), "{e}");
 }
 
 #[tokio::test]

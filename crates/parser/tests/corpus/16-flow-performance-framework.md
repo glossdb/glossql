@@ -169,7 +169,7 @@ territory (fixture 07's coexistence finding).
 ## 5. Validations (fixture 04's ruled shape)
 
 Expectation as a FACT gloss; the check as a thin function **voice**
-(`RETURNS` the aspect, full door, `ACCEPTS (imports)` for freshness);
+(`RETURNS` the aspect, full door, fresh by the read's pin);
 a detector bands the slots; ATTEST is the verdict surface. Two of the
 scorecard's four shown — the exact one and the one whose expectation
 is deliberately not zero:
@@ -209,10 +209,10 @@ GLOSS bank_reconciliation ON bank_transactions AS $${
 
 DECLARE FUNCTION journal_balance_check FOR fin
   AS $$/* debits equal credits, as a breach rate */$$
-  ACCEPTS (imports) RETURNS journal_balanced;
+  RETURNS journal_balanced;
 DECLARE FUNCTION reconciliation_check FOR fin
   AS $$/* the reconciled fraction against the source's own dirt */$$
-  ACCEPTS (imports) RETURNS bank_reconciliation;
+  RETURNS bank_reconciliation;
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
 DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)

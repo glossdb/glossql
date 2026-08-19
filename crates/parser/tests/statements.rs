@@ -70,8 +70,8 @@ snap!(
     r#"GLOSS type_patterns ON fin AS $${"expr": "STRPTIME(\"{col}\", '%d.%m.%Y')"}$$;"#
 );
 snap!(
-    function_decl_accepts_aspects,
-    "DECLARE FUNCTION outliers FOR GLOBAL AS $$SELECT profile(v) FROM subject_column($subject)$$ ACCEPTS (column_profile) RETURNS outlier_profile;"
+    function_decl_returns_aspect,
+    "DECLARE FUNCTION outliers FOR GLOBAL AS $$SELECT profile(v) FROM subject_column($subject)$$ RETURNS outlier_profile;"
 );
 snap!(
     function_decl_detector,
