@@ -156,10 +156,16 @@ Caps, stated in the result: 4 dims, 48 months, and a bucketing target
 of 24 members: at 24 or under every member is named, above that the
 top 23 by weight
 keep their names and the rest fold into `other` (each metric's
-`bucketed` field names the dimensions this happened to). Extraction
+`bucketed` field names the dimensions this happened to). A ratio cell
+carries its summed halves (`num`, `den`) so a coarser window can
+re-derive the division, and `metric_series()` serves them beside
+`behavior`, the metric's verb. Extraction
 serves the
 summary; the whole cube reads back via
-`GLOSSARY(<dataset>::metric_cube)`.
+`GLOSSARY(<dataset>::metric_cube)`. `metric_days('<metric>')` is the
+cube's live sibling: one metric's last 90 observed days at the same
+verb and the same judged time axis, computed at read from the
+grounding — the cube stays monthly.
 
 ## Detectors
 

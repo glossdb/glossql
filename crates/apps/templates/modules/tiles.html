@@ -5,14 +5,16 @@
    metric surface the number comes from — with `note` as its hover
    text (a disclosed assumption, a composition rule). #}
 
-{% macro chart(frame, spec, title="", chip="", note="", hint="") %}
+{# `windowed` opts the chart into the viewer's window (gl-window);
+   `daily` names the live day-grain frame day and week read from. #}
+{% macro chart(frame, spec, title="", chip="", note="", hint="", windowed=false, daily="") %}
 <section class="tile">
   {% if title or chip %}<header>
     {% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}
     {% if chip %}<code class="chip"{% if note %} title="{{ note }}"{% endif %}>{{ chip }}</code>{% endif %}
   </header>{% endif %}
   {% if hint %}<p class="hint">{{ hint | safe }}</p>{% endif %}
-  <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"></gl-chart>
+  <gl-chart frame="{{ frame | safe }}" spec="{{ spec | safe }}"{% if windowed %} windowed{% endif %}{% if daily %} daily="{{ daily | safe }}"{% endif %}></gl-chart>
 </section>
 {% endmacro chart %}
 

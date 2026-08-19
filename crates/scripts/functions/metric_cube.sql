@@ -38,10 +38,13 @@ mc_facts AS (
   FROM mc_d WHERE fact
 ),
 mc_cells AS (
+  -- A ratio cell carries its summed halves (num, den) — a coarser
+  -- window re-derives the division from them; other verbs leave them
+  -- NULL and the landed body omits the keys.
   SELECT seq,
          coalesce(array_agg(named_struct(
            'dimension', dimension, 'member', member,
-           'period', period, 'value', value
+           'period', period, 'value', value, 'num', num, 'den', den
          ) ORDER BY cell_seq) FILTER (WHERE period IS NOT NULL), []) AS rows,
          count(period) AS cell_count
   FROM mc_d GROUP BY seq

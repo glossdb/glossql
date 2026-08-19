@@ -564,3 +564,28 @@ details.contest[open] summary { color: var(--muted); }
   .bar-in { gap: 0.8rem; min-height: 2.8rem; }
   main { padding-left: 1rem; padding-right: 1rem; }
 }
+
+/* ---- the viewer's window (gl-window) ------------------------------ */
+
+.window-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.wgroup { display: inline-flex; gap: 0.25rem; }
+.wbtn {
+  font-family: var(--mono);
+  font-size: var(--step);
+  color: var(--faint);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.1rem 0.55rem;
+  cursor: pointer;
+}
+.wbtn:hover { color: var(--muted); border-color: var(--muted); }
+.wbtn.on { color: var(--open); border-color: var(--open-dim); }
+
+gl-window { display: block; margin: 0.4rem 0 0.8rem; }
+gl-drivers { display: block; }

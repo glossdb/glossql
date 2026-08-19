@@ -3086,6 +3086,7 @@ dependencies = [
  "arrow-json",
  "datafusion",
  "faer",
+ "futures",
  "glossql-catalog",
  "glossql-glossary",
  "glossql-session",

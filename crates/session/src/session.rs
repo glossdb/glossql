@@ -819,9 +819,15 @@ impl Session {
         if !one_query {
             return Err(SessionError::NotOneRead);
         }
-        let Some(Statement::Substrate(statement)) = statements.pop() else {
+        let Some(Statement::Substrate(mut statement)) = statements.pop() else {
             unreachable!("just matched")
         };
+        // Named string params bind into the AST before the pre-pass, so
+        // door arguments (`metric_days($metric)`) resolve; everything
+        // else still binds through the plan below.
+        if let Some(ParamValues::Map(map)) = &params {
+            crate::measure::bind_params(&mut statement, map);
+        }
         // `SELECT … INTO t` is a Query to the parser and a `CREATE MEMORY
         // TABLE` to the planner; the execute path refuses it and this path
         // must too — planned here it would mint a table and materialize the

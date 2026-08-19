@@ -343,6 +343,13 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
                DECLARE ASPECT definitions WITH $${"type": "object"}$$ AS FACT ON DATASET;
                DECLARE ASPECT formulas WITH $${"type": "object"}$$ AS FACT ON DATASET;
+               DECLARE ASPECT temporal_profile WITH $${"type": "object",
+                 "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+               DECLARE FUNCTION judge_time FOR GLOBAL AS
+                 $$SELECT true AS applicable, 'month' AS granularity,
+                          named_struct('ratio', 1.0) AS completeness$$
+                 RETURNS temporal_profile;
                GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
                  "assumptions": [
                    {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
@@ -352,7 +359,9 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                GLOSS definitions ON perf AS $${"definitions": {"dso": {
                  "meaning": "receivables outstanding expressed in days of revenue",
                  "unit": "days", "owner": "Finance", "source": "KPI handbook v3"}}}$$;
-               DECLARE DATASET second SET (purpose: 'multi-dataset guard');"#,
+               DECLARE DATASET second SET (purpose: 'multi-dataset guard');
+               USE perf;
+               SELECT judge_time() FROM ledger.month;"#,
         )
         .await
         .unwrap();

@@ -12,7 +12,7 @@ SELECT s.period,
   arrow_cast(CASE WHEN s.dimension = ''
     THEN coalesce(json_get_str(a.schema, 'title'), CAST($metric AS VARCHAR))
     ELSE 'rival: ' || s.member END, 'Utf8') AS series,
-  s.value
+  s.value, s.num, s.den, s.behavior
 FROM metric_series() s
 LEFT JOIN aspects a ON a.name = CAST($metric AS VARCHAR)
 WHERE s.metric = CAST($metric AS VARCHAR) AND s.dimension IN ('', 'alternative')

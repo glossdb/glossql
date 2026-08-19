@@ -49,6 +49,34 @@ pub(crate) fn bind_subject(statement: &mut DFStatement, subject: &str) {
     });
 }
 
+/// Bind named string parameters the same way, before the pre-pass runs —
+/// so a door argument (`metric_days($metric)`) resolves like any quoted
+/// literal. Same expansion-not-splicing guarantee as [`bind_subject`]:
+/// the value lands as one AST node and cannot re-tokenize. Only string
+/// values bind here; anything else stays a placeholder for the plan's
+/// own parameter pass, and a placeholder nobody bound still fails at
+/// execution.
+pub(crate) fn bind_params(
+    statement: &mut DFStatement,
+    params: &std::collections::HashMap<String, datafusion::common::metadata::ScalarAndMetadata>,
+) {
+    let DFStatement::Statement(inner) = statement else {
+        return;
+    };
+    let _ = visit_expressions_mut(inner.as_mut(), |expr| {
+        if let Expr::Value(v) = expr
+            && let SqlValue::Placeholder(p) = &v.value
+            && let Some(datafusion::common::ScalarValue::Utf8(Some(s))) = p
+                .strip_prefix('$')
+                .and_then(|name| params.get(name))
+                .map(|p| &p.value)
+        {
+            v.value = SqlValue::SingleQuotedString(s.clone());
+        }
+        std::ops::ControlFlow::<()>::Continue(())
+    });
+}
+
 /// The result-shape rule: one row × one column → the
 /// value itself; one row → an object of its columns; anything else → an
 /// array of row objects. NULL keys are omitted — the writer's default,

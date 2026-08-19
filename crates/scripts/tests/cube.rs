@@ -118,6 +118,17 @@ fn rows_of<'v>(metric: &'v Value, dimension: &str) -> Vec<&'v Value> {
         .collect()
 }
 
+/// One read, rendered as text — for asserts over served relations.
+async fn grid(session: &Session, sql: &str) -> String {
+    let outcomes = session.execute(sql).await.unwrap();
+    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("rows")
+    };
+    datafusion::arrow::util::pretty::pretty_format_batches(batches)
+        .unwrap()
+        .to_string()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_cube_slices_windows_and_carries_the_rival() {
     let dir = tempfile::tempdir().unwrap();
@@ -471,6 +482,70 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     let by_region = rows_of(dso, "region");
     near(at(&by_region, "EMEA", "2024-01"), 400.0 / 3000.0, "region EMEA");
     near(at(&by_region, "APAC", "2024-01"), 600.0 / 3000.0, "region APAC");
+
+    // Every ratio cell carries its summed halves — the client's
+    // coarser windows re-derive the division from them, never from
+    // the monthly ratio values.
+    let jan = total
+        .iter()
+        .find(|r| r["period"] == "2024-01")
+        .unwrap();
+    near(jan["num"].as_f64().unwrap(), 1000.0, "january num");
+    near(jan["den"].as_f64().unwrap(), 6000.0, "january den");
+    let seg_a = by_segment
+        .iter()
+        .find(|r| r["member"] == "A" && r["period"] == "2024-01")
+        .unwrap();
+    near(seg_a["num"].as_f64().unwrap(), 300.0, "segment A num");
+    near(seg_a["den"].as_f64().unwrap(), 2000.0, "segment A den");
+
+    // The flattened read serves the halves and the verb beside every
+    // value.
+    let series = grid(
+        &session,
+        "SELECT period, value, num, den, behavior FROM metric_series() \
+         WHERE metric = 'dso' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    assert!(series.contains("ratio") && series.contains("6000.0"), "{series}");
+
+    // The day drill computes at read from the grounding, same judged
+    // time axis, same verb, halves included.
+    let days = grid(
+        &session,
+        "SELECT period, value, num, den, behavior FROM metric_days('dso') ORDER BY period;",
+    )
+    .await;
+    assert!(days.contains("2024-01-31") && days.contains("2024-02-29"), "{days}");
+    assert!(
+        days.contains("ratio") && days.contains("1000.0") && days.contains("6000.0"),
+        "{days}"
+    );
+
+    // A frame's named param binds into the door argument before the
+    // pre-pass — the app's day drill rides `metric_days($metric)`.
+    let mut values: std::collections::HashMap<String, datafusion::common::ScalarValue> =
+        Default::default();
+    values.insert(
+        "metric".into(),
+        datafusion::common::ScalarValue::Utf8(Some("dso".into())),
+    );
+    let query = session
+        .query_stream_with_params(
+            "SELECT count(*) AS n FROM metric_days($metric)",
+            Some(datafusion::common::ParamValues::from(values)),
+        )
+        .await
+        .unwrap();
+    let batches: Vec<_> = futures::StreamExt::collect::<Vec<_>>(query.stream)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let n = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
+        .unwrap()
+        .to_string();
+    assert!(n.contains("| 2 "), "{n}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -578,4 +653,28 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
             .contains("no judged time column"),
         "{raw}"
     );
+
+    // a flow cell carries no halves — the keys exist only where a
+    // division has to be re-derivable
+    assert!(total[0].get("num").is_none_or(Value::is_null), "{:?}", total[0]);
+
+    // the day drill anchors on the same judged axis (thirty event
+    // days, three rows summing per day) and refuses the unjudged
+    // frame with the same road out
+    let days = grid(
+        &session,
+        "SELECT count(*) AS n, sum(value) AS v FROM metric_days('revenue');",
+    )
+    .await;
+    assert!(days.contains("| 30 ") && days.contains("90.0"), "{days}");
+    let e = session
+        .execute("SELECT * FROM metric_days('raw');")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("no judged time column"), "{e}");
+    let e = session
+        .execute("SELECT * FROM metric_days('nope');")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("no current QUERY grounding"), "{e}");
 }

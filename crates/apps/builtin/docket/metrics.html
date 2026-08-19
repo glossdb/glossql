@@ -22,9 +22,21 @@
     <template><p class="hint">{note}</p></template>
   </gl-rows>
 
+  {# The viewer's window: grain and span ride the URL as display
+     params (`w.*`) — nothing refetches, the charts re-derive from
+     rows in hand. Day and week read the live day frame. #}
+  <gl-window daily="frames/daily"></gl-window>
+
   {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
-       note="The measured cube's total series at the grounding's own verb, and the disclosed rival beside it where the grounding names one.") }}
+       note="The measured cube's total series at the grounding's own verb, and the disclosed rival beside it where the grounding names one. Quarter and year re-derive by the verb; a ratio divides its summed halves. Day and week compute at read from the grounding (metric_days).",
+       windowed=true, daily="frames/daily") }}
+
+  <section class="tile">
+    <header><span class="eyebrow">What moved · {{ metric }}</span>
+      <code class="chip" title="Each admitted dimension's members ranked by their own move between the last two windowed periods — from the landed cube's cells, computed in the browser.">metric_series()</code></header>
+    <gl-drivers frame="frames/drivers"></gl-drivers>
+  </section>
 
   <div class="half">
   <section class="tile">
@@ -45,7 +57,7 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Slice</span>
-      <code class="chip" title="The axes the cube admitted: served dimension columns, fewest members first; a wide axis serves its top members by weight plus 'other'.">metric_series()</code></header>
+      <code class="chip" title="The axes the cube admitted from judged verdicts: applicable dimension_relevance, relevance first; a wide axis serves its top members by weight plus 'other'.">metric_series()</code></header>
     <p class="hint">pick an axis — the slice rides the URL, so what you look at is shareable and re-derivable.</p>
     <gl-rows frame="frames/dims" empty="no axes admitted — the grounding serves no usable dimension column, or the cube has not run">
       <template>
@@ -61,7 +73,8 @@
   {% if dim %}
   {{ tiles::chart(frame="frames/slices", spec="specs/series.vl.json",
        title="By " ~ dim, chip="metric_series()",
-       note="One admitted dimension's members over the cube's months, at the grounding's own verb.") }}
+       note="One admitted dimension's members over the cube's months, at the grounding's own verb. The viewer's window applies; members re-derive by the verb.",
+       windowed=true) }}
   {% endif %}
 
   <section class="tile">

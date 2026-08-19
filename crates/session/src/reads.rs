@@ -517,6 +517,7 @@ pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
                 | "grounding_collisions"
                 | "metric_cube_slices"
                 | "metric_band_walk"
+                | "metric_days"
                 | "behavior_anchors"
         )
     })
@@ -701,6 +702,14 @@ pub(crate) async fn compute_batch(
             }
             Ok(Some(metric_series_read(shared).await?))
         }
+        ("metric_days", Some(a)) => {
+            let metric = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "metric_days takes one quoted metric: metric_days('metric')".into(),
+                )
+            })?;
+            Ok(Some(crate::search::metric_days(shared, &metric).await?))
+        }
         // The store's relations, readable as plain tables. Which names
         // qualify lives in one place: the store's RELATIONS table.
         (name, None) if glossql_glossary::relation_columns(name).is_some() => {
@@ -805,9 +814,12 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 }
 
 /// The cube flattened: `(metric, dimension, member, period, value,
-/// current)`. Dimension `''` is the monthly total, `'alternative'` the
+/// num, den, behavior, current)`. Dimension `''` is the monthly total,
+/// `'alternative'` the
 /// disclosed rival reading, anything else a served dimension column
-/// with its member in `member`. Served from the `measurements`
+/// with its member in `member`. `num`/`den` are a ratio cell's summed
+/// halves (NULL elsewhere) and `behavior` is the metric's verb — what
+/// a client needs to re-derive a coarser window honestly. Served from the `measurements`
 /// relation: the NEWEST landed cube whatever its pin, with `current`
 /// saying whether it was computed at the standing pin — a workspace
 /// write marks every chart stale instead of blanking it —
@@ -816,6 +828,16 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 /// lands a fresh one, and nothing computes at page load. An empty
 /// relation still serves nothing — the cube has never been measured.
 async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError> {
+    struct Row {
+        metric: String,
+        dimension: String,
+        member: String,
+        period: String,
+        value: f64,
+        num: Option<f64>,
+        den: Option<f64>,
+        behavior: String,
+    }
     let dataset = shared
         .dataset
         .read()
@@ -823,7 +845,7 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let ctx = shared.read_context().await?;
-    let mut rows: Vec<(String, String, String, String, f64)> = Vec::new();
+    let mut rows: Vec<Row> = Vec::new();
     let mut current = true;
     if let Some((measured, is_current)) = shared
         .store
@@ -838,6 +860,7 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
             let Some(metric) = m["metric"].as_str() else {
                 continue;
             };
+            let behavior = m["behavior"].as_str().unwrap_or("flow");
             for r in m["rows"].as_array().into_iter().flatten() {
                 // Cube rows are records since stage 5 — the tuple form
                 // was a script-ism arrow could not carry.
@@ -849,13 +872,16 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
                 ) else {
                     continue;
                 };
-                rows.push((
-                    metric.to_string(),
-                    dim.to_string(),
-                    member.to_string(),
-                    period.to_string(),
+                rows.push(Row {
+                    metric: metric.to_string(),
+                    dimension: dim.to_string(),
+                    member: member.to_string(),
+                    period: period.to_string(),
                     value,
-                ));
+                    num: r["num"].as_f64(),
+                    den: r["den"].as_f64(),
+                    behavior: behavior.to_string(),
+                });
             }
         }
     }
@@ -865,24 +891,32 @@ async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError
         utf8("member"),
         utf8("period"),
         Field::new("value", DataType::Float64, false),
+        Field::new("num", DataType::Float64, true),
+        Field::new("den", DataType::Float64, true),
+        utf8("behavior"),
         Field::new("current", DataType::Boolean, false),
     ]));
     Ok(batch(
         schema,
         vec![
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.0.as_str()),
+                rows.iter().map(|r| r.metric.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.1.as_str()),
+                rows.iter().map(|r| r.dimension.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.2.as_str()),
+                rows.iter().map(|r| r.member.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.3.as_str()),
+                rows.iter().map(|r| r.period.as_str()),
             )),
-            Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.4))),
+            Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.value))),
+            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.num))),
+            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.den))),
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.behavior.as_str()),
+            )),
             Arc::new(datafusion::arrow::array::BooleanArray::from(vec![
                 current;
                 rows.len()

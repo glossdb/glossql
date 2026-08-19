@@ -1469,6 +1469,43 @@ pub(crate) async fn current_query_slots(
     Ok(slots)
 }
 
+/// The one refusal every judged monthly reader shares.
+const NO_JUDGED_TIME: &str = "no judged time column: no served date column carries a current \
+     temporal_profile with a named cadence — run temporal() over the \
+     metric's date column first";
+
+/// The judged time axis over a served frame: the date column whose
+/// collapsed temporal_profile shows a named cadence, highest
+/// completeness first, schema order on a tie. A named cadence carries
+/// completeness; irregular and unknown do not, and never anchor a
+/// periodic series. A column without a verdict is a gap, not a
+/// candidate.
+fn judged_time_column(
+    fields: &datafusion::common::DFSchemaRef,
+    subjects: &std::collections::HashMap<String, String>,
+    temporal: &std::collections::HashMap<String, Value>,
+) -> Option<String> {
+    let mut best: Option<(String, f64)> = None;
+    for f in fields.fields() {
+        if !crate::whatif::is_temporal(f.data_type()) {
+            continue;
+        }
+        let Some(v) = subjects.get(f.name()).and_then(|s| temporal.get(s)) else {
+            continue;
+        };
+        if v["applicable"].as_bool() != Some(true) {
+            continue;
+        }
+        let Some(ratio) = v["completeness"]["ratio"].as_f64() else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(_, b)| ratio > *b) {
+            best = Some((f.name().clone(), ratio));
+        }
+    }
+    best.map(|(c, _)| c)
+}
+
 /// One measurement aspect's judged verdicts, collapsed and keyed by
 /// subject — human over agent over function, contested and superseded
 /// withheld. The cube's axis choices read these, never the data's own
@@ -1862,50 +1899,70 @@ fn coherence_shape() -> Vec<Field> {
     ]
 }
 
-/// The three monthly verbs, shared by the metric doors: flows sum per
-/// month; a marked stock sums the rows standing at the month's LATEST
-/// observed date — one arbitrary last row read a 480-row inventory as
-/// 94k against a true 12.4M; a ratio serves `num`
-/// and `den` and the month reads as sum(num)/sum(den), because a walk
+/// The three verbs at any calendar grain, shared by the metric doors:
+/// flows sum per period; a marked stock sums the rows standing at the
+/// period's LATEST observed date — one arbitrary last row read a
+/// 480-row inventory as 94k against a true 12.4M; a ratio serves `num`
+/// and `den` and the period reads as sum(num)/sum(den), because a walk
 /// or a slice over a summed ratio bands an artefact (DSO at
-/// 928.3 days against a true 75.6).
-pub(crate) fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
+/// 928.3 days against a true 75.6). With `halves` a ratio also serves
+/// its summed num and den — the only material a coarser window can
+/// re-derive the division from.
+pub(crate) fn grain_sql(sql: &str, tcol: &str, verb: &str, grain: &str, halves: bool) -> String {
     match verb {
-        "ratio" => format!(
-            "SELECT date_trunc('month', \"{tcol}\") AS period, \
-                    sum(num) / nullif(sum(den), 0) AS value \
-             FROM ({sql}) GROUP BY 1 ORDER BY 1"
-        ),
+        "ratio" => {
+            let h = if halves {
+                ", sum(num) AS num, sum(den) AS den"
+            } else {
+                ""
+            };
+            format!(
+                "SELECT date_trunc('{grain}', \"{tcol}\") AS period, \
+                        sum(num) / nullif(sum(den), 0) AS value{h} \
+                 FROM ({sql}) GROUP BY 1 ORDER BY 1"
+            )
+        }
         "stock" => format!(
             "SELECT period, sum(value) AS value FROM (\
-                SELECT date_trunc('month', \"{tcol}\") AS period, value, \
+                SELECT date_trunc('{grain}', \"{tcol}\") AS period, value, \
                        rank() OVER (\
-                           PARTITION BY date_trunc('month', \"{tcol}\") \
+                           PARTITION BY date_trunc('{grain}', \"{tcol}\") \
                            ORDER BY \"{tcol}\" DESC) AS rk \
                 FROM ({sql})\
              ) WHERE rk = 1 GROUP BY period ORDER BY period"
         ),
         _ => format!(
-            "SELECT date_trunc('month', \"{tcol}\") AS period, sum(value) AS value \
+            "SELECT date_trunc('{grain}', \"{tcol}\") AS period, sum(value) AS value \
              FROM ({sql}) GROUP BY 1 ORDER BY 1"
         ),
     }
 }
 
-/// A grounding's monthly series, NULL months kept — the walk and the
-/// cube index by position. Periods come back in the column's display
-/// form; callers cut the YYYY-MM head as the scripts did.
-async fn run_monthly(
+pub(crate) fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
+    grain_sql(sql, tcol, verb, "month", false)
+}
+
+/// One period of a grain series: `(period, value, num, den)` — the
+/// halves are present only where a ratio ran with `halves`.
+type GrainRow = (String, Option<f64>, Option<f64>, Option<f64>);
+
+/// A grounding's series at a grain, NULL periods kept — the walk and
+/// the cube index by position. Periods come back in the column's
+/// display form; callers cut the head they need (YYYY-MM, YYYY-MM-DD)
+/// as the scripts did.
+async fn run_grain(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     sql: &str,
     tcol: &str,
     verb: &str,
-) -> Result<Vec<(String, Option<f64>)>, SessionError> {
+    grain: &str,
+    halves: bool,
+) -> Result<Vec<GrainRow>, SessionError> {
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
-    let q = monthly_sql(sql, tcol, verb);
+    let q = grain_sql(sql, tcol, verb, grain, halves);
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
     let batches = ctx
         .execute_logical_plan(plan)
@@ -1921,32 +1978,62 @@ async fn run_monthly(
                 .index_of("period")
                 .map_err(|e| SessionError::Runtime(e.to_string()))?,
         );
-        let value = b.column(
-            b.schema()
-                .index_of("value")
-                .map_err(|e| SessionError::Runtime(e.to_string()))?,
-        );
-        let floats = cast_with_options(
-            value,
-            &DataType::Float64,
-            &CastOptions {
-                safe: true,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| SessionError::Runtime(e.to_string()))?;
-        let floats = floats
-            .as_any()
-            .downcast_ref::<Float64Array>()
+        let float_col = |name: &str| -> Result<Option<Float64Array>, SessionError> {
+            let Ok(i) = b.schema().index_of(name) else {
+                return Ok(None);
+            };
+            let floats = cast_with_options(
+                b.column(i),
+                &DataType::Float64,
+                &CastOptions {
+                    safe: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| SessionError::Runtime(e.to_string()))?;
+            floats
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| {
+                    SessionError::Runtime(format!("{name} did not read as a number"))
+                })
+        };
+        let value = float_col("value")?
             .ok_or_else(|| SessionError::Runtime("value did not read as a number".into()))?;
+        let num = float_col("num")?;
+        let den = float_col("den")?;
+        let at = |c: &Option<Float64Array>, i: usize| {
+            c.as_ref()
+                .and_then(|c| (!c.is_null(i)).then(|| c.value(i)))
+        };
         for i in 0..b.num_rows() {
             out.push((
                 array_value_to_string(period, i).map_err(|e| SessionError::Runtime(e.to_string()))?,
-                (!floats.is_null(i)).then(|| floats.value(i)),
+                (!value.is_null(i)).then(|| value.value(i)),
+                at(&num, i),
+                at(&den, i),
             ));
         }
     }
     Ok(out)
+}
+
+/// [`run_grain`] at month grain, values only — what the walk and the
+/// rival read.
+async fn run_monthly(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    sql: &str,
+    tcol: &str,
+    verb: &str,
+) -> Result<Vec<(String, Option<f64>)>, SessionError> {
+    Ok(run_grain(shared, ctx, sql, tcol, verb, "month", false)
+        .await?
+        .into_iter()
+        .map(|(p, v, ..)| (p, v))
+        .collect())
 }
 
 /// `metric_band_walk('dataset')` — for every grounded metric, walk the
@@ -2184,10 +2271,14 @@ fn band_shape() -> Vec<Field> {
 /// observations, never one arbitrary latest row of the whole bucket.
 fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, member: &str, verb: &str) -> String {
     match verb {
+        // A ratio member also serves its summed halves — the client's
+        // coarser windows (quarter, year) re-derive the division from
+        // them, never from the monthly ratio values.
         "ratio" => format!(
             "SELECT date_trunc('month', \"{tcol}\") AS period, \
                     {member} AS member, \
-                    sum(num) / nullif(sum(den), 0) AS value \
+                    sum(num) / nullif(sum(den), 0) AS value, \
+                    sum(num) AS num, sum(den) AS den \
              FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL \
              GROUP BY 1, 2 ORDER BY 1, 2"
         ),
@@ -2305,37 +2396,8 @@ pub(crate) async fn metric_cube_slices(
         // judged verdicts key by subject, the frame names aliases.
         let subjects = crate::provenance::served_subjects(&probe, dataset);
 
-        // The judged time axis: the served date column whose collapsed
-        // temporal_profile shows a named cadence, highest completeness
-        // first, schema order on a tie. A named cadence carries
-        // completeness; irregular and unknown do not, and never anchor
-        // a monthly series. A column without a verdict is a gap, not a
-        // candidate.
-        let mut best: Option<(String, f64)> = None;
-        for f in fields.fields() {
-            if !crate::whatif::is_temporal(f.data_type()) {
-                continue;
-            }
-            let Some(v) = subjects.get(f.name()).and_then(|s| temporal.get(s)) else {
-                continue;
-            };
-            if v["applicable"].as_bool() != Some(true) {
-                continue;
-            }
-            let Some(ratio) = v["completeness"]["ratio"].as_f64() else {
-                continue;
-            };
-            if best.as_ref().is_none_or(|(_, b)| ratio > *b) {
-                best = Some((f.name().clone(), ratio));
-            }
-        }
-        let Some((tcol, _)) = best else {
-            out.push(abstain(
-                seq,
-                "no judged time column: no served date column carries a current \
-                 temporal_profile with a named cadence — run temporal() over the \
-                 metric's date column first",
-            ));
+        let Some(tcol) = judged_time_column(&fields, &subjects, &temporal) else {
+            out.push(abstain(seq, NO_JUDGED_TIME));
             seq += 1;
             continue;
         };
@@ -2421,17 +2483,27 @@ pub(crate) async fn metric_cube_slices(
 
         // The total series bounds the window: the last MONTHS_CAP
         // periods, held as a set every other series filters against.
-        let total = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
+        // A ratio's cells carry their summed halves.
+        let total =
+            run_grain(shared, &ctx, sql, &tcol, verb, "month", verb == "ratio").await?;
         let start = total.len().saturating_sub(MONTHS_CAP);
         let keep: HashSet<String> = total[start..]
             .iter()
-            .map(|(p, _)| p[..7].to_string())
+            .map(|(p, ..)| p[..7].to_string())
             .collect();
-        let mut cells: Vec<(String, String, String, f64)> = Vec::new();
-        for (p, v) in &total {
+        type Cell = (String, String, String, f64, Option<f64>, Option<f64>);
+        let mut cells: Vec<Cell> = Vec::new();
+        for (p, v, num, den) in &total {
             let Some(v) = v else { continue };
             if keep.contains(&p[..7]) {
-                cells.push((String::new(), String::new(), p[..7].to_string(), *v));
+                cells.push((
+                    String::new(),
+                    String::new(),
+                    p[..7].to_string(),
+                    *v,
+                    *num,
+                    *den,
+                ));
             }
         }
 
@@ -2495,19 +2567,29 @@ pub(crate) async fn metric_cube_slices(
                         .map_err(|e| SessionError::Runtime(e.to_string()))
                 };
                 let (period, member, value) = (get("period")?, get("member")?, get("value")?);
-                let floats = datafusion::arrow::compute::cast_with_options(
-                    &value,
-                    &DataType::Float64,
-                    &datafusion::arrow::compute::CastOptions {
-                        safe: true,
-                        ..Default::default()
-                    },
-                )
-                .map_err(|e| SessionError::Runtime(e.to_string()))?;
-                let floats = floats
-                    .as_any()
-                    .downcast_ref::<datafusion::arrow::array::Float64Array>()
-                    .ok_or_else(|| SessionError::Runtime("value is not numeric".into()))?;
+                let float = |col: datafusion::arrow::array::ArrayRef| {
+                    datafusion::arrow::compute::cast_with_options(
+                        &col,
+                        &DataType::Float64,
+                        &datafusion::arrow::compute::CastOptions {
+                            safe: true,
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| SessionError::Runtime(e.to_string()))
+                    .and_then(|c| {
+                        c.as_any()
+                            .downcast_ref::<datafusion::arrow::array::Float64Array>()
+                            .cloned()
+                            .ok_or_else(|| SessionError::Runtime("value is not numeric".into()))
+                    })
+                };
+                let floats = float(value)?;
+                let halves = if verb == "ratio" {
+                    Some((float(get("num")?)?, float(get("den")?)?))
+                } else {
+                    None
+                };
                 for i in 0..b.num_rows() {
                     if floats.is_null(i) {
                         continue;
@@ -2520,7 +2602,13 @@ pub(crate) async fn metric_cube_slices(
                     }
                     let m = array_value_to_string(&member, i)
                         .map_err(|e| SessionError::Runtime(e.to_string()))?;
-                    cells.push((dcol.clone(), m, p, floats.value(i)));
+                    let at = |c: &datafusion::arrow::array::Float64Array| {
+                        (!c.is_null(i)).then(|| c.value(i))
+                    };
+                    let (num, den) = halves
+                        .as_ref()
+                        .map_or((None, None), |(n, d)| (at(n), at(d)));
+                    cells.push((dcol.clone(), m, p, floats.value(i), num, den));
                 }
             }
         }
@@ -2546,7 +2634,14 @@ pub(crate) async fn metric_cube_slices(
                             let Some(v) = v else { continue };
                             let p = p[..7].to_string();
                             if keep.contains(&p) {
-                                cells.push(("alternative".into(), rival.to_string(), p, v));
+                                cells.push((
+                                    "alternative".into(),
+                                    rival.to_string(),
+                                    p,
+                                    v,
+                                    None,
+                                    None,
+                                ));
                             }
                         }
                         extra.insert("alternative".into(), json!(rival));
@@ -2568,12 +2663,23 @@ pub(crate) async fn metric_cube_slices(
             }
         }
         out.push(fact(seq, extra));
-        for (cell_seq, (dimension, member, period, value)) in cells.iter().enumerate() {
-            out.push(json!({
-                "seq": seq, "cell_seq": cell_seq as i64,
-                "dimension": dimension, "member": member,
-                "period": period, "value": value,
-            }));
+        for (cell_seq, (dimension, member, period, value, num, den)) in
+            cells.iter().enumerate()
+        {
+            let mut cell = serde_json::Map::new();
+            cell.insert("seq".into(), json!(seq));
+            cell.insert("cell_seq".into(), json!(cell_seq as i64));
+            cell.insert("dimension".into(), json!(dimension));
+            cell.insert("member".into(), json!(member));
+            cell.insert("period".into(), json!(period));
+            cell.insert("value".into(), json!(value));
+            if let Some(n) = num {
+                cell.insert("num".into(), json!(n));
+            }
+            if let Some(d) = den {
+                cell.insert("den".into(), json!(d));
+            }
+            out.push(Value::Object(cell));
         }
         seq += 1;
     }
@@ -2581,6 +2687,90 @@ pub(crate) async fn metric_cube_slices(
         out.push(json!({}));
     }
     rows_batch(out, cube_shape())
+}
+
+/// `metric_days('metric')` — one grounded metric's recent story at day
+/// grain, computed at read from the grounding itself: the cube stays
+/// monthly, and the day drill is a SELECT that serves the last
+/// 90 observed days at the metric's own verb. A ratio row carries its
+/// summed halves so a coarser client window (the week) re-derives the
+/// division. The time axis is the same judged choice the cube makes,
+/// refused with the same road out.
+pub(crate) async fn metric_days(
+    shared: &Arc<Shared>,
+    metric: &str,
+) -> Result<RecordBatch, SessionError> {
+    const DAYS_CAP: usize = 90;
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let bad = |d: String| SessionError::BadSubject(format!("metric_days('{metric}'): {d}"));
+    let ctx = shared.session_ctx();
+    let rctx = shared.read_context().await?;
+    let temporal = judged_bodies(shared, &rctx, &dataset, "temporal_profile").await?;
+    let slot = current_query_slots(shared, &rctx, &dataset)
+        .await?
+        .into_iter()
+        .find(|s| s.aspect == metric)
+        .ok_or_else(|| bad(format!("no current QUERY grounding named `{metric}`")))?;
+    let body: Value = serde_json::from_str(&slot.body)
+        .map_err(|e| bad(format!("the grounding is not JSON: {e}")))?;
+    let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+        return Err(bad("the grounding carries no `sql`".into()));
+    };
+    let probe = Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await?;
+    let fields = probe.schema();
+    let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
+    if !has("value") {
+        return Err(bad("the grounding serves no value column".into()));
+    }
+    let subjects = crate::provenance::served_subjects(&probe, &dataset);
+    let Some(tcol) = judged_time_column(&fields, &subjects, &temporal) else {
+        return Err(bad(NO_JUDGED_TIME.into()));
+    };
+    let is_ratio = has("num") && has("den");
+    let verb = if is_ratio {
+        "ratio"
+    } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
+        "stock"
+    } else {
+        "flow"
+    };
+    let rows = run_grain(shared, &ctx, sql, &tcol, verb, "day", is_ratio).await?;
+    let start = rows.len().saturating_sub(DAYS_CAP);
+    let mut out: Vec<Value> = rows[start..]
+        .iter()
+        .filter(|(_, v, ..)| v.is_some())
+        .map(|(p, v, num, den)| {
+            let mut row = serde_json::Map::new();
+            row.insert("period".into(), json!(p.get(..10).unwrap_or(p)));
+            row.insert("value".into(), json!(v));
+            if let Some(n) = num {
+                row.insert("num".into(), json!(n));
+            }
+            if let Some(d) = den {
+                row.insert("den".into(), json!(d));
+            }
+            row.insert("behavior".into(), json!(verb));
+            Value::Object(row)
+        })
+        .collect();
+    if out.is_empty() {
+        out.push(json!({}));
+    }
+    rows_batch(
+        out,
+        vec![
+            Field::new("period", DataType::Utf8, true),
+            Field::new("value", DataType::Float64, true),
+            Field::new("num", DataType::Float64, true),
+            Field::new("den", DataType::Float64, true),
+            Field::new("behavior", DataType::Utf8, true),
+        ],
+    )
 }
 
 /// The rival's monthly series at its own verb: a rival that serves
@@ -2636,5 +2826,7 @@ fn cube_shape() -> Vec<Field> {
         Field::new("member", DataType::Utf8, true),
         Field::new("period", DataType::Utf8, true),
         Field::new("value", DataType::Float64, true),
+        Field::new("num", DataType::Float64, true),
+        Field::new("den", DataType::Float64, true),
     ]
 }

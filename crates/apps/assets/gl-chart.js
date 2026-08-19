@@ -30,26 +30,25 @@
 
   class GlChart extends HTMLElement {
     async connectedCallback() {
-      const mount = document.createElement('div');
-      mount.className = 'chart-mount';
-      this.replaceChildren(mount);
+      this._mount = document.createElement('div');
+      this._mount.className = 'chart-mount';
+      this.replaceChildren(this._mount);
       this.setAttribute('aria-busy', 'true');
       try {
         const [spec, rows] = await Promise.all([
           glStore.json(this.getAttribute('spec')),
           glStore.rows(this.getAttribute('frame')),
         ]);
-        // The rows ride in at construction so vega scales once — the
-        // name stays bound, so a later view.data('frame', …) still
-        // updates in place.
-        spec.data = { name: 'frame', values: rows };
-        if (spec.width === undefined) spec.width = 'container';
-        const result = await vegaEmbed(mount, spec, { actions: false, config: CONFIG });
-        if (!this.isConnected) {
-          result.view.finalize();
-          return;
+        this._spec = spec;
+        this._rows = rows;
+        await this.render();
+        // A `windowed` chart re-derives from rows already in hand when
+        // the viewer's window changes; day and week read the `daily`
+        // frame, fetched only when first asked for.
+        if (this.hasAttribute('windowed')) {
+          this._onWindow = () => this.render();
+          document.addEventListener('glossql:window', this._onWindow);
         }
-        this._view = result.view;
       } catch (e) {
         this.replaceChildren(glStore.errorBox(e.message || String(e)));
       } finally {
@@ -57,7 +56,45 @@
       }
     }
 
+    async windowedRows() {
+      if (!this.hasAttribute('windowed')) return this._rows;
+      const w = glWindow.state();
+      const daily = this.getAttribute('daily');
+      if ((w.grain === 'day' || w.grain === 'week') && daily) {
+        if (!this._daily) this._daily = await glStore.rows(daily);
+        return glWindow.windowed(this._daily, w);
+      }
+      return glWindow.windowed(this._rows, w);
+    }
+
+    async render() {
+      try {
+        const rows = await this.windowedRows();
+        // A fresh embed per window: the ordinal scale re-derives its
+        // domain, which an in-place data swap would keep stale.
+        const spec = JSON.parse(JSON.stringify(this._spec));
+        spec.data = { name: 'frame', values: rows };
+        if (spec.width === undefined) spec.width = 'container';
+        if (this._view) {
+          this._view.finalize();
+          this._view = null;
+        }
+        const result = await vegaEmbed(this._mount, spec, { actions: false, config: CONFIG });
+        if (!this.isConnected) {
+          result.view.finalize();
+          return;
+        }
+        this._view = result.view;
+      } catch (e) {
+        this.replaceChildren(glStore.errorBox(e.message || String(e)));
+      }
+    }
+
     disconnectedCallback() {
+      if (this._onWindow) {
+        document.removeEventListener('glossql:window', this._onWindow);
+        this._onWindow = null;
+      }
       if (this._view) {
         this._view.finalize();
         this._view = null;

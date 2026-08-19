@@ -43,10 +43,13 @@ hidden, no dot-walking.
 
 A frame is one SQL file served as Arrow IPC. URL params bind as typed
 plan placeholders (`$from` in the SQL, `?from=…` on the URL); values
-arrive as Utf8 and the frame SQL casts explicitly. `$dataset` is
+arrive as Utf8 and the frame SQL casts explicitly, and a door argument
+binds the same way (`metric_days($metric)`). `$dataset` is
 reserved — always the bound dataset. Frames only read, and the browser
 fetches each frame once per state, sharing the table across every tile
-bound to it. The URL is the only state; drill is navigation.
+bound to it. The URL is the only state; drill is navigation. Params
+starting with `w.` are the viewer's window — display state the store
+never forwards, so a grain or span change refetches nothing.
 
 Display logic — glyphs, classes, links — is computed in the frame's
 SQL, not in the template. The shipped reads (`open_questions`, `owed`,

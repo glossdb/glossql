@@ -18,14 +18,24 @@
   // frames provably cannot. Metadata and data are not one pile.
   const classes = new Map();
 
+  // The app root follows the pushed pathname: hx-boost swaps the page
+  // but never re-swaps body[data-approot], so cross-app navigation
+  // resolved frames against the app the tab was opened on. The
+  // attribute stays as the fallback for pages outside /app/<name>.
   function approot() {
-    return new URL(document.body.dataset.approot || '/app/', document.location.origin);
+    const m = document.location.pathname.match(/^(\/app\/[^/]+)(\/|$)/);
+    const root = m ? m[1] + '/' : document.body.dataset.approot || '/app/';
+    return new URL(root, document.location.origin);
   }
 
   function frameUrl(ref) {
     const url = new URL(ref, approot());
     const page = new URLSearchParams(document.location.search);
     for (const [k, v] of page) {
+      // `w.*` is display state — the client's window over data already
+      // fetched. It never reaches a frame, so changing it refetches
+      // nothing.
+      if (k.startsWith('w.')) continue;
       url.searchParams.set(k, v);
     }
     return url.toString();
