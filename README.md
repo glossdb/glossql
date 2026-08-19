@@ -89,9 +89,10 @@ One listener, three doors:
   directory, or as glosses, which is the shape an agent can write.
 
 The door tells, skills teach: everything an agent must *learn* ships
-as skills (`.claude/skills/`); everything *live* is read through the
-language itself — the declared vocabulary, functions, witnesses, and
-glossary are plain tables.
+as skills — the glossin plugin, in the vendor-neutral Agent
+Plugins shape; everything *live* is read through the language itself
+— the declared vocabulary, functions, witnesses, and glossary are
+plain tables.
 
 ## The shipped library
 

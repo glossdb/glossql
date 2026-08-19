@@ -29,9 +29,10 @@ The server: one binary, one workspace, three doors. How it is built is
   ([doors](../reference/doors.md)). The doors carry no authentication
   while governance stays a held-open question; `/query` speaks as the
   anonymous `human` actor, so door choice is rank choice.
-- **Skills** — `.claude/skills/`, where a door-connected agent learns
-  the language; every skill is gated by the test suite like these
-  pages.
+- **Skills** — the glossin plugin (Agent Plugins shape, one skill
+  per `skills/*/SKILL.md`), where a door-connected agent learns the
+  language; every skill is gated by the server's test suite like
+  these pages.
 - **Bootstrap** — a fresh workspace receives the shipped system at
   boot; declaration relations read as plain tables.
 
