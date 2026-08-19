@@ -6,7 +6,8 @@
 //! examples are checked here instead of proofread.
 //!
 //! Two rules, over every fenced ` ```glossql ` and ` ```sql ` block in
-//! `.claude/skills/*/SKILL.md`:
+//! the product skills (`../glossin/skills/*/SKILL.md`, a required
+//! sibling checkout) and `.claude/skills/*/SKILL.md`:
 //!
 //!   1. it parses;
 //!   2. if it is a single read, it PLANS against a bootstrapped
@@ -37,18 +38,33 @@ struct Block {
     sql: String,
 }
 
-/// Every fenced glossql/sql block in the shipped skills.
+/// Every fenced glossql/sql block in the shipped skills: the product
+/// skills in the `../glossin` sibling (the same path contract as
+/// `../tabicl-candle` — a clone that builds can gate the skills), and
+/// what remains under `.claude/skills` (the substrate skill).
 fn blocks() -> Vec<Block> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.claude/skills")
-        .canonicalize()
-        .expect("the skills directory ships with the repo");
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut skills = Vec::new();
+    for (dir, why) in [
+        (
+            manifest.join("../../.claude/skills"),
+            "the skills directory ships with the repo",
+        ),
+        (
+            manifest.join("../../../glossin/skills"),
+            "the glossin sibling checkout (../glossin) gates the \
+             product skills — clone it beside this repo",
+        ),
+    ] {
+        let dir = dir.canonicalize().expect(why);
+        skills.extend(
+            std::fs::read_dir(&dir)
+                .expect("readable skills directory")
+                .filter_map(|e| e.ok())
+                .map(|e| e.path()),
+        );
+    }
     let mut out = Vec::new();
-    let mut skills: Vec<_> = std::fs::read_dir(&dir)
-        .expect("readable skills directory")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
     skills.sort();
     for skill in skills {
         let path = skill.join("SKILL.md");
