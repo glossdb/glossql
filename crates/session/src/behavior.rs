@@ -36,10 +36,10 @@
 //! - A table's own time axes are preferred; it borrows through an edge
 //!   only when it has none.
 //! - The anchor grain is the COARSER of the two sides' native grains; a
-//!   day-native alignment also serves a month variant, and a measure
-//!   table whose only edges are document-keyed borrows its entity one
-//!   hop through the document — without the hop, every anchor on such
-//!   a table starves.
+//!   day-native alignment also serves a month variant, and a table
+//!   whose only edges are document-keyed borrows its entity one hop
+//!   through the document — measure side and event side alike; without
+//!   the hop, every anchor on such a table starves.
 //! - A cumulative that RESETS is a stock only inside its scope: the raw
 //!   alignment AND a year-scoped variant both serve, and the gates kill
 //!   the wrong one.
@@ -131,6 +131,11 @@ struct Align {
     /// The borrowed-entity hop: the measure side joins the document
     /// table `dd` and keys on ITS dimension column.
     via: Option<(String, Vec<String>, Vec<String>)>, // (table, fk, key)
+    /// The same hop on the EVENT side: a document-keyed event table
+    /// joins its document master `ee`, and `e_cols` name columns on
+    /// that master. Discovered only when the event table aligns no
+    /// other way — borrow when starving, like the time-axis borrow.
+    e_via: Option<(String, Vec<String>, Vec<String>)>, // (table, fk, key)
 }
 
 fn numeric_dtype(d: &str) -> bool {
@@ -372,6 +377,7 @@ pub(crate) async fn behavior_anchors(
                         m_cols: p.src_cols.clone(),
                         e_cols: p.dst_cols.clone(),
                         via: None,
+                        e_via: None,
                     });
                 }
                 if p.src_t == *ev && p.dst_t == table {
@@ -379,6 +385,7 @@ pub(crate) async fn behavior_anchors(
                         m_cols: p.dst_cols.clone(),
                         e_cols: p.src_cols.clone(),
                         via: None,
+                        e_via: None,
                     });
                 }
             }
@@ -397,6 +404,7 @@ pub(crate) async fn behavior_anchors(
                             m_cols: p.src_cols.clone(),
                             e_cols: q.src_cols.clone(),
                             via: None,
+                            e_via: None,
                         });
                     }
                 }
@@ -423,7 +431,57 @@ pub(crate) async fn behavior_anchors(
                                     p1.src_cols.clone(),
                                     p1.dst_cols.clone(),
                                 )),
+                                e_via: None,
                             });
+                        }
+                    }
+                }
+            }
+            // Borrowed entity, event side — only when the event table
+            // aligned no other way (borrow when starving, like the
+            // time-axis borrow): a document-keyed event table's one
+            // path to the measure runs through its document master.
+            // event → master (q1), and the master either carries the
+            // measure's dimension key (q2 meeting p) or points at the
+            // measure directly (q2). The event side joins the master
+            // `ee` and keys on ITS columns; cost is that one m:1 join
+            // ahead of the aggregate, and the HAVING probe still gates
+            // the alignment before either side is scanned wide.
+            if aligns.is_empty() {
+                for q1 in &pointers {
+                    if q1.src_t != *ev || q1.dst_t == *ev || q1.dst_t == table {
+                        continue;
+                    }
+                    for q2 in &pointers {
+                        if q2.src_t != q1.dst_t || q2.dst_t == *ev {
+                            continue;
+                        }
+                        let e_via = Some((
+                            q1.dst_t.clone(),
+                            q1.src_cols.clone(),
+                            q1.dst_cols.clone(),
+                        ));
+                        if q2.dst_t == table {
+                            aligns.push(Align {
+                                m_cols: q2.dst_cols.clone(),
+                                e_cols: q2.src_cols.clone(),
+                                via: None,
+                                e_via,
+                            });
+                            continue;
+                        }
+                        for p in &pointers {
+                            if p.src_t == table
+                                && p.dst_t == q2.dst_t
+                                && p.dst_cols == q2.dst_cols
+                            {
+                                aligns.push(Align {
+                                    m_cols: p.src_cols.clone(),
+                                    e_cols: q2.src_cols.clone(),
+                                    via: None,
+                                    e_via: e_via.clone(),
+                                });
+                            }
                         }
                     }
                 }
@@ -436,7 +494,16 @@ pub(crate) async fn behavior_anchors(
                     .as_ref()
                     .map(|(t, _, _)| format!("{t}>"))
                     .unwrap_or_default();
-                let k = format!("{via}{}={}", a.m_cols.join(","), a.e_cols.join(","));
+                let e_via = a
+                    .e_via
+                    .as_ref()
+                    .map(|(t, _, _)| format!(">{t}"))
+                    .unwrap_or_default();
+                let k = format!(
+                    "{via}{e_via}{}={}",
+                    a.m_cols.join(","),
+                    a.e_cols.join(",")
+                );
                 if !seen.contains(&k) {
                     seen.push(k);
                     deduped.push(a);
@@ -531,8 +598,31 @@ pub(crate) async fn behavior_anchors(
                                     )
                                 }
                             };
+                            // The event side mirrors the hop: a
+                            // document-keyed event table joins its
+                            // master `ee` and keys on the master's
+                            // columns; its movements stay its own.
+                            let mut ae_from = e_from.clone();
+                            let (ae_base, align_label) = match &al.e_via {
+                                None => ("s".to_string(), align_label),
+                                Some((via_t, via_fk, via_key)) => {
+                                    ae_from.push_str(&format!(
+                                        " JOIN {} ee ON {}",
+                                        qi(via_t),
+                                        join_on("s", via_fk, "ee", via_key)
+                                    ));
+                                    (
+                                        "ee".to_string(),
+                                        format!(
+                                            "{table}.{} = {ev} via {via_t}.{}",
+                                            cols_label(&al.m_cols),
+                                            cols_label(&al.e_cols)
+                                        ),
+                                    )
+                                }
+                            };
                             let mut m_e = entity_expr(&am_base, &al.m_cols);
-                            let mut e_e = entity_expr("s", &al.e_cols);
+                            let mut e_e = entity_expr(&ae_base, &al.e_cols);
                             if *scope == "year" {
                                 m_e = format!(
                                     "CAST({m_e} AS VARCHAR) || '@' || CAST(extract(year FROM {m_ts}) AS VARCHAR)"
@@ -542,7 +632,7 @@ pub(crate) async fn behavior_anchors(
                                 );
                             }
                             let m_guard = not_null_guard(&am_base, &al.m_cols);
-                            let e_guard = not_null_guard("s", &al.e_cols);
+                            let e_guard = not_null_guard(&ae_base, &al.e_cols);
 
                             // Viability, on one probe: fewer than two
                             // entities with 4+ periods cannot clear the
@@ -622,7 +712,7 @@ pub(crate) async fn behavior_anchors(
                             let mq = run(format!(
                                 "SELECT {e_e} AS e, \
                                  date_trunc('{grain}', {e_ts}) AS b{sel} \
-                                 FROM {e_from} \
+                                 FROM {ae_from} \
                                  WHERE {e_guard} AND {e_texpr} IS NOT NULL \
                                  GROUP BY 1, 2 ORDER BY 1, 2"
                             ))
