@@ -17,7 +17,7 @@ data.
   judge removes false positives.
 - **No statistic ports without its oracle.** Every shipped statistic
   has a ground-truthed acceptance test
-  (`behavior_oracle.rs`, `dimensions_oracle.rs`, `f1_oracle.rs`);
+  (`behavior_oracle.rs`, `dimensions_oracle.rs`);
   outputs earn existence by consumers — no aspect is declared that
   nothing reads.
 - **Red exists only where a detector computes it.** Humans do not

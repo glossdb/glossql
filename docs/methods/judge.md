@@ -31,9 +31,8 @@ candidates, never conclusions.
   guessing. A failed judgment means the statistics stand.
 - **No statistic ports without its oracle.** The ported statistics
   carry ground-truthed acceptance tests
-  (`crates/scripts/tests/behavior_oracle.rs`, `dimensions_oracle.rs`,
-  `f1_oracle.rs`); an instrument whose accuracy cannot be measured
-  does not ship.
+  (`crates/scripts/tests/behavior_oracle.rs`, `dimensions_oracle.rs`);
+  an instrument whose accuracy cannot be measured does not ship.
 - **Outputs earn existence by consumers.** No aspect is declared that
   nothing reads.
 - **Red exists only where a detector computes it.** Humans do not

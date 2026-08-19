@@ -33,6 +33,3 @@ __pycache__/
 .claude/worktrees/
 # Working notes tied to an open issue; deleted when it closes
 .claude/notes/
-
-# Captured runs over licensed corpora — local only (licensing, 2026-08-18)
-/goldens/
