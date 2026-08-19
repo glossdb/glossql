@@ -294,6 +294,42 @@ async fn body_of(shared: &Shared, door: &Door) -> Result<String, SessionError> {
     }
 }
 
+/// A two-part relation whose head is a bound table and whose tail is
+/// one of its columns can only be an extraction subject spelled inside
+/// a read: the top-level form parses as its own statement (SPEC.md §6,
+/// the compute act), and a read stays a read — the composable surface
+/// over a measurement is GLOSSARY. Refused here with the road out,
+/// where the engine would say "table not found" and mean it.
+fn refuse_subject_relations(q: &mut Query, resolved: &Resolved) -> Result<(), SessionError> {
+    for factor in factors_in(q) {
+        let TableFactor::Table {
+            name, args: None, ..
+        } = &factor
+        else {
+            continue;
+        };
+        let [t, c] = name.0.as_slice() else {
+            continue;
+        };
+        let (Some(t), Some(c)) = (t.as_ident(), c.as_ident()) else {
+            continue;
+        };
+        let Some(pin) = resolved.pins.get(&t.value) else {
+            continue;
+        };
+        if pin.schema().field_with_name(&c.value).is_ok() {
+            return Err(SessionError::BadSubject(format!(
+                "`{t}.{c}` is a subject, not a table: an extraction \
+                 (SELECT fn() FROM {t}.{c}) is its own statement — run it, then \
+                 compose its measurement through GLOSSARY({t}.{c}::aspect)",
+                t = t.value,
+                c = c.value
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Every table factor anywhere in the query, one total traversal.
 fn factors_in(q: &mut Query) -> Vec<TableFactor> {
     struct Collect(Vec<TableFactor>);
@@ -443,6 +479,7 @@ pub(crate) async fn resolve(
         ctes: ctes_in(&q),
         ..Resolved::default()
     };
+    refuse_subject_relations(&mut q, &resolved)?;
     let mut done = HashSet::new();
     let mut path = Vec::new();
     for door in doors_in(&mut q) {
