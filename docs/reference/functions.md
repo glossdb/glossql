@@ -145,12 +145,19 @@ at which the actual landed. This measurement only reports; the
 series — the total, the slices along its served dimension columns, and
 the named rival where a grounding discloses `alternative_sql` — landed
 as one measurement that `metric_series()` then serves to any frame.
+The axes come from judged verdicts, never from the data's own shape:
+a served column enters as a dimension when its collapsed
+`dimension_relevance` is applicable, relevance orders the admitted,
+and the time axis is the served date column whose collapsed
+`temporal_profile` shows a named cadence, highest completeness first.
+A column without a verdict is a gap, not a candidate — run the
+profilers over the served columns before the cube.
 Caps, stated in the result: 4 dims, 48 months, and a bucketing target
-of 24 members. A served column is admitted at 2..512 distinct members;
-at 24 or under every member is named, above that the top 23 by weight
+of 24 members: at 24 or under every member is named, above that the
+top 23 by weight
 keep their names and the rest fold into `other` (each metric's
-`bucketed` field names the dimensions this happened to). Past 512 a
-column reads as an identifier and drops out. Extraction serves the
+`bucketed` field names the dimensions this happened to). Extraction
+serves the
 summary; the whole cube reads back via
 `GLOSSARY(<dataset>::metric_cube)`.
 

@@ -19,6 +19,7 @@ mod measure;
 mod misfit;
 mod plane;
 mod prepass;
+mod provenance;
 mod reads;
 pub mod rulings;
 mod search;

@@ -1469,6 +1469,30 @@ pub(crate) async fn current_query_slots(
     Ok(slots)
 }
 
+/// One measurement aspect's judged verdicts, collapsed and keyed by
+/// subject — human over agent over function, contested and superseded
+/// withheld. The cube's axis choices read these, never the data's own
+/// shape.
+async fn judged_bodies(
+    shared: &Arc<Shared>,
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Result<std::collections::HashMap<String, Value>, SessionError> {
+    let scope = glossql_glossary::Scope::Dataset;
+    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some(aspect)).await?;
+    Ok(
+        glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), rctx, &verdicts)
+            .into_iter()
+            .filter(|r| r.state == "current")
+            .filter_map(|r| {
+                let body = serde_json::from_str(r.value.as_deref()?).ok()?;
+                Some((r.subject, body))
+            })
+            .collect(),
+    )
+}
+
 /// One grounding's monthly fingerprint, `None` when it cannot serve a
 /// number: no `value` column, no time column, or any planning or
 /// execution failure — the script's try/catch, spelled out.
@@ -2193,15 +2217,25 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, member: &str, verb: &st
 /// turns metric names into rows once and the `metric_series()` read
 /// serves them to any frame with plain value filters.
 ///
+/// The axes come from judged verdicts, never from the data's own
+/// shape: a served column enters as a dimension when its collapsed
+/// `dimension_relevance` is applicable (human over agent over
+/// function), relevance orders the admitted, and the time axis is the
+/// served date column whose collapsed `temporal_profile` shows a named
+/// cadence, highest completeness first. A column without a verdict is
+/// a gap, not a candidate — the cube slices only what the glossary
+/// judged sliceable. Counting keeps two jobs and admits nothing: the
+/// served-frame floor (a metric's own filters can collapse an axis the
+/// table-level verdict admitted) and the display split.
+///
 /// Caps, recorded here: at most 4 dimension columns per metric, the
-/// last 48 months. A served column is admitted at 2..512 distinct
-/// members, fewest members first; up to 24 members every member is
+/// last 48 months. Up to 24 members every member is
 /// named, above that the dimension is *bucketed* — the top 23 by
 /// weight (summed value; a ratio weighs by its denominator) keep their
 /// names and the rest fold into 'other', so a wide axis enters instead
 /// of falling off a cliff (34
-/// sales orgs could never enter at a hard 24). Beyond 512 a column
-/// reads as an identifier, not a dimension. The fact row names its
+/// sales orgs could never enter at a hard 24).
+/// The fact row names its
 /// bucketed dimensions so 'other' is never read as a business member.
 /// A grounding assumption carrying `alternative_sql` (the metrics
 /// skill's named-rival convention) contributes one more series under
@@ -2223,11 +2257,16 @@ pub(crate) async fn metric_cube_slices(
 ) -> Result<RecordBatch, SessionError> {
     const DIMS_CAP: usize = 4;
     const MEMBERS_CAP: i64 = 24;
-    const MEMBERS_ADMIT_CAP: i64 = 512;
     const MONTHS_CAP: usize = 48;
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
+
+    // The judged surface, read once per build: collapsed verdicts by
+    // column subject, under the shipped bootstrap's aspect names
+    // (crates/scripts/functions/bootstrap.glossql).
+    let relevance = judged_bodies(shared, &rctx, dataset, "dimension_relevance").await?;
+    let temporal = judged_bodies(shared, &rctx, dataset, "temporal_profile").await?;
 
     let mut out = Vec::new();
     let mut seq = 0i64;
@@ -2262,8 +2301,41 @@ pub(crate) async fn metric_cube_slices(
             seq += 1;
             continue;
         }
-        let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
-            out.push(abstain(seq, "no time column"));
+        // Which table column each served field descends from — the
+        // judged verdicts key by subject, the frame names aliases.
+        let subjects = crate::provenance::served_subjects(&probe, dataset);
+
+        // The judged time axis: the served date column whose collapsed
+        // temporal_profile shows a named cadence, highest completeness
+        // first, schema order on a tie. A named cadence carries
+        // completeness; irregular and unknown do not, and never anchor
+        // a monthly series. A column without a verdict is a gap, not a
+        // candidate.
+        let mut best: Option<(String, f64)> = None;
+        for f in fields.fields() {
+            if !crate::whatif::is_temporal(f.data_type()) {
+                continue;
+            }
+            let Some(v) = subjects.get(f.name()).and_then(|s| temporal.get(s)) else {
+                continue;
+            };
+            if v["applicable"].as_bool() != Some(true) {
+                continue;
+            }
+            let Some(ratio) = v["completeness"]["ratio"].as_f64() else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(_, b)| ratio > *b) {
+                best = Some((f.name().clone(), ratio));
+            }
+        }
+        let Some((tcol, _)) = best else {
+            out.push(abstain(
+                seq,
+                "no judged time column: no served date column carries a current \
+                 temporal_profile with a named cadence — run temporal() over the \
+                 metric's date column first",
+            ));
             seq += 1;
             continue;
         };
@@ -2279,10 +2351,14 @@ pub(crate) async fn metric_cube_slices(
             "flow"
         };
 
-        // Served dimension candidates: every column that is neither the
-        // value nor time-typed (nor a ratio's own halves). Admission is
-        // by member count, one aggregate pass.
-        let cand: Vec<String> = fields
+        // Judged dimensions: a served column (neither the value nor
+        // time-typed nor a ratio's own halves) enters when its
+        // collapsed dimension_relevance is applicable — relevance
+        // orders the admitted, fewest members break a tie, the cap
+        // keeps the top four. Counting admits nothing; its two jobs
+        // are the served-frame floor and the bucketing split, one
+        // aggregate pass.
+        let cand: Vec<(String, f64)> = fields
             .fields()
             .iter()
             .filter(|f| {
@@ -2292,14 +2368,20 @@ pub(crate) async fn metric_cube_slices(
                 }
                 !crate::whatif::is_temporal(f.data_type())
             })
-            .map(|f| f.name().clone())
+            .filter_map(|f| {
+                let v = subjects.get(f.name()).and_then(|s| relevance.get(s))?;
+                if v["applicable"].as_bool() != Some(true) {
+                    return None;
+                }
+                Some((f.name().clone(), v["relevance"].as_f64().unwrap_or(0.0)))
+            })
             .collect();
-        let mut counts: Vec<(String, i64)> = Vec::new();
+        let mut counts: Vec<(String, f64, i64)> = Vec::new();
         if !cand.is_empty() {
             let parts: Vec<String> = cand
                 .iter()
                 .enumerate()
-                .map(|(i, c)| format!("count(DISTINCT \"{c}\") AS \"n_{i}\""))
+                .map(|(i, (c, _))| format!("count(DISTINCT \"{c}\") AS \"n_{i}\""))
                 .collect();
             let q = format!("SELECT {} FROM ({sql})", parts.join(", "));
             let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
@@ -2310,28 +2392,30 @@ pub(crate) async fn metric_cube_slices(
                 .collect()
                 .await
                 .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
-            for (i, c) in cand.iter().enumerate() {
+            for (i, (c, r)) in cand.iter().enumerate() {
                 let n = int_column(&batches, &format!("n_{i}"))
                     .map_err(SessionError::Runtime)?[0];
-                counts.push((c.clone(), n));
+                counts.push((c.clone(), *r, n));
             }
         }
+        counts.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.2.cmp(&b.2))
+                .then(a.0.cmp(&b.0))
+        });
         let mut dims: Vec<String> = Vec::new();
         let mut bucketed: Vec<String> = Vec::new();
-        while dims.len() < DIMS_CAP {
-            let mut best: Option<(&str, i64)> = None;
-            for (c, n) in &counts {
-                if *n < 2 || *n > MEMBERS_ADMIT_CAP || dims.iter().any(|d| d == c) {
-                    continue;
-                }
-                if best.is_none_or(|(_, bn)| *n < bn) {
-                    best = Some((c, *n));
-                }
+        for (c, _, n) in &counts {
+            if dims.len() >= DIMS_CAP {
+                break;
             }
-            let Some((c, n)) = best else { break };
-            dims.push(c.to_string());
-            if n > MEMBERS_CAP {
-                bucketed.push(c.to_string());
+            if *n < 2 {
+                continue;
+            }
+            dims.push(c.clone());
+            if *n > MEMBERS_CAP {
+                bucketed.push(c.clone());
             }
         }
 

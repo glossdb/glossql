@@ -11,14 +11,18 @@
 -- business: metric_series() slices it, GLOSSARY reads it whole. Cube
 -- rows are records since stage 5 — the tuple form was a script-ism
 -- arrow could not carry.
--- `members` is a bucketing target, NOT a cutoff (34 sales orgs
--- could never enter at a hard
--- 24). A served column is admitted at 2..512 distinct members, fewest
--- first; at 24 or under every member is named, and above that the top
+-- The axes come from judged verdicts, never from the data's own
+-- shape: a served column enters as a dimension when its collapsed
+-- dimension_relevance is applicable (human over agent over function),
+-- relevance orders the admitted, and the time axis is the served date
+-- column whose collapsed temporal_profile shows a named cadence,
+-- highest completeness first. A column without a verdict is a gap,
+-- not a candidate. Counting admits nothing; `members` is a bucketing
+-- target, NOT a cutoff (34 sales orgs could never enter at a hard
+-- 24): at 24 or under every member is named, and above that the top
 -- 23 by weight keep their names while the rest fold into 'other' — so
--- a wide axis enters bucketed instead of falling off. Only past 512
--- does a column drop out, reading as an identifier and not a
--- dimension. Each metric's `bucketed` field names the dimensions this
+-- a wide axis enters bucketed instead of falling off. Each metric's
+-- `bucketed` field names the dimensions this
 -- happened to, so 'other' is never mistaken for a business member.
 -- Bucketing loses nothing: a bucketed flow or stock axis still sums
 -- to the metric's own total, and a ratio member — 'other' included —

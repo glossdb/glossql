@@ -55,11 +55,34 @@ async fn cube_session(
             .await
             .unwrap();
     }
+    // A measurement is never hand-glossed (SPEC.md §5.2) — the judged
+    // verdicts the cube reads land through extractions. The judge
+    // functions serve fixed verdicts so the tests exercise the cube's
+    // read policy, not the shipped profilers.
     let declarations = glossql_scripts::library::splice(
-        r#"DECLARE ASPECT metric_cube WITH $${
+        r#"DECLARE ASPECT temporal_profile WITH $${
+             "type": "object", "required": ["applicable"],
+             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+           DECLARE ASPECT dimension_relevance WITH $${
+             "type": "object", "required": ["applicable"],
+             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+           DECLARE ASPECT metric_cube WITH $${
              "type": "object", "required": ["applicable"],
              "properties": {"applicable": {"type": "boolean"},
                             "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE FUNCTION judge_time FOR GLOBAL AS
+             $$SELECT true AS applicable,
+                      CASE WHEN $subject LIKE '%.signed' THEN 'irregular'
+                           ELSE 'month' END AS granularity,
+                      CASE WHEN $subject LIKE '%.signed' THEN NULL
+                           WHEN $subject LIKE '%.booked' THEN named_struct('ratio', 0.5)
+                           ELSE named_struct('ratio', 1.0) END AS completeness$$
+             RETURNS temporal_profile;
+           DECLARE FUNCTION judge_axis FOR GLOBAL AS
+             $$SELECT true AS applicable,
+                      CASE WHEN $subject LIKE '%.note' THEN 0.9
+                           ELSE 0.7 END AS relevance$$
+             RETURNS dimension_relevance;
            DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.sql$$
              RETURNS metric_cube;"#,
     )
@@ -178,6 +201,18 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
                       "confidence": 0.7}
                  ]}$$;"#,
             r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            // The judged axes land LAST: a measurement is keyed at the
+            // statement pin, and every declaration moves it — a judge
+            // run before the metric glosses would read as drift. The
+            // rival's `alt` table deliberately carries no verdict — a
+            // rival is authored, never admission-validated, and still
+            // serves. The wide note column takes the higher relevance
+            // so ordering is by judgment, never by member count.
+            "SELECT judge_time() FROM lines.date;",
+            "SELECT judge_time() FROM levels.date;",
+            "SELECT judge_axis() FROM lines.note;",
+            "SELECT judge_axis() FROM lines.region;",
+            "SELECT judge_axis() FROM lines.channel;",
         ],
     )
     .await;
@@ -188,9 +223,10 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(metrics.len(), 2);
 
     let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
-    // admission by member count, fewest first; the 40-member column
-    // enters last, bucketed
-    assert_eq!(revenue["dims"], json!(["region", "channel", "note"]));
+    // admission by judged verdict: the 40-member note column leads on
+    // relevance (and enters bucketed), the 0.7 tie breaks by fewest
+    // members
+    assert_eq!(revenue["dims"], json!(["note", "region", "channel"]));
     assert_eq!(revenue["bucketed"], json!(["note"]));
     assert_eq!(revenue["behavior"], json!("flow"));
     assert_eq!(revenue["alternative"], json!("all invoiced"));
@@ -278,6 +314,8 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
         &[
             r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value, product FROM levels", "behavior": "stock"}$$;"#,
+            "SELECT judge_time() FROM levels.date;",
+            "SELECT judge_axis() FROM levels.product;",
         ],
     )
     .await;
@@ -385,6 +423,9 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
         &[
             r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS dso ON fin AS $${"sql": "SELECT date, value, num, den, segment, region FROM cells"}$$;"#,
+            "SELECT judge_time() FROM cells.date;",
+            "SELECT judge_axis() FROM cells.segment;",
+            "SELECT judge_axis() FROM cells.region;",
         ],
     )
     .await;
@@ -430,4 +471,111 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     let by_region = rows_of(dso, "region");
     near(at(&by_region, "EMEA", "2024-01"), 400.0 / 3000.0, "region EMEA");
     near(at(&by_region, "APAC", "2024-01"), 600.0 / 3000.0, "region APAC");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
+    // The glos onboarding shape: the served frame leads with an
+    // attribute date (all contracts signed in one month), a sparser
+    // date follows, the event date comes last among the three; a
+    // low-cardinality column rides along with no verdict landed.
+    // Schema order would anchor the series on `signed` (one period
+    // instead of thirty) and cardinality would admit `channel`; the
+    // judged verdicts pick `date` — irregular never anchors, and among
+    // named cadences the higher completeness wins — and `region`
+    // alone.
+    let (mut signed, mut booked, mut dates, mut values, mut regions, mut channels) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    for (i, start) in MONTH_STARTS.iter().enumerate() {
+        for r in ["r1", "r2", "r3"] {
+            signed.push(19723 + (i as i32 % 28));
+            booked.push(19723 + (i as i32 % 28));
+            dates.push(19723 + start);
+            values.push(1.0);
+            regions.push(r);
+            channels.push(["c1", "c2", "c3", "c4", "c5"][i % 5]);
+        }
+    }
+    let lines = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("signed", DataType::Date32, false),
+            Field::new("booked", DataType::Date32, false),
+            Field::new("date", DataType::Date32, false),
+            Field::new("value", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, false),
+            Field::new("channel", DataType::Utf8, false),
+        ])),
+        vec![
+            Arc::new(Date32Array::from(signed)),
+            Arc::new(Date32Array::from(booked)),
+            Arc::new(Date32Array::from(dates)),
+            Arc::new(Float64Array::from(values)),
+            Arc::new(StringArray::from(regions)),
+            Arc::new(StringArray::from(channels)),
+        ],
+    )
+    .unwrap();
+    let bare = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("date", DataType::Date32, false),
+            Field::new("value", DataType::Float64, false),
+        ])),
+        vec![
+            Arc::new(Date32Array::from(vec![19723])),
+            Arc::new(Float64Array::from(vec![1.0])),
+        ],
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("lines", lines), ("bare", bare)],
+        &[
+            r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT raw WITH $${"title": "Raw"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS revenue ON fin AS $${"sql": "SELECT signed, booked, date, value, region, channel FROM lines"}$$;"#,
+            r#"GLOSS raw ON fin AS $${"sql": "SELECT date, value FROM bare"}$$;"#,
+            // The attribute date carries a verdict too — irregular, no
+            // completeness — proving a landed verdict without a named
+            // cadence never anchors, not merely an absent one.
+            "SELECT judge_time() FROM lines.signed;",
+            "SELECT judge_time() FROM lines.booked;",
+            "SELECT judge_time() FROM lines.date;",
+            "SELECT judge_axis() FROM lines.region;",
+        ],
+    )
+    .await;
+    let out = cube(&session).await;
+
+    let metrics = out["metrics"].as_array().unwrap();
+    let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
+    assert_eq!(revenue["applicable"], json!(true), "{revenue}");
+    // the judged axis, not the first temporal column: thirty monthly
+    // periods, not one
+    let total = rows_of(revenue, "");
+    assert_eq!(total.len(), 30, "{revenue}");
+    assert_eq!(total[0]["period"], json!("2024-01"));
+    assert_eq!(total[29]["period"], json!("2026-06"));
+    // the judged dimension alone — the unjudged column is a gap, not a
+    // candidate
+    assert_eq!(revenue["dims"], json!(["region"]));
+
+    // a frame whose date column carries no verdict abstains with the
+    // road out
+    let raw = metrics.iter().find(|m| m["metric"] == "raw").unwrap();
+    assert_eq!(raw["applicable"], json!(false), "{raw}");
+    assert!(
+        raw["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no judged time column"),
+        "{raw}"
+    );
 }
