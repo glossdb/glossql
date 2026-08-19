@@ -1,7 +1,6 @@
 # docs — the curated statement
 
-What the system is — implemented, and planned with its triggers — for
-every reader, agents and humans alike. Code and its comments are the
+What the system is, for every reader, agents and humans alike. Code and its comments are the
 source of truth for what is live; these pages state the shape, the
 verdicts, and the why that code cannot. SPEC.md alone is normative
 language prose; the skills teach a door-connected agent the language.
@@ -19,9 +18,9 @@ suite.
   them: each algorithm with its measured verdict and stated limits.
 - [`architecture/`](architecture/README.md) — the store, the substrate
   seams, and storage.
-- [`system/`](system/README.md) — the server at a glance: what stands,
-  known limits, planned.
+- [`system/`](system/README.md) — the server at a glance: what stands
+  and its known limits.
 - [`onboarding/`](onboarding/README.md) — the onboarding path: what
-  stands, its conventions, what is planned.
+  stands and its conventions.
 - [`quality/`](quality/README.md) — the quality layer and the
   monitoring built on it.

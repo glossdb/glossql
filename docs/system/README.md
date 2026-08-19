@@ -43,22 +43,3 @@ The server: one binary, one workspace, three doors. How it is built is
   format's.
 - An MCP session reaped between calls answers a bare `Not Found`; the
   client re-inits and replays `USE`.
-
-## Planned
-
-Actionable units live in the issue tracker; the standing picture:
-
-- **Upstream-dependent.** Physical deletes — strike cleanup, aspect
-  re-declare, measurement-write batching — arrive with the Iceberg
-  delete write path; snapshot properties on the insert path collapse
-  the landing to `INSERT INTO`; a CTE probe in the planner seam
-  retires the pre-pass; groundings compile to spec views when catalog
-  view operations land.
-- **Deployment.** A REST catalog binds through the one-builder seam;
-  cloud kernel serving is measured when a deployment target exists;
-  Flight SQL is a future door — pyarrow reads the HTTP stream today.
-- **Language and doors.** App authoring as statements and a
-  data-update verb are held for ruling, corpus-first.
-- **Model track, each with its trigger.** Fully native band body;
-  the width scaling experiment; frame-limit machinery; what-if product
-  design.

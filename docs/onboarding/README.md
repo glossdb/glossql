@@ -98,21 +98,3 @@ arc.
   what a sentinel means. Temporal formats ride the same path: the
   recipe cast carries the fix, and what is learned banks at source
   grain.
-
-## Planned
-
-- **The fresh-user run** — a scratch folder outside the repo, MCP
-  config only, full onboarding through the question round; the run is
-  the verification and the answer to "where do users start".
-- **Client coverage** — the round rides MCP form elicitation, and a
-  client without form support gets the prose relay instead; verifying
-  form rendering across clients is open.
-- **Assumption `basis` as a structured reference** — today `basis` is
-  a free string (the grounding schema), so no read can ask "which
-  groundings cite this definition"; the structured form is a ruling
-  candidate.
-- **The full deletion cascade** — `DROP TABLE` refuses while data or
-  glosses stand, the stand-in until a cascade is ruled; approval decay
-  folds in here (a human slot is not more durable than the reality
-  under it — once evidence lineage is snapshot lineage, it is a join,
-  not machinery).

@@ -93,31 +93,3 @@ landing — catches the value faults no marginal statistic sees;
 known-good history; the band walk asks, for each recent month, what
 range it should have landed in. A clean corpus stays green at the
 judge.
-
-## Planned
-
-1. **Quality reported at metric grain.** Verdicts land at table /
-   column / relationship grain; the operator thinks in metrics. "Which
-   metrics are impaired by this batch" is lineage arithmetic the
-   glossary already knows; the open work is the read shape and its
-   presentation.
-2. **Wrong-join decisions.** Joint plausibility can rank wrong
-   pairings where nothing deterministic reaches; turning a
-   recall-oriented ranking into an admission decision without flooding
-   the judge has no established policy.
-3. **Restatement watch.** Already-admitted history changing later —
-   late postings are normal to a point that differs per workspace.
-   Snapshots make the change detectable; normal-vs-incident has no
-   method yet.
-4. **Aging tables, honestly monitored.** The current answer to
-   lifecycle maturation is excluding the lifecycle columns —
-   blindness, not monitoring. "Is this month's status mix normal for
-   its age" needs lifecycle timestamps or snapshots; no instrument
-   exists.
-5. **Slow, small changes.** A 2% scoped move is invisible in any
-   single month. Accumulation across months (sequential testing) is
-   the classical answer; untried, and possibly unworkable at six-month
-   histories.
-6. **Slice false-alarm budgets.** Per-slice surprise multiplies false
-   alarms with the slice count and drowns the judge without a budget
-   across slices. Standard statistics, unproven here.
