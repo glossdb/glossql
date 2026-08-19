@@ -336,36 +336,48 @@ async fn account_casts(
 
     let mut checks = Vec::with_capacity(targets.len());
     for (target, failed) in targets.iter().zip(counts) {
-        let mut tokens = Vec::new();
+        // One token read per call site, merged by frequency: a
+        // composite expression samples each input's own failures, so
+        // the tokens under a column are the values that nulled it —
+        // never another input's.
+        let mut merged: Vec<(String, u64)> = Vec::new();
         if failed > 0 {
-            let rows = ctx
-                .sql_with_options(&accounting::tokens_sql(select, target), read_only())
-                .await?
-                .collect()
-                .await?;
-            for batch in &rows {
-                // The token column's concrete type follows the engine's
-                // string preferences (Utf8View today) — render generically
-                // rather than downcasting to one spelling of "string".
-                let t = batch.column(0);
-                let n = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .ok_or_else(|| Error::Batches("token count is not Int64".into()))?;
-                for i in 0..batch.num_rows() {
-                    if !t.is_null(i) {
-                        let token = datafusion::arrow::util::display::array_value_to_string(t, i)
-                            .map_err(|e| Error::Batches(e.to_string()))?;
-                        tokens.push((token, n.value(i) as u64));
+            for site in &target.sites {
+                let rows = ctx
+                    .sql_with_options(&accounting::tokens_sql(select, target, site), read_only())
+                    .await?
+                    .collect()
+                    .await?;
+                for batch in &rows {
+                    // The token column's concrete type follows the engine's
+                    // string preferences (Utf8View today) — render generically
+                    // rather than downcasting to one spelling of "string".
+                    let t = batch.column(0);
+                    let n = batch
+                        .column(1)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .ok_or_else(|| Error::Batches("token count is not Int64".into()))?;
+                    for i in 0..batch.num_rows() {
+                        if !t.is_null(i) {
+                            let token =
+                                datafusion::arrow::util::display::array_value_to_string(t, i)
+                                    .map_err(|e| Error::Batches(e.to_string()))?;
+                            match merged.iter_mut().find(|(k, _)| *k == token) {
+                                Some((_, c)) => *c += n.value(i) as u64,
+                                None => merged.push((token, n.value(i) as u64)),
+                            }
+                        }
                     }
                 }
             }
         }
+        merged.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        merged.truncate(8);
         checks.push(CastCheck {
             column: target.column.clone(),
             failed,
-            tokens,
+            tokens: merged,
         });
     }
     Ok(checks)

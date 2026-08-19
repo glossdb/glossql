@@ -275,6 +275,51 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_composite_expression_samples_the_column_that_failed() {
+    // A projection holding two `try_*` sites over different columns:
+    // the CASE guard reads tag_datum, the result casts termin_zeit.
+    // Attribution is per call site, so the tokens under termin_zeit
+    // are the values that nulled it — never the guard column's dates,
+    // which is what one onboarding shipped (the agent chased tag_datum
+    // values reported under termin_zeit for two probe rounds).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("plan.csv"),
+        "id,tag_datum,termin_zeit\n\
+         1,03.01.2026,03.01.2026 08:30\n\
+         2,04.01.2026,bald\n\
+         3,05.01.2026,05.01.2026 09:15\n\
+         4,06.01.2026,unklar\n\
+         5,07.01.2026,07.01.2026 10:00\n",
+    )
+    .unwrap();
+    let landed = run_recipe(
+        &spec("csv", dir.path()),
+        "SELECT id, \
+                try_to_date(tag_datum, '%d.%m.%Y') AS tag_datum, \
+                CASE WHEN try_to_date(tag_datum, '%d.%m.%Y') IS NOT NULL \
+                     THEN try_to_timestamp(termin_zeit, '%d.%m.%Y %H:%M') \
+                     ELSE NULL END AS termin_zeit \
+         FROM read_csv('plan.csv')",
+    )
+    .await
+    .unwrap();
+
+    let glossql_import::CastAccounting::Checked(checks) = &landed.casts else {
+        panic!("accounted: {:?}", landed.casts);
+    };
+    let termin = checks.iter().find(|c| c.column == "termin_zeit").unwrap();
+    assert_eq!(termin.failed, 2, "{checks:?}");
+    assert_eq!(
+        termin.tokens,
+        vec![("bald".to_string(), 1), ("unklar".to_string(), 1)],
+        "tokens come from the failing column, not its CASE guard"
+    );
+    let tag = checks.iter().find(|c| c.column == "tag_datum").unwrap();
+    assert_eq!(tag.failed, 0, "{checks:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_try_to_date_reads_a_column_of_mixed_formats() {
     // Run 4's payments column: three conventions interleaved, no ISO
     // row at all. Formats are tried in order and the first that parses

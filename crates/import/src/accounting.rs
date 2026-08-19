@@ -4,7 +4,10 @@
 //! the one moment raw and typed values coexist, each cast in the
 //! recipe's SELECT list is re-read as `input IS NOT NULL AND cast IS
 //! NULL`: one companion aggregate for the counts, one grouped read per
-//! failing column for its top tokens by frequency. The tokens are
+//! failing `try_*` call site for its top tokens by frequency — per
+//! SITE, not per column, so a projection that composes two casts over
+//! two columns samples the values that actually failed, never the
+//! other input's. The tokens are
 //! derived from the data — **no sentinel vocabulary exists here, ruled:
 //! none may** — and judging them is the agent's job, closed by an
 //! authored recipe amendment.
@@ -56,12 +59,19 @@ impl CastAccounting {
 }
 
 /// A cast column the companion queries will account: the projection's
-/// full expression (what lands) and the try-node's input (what was
-/// there), both rendered back to SQL.
+/// full expression (what lands) and every `try_*` call site within it
+/// (what was there, per input), all rendered back to SQL.
 pub(crate) struct Target {
     pub column: String,
-    pub inner: String,
     pub full: String,
+    pub sites: Vec<Site>,
+}
+
+/// One `try_*` call site inside a projection: the try expression and
+/// its input.
+pub(crate) struct Site {
+    pub try_expr: String,
+    pub inner: String,
 }
 
 pub(crate) enum Plan {
@@ -106,11 +116,12 @@ pub(crate) fn plan(sql: &str) -> Plan {
             SelectItem::UnnamedExpr(expr) => (expr, expr.to_string()),
             _ => continue,
         };
-        if let Some(inner) = try_input(expr) {
+        let sites = try_sites(expr);
+        if !sites.is_empty() {
             targets.push(Target {
                 column,
-                inner,
                 full: expr.to_string(),
+                sites,
             });
         }
     }
@@ -126,9 +137,15 @@ pub(crate) fn plan(sql: &str) -> Plan {
     counts.projection = targets
         .iter()
         .map(|t| {
+            let present = t
+                .sites
+                .iter()
+                .map(|s| format!("({}) IS NOT NULL", s.inner))
+                .collect::<Vec<_>>()
+                .join(" OR ");
             parse_projection(&format!(
-                "SUM(CASE WHEN ({}) IS NOT NULL AND ({}) IS NULL THEN 1 ELSE 0 END)",
-                t.inner, t.full
+                "SUM(CASE WHEN ({present}) AND ({}) IS NULL THEN 1 ELSE 0 END)",
+                t.full
             ))
         })
         .collect::<Result<_, _>>()
@@ -140,21 +157,25 @@ pub(crate) fn plan(sql: &str) -> Plan {
     }
 }
 
-/// The token read for one failing column: the cast's input values that
-/// nulled, most frequent first.
+/// The token read for one call site of a failing column: the values
+/// this site's cast nulled while the whole projection landed NULL,
+/// most frequent first. The projection-NULL conjunct keeps the
+/// COALESCE rule: a second format that catches the value is not a
+/// failure, so its site samples nothing.
 pub(crate) fn tokens_sql(
     select: &datafusion::sql::sqlparser::ast::Select,
     target: &Target,
+    site: &Site,
 ) -> String {
     let mut q = select.clone();
     q.projection = vec![
-        parse_projection(&format!("CAST(({}) AS VARCHAR)", target.inner))
+        parse_projection(&format!("CAST(({}) AS VARCHAR)", site.inner))
             .expect("token projection parses"),
         parse_projection("COUNT(*)").expect("count projection parses"),
     ];
     let miss = format!(
-        "({}) IS NOT NULL AND ({}) IS NULL",
-        target.inner, target.full
+        "({}) IS NOT NULL AND ({}) IS NULL AND ({}) IS NULL",
+        site.inner, site.try_expr, target.full
     );
     let miss = Parser::new(&GenericDialect {})
         .try_with_sql(&miss)
@@ -181,14 +202,18 @@ fn parse_projection(
     ))
 }
 
-/// The input of the outermost `try_*` in the expression, if any — the
-/// pre-order walk meets an ancestor before its descendants, so the
-/// first hit is never inside another try. `COALESCE(try_to_date(x, a),
-/// try_to_date(x, b))` accounts correctly through this: the cell counts
-/// as failed only when the whole projection landed NULL over a present
-/// input, so a second format that catches it is not a failure.
-fn try_input(expr: &Expr) -> Option<String> {
-    let mut found = None;
+/// Every `try_*` call site in the expression, one per distinct input.
+/// The pre-order walk meets an ancestor before its descendants, so a
+/// try nested inside an earlier site's input drops in the filter, and
+/// `COALESCE(try_to_date(x, a), try_to_date(x, b))` collapses to one
+/// site over `x` — which keeps the fallback rule: the cell counts as
+/// failed only when the whole projection landed NULL over a present
+/// input, so a second format that catches it is not a failure. Two
+/// sites over DIFFERENT inputs both survive, and each samples its own
+/// input's tokens — the attribution the composite-expression bug was
+/// about.
+fn try_sites(expr: &Expr) -> Vec<Site> {
+    let mut found: Vec<Site> = Vec::new();
     let _ = visit_expressions(expr, |e| {
         let inner = match e {
             Expr::Cast {
@@ -213,10 +238,21 @@ fn try_input(expr: &Expr) -> Option<String> {
             _ => None,
         };
         if let Some(inner) = inner {
-            found = Some(inner);
-            return ControlFlow::Break(());
+            found.push(Site {
+                try_expr: e.to_string(),
+                inner,
+            });
         }
         ControlFlow::<()>::Continue(())
     });
-    found
+    let mut sites: Vec<Site> = Vec::new();
+    for s in found {
+        let kept = sites
+            .iter()
+            .any(|k| k.inner == s.inner || k.inner.contains(&s.try_expr));
+        if !kept {
+            sites.push(s);
+        }
+    }
+    sites
 }
