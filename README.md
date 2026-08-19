@@ -56,7 +56,7 @@ DECLARE SOURCE / RECIPE / DATASET          -- where data comes from
 DECLARE RELATIONSHIP a.x -> b.y            -- declared structure (-> m:1, <-> 1:1)
 DECLARE ASPECT ... AS MEASUREMENT|FACT|QUERY   -- the vocabulary
 GLOSS aspect ON subject AS { ... }         -- the one write verb, body always JSON
-DECLARE FUNCTION ... ACCEPTS ... RETURNS ...   -- scripts as functions
+DECLARE FUNCTION ... AS $$ ... $$ RETURNS ...  -- SQL bodies as functions
 DECLARE WITNESS ... BY (...) DETECTOR ...  -- who may speak; who adjudicates
 SELECT * FROM GLOSSARY(subject)            -- collapsed context read
 SELECT * FROM ATTEST(subject.aspect)       -- adjudication read (band + score)
@@ -72,8 +72,8 @@ A Rust workspace (`crates/`) on DataFusion and Iceberg: `parser`
 (the grammar over DataFusion's parser), `glossary` (the store —
 slots, supersession, admission, collapse), `session` (statement
 routing, one session per actor and dataset), `catalog` + `import`
-(the Iceberg lake and recipe execution), `scripts` (the rhai function
-runtime and the reference library), `apps` (server-rendered data
+(the Iceberg lake and recipe execution), `scripts` (the native
+kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
 One listener, three doors:

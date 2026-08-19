@@ -1,0 +1,27 @@
+---
+source: crates/parser/tests/statements.rs
+assertion_line: 72
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION outliers FOR GLOBAL AS $$SELECT profile(v) FROM subject_column($subject)$$ RETURNS outlier_profile;\").expect(\"must parse\")"
+---
+[
+    Declare(
+        Function(
+            FunctionDecl {
+                name: Ident {
+                    value: "outliers",
+                    quote_style: None,
+                    span: Span(Location(1,18)..Location(1,26)),
+                },
+                scope: Global,
+                script: "SELECT profile(v) FROM subject_column($subject)",
+                returns: Some(
+                    Ident {
+                        value: "outlier_profile",
+                        quote_style: None,
+                        span: Span(Location(1,101)..Location(1,116)),
+                    },
+                ),
+            },
+        ),
+    ),
+]

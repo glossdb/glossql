@@ -1,6 +1,6 @@
 //! `behavior_anchors('table.column')` — the stock/flow discriminator
-//! from v0.3's lineage reconcile (analysis/lineage/reconcile.py,
-//! transcribed 2026-08-05), reshaped as an evidence door — the judge
+//! from v0.3's lineage reconcile (analysis/lineage/reconcile.py),
+//! reshaped as an evidence door — the judge
 //! reads it before glossing `behavior`; it is never a voice in the
 //! behavior slots.
 //!
@@ -12,7 +12,7 @@
 //!   FLOW : y[t]  ≈ m[t]        R_flow  = Σ|y − m| / Σ|m|
 //!   STOCK: Δy[t] ≈ m[t] (t≥1)  R_stock = Σ|Δy − m'| / Σ|m'|
 //!
-//! Anchors come from DECLARED relationships only (ruled 2026-08-05):
+//! Anchors come from DECLARED relationships only:
 //! the plane order is relationships first, and the wrong-anchor gate
 //! then guards misdeclared edges rather than a combinatorial sweep.
 //! Since the port, a composite (tuple) endpoint takes part like any
@@ -20,8 +20,8 @@
 //! where the script it replaces skipped them and was blind to the
 //! composite corpus's whole declared graph (the foundation report §7a).
 //!
-//! The division of labor (2026-08-06, replacing interpreter-bound
-//! loops): this door discovers anchors and holds POLICY — axes,
+//! The division of labor (interpreter-bound loops are the
+//! alternative): this door discovers anchors and holds POLICY — axes,
 //! alignments, grain, which terms are movements, Wilson support, the
 //! winner and its alternatives. The `reconcile` kernel, behind the
 //! runtime seam, holds the ARITHMETIC. Pairing is on the intersection
@@ -38,11 +38,11 @@
 //! - The anchor grain is the COARSER of the two sides' native grains; a
 //!   day-native alignment also serves a month variant, and a measure
 //!   table whose only edges are document-keyed borrows its entity one
-//!   hop through the document (2026-08-14, the medium run's
-//!   starvation).
+//!   hop through the document — without the hop, every anchor on such
+//!   a table starves.
 //! - A cumulative that RESETS is a stock only inside its scope: the raw
 //!   alignment AND a year-scoped variant both serve, and the gates kill
-//!   the wrong one (found on rel-f1, 2026-08-06).
+//!   the wrong one.
 //! - An alignment where fewer than two entities carry 4+ periods
 //!   abstains on one HAVING probe, before either side is scanned wide.
 
@@ -94,8 +94,8 @@ fn qi(name: &str) -> String {
 }
 
 /// One endpoint of a declared relationship: `t.c` or the tuple
-/// `t.(a, b)`.
-fn endpoint(path: &str) -> Option<(String, Vec<String>)> {
+/// `t.(a, b)` — the one parser every reader of `relationships` shares.
+pub(crate) fn endpoint(path: &str) -> Option<(String, Vec<String>)> {
     if let Some((t, rest)) = path.split_once(".(") {
         let inner = rest.strip_suffix(')')?;
         let cols: Vec<String> = inner.split(", ").map(str::to_string).collect();
@@ -183,12 +183,7 @@ pub(crate) async fn behavior_anchors(
     resolved: &crate::prepass::Resolved,
     subject: &str,
 ) -> Result<RecordBatch, SessionError> {
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let runtime = shared.runtime();
     let run = |q: String| {
         let shared = Arc::clone(shared);
@@ -406,7 +401,7 @@ pub(crate) async fn behavior_anchors(
                     }
                 }
             }
-            // Borrowed entity (2026-08-14): the measure side joins the
+            // Borrowed entity: the measure side joins the
             // document table and keys on ITS dimension column; the
             // event side must carry the key on a direct edge of its
             // own. The via table may BE the event table.

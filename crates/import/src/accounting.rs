@@ -1,6 +1,6 @@
 //! Cell-level cast accounting: typing is authored, so a `try_*` that
 //! fails lands a NULL cell in a kept row — invisible in row counts,
-//! which is the import's blind spot (ruled 2026-08-06). At the landing,
+//! which is the import's blind spot. At the landing,
 //! the one moment raw and typed values coexist, each cast in the
 //! recipe's SELECT list is re-read as `input IS NOT NULL AND cast IS
 //! NULL`: one companion aggregate for the counts, one grouped read per

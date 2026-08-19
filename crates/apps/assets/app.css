@@ -253,22 +253,6 @@ code { font-family: var(--mono); font-size: 0.95em; }
   margin: 0;
 }
 
-/* A band's own segmented control: sits in the head and swaps only its
-   band. */
-.tile header .seg-group { margin-left: auto; }
-.tile header .seg-group ~ .chip { margin-left: 0; }
-.seg-group { display: inline-flex; gap: 0.15rem; }
-.seg {
-  font-size: var(--step);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faint);
-  border-bottom: 2px solid transparent;
-  padding: 0.1rem 0.45rem 0.25rem;
-}
-.seg:hover { color: var(--ink); }
-.seg.active { color: var(--ink); border-bottom-color: var(--open); }
-
 /* ---- the confidence gutter ---------------------------------------- */
 
 /* One rail per matter, filled to the confidence its author holds:
@@ -456,10 +440,6 @@ a.rrow:hover { background: var(--panel); }
 
 gl-value { display: flex; align-items: baseline; gap: 0.6rem; min-height: 2rem; }
 .kpi-num { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
-.kpi-unit { font-size: var(--step); font-weight: 400; color: var(--muted); margin-left: 0.3rem; }
-.kpi-delta { font-size: var(--step); }
-.kpi-delta.pos { color: var(--settled); }
-.kpi-delta.neg { color: var(--breach); }
 
 /* ---- charts and tables -------------------------------------------- */
 
@@ -521,34 +501,6 @@ details.contest[open] summary { color: var(--muted); }
 
 /* Full lists scroll instead of truncating — depth over dismissal. */
 .scroll { max-height: 30rem; overflow-y: auto; scrollbar-width: thin; }
-
-/* A count opens the list behind it. Platform popover, no script. */
-.pop-open {
-  font: inherit;
-  font-size: var(--step);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faint);
-  background: none;
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  padding: 0.05rem 0.4rem;
-  margin-left: auto;
-  cursor: pointer;
-}
-.pop-open:hover { color: var(--ink); border-color: var(--faint); }
-[popover].pop {
-  background: var(--ground);
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  padding: 1.1rem 1.3rem;
-  width: min(48rem, 92vw);
-  max-height: 72vh;
-  overflow-y: auto;
-  color: var(--ink);
-}
-[popover].pop::backdrop { background: rgba(4, 8, 14, 0.6); }
-.pop .eyebrow { display: block; margin-bottom: 0.4rem; }
 
 /* ---- loading and errors ------------------------------------------- */
 

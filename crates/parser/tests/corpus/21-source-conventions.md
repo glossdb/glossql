@@ -1,11 +1,9 @@
 # 21 · Source conventions: the per-source deposit — TRANSCRIBES (`AS FACT ON SOURCE`)
 
-Source: our own runs, both halves on 2026-08-12 in one workspace
-(`reports/2026-08-12-onboarding-run-pin-queue.md` deposited during the
-fresh-workspace onboarding; `reports/2026-08-12-per-source-read-run.md`
-read it back from a second dataset before that dataset's first probe).
-The fork record is `feedback/flow-source-conventions.md` — Fork B
-ruled in 2026-08-12: no new construct, the SOURCE grain added to the
+Source: our own runs, both halves in one workspace (deposited during a
+fresh-workspace onboarding; read back from a second dataset before that
+dataset's first probe). Fork B
+ruled in: no new construct, the SOURCE grain added to the
 aspect `ON` list; `DECLARE SOURCE` is the whole definition of what a
 source is. Source-grain slots read, supersede, and disclose across
 every dataset in the workspace — a convention is a fact about the

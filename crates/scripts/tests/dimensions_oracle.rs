@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -66,7 +66,7 @@ async fn the_generator_grades_the_relevance_score() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -75,7 +75,7 @@ async fn the_generator_grades_the_relevance_score() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(
@@ -109,7 +109,7 @@ async fn the_generator_grades_the_relevance_score() {
     // independently from the corpus's own status totals (corpus
     // 9dbcf6b6c6f3, seed 42, 12 months — re-pin when output/clean is
     // regenerated on a changed generator: the constants moved once
-    // already, 2026-08-11, when the corpus gained families). The skew
+    // already, when the corpus gained families). The skew
     // is real (87% paid) and the score reports it — the number never
     // overrules the business judgment of interest.
     let status = relevance(&session, "invoices.status").await;

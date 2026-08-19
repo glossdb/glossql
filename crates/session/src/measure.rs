@@ -1,5 +1,5 @@
-//! A measurement is a query (ruled 2026-08-17, the foundation report
-//! §7e). Role by shape decides the body language: a function with
+//! A measurement is a query.
+//! Role by shape decides the body language: a function with
 //! `RETURNS` carries SQL, a judge carries a script. The helpers here are
 //! the SQL half — recognizing the body, binding the subject into its
 //! AST, and shaping the executed result into the JSON that lands.
@@ -15,8 +15,8 @@ use serde_json::Value;
 use crate::session::SessionError;
 
 /// The body as one substrate query, if that is what it is. Anything
-/// else — a script, prose, a statement sequence — is `None` and runs on
-/// the legacy script path until its declaration crosses.
+/// else — prose, a statement sequence — is `None`, and each caller
+/// refuses with the shape its role owes.
 pub(crate) fn sql_body(script: &str) -> Option<DFStatement> {
     let mut statements = GlossqlParser::parse_sql(script).ok()?;
     if statements.len() != 1 {
@@ -49,7 +49,7 @@ pub(crate) fn bind_subject(statement: &mut DFStatement, subject: &str) {
     });
 }
 
-/// The result-shape rule (ruled 2026-08-17): one row × one column → the
+/// The result-shape rule: one row × one column → the
 /// value itself; one row → an object of its columns; anything else → an
 /// array of row objects. NULL keys are omitted — the writer's default,
 /// and checked against the record: no golden body carries a null key.

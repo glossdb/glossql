@@ -9,17 +9,17 @@ path = "src/lib.rs"
 
 [dependencies]
 datafusion = { workspace = true }
-futures = "0.3"
+futures = { workspace = true }
 serde_json = { workspace = true }
 # try_to_date/try_to_timestamp parse with the same chrono arrow already uses.
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-adbc_core = "0.24"
-adbc_driver_manager = "0.24"
+adbc_core = { workspace = true }
+adbc_driver_manager = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true

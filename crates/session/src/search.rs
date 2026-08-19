@@ -26,7 +26,7 @@ use crate::session::SessionError;
 /// among the table's numeric columns (`a = b * c` and `a = b + c`) with
 /// their violation counts, one row per counted (target; operands; form).
 ///
-/// Why this exists (tfmeval, 2026-08-10): a scoped unit-mix artifact and
+/// Why this exists: a scoped unit-mix artifact and
 /// a real price change move a metric identically; the only instrument
 /// that separates them is the derivation the lineage carries —
 /// `line_amount = units * unit_price` held at violation rate 0.0 on
@@ -76,12 +76,7 @@ pub(crate) async fn derivation_candidates(
         );
     }
 
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let scan = || {
         LogicalPlanBuilder::scan(table, provider_as_source(Arc::clone(&provider)), None)
             .map_err(|e| bad(e.to_string()))
@@ -266,7 +261,7 @@ pub(crate) async fn derivation_candidates(
 /// `hierarchy_candidates('table')` — pairwise functional-dependency
 /// screens at high recall over one table's dimension-like columns: the
 /// cheap SQL core of v0.3's dimension-identity stack
-/// (analysis/hierarchies, transcribed 2026-08-05), one row per screened
+/// (analysis/hierarchies), one row per screened
 /// direction.
 ///
 /// v0.3's decision layer, dispositioned by the recall ruling (the
@@ -285,8 +280,8 @@ pub(crate) async fn derivation_candidates(
 ///   proxy a measurement can see.
 /// - Guards are FULL-scan (the rel-hm fold-key lesson: a row sample
 ///   makes fold keys look near-key; never sample the guards).
-/// - Only EXACT uniqueness excludes (2026-08-06, the f1 circuits
-///   lesson): a unique column determines everything trivially, but a
+/// - Only EXACT uniqueness excludes: a unique column determines
+///   everything trivially, but a
 ///   near-unique one is legitimate hierarchy material; `rows_per_value`
 ///   keeps thin evidence visible instead of gated.
 ///
@@ -307,12 +302,7 @@ pub(crate) async fn hierarchy_candidates(
     let provider = resolved
         .pin(table)
         .ok_or_else(|| bad("no such table in the bound dataset".into()))?;
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let run = |plan| async {
         ctx.execute_logical_plan(plan)
             .await
@@ -700,27 +690,28 @@ pub(crate) fn rows_batch(rows: Vec<Value>, fields: Vec<Field>) -> Result<RecordB
 
 /// `relationship_candidates('dataset')` — the high-recall half of the
 /// candidate → verified → declared arc (fixture 12): every plausible
-/// join pair across the landed tables, generous by design (ruled
-/// 2026-08-05) — the statistical pass optimizes recall and the judge
+/// join pair across the landed tables, generous by design —
+/// the statistical pass optimizes recall and the judge
 /// removes false positives against the data; this door never does.
 ///
-/// The algorithm (2026-08-06, replacing a per-pair SQL join that was
-/// quadratic in engine round-trips): inclusion-dependency discovery on
+/// The algorithm (a per-pair SQL join would be quadratic in engine
+/// round-trips): inclusion-dependency discovery on
 /// the SPIDER/SINDY shape — every candidate column's distinct values
 /// land once through one union-of-distincts plan, and containment
 /// between two columns is a set intersection in memory. Values compare
 /// by display form, which is equality-faithful inside one dtype (pairs
 /// are dtype-gated, and even floats print shortest-roundtrip), so the
 /// counts are the typed-key counts. The statistic is containment —
-/// matched over the from side's distinct count; Jaccard punishes
-/// exactly the size-skewed pairs real FKs are. The only pruning is
+/// matched over the from side's distinct count: the question is
+/// directional, and a small key set fully inside a large one scores
+/// perfectly whatever the size skew. The only pruning is
 /// algebra: a to side with fewer than half the from side's distinct
 /// values cannot reach the 0.5 bar. Exact while Σ distinct fits
 /// memory; the named ladder past that is BINDER-style hash-range
 /// partitioning and bottom-k sketches — not built until a dataset
 /// needs them.
 ///
-/// The composite rescue (the v0.3 reality, ported 2026-08-05): a to
+/// The composite rescue: a to
 /// side that is no key alone can be one inside a scope — the
 /// multi-tenant shape, (businessID, name). For each overlapping pair
 /// whose to side is not key-like, the co-present pairs between the
@@ -740,12 +731,7 @@ pub(crate) async fn relationship_candidates(
 
     let bad =
         |d: String| SessionError::BadSubject(format!("relationship_candidates('{dataset}'): {d}"));
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let run = |plan| async {
         ctx.execute_logical_plan(plan)
             .await
@@ -957,8 +943,7 @@ pub(crate) async fn relationship_candidates(
 
     // Composite rescue, three batched phases.
     struct Attempt {
-        anchor: usize,
-        p: usize, // into pairs
+        p: usize, // into pairs — the anchor leg
         s: usize,
         order: i64,
     }
@@ -1013,12 +998,7 @@ pub(crate) async fn relationship_candidates(
                 continue;
             }
             seen.insert(key);
-            attempts.push(Attempt {
-                anchor: pi,
-                p: pi,
-                s: si,
-                order,
-            });
+            attempts.push(Attempt { p: pi, s: si, order });
             order += 1;
         }
     }
@@ -1109,14 +1089,11 @@ pub(crate) async fn relationship_candidates(
         if overlap < 0.5 {
             continue;
         }
-        if rescued
-            .get(&a.anchor)
-            .is_some_and(|r| r.order <= a.order)
-        {
+        if rescued.get(&a.p).is_some_and(|r| r.order <= a.order) {
             continue;
         }
         rescued.insert(
-            a.anchor,
+            a.p,
             Rescue {
                 order: a.order,
                 p: a.p,
@@ -1129,11 +1106,8 @@ pub(crate) async fn relationship_candidates(
             },
         );
     }
-    // The script iterated a map keyed by the anchor index as TEXT, so
-    // its emission order was lexicographic on that text — reproduced,
-    // not admired.
     let mut anchor_keys: Vec<usize> = rescued.keys().copied().collect();
-    anchor_keys.sort_by_key(|k| k.to_string());
+    anchor_keys.sort_unstable();
     for akey in anchor_keys {
         let r = &rescued[&akey];
         // The anchor is the identifying leg — the higher-cardinality to
@@ -1335,7 +1309,7 @@ fn relationship_shape() -> Vec<Field> {
 /// deliberate synonyms exist, and telling them from errors is the
 /// judge's call against the definitions, never this door's.
 ///
-/// Two bucketings (the second added 2026-08-14, from the medium run):
+/// Two bucketings:
 /// canonical SQL catches respelled extracts, and the SERVED monthly
 /// series catches what canonicalization cannot — revenue and
 /// ar_open_items carried different SQL yet served identical totals in
@@ -1350,14 +1324,9 @@ pub(crate) async fn grounding_collisions(
 ) -> Result<RecordBatch, SessionError> {
     use std::collections::BTreeMap;
 
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
-    let slots = current_query_slots(&rctx, dataset);
+    let slots = current_query_slots(shared, &rctx, dataset).await?;
 
     // Bucket by canonical SQL.
     let mut buckets: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
@@ -1466,71 +1435,38 @@ pub(crate) struct QuerySlot {
     pub body: String,
 }
 
-/// The latest QUERY grounding per (subject, aspect), human over agent —
-/// the collapse grounding_collisions, metric_bands and metric_cube all
-/// run, over the statement's snapshot: latest row per (subject, aspect,
-/// actor kind) — the supersession key — QUERY aspects only, then human
-/// over agent per (subject, aspect). Returned in slot-key order, which
-/// is the iteration order the scripts had.
-pub(crate) fn current_query_slots(
+/// The current QUERY groundings the metric doors run — the store's own
+/// collapsed read (supersession, human over agent, contested withheld,
+/// SPEC.md §5.3), narrowed to QUERY aspects: one slot per
+/// (subject, aspect) that serves a value. A contested grounding never
+/// enters a cube, a walk, or a collision bucket. In slot-key order.
+pub(crate) async fn current_query_slots(
+    shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
-) -> Vec<QuerySlot> {
-    use std::collections::BTreeMap;
-
+) -> Result<Vec<QuerySlot>, SessionError> {
     let query_aspects: HashSet<&str> = rctx
         .aspects
         .iter()
         .filter(|a| a.kind == "query")
         .map(|a| a.name.as_str())
         .collect();
-    let mut latest: BTreeMap<(&str, &str, &str), &glossql_glossary::GlossRow> = BTreeMap::new();
-    for row in rctx.glossary.iter() {
-        if row.dataset != dataset || !query_aspects.contains(row.aspect.as_str()) {
-            continue;
-        }
-        let key = (
-            row.subject.as_str(),
-            row.aspect.as_str(),
-            row.actor_kind.as_str(),
-        );
-        match latest.get(&key) {
-            Some(have) if have.written_at > row.written_at => {}
-            _ => {
-                latest.insert(key, row);
-            }
-        }
-    }
-    struct Slot<'a> {
-        row: &'a glossql_glossary::GlossRow,
-        human: bool,
-    }
-    let mut slots: BTreeMap<String, Slot> = BTreeMap::new();
-    let mut ordered: Vec<&&glossql_glossary::GlossRow> = latest.values().collect();
-    ordered.sort_by_key(|r| r.seq);
-    for row in ordered {
-        let key = format!("{} {}", row.subject, row.aspect);
-        // Human over agent: a filled human slot is never displaced by
-        // another kind; anything else overwrites in row order.
-        if row.actor_kind != "human" && slots.get(&key).is_some_and(|s| s.human) {
-            continue;
-        }
-        slots.insert(
-            key,
-            Slot {
-                row,
-                human: row.actor_kind == "human",
-            },
-        );
-    }
-    slots
-        .into_values()
-        .map(|s| QuerySlot {
-            subject: s.row.subject.clone(),
-            aspect: s.row.aspect.clone(),
-            body: s.row.body.clone(),
-        })
-        .collect()
+    let scope = glossql_glossary::Scope::Dataset;
+    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, None).await?;
+    let mut slots: Vec<QuerySlot> =
+        glossql_glossary::Store::collapsed_read(dataset, &scope, None, rctx, &verdicts)
+            .into_iter()
+            .filter(|r| query_aspects.contains(r.aspect.as_str()))
+            .filter_map(|r| {
+                r.value.map(|body| QuerySlot {
+                    subject: r.subject,
+                    aspect: r.aspect,
+                    body,
+                })
+            })
+            .collect();
+    slots.sort_by(|a, b| (&a.subject, &a.aspect).cmp(&(&b.subject, &b.aspect)));
+    Ok(slots)
 }
 
 /// One grounding's monthly fingerprint, `None` when it cannot serve a
@@ -1547,32 +1483,23 @@ async fn series_fingerprint(
 
     let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await.ok()?;
     let fields = probe.schema();
-    let has_value = fields.fields().iter().any(|f| f.name() == "value");
-    let tcol = has_value
-        .then(|| {
-            fields.fields().iter().find_map(|f| {
-                let d = f.data_type().to_string();
-                (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
-            })
-        })
-        .flatten()?;
-
-    let is_stock = body.get("behavior").and_then(Value::as_str) == Some("stock");
-    let q = if is_stock {
-        format!(
-            "SELECT period, sum(value) AS value FROM (\
-               SELECT date_trunc('month', \"{tcol}\") AS period, value, \
-                      rank() OVER (PARTITION BY date_trunc('month', \"{tcol}\") \
-                                   ORDER BY \"{tcol}\" DESC) AS rk \
-               FROM ({sql})\
-             ) WHERE rk = 1 GROUP BY period ORDER BY period"
-        )
+    let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
+    // The same verb rule every monthly reader applies: a ratio serves
+    // `num` and `den`, a marked stock sums the latest observed date,
+    // everything else sums the month.
+    let is_ratio = has("num") && has("den");
+    if !is_ratio && !has("value") {
+        return None;
+    }
+    let tcol = crate::whatif::date_column(fields.fields())?;
+    let verb = if is_ratio {
+        "ratio"
+    } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
+        "stock"
     } else {
-        format!(
-            "SELECT date_trunc('month', \"{tcol}\") AS period, sum(value) AS value \
-             FROM ({sql}) GROUP BY 1 ORDER BY 1"
-        )
+        "flow"
     };
+    let q = monthly_sql(sql, &tcol, verb);
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await.ok()?;
     let batches = ctx
         .execute_logical_plan(plan)
@@ -1611,8 +1538,7 @@ async fn series_fingerprint(
 
 /// SQL text as an identity: parse and re-render, so spelling differences
 /// collapse and identifiers survive verbatim. A body the parser cannot
-/// read normalizes by whitespace alone — weaker, honestly so. The rhai
-/// kernel of the same name is this exact rule; they change together.
+/// read normalizes by whitespace alone — weaker, honestly so.
 fn canonical_sql(sql: &str) -> String {
     use datafusion::sql::sqlparser::dialect::GenericDialect;
     use datafusion::sql::sqlparser::parser::Parser;
@@ -1646,7 +1572,7 @@ fn collision_shape() -> Vec<Field> {
 /// checked against the rows: DECLARED relationships only — the
 /// candidate plane proposes, the judge declares, this door measures
 /// what the declaration now claims. Two facts per relationship, both
-/// invisible to every column-shaped check (tfmeval, 2026-08-10: tier0,
+/// invisible to every column-shaped check (measured: tier0,
 /// PSI and the classifier two-sample test all scored exactly 0.0 on
 /// every referential defect on a high-cardinality key — the join is the
 /// only instrument):
@@ -1676,12 +1602,7 @@ pub(crate) async fn relationship_checks(
 
     let bad =
         |d: String| SessionError::BadSubject(format!("relationship_checks('{dataset}'): {d}"));
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let run = |plan| async {
         ctx.execute_logical_plan(plan)
             .await
@@ -1691,19 +1612,7 @@ pub(crate) async fn relationship_checks(
             .map_err(|e| bad(e.to_string()))
     };
 
-    // One endpoint: `t.c`, or the tuple `t.(a, b)`.
-    fn endpoint(path: &str) -> Option<(String, Vec<String>)> {
-        if let Some((t, rest)) = path.split_once(".(") {
-            let inner = rest.strip_suffix(')')?;
-            let cols: Vec<String> = inner.split(", ").map(str::to_string).collect();
-            return (cols.len() >= 2).then(|| (t.to_string(), cols));
-        }
-        let parts: Vec<&str> = path.split('.').collect();
-        let [t, c] = parts.as_slice() else {
-            return None;
-        };
-        Some((t.to_string(), vec![c.to_string()]))
-    }
+    use crate::behavior::endpoint;
 
     struct Entry {
         relationship: String,
@@ -1752,10 +1661,7 @@ pub(crate) async fn relationship_checks(
                 .schema()
                 .fields()
                 .iter()
-                .filter(|f| {
-                    let d = f.data_type().to_string();
-                    d.contains("Date") || d.contains("Timestamp")
-                })
+                .filter(|f| crate::whatif::is_temporal(f.data_type()))
                 .take(3)
                 .map(|f| f.name().clone())
                 .collect();
@@ -1935,11 +1841,11 @@ fn coherence_shape() -> Vec<Field> {
 /// The three monthly verbs, shared by the metric doors: flows sum per
 /// month; a marked stock sums the rows standing at the month's LATEST
 /// observed date — one arbitrary last row read a 480-row inventory as
-/// 94k against a true 12.4M (the 2026-08-14 run); a ratio serves `num`
+/// 94k against a true 12.4M; a ratio serves `num`
 /// and `den` and the month reads as sum(num)/sum(den), because a walk
-/// or a slice over a summed ratio bands an artefact (2026-08-15, DSO at
+/// or a slice over a summed ratio bands an artefact (DSO at
 /// 928.3 days against a true 75.6).
-fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
+pub(crate) fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
     match verb {
         "ratio" => format!(
             "SELECT date_trunc('month', \"{tcol}\") AS period, \
@@ -2025,15 +1931,13 @@ async fn run_monthly(
 /// monthly read at the grounding's verb, the feature recipe, the
 /// point-in-time fills, the walk — is authored policy; the model call
 /// is one kernel behind the runtime seam, never reimplemented.
-/// Evaluated against generated ground truth before it shipped
-/// (dataraum-tabicl README, stage 3; the E2.1 walk).
+/// Evaluated against generated ground truth before it shipped.
 ///
-/// The feature recipe and the fill tracked back to the graded protocol
-/// on 2026-08-12 — three drifts had entered in the port (raw t-3 lag
-/// for the trailing mean, a whole-series fill that was not
-/// point-in-time, a fabricated month-0 training row). Change it only
-/// against `../tfmeval/experiments/e2_1_bands.py`, which is what the
-/// coverage figures in that repo's FINDINGS.md were measured on.
+/// The feature recipe and the fill are graded protocol, exact: the
+/// trailing mean excludes the current month, every fill is
+/// point-in-time, and no training row exists before the first
+/// observed month. Change any of it only against a graded re-run —
+/// each of these three has silently drifted once.
 ///
 /// Each walked point records its bands and its PIT — the quantile at
 /// which the actual landed, 0..1 and ordinal by construction (raw
@@ -2047,12 +1951,7 @@ pub(crate) async fn metric_band_walk(
     const MIN_TRAIN: usize = 5;
     const MAX_WALK: usize = 6;
 
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let runtime = shared.runtime();
 
@@ -2074,7 +1973,7 @@ pub(crate) async fn metric_band_walk(
 
     let mut out = Vec::new();
     let mut seq = 0i64;
-    for slot in current_query_slots(&rctx, dataset) {
+    for slot in current_query_slots(shared, &rctx, dataset).await? {
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
@@ -2092,10 +1991,7 @@ pub(crate) async fn metric_band_walk(
         if !has("value") {
             continue;
         }
-        let Some(tcol) = fields.fields().iter().find_map(|f| {
-            let d = f.data_type().to_string();
-            (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
-        }) else {
+        let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
             continue;
         };
         let is_ratio = has("num") && has("den");
@@ -2126,7 +2022,7 @@ pub(crate) async fn metric_band_walk(
 
         // Features for month i (row i-1): index, month-of-year, the 1-
         // and 12-month lags, and the trailing 3-month MEAN — `lag3m` in
-        // the graded protocol (tfmeval e2_1_bands.py:71-77), not the raw
+        // the graded protocol, not the raw
         // t-3 value. Absent features stay absent; they fill per walk
         // step from training rows only.
         let mut feats: Vec<[Option<f64>; 5]> = Vec::new();
@@ -2303,7 +2199,7 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, member: &str, verb: &st
 /// named, above that the dimension is *bucketed* — the top 23 by
 /// weight (summed value; a ratio weighs by its denominator) keep their
 /// names and the rest fold into 'other', so a wide axis enters instead
-/// of falling off a cliff (ruled 2026-08-18, the rel-salt run: 34
+/// of falling off a cliff (34
 /// sales orgs could never enter at a hard 24). Beyond 512 a column
 /// reads as an identifier, not a dimension. The fact row names its
 /// bucketed dimensions so 'other' is never read as a business member.
@@ -2314,7 +2210,7 @@ fn monthly_member_sql(sql: &str, tcol: &str, dcol: &str, member: &str, verb: &st
 /// reported, not thrown. The monthly verbs are [`monthly_sql`]'s three,
 /// the ratio verb because summing a ratio was wrong: DSO for one month
 /// came back 928.3 days against a true 75.6 when twelve member ratios
-/// were added together (2026-08-15). This is the division node of the
+/// were added together. This is the division node of the
 /// formula evaluator that would eventually read the `formulas` gloss
 /// directly; the grounding already computes both halves and used to
 /// discard them.
@@ -2330,17 +2226,12 @@ pub(crate) async fn metric_cube_slices(
     const MEMBERS_ADMIT_CAP: i64 = 512;
     const MONTHS_CAP: usize = 48;
 
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
 
     let mut out = Vec::new();
     let mut seq = 0i64;
-    for slot in current_query_slots(&rctx, dataset) {
+    for slot in current_query_slots(shared, &rctx, dataset).await? {
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
@@ -2371,10 +2262,7 @@ pub(crate) async fn metric_cube_slices(
             seq += 1;
             continue;
         }
-        let Some(tcol) = fields.fields().iter().find_map(|f| {
-            let d = f.data_type().to_string();
-            (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
-        }) else {
+        let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
             out.push(abstain(seq, "no time column"));
             seq += 1;
             continue;
@@ -2402,8 +2290,7 @@ pub(crate) async fn metric_cube_slices(
                 if n == "value" || (is_ratio && (n == "num" || n == "den")) {
                     return false;
                 }
-                let d = f.data_type().to_string();
-                !(d.contains("Date") || d.contains("Timestamp"))
+                !crate::whatif::is_temporal(f.data_type())
             })
             .map(|f| f.name().clone())
             .collect();
@@ -2624,10 +2511,7 @@ async fn rival_series(
     let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
-    let Some(tcol) = fields.fields().iter().find_map(|f| {
-        let d = f.data_type().to_string();
-        (d.contains("Date") || d.contains("Timestamp")).then(|| f.name().clone())
-    }) else {
+    let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
         return Ok(None);
     };
     if !has("value") {

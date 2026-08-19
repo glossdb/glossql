@@ -11,15 +11,15 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor,
-    Value as SqlValue, visit_expressions_mut, visit_relations,
+    FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor,
+    visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
 use futures::StreamExt as _;
 use serde_json::Value;
 
 use glossql_catalog::{IcebergCatalogProvider, Lake};
-use glossql_glossary::{Actor, FunctionRow, RecipeAdmission, Store, schemas};
+use glossql_glossary::{Actor, RecipeAdmission, Store, schemas};
 use glossql_import::SourceSpec;
 use glossql_parser::{
     Declaration, Extract, Gloss, GlossqlParser, Probe, RelOp, Statement, Subject,
@@ -69,8 +69,8 @@ pub enum SessionError {
         index: usize,
         total: usize,
         /// What landed and what never ran — "statements 1–2 landed;
-        /// 4–7 not run". A mid-sequence refusal without this cost the
-        /// 2026-08-14 run a read of `imports` to learn what stood.
+        /// 4–7 not run". Without this, a mid-sequence refusal forces a
+        /// read of `imports` just to learn what stood.
         context: String,
         source: Box<SessionError>,
     },
@@ -104,29 +104,23 @@ pub enum Outcome {
     Affected(u64),
 }
 
-/// The seam scripts plug into (rhai + arrow kernels, `glossql-scripts`).
-/// Since stage 5 a script is a judge: it receives its `context` — a
-/// detector's slots and threshold (§7.1), or a legacy measurement's
-/// `ACCEPTS` document — and computes; the SQL door died with the last
-/// shipped script measurement, so a script never re-enters the engine.
-/// Tests inject fakes.
+/// The kernel seam (`glossql-scripts`): the native statistical kernels
+/// and aggregate registrations behind the doors. Function bodies are
+/// SQL the engine plans — a measurement over data (§6), a detector over
+/// its witness's `slots` — so nothing here evaluates a body; the seam
+/// carries only what SQL cannot: the model forwards and the reconcile
+/// discriminator. Tests inject fakes.
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        subject: &str,
-        context: &Value,
-    ) -> Result<Value, String>;
-
-    /// The aggregate statistics the runtime ships (`profile`, `mad`,
-    /// `entropy` — the shapes SQL lacks). Registered on the session's
-    /// context when the runtime attaches, so a measurement body and an
-    /// agent's own SQL name the same functions.
+    /// The aggregate statistics the runtime ships (`profile` — the
+    /// shape SQL lacks; `mad` and `entropy` ride inside its struct).
+    /// Registered on the session's context when the runtime attaches,
+    /// so a measurement body and an agent's own SQL name the same
+    /// functions.
     fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
         Vec::new()
     }
 
-    /// The band kernel behind the `whatif.` door (ruled 2026-08-11):
+    /// The band kernel behind the `whatif.` door:
     /// fit one estimator on the replayed worlds, quantiles at `alphas`
     /// for every test row. Slices are row-major; the return is
     /// row-major (test_rows × alphas). The runtime that carries the
@@ -147,8 +141,8 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Err("this runtime carries no band kernel".into())
     }
 
-    /// The misfit kernel behind the `misfit.` door (ruled 2026-08-11,
-    /// fixture 20): fit on the frame, score the same frame — one mean
+    /// The misfit kernel behind the `misfit.` door (fixture 20): fit
+    /// on the frame, score the same frame — one mean
     /// log density per row, log space end to end (higher = fits the
     /// frame better). `x` is row-major (rows × cols), nulls as NaN.
     /// The runtime that carries the model overrides this; the default
@@ -197,14 +191,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
 #[derive(Debug)]
 pub struct NoRuntime;
 
-impl FunctionRuntime for NoRuntime {
-    fn invoke(&self, function: &FunctionRow, _: &str, _: &Value) -> Result<Value, String> {
-        Err(format!(
-            "no function runtime configured — `{}` cannot run without scripts",
-            function.name
-        ))
-    }
-}
+impl FunctionRuntime for NoRuntime {}
 
 /// One substrate statement out of a SQL string — the internal reads
 /// (the drop-table emptiness probe) plan through the same pre-pass as
@@ -411,7 +398,7 @@ impl Session {
                 {
                     format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
                 } else {
-                    // Supersede-and-reland (ruled 2026-08-06): a changed
+                    // Supersede-and-reland: a changed
                     // recipe drops the old landing and its
                     // evidence, then lands fresh. Glosses stay — the
                     // snapshot id discloses their age.
@@ -437,9 +424,9 @@ impl Session {
                     // the dropped rows — and the cells the casts nulled
                     // — are acceptable is the author's call, made now.
                     // A multi-source recipe reports per-scan counts
-                    // instead of a misleading difference (found
-                    // 2026-08-12: the sum across providers read as one
-                    // source's drop count).
+                    // instead of a misleading difference — the sum
+                    // across providers would read as one source's
+                    // drop count.
                     let verb = if replaced {
                         "superseded and re-landed: "
                     } else {
@@ -523,8 +510,7 @@ impl Session {
         table: &str,
         landed: glossql_import::Landed,
     ) -> Result<(String, String), SessionError> {
-        let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
-        let summary = landed.row_summary(rows);
+        let summary = landed.row_summary();
         let mut facts = std::collections::HashMap::from([(
             glossql_glossary::LANDING_SCANS_PROP.to_string(),
             serde_json::Value::Array(
@@ -536,7 +522,7 @@ impl Session {
             )
             .to_string(),
         )]);
-        if let Some(dropped) = landed.dropped_rows(rows) {
+        if let Some(dropped) = landed.dropped_rows() {
             facts.insert(
                 glossql_glossary::LANDING_DROPPED_PROP.to_string(),
                 dropped.to_string(),
@@ -581,8 +567,8 @@ impl Session {
     /// generation is tracked: when a namespace create rebuilt the shared
     /// provider, an already-mounted session re-registers from the current
     /// generation instead of resolving through the frozen one forever
-    /// (found 2026-08-12 — a table landed on the new generation was
-    /// invisible to channels mounted before the invalidation).
+    /// — otherwise a table landed on the new generation stays
+    /// invisible to channels mounted before the invalidation.
     async fn mount_schema(&self, dataset: &str) -> Result<Arc<dyn SchemaProvider>, SessionError> {
         let lake = self.lake();
         let current = lake.provider().await?;
@@ -597,19 +583,15 @@ impl Session {
         if same_generation && let Some(existing) = default.schema(dataset) {
             return Ok(existing);
         }
-        let (provider, schema) = match current.schema(dataset) {
-            Some(schema) => (current, schema),
-            None => {
-                lake.invalidate_provider();
-                let rebuilt = lake.provider().await?;
-                let schema = rebuilt.schema(dataset).ok_or_else(|| {
-                    SessionError::Lake(glossql_catalog::Error::Workspace(format!(
-                        "namespace `{dataset}` is missing from the catalog"
-                    )))
-                })?;
-                (rebuilt, schema)
-            }
-        };
+        // The shared provider is invalidated by every namespace create,
+        // so a miss here is a namespace that does not exist — the
+        // error, not a rebuild.
+        let provider = current;
+        let schema = provider.schema(dataset).ok_or_else(|| {
+            SessionError::Lake(glossql_catalog::Error::Workspace(format!(
+                "namespace `{dataset}` is missing from the catalog"
+            )))
+        })?;
         default.register_schema(dataset, Arc::clone(&schema))?;
         // One provider serves every namespace, and a session is keyed to
         // one dataset, so a single tracked generation suffices.
@@ -666,9 +648,7 @@ impl Session {
     /// Extraction (SPEC.md §6): the compute act. A hit at the statement's
     /// pin serves; a miss computes, validates against the RETURNS
     /// aspect's schema, and lands one `measurements` row — the drift
-    /// record's next point. The context document holds one entry per
-    /// `ACCEPTS` aspect: the nearest value walking up from the subject
-    /// (subject, parent, dataset), null when nothing is glossed.
+    /// record's next point.
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
         let resolved = self.subject(&extract.subject).await?;
@@ -680,7 +660,7 @@ impl Session {
                 .function(&name, Some(&resolved.dataset))
                 .await?
                 .ok_or_else(|| SessionError::UnknownFunction(name.clone()))?;
-            // Role by shape (ruled 2026-08-04): a function without RETURNS
+            // Role by shape: a function without RETURNS
             // is a detector — it runs through its witness, never extraction.
             let Some(returns) = function.returns.clone() else {
                 return Err(SessionError::DetectorNotExtractable(name.clone()));
@@ -694,34 +674,15 @@ impl Session {
             let row = match measured {
                 Some(row) => row,
                 None => {
-                    let mut context = serde_json::Map::new();
-                    for aspect in &function.accepts {
-                        let value = context_value(
-                            &self.shared,
-                            &ctx,
-                            &resolved.dataset,
-                            &resolved.subject,
-                            aspect,
-                        )
-                        .await?;
-                        context.insert(aspect.clone(), value);
-                    }
-                    let context = Value::Object(context);
-                    // Role by shape, extended to the body (ruled
-                    // 2026-08-17, §7e): a RETURNS function whose body is
-                    // one SQL query is a measurement the engine runs. A
-                    // script body still invokes — a legacy authored
-                    // measurement computes from its context alone, and
-                    // one that reaches for the dead SQL door fails with
-                    // the runtime's own message.
-                    let output = match crate::measure::sql_body(&function.script) {
-                        Some(body) => self.compute_sql(body, &resolved.subject).await?,
-                        None => self
-                            .shared
-                            .runtime()
-                            .invoke(&function, &resolved.subject, &context)
-                            .map_err(SessionError::Runtime)?,
-                    };
+                    // A measurement's body is one SQL query the engine
+                    // plans and runs (§6) — anything else is refused
+                    // with the shape the declaration owes.
+                    let body = crate::measure::sql_body(&function.script).ok_or_else(|| {
+                        SessionError::Runtime(format!(
+                            "`{name}`: a measurement's body is one SQL query"
+                        ))
+                    })?;
+                    let output = self.compute_sql(body, &resolved.subject).await?;
                     // The aspect's schema is the one contract: nothing lands
                     // under an aspect without validating against it.
                     let (schema, _, grains) = store.aspect(&returns).await?.ok_or_else(|| {
@@ -752,7 +713,7 @@ impl Session {
                     })?;
                     // An abstention naming absent inputs is an answer
                     // about the context, not a measurement of the
-                    // subject (ruled 2026-08-04/16) — it serves without
+                    // subject — it serves without
                     // landing, so the retry recomputes once the
                     // producer has run.
                     if output.get("missing_aspects").is_some() {
@@ -805,7 +766,7 @@ impl Session {
         crate::measure::body_value(&batches)
     }
 
-    /// One query, streaming (project lead, 2026-08-04): batches flow as
+    /// One query, streaming: batches flow as
     /// the engine produces them — memory rides one batch, and a dropped
     /// stream cancels the work upstream. `GLOSSARY()`/`ATTEST()` stream
     /// like any read; the planner did its part before the first batch.
@@ -826,7 +787,7 @@ impl Session {
 
     /// [`Session::plan_statement`] plus what resolution learned: whether
     /// the statement reads the glossary anywhere in its expansion — the
-    /// frame class the app door serves (ruled 2026-08-18).
+    /// frame class the app door serves.
     pub(crate) async fn plan_statement_classed(
         &self,
         statement: datafusion::sql::parser::Statement,
@@ -864,7 +825,7 @@ impl Session {
         // `SELECT … INTO t` is a Query to the parser and a `CREATE MEMORY
         // TABLE` to the planner; the execute path refuses it and this path
         // must too — planned here it would mint a table and materialize the
-        // whole source before the row cap applies (found 2026-08-12).
+        // whole source before the row cap applies.
         if let DFStatement::Statement(inner) = &*statement
             && let SQLStatement::Query(q) = inner.as_ref()
             && selects_into(q)
@@ -889,23 +850,22 @@ impl Session {
         })
     }
 
-    /// Substrate SQL runs behind an allowlist (project lead, 2026-08-04):
-    /// queries pass, `DESCRIBE`/`EXPLAIN` pass as reads (2026-08-07), the
+    /// Substrate SQL runs behind an allowlist:
+    /// queries pass, `DESCRIBE`/`EXPLAIN` pass as reads, the
     /// store's forwarded deletes pass, `DROP TABLE` routes to engine
     /// semantics — everything else that would alter the schema or data
     /// directly is refused. Tables come from recipes.
     async fn substrate(&self, statement: DFStatement) -> Result<Outcome, SessionError> {
-        // Removal is SQL (SPEC.md §5.2, §6): deletes on the store's two
-        // relations run at the store. DataFusion cannot execute DML against
-        // registered providers anyway.
-        if let Some((target, text)) = store_delete(&statement) {
-            let affected = self.shared.store.forward_delete(&target, &text).await?;
+        // Removal is SQL (SPEC.md §5.2, §6): the strike routes to the
+        // store by name, which refuses until the substrate can remove
+        // rows. DataFusion cannot execute DML against registered
+        // providers anyway.
+        if let Some(target) = store_delete(&statement) {
+            let affected = self.shared.store.forward_delete(&target).await?;
             return Ok(Outcome::Affected(affected));
         }
         // DESCRIBE and EXPLAIN are reads — about a table's schema and a
-        // plan — not manipulation, so they pass (project lead,
-        // 2026-08-07; the earlier refusal was the variant allowlist being
-        // categorical, not a ruling against them). EXPLAIN is the
+        // plan — not manipulation, so they pass. EXPLAIN is the
         // substrate parser's own variant wrapping the statement it
         // explains (datafusion-sql-53.1.0 parser.rs:293); only a plain
         // query may ride it, so the allowlist repeats inside it instead
@@ -939,7 +899,7 @@ impl Session {
             match inner.as_ref() {
                 // `SELECT … INTO t` is a Query to the parser and a
                 // `CREATE MEMORY TABLE` to the planner — the one spelling
-                // that made tables without a recipe (found 2026-08-06).
+                // that made tables without a recipe.
                 SQLStatement::Query(q) if selects_into(q) => {
                     return Err(SessionError::SubstrateClosed("SELECT INTO".into()));
                 }
@@ -959,8 +919,8 @@ impl Session {
         // Bounded like the streaming door, for the same reason: the reader
         // sees at most its cap, so the engine should not be asked for more
         // than that. One row past the cap is kept, which is how the door
-        // knows the answer was truncated (found 2026-08-06: this path used
-        // to collect the whole result and trim it at render).
+        // knows the answer was truncated; collecting the whole result
+        // and trimming at render would defeat the cap.
         let mut stream = frame.execute_stream().await?;
         let schema = stream.schema();
         let mut batches = Vec::new();
@@ -981,7 +941,7 @@ impl Session {
         Ok(Outcome::Rows(batches))
     }
 
-    /// `DROP TABLE` (PoC rules, project lead 2026-08-04): refused while the
+    /// `DROP TABLE` (PoC rules): refused while the
     /// table holds data or glosses — replacement is postponed, so this only
     /// ever removes a mis-declared table. What it removes, it removes
     /// whole: the lake table, its recipe property, its landings, the
@@ -1101,56 +1061,10 @@ fn endpoint_parts(side: &glossql_parser::RelSide) -> (Vec<String>, Vec<String>) 
     (table, columns)
 }
 
-/// The nearest current value of `aspect`, walking up from the subject:
-/// the subject itself, its parent, then the dataset. Null when nothing is
-/// glossed — scripts are deterministic and handle absence themselves.
-async fn context_value(
-    shared: &Arc<Shared>,
-    ctx: &glossql_glossary::ReadContext,
-    dataset: &str,
-    subject: &str,
-    aspect: &str,
-) -> Result<Value, SessionError> {
-    let mut level = Some(subject.to_string());
-    while let Some(current) = level {
-        let scope = if current == dataset {
-            glossql_glossary::Scope::Dataset
-        } else {
-            glossql_glossary::Scope::Subject(current.clone())
-        };
-        let verdicts = crate::reads::verdicts(shared, ctx, dataset, &scope, Some(aspect)).await?;
-        let rows = glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), ctx, &verdicts);
-        let target = if current == dataset {
-            dataset
-        } else {
-            &current
-        };
-        if let Some(row) = rows.iter().find(|r| r.subject == target)
-            && let Some(value) = &row.value
-        {
-            return Ok(serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.clone())));
-        }
-        level = parent_of(&current, dataset);
-    }
-    Ok(Value::Null)
-}
-
-/// `orders.amount` → `orders` → the dataset; tables and pair paths step
-/// straight to the dataset.
-fn parent_of(subject: &str, dataset: &str) -> Option<String> {
-    if subject == dataset {
-        None
-    } else if subject.contains(' ') || !subject.contains('.') {
-        Some(dataset.to_string())
-    } else {
-        Some(subject.rsplit_once('.').expect("has a dot").0.to_string())
-    }
-}
-
 /// A single query's batch stream, plus what it reads: `metadata_only`
 /// marks a query whose every relation is the store's — `GLOSSARY()`,
 /// `ATTEST()`, and the plain store relations. The doors' row-cap policy
-/// exempts these (project lead, 2026-08-04): metadata is the agent's
+/// exempts these: metadata is the agent's
 /// map; the cap guards data reads.
 pub struct QueryStream {
     pub stream: SendableRecordBatchStream,
@@ -1159,8 +1073,8 @@ pub struct QueryStream {
     /// expansion — derived by the pre-pass, not curated. The app door
     /// serves it as the frame class (`record`/`data`): a record frame
     /// can change under a glossary write, a data frame cannot, so the
-    /// browser's frame store evicts only record entries on a ruling
-    /// (ruled 2026-08-18). Distinct from `metadata_only`, which is
+    /// browser's frame store evicts only record entries on a ruling.
+    /// Distinct from `metadata_only`, which is
     /// syntactic and cannot see through shipped reads.
     pub record: bool,
 }
@@ -1171,7 +1085,7 @@ pub struct QueryStream {
 /// the one read construct beside them (`glossary()` shares its name
 /// with the relation).
 /// The shape of a whole tool call, classified without executing — the
-/// door's question-round cadence reads it (ruled 2026-08-14).
+/// door's question-round cadence reads it.
 /// `reviews` marks a call that reads the record: at least one metadata
 /// read and no write — the brief sweep and the stage read-backs.
 /// `writes` marks a call that moves the workspace: GLOSS, DECLARE,
@@ -1310,30 +1224,14 @@ fn selects_into(query: &Query) -> bool {
     body_selects_into(&query.body)
 }
 
-/// `DELETE FROM glossary …` → (target, SQL for the
-/// store). The text is rendered from the AST with dollar-quoted literals
-/// normalized to single quotes: the store speaks SQLite, which reads
-/// `$tag$` as a bind parameter rather than a quote, so a dollar-quoted body
-/// carrying a `;` used to arrive as a statement sequence (found
-/// 2026-08-06). Single quotes render escaped by sqlparser and tokenize the
-/// same in both dialects, which is what makes the round trip safe.
-fn store_delete(statement: &DFStatement) -> Option<(String, String)> {
+/// `DELETE FROM glossary …` → the store's target name. Only the
+/// glossary routes; a delete on anything else falls through to the
+/// allowlist's own refusal.
+fn store_delete(statement: &DFStatement) -> Option<String> {
     let DFStatement::Statement(inner) = statement else {
         return None;
     };
-    let SQLStatement::Delete(_) = inner.as_ref() else {
-        return None;
-    };
-    let mut normalized = inner.as_ref().clone();
-    let _ = visit_expressions_mut(&mut normalized, |expr| {
-        if let Expr::Value(v) = expr
-            && let SqlValue::DollarQuotedString(s) = &v.value
-        {
-            v.value = SqlValue::SingleQuotedString(s.value.clone());
-        }
-        std::ops::ControlFlow::<()>::Continue(())
-    });
-    let SQLStatement::Delete(delete) = &normalized else {
+    let SQLStatement::Delete(delete) = inner.as_ref() else {
         return None;
     };
     let tables = match &delete.from {
@@ -1349,5 +1247,5 @@ fn store_delete(statement: &DFStatement) -> Option<(String, String)> {
         return None;
     }
     let target = name.0[0].as_ident()?.value.to_lowercase();
-    (target == "glossary").then(|| (target, normalized.to_string()))
+    (target == "glossary").then_some(target)
 }

@@ -4,8 +4,8 @@
 -- ATTEST(), never from glossary lifecycle states (current/stale/
 -- contested belong to Coverage). A witness without a detector is a
 -- speaker gate, not a check — it never appears here; witnessed slots
--- nobody spoke to are the agent's backlog (frames/checks_backlog.sql),
--- owed in Coverage. New imports invalidate the measurements, so the
+-- nobody spoke to are the agent's backlog, owed in Coverage. New
+-- imports invalidate the measurements, so the
 -- next read recomputes — nothing here is maintained by hand.
 SELECT
   arrow_cast(a.witness, 'Utf8') AS checked,

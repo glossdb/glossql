@@ -10,7 +10,7 @@ use crate::ast::*;
 
 // The postgres dialect is load-bearing: it lexes `<->` as one TwoWayArrow
 // token and supports dollar-quoted bodies; the session uses the same
-// dialect for planning (reports/2026-08-03-sqlparser-respell.md).
+// dialect for planning.
 static DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
 
 /// The glossql front parser: DataFusion's `DFParser` custom-statement
@@ -246,19 +246,14 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
             } else {
                 FunctionScope::Dataset(p.parse_identifier()?)
             };
-            // The body itself, not a path to it (ruled 2026-08-15,
-            // fixture 24): an agent over MCP has statements and no
+            // The body itself, not a path to it (fixture 24): an
+            // agent over MCP has statements and no
             // filesystem, so a function it cannot write is a validation
             // it cannot finish.
             expect_word(p, "AS")?;
             let script = parse_dollar(p, "dollar-quoted script — AS $$ … $$")?;
-            let accepts = if consume_word(p, "ACCEPTS") {
-                parse_accepts(p)?
-            } else {
-                Vec::new()
-            };
-            // `RETURNS aspect` mirrors `ACCEPTS`; a function without it is
-            // a detector (role by shape, project lead 2026-08-04).
+            // A function without `RETURNS aspect` is a detector (role by
+            // shape).
             let returns = if consume_word(p, "RETURNS") {
                 Some(p.parse_identifier()?)
             } else {
@@ -268,7 +263,6 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                 name,
                 scope,
                 script,
-                accepts,
                 returns,
             }))
         }
@@ -351,19 +345,6 @@ fn parse_speaker(p: &mut Parser) -> Result<Speaker, ParserError> {
     }
     let found = p.peek_token();
     expected("AGENT or HUMAN", &found)
-}
-
-/// `ACCEPTS (aspect, …)` — the aspects whose current values the server
-/// hands the script as its context document. Settings are context, never
-/// call arguments.
-fn parse_accepts(p: &mut Parser) -> Result<Vec<Ident>, ParserError> {
-    p.expect_token(&Token::LParen)?;
-    let mut aspects = vec![p.parse_identifier()?];
-    while !p.consume_token(&Token::RParen) {
-        p.expect_token(&Token::Comma)?;
-        aspects.push(p.parse_identifier()?);
-    }
-    Ok(aspects)
 }
 
 /// A dollar-quoted region holding a JSON object, validated per RFC 8259.
@@ -458,9 +439,9 @@ fn parse_extract(p: &mut Parser) -> Result<Extract, ParserError> {
     }
 }
 
-/// A call is bare — `f()`. Settings reach scripts as context (`ACCEPTS`),
-/// never as arguments; a call with arguments fails here and falls through
-/// to substrate SQL, where planning rejects it loudly.
+/// A call is bare — `f()`. Settings are context, never call arguments;
+/// a call with arguments fails here and falls through to substrate SQL,
+/// where planning rejects it loudly.
 fn parse_call(p: &mut Parser) -> Result<Ident, ParserError> {
     let function = p.parse_identifier()?;
     p.expect_token(&Token::LParen)?;

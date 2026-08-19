@@ -105,7 +105,6 @@ the door, the app and these examples:
 | `workspace_next` | the nine surfaces this workspace can be extended through, what stands and what is open on each |
 | `open_questions` | what stands open for a human to judge — the rows the door asks as forms |
 | `ruling_entries` | the human's standing judgments, with `folded_in` |
-| `ruling_conflicts` | one claim ruled two ways on different aspects |
 | `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every declared metric with its latest cube month, move, axes and formula |
@@ -180,13 +179,14 @@ any table (`WHERE aspect = 'cycle_time'`); order it where you read it,
 since a read carries no ordering of its own. `ruling_entries` is what
 the human has ruled; both build on it.
 
-**One key ruled two ways is yours to reconcile.** `ruling_conflicts`
-reports a claim confirmed on one aspect and corrected on another.
-Nothing asks you about it and nothing resolves
-it: read the rows, decide whether the aspects genuinely differ, and
-record the reconciliation in the groundings themselves. Folding both
-in literally is how a ruled component ends up contradicting the metric
-that composes it.
+**One key ruled two ways is yours to reconcile.** The round names the
+sibling ruling on the form when it asks about a key the human already
+ruled under another aspect; `ruling_entries` shows both afterwards.
+Nothing pairs or resolves them: decide whether the aspects genuinely
+differ, and record the reconciliation in the groundings themselves.
+Folding both in literally is how a ruled component ends up
+contradicting the metric that composes it — and if you need the
+question settled again, ask again.
 
 **Every disclosed assumption carries a `key`** — a short slug you
 write at disclosure (`business-days-only`, `completed-only`). The key

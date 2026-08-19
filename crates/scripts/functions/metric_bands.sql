@@ -3,7 +3,7 @@
 -- landed in, given everything before it. Runs at dataset grain
 -- (`SELECT metric_bands() FROM fin`). The walk protocol — the monthly
 -- verb, the feature recipe, the point-in-time fills — is the door's
--- (`metric_band_walk`), graded against tfmeval's e2_1_bands.py; the
+-- (`metric_band_walk`), graded against the published protocol; the
 -- model call is one kernel behind the runtime seam. Each walked point
 -- records its bands and its PIT — the quantile at which the actual
 -- landed, 0..1 and ordinal by construction. The band_breach detector

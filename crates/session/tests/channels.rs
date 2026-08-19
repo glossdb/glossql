@@ -51,7 +51,7 @@ async fn plane(dir: &std::path::Path) -> Plane {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     Plane::new(store, Arc::new(NoRuntime))
 }
 
@@ -146,8 +146,8 @@ async fn a_landed_table_reads_across_channels() {
 }
 
 /// One channel's re-land must stale every channel's collapsed reads,
-/// not only the writer's (found 2026-08-12: each channel pinned its own
-/// snapshot view forever, so serve-and-mark lied to concurrent readers).
+/// not only the writer's (a channel pinning its own
+/// snapshot view forever makes serve-and-mark lie to concurrent readers).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_re_land_stales_other_channels_reads_too() {
     let dir = tempfile::tempdir().unwrap();

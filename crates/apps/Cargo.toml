@@ -9,19 +9,19 @@ glossql-session = { path = "../session" }
 datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
 axum = { workspace = true }
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
+futures.workspace = true
+serde.workspace = true
 serde_json = { workspace = true }
-tera = { version = "1", default-features = false }
+tera.workspace = true
 tokio = { workspace = true }
-toml = "0.8"
+toml.workspace = true
 
 [dev-dependencies]
 glossql-catalog = { path = "../catalog" }
 glossql-parser = { path = "../parser" }
 glossql-scripts = { path = "../scripts" }
-tower = { version = "0.5", features = ["util"] }
-tempfile = "3"
+tower.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

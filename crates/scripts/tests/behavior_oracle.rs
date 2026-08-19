@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -71,7 +71,7 @@ async fn the_generator_grades_the_discriminator() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -80,7 +80,7 @@ async fn the_generator_grades_the_discriminator() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(
@@ -171,7 +171,7 @@ async fn the_generator_grades_the_discriminator() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn document_keyed_events_reconcile_at_month_grain() {
-    // The 2026-08-14 starvation (the medium run): payment-shaped
+    // The starvation shape: payment-shaped
     // tables key on the invoice document, and one row per document
     // never carries 4+ periods — the most obviously flow-shaped
     // columns in order-to-cash abstained on every anchor. Two moves
@@ -194,7 +194,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -203,7 +203,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(

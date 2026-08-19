@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 fn session(store: &Store) -> Session {
@@ -19,7 +19,7 @@ fn session(store: &Store) -> Session {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))))
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))))
 }
 
 fn one(outcomes: &[Outcome]) -> String {
@@ -50,11 +50,11 @@ DECLARE ASPECT costs WITH $${"title": "Costs"}$$ AS QUERY ON DATASET;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concepts_sharing_an_extract_collide_and_spelling_does_not_hide_it() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     let s = session(&store);
     for stmt in SETUP.split(';').filter(|s| !s.trim().is_empty()) {
-        // The marker survives the split (a body would not — rhai is full
-        // of semicolons), so the shipped text goes in afterwards, by the
+        // The marker survives the split (a body might not — SQL can carry
+        // semicolons in prose), so the shipped text goes in afterwards, by the
         // same substitution the door makes at boot.
         let stmt = glossql_scripts::library::splice(&format!("{stmt};")).expect("shipped");
         s.execute(&stmt).await.unwrap();
@@ -116,7 +116,7 @@ async fn concepts_sharing_an_extract_collide_and_spelling_does_not_hide_it() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn identical_served_series_collide_even_when_the_sql_differs() {
-    // The 2026-08-14 miss: revenue and ar_open_items served the same
+    // The miss this guards: revenue and ar_open_items served the same
     // monthly totals in every month from different SQL, and the
     // canonical buckets saw nothing. The series pass fingerprints the
     // served numbers; the third grounding's filtered series stays in
@@ -125,7 +125,7 @@ async fn identical_served_series_collide_even_when_the_sql_differs() {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::datasource::MemTable;
 
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     let s = session(&store);
     for stmt in SETUP.split(';').filter(|s| !s.trim().is_empty()) {
         let stmt = glossql_scripts::library::splice(&format!("{stmt};")).expect("shipped");
@@ -187,4 +187,17 @@ async fn identical_served_series_collide_even_when_the_sql_differs() {
         "{out}"
     );
     assert_eq!(collisions[0]["months"], serde_json::json!(3), "{out}");
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

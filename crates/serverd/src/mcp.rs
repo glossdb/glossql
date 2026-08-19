@@ -1,6 +1,6 @@
 //! The MCP shim: one door, one tool. `glossql` takes statements and
 //! returns outcomes — the door tells, skills teach. Everything an agent
-//! must *learn* (grammar, rhai authoring, flows) ships as skills;
+//! must *learn* (grammar, function authoring, flows) ships as skills;
 //! everything live (declared functions, the glossary, the tables) is
 //! read through the language itself, where it is always current.
 
@@ -39,7 +39,7 @@ const MCP_BODY_CAP: usize = 16 * 1024 * 1024;
 /// metadata — `ttlMs` (number) and `cacheScope` (`"public" | "private"`)
 /// — beside the SEP-2322 `resultType` discriminator. rmcp 3.1.2 models
 /// the discriminator but not the caching fields, and a client on this
-/// revision validates all three (Claude Code, observed 2026-08-12:
+/// revision validates all three (Claude Code:
 /// `ttlMs` "expected number", `cacheScope` "expected public|private",
 /// and an omitted `resultType` refused with "the absent-means-complete
 /// bridge applies only to earlier-revision servers"). Until the library
@@ -65,29 +65,7 @@ pub async fn amend_tools_list(request: Request, next: Next) -> Response {
         .unwrap_or("-")
         .to_string();
     let is_list = method == "tools/list";
-    // The wire monitor: which lifecycle each client actually speaks.
-    // The negotiated version decides whether an elicitation answer has
-    // a route back to the waiting handler — the session-carrying
-    // lifecycle (≤ 2025-11-25) only, in rmcp 3.1.2.
-    let version = message
-        .as_ref()
-        .and_then(|v| v.pointer("/params/protocolVersion"))
-        .and_then(|p| p.as_str())
-        .map(str::to_string)
-        .or_else(|| {
-            parts
-                .headers
-                .get("mcp-protocol-version")
-                .and_then(|h| h.to_str().ok())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "-".into());
-    let lifecycle = if parts.headers.contains_key("mcp-session-id") {
-        "session"
-    } else {
-        "sessionless"
-    };
-    println!("mcp    <- {method} @{version} {lifecycle}");
+    println!("mcp    <- {method}");
     let response = next
         .run(Request::from_parts(parts, Body::from(bytes)))
         .await;
@@ -136,13 +114,12 @@ pub async fn amend_tools_list(request: Request, next: Next) -> Response {
 
 /// What the brief is decided on: the store's counts plus the open
 /// question count. Movement is a comparison of these FACTS — never of
-/// rendered lines (string equality on non-keys is forbidden, ruled
-/// 2026-08-14; a rendered string is display, not identity).
+/// rendered lines (string equality on non-keys is forbidden; a
+/// rendered string is display, not identity).
 #[derive(Clone, PartialEq, Eq)]
 pub struct BriefFacts {
     counts: glossql_glossary::BriefCounts,
     questions: usize,
-    conflicts: usize,
 }
 
 /// The brief's shared state, one per door process: the composed line
@@ -168,10 +145,9 @@ pub struct GlossqlMcp {
     plane: Arc<Plane>,
     /// The door's knobs: the fallback agent id for calls no handshake
     /// named, the row cap. Human writes land as [`crate::HUMAN`] —
-    /// anonymous by ruling (2026-08-13).
+    /// anonymous by ruling.
     doors: crate::DoorConfig,
-    /// The brief (ruled 2026-08-12, delivery option B; extended
-    /// 2026-08-14): one composed line over live counts, appended to
+    /// The brief: one composed line over live counts, appended to
     /// the instructions every initialize/discover serves — and, since
     /// a client fetches those once per connection, ALSO appended as a
     /// content block to any tool result whose call moved the facts.
@@ -179,13 +155,13 @@ pub struct GlossqlMcp {
     /// every tool call.
     brief: Arc<Brief>,
     /// Questions the human declined — transport state, never the
-    /// store (no ledger, ruled 2026-08-13). A decline rests only
+    /// store (no ledger). A decline rests only
     /// until the workspace moves: any writing call clears the set,
-    /// so "not now" never hardens into "never" (cadence ruling,
-    /// 2026-08-14). A landed slot stops deriving on its own.
+    /// so "not now" never hardens into "never". A landed slot stops
+    /// deriving on its own.
     deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Questions asked on the session lifecycle and not yet answered.
-    /// The ask no longer blocks the agent's call (run 4, 2026-08-15),
+    /// The ask does not block the agent's call,
     /// so nothing else would stop the next read from asking the same
     /// thing again — and a person should be looking at one form, not a
     /// stack of them. Non-empty means an ask is in flight and the
@@ -235,7 +211,6 @@ impl GlossqlMcp {
     /// The facts and their rendering, in one read pass.
     async fn compose_brief(plane: &Plane) -> (Option<BriefFacts>, String) {
         let questions = open_question_count(plane).await.unwrap_or(0);
-        let conflicts = conflict_count(plane).await.unwrap_or(0);
         match plane.store().brief_counts().await {
             Ok(counts) => {
                 let mut line = format!(
@@ -275,24 +250,12 @@ impl GlossqlMcp {
                         if questions == 1 { "s" } else { "" },
                     ));
                 }
-                if conflicts > 0 {
-                    line.push_str(&format!(
-                        "; {} claim{} ruled two ways — read `ruling_conflicts` and \
-                         reconcile in your own groundings",
-                        conflicts,
-                        if conflicts == 1 { " is" } else { "s are" },
-                    ));
-                }
                 line.push_str(
                     ". Start with the brief the glossql skill teaches — human slots, \
                      contested, red bands, the open queue — before acting.",
                 );
                 (
-                    Some(BriefFacts {
-                        counts,
-                        questions,
-                        conflicts,
-                    }),
+                    Some(BriefFacts { counts, questions }),
                     line,
                 )
             }
@@ -305,47 +268,35 @@ impl GlossqlMcp {
 
     /// The next open question the workspace derives — judged
     /// assumptions below full confidence on the winning slot, lowest
-    /// confidence first. Judgment only, never statistics (ruled
-    /// 2026-08-13): a claim a measurement can settle — behavior, unit,
+    /// confidence first. Judgment only, never statistics: a claim a
+    /// measurement can settle — behavior, unit,
     /// role — is the agent's work through the shipped functions, and
     /// the door never asks the human for it. A workspace with no
     /// dataset bound (or nothing open) derives nothing, and the round
     /// stays silent.
-    async fn derive_question(&self, session: &Session, skip_deferred: bool) -> Option<Question> {
+    async fn derive_question(&self, session: &Session) -> Option<Question> {
         let deferred = set_of(&self.deferred).clone();
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
             println!("glossql ?? question-round: the loose derivation failed: {e}");
         }
-        if let Ok(rows) = loose {
-            for row in rows {
-                let Some(q) = loose_from(&row) else {
-                    continue;
-                };
-                if skip_deferred && deferred.contains(&q.id()) {
-                    continue;
-                }
-                return Some(q);
-            }
-        }
-        None
+        loose
+            .ok()?
+            .iter()
+            .filter_map(loose_from)
+            .find(|q| !deferred.contains(&q.id()))
     }
 
     /// The retry is stateless, so re-derivation is the only trust: an
-    /// answer lands only if its question still derives.
+    /// answer lands only if its question still derives — walked live
+    /// for the key rather than trusting the echoed shape.
     async fn question_for_key(&self, session: &Session, key: &str) -> Option<Question> {
-        // Walk the live derivation for the key rather than trusting
-        // the echoed shape.
-        let mut probe = self.derive_all(session).await;
-        probe.retain(|q| q.id() == key);
-        probe.pop()
-    }
-
-    async fn derive_all(&self, session: &Session) -> Vec<Question> {
-        match read_rows(session, LOOSE_SQL).await {
-            Ok(rows) => rows.iter().filter_map(loose_from).collect(),
-            Err(_) => Vec::new(),
-        }
+        read_rows(session, LOOSE_SQL)
+            .await
+            .ok()?
+            .iter()
+            .filter_map(loose_from)
+            .find(|q| q.id() == key)
     }
 
     /// Land what the human said — or defer, or hand a correction to
@@ -405,8 +356,8 @@ impl GlossqlMcp {
             // The question itself missed — the human refuses it rather
             // than the claim. The entry holds this key closed; the
             // agent owes a reformulation under a new key, which derives
-            // its own question (ruled 2026-08-18, after a run where a
-            // sloppily worded fold-in question could only be deferred).
+            // its own question — without this stance a sloppily worded
+            // fold-in question can only be deferred.
             Some("unclear — ask differently") => {
                 let note = content
                     .get("correction")
@@ -429,8 +380,8 @@ impl GlossqlMcp {
                     .and_then(|v| v.as_str())
                     .unwrap_or("(no correction text)");
                 // The correction writes its own record — a message
-                // alone left the question deriving forever (the
-                // 2026-08-14 run). The re-grounding stays the agent's
+                // alone would leave the question deriving
+                // forever. The re-grounding stays the agent's
                 // work; the ruling holds the question closed while
                 // they do it.
                 let note = self
@@ -457,9 +408,9 @@ impl GlossqlMcp {
     /// human actually read as a snapshot — display, never compared.
     /// The agent owes the fold-in (re-record the grounding citing the
     /// ruling); until then the brief counts the debt and the round
-    /// holds the question closed. Ruled 2026-08-14: the earlier shape
-    /// copied the winning body into the human slot, and the frozen
-    /// copy outranked every later correction — the human slot now
+    /// holds the question closed. Copying the winning body into the
+    /// human slot is forbidden: the frozen
+    /// copy would outrank every later correction — the human slot
     /// carries only what the human actually said.
     async fn land_ruling(&self, session: &Session, ruling: RulingEntry<'_>) -> String {
         let RulingEntry {
@@ -572,27 +523,12 @@ async fn open_question_count(plane: &Plane) -> Option<usize> {
         id: crate::HUMAN.into(),
     };
     let session = plane.channel(actor, Some(&dataset)).await.ok()?;
-    Some(read_rows(&session, LOOSE_SQL).await.ok()?.len())
-}
-
-/// Claims the human ruled two ways — a read, not a round. Counted for
-/// the brief so an agent hears about the tension; nothing asks about
-/// it, and reconciling is the agent's act in its own groundings.
-async fn conflict_count(plane: &Plane) -> Option<usize> {
-    let mut names = plane.datasets().await.ok()?;
-    names.sort();
-    let dataset = names.into_iter().next()?;
-    let actor = Actor {
-        kind: ActorKind::Human,
-        id: crate::HUMAN.into(),
-    };
-    let session = plane.channel(actor, Some(&dataset)).await.ok()?;
-    Some(
-        read_rows(&session, "SELECT * FROM ruling_conflicts")
-            .await
-            .ok()?
-            .len(),
-    )
+    read_rows(&session, "SELECT count(*) AS n FROM open_questions")
+        .await
+        .ok()?
+        .first()
+        .and_then(|r| r["n"].as_u64())
+        .map(|n| n as usize)
 }
 
 /// The round's opaque state tag, echoed by MRTR retries. Untrusted —
@@ -614,8 +550,8 @@ const SAME_AS: &str = "same as before";
 /// move, never one per read — so the wait does not have to pay for
 /// absence a second time. What it does have to cover is a person who
 /// IS there, reading a definitional question with a named alternative
-/// and thinking before answering, and 25s does not (project lead,
-/// 2026-08-15). Sized for the present human; tune with the flag.
+/// and thinking before answering, and 25s does not.
+/// Sized for the present human; tune with the flag.
 pub const DEFAULT_ROUND_WAIT_SECS: u64 = 120;
 
 /// One entry of the human's `ruling` slot, as the door composes it.
@@ -635,7 +571,7 @@ struct RulingEntry<'a> {
 /// What still stands open for a human to judge, and the round's ONLY
 /// derivation — unassessed witnessed claims (behavior, unit, role) are
 /// the agent's measurement backlog, never human questions, and the
-/// shipped functions settle them (ruled 2026-08-13). The derivation
+/// shipped functions settle them. The derivation
 /// itself is `crates/session/reads/open_questions.sql`, which carries
 /// the gates and the reasons; the door only orders and serves it, and
 /// the app's docket renders the same read. Least-confident first, and
@@ -797,8 +733,8 @@ impl ServerHandler for GlossqlMcp {
         // sessionless: the ask is an MRTR `input_required` result
         // (SEP-2322) and the answer arrives on the client's retry of
         // this same call. Session lifecycles get the server→client
-        // request on this call's own stream instead. Cadence (ruled
-        // 2026-08-14, from the first live run): forms ride only calls
+        // request on this call's own stream instead. Cadence: forms
+        // ride only calls
         // that read the record — a metadata read, no writes — so the
         // brief sweep and the stage read-backs carry the round while
         // landings and judging queries run uninterrupted. A writing
@@ -831,7 +767,7 @@ impl ServerHandler for GlossqlMcp {
                 .and_then(|caps| caps.elicitation)
                 .is_some()
         {
-            if let Some(question) = self.derive_question(&session, true).await {
+            if let Some(question) = self.derive_question(&session).await {
                 match question.params() {
                     Ok(params) => {
                         if context
@@ -909,7 +845,7 @@ impl ServerHandler for GlossqlMcp {
         // A single query streams from the engine and stops at the cap —
         // what the agent won't see is never computed. Metadata reads
         // (GLOSSARY(), ATTEST(), the store relations) are exempt from
-        // the cap (project lead, 2026-08-04): the map must be whole,
+        // the cap: the map must be whole,
         // and the store bounds it. Everything else runs through execute.
         let rendered = match session.query_stream(statements).await {
             Ok(query) => {
@@ -930,10 +866,10 @@ impl ServerHandler for GlossqlMcp {
             },
             Err(e) => Err(e.to_string()),
         };
-        // The brief travels on the call that moved it (ruled
-        // 2026-08-14, run 2's friction 11: initialize instructions are
-        // fetched once per connection, so a long-lived session never
-        // saw the counts change). Two rules hold it honest:
+        // The brief travels on the call that moved it: initialize
+        // instructions are fetched once per connection, so a
+        // long-lived session would never
+        // see the counts change. Two rules hold it honest:
         // movement is decided on the COUNTS, never on the rendered
         // line (a rendered string is display, not identity); and the
         // The baseline is the facts as they stood before this call.
@@ -941,11 +877,17 @@ impl ServerHandler for GlossqlMcp {
         // watching the same workspace does not, and that is the known
         // cost of not keeping per-actor state the run has never asked
         // for.
-        let before = self.brief.facts.read().ok().and_then(|f| f.clone());
-        Self::refresh_brief(&self.plane, &self.brief).await;
-        let after = self.brief.facts.read().ok().and_then(|f| f.clone());
-        let brief_moved = (after.is_some() && after != before)
-            .then(|| format!("brief: {}", self.brief.line()));
+        // Scoped to the cause: only a write (or a landed ruling) can
+        // move the counts, so a pure read never pays the recomposition.
+        let brief_moved = if shape.writes || probed.is_some() {
+            let before = self.brief.facts.read().ok().and_then(|f| f.clone());
+            Self::refresh_brief(&self.plane, &self.brief).await;
+            let after = self.brief.facts.read().ok().and_then(|f| f.clone());
+            (after.is_some() && after != before)
+                .then(|| format!("brief: {}", self.brief.line()))
+        } else {
+            None
+        };
         Ok(match rendered {
             Ok(body) => {
                 let mut blocks = vec![ContentBlock::text(body.to_string())];

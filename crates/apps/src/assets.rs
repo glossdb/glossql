@@ -20,7 +20,6 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("app.css", "text/css"),
     asset!("store.js", "text/javascript"),
     asset!("gl-chart.js", "text/javascript"),
-    asset!("gl-table.js", "text/javascript"),
     asset!("gl-value.js", "text/javascript"),
     asset!("gl-rows.js", "text/javascript"),
     asset!("vendor/htmx.min.js", "text/javascript"),

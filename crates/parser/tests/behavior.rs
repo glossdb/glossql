@@ -116,12 +116,6 @@ fn recipe_tail_must_be_dollar_quoted() {
 }
 
 #[test]
-fn accepts_is_a_parenthesized_aspect_list() {
-    let e = error("DECLARE FUNCTION f FOR fin AS $$#{}$$ ACCEPTS typing_config RETURNS $${}$$;");
-    assert!(e.contains("("), "{e}");
-}
-
-#[test]
 fn calls_with_arguments_are_not_extractions() {
     // Settings are context, never call arguments: an argument-carrying call
     // is not an extraction — it falls through to substrate SQL, where

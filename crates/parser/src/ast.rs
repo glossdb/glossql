@@ -28,7 +28,7 @@ pub enum Statement {
     Substrate(Box<DFStatement>),
 }
 
-/// `PROBE source AS $$sql$$` — a recipe rehearsal (ruled 2026-08-04): the
+/// `PROBE source AS $$sql$$` — a recipe rehearsal: the
 /// same SQL surface as a recipe, executed at the source, landing nothing.
 /// The result carries the schema the recipe would land, so `LIMIT 0`
 /// rehearses the identity a `DECLARE RECIPE` would stamp.
@@ -106,11 +106,11 @@ pub struct AspectDecl {
     pub name: Ident,
     pub schema: JsonBody,
     pub kind: AspectKind,
-    /// `ON grain, …` — the subject classes glosses may attach to (ruled
-    /// 2026-08-05); empty = all grains.
+    /// `ON grain, …` — the subject classes glosses may attach to;
+    /// empty = all grains.
     pub grains: Vec<Grain>,
-    /// `WHEN aspect = 'value'` — conditional relevance (ruled
-    /// 2026-08-14): the aspect is owed on a subject only while the
+    /// `WHEN aspect = 'value'` — conditional relevance: the
+    /// aspect is owed on a subject only while the
     /// named sibling aspect's collapsed body carries `value` = the
     /// literal. Bounds `unassessed` disclosure only; writes stay gated
     /// by grain, and a spoken slot outside its condition serves.
@@ -123,7 +123,7 @@ pub enum Grain {
     Table,
     Column,
     Relationship,
-    /// A declared source's name as subject (ruled 2026-08-12): the
+    /// A declared source's name as subject: the
     /// deposit the next dataset reads — source-grain slots collapse
     /// workspace-wide.
     Source,
@@ -140,15 +140,10 @@ pub enum AspectKind {
 pub struct FunctionDecl {
     pub name: Ident,
     pub scope: FunctionScope,
-    /// The script itself, carried by `AS $$…$$` (ruled 2026-08-15,
-    /// fixture 24 — it was a path until then).
+    /// The script itself, carried by `AS $$…$$` (fixture 24).
     pub script: String,
-    /// `ACCEPTS (aspect, …)` — aspects whose current values the server
-    /// hands the script as its context document; empty = no context.
-    pub accepts: Vec<Ident>,
-    /// `RETURNS aspect` — the aspect this function's output fills,
-    /// mirroring `ACCEPTS` (project lead, 2026-08-04). Absent, the
-    /// function is a detector: role is declared by shape.
+    /// `RETURNS aspect` — the aspect this function's output fills.
+    /// Absent, the function is a detector: role is declared by shape.
     pub returns: Option<Ident>,
 }
 
@@ -170,8 +165,7 @@ pub struct WitnessDecl {
 }
 
 /// A speaker in a witness's `BY` list — actor kinds only. A function's
-/// voice comes from its `RETURNS` binding, never from the gate (project
-/// lead, 2026-08-04).
+/// voice comes from its `RETURNS` binding, never from the gate.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Speaker {
     Agent,
@@ -205,8 +199,8 @@ pub struct Path {
 }
 
 /// A relationship endpoint: `[dataset.]table.column` or, composite,
-/// `[dataset.]table.(a, b)` — the tuple is the key (ruled 2026-08-05;
-/// there is no derived-column cure).
+/// `[dataset.]table.(a, b)` — the tuple is the key (there is no
+/// derived-column cure).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RelSide {
     pub dataset: Option<Ident>,

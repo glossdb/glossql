@@ -1,14 +1,9 @@
-//! The rhai runtime behind [`FunctionRuntime`] (SPEC.md §6): judges as
-//! scripts, pure over their context — since stage 5 a measurement's body
-//! is SQL the engine runs, and the script door died with the last shipped
-//! script measurement. The statistical kernels stay here in Rust, behind
-//! the engine's aggregate registrations and the runtime's typed methods.
-//!
-//! Invocation contract: the script file evaluates with two scope
-//! constants — `subject` (the subject path) and `context` (a detector's
-//! slots + threshold, or a legacy measurement's `ACCEPTS` document) —
-//! and its final expression is the result, converted to JSON and
-//! validated by the session.
+//! The kernel runtime behind [`FunctionRuntime`] (SPEC.md §6). Function
+//! bodies are SQL the engine plans — a measurement over data, a detector
+//! over its witness's `slots` — so nothing here evaluates a body. What
+//! remains is what SQL cannot express: the statistical kernels in Rust,
+//! behind the engine's aggregate registrations and the runtime's typed
+//! methods.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -25,53 +20,37 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_glossary::FunctionRow;
 use glossql_session::FunctionRuntime;
-use rhai::{AST, Dynamic, Engine, EvalAltResult, Scope};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-/// One engine, configured once; compiled ASTs cached per script (recompiled
-/// when the file's text changes). Both are shareable because the crate is
-/// built with rhai's `sync` feature.
-pub struct RhaiRuntime {
-    root: PathBuf,
-    engine: Engine,
-    asts: RwLock<HashMap<String, (String, Arc<AST>)>>,
-    /// Shared with the `tabicl_bands` closure: one lazily loaded model
-    /// serves both the script kernel and the `band_grid` seam.
+/// The native kernels and their one lazily loaded model.
+pub struct KernelRuntime {
     band_model: Arc<BandModel>,
 }
 
-impl std::fmt::Debug for RhaiRuntime {
+impl std::fmt::Debug for KernelRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RhaiRuntime")
-            .field("root", &self.root)
-            .finish()
+        f.debug_struct("KernelRuntime").finish_non_exhaustive()
     }
 }
 
-/// A table of batches — the reconcile kernel's input shape.
-#[derive(Debug, Clone)]
-pub struct Table(Arc<Vec<RecordBatch>>);
-
-type ScriptResult<T> = Result<T, Box<EvalAltResult>>;
+type ScriptResult<T> = Result<T, String>;
 
 fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
-    Err(message.into().into())
+    Err(message.into())
 }
 
 /// The TabICL regressor behind the band kernel: loaded once per runtime
 /// from the workspace's weights directory on first call, shared across
 /// scripts and threads (the forward takes `&self`). A failed load is
 /// never cached — weights provisioned after the first refused read are
-/// picked up by the next call, no restart (found live 2026-08-11, the
-/// whatif trial: the OnceLock held the error for the process lifetime).
+/// picked up by the next call, no restart (a caching OnceLock would
+/// hold the error for the process lifetime).
 struct BandModel {
     dir: PathBuf,
     model: RwLock<Option<Arc<tabicl_candle::tabicl::TabIcl>>>,
     /// Chosen once: Metal when the machine has it (only the candle
-    /// compute rides the GPU), CPU otherwise or under
-    /// `GLOSSQL_DEVICE=cpu`.
+    /// compute rides the GPU), CPU otherwise.
     device: tabicl_candle::Device,
 }
 
@@ -97,9 +76,6 @@ fn compute_pool() -> &'static rayon::ThreadPool {
 }
 
 fn pick_device() -> tabicl_candle::Device {
-    if std::env::var("GLOSSQL_DEVICE").is_ok_and(|v| v.eq_ignore_ascii_case("cpu")) {
-        return tabicl_candle::Device::Cpu;
-    }
     tabicl_candle::Device::new_metal(0).unwrap_or(tabicl_candle::Device::Cpu)
 }
 
@@ -160,69 +136,10 @@ impl BandModel {
         Ok(Arc::clone(slot.get_or_insert(loaded)))
     }
 
-    /// One fit + one read: bands at the given levels for one test row,
-    /// and the PIT — the quantile at which the observed value lands in
-    /// the predicted distribution, read off the monotone quantile grid.
-    /// Ordinal by construction; raw densities never leave the kernel.
-    fn bands(
-        &self,
-        train_x: &rhai::Array,
-        train_y: &rhai::Array,
-        test_x: &rhai::Array,
-        alphas: &rhai::Array,
-        actual: f64,
-    ) -> Result<rhai::Map, String> {
-        let number = |d: &Dynamic| -> Result<f64, String> {
-            d.as_float()
-                .or_else(|_| d.as_int().map(|v| v as f64))
-                .map_err(|t| format!("tabicl_bands takes numbers, got {t}"))
-        };
-        let row = |d: &Dynamic| -> Result<Vec<f64>, String> {
-            d.clone()
-                .into_array()
-                .map_err(|t| format!("tabicl_bands takes rows of numbers, got {t}"))?
-                .iter()
-                .map(&number)
-                .collect()
-        };
-
-        let rows = train_x.len();
-        if rows != train_y.len() || rows < 2 {
-            return Err(format!(
-                "tabicl_bands: {rows} training rows against {} targets (need >= 2)",
-                train_y.len()
-            ));
-        }
-        let test: Vec<f64> = row(&Dynamic::from(test_x.clone()))?;
-        let cols = test.len();
-        let mut x = Vec::with_capacity(rows * cols);
-        for r in train_x {
-            let r = row(r)?;
-            if r.len() != cols {
-                return Err(format!(
-                    "tabicl_bands: ragged training row ({} features against {cols})",
-                    r.len()
-                ));
-            }
-            x.extend(r);
-        }
-        let y: Vec<f64> = train_y.iter().map(&number).collect::<Result<_, _>>()?;
-        let levels: Vec<f64> = alphas.iter().map(&number).collect::<Result<_, _>>()?;
-
-        let (q, pit) = self.bands_core(&x, rows, cols, &y, &test, &levels, actual)?;
-        let mut out = rhai::Map::new();
-        out.insert(
-            "q".into(),
-            Dynamic::from(q.into_iter().map(Dynamic::from).collect::<rhai::Array>()),
-        );
-        out.insert("pit".into(), Dynamic::from(pit));
-        Ok(out)
-    }
-
-    /// The typed core of the band kernel — one fit, quantiles at the
+    /// The band kernel — one fit, quantiles at the
     /// levels, and the PIT read off the monotone quantile grid. Ordinal
-    /// by construction; raw densities never leave here. Serves the rhai
-    /// wrapper above and the metric-bands walk door through
+    /// by construction; raw densities never leave here. Serves the
+    /// metric-bands walk door through
     /// [`FunctionRuntime::band_point`].
     fn bands_core(
         &self,
@@ -264,169 +181,34 @@ impl BandModel {
     }
 }
 
-impl RhaiRuntime {
-    /// `root` is the workspace directory. Scripts no longer live under
-    /// it — a declaration carries its own body (fixture 24) — but the
-    /// band model's weights still do.
+impl KernelRuntime {
+    /// `root` is the workspace directory. Bodies live in declarations
+    /// (fixture 24), never under it — only the band model's weights do.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
-        let mut engine = Engine::new_raw();
-        engine.register_global_module(rhai::packages::Package::as_shared_module(
-            &rhai::packages::StandardPackage::new(),
-        ));
-        // The default file resolver reads the filesystem and its base path
-        // is not a jail (rhai-1.25.1 file.rs:272-290); no imports until a
-        // corpus script needs them.
-        engine.set_module_resolver(rhai::module_resolvers::DummyModuleResolver);
-        // Runaway backstop, not a sandbox — scripts are workspace-trusted
-        // (M2 ruling); every other limit keeps its default. 50M is right
-        // BECAUSE the heavy arithmetic lives in kernels (2026-08-06: the
-        // f1 rework briefly raised this to 2B to cover interpreter-bound
-        // loops — that was covering for a wrong design, reverted with it).
-        engine.set_max_operations(50_000_000);
-        // Except expression depth, whose default HALVES in debug builds
-        // (rhai-1.25.1 limits.rs:17 vs :32) — a library script would then
-        // parse in release and fail under `cargo test`. Pin the release
-        // defaults so both builds run the same contract.
-        engine.set_max_expr_depths(64, 32);
-
-        engine
-            // SQL text as an identity: parse and re-render, so spelling
-            // differences (whitespace, keyword case, redundant parens the
-            // parser folds) collapse and identifiers survive verbatim. A
-            // body the parser cannot read normalizes by whitespace alone —
-            // weaker, honestly so, and stated here rather than hidden.
-            .register_fn("canonical_sql", |sql: &str| -> String {
-                use datafusion::sql::sqlparser::dialect::GenericDialect;
-                use datafusion::sql::sqlparser::parser::Parser;
-                match Parser::parse_sql(&GenericDialect {}, sql) {
-                    Ok(statements) if statements.len() == 1 => statements[0].to_string(),
-                    _ => sql.split_whitespace().collect::<Vec<_>>().join(" "),
-                }
-            })
-            // A stored body (a gloss, a cached value) back into a map the
-            // script can read — the inverse of returning one.
-            .register_fn("parse_json", |s: &str| -> ScriptResult<Dynamic> {
-                let value: serde_json::Value =
-                    serde_json::from_str(s).map_err(|e| format!("parse_json: {e}"))?;
-                rhai::serde::to_dynamic(&value).map_err(|e| e.to_string().into())
-            });
-
-        // The TabICL band kernel (ruled 2026-08-11): the forward pass is
-        // native — the model is never reimplemented in script — while the
-        // walk-forward protocol stays authored in metric_bands.rhai.
         // Weights load lazily, digest-verified, from the workspace's
         // weights/ directory (flat layout: tabicl-regressor.safetensors,
         // its config json, DIGESTS); a missing directory fails the
-        // calling function with the loader's message.
+        // calling door with the loader's message.
         let band_model = Arc::new(BandModel {
             dir: root.join("weights"),
             model: RwLock::new(None),
             device: pick_device(),
         });
-        let kernel_model = Arc::clone(&band_model);
-        engine.register_fn(
-            "tabicl_bands",
-            move |train_x: rhai::Array,
-                  train_y: rhai::Array,
-                  test_x: rhai::Array,
-                  alphas: rhai::Array,
-                  actual: f64|
-                  -> ScriptResult<rhai::Map> {
-                kernel_model
-                    .bands(&train_x, &train_y, &test_x, &alphas, actual)
-                    .map_err(Into::into)
-            },
-        );
-
-        RhaiRuntime {
-            root,
-            engine,
-            asts: RwLock::new(HashMap::new()),
-            band_model,
-        }
-    }
-
-    /// The compiled script, from the body the declaration carried
-    /// (ruled 2026-08-15, fixture 24 — this read a file until then).
-    /// Cached per function name and invalidated by the source itself,
-    /// so a re-declare recompiles and nothing has to be told to.
-    /// Does this body compile? For the standing skill invariant, which
-    /// could not see rhai before: a `DECLARE FUNCTION … AS $$…$$`
-    /// example parses as glossql whatever its body says, because the
-    /// body is opaque text at that level — so a script the engine
-    /// rejects shipped as teaching. Found in a run on 2026-08-15, where
-    /// the functions skill's own worked example carried a multi-line
-    /// double-quoted string, which rhai does not allow.
-    pub fn compiles(&self, source: &str) -> Result<(), String> {
-        self.engine
-            .compile(source)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
-    fn ast(&self, name: &str, source: &str) -> Result<Arc<AST>, String> {
-        if let Some((cached, ast)) = self.asts.read().expect("asts").get(name)
-            && cached == source
-        {
-            return Ok(Arc::clone(ast));
-        }
-        let ast = Arc::new(
-            self.engine
-                .compile(source)
-                .map_err(|e| format!("`{name}`: {e}"))?,
-        );
-        self.asts
-            .write()
-            .expect("asts")
-            .insert(name.to_string(), (source.to_string(), Arc::clone(&ast)));
-        Ok(ast)
-    }
-
-    /// The registered kernel signatures — what the engine actually offers,
-    /// for the skill-mirror test. `kernel-audit` rides only under
-    /// `cargo test` (the self dev-dependency in Cargo.toml), never in the
-    /// shipped library.
-    #[cfg(feature = "kernel-audit")]
-    pub fn kernel_signatures(&self) -> Vec<String> {
-        self.engine.gen_fn_signatures(false)
+        KernelRuntime { band_model }
     }
 }
 
-impl FunctionRuntime for RhaiRuntime {
-    /// The shipped statistics (`profile`, `mad`, `entropy`), registered
-    /// when the runtime attaches — a measurement body and an agent's own
-    /// SQL name the same aggregates (stage 5, §7e).
+impl FunctionRuntime for KernelRuntime {
+    /// The shipped statistics (`profile`; `mad` and `entropy` ride
+    /// inside its struct), registered when the runtime attaches — a
+    /// measurement body and an agent's own SQL name the same
+    /// aggregates (stage 5, §7e).
     fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
         statistics::udafs()
     }
 
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        subject: &str,
-        context: &Value,
-    ) -> Result<Value, String> {
-        let ast = self.ast(&function.name, &function.script)?;
-        let mut scope = Scope::new();
-        scope.push_constant("subject", subject.to_string());
-        scope.push_constant(
-            "context",
-            rhai::serde::to_dynamic(context).map_err(|e| e.to_string())?,
-        );
-        let result: Dynamic = self
-            .engine
-            .eval_ast_with_scope(&mut scope, &ast)
-            .map_err(|e| format!("`{}`: {e}", function.name))?;
-        serde_json::to_value(&result).map_err(|e| {
-            format!(
-                "`{}` returned something JSON cannot carry: {e}",
-                function.name
-            )
-        })
-    }
-
-    /// The `whatif.` door's kernel (ruled 2026-08-11): the regressor
+    /// The `whatif.` door's kernel: the regressor
     /// ensemble over the replayed worlds — a replay grid is a handful
     /// of worlds, exactly the sparse-support regime the ensemble was
     /// ruled in for (tabicl-candle README, stage 3). Members from the
@@ -488,26 +270,19 @@ impl FunctionRuntime for RhaiRuntime {
             .map_err(|e| e.to_string())
     }
 
-    /// The behavior-evidence door's kernel (stage 5): the same
-    /// discriminator the `reconcile` script kernel serves, over batches.
+    /// The behavior-evidence door's kernel (stage 5): the stock/flow
+    /// discriminator, over batches.
     fn reconcile(
         &self,
         y: &[RecordBatch],
         m: &[RecordBatch],
         terms: &[String],
     ) -> Result<Value, String> {
-        let out = reconcile_kernel(
-            &Table(Arc::new(y.to_vec())),
-            &Table(Arc::new(m.to_vec())),
-            terms.to_vec(),
-        )
-        .map_err(|e| e.to_string())?;
-        serde_json::to_value(Dynamic::from_map(out))
-            .map_err(|e| format!("reconcile returned something JSON cannot carry: {e}"))
+        reconcile_kernel(y, m, terms.to_vec())
     }
 
-    /// The metric-bands walk's kernel (stage 5): the same one-fit read
-    /// the `tabicl_bands` script kernel serves, typed.
+    /// The metric-bands walk's kernel (stage 5): one fit and one read,
+    /// typed.
     fn band_point(
         &self,
         train_x: &[f64],
@@ -522,7 +297,7 @@ impl FunctionRuntime for RhaiRuntime {
             .bands_core(train_x, rows, cols, train_y, test_x, alphas, actual)
     }
 
-    /// The `misfit.` door's kernel (ruled 2026-08-11, fixture 20): the
+    /// The `misfit.` door's kernel (fixture 20): the
     /// chain-rule density read, fit on the frame and scored on the same
     /// frame (self-fit — measured protocol-robust for this model).
     /// Numeric features only, through the regressor checkpoint. Two
@@ -638,23 +413,25 @@ pub(crate) fn extremum_of(a: &ArrayRef, min: bool) -> ScriptResult<Option<Extrem
     Ok(best.map(Extremum::Text))
 }
 
-/// Distinct non-null values, counted by display form — the reading a
-/// human would count.
-pub(crate) fn distinct_of(a: &ArrayRef) -> ScriptResult<i64> {
-    let mut seen = HashSet::new();
+/// Non-null values counted by display form — the reading a human would
+/// count. One pass serves both the distinct count (the map's size) and
+/// the top-k display buckets.
+pub(crate) fn display_counts(a: &ArrayRef) -> ScriptResult<HashMap<String, i64>> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
     for i in 0..a.len() {
         if a.is_null(i) {
             continue;
         }
-        seen.insert(array_value_to_string(a, i).map_err(|e| e.to_string())?);
+        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
+        *counts.entry(value).or_insert(0) += 1;
     }
-    Ok(seen.len() as i64)
+    Ok(counts)
 }
 
 /// Shannon entropy (nats) of the non-null value distribution, exact —
 /// one pass over typed cell keys, never display buckets. `top_k` stays
-/// a display cap; this scalar is what a score may read (the 2026-08-06
-/// f1 lesson: a display cap must not become a statistics cap).
+/// a display cap; this scalar is what a score may read (a display
+/// cap must not become a statistics cap).
 pub(crate) fn entropy_of(a: &ArrayRef) -> ScriptResult<f64> {
     let mut counts: HashMap<u64, i64> = HashMap::new();
     for key in cell_keys(a)?.into_iter().flatten() {
@@ -676,19 +453,11 @@ pub(crate) fn entropy_of(a: &ArrayRef) -> ScriptResult<f64> {
 
 /// The k most frequent display values, count descending then value
 /// ascending — deterministic buckets for a judge to read.
-pub(crate) fn top_k_of(a: &ArrayRef, k: usize) -> ScriptResult<Vec<(String, i64)>> {
-    let mut counts: HashMap<String, i64> = HashMap::new();
-    for i in 0..a.len() {
-        if a.is_null(i) {
-            continue;
-        }
-        let value = array_value_to_string(a, i).map_err(|e| e.to_string())?;
-        *counts.entry(value).or_insert(0) += 1;
-    }
-    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+pub(crate) fn top_k(counts: &HashMap<String, i64>, k: usize) -> Vec<(String, i64)> {
+    let mut pairs: Vec<(String, i64)> = counts.iter().map(|(v, c)| (v.clone(), *c)).collect();
     pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     pairs.truncate(k);
-    Ok(pairs)
+    pairs
 }
 
 /// (min, max, avg) of string lengths in characters; `None` off strings
@@ -777,7 +546,7 @@ fn as_floats(array: &ArrayRef) -> ScriptResult<Float64Array> {
         .clone())
 }
 
-// ---- statistical kernels (2026-08-06) --------------------------------
+// ---- statistical kernels ---------------------------------------------
 //
 // The compute-heavy halves of the measurement scripts, in Rust where
 // they belong (the crate contract above: scripts orchestrate, they
@@ -921,25 +690,25 @@ fn cell_keys(array: &ArrayRef) -> ScriptResult<Vec<Option<u64>>> {
     Ok(keys)
 }
 
-/// A named column across the table's batches, concatenated once.
-fn column_of(t: &Table, name: &str) -> ScriptResult<ArrayRef> {
-    let Some(first) = t.0.first() else {
+/// A named column across the batches, concatenated once.
+fn column_of(t: &[RecordBatch], name: &str) -> ScriptResult<ArrayRef> {
+    let Some(first) = t.first() else {
         return fail(format!("no rows carry a column `{name}`"));
     };
     let Some((index, _)) = first.schema().column_with_name(name) else {
         return fail(format!("no column `{name}` in the result"));
     };
-    if t.0.len() == 1 {
+    if t.len() == 1 {
         return Ok(Arc::clone(first.column(index)));
     }
-    let arrays: Vec<&dyn Array> = t.0.iter().map(|b| b.column(index).as_ref()).collect();
-    datafusion::arrow::compute::concat(&arrays).map_err(|e| e.to_string().into())
+    let arrays: Vec<&dyn Array> = t.iter().map(|b| b.column(index).as_ref()).collect();
+    datafusion::arrow::compute::concat(&arrays).map_err(|e| e.to_string())
 }
 
 // ---- the reconcile kernel: v0.3's stock/flow discriminator ----------
 //
 // Constants ported verbatim with their provenance; the two gates are
-// COUPLED (see behavior_evidence.rhai's header for the derivation).
+// COUPLED (see behavior_evidence.sql's header for the derivation).
 const MIN_PERIODS: usize = 4;
 const FIRE_RESIDUAL_MAX: f64 = 0.5;
 const MIN_ENTITIES_FIRED: usize = 2;
@@ -1024,8 +793,8 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// over the stacked entity series; residuals reduce per (entity,
 /// convention) under the ported gates. Returns per-convention
 /// summaries; support policy (Wilson, winner, alternatives) stays in
-/// the script.
-fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rhai::Map> {
+/// the door.
+fn reconcile_kernel(y: &[RecordBatch], m: &[RecordBatch], terms: Vec<String>) -> ScriptResult<Value> {
     let k = terms.len();
     if k == 0 {
         return fail("reconcile needs at least one movement term");
@@ -1132,7 +901,7 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
     });
     let mw = &mmatf * &w;
 
-    let mut summaries = rhai::Array::with_capacity(cc);
+    let mut summaries = Vec::with_capacity(cc);
     let mut ys_buf: Vec<f64> = Vec::new();
     let mut ms_buf: Vec<f64> = Vec::new();
     for (c, &(t1, t2)) in conv_terms.iter().enumerate() {
@@ -1180,16 +949,13 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
         } else {
             "abstain"
         };
-        let mut s = rhai::Map::new();
-        s.insert("convention".into(), Dynamic::from(conv_names[c].clone()));
-        s.insert(
-            "terms".into(),
-            Dynamic::from(if t2.is_some() { 2i64 } else { 1i64 }),
-        );
-        s.insert("verdict".into(), Dynamic::from(verdict.to_string()));
-        s.insert("voted".into(), Dynamic::from(voted as i64));
-        s.insert("winners".into(), Dynamic::from(winners as i64));
-        s.insert("agreement".into(), Dynamic::from(agreement));
+        let mut s = serde_json::Map::new();
+        s.insert("convention".into(), json!(conv_names[c]));
+        s.insert("terms".into(), json!(if t2.is_some() { 2i64 } else { 1i64 }));
+        s.insert("verdict".into(), json!(verdict));
+        s.insert("voted".into(), json!(voted as i64));
+        s.insert("winners".into(), json!(winners as i64));
+        s.insert("agreement".into(), json!(agreement));
         if verdict != "abstain" {
             // Medians over the winning-label voters only — a dissenting
             // minority's residuals would contaminate the diagnostics.
@@ -1199,12 +965,12 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
                 (rf_flow.clone(), rs_flow.clone())
             };
             if let Some(v) = median(rf) {
-                s.insert("r_flow".into(), Dynamic::from(v));
+                s.insert("r_flow".into(), json!(v));
             }
             if let Some(v) = median(rs) {
-                s.insert("r_stock".into(), Dynamic::from(v));
+                s.insert("r_stock".into(), json!(v));
             }
-            // The sign partition (ported 2026-08-06): every entity
+            // The sign partition: every entity
             // re-classified against the negated anchor. A voter firing
             // the winning pattern only under negation stores the mirror
             // convention — ledger-signed data reads this way. Diagnostic
@@ -1242,9 +1008,9 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
                     voters += 1;
                 }
             }
-            s.insert("sign_primary".into(), Dynamic::from(primary));
-            s.insert("sign_mirror".into(), Dynamic::from(mirror));
-            s.insert("sign_both".into(), Dynamic::from(both));
+            s.insert("sign_primary".into(), json!(primary));
+            s.insert("sign_mirror".into(), json!(mirror));
+            s.insert("sign_both".into(), json!(both));
             // BIC over the winning voters' best residuals (v0.3's
             // formula): n·ln(RSS/n) + arity·ln(n), RSS floored so an
             // exact fit stays finite. The ΔBIC>10 arity tiebreak in the
@@ -1253,23 +1019,23 @@ fn reconcile_kernel(y: &Table, m: &Table, terms: Vec<String>) -> ScriptResult<rh
                 let n = voters as f64;
                 let arity = if t2.is_some() { 2.0 } else { 1.0 };
                 let bic = n * (rss.max(1e-12) / n).ln() + arity * n.ln();
-                s.insert("bic".into(), Dynamic::from(bic));
+                s.insert("bic".into(), json!(bic));
             }
         }
-        summaries.push(Dynamic::from_map(s));
+        summaries.push(Value::Object(s));
     }
 
-    let mut out = rhai::Map::new();
-    out.insert("n_common".into(), Dynamic::from(n_common as i64));
-    out.insert("summaries".into(), Dynamic::from(summaries));
-    Ok(out)
+    Ok(json!({
+        "n_common": n_common as i64,
+        "summaries": summaries,
+    }))
 }
 
 
 #[cfg(test)]
 mod band_grid_filter {
-    //! The constant-column mirror in `band_grid` (finding 1,
-    //! 2026-08-12): the door mechanics live in glossql-session's
+    //! The constant-column mirror in `band_grid`: the door
+    //! mechanics live in glossql-session's
     //! suites; here the seam itself — refuse cleanly when nothing
     //! varies, and survive the single-post-month frame whose constant
     //! month index used to fire the kernel's shuffle assert.
@@ -1280,7 +1046,7 @@ mod band_grid_filter {
     fn band_grid_refuses_when_no_feature_varies() {
         // Both columns constant over the training rows: refused before
         // the model would load, so no weights are needed here.
-        let rt = RhaiRuntime::new("no-workspace-here");
+        let rt = KernelRuntime::new("no-workspace-here");
         let train_x = vec![1.0, 3.0, 1.0, 3.0, 1.0, 3.0];
         let train_y = vec![10.0, 11.0, 12.0];
         let e = rt
@@ -1321,7 +1087,7 @@ mod band_grid_filter {
         ] {
             std::os::unix::fs::symlink(sibling.join(from), weights.join(to)).unwrap();
         }
-        let rt = RhaiRuntime::new(dir.path());
+        let rt = KernelRuntime::new(dir.path());
 
         let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
         let mut train_x = Vec::new();

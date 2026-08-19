@@ -100,8 +100,8 @@ fn blocks() -> Vec<Block> {
 fn missing_table(error: &str) -> bool {
     // Any qualified table this workspace does not have, not just the
     // default schema: an extract example names its subject as
-    // `orders.amount`, which resolves to `datafusion.orders.amount`
-    // (widened 2026-08-15). A shipped read that does not exist lands
+    // `orders.amount`, which resolves to `datafusion.orders.amount`.
+    // A shipped read that does not exist lands
     // here too — as `datafusion.public.<name>` — and always did.
     error.contains("table 'datafusion.")
         || error.contains("No table named")
@@ -128,17 +128,16 @@ async fn every_skill_example_parses() {
     );
 }
 
-/// Every `DECLARE FUNCTION … AS $$…$$` body in the skills compiles.
+/// Every `DECLARE FUNCTION … AS $$…$$` body in the skills is one SQL
+/// query.
 ///
 /// Rule 1 cannot see this: a function's body is opaque text to the
-/// glossql parser, so an example whose rhai the engine rejects parses
-/// perfectly and ships as teaching. Found in a run on 2026-08-15 — the
-/// functions skill's worked example carried a multi-line double-quoted
-/// string, which rhai does not allow (SQL over several lines needs
-/// backticks). An agent copying it got "Open string is not terminated".
+/// glossql parser, so an example whose body the engine would refuse
+/// parses perfectly and ships as teaching. A body is SQL — a
+/// measurement over data, a detector over `slots` (§6) — so the check
+/// is the same shape rule the session applies.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_function_body_compiles() {
-    let runtime = glossql_scripts::RhaiRuntime::new(std::env::temp_dir());
     let mut broken = Vec::new();
     let mut checked = 0usize;
     for b in blocks() {
@@ -156,12 +155,15 @@ async fn every_skill_function_body_compiles() {
             let Some(close) = after.find("$$") else { continue };
             checked += 1;
             let body = &after[..close];
-            // Role by shape (§7e): a body that parses as one SQL query
-            // is a measurement the engine runs; anything else must
-            // compile as a script.
-            let is_sql = glossql_parser::GlossqlParser::parse_sql(body)
-                .is_ok_and(|statements| statements.len() == 1);
-            if !is_sql && let Err(e) = runtime.compiles(body) {
+            let is_sql = match glossql_parser::GlossqlParser::parse_sql(body) {
+                Ok(statements) => statements.len() == 1,
+                Err(e) => {
+                    broken.push(format!("{}:{} — {e}", b.skill, b.line));
+                    continue;
+                }
+            };
+            if !is_sql {
+                let e = "a function body is one SQL query";
                 broken.push(format!("{}:{} — {e}", b.skill, b.line));
             }
         }
@@ -179,9 +181,9 @@ async fn every_skill_function_body_compiles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
-    bootstrap(&store, &plane, human())
+    bootstrap(&plane, human())
         .await
         .unwrap();
 
@@ -241,4 +243,17 @@ async fn every_skill_read_names_columns_that_exist() {
         planned >= 5,
         "only {planned} skill reads were planned — the test is skipping its own subject"
     );
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

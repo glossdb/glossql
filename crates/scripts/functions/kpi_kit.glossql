@@ -20,8 +20,8 @@
 -- the witnessed enum/valued claims on measures. Unwritten, each one
 -- is the AGENT's measurement backlog (behavior_evidence settles
 -- behavior; profiles and currency columns settle unit) — never a
--- human question. The door's round asks judgment only (ruled
--- 2026-08-13). Relevance is conditional (ruled 2026-08-14): WHEN
+-- human question. The door's round asks judgment
+-- only. Relevance is conditional: WHEN
 -- narrows what a column owes to what its role makes meaningful — a
 -- role-less column owes only role, and the backlog counts what is
 -- real instead of columns × vocabulary.
@@ -75,16 +75,16 @@ DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
 
 -- Dataset registries, both keyed by the concept's own name.
 --
--- `formulas` holds a derived metric's definition (fixture 16 §4, ruled
--- 2026-08-06): a window-generic expression over sibling concepts, the
+-- `formulas` holds a derived metric's definition (fixture 16 §4):
+-- a window-generic expression over sibling concepts, the
 -- window `w` its one free variable — `revenue[w] - expenses[w]`,
 -- `accounts_receivable[end of w] / revenue[w] * days[w]`. It covers
 -- every window because it names none, and it is what a drill
 -- re-scopes from: a ratio is never regrouped from its output rows.
--- KNOWN GAP (ruled a gap 2026-08-15): nothing checks that the operands
+-- KNOWN GAP: nothing checks that the operands
 -- name declared concepts, so a typo is silent.
 --
--- `definitions` holds the handbook content (ruled 2026-08-12): the
+-- `definitions` holds the handbook content: the
 -- aspect blob of a metric stays thin — the `title` display label and
 -- the `x-kind` tooling flag — because declarations have no
 -- supersession, and everything the company might revise (meaning,
@@ -110,7 +110,7 @@ DECLARE ASPECT recipe_change WITH $${
                  "reason": {"type": "string"}}
 }$$ AS FACT ON TABLE;
 
--- The ruling channel (ruled 2026-08-14): the question round lands each
+-- The ruling channel: the question round lands each
 -- human judgment here — the claim it rules, confirmed or corrected —
 -- and the ruled aspect's slots stay agent-authored. The agent owes
 -- the fold-in (re-record the grounding citing the ruling); the brief
@@ -124,7 +124,7 @@ DECLARE ASPECT recipe_change WITH $${
 -- closure, the fold-in debt, and the contradiction check all match
 -- (aspect, key). `assumption` rides along as the prose the human
 -- actually read, a snapshot for the record — never a match column
--- (string equality on non-keys is forbidden, ruled 2026-08-14).
+-- (string equality on non-keys is forbidden).
 
 DECLARE ASPECT ruling WITH $${
   "type": "object", "required": ["rulings"],
@@ -138,7 +138,7 @@ DECLARE ASPECT ruling WITH $${
                    "note": {"type": "string"}}}}}
 }$$ AS FACT;
 
--- Apps as glosses (ruled 2026-08-15). An app was a directory read from
+-- Apps as glosses. An app was a directory read from
 -- disk, which is why an agent connected over MCP could not author one:
 -- it has statements, not a filesystem. Each part is its own gloss —
 -- the aspect says what kind of file it is, the subject says where it

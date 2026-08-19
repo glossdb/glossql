@@ -1,14 +1,12 @@
-//! The `whatif.` door (ruled 2026-08-11, fixture 19): a declared scenario —
+//! The `whatif.` door (fixture 19): a declared scenario —
 //! a FACT aspect carrying column overrides — served as bands over recipe
-//! replay. The proven pipeline (dataraum-eval PHASE2 Leg B, tfmeval E4)
-//! applied to real rows: the server replays each concept's current QUERY
+//! replay. The server replays each concept's current QUERY
 //! grounding with the overrides applied at a bracketing grid of strengths
 //! (support worlds), the band kernel reads across the worlds with the
 //! factors as features, and the declared point is always interpolation.
 //! The override never touches storage: it is a plan rewrite — every scan
 //! of an overridden table gains a projection scaling the overridden
-//! column from the scenario's start month (`reports/
-//! 2026-08-11-tabicl-integration.md`, the corrected verdict).
+//! column from the scenario's start month.
 //!
 //! Judgment rides the `basis` column, never a hidden guess: a concept
 //! whose grounding is not current says so; one the overrides never move
@@ -20,7 +18,7 @@
 //!
 //! Recomputed per read, never stored: the replay is a search inside one
 //! plan set, and an in-memory pin-keyed cache is a later, measured
-//! question (2026-08-16 §10).
+//! question.
 
 use std::sync::Arc;
 
@@ -42,7 +40,7 @@ use crate::reads::{Shared, verdicts};
 use crate::session::SessionError;
 
 const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
-/// The bracket rule (ruled 2026-08-11): strengths placed on both sides
+/// The bracket rule: strengths placed on both sides
 /// of the declared factor, so the scenario's own read is interpolation.
 const BRACKET: [f64; 5] = [-0.25, -0.10, -0.05, 0.05, 0.15];
 
@@ -111,7 +109,7 @@ pub(crate) async fn whatif_batch(
     let overrides = decode_overrides(&body).map_err(bad)?;
     // Recomputed per read: the replay stays inside one plan set, and
     // whether repeated identical work earns an in-memory, pin-keyed
-    // cache is a later, measured question (2026-08-16 §10).
+    // cache is a later, measured question.
     let rows = compute(shared, &dataset, scenario, &overrides).await?;
     Ok(row_batch(rows))
 }
@@ -156,12 +154,7 @@ async fn compute(
     scenario: &str,
     overrides: &[Override],
 ) -> Result<Vec<Row>, SessionError> {
-    let ctx = shared
-        .ctx
-        .read()
-        .expect("ctx lock")
-        .clone()
-        .ok_or_else(|| SessionError::Runtime("the session context is not wired".into()))?;
+    let ctx = shared.session_ctx();
     let bad = |detail: String| SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"));
 
     // Every overridden column must exist, and its table must carry a
@@ -310,9 +303,7 @@ async fn concept_rows(
         ));
     };
 
-    // The three verbs, the same ones metric_cube and metric_bands read
-    // (both fixed before this door was; a run on 2026-08-15 found this
-    // copy still carrying both of the defects they had shed).
+    // The three verbs, the same ones metric_cube and metric_bands read.
     //
     // A RATIO declares itself by serving `num` and `den` beside `value`,
     // and reads as sum(num)/sum(den). Summing it instead adds member
@@ -323,34 +314,17 @@ async fn concept_rows(
     // observed date. `row_number() = 1` kept ONE arbitrary row — a
     // receivables grounding emitting one row per open invoice replayed
     // as 4,325 against a true 42M, and inventory as 12k against 12.4M.
-    // That is the same defect the cube recorded shedding on 2026-08-14;
-    // this copy never got the correction.
     let is_ratio = fields.iter().any(|f| f.name() == "num")
         && fields.iter().any(|f| f.name() == "den");
     let is_stock = !is_ratio && body["behavior"].as_str() == Some("stock");
-    let series_sql = if is_ratio {
-        format!(
-            "SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
-                    sum(num) / nullif(sum(den), 0) AS value \
-             FROM ({sql}) GROUP BY 1 ORDER BY 1"
-        )
+    let verb = if is_ratio {
+        "ratio"
     } else if is_stock {
-        format!(
-            "SELECT period, sum(value) AS value FROM ( \
-               SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
-                      value, \
-                      rank() OVER ( \
-                        PARTITION BY date_trunc('month', \"{tcol}\") \
-                        ORDER BY \"{tcol}\" DESC) AS rk \
-               FROM ({sql})) WHERE rk = 1 GROUP BY period ORDER BY period"
-        )
+        "stock"
     } else {
-        format!(
-            "SELECT substr(cast(date_trunc('month', \"{tcol}\") as varchar), 1, 7) AS period, \
-                    sum(value) AS value \
-             FROM ({sql}) GROUP BY 1 ORDER BY 1"
-        )
+        "flow"
     };
+    let series_sql = crate::search::monthly_sql(sql, &tcol, verb);
 
     let base = run_series(shared, ctx, &series_sql, None).await?;
     let post: Vec<usize> = (0..base.len())
@@ -574,6 +548,9 @@ async fn run_series(
             }
             let p = array_value_to_string(period, i)
                 .map_err(|e| SessionError::Runtime(e.to_string()))?;
+            // The YYYY-MM head — periods arrive in the column's
+            // display form, as every monthly reader cuts them.
+            let p = p.get(..7).map(str::to_string).unwrap_or(p);
             out.push((p, value.value(i)));
         }
     }
@@ -642,21 +619,21 @@ fn apply_overrides(
 }
 
 /// Roster identity by month value — equal counts of different months
-/// must not compare positionally (2026-08-12).
+/// must not compare positionally.
 fn same_roster(a: &[(String, f64)], b: &[(String, f64)]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0 == y.0)
 }
 
 /// The first date-typed column, the same discovery every reader does.
-fn date_column(fields: &Fields) -> Option<String> {
+/// The one temporal-column test every monthly reader shares.
+pub(crate) fn is_temporal(dt: &DataType) -> bool {
+    matches!(dt, DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _))
+}
+
+pub(crate) fn date_column(fields: &Fields) -> Option<String> {
     fields
         .iter()
-        .find(|f| {
-            matches!(
-                f.data_type(),
-                DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _)
-            )
-        })
+        .find(|f| is_temporal(f.data_type()))
         .map(|f| f.name().clone())
 }
 

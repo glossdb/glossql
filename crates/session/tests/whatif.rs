@@ -1,4 +1,4 @@
-//! The `whatif.` door end to end (ruled 2026-08-11, fixture 19): a
+//! The `whatif.` door end to end (fixture 19): a
 //! declared scenario replayed through the groundings at a bracketing
 //! grid, banded through the runtime's kernel seam. The kernel here is a
 //! fake — deterministic linear interpolation over the factor axis — so
@@ -13,9 +13,8 @@ use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
-use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
+use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{FunctionRuntime, Outcome, Session};
-use serde_json::Value;
 
 /// A kernel that interpolates linearly along the factor axis within each
 /// month — the mechanics stand-in for the model: exact on the linear
@@ -26,15 +25,6 @@ struct LinearKernel {
 }
 
 impl FunctionRuntime for LinearKernel {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        _: &str,
-        _: &Value,
-    ) -> Result<Value, String> {
-        Err(format!("no scripts in this test (`{}`)", function.name))
-    }
-
     fn band_grid(
         &self,
         train_x: &[f64],
@@ -73,8 +63,8 @@ fn interp(pts: &[(f64, f64)], x: f64) -> f64 {
     }
 }
 
-async fn session_with_kernel() -> (Session, Arc<LinearKernel>) {
-    let store = Store::open_memory().await.unwrap();
+async fn session_with_kernel() -> (tempfile::TempDir, Session, Arc<LinearKernel>) {
+    let (dir, store) = scratch_store().await;
     let kernel = Arc::new(LinearKernel::default());
     let session = Session::new(
         store,
@@ -85,7 +75,7 @@ async fn session_with_kernel() -> (Session, Arc<LinearKernel>) {
     )
     .expect("session builds")
     .with_runtime(kernel.clone());
-    (session, kernel)
+    (dir, session, kernel)
 }
 
 async fn run(session: &Session, sql: &str) -> Vec<Outcome> {
@@ -168,8 +158,8 @@ const SCENARIO: &str = r##"GLOSS price_hike ON fin AS $${"overrides": [
   {"column": "sales.unit_price", "factor": 1.15, "from": "2026-07",
    "basis": "the declared lever"}]}$$;"##;
 
-async fn scenario_session() -> (Session, Arc<LinearKernel>) {
-    let (session, kernel) = session_with_kernel().await;
+async fn scenario_session() -> (tempfile::TempDir, Session, Arc<LinearKernel>) {
+    let (dir, session, kernel) = session_with_kernel().await;
     run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
@@ -180,12 +170,12 @@ async fn scenario_session() -> (Session, Arc<LinearKernel>) {
         .await
         .unwrap();
     run(&session, SCENARIO).await;
-    (session, kernel)
+    (dir, session, kernel)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_whatif_door_replays_and_bands() {
-    let (session, _) = scenario_session().await;
+    let (_dir, session, _) = scenario_session().await;
 
     // The covered concept: six post months, the mechanical replay at
     // exactly x1.15, the kernel's read sitting on the linear surface.
@@ -225,14 +215,14 @@ async fn the_whatif_door_replays_and_bands() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_scenario_read_recomputes_per_read() {
-    let (session, kernel) = scenario_session().await;
+    let (_dir, session, kernel) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
     let fits = kernel.fits.load(Ordering::SeqCst);
     assert!(fits > 0, "the first read fits the kernel");
 
     // Nothing is stored: every read replays (an in-memory, pin-keyed
-    // cache is a later, measured question — 2026-08-16 §10).
+    // cache is a later, measured question).
     run(&session, "SELECT * FROM whatif.price_hike();").await;
     assert!(kernel.fits.load(Ordering::SeqCst) > fits, "recomputed");
 
@@ -259,7 +249,7 @@ async fn the_scenario_read_recomputes_per_read() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_door_refuses_what_is_not_a_scenario() {
-    let (session, _) = scenario_session().await;
+    let (_dir, session, _) = scenario_session().await;
 
     let e = session
         .execute("SELECT * FROM whatif.nothing();")
@@ -282,7 +272,7 @@ async fn the_door_refuses_what_is_not_a_scenario() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
-    let (session, _) = session_with_kernel().await;
+    let (_dir, session, _) = session_with_kernel().await;
     run(&session, SETUP).await;
     let (schema, batch) = sales_table();
     session
@@ -306,8 +296,8 @@ async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
     );
 }
 
-async fn session_with_sales(rows: &[(f64, i32)]) -> (Session, Arc<LinearKernel>) {
-    let (session, kernel) = session_with_kernel().await;
+async fn session_with_sales(rows: &[(f64, i32)]) -> (tempfile::TempDir, Session, Arc<LinearKernel>) {
+    let (dir, session, kernel) = session_with_kernel().await;
     run(
         &session,
         "DECLARE DATASET fin SET (purpose: 'scenario flows');\nUSE fin;",
@@ -321,7 +311,7 @@ async fn session_with_sales(rows: &[(f64, i32)]) -> (Session, Arc<LinearKernel>)
         )
         .await
         .unwrap();
-    (session, kernel)
+    (dir, session, kernel)
 }
 
 /// One QUERY concept whose grounding the tests gloss per case, plus the
@@ -335,12 +325,12 @@ DECLARE ASPECT price_hike WITH $${"type": "object", "required": ["overrides"]}$$
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_superseded_concept_grounding_replays_in_the_next_read() {
-    let (session, _) = scenario_session().await;
+    let (_dir, session, _) = scenario_session().await;
 
     run(&session, "SELECT * FROM whatif.price_hike();").await;
 
     // Superseding a concept's QUERY grounding — not the scenario —
-    // changes what the next read replays (finding 4, 2026-08-12).
+    // changes what the next read replays.
     run(
         &session,
         r##"GLOSS revenue ON fin AS $${"sql": "SELECT order_date, units * unit_price + 1000 AS value FROM sales"}$$;"##,
@@ -360,7 +350,7 @@ async fn a_scenario_from_the_last_recorded_month_serves_the_one_month() {
     // One post month (finding 1's trigger): the month-index feature is
     // constant over the frame — the kernel seam drops it, the door
     // serves the month, never a dead read.
-    let (session, _) =
+    let (_dir, session, _) =
         session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
     run(&session, SETUP).await;
     run(
@@ -384,9 +374,9 @@ async fn a_scenario_from_the_last_recorded_month_serves_the_one_month() {
 async fn a_replay_past_the_kernel_cap_is_refused_with_the_number() {
     // 6 worlds x 350 post months = 2100 training rows — past the bound
     // the misfit door measured; refused with the number and the fix
-    // before any world replays (finding 8, 2026-08-12).
+    // before any world replays.
     let rows: Vec<(f64, i32)> = (0..350).map(|i| (100.0, 2000 + i / 12)).collect();
-    let (session, kernel) = session_with_sales(&rows).await;
+    let (_dir, session, kernel) = session_with_sales(&rows).await;
     run(&session, SETUP).await;
     run(
         &session,
@@ -418,8 +408,8 @@ async fn the_basis_counts_the_worlds_that_actually_contributed() {
     // A grounding gated to unit_price in [99, 121]: the 0.90 and 1.30
     // worlds push every post month out of the window, their rosters
     // change, and they are skipped — the served basis says 4 of 6 and
-    // names them, never the full grid (finding 8, 2026-08-12).
-    let (session, _) =
+    // names them, never the full grid.
+    let (_dir, session, _) =
         session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
     run(&session, GATED_SETUP).await;
     run(
@@ -446,8 +436,8 @@ async fn baseline_only_support_is_refused() {
     // The window admits only the baseline price and the declared 1.15:
     // every bracketed world's roster changes, so bands would rest on
     // baseline alone — refused, never served with a false support
-    // claim (finding 8, 2026-08-12).
-    let (session, kernel) =
+    // claim.
+    let (_dir, session, kernel) =
         session_with_sales(&(0..12).map(|_| (100.0, 2026)).collect::<Vec<_>>()).await;
     run(&session, GATED_SETUP).await;
     run(
@@ -477,12 +467,11 @@ async fn baseline_only_support_is_refused() {
 async fn a_roster_swap_of_equal_length_is_refused() {
     // September priced out of the window at baseline, October priced
     // out under the declared factor: the joint roster keeps its length
-    // but swaps a month — caught by value, not count (finding 8,
-    // 2026-08-12).
+    // but swaps a month — caught by value, not count.
     let mut rows: Vec<(f64, i32)> = (0..12).map(|_| (100.0, 2026)).collect();
     rows[8].0 = 90.0; // Sep: out at baseline (< 95), in at x1.15 (103.5)
     rows[9].0 = 105.0; // Oct: in at baseline, out at x1.15 (120.75)
-    let (session, _) = session_with_sales(&rows).await;
+    let (_dir, session, _) = session_with_sales(&rows).await;
     run(&session, GATED_SETUP).await;
     run(
         &session,
@@ -532,8 +521,8 @@ fn cells_table() -> (Arc<Schema>, RecordBatch) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
-    // Both defects this door carried until 2026-08-15, each already
-    // fixed in metric_cube and metric_bands and never ported here.
+    // Two defects this door once carried, each already
+    // fixed in metric_cube and metric_bands and guarded here since.
     //
     // The stock verb kept ONE arbitrary row per month (row_number = 1),
     // so a receivables grounding emitting a row per open invoice
@@ -544,7 +533,7 @@ async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
     // Two rows a month: level 10 and 20, halves 100/1000 and 300/1000.
     // A stock is 30, never 10 or 20. A ratio is 400/2000 = 0.2, never
     // the 0.4 its two rows add up to.
-    let (session, _) = session_with_kernel().await;
+    let (_dir, session, _) = session_with_kernel().await;
     run(
         &session,
         "DECLARE DATASET fin SET (purpose: 'the stock and ratio verbs');\nUSE fin;",
@@ -598,4 +587,17 @@ GLOSS lever ON fin AS $${"overrides": [
         !rate.contains("0.46"),
         "a ratio is never the sum of its rows: {rate}"
     );
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

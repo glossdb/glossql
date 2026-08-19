@@ -1,11 +1,10 @@
 # 16 · Flow: the performance framework — TRANSCRIBES (the target as statements)
 
-Source: the target scorecard
-(`reports/2026-08-05-scorecard-performance-framework.md`) against the
-generator's real shapes (`../dataraum-testdata/output/clean`, seed 42;
+Source: the target scorecard against the finance generator's real
+shapes (`../dataraum-testdata/output/clean`, seed 42;
 `ground_truth.yaml` is the oracle). The operating-model deliverable as
 a statement sequence: fixtures 01/03/04/07's ruled shapes, exercised
-end to end for the first time. Presented and ruled 2026-08-06:
+end to end for the first time. Ruled:
 windows are read policy; `read.` table functions are the
 value-at-read spelling, bound when the UI transformation starts;
 the scorecard runs first with the reader inlining served SQL.
@@ -20,8 +19,8 @@ statements.
 
 ## 1. The metric vocabulary (fixture 01/03's shape)
 
-One QUERY aspect per concept, on the dataset (the lead's placement,
-2026-08-05). Base concepts and derived metrics declare uniformly —
+One QUERY aspect per concept, on the dataset (the lead's placement).
+Base concepts and derived metrics declare uniformly —
 fixture 03's finding, a metric *is* a concept; the difference is
 whether its SQL half is an extract (§2) or a formula over siblings
 (§4). Four of the scorecard's roster shown:
@@ -115,7 +114,7 @@ SELECT cost_center, sum(value) FROM read.revenue() GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 The window a given reader picks is theirs — the app defaults to
-month, another reader asks by day (lead, 2026-08-06); the same
+month, another reader asks by day; the same
 definitions answer both.
 
 A ratio is evaluated per window through its formula (§4): the agent
@@ -167,10 +166,10 @@ QUERY gloss (§3). Two recorded evaluations arriving at the same
 number is a correct state; whether they reconcile is witness
 territory (fixture 07's coexistence finding).
 
-## 5. Validations (fixture 04's ruled shape — approved 2026-08-06)
+## 5. Validations (fixture 04's ruled shape)
 
 Expectation as a FACT gloss; the check as a thin function **voice**
-(`RETURNS` the aspect, full door, `ACCEPTS (imports)` for freshness);
+(`RETURNS` the aspect, full door, fresh by the read's pin);
 a detector bands the slots; ATTEST is the verdict surface. Two of the
 scorecard's four shown — the exact one and the one whose expectation
 is deliberately not zero:
@@ -210,10 +209,10 @@ GLOSS bank_reconciliation ON bank_transactions AS $${
 
 DECLARE FUNCTION journal_balance_check FOR fin
   AS $$/* debits equal credits, as a breach rate */$$
-  ACCEPTS (imports) RETURNS journal_balanced;
+  RETURNS journal_balanced;
 DECLARE FUNCTION reconciliation_check FOR fin
   AS $$/* the reconciled fraction against the source's own dirt */$$
-  ACCEPTS (imports) RETURNS bank_reconciliation;
+  RETURNS bank_reconciliation;
 DECLARE FUNCTION balance_bands FOR fin AS $$/* detector: bands the balance slots */$$;
 
 DECLARE WITNESS journal_balanced_w ON journal_balanced BY (AGENT, HUMAN)
@@ -249,10 +248,10 @@ SELECT subject, aspect, value FROM GLOSSARY(fin) WHERE state = 'current';
 ```
 
 A metric's *value*: the reader takes the served SQL and runs it
-through the door — the scorecard runs this way (run-first, ruled
-2026-08-06). The bind lands when the UI transformation starts:
-**value-at-read as a namespaced table function** (ruled 2026-08-06,
-closing the §9-parked enhancement) — the subject aspect's current
+through the door — the scorecard runs this way (run-first).
+The bind lands when the UI transformation starts:
+**value-at-read as a namespaced table function** (closing the
+§9-parked enhancement) — the subject aspect's current
 QUERY gloss (an extract, or a recorded evaluation) expanded at read,
 the value arriving as an ordinary relation the reader composes
 around:
@@ -296,13 +295,13 @@ the `formulas` gloss, not regrouping `read.dso()`.
   parameter was the window, and the window belongs to the reader.
 - **Value-at-read ruled** (§6): `read.` table functions, bound when
   the UI transformation starts; run-first until then. Fixture 15
-  still holds the conformed-group fork. The prefix was `metric.`
-  until 2026-08-11, renamed `read.` when it was ruled the one generic
+  still holds the conformed-group fork. The prefix was `metric.`,
+  renamed `read.` when it was ruled the one generic
   serving door over every QUERY gloss — no alias; the flavor lives in
   `x-kind`, never in the call syntax.
 - The `expected_rate: 0.895` gloss is the anti-overcleaning stance in
   one statement: the expectation is authored, never assumed zero.
-- **The pinning agenda** (added 2026-08-06, the run-7 lesson): the
+- **The pinning agenda** (the run-7 lesson): the
   scorecard run reproduced every uniquely-defined number exactly, and
   its only misses were unflagged *definition choices* — the agent
   stated each with grounds but presented them as judgments made, not

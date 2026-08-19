@@ -9,7 +9,6 @@
 (function () {
   'use strict';
 
-  const MAX = 32;
   const tables = new Map(); // frame url -> Promise<Arrow.Table>
   const rowSets = new Map(); // frame url -> Promise<Array<Object>>
   const specs = new Map(); // spec url -> Promise<Object>
@@ -32,10 +31,6 @@
     return url.toString();
   }
 
-  function evict(map) {
-    while (map.size > MAX) map.delete(map.keys().next().value);
-  }
-
   async function fetchTable(url) {
     const res = await fetch(url);
     if (!res.ok) {
@@ -54,7 +49,6 @@
     const url = frameUrl(ref);
     if (!tables.has(url)) {
       tables.set(url, fetchTable(url));
-      evict(tables);
     }
     return tables.get(url);
   }
@@ -65,7 +59,6 @@
     const url = frameUrl(ref);
     if (!rowSets.has(url)) {
       rowSets.set(url, table(ref).then(toRows));
-      evict(rowSets);
     }
     return rowSets.get(url);
   }
@@ -100,7 +93,6 @@
           return res.json();
         })
       );
-      evict(specs);
     }
     // A fresh object per caller — charts mutate their spec.
     return specs.get(url).then((spec) => JSON.parse(JSON.stringify(spec)));
@@ -129,6 +121,7 @@
         if ((classes.get(url) || 'record') === 'record') {
           tables.delete(url);
           rowSets.delete(url);
+          classes.delete(url);
         }
       }
     },

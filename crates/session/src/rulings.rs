@@ -3,8 +3,8 @@
 //! A ruling is the human's standing judgment on one disclosed claim,
 //! named by the agent's declared `key`. It lives in the human's own
 //! `ruling` slot on the subject and carries the judgment alone — never
-//! a copy of the agent's grounding (ruled 2026-08-14: the frozen copy
-//! outranked every later correction).
+//! a copy of the agent's grounding (a frozen copy would
+//! outrank every later correction).
 //!
 //! This lives here, below every door, because more than one door can
 //! carry one. The MCP round asks a question mid-call and lands the
@@ -23,10 +23,11 @@
 //!
 //! So two rulings can only ever contradict across ASPECTS: the same
 //! key confirmed on one and corrected on another, which is legitimate
-//! (two groundings may genuinely differ) and which `ruling_conflicts`
-//! reports. No third ruling settles it and none is needed — re-ruling
-//! either side overwrites that entry, and once the stances agree the
-//! pair stops matching.
+//! (two groundings may genuinely differ). The round names the sibling
+//! ruling on the form when it asks, and that is the whole mechanism:
+//! no read pairs them afterwards — an agent that needs the question
+//! settled again asks again. No third ruling settles a difference and
+//! none is needed — re-ruling either side overwrites that entry.
 
 use datafusion::arrow::array::{Array, StringArray};
 

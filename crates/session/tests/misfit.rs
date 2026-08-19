@@ -1,4 +1,4 @@
-//! The `misfit.` door end to end (ruled 2026-08-11, fixture 20): a
+//! The `misfit.` door end to end (fixture 20): a
 //! declared sample frame served back with a per-row misfit score. The
 //! kernel here is a fake — deviation from each column's mean — so these
 //! tests pin the door's mechanics (dispatch, the numeric surface and
@@ -13,9 +13,8 @@ use datafusion::arrow::array::{Date32Array, Float64Array, Int64Array, RecordBatc
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
-use glossql_glossary::{Actor, ActorKind, FunctionRow, Store};
+use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{FunctionRuntime, Outcome, Session};
-use serde_json::Value;
 
 /// A kernel that scores each row by its summed deviation from the
 /// column means — the mechanics stand-in for the density: a planted
@@ -27,15 +26,6 @@ struct MeanKernel {
 }
 
 impl FunctionRuntime for MeanKernel {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        _: &str,
-        _: &Value,
-    ) -> Result<Value, String> {
-        Err(format!("no scripts in this test (`{}`)", function.name))
-    }
-
     fn misfit_scores(&self, x: &[f64], rows: usize, cols: usize) -> Result<Vec<f64>, String> {
         self.fits.fetch_add(1, Ordering::SeqCst);
         let mut means = vec![0f64; cols];
@@ -64,27 +54,18 @@ impl FunctionRuntime for MeanKernel {
 }
 
 /// A kernel that hands back a non-finite score — the door must refuse,
-/// never serve NaN rows (finding 11, 2026-08-12).
+/// never serve NaN rows.
 #[derive(Debug, Default)]
 struct NanKernel;
 
 impl FunctionRuntime for NanKernel {
-    fn invoke(
-        &self,
-        function: &FunctionRow,
-        _: &str,
-        _: &Value,
-    ) -> Result<Value, String> {
-        Err(format!("no scripts in this test (`{}`)", function.name))
-    }
-
     fn misfit_scores(&self, _: &[f64], rows: usize, _: usize) -> Result<Vec<f64>, String> {
         Ok(vec![f64::NAN; rows])
     }
 }
 
-async fn session_with_kernel() -> (Session, Arc<MeanKernel>) {
-    let store = Store::open_memory().await.unwrap();
+async fn session_with_kernel() -> (tempfile::TempDir, Session, Arc<MeanKernel>) {
+    let (dir, store) = scratch_store().await;
     let kernel = Arc::new(MeanKernel::default());
     let session = Session::new(
         store,
@@ -95,7 +76,7 @@ async fn session_with_kernel() -> (Session, Arc<MeanKernel>) {
     )
     .expect("session builds")
     .with_runtime(kernel.clone());
-    (session, kernel)
+    (dir, session, kernel)
 }
 
 async fn run(session: &Session, sql: &str) -> Vec<Outcome> {
@@ -161,8 +142,8 @@ DECLARE ASPECT unglossed WITH $${"title": "Declared, never glossed"}$$ AS QUERY 
 GLOSS suspects ON fin AS $${"sql": "SELECT * FROM orders"}$$;
 "##;
 
-async fn frame_session() -> (Session, Arc<MeanKernel>) {
-    let (session, kernel) = session_with_kernel().await;
+async fn frame_session() -> (tempfile::TempDir, Session, Arc<MeanKernel>) {
+    let (dir, session, kernel) = session_with_kernel().await;
     run(&session, SETUP).await;
     let (schema, batch) = orders_table();
     session
@@ -172,12 +153,12 @@ async fn frame_session() -> (Session, Arc<MeanKernel>) {
         )
         .await
         .unwrap();
-    (session, kernel)
+    (dir, session, kernel)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_misfit_door_ranks_and_composes() {
-    let (session, _) = frame_session().await;
+    let (_dir, session, _) = frame_session().await;
 
     // The planted outlier tops the ranking; the basis names the ranked
     // columns and every exclusion with its reason.
@@ -204,7 +185,7 @@ async fn the_misfit_door_ranks_and_composes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_door_refuses_what_is_not_a_frame() {
-    let (session, _) = frame_session().await;
+    let (_dir, session, _) = frame_session().await;
 
     let e = session
         .execute("SELECT * FROM misfit.nothing();")
@@ -233,10 +214,10 @@ async fn the_door_refuses_what_is_not_a_frame() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
-    let (session, _) = frame_session().await;
+    let (_dir, session, _) = frame_session().await;
 
     // A frame past the row cap: refused with the cap, never cut. The
-    // cap bounds the kernel's context (2000, measured 2026-08-12) —
+    // cap bounds the kernel's context (2000, measured) —
     // the refusal teaches sampling in the frame SQL.
     let n = 2100;
     let schema = Arc::new(Schema::new(vec![
@@ -308,7 +289,7 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_non_finite_score_refuses_the_read() {
-    let store = Store::open_memory().await.unwrap();
+    let (_dir, store) = scratch_store().await;
     let session = Session::new(
         store,
         Actor {
@@ -338,7 +319,7 @@ async fn a_non_finite_score_refuses_the_read() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_cache_and_supersession_narrows_immediately() {
-    let (session, kernel) = frame_session().await;
+    let (_dir, session, kernel) = frame_session().await;
 
     // Two reads, two fits: the ranking is ephemeral by design.
     run(&session, "SELECT * FROM misfit.suspects();").await;
@@ -359,4 +340,17 @@ async fn no_cache_and_supersession_narrows_immediately() {
     )
     .await;
     assert!(!top.contains("10000.0"), "{top}");
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

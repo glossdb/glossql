@@ -50,10 +50,10 @@ pub async fn resolve_path(
                 })
             } else if use_dataset.is_none() && store.source_settings(one).await?.is_some() {
                 // A declared source resolves workspace-wide — SOURCE-grain
-                // slots serve in every dataset (ruled 2026-08-12), and
+                // slots serve in every dataset, and
                 // `DECLARE SOURCE` and `PROBE` run datasetless, so the
-                // conventions read must too (found 2026-08-14: the one
-                // read meant to be dataset-independent demanded a USE).
+                // conventions read must too — the one read meant to be
+                // dataset-independent must never demand a USE.
                 Ok(Resolved {
                     dataset: one.clone(),
                     subject: one.clone(),
@@ -76,8 +76,8 @@ pub async fn resolve_path(
 }
 
 /// Resolve one endpoint of a pair path: `[dataset.]table` segments plus the
-/// key — one column, or ≥ 2 for a composite endpoint (the tuple is the key,
-/// ruled 2026-08-05). Canonical spelling: `table.column` / `table.(a, b)`.
+/// key — one column, or ≥ 2 for a composite endpoint (the tuple is the
+/// key). Canonical spelling: `table.column` / `table.(a, b)`.
 pub async fn resolve_endpoint(
     store: &Store,
     use_dataset: Option<&str>,

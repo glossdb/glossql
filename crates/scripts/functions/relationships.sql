@@ -2,7 +2,7 @@
 -- candidate -> verified -> declared arc. Runs at dataset grain
 -- (`SELECT detect_relationships() FROM fin`) and serves every plausible
 -- join pair the door measured across the landed tables — generous by
--- design (ruled 2026-08-05): the statistical pass optimizes recall, and
+-- design: the statistical pass optimizes recall, and
 -- the judge reading this measurement removes the false positives
 -- against the data; this body never does. Core fields (from, to,
 -- cardinality, overlap) answer the aspect schema; the rest of the

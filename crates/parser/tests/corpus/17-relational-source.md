@@ -1,11 +1,10 @@
 # 17 · The relational spine — the sqlite run
 
-Source: our own test run (2026-08-07, run 8) — dataset `fin2` over the
+Source: our own test run — dataset `fin2` over the
 BookSQL SQLite dump (`~/glossql-data/finance_2/accounting.sqlite`, seven
 tables, 1,012,948 rows), the first full flow over a relational source
-since the ADBC executor landed 2026-08-06. The spine below is what the
-run spoke, abridged to the columns that carried the findings; the full
-record is `reports/2026-08-07-sqlite-relational-run.md`.
+through the ADBC executor. The spine below is what the
+run spoke, abridged to the columns that carried the findings.
 
 ## Declare the source — the driver is the index slug
 
@@ -19,8 +18,8 @@ DECLARE SOURCE books SET (type: relational_db,
 
 The run first spelled `driver: 'adbc_driver_sqlite'` (the skill's old
 example) and got a bare NotFound — the loadable name is the ADBC driver
-index slug the operator installed. Hardcoded list since 2026-08-07; the
-load error now teaches it.
+index slug the operator installed. The list is hardcoded; the
+load error teaches it.
 
 ## Harvest the source's own catalog — evidence, never declarations
 
@@ -57,7 +56,7 @@ Two dialect facts the run paid for, both now in the add-source skill:
   class so the wire carries a numeric.
 - **The cast trap.** `CAST(date(x) AS DATE)` does not fail — `DATE`
   takes NUMERIC affinity, and `'2010-12-27'` lands as int64 `2010`.
-  Measured through the driver, 2026-08-07:
+  Measured through the driver:
 
 ```glossql
 PROBE books AS $$SELECT date('2010-12-27')              AS iso,
@@ -76,8 +75,8 @@ DESCRIBE ledger;
 SELECT CAST(transaction_date AS DATE) AS d, credit FROM ledger LIMIT 5;
 ```
 
-`DESCRIBE` passes the allowlist since 2026-08-07 (the run burned a
-diagnostic re-landing to learn its types). The second read is the
+`DESCRIBE` passes the allowlist (the run burned a
+diagnostic re-landing to learn its types before it did). The second read is the
 typed contract this dialect can carry: cast at read over ISO text.
 
 ## Verdicts
@@ -90,6 +89,6 @@ typed contract this dialect can carry: cast at read over ISO text.
   column from this dialect. `temporal()` names the gap in its
   abstention reason; `behavior_evidence()` abstains dataset-wide
   without a typed period axis. A typed backend (PostgreSQL) does not
-  share the loss — the recipe cast lands temporal there. Ruled
-  2026-08-07: no landing-side machinery; the dialect teaching carries
+  share the loss — the recipe cast lands temporal there. Ruled:
+  no landing-side machinery; the dialect teaching carries
   it, and SQLite stays a cheap ADBC test, not a product target.

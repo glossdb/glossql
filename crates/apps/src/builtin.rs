@@ -6,8 +6,8 @@
 //!
 //! One ships: the docket — what stands open for a human to judge, what
 //! has been settled, what waits on an act, with the metric surfaces
-//! and the record behind it (ruled 2026-08-15, replacing the separate
-//! model and metrics apps: they were two faces of one workspace, and
+//! and the record behind it (one app, not a model app beside a
+//! metrics app: they were two faces of one workspace, and
 //! keeping them apart meant deriving the same counts twice).
 //! Built-ins move in lockstep with the binary instead of going stale
 //! in a workspace copy.
@@ -36,7 +36,6 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/assumptions.sql"),
         docket!("frames/census.sql"),
         docket!("frames/checks.sql"),
-        docket!("frames/conflicts.sql"),
         docket!("frames/coverage.sql"),
         docket!("frames/dims.sql"),
         docket!("frames/front.sql"),

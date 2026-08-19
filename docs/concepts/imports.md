@@ -1,0 +1,93 @@
+# Sources, probes, recipes
+
+A **source** names where data comes from. A **recipe** materializes a
+table from a source. The landed table is the typed table — there is no
+raw twin, no derived cleaning layer, no typing machinery. **Typing is
+authored**: the recipe carries the casts, and the author earns them by
+probing first.
+
+## Sources
+
+```glossql
+DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
+DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/prod', via: crm_prod);
+```
+
+`type` is `relational_db | parquet | csv | json`. For file sources,
+`location` is the root directory recipe paths resolve under; for a
+relational source it is the connection URI the recipe executes over.
+Every other `SET` pair — `via` above — rides the source's stored
+settings.
+
+## Probes rehearse, recipes land
+
+`PROBE source AS $$sql$$` runs recipe-shaped SQL at the source and
+lands nothing. It is the recipe rehearsal: the same SQL surface, the
+same path resolution, and the result always carries its schema — a
+`LIMIT 0` probe of the final SQL rehearses exactly the identity the
+recipe will stamp.
+
+```glossql
+PROBE erp_export AS $$SELECT count(*) AS n, count(p_rec) AS reconciled_parsed
+FROM (SELECT try_cast(reconciled AS BOOLEAN) AS p_rec
+      FROM read_csv('bank_transactions.csv'))$$;
+
+DECLARE RECIPE bank_transactions ON fin_ap FROM erp_export AS $$
+  SELECT txn_id, try_cast(account_id AS BIGINT) AS account_id,
+         try_cast("date" AS DATE) AS date,
+         try_cast(amount AS DOUBLE) AS amount, currency, reference,
+         counterparty, try_cast(reconciled AS BOOLEAN) AS reconciled,
+         payment_id
+  FROM read_csv('bank_transactions.csv')$$;
+```
+
+Recipe SQL runs **at the source**: a relational source executes it in
+its own dialect; at a file source the server runs it, with
+`read_parquet` / `read_csv` / `read_json` resolving under the source's
+location and `try_to_date` / `try_to_timestamp` registered. The
+default recipe is `SELECT *`.
+
+**Cast accounting.** The engine keeps one number per import —
+`dropped_rows_count`, source rows minus landed rows — in the
+statement's outcome and in the `imports` relation for history. Which
+rows were dropped is the author's question, answered at the source.
+There are no sentinel lists: cast accounting surfaces candidates, and
+closure is an authored recipe amendment.
+
+## Identity and correction
+
+Statement identity is content — the recipe SQL and the schema it
+produces. An unchanged re-declaration is a no-op. A changed one
+supersedes and re-lands: the table lands fresh and its record starts
+over with it. Glosses stay — no machinery deletes knowledge; their
+snapshot ids disclose their age against the fresh landing. This
+supersede-and-reland is the cure surface: a source wart is fixed by
+re-declaring the recipe, never by editing data.
+
+`DROP TABLE` removes a table and refuses while it holds data or
+glosses. Substrate DDL that would alter schema or data directly is
+closed — tables come from recipes.
+
+## The source deposit
+
+What an onboarding learns about a source *system* — date formats, sign
+conventions, naming warts — belongs to the source, not to any one
+dataset. An aspect declared `AS FACT ON SOURCE` attaches to the
+declared source and its slots read, supersede, and disclose across
+every dataset in the workspace:
+
+```glossql
+DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+
+GLOSS conventions ON erp_export AS $${
+  "dates": "ISO YYYY-MM-DD throughout; try_cast(x AS DATE) suffices",
+  "currency": "single-currency USD on every monetary table",
+  "sign": "journal net_amount = debit - credit (debit-positive), an exact identity"
+}$$;
+```
+
+The next dataset from the same system reads the deposit before its
+first probe; what it learns joins the deposit by an ordinary re-speak.
+Dataset-local evidence (orphan populations, grain verdicts) stays in
+dataset glosses — only what the next export will also carry belongs at
+source grain.

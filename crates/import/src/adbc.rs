@@ -18,7 +18,7 @@ use datafusion::sql::sqlparser::parser::Parser;
 use crate::{Error, Result, SourceSpec};
 
 /// The loadable drivers, hardcoded from the ADBC driver index
-/// (arrow.apache.org/adbc, read 2026-08-07). A source's `driver`
+/// (arrow.apache.org/adbc). A source's `driver`
 /// setting is the index **slug** — the name the operator's install
 /// registered (`dbc install <slug>`) — or a filesystem path to the
 /// library. Hardcoding the list is the ruled workaround until a served
@@ -56,12 +56,12 @@ pub(crate) struct SourceRead {
 /// `block_in_place`.
 pub(crate) fn run_at_source(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<SourceRead> {
     refuse_non_query(spec, sql)?;
-    let Some(driver) = spec.driver.as_deref() else {
-        return Err(Error::BadSource {
-            name: spec.name.clone(),
-            detail: "missing `driver` in settings — the ADBC driver name or library path".into(),
-        });
-    };
+    // `SourceSpec::from_settings` is the one constructor and refuses a
+    // relational source without a driver.
+    let driver = spec
+        .driver
+        .as_deref()
+        .expect("relational specs carry a driver");
     let adbc = |e: adbc_core::error::Error| Error::Relational {
         name: spec.name.clone(),
         detail: e.to_string(),

@@ -1,7 +1,6 @@
 # 24 · Functions carry their own body — the run-4 verdict
 
-Source: our own test run (2026-08-15,
-`reports/2026-08-15-onboarding-run-shrunk.md`), driven through the MCP
+Source: our own test run, driven through the MCP
 door alone. Two validations were judged, authored and left half-built:
 the inventory roll-forward closed exactly on 5,280 of 5,280
 product-location-months, and the AP mismatch analysis settled that a
@@ -20,7 +19,7 @@ SELECT name, script FROM functions
 -- band_breach | functions/band_breach.rhai
 ```
 
-Ruled 2026-08-15: **a function's body is data.** `FROM 'path'` is
+Ruled: **a function's body is data.** `FROM 'path'` is
 replaced by `AS $$…$$`, the store keeps the script itself, and the
 `functions/` directory retires. Writing a function and reading one
 become the same two statements every other kind of knowledge uses.
@@ -31,29 +30,23 @@ become the same two statements every other kind of knowledge uses.
 USE fin;
 
 DECLARE FUNCTION inventory_rollforward_check FOR fin AS $$
-  let m = db.query("SELECT sum(abs(gap)) AS bad, count(*) AS n FROM (
+  SELECT 'prior level plus the month''s movements equals this month''s level' AS outcome,
+         coalesce(sum(abs(gap)) / nullif(count(*), 0), 0.0) AS breach_rate
+  FROM (
     SELECT s.units_on_hand
              - lag(s.units_on_hand) OVER (PARTITION BY s.product_id, s.location ORDER BY s.period)
              - coalesce(f.moved, 0) AS gap
     FROM stock_levels s
     LEFT JOIN monthly_moves f
-      ON f.product_id = s.product_id AND f.location = s.location AND f.period = s.period)");
-  let n = m.number("n", 0);
-  #{
-    "outcome": "prior level plus the month's movements equals this month's level",
-    "breach_rate": if n > 0 { m.number("bad", 0) / n } else { 0.0 }
-  }
-$$ ACCEPTS (imports) RETURNS inventory_rollforward;
+      ON f.product_id = s.product_id AND f.location = s.location AND f.period = s.period)
+$$ RETURNS inventory_rollforward;
 
 DECLARE FUNCTION ar_settles_in_full_check FOR fin AS $$
-  let m = db.query("SELECT count(*) FILTER (WHERE settled < billed) AS short,
-                           count(*) AS n FROM ar_settlement");
-  let n = m.number("n", 0);
-  #{
-    "outcome": "a receipt settles its invoice in full; a short receipt is the exception",
-    "breach_rate": if n > 0 { m.number("short", 0) / n } else { 0.0 }
-  }
-$$ ACCEPTS (imports) RETURNS ar_settles_in_full;
+  SELECT 'a receipt settles its invoice in full; a short receipt is the exception' AS outcome,
+         coalesce(CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE)
+                    / nullif(count(*), 0), 0.0) AS breach_rate
+  FROM ar_settlement
+$$ RETURNS ar_settles_in_full;
 
 DECLARE WITNESS inventory_rollforward_w ON inventory_rollforward
   BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;
@@ -77,10 +70,9 @@ DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
 
 ## Findings
 
-- **The body is the only thing that moved.** `FOR`, `ACCEPTS`,
+- **The body is the only thing that moved.** `FOR`,
   `RETURNS` and role-by-shape (no `RETURNS` declares a detector) are
-  untouched, and so is the script contract — `subject`, `context`,
-  `db`. A declaration that named a path now carries what the path
+  untouched. A declaration that named a path now carries what the path
   pointed at.
 - **Two capabilities arrive with it, and neither is new grammar.**
   Authoring: the check half of a validation is writable over the door,
@@ -88,7 +80,7 @@ DECLARE FUNCTION outliers FOR GLOBAL FROM 'functions/outliers.rhai'
   serves the reference library as fifteen worked examples instead of
   fifteen paths, so a skill can say "read the closest one" and mean it.
 - **`FROM` and `AS` did not both survive.** Two homes for one body is
-  the staleness the `x-unit` ruling (2026-08-12) was written against —
+  the staleness the `x-unit` ruling was written against —
   the copies disagree and nothing says which wins. The path form is
   retired rather than deprecated; the gap block above is its epitaph.
 - The workspace `functions/` directory retires with it. Bootstrap

@@ -3,7 +3,7 @@
 -- violation counts. Runs at table grain
 -- (`SELECT detect_derivations() FROM orders`).
 --
--- Why this exists (tfmeval, 2026-08-10): a scoped unit-mix artifact and
+-- Why this exists: a scoped unit-mix artifact and
 -- a real price change move a metric identically; the only instrument
 -- that separates them is the derivation the lineage carries —
 -- `line_amount = units * unit_price` held at violation rate 0.0 on

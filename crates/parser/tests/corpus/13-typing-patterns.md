@@ -99,11 +99,7 @@ GLOSS null_values ON fin AS $${"values": [
   the ordinary key; no merge machinery survives.
 - **The author is the consumer** (respelled 2026-08-04, with the
   authored-typing ruling): the patterns' reader was the typing function
-  (`infer_types ACCEPTS (type_patterns, null_values)`); it is now the
+  (v0.3's `infer_types`); it is now the
   agent authoring a recipe, reading the same glosses through
   `GLOSSARY(fin::type_patterns)` before writing the casts — a pattern's
-  `standardization_expr` is exactly the SQL the author pastes. The corpus
-  evidence for the `ACCEPTS (aspect, …)` form lives in fixture 11:
-  `outliers ACCEPTS (column_profile)`, where the server hands the script
-  the aspect's current value as its context document — one schema,
-  referenced, never copied.
+  `standardization_expr` is exactly the SQL the author pastes.

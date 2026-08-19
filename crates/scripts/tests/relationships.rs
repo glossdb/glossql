@@ -14,7 +14,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_scripts::RhaiRuntime;
+use glossql_scripts::KernelRuntime;
 use glossql_session::{Outcome, Session};
 
 /// The shipped body, so the declaration carries what runs.
@@ -102,7 +102,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -111,7 +111,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(
@@ -257,7 +257,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake.clone()).await.unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
     let session = Session::new(
         store.clone(),
         Actor {
@@ -266,7 +266,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(RhaiRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
 
     session
         .execute(&format!(
@@ -312,7 +312,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
     // does not identify a txn row.
     assert!(!value.contains(r#""from":"parties."#), "{value}");
 
-    // The ruling (2026-08-05, fixture 14): the tuple is the key — the
+    // The ruling (fixture 14): the tuple is the key — the
     // survivor declares directly, no derived-column cure. The declaration
     // reads back, and the grounds glossed on the pair path surface in the
     // anchor table's sweep.

@@ -12,8 +12,8 @@
 //! and the ruling lands exactly where the round's would — the human's
 //! own slot, on the human's own channel, witnessed by this server.
 //!
-//! The response is an event, not a navigation (signed off 2026-08-18,
-//! replacing a 303 back to the Referer — PRG bent out of shape, since
+//! The response is an event, not a navigation (not a 303 back to
+//! the Referer — PRG bent out of shape, since
 //! the reader never leaves the page and the docket is client-rendered
 //! anyway). Success is 204 with `HX-Trigger: glossql:written`; the
 //! store hears the event, drops its frame caches, and every connected
@@ -39,11 +39,12 @@ pub struct Answer {
     key: String,
     /// `confirmed`, `corrected`, or `unclear` — the stances the round
     /// serves. `unclear` refuses the question rather than the claim:
-    /// the agent owes a reformulation, not a fold-in.
+    /// the agent owes a reformulation, not a fold-in. Admission is the
+    /// one gate: the ruling aspect's schema holds the enum, so an
+    /// unknown stance answers with the store's own refusal.
     stance: String,
-    /// The human's own words. Required in practice for a correction:
-    /// "wrong" without saying what is right closes a question and
-    /// tells the agent nothing.
+    /// The human's own words, empty allowed — the MCP door writes the
+    /// same act the same way.
     #[serde(default)]
     note: String,
 }
@@ -57,16 +58,7 @@ pub async fn rule(
     Path(app): Path<String>,
     Form(answer): Form<Answer>,
 ) -> Response {
-    let stance = match answer.stance.as_str() {
-        "confirmed" | "corrected" | "unclear" => answer.stance.as_str(),
-        other => return plain(StatusCode::BAD_REQUEST, format!("unknown stance `{other}`")),
-    };
-    if stance == "corrected" && answer.note.trim().is_empty() {
-        return plain(
-            StatusCode::BAD_REQUEST,
-            "a correction has to say what is right".to_string(),
-        );
-    }
+    let stance = answer.stance.as_str();
     let glossed = crate::glossed::parts(&door).await;
     let def = match AppDef::load(&door.workspace, &app, &glossed) {
         Ok(Some(def)) => def,

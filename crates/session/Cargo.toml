@@ -11,15 +11,15 @@ glossql-import = { path = "../import" }
 datafusion.workspace = true
 datafusion-functions-json.workspace = true
 arrow-json.workspace = true
-futures = "0.3"
-chrono = "0.4"
+futures.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true

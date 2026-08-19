@@ -1,8 +1,6 @@
 # glossql — language specification
 
-Status: **working draft**, 2026-08-04. This is the simplified language; it
-supersedes the 2026-07 draft (git history holds it; the pivot record is
-`reports/2026-08-03-simplification.md`). SPEC.md is the only normative prose.
+Status: **working draft**. SPEC.md is the only normative prose.
 `grammar.ebnf` is the source of truth for syntax; the corpus
 (`crates/parser/tests/corpus/`) holds the evidence that every construct
 transcribes a real artifact.
@@ -22,20 +20,20 @@ Ground rules:
   context — is a JSON document validated by a [JSON Schema](https://json-schema.org).
   Rendering conventions ride the schema. Authored prose is opaque.
 - **The actor rides the transport.** Every connection carries an actor
-  (agent_id or human_id), DuckDB-style. An answer the door elicits from
+  (agent_id or human_id). An answer the door elicits from
   the human mid-call is server-witnessed and lands with human standing —
   the same rule; the transport is just not always a connection (fixture
-  22, ruled 2026-08-13). There is no BY clause anywhere; the engine
+  22). There is no BY clause anywhere; the engine
   stamps writer and actor kind on every statement.
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
   key is (subject, aspect, actor kind).
-- **A measurement is a query; a judge is a script.** A function with
-  `RETURNS` carries one SQL query the engine plans and runs; a detector
-  carries a rhai script over its witness's slots and never table data. A
-  function is either a measurement or a detector, never a metric. Metrics
-  are concepts: QUERY aspects, run as their SQL (§5.1). Analytical logic
-  does not live in the grammar.
+- **A function's body is one SQL query.** A function with `RETURNS` is
+  a measurement — its query runs over data at the read's pin; a
+  detector's query runs over its witness's `slots` relation. A
+  function is either a measurement or a detector, never a
+  metric. Metrics are concepts: QUERY aspects, run as their SQL (§5.1).
+  Analytical logic does not live in the grammar.
 
 ## 2. Origins
 
@@ -44,9 +42,8 @@ transcription of a real artifact from the predecessor production system.
 Corpus fixtures 01–13 quote those artifacts inline beside their glossql
 forms, each carrying a transcription verdict (the corpus README indexes
 them); from fixture 14 on, the fixtures transcribe this system's own runs
-and rulings. The artifact-by-artifact map that used to sit here retired
-2026-08-14 — the fixtures are the record, and the predecessor is no
-longer a live reference.
+and rulings. The fixtures are the record; the predecessor is not a
+live reference.
 
 ## 3. Sources and datasets
 
@@ -73,7 +70,7 @@ The recipe SQL runs **at the source**: a relational source executes it in
 its own dialect; at a file source the server runs it, with `read_parquet` /
 `read_csv` / `read_json` resolving paths under the source's location and
 `try_to_date` / `try_to_timestamp` registered. **The recipe carries the
-casts** (ruled 2026-08-04): typing is authored, not decided. The author
+casts**: typing is authored, not decided. The author
 probes the source first — `PROBE source AS $$sql$$` is the recipe
 rehearsal: the same SQL surface and path resolution, executed at the
 source, landing nothing, its result always carrying its schema (a
@@ -87,7 +84,7 @@ were dropped is the author's question, answered at the source.
 
 Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
-re-lands (ruled 2026-08-06): the table lands fresh, and its record —
+re-lands: the table lands fresh, and its record —
 the recipe it carries, the landings it holds — starts over with it.
 Glosses stay — no machinery deletes knowledge; their snapshot ids
 disclose their age against the fresh landing. `DROP TABLE` drops the
@@ -178,11 +175,11 @@ The kind fixes the aspect's role:
   rendering). Anything the company revises — meaning, unit, owner, source —
   belongs in a gloss instead, because a declaration cannot be re-declared
   once anything is glossed on the aspect and so can never be superseded,
-  contested or outranked (ruled 2026-08-12).
+  contested or outranked.
 - **MEASUREMENT** — a statistical evaluation (min_max, outliers,
   relationship_candidates). Never glossed: its value is the bound
-  function's output (§6, §7), computed when a read needs it and served by
-  `GLOSSARY()` beside facts and groundings.
+  function's landed output (§6, §7), extracted at the read's pin and
+  served by `GLOSSARY()` beside facts and groundings.
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
 is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
@@ -190,7 +187,7 @@ binding) may attach to. Absent, the aspect speaks to all grains. Disclosure
 (§5.3) stays within it: absence shows only on subjects the aspect is
 declared for.
 
-A grain list may carry a **condition** (ruled 2026-08-14):
+A grain list may carry a **condition**:
 `ON COLUMN WHEN role = 'measure'` names a sibling aspect and a value, and
 the aspect is owed on a subject only while that aspect's winning slot
 (human over agent, contest notwithstanding) carries `value` = the literal.
@@ -201,7 +198,7 @@ strands nothing. No sibling slot spoken means nothing owed yet. At
 `DECLARE`, the referenced aspect must exist, and when its schema pins
 `value` to an enum the literal must be a member.
 
-`SOURCE` grain (ruled 2026-08-12): the subject is a declared source's name
+`SOURCE` grain: the subject is a declared source's name
 (§3) — no further formality; `DECLARE SOURCE` is the definition. Sources
 are workspace rows, so source-grain slots read, supersede, and disclose
 across every dataset — the deposit one onboarding makes is what the next
@@ -265,11 +262,9 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 }
 ```
 
-- `behavior` is the authored stock marker (ruled 2026-08-11 with the
-  band walk): readers that window a grounding take last-per-window for
-  `"stock"`, sum for `"flow"`; absent reads as flow. Landed 2026-08-11
-  after the monitoring evaluation found the closed schema rejecting the
-  marker both readers already honored.
+- `behavior` is the authored stock marker: readers that window a
+  grounding take last-per-window for `"stock"`, sum for `"flow"`;
+  absent reads as flow.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
   stay separate; a witness adjudicates across them (§7).
@@ -336,8 +331,8 @@ SELECT * FROM GLOSSARY(fin::dso);
 
 Functions registered with name, contract and body. A function is either
 a **measurement** — it fills a MEASUREMENT aspect through that aspect's
-witness (§7), and its body is one SQL query — or a **detector** (§7.1),
-whose body is a rhai script over slots. The library is the engine's
+witness (§7), its query running over data — or a **detector** (§7.1),
+whose query runs over its witness's `slots`. The library is the engine's
 analytical machinery (profiling, quality checks, detection) shipped as
 declarations; metrics are not functions (§5.1). Typing is not in it —
 the recipe carries the casts (§3).
@@ -347,44 +342,49 @@ DECLARE FUNCTION profile FOR GLOBAL AS $$
   SELECT profile(v) FROM subject_column($subject)
 $$ RETURNS column_profile;
 
-DECLARE FUNCTION reconcile_bands FOR fin AS $$/* detector: bands the reconciliation slots */$$;
+DECLARE FUNCTION reconcile_bands FOR fin AS $$
+  SELECT subject,
+         CASE WHEN max(body['delta']) <= $threshold THEN 'green' ELSE 'red' END AS band,
+         coalesce(max(body['delta']), 0.0) AS score
+  FROM slots GROUP BY subject
+$$;
 ```
 
 - `FOR` scopes the function to a dataset, or `GLOBAL`.
-- `AS` carries the body itself (ruled 2026-08-15, fixture 24). It was a
-  path until then, which put the body outside the language: an agent
-  connected over the MCP door has statements and no filesystem, so it
-  could neither author a function nor read the library's own. The
+- `AS` carries the body itself (fixture 24) — never a path, which
+  would put the body outside the language: an agent connected over the
+  MCP door has statements and no filesystem, so it could neither
+  author a function nor read the library's own. The
   declaration supersedes on re-declare like any other, and
   `SELECT script FROM functions` serves the shipped library as worked
   examples.
-- **The role picks the body's language** (ruled 2026-08-17). A `RETURNS`
-  body is SQL, planned and run by the engine — read-only, at the
-  statement's pin, composing everything a read can. `$subject` arrives
-  as a string literal; `subject_column($subject)` is the subject's
-  column as a relation named `v`. The result lands by shape: one row and
-  one column is the value, one row is an object of its columns, many
-  rows are an array of row objects.
-- `ACCEPTS` names the aspects whose current values the server hands a
-  script body as its context document — settings are context, never call
-  arguments; calls are always bare `f()`. A SQL body composes inline
-  instead: a landed value is a read over `measurements`, a statistic is
-  the same aggregate computed in place. A declaration relation reads as
-  a table, which needs no naming.
-- `RETURNS` names the aspect the function's output fills, mirroring
-  `ACCEPTS`: functions read aspects and write an aspect, and the aspect's
+- **One language.** Every body is one SQL query, planned and run by the
+  engine — read-only. A measurement runs at the statement's pin,
+  composing everything a read can; `$subject` arrives as a string
+  literal, and `subject_column($subject)` is the subject's column as a
+  relation named `v`. The result lands by shape: one row and one column
+  is the value, one row is an object of its columns, many rows are an
+  array of row objects. Settings are context, never call arguments —
+  calls are always bare `f()`. A body composes its context inline: a
+  glossed value is a read over the glossary, a landed value a read over
+  `measurements`, a statistic the same aggregate computed in place. A
+  declaration relation reads as a table, which needs no naming.
+- `RETURNS` names the aspect the function's output fills; the aspect's
   schema is the one contract — output is validated against it at
   extraction, and `GLOSSARY()` serves it as-is. A MEASUREMENT aspect has
   exactly one returning function (its producer); a FACT aspect may be
   returned by functions too — each is a data-grounded *voice* whose
   output joins the spoken slots (§7), computed at read.
 - **No `RETURNS` declares a detector** — role by shape. A detector is
-  named only in a witness's `DETECTOR` clause; it receives the witness's
-  slots and threshold, never table data, and its output must satisfy the
-  standard attest schema (§7.2) — the engine's contract, not authored.
-- Every function receives its subject — `$subject` in a SQL body, the
-  `subject` constant in a script. A script computes from its slots and
-  context alone; anything that reads data is a measurement.
+  named only in a witness's `DETECTOR` clause. Its query plans over
+  the `slots` relation — the witness's raw rows (§5.3),
+  narrowed to its aspect, with `speaker` beside them and `body` typed by
+  the slots' own JSON — and the witness `THRESHOLD` binds as
+  `$threshold`. Each returned row must satisfy the standard attest
+  contract (§7.2) — the engine's contract, not authored.
+- A measurement receives its subject as `$subject`; a detector's
+  relation carries `subject` per row, so one query answers every
+  subject.
 
 Extraction:
 
@@ -401,9 +401,9 @@ A later extraction at the same pin serves that row; any input moving
 makes a new pin, so there is no invalidation, only a miss, and old rows
 stand as the drift record. A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
-through `GLOSSARY(subject::aspect)` (ruled 2026-08-14: a large
-measurement's extraction result was effectively write-only at the door;
-the summary is the function's own authorship, never a truncation).
+through `GLOSSARY(subject::aspect)` (a large measurement's extraction
+result would otherwise be write-only at the door; the summary is the
+function's own authorship, never a truncation).
 Nothing recomputes at write time, and no machinery ever deletes a gloss:
 stale judgment is served and marked, superseded only by whoever owns the
 slot.
@@ -456,6 +456,9 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 The **standard attest schema** is fixed:
 `(subject, aspect, witness, band, score, computed_at)` — `band` in
 `green | yellow | orange | red`, `score` the disagreement/entropy in 0..1.
+A detector's query returns the authored third of it — one
+`(subject, band, score)` row per subject — and the engine completes
+each row with the witness, its aspect, and its own clock.
 Detectors run **at read**. A verdict belongs to its **witness**, not to
 its detector: one detector serving three witnesses holds three verdicts,
 computed from each witness's own slots against its own threshold.
@@ -473,7 +476,7 @@ results: no construct writes a verdict into data.
 ## 8. Skills
 
 Agents use the language through skills; agents are not part of the grammar.
-The door tells, skills teach (ruled 2026-08-04): the server's one surface
+The door tells, skills teach: the server's one surface
 takes statements and returns outcomes, and everything an agent must *learn*
 ships as skills sourced from this repository's artifacts — the language
 (this document, `grammar.ebnf`), the flows (corpus fixtures 11 and 12),
@@ -486,29 +489,28 @@ glossary, the tables — is read through the language, never taught.
 One open question, fixture 09's remaining half: whether agents actually
 compose their context from the reads — sweeping `state != 'current'`,
 respecting bands — now that the collapsed shape discloses every gap
-(§5.3, decided 2026-08-04: serving wrong information is not an
-experiment). Closes by running the agent experiment, not by argument.
+(§5.3: serving wrong information is not an experiment). Closes by
+running the agent experiment, not by argument.
 
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
-DuckDB-style, or a door-elicited answer, server-witnessed with human
-standing ·
-value-at-read, ruled 2026-08-06, bound 2026-08-07: a QUERY aspect's
+or a door-elicited answer, server-witnessed with human standing ·
+value-at-read: a QUERY aspect's
 value materializes as a namespaced table function — `FROM read.dso()`
 expands the collapsed current grounding at plan time, nesting allowed
 behind a cycle guard; running stays the reader's act. The prefix is
-`read.` (ruled 2026-08-11, renamed from `metric.`, no alias): one
+`read.` (no alias): one
 serving door over every QUERY gloss, whatever flavor `x-kind` names.
-Analyses stay operation-named doors — `whatif.<scenario>()` (ruled
-2026-08-11, fixture 19) serves a declared scenario: a FACT aspect per
+Analyses stay operation-named doors — `whatif.<scenario>()`
+(fixture 19) serves a declared scenario: a FACT aspect per
 scenario carrying overrides, the server replaying the recipes at a
 bracketing grid of strengths and reading across the replayed worlds;
 the grid, reach, and support guard are machinery, never statement
-syntax; `misfit.<frame>()` (ruled 2026-08-11, fixture 20) ranks a
+syntax; `misfit.<frame>()` (fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
-`metric_series()` (2026-08-13) serves the `metric_cube`
+`metric_series()` serves the `metric_cube`
 measurement at the read's pin as long rows — metric names become data so
 a static frame (the built-in docket app) slices any metric with plain
 value filters; an extraction lands the cube, nothing computes at page

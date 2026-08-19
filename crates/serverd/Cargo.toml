@@ -17,15 +17,15 @@ datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
 arrow-json = { workspace = true }
 axum = { workspace = true }
-futures = "0.3"
+futures.workspace = true
 rmcp = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
 glossql-parser = { path = "../parser" }
-tower = { version = "0.5", features = ["util"] }
-tempfile = "3"
+tower.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

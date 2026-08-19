@@ -1,5 +1,5 @@
 //! The fixture-11 flow against a real warehouse (corpus/11-flow-add-source),
-//! under the authored-typing ruling (2026-08-04): the agent probes the
+//! under the authored-typing ruling: the agent probes the
 //! source through the statement door, the recipe carries the casts, the
 //! landed table IS the typed table. Glosses carry snapshot ids; recipe
 //! identity is content; `DROP TABLE` and the substrate allowlist hold the
@@ -46,7 +46,7 @@ async fn workspace(dir: &std::path::Path) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     Session::new(
         store,
         Actor {
@@ -186,8 +186,8 @@ async fn fixture_11_add_source_flow() {
     assert_eq!(single_value(&unstamped), "1");
 
     // §3: unchanged recipe is a no-op; a changed one supersedes and
-    // re-lands (ruled 2026-08-06 — runs 5 and 6 both dead-ended on the
-    // old refusal). Glosses stay; the cached evidence is swept.
+    // re-lands (a refusal dead-ends every cure of a post-landing
+    // defect). Glosses stay; the cached evidence is swept.
     let redeclare = "DECLARE RECIPE orders ON fin FROM erp_export AS $$\
                SELECT order_id, try_cast(amount AS DOUBLE) AS amount \
                FROM read_parquet('orders/*.parquet') \
@@ -225,8 +225,8 @@ async fn fixture_11_add_source_flow() {
     assert_eq!(single_value(&landings), "1");
 
     // A re-land that cannot run leaves the landing it was replacing
-    // (found 2026-08-06: the old table was dropped before the new recipe
-    // had produced a single batch, so a typo destroyed it with no rollback).
+    // (dropping the old table before the new recipe produces a single
+    // batch lets a typo destroy it with no rollback).
     let broken = "DECLARE RECIPE orders ON fin FROM erp_export AS $$SELECT ordr_id FROM read_parquet('orders/*.parquet')$$;";
     let err = session.execute(broken).await.unwrap_err();
     assert!(err.to_string().contains("ordr_id"), "{err}");

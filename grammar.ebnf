@@ -1,4 +1,4 @@
-(* glossql grammar — the simplified language, 2026-08-03.
+(* glossql grammar.
    Machine-readable source of truth for syntax; SPEC.md carries the semantics.
 
    Lexical conventions (SQL host):
@@ -12,8 +12,8 @@
    - keywords are case-insensitive; statements end with ";"
 
    Every statement lexes with the stock sqlparser tokenizer on the postgres
-   dialect ("<->" is one token there); the respell that made this hold is
-   recorded in reports/2026-08-03-sqlparser-respell.md.
+   dialect ("<->" is one token there); every keyword and operator is chosen
+   so this holds — no custom lexing anywhere.
 
    Substrate SQL is opaque to this grammar: glossql adds statements and table
    functions to a SQL host (views, SELECT bodies, DELETE FROM glossary and
@@ -42,8 +42,8 @@ declaration       = "DECLARE", ( source_decl
                                | witness_decl ) ;
 
 probe_stmt        = "PROBE", name, "AS", dollar ;
-                    (* PROBE source AS $$ <sql> $$ — the recipe rehearsal
-                       (ruled 2026-08-04): same SQL surface, same path
+                    (* PROBE source AS $$ <sql> $$ — the recipe
+                       rehearsal: same SQL surface, same path
                        resolution, executed at the source, landing nothing.
                        The result always carries its schema; LIMIT 0
                        rehearses the identity a DECLARE RECIPE would stamp *)
@@ -64,7 +64,7 @@ recipe_decl       = "RECIPE", name, "ON", name, "FROM", name, "AS", dollar ;
                        under the source's location, try_to_date/
                        try_to_timestamp registered. Dollar-quoted so
                        foreign-dialect text never meets the host tokenizer.
-                       The recipe carries the casts (ruled 2026-08-04):
+                       The recipe carries the casts:
                        the result lands as table r, the typed table —
                        no derived view, no raw twin. Identity is content
                        (SQL + produced schema): unchanged re-declaration
@@ -107,14 +107,13 @@ aspect_decl       = "ASPECT", name, "WITH", json, "AS", aspect_kind,
 grain             = "DATASET" | "TABLE" | "COLUMN" | "RELATIONSHIP" | "SOURCE" ;
                     (* the subject classes glosses may attach to;
                        absent = all. WHEN names a sibling aspect and a
-                       value (ruled 2026-08-14): the aspect is owed on a
+                       value: the aspect is owed on a
                        subject only while that aspect's collapsed body
                        carries `value` = the literal — bounds
                        `unassessed` disclosure and every count derived
                        from it; writes stay gated by grain alone, and a
                        spoken slot outside its condition serves
-                       normally. The literal is validated against the
-                       named aspect's `value` enum when it has one. *)
+                       normally. *)
 aspect_kind       = "MEASUREMENT"            (* never glossed; value = bound
                                                 function's cached JSON output *)
                   | "FACT"                   (* authored assertion; WITH schema
@@ -135,25 +134,22 @@ gloss             = "GLOSS", name, "ON", subject, "AS", json ;
 
 function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
                     "AS", dollar,
-                    [ "ACCEPTS", "(", name, { ",", name }, ")" ],
                     [ "RETURNS", name ] ;
                     (* the engine's analytical machinery; never a metric
                        (metrics are QUERY aspects run as their SQL).
-                       AS carries the body itself (ruled 2026-08-15, fixture
-                       24): a body on disk was a body an agent over MCP could
+                       AS carries the body itself (fixture 24): a body
+                       on disk was a body an agent over MCP could
                        neither write nor read, so the store keeps it and
                        `SELECT script FROM functions` serves the library as
                        examples. `FROM 'path'` is retired, not deprecated —
                        two homes for one body is the staleness the registry
-                       rulings exist against. The role picks the body's
-                       language (ruled 2026-08-17): a RETURNS body is one SQL
-                       query the engine plans — read-only, at the statement's
-                       pin; a detector body is a rhai script over slots, never
-                       table data. ACCEPTS names the aspects whose current
-                       values the server hands a script body as context —
-                       settings are context, never call arguments; a SQL body
-                       composes inline instead. RETURNS mirrors ACCEPTS (ruled
-                       2026-08-04): it names the aspect the output fills,
+                       rulings exist against. Every body is one SQL query
+                       the engine plans — read-only: a RETURNS body runs
+                       over data at the statement's pin; a detector body
+                       runs over its witness's `slots` relation.
+                       Settings are context, never call arguments; a SQL
+                       body composes its context inline. RETURNS names
+                       the aspect the output fills,
                        validated against that aspect's schema; a MEASUREMENT
                        aspect has one returning function, a FACT aspect's
                        returning functions are voices in its slots. No RETURNS
@@ -163,11 +159,11 @@ function_decl     = "FUNCTION", name, "FOR", ( name | "GLOBAL" ),
 
 extract           = "SELECT", call, { ",", call }, "FROM", subject ;
 call              = name, "(", ")" ;
-                    (* calls are bare — settings reach a script as context
-                       (ACCEPTS), never as arguments (dropped 2026-08-04).
+                    (* calls are bare — settings are context,
+                       never arguments.
                        extraction computes at the read's pin and lands a
                        measurements row; the same pin serves it back, any
-                       input moving recomputes — REFRESH dropped 2026-08-03.
+                       input moving recomputes — there is no REFRESH.
                        Functions never write the glossary. *)
 
 (* -- witnesses ---------------------------------------------------------- *)

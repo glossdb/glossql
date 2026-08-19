@@ -16,14 +16,14 @@ use glossql_session::NoRuntime;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-async fn app_with(doors: DoorConfig) -> Router {
-    let store = Store::open_memory().await.unwrap();
+async fn app_with(doors: DoorConfig) -> (Router, tempfile::TempDir) {
+    let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
-    router(plane, doors, std::env::temp_dir())
+    (router(plane, doors, std::env::temp_dir()), dir)
 }
 
-async fn app() -> Router {
+async fn app() -> (Router, tempfile::TempDir) {
     app_with(DoorConfig::default()).await
 }
 
@@ -35,7 +35,7 @@ async fn body_json(response: Response<Body>) -> Value {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_docket_app_ships_in_the_binary() {
     // The workspace carries no apps — the built-in answers for the name.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let response = app
         .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
         .await
@@ -50,7 +50,7 @@ async fn the_docket_app_ships_in_the_binary() {
 async fn a_builtin_frame_names_the_missing_dataset() {
     // No dataset in the workspace: the frame states the condition
     // instead of failing opaquely — the tile renders the message.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let response = app
         .oneshot(
             Request::get("/app/docket/frames/census")
@@ -66,7 +66,7 @@ async fn a_builtin_frame_names_the_missing_dataset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_streams_arrow_ipc() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let response = app
         .oneshot(
             Request::post("/query")
@@ -95,7 +95,7 @@ async fn the_query_door_streams_arrow_ipc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_answers_a_statement_sequence_in_json() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let response = app
         .oneshot(
             Request::post("/query")
@@ -115,7 +115,7 @@ async fn the_query_door_answers_a_statement_sequence_in_json() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_answers_a_refusal_in_the_body() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let response = app
         .oneshot(
             Request::post("/query")
@@ -187,12 +187,13 @@ async fn expect_ok(response: Response<Body>) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_initializes_and_lists_the_one_tool() {
-    let body = expect_ok(mcp(app().await, initialize()).await).await;
+    let (app, _dir) = app().await;
+    let body = expect_ok(mcp(app.clone(), initialize()).await).await;
     assert_eq!(body["result"]["serverInfo"]["name"], "glossql-serverd");
 
     let body = expect_ok(
         mcp(
-            app().await,
+            app,
             json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": meta()}}),
         )
         .await,
@@ -202,7 +203,7 @@ async fn the_mcp_door_initializes_and_lists_the_one_tool() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0]["name"], "glossql");
     // The revision's full tools/list contract, validated by shipping
-    // clients (Claude Code, observed 2026-08-12): the SEP-2322
+    // clients (Claude Code): the SEP-2322
     // discriminator plus the list-caching fields the door injects
     // until rmcp models them.
     assert_eq!(body["result"]["resultType"], "complete", "{body}");
@@ -212,7 +213,7 @@ async fn the_mcp_door_initializes_and_lists_the_one_tool() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let call = |statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
@@ -237,7 +238,7 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert_eq!(outcomes[0]["truncated"], json!(false));
     // Every read carries its shape as (name, type) — and the shape
     // survives an empty result: the LIMIT 0 rehearsal's whole point
-    // (ruled 2026-08-14; the run's workaround was landing a rehearsal
+    // (the workaround otherwise is landing a rehearsal
     // recipe just to DESCRIBE it).
     assert_eq!(
         outcomes[0]["columns"],
@@ -262,8 +263,8 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(text.contains("nothing"), "{text}");
 
     // A refusal mid-sequence names its place, what landed, and what
-    // never ran — the 2026-08-14 run had to read `imports` to learn
-    // what stood after a silent abort.
+    // never ran — after a silent abort the only recourse is reading
+    // `imports` to learn what stood.
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -278,7 +279,7 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(text.contains("statement 1 landed"), "{text}");
     assert!(text.contains("statement 3 not run"), "{text}");
 
-    // The connect-time brief (ruled 2026-08-12): every initialize after
+    // The connect-time brief: every initialize after
     // a call serves live counts in its instructions — an agent
     // connecting now hears what stands before it acts.
     let body = expect_ok(mcp(app, initialize()).await).await;
@@ -310,7 +311,7 @@ fn meta_elicit() -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_round_never_asks_the_human_for_statistics() {
-    // Ruled 2026-08-13, from the first live run: an unassessed
+    // An unassessed
     // witnessed claim a measurement can settle (behavior, unit) is the
     // AGENT's backlog — behavior_evidence computes it — and the door
     // must not ask the human for it. The kit ships the vocabulary, a
@@ -330,16 +331,16 @@ async fn the_round_never_asks_the_human_for_statistics() {
     )
     .await
     .unwrap();
-    let store = Store::open_scratch(lake).await.unwrap();
+    let store = Store::open(lake).await.unwrap();
     // The kit's witnesses carry detectors (slot_entropy), and reads
     // adjudicate — this test needs the real script runtime.
-    let runtime = Arc::new(glossql_scripts::RhaiRuntime::new(dir.path().to_path_buf()));
+    let runtime = Arc::new(glossql_scripts::KernelRuntime::new(dir.path().to_path_buf()));
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     let human = Actor {
         kind: ActorKind::Human,
         id: HUMAN.into(),
     };
-    bootstrap(&store, &plane, human).await.unwrap();
+    bootstrap(&plane, human).await.unwrap();
     let app = router(plane, DoorConfig::default(), dir.path().to_path_buf());
 
     let setup = format!(
@@ -388,7 +389,7 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
     // ruled `goods-only` two ways on purpose, and that must stay
     // possible. So the second ask offers the first ruling back as an
     // answer: agreeing costs a click, differing is still there.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'one key, one decision');
         USE fin;
@@ -527,11 +528,11 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
 async fn the_round_rules_a_loose_assumption_on_retry() {
     // A judged assumption below full confidence becomes a
     // confirm/correct form; "stands as stated" lands a RULING entry —
-    // the judgment alone, never a copy of the agent's body (ruled
-    // 2026-08-14: the frozen copy outranked every later correction).
+    // the judgment alone, never a copy of the agent's body (a
+    // frozen copy would outrank every later correction).
     // The ruling holds the question closed, the brief counts the
     // fold-in debt, and the agent's re-record clears it.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'loose test');
         USE fin;
@@ -650,9 +651,9 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
     // Decline is defer: transport state, never the store — the app
     // still shows the open row. It rests only while the workspace
     // holds still; a writing call clears the deferral, so the next
-    // review asks again (cadence ruling, 2026-08-14) — "not now"
+    // review asks again — "not now"
     // never hardens into "never".
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'defer test');
         USE fin;
@@ -715,11 +716,11 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_round_never_interrupts_a_working_call() {
-    // Cadence (ruled 2026-08-14, from the first live run): forms ride
+    // Cadence: forms ride
     // only calls that read the record. A landing call and a plain data
     // read run uninterrupted even while a question stands open; the
     // review-shaped call carries the form.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'cadence test');
         USE fin;
@@ -777,7 +778,7 @@ async fn the_round_never_interrupts_a_working_call() {
 async fn the_round_rides_a_transport_session_too() {
     use futures::StreamExt;
 
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'session round');
         USE fin;
@@ -902,7 +903,7 @@ async fn the_round_rides_a_transport_session_too() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_actor_id_is_the_clients_name_not_the_transports() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let call = |id: u64, statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -944,7 +945,7 @@ async fn the_actor_id_is_the_clients_name_not_the_transports() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let app = app_with(DoorConfig {
+    let (app, _dir) = app_with(DoorConfig {
         row_cap: 3,
         ..Default::default()
     })
@@ -1001,7 +1002,7 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let app = app_with(DoorConfig {
+    let (app, _dir) = app_with(DoorConfig {
         row_cap: 3,
         ..Default::default()
     })
@@ -1032,11 +1033,11 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sequential_rulings_compose_instead_of_reverting() {
-    // Found live 2026-08-13: ruling a second assumption reverted the
-    // first (a loop). Rulings now accumulate as entries in the human's
+    // Ruling a second assumption must not revert the
+    // first. Rulings accumulate as entries in the human's
     // one ruling slot — each append carries the earlier entries along,
-    // and no ruling ever touches the agent's body (ruled 2026-08-14).
-    let app = app().await;
+    // and no ruling ever touches the agent's body.
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'sequential rulings');
         USE fin;
@@ -1114,22 +1115,19 @@ async fn sequential_rulings_compose_instead_of_reverting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn one_claim_ruled_two_ways_shows_up_as_a_read() {
+async fn the_round_names_the_sibling_ruling_on_the_same_key() {
     // Run 2 produced this: `purchases`'s goods-only assumption was
     // confirmed in the same session where `dpo`'s goods-only
     // assumption was corrected. The two groundings word the claim
     // differently on purpose — pairing rests on the declared key,
-    // never on the prose (STRING EQUALITY ON NON-KEYS IS FORBIDDEN,
-    // ruled 2026-08-14).
+    // never on the prose (STRING EQUALITY ON NON-KEYS IS FORBIDDEN).
     //
-    // It is a read, not a round. Nothing asks about the tension and
-    // nothing resolves it: the rows are there for the docket, for the
-    // brief's count, and for the agent to reconcile in its own
-    // groundings — which is what run 2's agent did anyway. The
-    // resolution protocol this replaces (a second question shape, a
-    // stance, a `settles_with` list, a settled anti-join) was more
-    // code than the thing it caught.
-    let app = app().await;
+    // The form is the whole mechanism: when the round asks about a key
+    // the human already ruled under another aspect, the message names
+    // that sibling ruling, and the human decides with both in view.
+    // Nothing pairs the rulings afterwards — two aspects may genuinely
+    // differ, and an agent that needs it settled again asks again.
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'one claim, two rulings');
         USE fin;
@@ -1202,44 +1200,11 @@ async fn one_claim_ruled_two_ways_shows_up_as_a_read() {
     .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
-    // Now one key stands ruled two ways, and the read says so.
-    let body = expect_ok(
-        mcp(
-            app.clone(),
-            call_with(
-                meta(),
-                105,
-                "SELECT key, newer_aspect, older_aspect, newer_stance, older_stance \
-                 FROM ruling_conflicts;",
-                None,
-            ),
-        )
-        .await,
-    )
-    .await;
-    let text = body["result"]["content"][0]["text"].as_str().unwrap();
-    let outcomes: Value = serde_json::from_str(text).unwrap();
-    assert_eq!(outcomes[0]["row_count"], json!(1), "{outcomes}");
-    let row = &outcomes[0]["rows"][0];
-    assert_eq!(row["key"], json!("goods-only"), "{outcomes}");
-    assert_eq!(row["newer_aspect"], json!("purchases"), "{outcomes}");
-    assert_eq!(row["older_aspect"], json!("dpo"), "{outcomes}");
-    assert_eq!(row["newer_stance"], json!("confirmed"), "{outcomes}");
-    assert_eq!(row["older_stance"], json!("corrected"), "{outcomes}");
-
-    // And the agent hears it in the brief rather than being asked.
+    // Both rulings stand, each on its own aspect, and the round is
+    // quiet — the record needs no third act.
     let body =
-        expect_ok(mcp(app.clone(), call_with(meta(), 106, "SELECT 1 AS ok", None)).await).await;
-    let blocks = body["result"]["content"].as_array().unwrap();
-    let brief = blocks
-        .iter()
-        .find(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: ")));
-    if let Some(brief) = brief {
-        assert!(
-            brief["text"].as_str().unwrap().contains("ruled two ways"),
-            "{body}"
-        );
-    }
+        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 105, review, None)).await).await;
+    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1248,7 +1213,7 @@ async fn the_brief_rides_the_call_that_moved_it() {
     // per connection, so a long-lived session never saw the counts
     // move. The brief now also rides any tool result whose call
     // changed it — and stays off the quiet ones.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'brief delivery');
         USE fin;
@@ -1302,13 +1267,13 @@ async fn the_brief_rides_the_call_that_moved_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unkeyed_assumption_is_never_asked() {
-    // A KNOWN, ACCEPTED GAP (ruled 2026-08-14). Identity is the
+    // A KNOWN, ACCEPTED GAP. Identity is the
     // declared `key`; an assumption disclosed without one cannot be
     // held closed by a ruling, so the round would re-ask it forever.
     // It is therefore never asked at all — the record still shows it,
     // and the skills make the key part of the disclosure shape. The
     // alternative — pairing on the prose — is forbidden.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'unkeyed assumptions');
         USE fin;
@@ -1348,7 +1313,7 @@ async fn the_open_questions_read_composes_like_a_table() {
     // any ad-hoc query share one file instead of three copies. Filters
     // ride WHERE — the same posture `read.<aspect>()` and
     // `metric_series()` take.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'the read library');
         USE fin;
@@ -1442,13 +1407,13 @@ async fn the_open_questions_read_composes_like_a_table() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_authors_an_app_over_the_tool() {
-    // Ruled 2026-08-15: an app is glosses, one per part. Before this an
-    // app was a directory read from disk, so the one thing an agent
+    // An app is glosses, one per part. As a directory
+    // read from disk only, the one thing an agent
     // connected over MCP could not build was the surface a human looks
     // at — it has statements, not a filesystem. Nothing new carries it:
     // the parts travel as glosses, supersession versions each one, and
     // actor kind records whose hand shaped it.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'an agent authors an app');
         USE fin;
@@ -1511,7 +1476,7 @@ async fn the_workspace_says_what_it_affords() {
     // be extended through, how much of each stands, and what is open on
     // it. Not an order to follow — the agent judges what to do next;
     // this only says what the system affords.
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'the affordance map');
         USE fin;
@@ -1568,7 +1533,7 @@ async fn the_workspace_says_what_it_affords() {
     assert_eq!(row("metrics")["stands"], json!(1), "{rows:?}");
     assert_eq!(row("metrics")["open"], json!(1), "{rows:?}");
     assert_eq!(row("claims")["open"], json!(1), "{rows:?}");
-    // The two model doors (2026-08-15). Both are planner doors, not rows
+    // The two model doors. Both are planner doors, not rows
     // in `functions`, so this map is the only place an agent meets them
     // at all. Each is declared here and never glossed — vocabulary
     // standing with no body, which is exactly what `open` means.
@@ -1590,7 +1555,7 @@ async fn the_workspace_says_what_it_affords() {
 /// here against the same session.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
-    let app = app().await;
+    let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'the affordance map, filtered');
         USE fin;
@@ -1654,4 +1619,17 @@ async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
         .filter_map(|r| r["surface"].as_str())
         .collect();
     assert_eq!(surfaces, vec!["sources", "tables"], "{some_rows:?}");
+}
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+async fn scratch_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    (dir, store)
 }

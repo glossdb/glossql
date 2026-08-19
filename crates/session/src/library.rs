@@ -15,9 +15,9 @@
 //! source of the SQL.
 
 /// Every shipped read, by the name it answers to in `FROM`. Reads
-/// build on reads — `open_questions` and `ruling_conflicts` both read
-/// `ruling_entries` — which is the point of expanding them through the
-/// planner rather than executing them as strings.
+/// build on reads — `open_questions` reads `ruling_entries` — which is
+/// the point of expanding them through the planner rather than
+/// executing them as strings.
 pub(crate) const LIBRARY: &[(&str, &str)] = &[
     (
         "agent_assumptions",
@@ -27,10 +27,6 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
     (
         "ruling_entries",
         include_str!("../reads/ruling_entries.sql"),
-    ),
-    (
-        "ruling_conflicts",
-        include_str!("../reads/ruling_conflicts.sql"),
     ),
     (
         "open_questions",

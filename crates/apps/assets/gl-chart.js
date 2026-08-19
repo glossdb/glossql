@@ -1,10 +1,6 @@
 // <gl-chart frame="frames/x" spec="specs/x.vl.json"> — a vega-lite
 // view over a stored frame. The spec binds the named data source
-// "frame"; the store supplies the rows. With drill-field set, clicking
-// a mark navigates: the clicked datum's field lands in the URL as
-// drill-param (default: the field name) — drill is navigation, the
-// server renders the narrowed state, the store refetches only what
-// changed.
+// "frame"; the store supplies the rows.
 (function () {
   'use strict';
 
@@ -54,30 +50,11 @@
           return;
         }
         this._view = result.view;
-        this.drill(result.view);
       } catch (e) {
         this.replaceChildren(glStore.errorBox(e.message || String(e)));
       } finally {
         this.removeAttribute('aria-busy');
       }
-    }
-
-    drill(view) {
-      const field = this.getAttribute('drill-field');
-      if (!field) return;
-      const param = this.getAttribute('drill-param') || field;
-      // Vega hands temporal datums back as epoch numbers; drill-type
-      // "date" says the URL wants the ISO day.
-      const asDate = this.getAttribute('drill-type') === 'date';
-      view.addEventListener('click', (_event, item) => {
-        if (!item || !item.datum || item.datum[field] === undefined) return;
-        let value = item.datum[field];
-        if (asDate && !(value instanceof Date)) value = new Date(value);
-        if (value instanceof Date) value = value.toISOString().slice(0, 10);
-        const url = new URL(document.location);
-        url.searchParams.set(param, value);
-        document.location.assign(url);
-      });
     }
 
     disconnectedCallback() {

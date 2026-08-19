@@ -2,22 +2,17 @@
 //!
 //! The glossary, the declarations (functions, aspects, witnesses,
 //! sources, relationships) and the measurements are each one Iceberg v3
-//! table; [`MetadataBackend`] is the two-method seam they cross the
+//! table; [`IcebergMetadata`] is the seam they cross the
 //! lake through — scan history, append rows. Named for what it holds:
 //! the workspace's metadata, as opposed to the data plane the recipes
-//! land into. (It was called `Relations` until 2026-08-18, which
-//! collided with the `relationships` relation and read as a collection
-//! rather than a backend.)
-//!
-//! Stage 3 of `reports/2026-08-17-the-foundation.md` §6. Three decisions
-//! make this smaller than it looks:
+//! land into. Three decisions make this smaller than it looks:
 //!
 //! - **Supersession is not ours to implement.** Iceberg v3 row lineage
 //!   supplies `_last_updated_sequence_number` (the commit that last
 //!   touched the row) and `_pos` (its position in the file); together
 //!   they are a total order over writes, assigned by the catalog with no
-//!   coordination between writers and nothing for us to mint (spike 7,
-//!   2026-08-17, apache/iceberg-rust#2966).
+//!   coordination between writers and nothing for us to mint
+//!   (apache/iceberg-rust#2966).
 //! - **The dataset is a key column, and the format partitions by it.**
 //!   A workspace holds many datasets, so a relation about a dataset's
 //!   subjects carries a `dataset` column and declares it as its
@@ -60,8 +55,7 @@ pub struct Row {
     pub cells: Vec<Option<String>>,
     /// The write's position in the store's total order — the commit's
     /// data sequence number and the row's position in its file, which
-    /// together order writes inside one commit as well as across them
-    /// (spike 7, 2026-08-17).
+    /// together order writes inside one commit as well as across them.
     pub seq: (i64, i64),
 }
 
@@ -87,34 +81,6 @@ pub struct RelationSpec {
     /// dataset-keyed relations, so each dataset's rows land in their own
     /// files — the format's split, no classification of ours on top.
     pub partition: &'static [&'static str],
-}
-
-/// Everything a store backend must provide. Deliberately two methods:
-/// anything more is a rule, and rules live in `glossql-glossary`.
-///
-/// `scan` hands back **history**, not the current view. Supersession is
-/// `rules::latest_by` applied on top; a backend that filtered would be
-/// reimplementing the rule, which is what the SQL
-/// `NOT EXISTS ... n.id > g.id` was. `append` adds rows — replacement is
-/// a later row, never an update, so nothing here mutates. A scan of a
-/// relation nothing has written is empty, never an act: reads never
-/// write, so tables are created by the first append alone.
-#[async_trait::async_trait]
-pub trait MetadataBackend: Send + Sync + std::fmt::Debug {
-    /// Every row ever written to the relation, in no guaranteed order —
-    /// callers order by [`Row::seq`] because that is the rule.
-    async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>>;
-
-    /// The rows whose `column` equals `value` — the predicate pushed into
-    /// the format's own scan, so a big relation's history is not read to
-    /// serve one key.
-    async fn scan_where(&self, relation: &str, column: &str, value: &str)
-    -> crate::Result<Vec<Row>>;
-
-    /// Append rows as one write. Ordering inside one append is by
-    /// position, so a caller that appends two rows sharing a supersession
-    /// key gets the later one — see the batching ruling of 2026-08-17.
-    async fn append(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()>;
 }
 
 /// `_last_updated_sequence_number` and `_pos`, the two halves of the
@@ -205,9 +171,6 @@ impl IcebergMetadata {
             return Ok(Vec::new());
         }
         let table = catalog.load_table(&ident).await?;
-        if table.metadata().current_snapshot().is_none() {
-            return Ok(Vec::new());
-        }
         // The ordering columns ride the projection: the rule reads them,
         // the caller never sees them.
         let mut select: Vec<String> = spec.columns.iter().map(|c| c.to_string()).collect();
@@ -230,30 +193,34 @@ impl IcebergMetadata {
                     .filter(|a| !a.is_null(r))
                     .map(|a| a.value(r).to_string())
             };
-            let num = |name: &str, r: usize| -> i64 {
-                batch
-                    .schema()
-                    .index_of(name)
-                    .ok()
-                    .and_then(|i| {
-                        datafusion::arrow::compute::cast(
-                            batch.column(i),
-                            &datafusion::arrow::datatypes::DataType::Int64,
-                        )
-                        .ok()
-                    })
-                    .and_then(|a| {
-                        a.as_any()
-                            .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                            .filter(|a| !a.is_null(r))
-                            .map(|a| a.value(r))
-                    })
-                    .unwrap_or(0)
+            // The lineage columns ARE the supersession order — a
+            // missing or unreadable value silently kept an arbitrary
+            // row, so absence is an error, never a zero.
+            let num = |name: &str, r: usize| -> crate::Result<i64> {
+                let i = batch.schema().index_of(name).map_err(|e| {
+                    crate::Error::Workspace(format!("{relation}: no `{name}` in the scan: {e}"))
+                })?;
+                datafusion::arrow::compute::cast(
+                    batch.column(i),
+                    &datafusion::arrow::datatypes::DataType::Int64,
+                )
+                .ok()
+                .and_then(|a| {
+                    a.as_any()
+                        .downcast_ref::<datafusion::arrow::array::Int64Array>()
+                        .filter(|a| !a.is_null(r))
+                        .map(|a| a.value(r))
+                })
+                .ok_or_else(|| {
+                    crate::Error::Workspace(format!(
+                        "{relation}: `{name}` does not read as a row-lineage number"
+                    ))
+                })
             };
             for r in 0..batch.num_rows() {
                 out.push(Row::new(
                     (0..spec.columns.len()).map(|i| text(i, r)).collect(),
-                    (num(SEQ, r), num(POS, r)),
+                    (num(SEQ, r)?, num(POS, r)?),
                 ));
             }
         }
@@ -322,13 +289,24 @@ impl IcebergMetadata {
     }
 }
 
-#[async_trait::async_trait]
-impl MetadataBackend for IcebergMetadata {
-    async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>> {
+/// Deliberately three methods: anything more is a rule, and rules live
+/// in `glossql-glossary`. `scan` hands back **history**, not the
+/// current view — supersession is `rules::latest_by` applied on top.
+/// `append` adds rows — replacement is a later row, never an update, so
+/// nothing here mutates. A scan of a relation nothing has written is
+/// empty, never an act: reads never write, so tables are created by the
+/// first append alone.
+impl IcebergMetadata {
+    /// Every row ever written to the relation, in no guaranteed order —
+    /// callers order by [`Row::seq`] because that is the rule.
+    pub async fn scan(&self, relation: &str) -> crate::Result<Vec<Row>> {
         self.scan_filtered(relation, None).await
     }
 
-    async fn scan_where(
+    /// The rows whose `column` equals `value` — the predicate pushed into
+    /// the format's own scan, so a big relation's history is not read to
+    /// serve one key.
+    pub async fn scan_where(
         &self,
         relation: &str,
         column: &str,
@@ -344,7 +322,10 @@ impl MetadataBackend for IcebergMetadata {
         .await
     }
 
-    async fn append(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()> {
+    /// Append rows as one write. Ordering inside one append is by
+    /// position, so a caller that appends two rows sharing a supersession
+    /// key gets the later one.
+    pub async fn append(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()> {
         if rows.is_empty() {
             return Ok(());
         }

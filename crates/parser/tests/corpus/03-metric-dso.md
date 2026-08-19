@@ -91,7 +91,7 @@ GLOSS dso ON fin AS $${
   is running that SQL. The dependency DAG and formula dissolve into the
   composed SQL — they were always a description of SQL to be written.
 - **There is no function here.** A function is a measurement or a detector
-  (engine machinery as a rhai script); a metric is neither — it runs as its
+  (engine machinery); a metric is neither — it runs as its
   SQL. The earlier transcription of this fixture as `DECLARE FUNCTION dso`
   was wrong and is superseded by this one (2026-08-03).
 - Parameter mechanics (`days_in_period`, `derivation: period_grain`) ride

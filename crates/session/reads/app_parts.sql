@@ -9,7 +9,7 @@
 -- The aspect says what kind of file it is and the subject says where
 -- it goes: `app` on `<app>` is the manifest, `app_page` on
 -- `<app>.<page>` is a page, `app_frame` a query, `app_spec` a chart
--- spec. One gloss per part (ruled 2026-08-15), so an author edits one
+-- spec. One gloss per part, so an author edits one
 -- frame without rewriting the app.
 --
 -- Two collapses, in this order: the newest writing per (subject,
