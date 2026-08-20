@@ -132,6 +132,24 @@
     { capture: true }
   );
 
+  // A re-measure can change the cube — its axes, so the dims, the
+  // slices, the drivers — which a ruling cannot. The door names it
+  // (`glossql:remeasured`, sent beside `glossql:written`), and on it
+  // the data frames go too; the tiles' own `glossql:written` listeners
+  // then find fresh promises and redraw. Scope the effect to the cause:
+  // this is the one write that reaches the data class.
+  document.addEventListener(
+    'glossql:remeasured',
+    () => {
+      for (const url of new Set([...tables.keys(), ...rowSets.keys()])) {
+        tables.delete(url);
+        rowSets.delete(url);
+        classes.delete(url);
+      }
+    },
+    { capture: true }
+  );
+
   // A refused write states its reason inside the form that posted it —
   // appended as a child, so it lays out as one of the form's own rows
   // (inserted beside the form it became a grid item of the row's

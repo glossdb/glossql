@@ -982,7 +982,13 @@ async fn the_metrics_faces_serve_the_cube() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(response.headers()["HX-Trigger"], "glossql:written");
+    // The write names itself beside the write event: a re-measure can
+    // change the cube, which a ruling cannot, so the store drops data
+    // frames on the first and record frames on the second.
+    assert_eq!(
+        response.headers()["HX-Trigger"],
+        "glossql:remeasured, glossql:written"
+    );
     let banner = get(&app, "/app/docket/frames/remeasure").await;
     assert_eq!(row_count(banner).await, 0, "re-measured: the verdicts are current again");
     let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;

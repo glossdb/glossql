@@ -658,17 +658,54 @@ impl Question {
             Some(s) => format!(" Note: you ruled this same claim {s}."),
             None => String::new(),
         };
+        // The form's message is the one prose surface the client
+        // renders, and it clips a long line at the terminal's width.
+        // Four parts on their own lines, the prose wrapped by words.
+        let message = format!(
+            "{subject} · {aspect} — {dimension}\n{}\n(confidence {confidence}).{pointer}\n{}",
+            wrap(&format!("\"{assumption}\""), WRAP),
+            wrap(
+                "Does this stand? If wrong, say what is right. If the question \
+                 itself is unclear, say so — it will be reformulated and asked \
+                 again. Decline to defer.",
+                WRAP
+            ),
+        );
         Ok(ElicitRequestParams::FormElicitationParams {
             meta: None,
-            message: format!(
-                "{subject} · {aspect} — {dimension}: \"{assumption}\" \
-                 (confidence {confidence}).{pointer} Does this stand? If wrong, \
-                 say what is right. If the question itself is unclear, say so — \
-                 it will be reformulated and asked again. Decline to defer."
-            ),
+            message,
             requested_schema: schema,
         })
     }
+}
+
+/// The column the question's prose breaks at.
+const WRAP: usize = 72;
+
+/// Greedy word wrap: each line holds as many whole words as fit in
+/// `width` characters; a word longer than the width stands on its own
+/// line. Existing line breaks are kept.
+fn wrap(text: &str, width: usize) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / width + 1);
+    for (i, paragraph) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let mut line_len = 0;
+        for word in paragraph.split_whitespace() {
+            let len = word.chars().count();
+            if line_len > 0 && line_len + 1 + len > width {
+                out.push('\n');
+                line_len = 0;
+            } else if line_len > 0 {
+                out.push(' ');
+                line_len += 1;
+            }
+            out.push_str(word);
+            line_len += len;
+        }
+    }
+    out
 }
 
 impl ServerHandler for GlossqlMcp {
@@ -913,5 +950,29 @@ impl ServerHandler for GlossqlMcp {
             }
         }
         .into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap;
+
+    #[test]
+    fn wrap_breaks_by_words_within_the_width() {
+        let text = "classified finishers with a grid slot only; a retirement after the \
+                    start still counts as a start and keeps its grid position";
+        let wrapped = wrap(text, 40);
+        assert!(wrapped.lines().all(|l| l.chars().count() <= 40), "{wrapped}");
+        assert_eq!(
+            wrapped.split_whitespace().collect::<Vec<_>>(),
+            text.split_whitespace().collect::<Vec<_>>()
+        );
+        assert!(wrapped.lines().count() > 1);
+    }
+
+    #[test]
+    fn wrap_keeps_line_breaks_and_long_words() {
+        assert_eq!(wrap("a b\nc", 10), "a b\nc");
+        assert_eq!(wrap("short averyveryverylongword end", 8), "short\naveryveryverylongword\nend");
     }
 }

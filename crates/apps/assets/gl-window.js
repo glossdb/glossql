@@ -10,6 +10,10 @@
 // The grains offered start at the metric's resolution, read from the
 // cube's fact row (the `frame` attribute, `metric_axes()`): a finer
 // grain would serve nothing. Without the row every grain is offered.
+// A URL naming no grain opens at the default — and when the metric's
+// resolution is coarser than that, the control replaces the URL with
+// the resolution before anything is read at a grain that serves
+// nothing.
 (function () {
   'use strict';
 
@@ -51,6 +55,13 @@
         }
       }
       if (!this.isConnected) return;
+      if (
+        !new URLSearchParams(document.location.search).has('grain') &&
+        GRAINS.indexOf(from) > GRAINS.indexOf(DEFAULT.grain)
+      ) {
+        document.location.replace(href({ grain: from }));
+        return;
+      }
       this.render(from);
     }
 

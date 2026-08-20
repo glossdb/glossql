@@ -11,9 +11,12 @@
 //! — the same extractions an agent would run, nothing authored: the
 //! functions speak.
 //!
-//! The response is the write event, as the ruling's is: 204 with
-//! `HX-Trigger: glossql:written`. The record frames refetch, the banner
-//! clears, and the next cube read rebuilds at the new version.
+//! The response is the write event, as the ruling's is — and it names
+//! itself: 204 with `HX-Trigger: glossql:remeasured, glossql:written`.
+//! A ruling cannot change the cube, so the store keeps data frames
+//! across one; a re-measure can (the axes), so on `glossql:remeasured`
+//! the store drops them too, and every tile refetches in place. The
+//! next cube read rebuilds at the new version.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -22,7 +25,11 @@ use glossql_glossary::{Actor, ActorKind};
 
 use crate::AppDoor;
 use crate::app::AppDef;
-use crate::rule::{WRITTEN, plain};
+use crate::rule::plain;
+
+/// Both events, the cube's own first: the store evicts on each in
+/// capture phase before any tile's own listener refetches.
+const REMEASURED: [(&str, &str); 1] = [("HX-Trigger", "glossql:remeasured, glossql:written")];
 
 pub async fn remeasure(State(door): State<AppDoor>, Path(app): Path<String>) -> Response {
     let glossed = crate::glossed::parts(&door).await;
@@ -46,7 +53,7 @@ pub async fn remeasure(State(door): State<AppDoor>, Path(app): Path<String>) -> 
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
     match human.remeasure_cube().await {
-        Ok(_) => (StatusCode::NO_CONTENT, WRITTEN).into_response(),
+        Ok(_) => (StatusCode::NO_CONTENT, REMEASURED).into_response(),
         Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }
 }

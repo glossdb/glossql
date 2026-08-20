@@ -2,7 +2,10 @@
 // view over a stored frame. The spec binds the named data source
 // "frame"; the store supplies the rows. What the chart shows is what
 // the frame served — a window over a series is the frame's params,
-// never a re-aggregation here.
+// never a re-aggregation here. On a write the chart asks the store
+// again and redraws only when the frame's promise changed — a frame
+// the write could not change keeps its entry, and the identical
+// promise says so.
 (function () {
   'use strict';
 
@@ -31,19 +34,34 @@
   };
 
   class GlChart extends HTMLElement {
-    async connectedCallback() {
+    connectedCallback() {
       this._mount = document.createElement('div');
       this._mount.className = 'chart-mount';
       this.replaceChildren(this._mount);
+      this._written = () => this.load();
+      document.addEventListener('glossql:written', this._written);
+      this.load();
+    }
+
+    async load() {
+      const pending = glStore.rows(this.getAttribute('frame'));
+      if (pending === this._rendered) return;
+      this._rendered = pending;
       this.setAttribute('aria-busy', 'true');
       try {
         const [spec, rows] = await Promise.all([
           glStore.json(this.getAttribute('spec')),
-          glStore.rows(this.getAttribute('frame')),
+          pending,
         ]);
-        if (!this.isConnected) return;
+        if (!this.isConnected || pending !== this._rendered) return;
         spec.data = { name: 'frame', values: rows };
         if (spec.width === undefined) spec.width = 'container';
+        // A fresh embed per frame: the scales re-derive their domains,
+        // which an in-place data swap would keep stale.
+        if (this._view) {
+          this._view.finalize();
+          this._view = null;
+        }
         const result = await vegaEmbed(this._mount, spec, { actions: false, config: CONFIG });
         if (!this.isConnected) {
           result.view.finalize();
@@ -51,6 +69,8 @@
         }
         this._view = result.view;
       } catch (e) {
+        // A failed fetch is not rendered state — retry on the next load.
+        this._rendered = null;
         this.replaceChildren(glStore.errorBox(e.message || String(e)));
       } finally {
         this.removeAttribute('aria-busy');
@@ -58,6 +78,7 @@
     }
 
     disconnectedCallback() {
+      document.removeEventListener('glossql:written', this._written);
       if (this._view) {
         this._view.finalize();
         this._view = null;

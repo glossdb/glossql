@@ -106,11 +106,13 @@ The other tiles:
   resolution from a `metric_axes()` frame and offers the grains from
   there up.
 
-After the docket's two writes — a ruling, and re-measure (the
-profilers the cube admits on, re-run over the served columns) — the
-door answers `HX-Trigger: glossql:written`; the frame store drops its
-record caches and every connected tile refetches in place —
-instruments keep their DOM.
+After the docket's two writes the door answers with an event, never a
+navigation: a ruling with `HX-Trigger: glossql:written`, on which the
+frame store drops its record-class caches; re-measure (the profilers
+the cube admits on, re-run over the served columns) with
+`glossql:remeasured, glossql:written`, on which the data-class caches
+go too — a re-measure can change the cube, a ruling cannot. Every
+connected tile refetches in place; instruments keep their DOM.
 
 ## The built-in docket
 

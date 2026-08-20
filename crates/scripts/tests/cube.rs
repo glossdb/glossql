@@ -269,7 +269,7 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(fact("judged_current").await, "true");
     assert_eq!(fact("behavior").await, "flow");
     assert_eq!(fact("resolution").await, "month");
-    assert_eq!(fact("\"window\"").await, "48 months");
+    assert_eq!(fact("window").await, "48 months");
     assert_eq!(fact("array_to_string(dims, ',')").await, "note,region,channel");
     assert_eq!(fact("array_to_string(bucketed, ',')").await, "note");
     assert_eq!(fact("alternative").await, "all invoiced");
@@ -847,7 +847,7 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
 
     let axes = grid(
         &session,
-        "SELECT metric, resolution, \"window\" FROM metric_axes() ORDER BY metric;",
+        "SELECT metric, resolution, window FROM metric_axes() ORDER BY metric;",
     )
     .await;
     assert!(axes.contains("by_day    | day        | 18 months"), "{axes}");
@@ -922,7 +922,7 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         .unwrap();
     let axes = grid(
         &session,
-        "SELECT metric, resolution, \"window\", judged_current FROM metric_axes() ORDER BY metric;",
+        "SELECT metric, resolution, window, judged_current FROM metric_axes() ORDER BY metric;",
     )
     .await;
     assert!(axes.contains("by_minute | hour       | 1 day     | false"), "{axes}");

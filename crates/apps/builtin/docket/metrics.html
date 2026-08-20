@@ -41,12 +41,12 @@
   <gl-window frame="frames/axes"></gl-window>
 
   {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
-       title="The story · " ~ metric, chip="metric_series(grain => $grain)",
+       title="The story · " ~ metric, chip="metric_series()",
        note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing.") }}
 
   <section class="tile">
     <header><span class="eyebrow">What moved · {{ metric }}</span>
-      <code class="chip" title="Each admitted dimension's members ranked by their own move between the newest two periods at the viewer's grain — the cube's cells, ranked in the frame's SQL. A member's move is at the metric's verb, never a share of the total.">metric_series(grain => $grain)</code></header>
+      <code class="chip" title="Each admitted dimension's members ranked by their own move between the newest two periods at the viewer's grain — the cube's cells, ranked in the frame's SQL. A member's move is at the metric's verb, never a share of the total.">metric_series()</code></header>
     <gl-rows frame="frames/drivers?grain=month" empty="no member moves at this grain — the cube holds fewer than two periods here, or no axis was admitted">
       <template>
         <div class="rrow" style="grid-template-columns:8rem 1fr 7rem 9rem 12rem">
@@ -94,7 +94,7 @@
 
   {% if dim %}
   {{ tiles::chart(frame="frames/slices?grain=month&span=24", spec="specs/series.vl.json",
-       title="By " ~ dim, chip="metric_series(grain => $grain)",
+       title="By " ~ dim, chip="metric_series()",
        note="One admitted dimension's members at the viewer's grain, at the grounding's own verb — the cube's member cells re-bucketed on the server; a ratio member divides its own summed halves.") }}
   {% endif %}
 
