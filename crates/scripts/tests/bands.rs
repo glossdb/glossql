@@ -112,6 +112,13 @@ async fn walk_session(
              "type": "object", "required": ["applicable"],
              "properties": {"applicable": {"type": "boolean"},
                             "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE ASPECT temporal_profile WITH $${
+             "type": "object", "required": ["applicable"],
+             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+           DECLARE FUNCTION judge_time FOR GLOBAL AS
+             $$SELECT true AS applicable, 'month' AS granularity,
+                      named_struct('ratio', 1.0) AS completeness$$
+             RETURNS temporal_profile;
            DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
              RETURNS metric_bands;
            DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
@@ -177,6 +184,12 @@ async fn metric_bands_walks_and_reads_the_breach() {
             r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
             r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            // One side profiled, one not: the walk anchors on the judged
+            // column where a verdict stands and on the first date column
+            // where none does. Both name the same column here, so the
+            // series and the bands below are identical either way — what
+            // differs is whether the measurement says it was judged.
+            r#"SELECT judge_time() FROM lines.date;"#,
         ],
     )
     .await;
@@ -192,6 +205,15 @@ async fn metric_bands_walks_and_reads_the_breach() {
             .unwrap_or_else(|| panic!("metric {name} missing"))
             .clone()
     };
+
+    // The axis the walk took, and whether a verdict named it. `revenue`
+    // reads the profiled `lines.date`, `inventory` the unprofiled
+    // `levels.date` — the cadence stays month for both, since the
+    // feature recipe is month-shaped whatever the axis.
+    assert_eq!(by_name("revenue")["axis"], json!("date"));
+    assert_eq!(by_name("revenue")["axis_judged"], json!(true));
+    assert_eq!(by_name("inventory")["axis"], json!("date"));
+    assert_eq!(by_name("inventory")["axis_judged"], json!(false));
 
     for (name, aggregation) in [("revenue", "sum"), ("inventory", "latest-sum")] {
         let metric = by_name(name);

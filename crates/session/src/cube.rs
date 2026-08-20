@@ -200,6 +200,13 @@ pub(crate) struct Fact {
     pub judged_current: bool,
     pub reason: Option<String>,
     pub behavior: Option<String>,
+    /// Where the verb came from: `ratio` when the frame served both
+    /// halves and the marker was never consulted, `marked` when the
+    /// grounding carried `behavior`, `default` when it did not and the
+    /// metric is summed as a flow because nothing said otherwise. The
+    /// default is the common case and usually right — the point is
+    /// that reading it as a flow stops being a silent assumption.
+    pub behavior_basis: Option<&'static str>,
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
     pub dims: Vec<String>,
@@ -216,6 +223,7 @@ impl Fact {
             judged_current: true,
             reason: Some(reason),
             behavior: None,
+            behavior_basis: None,
             resolution: None,
             window: None,
             dims: Vec::new(),
@@ -286,7 +294,7 @@ impl CubeCache {
 }
 
 /// One landed verdict: its body, and whether it stands at this pin.
-struct Verdict {
+pub(crate) struct Verdict {
     body: Value,
     current: bool,
 }
@@ -305,7 +313,7 @@ struct Judged {
 /// aspect (§5.2), so there is no collapse to run; a verdict judged at
 /// an earlier pin still admits an axis, and the fact row says it is
 /// not current.
-fn judged_bodies(
+pub(crate) fn judged_bodies(
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
     aspect: &str,
@@ -337,7 +345,7 @@ fn judged_bodies(
 /// cadence (none for `irregular` and `unknown`, which anchor at the
 /// floor) and whether the verdict is current. A column without a
 /// verdict is a gap, not a candidate.
-fn judged_time_column(
+pub(crate) fn judged_time_column(
     fields: &datafusion::common::DFSchemaRef,
     subjects: &HashMap<String, String>,
     temporal: &HashMap<String, Verdict>,
@@ -409,7 +417,14 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
             .inner
             .get_with(key, async {
                 cache.builds.fetch_add(1, Ordering::Relaxed);
-                Arc::new(build_metric(shared, &ctx, &dataset, slot, judged, settings).await)
+                // Boxed: the build's future carries the whole frame —
+                // schema, subjects, cells, the fact — and it is awaited
+                // inside moka's own, inside the read's. Left on the
+                // stack it overflows a test thread's 2 MB, which is the
+                // same reason every `build_plan` call below is pinned.
+                Arc::new(
+                    Box::pin(build_metric(shared, &ctx, &dataset, slot, judged, settings)).await,
+                )
             })
             .await;
         out.push(cube);
@@ -503,12 +518,15 @@ async fn build(
     // cannot be mistaken for a stock. The marker is the grounding's
     // top-level `behavior` (the metrics skill's convention).
     let is_ratio = has("num") && has("den");
-    let verb: &'static str = if is_ratio {
-        "ratio"
-    } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
-        "stock"
+    let marker = body.get("behavior").and_then(Value::as_str);
+    let (verb, behavior_basis): (&'static str, &'static str) = if is_ratio {
+        ("ratio", "ratio")
+    } else if marker == Some("stock") {
+        ("stock", "marked")
+    } else if marker == Some("flow") {
+        ("flow", "marked")
     } else {
-        "flow"
+        ("flow", "default")
     };
 
     // Judged dimensions: a served column (neither the value nor
@@ -676,9 +694,14 @@ async fn build(
 
     // The named rival, when a grounding assumption discloses one. The
     // rival SQL is authored but never admission-validated: it runs
-    // behind a guard and a failure is reported in the fact row, never
-    // thrown. Its time axis is its first date column and its verb its
-    // own — a rival serving num/den is a ratio whatever the metric is.
+    // behind a guard and a refusal is reported in the fact row, never
+    // thrown. Its verb is its own — a rival serving num/den is a ratio
+    // whatever the metric is — and its time axis is judged like the
+    // chosen reading's wherever a verdict stands, since the rival is a
+    // comparison cell. Where the rival's frame carries one date column
+    // and no verdict, that column is not a choice and is taken; where
+    // it carries several unjudged, the rival is not served and the fact
+    // row says why.
     let mut alternative = None;
     let mut alternative_error = None;
     if let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) {
@@ -690,8 +713,12 @@ async fn build(
                 .get("alternative")
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
-            match rival_series(shared, ctx, alt_sql, verb, resolution, since.as_deref()).await {
-                Ok(Some((rows, rival_verb))) => {
+            match rival_series(
+                shared, ctx, alt_sql, dataset, judged, verb, resolution, since.as_deref(),
+            )
+            .await
+            {
+                Ok((rows, rival_verb)) => {
                     for (period, _, value, num, den) in rows {
                         cells.push(Cell {
                             dimension: "alternative".into(),
@@ -705,11 +732,8 @@ async fn build(
                     }
                     alternative = Some(rival.to_string());
                 }
-                Ok(None) => {
-                    alternative_error = Some("rival SQL serves no value/time column".to_string());
-                }
-                Err(Abstain(e)) => {
-                    alternative_error = Some(format!("rival SQL failed: {e}"));
+                Err(Abstain(why)) => {
+                    alternative_error = Some(format!("the rival is not served: {why}"));
                 }
             }
             break;
@@ -723,6 +747,7 @@ async fn build(
             judged_current,
             reason: None,
             behavior: Some(verb.to_string()),
+            behavior_basis: Some(behavior_basis),
             resolution: Some(resolution),
             window,
             dims,
@@ -736,25 +761,56 @@ async fn build(
 
 /// The rival's series at the metric's resolution and window, at its
 /// own verb: a rival that serves num/den totals as a ratio even where
-/// the chosen reading does not, and the reverse. `None` = no value or
-/// time column.
+/// the chosen reading does not, and the reverse. Its time axis is
+/// judged on the same rule as the chosen reading wherever a verdict
+/// stands, falling back to the frame's only date column and refusing
+/// where several stand unjudged — a rival is a comparison cell, and an
+/// anchor guessed among several beside a judged series compares
+/// nothing. Every refusal carries its own reason for the fact row.
+#[allow(clippy::too_many_arguments)]
 async fn rival_series(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
     sql: &str,
+    dataset: &str,
+    judged: &Judged,
     chosen_verb: &str,
     resolution: Resolution,
     since: Option<&str>,
-) -> Result<Option<(Vec<SeriesRow>, &'static str)>, Abstain> {
+) -> Result<(Vec<SeriesRow>, &'static str), Abstain> {
     let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
-    let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
-        return Ok(None);
-    };
     if !has("value") {
-        return Ok(None);
+        return Err(Abstain("it serves no `value` column".into()));
     }
+    let subjects = crate::provenance::served_subjects(&probe, dataset);
+    let tcol = match judged_time_column(&fields, &subjects, &judged.temporal) {
+        Some((column, ..)) => column,
+        // No verdict on any served date column — common, because a
+        // rival routinely reads a table the metric does not, and that
+        // table need never have been profiled. Where the rival's frame
+        // carries exactly one date column there is no choice to get
+        // wrong, so it is served on it. Where it carries several, the
+        // anchor would be a guess standing beside a judged series, and
+        // a guessed comparison is worse than none.
+        None => {
+            let mut dates = fields
+                .fields()
+                .iter()
+                .filter(|f| crate::whatif::is_temporal(f.data_type()));
+            match (dates.next(), dates.next()) {
+                (Some(only), None) => only.name().clone(),
+                (Some(_), Some(_)) => {
+                    return Err(Abstain(
+                        "it carries several date columns and none of them is judged, so its                          time axis beside a judged series would be a guess"
+                            .into(),
+                    ));
+                }
+                _ => return Err(Abstain("it serves no date column".into())),
+            }
+        }
+    };
     let verb: &'static str = if has("num") && has("den") {
         "ratio"
     } else if chosen_verb == "stock" {
@@ -769,7 +825,7 @@ async fn rival_series(
         false,
     )
     .await?;
-    Ok(Some((rows, verb)))
+    Ok((rows, verb))
 }
 
 /// The bucket start of a time expression at a resolution, as a plain
@@ -1136,6 +1192,7 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
         Field::new("judged_current", DataType::Boolean, false),
         Field::new("reason", DataType::Utf8, true),
         Field::new("behavior", DataType::Utf8, true),
+        Field::new("behavior_basis", DataType::Utf8, true),
         Field::new("resolution", DataType::Utf8, true),
         Field::new("window", DataType::Utf8, true),
         Field::new(
@@ -1165,6 +1222,7 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
             )),
             text(|f| f.reason.as_deref()),
             text(|f| f.behavior.as_deref()),
+            text(|f| f.behavior_basis),
             text(|f| f.resolution.map(Resolution::as_str)),
             text(|f| f.window.as_deref()),
             list(|f| &f.dims),

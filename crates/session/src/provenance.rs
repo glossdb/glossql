@@ -72,10 +72,31 @@ fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str) -> Option<String> 
     }
 }
 
+/// A bare column is its own source, and so is a *call* over exactly one
+/// column-bearing argument: `date_trunc('month', posted_at)` and
+/// `CAST(posted_at AS TIMESTAMP)` are the posting date's axis, bucketed
+/// or retyped. Literal arguments are parameters, never sources.
+///
+/// Arithmetic is deliberately not a call: `amount * 2` and `a + b`
+/// descend from nothing, because a computed number is not the column it
+/// was computed from. Aggregates are not reached at all — the
+/// `Aggregate` arm follows group expressions only, so `sum(x)` still
+/// has no subject; that descent belongs to the evidence link, the one
+/// caller that wants it and the one that can weigh what it costs
+/// dimension admission.
 fn follow(input: &LogicalPlan, expr: &Expr, dataset: &str) -> Option<String> {
     match expr {
         Expr::Alias(a) => follow(input, &a.expr, dataset),
         Expr::Column(c) => source_of(input, c, dataset),
+        Expr::Cast(c) => follow(input, &c.expr, dataset),
+        Expr::TryCast(c) => follow(input, &c.expr, dataset),
+        Expr::ScalarFunction(f) => {
+            let mut bearing = f.args.iter().filter(|a| !a.column_refs().is_empty());
+            match (bearing.next(), bearing.next()) {
+                (Some(arg), None) => follow(input, arg, dataset),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -156,13 +177,24 @@ mod tests {
 
     #[tokio::test]
     async fn a_computed_field_descends_from_nothing() {
-        let map = subjects(
-            "SELECT date, amount * 2 AS value, upper(region) AS region FROM lines",
-        )
-        .await;
+        let map = subjects("SELECT date, amount * 2 AS value FROM lines").await;
         assert_eq!(map.get("date").unwrap(), "lines.date");
         assert!(!map.contains_key("value"));
-        assert!(!map.contains_key("region"));
+    }
+
+    #[tokio::test]
+    async fn a_call_over_one_column_is_that_column() {
+        let map = subjects(
+            "SELECT date_trunc('month', date) AS period, upper(region) AS region,                     concat(region, customer) AS pair \
+             FROM lines",
+        )
+        .await;
+        // The bucketed axis is still the date column — without this a
+        // grounding that buckets its own time has no judged verdict.
+        assert_eq!(map.get("period").unwrap(), "lines.date");
+        assert_eq!(map.get("region").unwrap(), "lines.region");
+        // Two column-bearing arguments name no single source.
+        assert!(!map.contains_key("pair"));
     }
 
     #[tokio::test]

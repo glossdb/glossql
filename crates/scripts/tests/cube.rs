@@ -268,6 +268,12 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(fact("applicable").await, "true");
     assert_eq!(fact("judged_current").await, "true");
     assert_eq!(fact("behavior").await, "flow");
+    // Where the verb came from. `revenue` carries no `behavior` key, so
+    // it is a flow because nothing said otherwise — the common case,
+    // and usually right; the fact says so rather than leaving it a
+    // silent assumption. `inventory` is marked and the ratio metrics
+    // never consult the marker at all.
+    assert_eq!(fact("behavior_basis").await, "default");
     assert_eq!(fact("resolution").await, "month");
     assert_eq!(fact("window").await, "48 months");
     assert_eq!(fact("array_to_string(dims, ',')").await, "note,region,channel");
@@ -335,6 +341,14 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(
         cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';").await,
         "stock"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT behavior_basis FROM metric_axes() WHERE metric = 'inventory';"
+        )
+        .await,
+        "marked"
     );
     assert_eq!(
         cell(
@@ -535,6 +549,17 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
         cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'dso';").await,
         "ratio"
     );
+    // A ratio never consults the marker: both halves served, the
+    // division is the reading whatever `behavior` says.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT behavior_basis FROM metric_axes() WHERE metric = 'dso';"
+        )
+        .await,
+        "ratio"
+    );
+
     // The halves are measures, not axes: num/den must never be offered
     // as dimensions to slice along.
     let dims = cell(

@@ -740,6 +740,71 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
 }
 
 #[tokio::test]
+async fn the_band_withholds_a_value_and_the_raw_score_never_does() {
+    use glossql_glossary::{Verdict, Verdicts};
+    // A detector may band against something other than its witness
+    // THRESHOLD — `rate_tolerance` bands on the authored tolerance and
+    // falls back to the THRESHOLD only where no expectation stands. The
+    // collapse must not re-derive a crossing from score against that
+    // same THRESHOLD: it would judge the score a second time against
+    // the line the detector deliberately replaced, and the slot read
+    // green while its value was withheld.
+    let (_dir, s) = store().await;
+    let at = |witness: &str, band: &str, score: f64, threshold: f64| Verdict {
+        witness: witness.into(),
+        band: band.into(),
+        score,
+        threshold: Some(threshold),
+        computed_at: "t".into(),
+        current: true,
+    };
+    for (actor, value) in [(agent(), "EUR"), (human(), "CHF")] {
+        write(
+            &s,
+            &actor,
+            &format!(r#"GLOSS unit ON orders.amount AS $${{"value": "{value}"}}$$;"#),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Two voices, so a crossing could contest. The score sits far above
+    // the witness threshold and the detector still says green.
+    let mut verdicts = Verdicts::default();
+    verdicts.insert(
+        ("orders.amount".into(), "unit".into()),
+        vec![at("w_a", "green", 0.9, 0.1)],
+    );
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, "current", "green never withholds: {:?}", rows[0]);
+    assert!(rows[0].value.is_some(), "{:?}", rows[0]);
+
+    // And red withholds on the band alone, with the score below the
+    // threshold it would have been measured against.
+    let mut verdicts = Verdicts::default();
+    verdicts.insert(
+        ("orders.amount".into(), "unit".into()),
+        vec![at("w_a", "red", 0.01, 0.9)],
+    );
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
+    assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
+    assert!(rows[0].value.is_none(), "{:?}", rows[0]);
+}
+
+#[tokio::test]
 async fn source_grain_slots_read_and_supersede_workspace_wide() {
     // An
     // aspect ON SOURCE speaks to declared source names, and its slots
@@ -895,5 +960,43 @@ async fn a_source_subject_is_refused_outside_source_grain() {
         !rows.iter().any(|r| r.subject == "erp" && r.aspect == "entity"),
         "{rows:?}"
     );
+}
+
+#[tokio::test]
+async fn a_source_named_after_its_dataset_is_still_a_source() {
+    // Nothing forbids naming a source for the dataset it feeds, and the
+    // backlog has always read such a name as SOURCE grain. Admission
+    // used to disagree — it tested `subject == dataset` first and
+    // resolved the name to DATASET grain, so a source-grain aspect
+    // refused the only subject that could ever carry it, with no way to
+    // rename around it.
+    let (_dir, s) = store().await;
+    let Declaration::Dataset(ds) = decl("DECLARE DATASET erp SET (purpose: 'p');") else {
+        unreachable!()
+    };
+    s.declare_dataset(&ds).await.unwrap();
+    let Declaration::Source(src) =
+        decl("DECLARE SOURCE erp SET (type: parquet, location: 'lake');")
+    else {
+        unreachable!()
+    };
+    s.declare_source(&src).await.unwrap();
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+    let Declaration::Witness(w) =
+        decl("DECLARE WITNESS conventions_w ON conventions BY (AGENT, HUMAN);")
+    else {
+        unreachable!()
+    };
+    s.declare_witness(&w).await.unwrap();
+
+    let g = gloss(r#"GLOSS conventions ON erp AS $${"value": "ISO dates"}$$;"#);
+    s.gloss("erp", &agent(), "conventions", "erp", &g.body, None)
+        .await
+        .expect("a source keeps source grain even where it spells its dataset");
 }
 
