@@ -969,12 +969,12 @@ impl Store {
         // its own witness's threshold — a score is never compared to a
         // neighbour witness's. Plural witnesses per
         // aspect are allowed; the slot is contested when ANY witness's
-        // verdict crosses its own threshold — conservative withholding.
+        // verdict bands red — conservative withholding, and the
+        // detector's own band is what says so ([`rules::withholds`]).
         let mut rows = Vec::new();
         for ((subject, aspect), group) in grouped {
             let verdict = verdicts.get(&(subject.clone(), aspect.clone()));
-            let crossing = verdict
-                .and_then(|v| v.iter().find(|v| v.threshold.is_some_and(|t| v.score > t)));
+            let crossing = verdict.and_then(|v| v.iter().find(|v| rules::withholds(&v.band)));
             // The row carries one verdict: the crossing one when contested,
             // the first in witness name order otherwise.
             let shown = crossing.or_else(|| verdict.and_then(|v| v.first()));

@@ -82,6 +82,18 @@ pub fn serving(group: &[&Slot]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// **The withholding band.** The detector's own band is the verdict, and
+/// `red` is the crossing — whatever score produced it. The collapse
+/// never re-derives a crossing from score against the witness
+/// THRESHOLD: a detector may band against an authored expectation
+/// instead (`rate_tolerance`, where the tolerance wins and the
+/// THRESHOLD is only its fallback), and re-deriving would judge that
+/// score a second time against the line the detector deliberately
+/// replaced — reading green while withholding the value.
+pub fn withholds(band: &str) -> bool {
+    band == "red"
+}
+
 /// **Contest.** A detector crossing withholds a value only where voices
 /// could actually differ: a single-speaker
 /// measurement whose detector crossed would read as `contested`, and the
@@ -119,11 +131,13 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
 
 /// **Grain admission**: an aspect declared `ON grain,
 /// …` only accepts subjects of those grains; `None` (no clause) admits
-/// all. A bare name is table-shaped unless it names a declared source —
-/// then it is SOURCE grain, satisfying `source` and only `source`: a
-/// table-grain aspect that accepted `GLOSS entity ON erp`
-/// would put unfillable rows in the backlog. `is_source` is the caller's
-/// lookup against the `sources` relation.
+/// all. A name that names a declared source is SOURCE grain, satisfying
+/// `source` and only `source`: a table-grain aspect that accepted
+/// `GLOSS entity ON erp` would put unfillable rows in the backlog. The
+/// source reading wins over every other, the dataset's own spelling
+/// included — a source may carry its dataset's name, and it stays
+/// addressable when it does. `is_source` is the caller's lookup against
+/// the `sources` relation, and the backlog mirrors this rule.
 pub fn admit_grain(
     aspect: &str,
     grains: Option<&str>,
@@ -134,11 +148,10 @@ pub fn admit_grain(
     let Some(declared) = grains else {
         return Ok(());
     };
-    let grain = grain_of(dataset, subject);
-    let effective = if is_source && grain == "table" {
+    let effective = if is_source {
         "source"
     } else {
-        grain
+        grain_of(dataset, subject)
     };
     if declared.split(',').any(|g| g == effective) {
         return Ok(());

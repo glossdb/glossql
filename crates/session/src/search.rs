@@ -1326,6 +1326,7 @@ pub(crate) async fn grounding_collisions(
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
+    let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let slots = current_query_slots(shared, &rctx, dataset).await?;
 
     // Bucket by canonical SQL.
@@ -1388,7 +1389,8 @@ pub(crate) async fn grounding_collisions(
     let mut series_buckets: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for (slot, body, canon) in &grounded {
         let sql = body["sql"].as_str().expect("filtered above");
-        let Some(fp) = series_fingerprint(shared, &ctx, sql, body).await else {
+        let Some(fp) = series_fingerprint(shared, &ctx, dataset, &judged_temporal, sql, body).await
+        else {
             continue;
         };
         series_buckets
@@ -1475,6 +1477,8 @@ pub(crate) async fn current_query_slots(
 async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
+    judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
     sql: &str,
     body: &Value,
 ) -> Option<String> {
@@ -1491,7 +1495,17 @@ async fn series_fingerprint(
     if !is_ratio && !has("value") {
         return None;
     }
-    let tcol = crate::whatif::date_column(fields.fields())?;
+    // The judged axis where one stands, the first date column where
+    // none does — a fallback, never a refusal. Two groundings that
+    // compute the same thing must fingerprint alike, and anchoring on
+    // the judged column is what makes that hold across differently
+    // spelled frames; but refusing an unprofiled grounding would drop
+    // it out of the collision pass entirely, shrinking the check
+    // instead of failing it.
+    let subjects = crate::provenance::served_subjects(&probe, dataset);
+    let tcol = crate::cube::judged_time_column(fields, &subjects, judged_temporal)
+        .map(|(column, ..)| column)
+        .or_else(|| crate::whatif::date_column(fields.fields()))?;
     let verb = if is_ratio {
         "ratio"
     } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
@@ -2039,6 +2053,7 @@ pub(crate) async fn metric_band_walk(
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
+    let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let runtime = shared.runtime();
 
     // Median over the present values of one feature column. Even counts
@@ -2077,9 +2092,23 @@ pub(crate) async fn metric_band_walk(
         if !has("value") {
             continue;
         }
-        let Some(tcol) = crate::whatif::date_column(fields.fields()) else {
+        // The judged column where a verdict stands, the first date
+        // column by dtype where none does. Only the *column* is judged:
+        // the walk's cadence stays month because the feature recipe is
+        // month-shaped (month-of-year, the 12-month lag), and
+        // re-cadencing it would change the graded protocol above. The
+        // measurement names the axis it took, so a walk anchored on an
+        // unjudged column says so rather than reading like the cube's.
+        let subjects = crate::provenance::served_subjects(&probe, dataset);
+        let judged_axis = crate::cube::judged_time_column(fields, &subjects, &judged_temporal)
+            .map(|(column, ..)| column);
+        let Some(tcol) = judged_axis
+            .clone()
+            .or_else(|| crate::whatif::date_column(fields.fields()))
+        else {
             continue;
         };
+        let axis_judged = judged_axis.is_some();
         let is_ratio = has("num") && has("den");
         let is_stock = !is_ratio
             && body.get("behavior").and_then(Value::as_str) == Some("stock");
@@ -2195,6 +2224,8 @@ pub(crate) async fn metric_band_walk(
                 json!(if is_stock { "latest-sum" } else { "sum" }),
             );
             row.insert("trained_on".into(), json!(n as i64));
+            row.insert("axis".into(), json!(tcol));
+            row.insert("axis_judged".into(), json!(axis_judged));
             row.insert("point_seq".into(), json!(point_seq as i64));
             for (k, val) in p.as_object().expect("point object") {
                 row.insert(k.clone(), val.clone());
@@ -2207,6 +2238,7 @@ pub(crate) async fn metric_band_walk(
                 "grain": "month",
                 "aggregation": if is_stock { "latest-sum" } else { "sum" },
                 "trained_on": n as i64,
+                "axis": tcol, "axis_judged": axis_judged,
             }));
         }
         seq += 1;
@@ -2226,6 +2258,10 @@ fn band_shape() -> Vec<Field> {
         Field::new("grain", DataType::Utf8, true),
         Field::new("aggregation", DataType::Utf8, true),
         Field::new("trained_on", DataType::Int64, true),
+        // The date column the walk anchored on, and whether a
+        // temporal_profile verdict named it. Per metric, not per point.
+        Field::new("axis", DataType::Utf8, true),
+        Field::new("axis_judged", DataType::Boolean, true),
         Field::new("point_seq", DataType::Int64, true),
         Field::new("period", DataType::Utf8, true),
         Field::new("actual", DataType::Float64, true),

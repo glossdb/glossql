@@ -213,6 +213,10 @@ async fn compute(
         .filter_map(|r| Some((r[0].clone()?, r[1].clone()?)))
         .collect();
     let read_ctx = shared.read_context().await?;
+    // The judged time axis, read once for every concept in the replay:
+    // what-if is charted beside the cube's own series, so it anchors
+    // where the cube anchors wherever a verdict stands.
+    let judged_temporal = crate::cube::judged_bodies(&read_ctx, dataset, "temporal_profile");
     let all_verdicts = verdicts(shared, &read_ctx, dataset, &scope, None).await?;
     let collapsed = glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
 
@@ -247,6 +251,8 @@ async fn compute(
         match concept_rows(
             shared,
             &ctx,
+            dataset,
+            &judged_temporal,
             &c.aspect,
             &sql,
             &body,
@@ -277,6 +283,8 @@ async fn compute(
 async fn concept_rows(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
+    dataset: &str,
+    judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
     concept: &str,
     sql: &str,
     body: &Value,
@@ -297,11 +305,33 @@ async fn concept_rows(
             "not served: the grounding carries no `value` column".into(),
         ));
     }
-    let Some(tcol) = date_column(&fields) else {
-        return Err(refuse(
-            "not served: the grounding carries no time axis".into(),
-        ));
-    };
+    // The judged axis where a verdict stands on a served date column,
+    // the first date column by dtype where none does. The fallback is
+    // allowed — a replay must still run on a grounding the cube would
+    // abstain from — but it is never silent: `basis` names the axis and
+    // says whether it was judged, because these rows are read beside
+    // cube series that anchor on the judged one.
+    let subjects = crate::provenance::served_subjects(&probe, dataset);
+    let (tcol, axis_note) =
+        match crate::cube::judged_time_column(probe.schema(), &subjects, judged_temporal) {
+            Some((column, ..)) => {
+                let note = format!("time axis `{column}`, judged");
+                (column, note)
+            }
+            None => {
+                let Some(column) = date_column(&fields) else {
+                    return Err(refuse(
+                        "not served: the grounding carries no time axis".into(),
+                    ));
+                };
+                let note = format!(
+                    "time axis `{column}`, by dtype — no served date column carries an \
+                     applicable temporal_profile, so this replay does not anchor where the \
+                     cube anchors"
+                );
+                (column, note)
+            }
+        };
 
     // The three verbs, the same ones the cube and metric_bands read.
     //
@@ -461,8 +491,8 @@ async fn concept_rows(
     };
     let asked: Vec<String> = declared.iter().map(|f| format!("{f:.2}")).collect();
     let basis = format!(
-        "replayed x[{}] on {named_columns}; {} of {} worlds x {} months{skipped_note}; \
-         asked ({}) in support",
+        "replayed x[{}] on {named_columns}; {axis_note}; {} of {} worlds x {} months\
+         {skipped_note}; asked ({}) in support",
         grid.join(", "),
         contributed.len(),
         worlds.len(),
