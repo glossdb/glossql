@@ -25,6 +25,7 @@ serverd on 127.0.0.1:8080 — /mcp (agent door), /query (arrow door), /app (app 
 | `--agent <id>` | `agent` | fallback agent actor id for MCP calls whose initialize named no client |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--round-wait <secs>` | `120` | how long a question form waits for a person before the silence counts as a decline |
+| `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
 
 ## What boot does
 

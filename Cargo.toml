@@ -43,6 +43,10 @@ iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", branch =
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
 serde_json = "1"
+# The cube cache (crates/session/src/cube.rs): moka is already in the
+# tree through iceberg-rust, at this version; its ObjectCache is their
+# metadata seam, not reusable.
+moka = { version = "0.12", features = ["future"] }
 # arrow-ipc/arrow-json ride the arrow that datafusion 53.1 pins (58.4) — the
 # same lockstep rule as above; bumping either alone splits the arrow tree.
 arrow-ipc = "58.4"

@@ -104,7 +104,7 @@ measurement library:
 | profiling | `profile`, `outliers`, `temporal` |
 | structure | `detect_relationships`, `relationship_coherence`, `detect_hierarchies`, `detect_derivations` |
 | semantics | `behavior_evidence` (stock/flow, sign), `dimension_relevance`, `detect_grounding_collisions`, `slot_entropy` |
-| metrics | `metric_cube`, `metric_bands`, `band_breach`, `rate_tolerance` |
+| metrics | `metric_bands`, `band_breach`, `rate_tolerance` |
 
 plus the KPI kit: the semantic vocabulary (`meaning`, `role`,
 `behavior`, `unit`, `dimension`, `entity`, …) with its witnesses, so

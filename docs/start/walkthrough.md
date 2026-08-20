@@ -203,16 +203,23 @@ SELECT subject, band, score FROM ATTEST(ops::duration_present);
 
 ## The surfaces
 
-The cube computes each metric's monthly series and slices; the docket
-and any app chart it through `metric_series()`:
+The cube holds each metric's cells at its judged resolution — the
+total and the slices along its judged dimensions — computed at read
+and cached, never recorded; the docket and any app chart it through
+`metric_series()`, and `metric_axes()` says what it admitted:
 
 ```sql
-SELECT metric, title, unit, meaning, period, value, axes, formula
+SELECT metric, title, unit, meaning, formula
 FROM metric_surfaces ORDER BY metric
 ```
 
 ```sql
-SELECT metric, period, value FROM metric_series()
+SELECT metric, applicable, reason, behavior, resolution, dims
+FROM metric_axes() ORDER BY metric
+```
+
+```sql
+SELECT metric, period, value FROM metric_series(grain => 'month')
 WHERE dimension = '' ORDER BY metric, period
 ```
 

@@ -522,7 +522,7 @@ fn cells_table() -> (Arc<Schema>, RecordBatch) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stock_sums_its_snapshot_and_a_ratio_divides_its_halves() {
     // Two defects this door once carried, each already
-    // fixed in metric_cube and metric_bands and guarded here since.
+    // fixed in the cube and metric_bands and guarded here since.
     //
     // The stock verb kept ONE arbitrary row per month (row_number = 1),
     // so a receivables grounding emitting a row per open invoice

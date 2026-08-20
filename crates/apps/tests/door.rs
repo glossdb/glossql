@@ -15,17 +15,6 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{NoRuntime, Plane};
 use tower::ServiceExt;
 
-async fn current_pin(store: &Store, dataset: &str) -> glossql_glossary::Pin {
-    let lake = store.lake();
-    let mut snaps = std::collections::HashMap::new();
-    for t in lake.table_names(dataset).await.unwrap() {
-        if let Some(s) = lake.snapshot_id(dataset, &t).await.unwrap() {
-            snaps.insert(t, s);
-        }
-    }
-    store.pin(dataset, &snaps).await.unwrap()
-}
-
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -119,6 +108,20 @@ fn shipped_ruling_declaration() -> &'static str {
         .find("AS FACT;")
         .expect("the declaration closes")
         + "AS FACT;".len();
+    &kit[start..start + len]
+}
+
+/// The SHIPPED `cube` aspect, cut the same way — the floor and the
+/// ladder the cube computes under.
+fn shipped_cube_declaration() -> &'static str {
+    let kit = glossql_scripts::library::KIT;
+    let start = kit
+        .find("DECLARE ASPECT cube")
+        .expect("the kit ships the cube aspect");
+    let len = kit[start..]
+        .find("AS FACT ON DATASET;")
+        .expect("the declaration closes")
+        + "AS FACT ON DATASET;".len();
     &kit[start..start + len]
 }
 
@@ -337,32 +340,44 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
         })
         .await
         .unwrap();
+    // The judged verdicts the cube reads land LAST: a measurement is
+    // keyed at the statement pin and every declaration moves it.
     agent
-        .execute(
+        .execute(&format!(
             r#"USE perf;
-               DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
-               DECLARE ASPECT definitions WITH $${"type": "object"}$$ AS FACT ON DATASET;
-               DECLARE ASPECT formulas WITH $${"type": "object"}$$ AS FACT ON DATASET;
-               DECLARE ASPECT temporal_profile WITH $${"type": "object",
+               DECLARE ASPECT dso WITH $${{"title": "DSO", "x-kind": "metric"}}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT definitions WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
+               DECLARE ASPECT formulas WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
+               DECLARE ASPECT temporal_profile WITH $${{"type": "object",
                  "required": ["applicable"],
-                 "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+                 "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+               DECLARE ASPECT dimension_relevance WITH $${{"type": "object",
+                 "required": ["applicable"],
+                 "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+               {cube}
                DECLARE FUNCTION judge_time FOR GLOBAL AS
                  $$SELECT true AS applicable, 'month' AS granularity,
                           named_struct('ratio', 1.0) AS completeness$$
                  RETURNS temporal_profile;
-               GLOSS dso ON perf AS $${"sql": "SELECT month, value FROM ledger",
+               DECLARE FUNCTION judge_axis FOR GLOBAL AS
+                 $$SELECT true AS applicable, 0.8 AS relevance$$
+                 RETURNS dimension_relevance;
+               GLOSS dso ON perf AS $${{"sql": "SELECT month, value, cohort FROM ledger",
                  "assumptions": [
-                   {"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7},
-                   {"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}
-                 ]}$$;
-               GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * days[w]"}}$$;
-               GLOSS definitions ON perf AS $${"definitions": {"dso": {
+                   {{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7,
+                    "alternative": "doubled", "alternative_sql": "SELECT month, value * 2 AS value FROM ledger"}},
+                   {{"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}}
+                 ]}}$$;
+               GLOSS formulas ON perf AS $${{"formulas": {{"dso": "ar[end of w] / revenue[w] * days[w]"}}}}$$;
+               GLOSS definitions ON perf AS $${{"definitions": {{"dso": {{
                  "meaning": "receivables outstanding expressed in days of revenue",
-                 "unit": "days", "owner": "Finance", "source": "KPI handbook v3"}}}$$;
+                 "unit": "days", "owner": "Finance", "source": "KPI handbook v3"}}}}}}$$;
                DECLARE DATASET second SET (purpose: 'multi-dataset guard');
                USE perf;
-               SELECT judge_time() FROM ledger.month;"#,
-        )
+               SELECT judge_time() FROM ledger.month;
+               SELECT judge_axis() FROM ledger.cohort;"#,
+            cube = shipped_cube_declaration()
+        ))
         .await
         .unwrap();
 }
@@ -406,7 +421,7 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
             };
             // Extra params are ignored by frames that bind none of them.
             let uri = format!(
-                "/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region",
+                "/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24",
                 builtin.name
             );
             let response = get(&app, &uri).await;
@@ -442,8 +457,11 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
     // resolves — never a curated list. `record` frames read the
     // glossary somewhere and can change under a ruling; `data` frames
     // provably cannot, so the browser's store keeps them across
-    // rulings. The stale banner is record on purpose: staleness is a
-    // fact about the record, read through workspace_next.
+    // rulings. The class is about what a frame SERVES, not what its
+    // build consumed: the cube's facts (`axes`) say what the judged
+    // record admitted and are record; its cells (`trend`, `slices`,
+    // `latest`, `drivers`) are the data at a grain and survive a
+    // ruling on screen.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
@@ -452,15 +470,21 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("settled", "record"),
         ("owed", "record"),
         ("assumptions", "record"),
-        ("stale", "record"),
+        ("pulse", "record"),
+        ("axes", "record"),
+        ("remeasure", "record"),
         ("metric", "record"),
         ("trend", "data"),
         ("slices", "data"),
         ("dims", "data"),
+        ("drivers", "data"),
+        ("latest", "data"),
     ] {
         let response = get(
             &app,
-            &format!("/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region"),
+            &format!(
+                "/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24"
+            ),
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK, "{frame}");
@@ -870,56 +894,99 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_metrics_faces_serve_the_measured_cube() {
-    // The business surface end to end from the cube cache: the pulse
-    // carries the latest month and the admitted axes, the picker lists
-    // them, a picked slice serves its members, and the trend carries
-    // the disclosed rival beside the chosen reading. The script that
-    // builds this body is the scripts suite's business — here it is
-    // planted as the measurement would cache it.
+async fn the_metrics_faces_serve_the_cube() {
+    // The business surface end to end from the cube: nothing is
+    // planted — the frames read `metric_series()` and `metric_axes()`,
+    // which build the cube from the grounding and the judged verdicts
+    // the workspace carries. The pulse is the record, its numbers a
+    // data frame joined in the browser by the metric's name; the
+    // picker lists the admitted axis, a picked slice serves its
+    // members, the trend carries the disclosed rival beside the chosen
+    // reading, and the drivers rank member moves in SQL.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
-
-    let cube = serde_json::json!({
-        "applicable": true,
-        "caps": {"dims": 2, "members": 24, "months": 24},
-        "metrics": [{
-            "metric": "dso", "applicable": true, "behavior": "flow",
-            "dims": ["cohort"], "alternative": "days on billings",
-            "rows": [
-                {"dimension": "", "member": "", "period": "2026-01", "value": 12.5},
-                {"dimension": "", "member": "", "period": "2026-02", "value": 4.0},
-                {"dimension": "cohort", "member": "a", "period": "2026-01", "value": 10.5},
-                {"dimension": "cohort", "member": "a", "period": "2026-02", "value": 4.0},
-                {"dimension": "cohort", "member": "b", "period": "2026-01", "value": 2.0},
-                {"dimension": "alternative", "member": "days on billings", "period": "2026-01", "value": 11.0},
-                {"dimension": "alternative", "member": "days on billings", "period": "2026-02", "value": 5.0}
-            ]
-        }]
-    });
-    let pin = current_pin(plane.store(), "perf").await;
-    plane
-        .store()
-        .measurement_put("perf", "metric_cube", "perf", "metric_cube", &pin, &cube.to_string())
-        .await
-        .unwrap();
 
     let pulse = get(&app, "/app/docket/frames/pulse").await;
     assert_eq!(pulse.status(), StatusCode::OK);
     assert_eq!(row_count(pulse).await, 1, "one declared surface, one row");
 
-    let dims = get(&app, "/app/docket/frames/dims?metric=dso").await;
+    let latest = get(&app, "/app/docket/frames/latest").await;
+    assert_eq!(latest.status(), StatusCode::OK);
+    assert_eq!(row_count(latest).await, 1, "the newest period of the one metric");
+
+    let axes = get(&app, "/app/docket/frames/axes?metric=dso").await;
+    assert_eq!(axes.status(), StatusCode::OK);
+    assert_eq!(row_count(axes).await, 1, "one fact row for the metric");
+
+    let dims = get(&app, "/app/docket/frames/dims?metric=dso&grain=month&span=24").await;
     assert_eq!(row_count(dims).await, 1, "cohort is the one admitted axis");
 
-    let slices = get(&app, "/app/docket/frames/slices?metric=dso&dim=cohort").await;
+    let slices =
+        get(&app, "/app/docket/frames/slices?metric=dso&dim=cohort&grain=month&span=all").await;
     assert_eq!(row_count(slices).await, 3, "two members over two months, one sparse");
 
-    let trend = get(&app, "/app/docket/frames/trend?metric=dso").await;
+    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
     assert_eq!(
         row_count(trend).await,
         4,
         "the chosen reading and the rival, two months each"
     );
+    // The grain re-buckets on the server: both months fall in one
+    // quarter, for the chosen reading and the rival alike.
+    let quarter = get(&app, "/app/docket/frames/trend?metric=dso&grain=quarter&span=24").await;
+    assert_eq!(row_count(quarter).await, 2, "one quarter, two series");
+    // The span clips the newest periods in the frame's SQL.
+    let clipped = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=1").await;
+    assert_eq!(row_count(clipped).await, 2, "the newest month, two series");
+
+    let drivers = get(&app, "/app/docket/frames/drivers?metric=dso&grain=month").await;
+    assert_eq!(
+        row_count(drivers).await,
+        1,
+        "cohort a moved between the two months; cohort b has one period"
+    );
+
+    // The axes banner is silent while the verdicts stand at this pin.
+    let banner = get(&app, "/app/docket/frames/remeasure").await;
+    assert_eq!(banner.status(), StatusCode::OK);
+    assert_eq!(row_count(banner).await, 0, "nothing to re-measure");
+
+    // A gloss moves the pin. The cube rebuilds at the next read with
+    // the same numbers — the verdicts judged before the gloss still
+    // admit the axes — and the banner says they are not current.
+    plane
+        .session(Actor {
+            kind: ActorKind::Agent,
+            id: "builder".into(),
+        })
+        .await
+        .unwrap()
+        .execute(r#"USE perf; GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * days[w]"}}$$;"#)
+        .await
+        .unwrap();
+    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
+    assert_eq!(row_count(trend).await, 4, "the numbers stand after the gloss");
+    let banner = get(&app, "/app/docket/frames/remeasure").await;
+    assert_eq!(row_count(banner).await, 1, "the axes were judged before the gloss");
+
+    // Re-measure — the docket's second write, a compute act: the
+    // profilers run over the served columns, the response is the write
+    // event, and the banner clears on the next read.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/app/docket/remeasure")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()["HX-Trigger"], "glossql:written");
+    let banner = get(&app, "/app/docket/frames/remeasure").await;
+    assert_eq!(row_count(banner).await, 0, "re-measured: the verdicts are current again");
+    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
+    assert_eq!(row_count(trend).await, 4, "and the numbers stand");
 }
 
 #[tokio::test(flavor = "multi_thread")]

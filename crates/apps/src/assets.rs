@@ -23,7 +23,6 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("gl-value.js", "text/javascript"),
     asset!("gl-rows.js", "text/javascript"),
     asset!("gl-window.js", "text/javascript"),
-    asset!("gl-drivers.js", "text/javascript"),
     asset!("vendor/htmx.min.js", "text/javascript"),
     asset!("vendor/vega.min.js", "text/javascript"),
     asset!("vendor/vega-lite.min.js", "text/javascript"),

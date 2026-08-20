@@ -1430,6 +1430,47 @@ impl Store {
             }))
     }
 
+    /// Every subject's newest measurement by `function` whatever its
+    /// pin, each marked `current` when it stands at the context's pin —
+    /// [`Store::measurement_latest`]'s rule for a reader that admits on
+    /// verdicts across many subjects (the cube's axes) and must say,
+    /// per subject, whether the verdict is from this moment or an
+    /// earlier one. One scan of the relation by function name.
+    pub async fn measurements_latest(
+        &self,
+        ctx: &ReadContext,
+        dataset: &str,
+        function: &str,
+    ) -> Result<Vec<(MeasurementRow, bool)>> {
+        let rows = self
+            .metadata
+            .scan_where("measurements", "function", function)
+            .await?;
+        let mut newest: std::collections::HashMap<&str, &glossql_catalog::Row> =
+            std::collections::HashMap::new();
+        for r in rows.iter().filter(|r| r.get(0) == Some(dataset)) {
+            let Some(subject) = r.get(2) else { continue };
+            let standing = newest.entry(subject).or_insert(r);
+            if r.seq > standing.seq {
+                *standing = r;
+            }
+        }
+        Ok(newest
+            .into_iter()
+            .map(|(subject, r)| {
+                (
+                    MeasurementRow {
+                        subject: subject.to_string(),
+                        function: function.to_string(),
+                        body: text(&r.cells, 6),
+                        computed_at: text(&r.cells, 7),
+                    },
+                    r.get(5) == Some(ctx.pin.text.as_str()),
+                )
+            })
+            .collect())
+    }
+
     /// Land one measurement; the served row comes back so the caller
     /// need not re-read what it just wrote.
     pub async fn measurement_put(

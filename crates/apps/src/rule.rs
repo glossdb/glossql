@@ -51,7 +51,7 @@ pub struct Answer {
 
 /// The write announced: htmx dispatches this on the posting form and it
 /// bubbles — the store clears on it, components refetch on it.
-const WRITTEN: [(&str, &str); 1] = [("HX-Trigger", "glossql:written")];
+pub(crate) const WRITTEN: [(&str, &str); 1] = [("HX-Trigger", "glossql:written")];
 
 pub async fn rule(
     State(door): State<AppDoor>,
@@ -124,6 +124,6 @@ pub async fn rule(
     }
 }
 
-fn plain(status: StatusCode, message: String) -> Response {
+pub(crate) fn plain(status: StatusCode, message: String) -> Response {
     (status, message).into_response()
 }

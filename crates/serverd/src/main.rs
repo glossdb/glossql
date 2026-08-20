@@ -9,12 +9,15 @@ use glossql_scripts::KernelRuntime;
 use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
-[--addr <ip:port>] [--agent <id>] [--row-cap <n>] [--round-wait <secs>]";
+[--addr <ip:port>] [--agent <id>] [--row-cap <n>] [--round-wait <secs>] \
+[--cube-cache <megabytes>]";
 
 struct Args {
     workspace: PathBuf,
     addr: String,
     doors: DoorConfig,
+    /// The process-wide byte budget for cubes, in megabytes.
+    cube_cache_mb: u64,
 }
 
 fn parse(mut argv: std::env::Args) -> Result<Args, String> {
@@ -22,6 +25,7 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
     let mut workspace = None;
     let mut addr = "127.0.0.1:8080".to_string();
     let mut doors = DoorConfig::default();
+    let mut cube_cache_mb = glossql_session::DEFAULT_CUBE_CACHE_MB;
     while let Some(flag) = argv.next() {
         let mut value = || argv.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
@@ -35,6 +39,11 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
             "--row-cap" => {
                 doors.row_cap = value()?.parse().map_err(|e| format!("--row-cap: {e}"))?;
             }
+            "--cube-cache" => {
+                cube_cache_mb = value()?
+                    .parse()
+                    .map_err(|e| format!("--cube-cache: {e}"))?;
+            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -42,6 +51,7 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
         workspace: workspace.ok_or("--workspace is required")?,
         addr,
         doors,
+        cube_cache_mb,
     })
 }
 
@@ -57,8 +67,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // live under it (bodies ride their declarations, fixture 24).
     let runtime = Arc::new(KernelRuntime::new(args.workspace.clone()));
 
-    let plane =
-        Arc::new(Plane::new(store.clone(), runtime).with_row_cap(args.doors.row_cap));
+    let plane = Arc::new(
+        Plane::new(store.clone(), runtime)
+            .with_row_cap(args.doors.row_cap)
+            .with_cube_cache(args.cube_cache_mb),
+    );
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
         &plane,

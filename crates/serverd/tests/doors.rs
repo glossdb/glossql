@@ -1510,7 +1510,6 @@ async fn the_workspace_says_what_it_affords() {
         "apps",
         "aspects",
         "claims",
-        "cube",
         "functions",
         "metrics",
         "relationships",

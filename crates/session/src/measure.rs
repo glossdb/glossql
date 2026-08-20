@@ -50,7 +50,7 @@ pub(crate) fn bind_subject(statement: &mut DFStatement, subject: &str) {
 }
 
 /// Bind named string parameters the same way, before the pre-pass runs —
-/// so a door argument (`metric_days($metric)`) resolves like any quoted
+/// so a door argument (`metric_series(grain => $grain)`) resolves like any quoted
 /// literal. Same expansion-not-splicing guarantee as [`bind_subject`]:
 /// the value lands as one AST node and cannot re-tokenize. Only string
 /// values bind here; anything else stays a placeholder for the plan's

@@ -14,6 +14,7 @@ mod builtin;
 mod frames;
 pub mod glossed;
 mod pages;
+mod remeasure;
 mod rule;
 
 pub use app::AppDef;
@@ -62,6 +63,7 @@ pub fn router(plane: Arc<Plane>, workspace: PathBuf, human: String) -> Router {
         .route("/{app}/frames/{frame}", get(frames::frame))
         .route("/{app}/specs/{spec}", get(pages::spec))
         .route("/{app}/rule", axum::routing::post(rule::rule))
+        .route("/{app}/remeasure", axum::routing::post(remeasure::remeasure))
         .with_state(AppDoor {
             plane,
             workspace,

@@ -31,13 +31,7 @@
   function frameUrl(ref) {
     const url = new URL(ref, approot());
     const page = new URLSearchParams(document.location.search);
-    for (const [k, v] of page) {
-      // `w.*` is display state — the client's window over data already
-      // fetched. It never reaches a frame, so changing it refetches
-      // nothing.
-      if (k.startsWith('w.')) continue;
-      url.searchParams.set(k, v);
-    }
+    for (const [k, v] of page) url.searchParams.set(k, v);
     return url.toString();
   }
 
@@ -120,8 +114,8 @@
   // ruling's 204, and the stale-tab 409 whose cause is someone else's
   // write), and it classifies every frame it serves: `record` frames
   // read the glossary somewhere in their expansion, `data` frames
-  // provably do not — so the cube, the trend and the slices survive a
-  // ruling untouched, in cache and on screen. Capture phase, so the
+  // provably do not — so the cube's cells, the trend and the slices
+  // survive a ruling untouched, in cache and on screen. Capture phase, so the
   // evictions land before any panel's own listener refetches. Specs
   // stay: they are static files.
   document.addEventListener(

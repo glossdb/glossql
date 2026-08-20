@@ -853,7 +853,7 @@ async fn a_source_conventions_gloss_reads_from_another_dataset() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn metric_series_serves_the_cached_cube() {
+async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
     let (_dir, session) = agent_session().await;
     run(
         &session,
@@ -861,95 +861,67 @@ async fn metric_series_serves_the_cached_cube() {
     )
     .await;
 
-    // Before the measurement runs the relation is empty — honest, not
-    // an error; nothing computes at read.
+    // No grounding, no rows and no facts — honest absence; nothing
+    // computes, nothing lands (the cube is a query result, never a
+    // measurement). The scripts suite holds the cube's own semantics.
+    let empty = table(&session, "SELECT count(*) AS n FROM metric_series(grain => 'month');").await;
+    assert!(empty.contains("| 0"), "{empty}");
+    let facts = table(&session, "SELECT count(*) AS n FROM metric_axes();").await;
+    assert!(facts.contains("| 0"), "{facts}");
+
+    // The `cube` aspect is the declared contract a cube computes under
+    // — the floor and the ladder; the first metric that needs building
+    // without it is refused with the road out (the kit ships it).
+    run(
+        &session,
+        r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;
+           GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v"}$$;"#,
+    )
+    .await;
+    let e = session
+        .execute("SELECT count(*) FROM metric_series();")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("no `cube` aspect"), "{e}");
+    run(
+        &session,
+        r#"DECLARE ASPECT cube WITH $${"type": "object", "properties": {
+             "resolution": {"default": "day"},
+             "windows": {"type": "object", "properties": {"month": {"default": "48 months"}}}}}$$
+           AS FACT ON DATASET;"#,
+    )
+    .await;
+    // A grounding that cannot serve abstains in its fact row, with
+    // the reason, and serves no cells.
+    let facts = table(
+        &session,
+        "SELECT metric, applicable, reason FROM metric_axes();",
+    )
+    .await;
+    assert!(facts.contains("dso") && facts.contains("false") && facts.contains("no value column"), "{facts}");
     let empty = table(&session, "SELECT count(*) AS n FROM metric_series();").await;
     assert!(empty.contains("| 0"), "{empty}");
 
-    // A canned cube: one flow metric with a served dimension and a
-    // disclosed rival — the shipped body's own logic is the scripts
-    // suite's business; here the contract is the serving read.
-    run(
-        &session,
-        r#"DECLARE ASPECT metric_cube WITH $${"type": "object"}$$ AS MEASUREMENT ON DATASET;
-           DECLARE FUNCTION metric_cube FOR GLOBAL AS $$
-             SELECT true AS applicable,
-                    [named_struct(
-                      'metric', 'revenue', 'applicable', true, 'behavior', 'flow',
-                      'dims', ['region'], 'alternative', 'all invoiced',
-                      'rows', [
-                        named_struct('dimension', '', 'member', '', 'period', '2026-01', 'value', 100.0),
-                        named_struct('dimension', '', 'member', '', 'period', '2026-02', 'value', 130.0),
-                        named_struct('dimension', 'region', 'member', 'EMEA', 'period', '2026-01', 'value', 60.0),
-                        named_struct('dimension', 'region', 'member', 'EMEA', 'period', '2026-02', 'value', 70.0),
-                        named_struct('dimension', 'region', 'member', 'AMER', 'period', '2026-01', 'value', 40.0),
-                        named_struct('dimension', 'region', 'member', 'AMER', 'period', '2026-02', 'value', 60.0),
-                        named_struct('dimension', 'alternative', 'member', 'all invoiced', 'period', '2026-01', 'value', 90.0),
-                        named_struct('dimension', 'alternative', 'member', 'all invoiced', 'period', '2026-02', 'value', 95.0)
-                      ])] AS metrics
-           $$ RETURNS metric_cube;
-           SELECT metric_cube() FROM fin;"#,
-    )
-    .await;
-
-    // The total series: dimension '' is the monthly total.
-    let totals = table(
-        &session,
-        "SELECT period, value FROM metric_series() \
-         WHERE metric = 'revenue' AND dimension = '' ORDER BY period;",
-    )
-    .await;
-    assert!(totals.contains("2026-01") && totals.contains("100.0"), "{totals}");
-
-    // Slices compose with plain SQL — the members sum back to the frame.
-    let sliced = table(
-        &session,
-        "SELECT member, sum(value) AS v FROM metric_series() \
-         WHERE metric = 'revenue' AND dimension = 'region' GROUP BY 1 ORDER BY 1;",
-    )
-    .await;
-    assert!(sliced.contains("AMER") && sliced.contains("100.0"), "{sliced}");
-    assert!(sliced.contains("EMEA") && sliced.contains("130.0"), "{sliced}");
-
-    // The disclosed rival rides as its own dimension, named.
-    let rival = table(
-        &session,
-        "SELECT member, value FROM metric_series() \
-         WHERE dimension = 'alternative' ORDER BY period;",
-    )
-    .await;
-    assert!(rival.contains("all invoiced") && rival.contains("95.0"), "{rival}");
-
-    // Arguments are refused — filters ride WHERE.
+    // The one argument is the grain; filters ride WHERE.
     let e = session
         .execute("SELECT * FROM metric_series('revenue');")
         .await
         .unwrap_err();
+    assert!(e.to_string().contains("grain =>"), "{e}");
+    let e = session
+        .execute("SELECT * FROM metric_series(grain => 'fortnight');")
+        .await
+        .unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("one of minute, hour, day, week, month, quarter, year"),
+        "{e}"
+    );
+    let e = session
+        .execute("SELECT * FROM metric_axes('revenue');")
+        .await
+        .unwrap_err();
     assert!(e.to_string().contains("no arguments"), "{e}");
-
-    // A later write orphans the cube: the series still serves — the
-    // last landed cube, marked stale — and a recompute brings it back
-    // current (blanking instead would empty every chart
-    // after any gloss).
-    run(
-        &session,
-        r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET;
-           GLOSS note ON fin AS $${"text": "a write that moves the pin"}$$;"#,
-    )
-    .await;
-    let stale = table(
-        &session,
-        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
-    )
-    .await;
-    assert!(stale.contains("false"), "{stale}");
-    run(&session, "SELECT metric_cube() FROM fin;").await;
-    let fresh = table(
-        &session,
-        "SELECT DISTINCT current FROM metric_series() WHERE metric = 'revenue';",
-    )
-    .await;
-    assert!(fresh.contains("true"), "{fresh}");
 }
 
 /// A measurement is a query (stage 5, §7e): the skill's own
@@ -1108,8 +1080,7 @@ async fn a_cte_shadows_a_same_named_table() {
 /// moment it commits. The pin covers inputs only, so a landing moves no
 /// pin — a cached context checked by pin alone would keep serving the
 /// view from before the landing on every channel but the one that
-/// computed it — the docket's charts stay empty
-/// while the agent's channel serves the cube it just landed.
+/// computed it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_landing_reaches_a_channel_that_already_read() {
     let (_dir, store) = scratch_store().await;

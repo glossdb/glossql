@@ -44,12 +44,15 @@ hidden, no dot-walking.
 A frame is one SQL file served as Arrow IPC. URL params bind as typed
 plan placeholders (`$from` in the SQL, `?from=…` on the URL); values
 arrive as Utf8 and the frame SQL casts explicitly, and a door argument
-binds the same way (`metric_days($metric)`). `$dataset` is
+binds the same way (`metric_series(grain => $grain)`). `$dataset` is
 reserved — always the bound dataset. Frames only read, and the browser
 fetches each frame once per state, sharing the table across every tile
-bound to it. The URL is the only state; drill is navigation. Params
-starting with `w.` are the viewer's window — display state the store
-never forwards, so a grain or span change refetches nothing.
+bound to it. The URL is the only state; drill is navigation, and so is
+a viewer's window: `?grain=quarter&span=24` are ordinary params bound
+as `$grain` and `$span`, and the frame SQL is the filter. A reference's
+own params are the author's defaults (`frames/trend?grain=month&span=24`);
+the page URL overrides them, and only the frames whose URL changed
+refetch.
 
 Display logic — glyphs, classes, links — is computed in the frame's
 SQL, not in the template. The shipped reads (`open_questions`, `owed`,
@@ -71,13 +74,16 @@ vega-lite spec over a frame), `gl-table`, `gl-value`, and `gl-rows`:
 
 `gl-rows` renders the stored frame through the author's own
 `<template>`: every `{field}` in text or attribute values takes the
-row's value, formatted like a table cell. Substitution is literal and
+row's value, formatted like a table cell. With `join="frames/y"
+on="key"` a second frame's row with the same key merges into each row
+(its fields win) — how a record frame and a data frame meet in one
+list without becoming one fetch. Substitution is literal and
 the template stays dumb — a frame that feeds an `href` emits a
 URL-ready value, with one guard: a substituted `href`/`src` carrying a
 script-capable scheme becomes `#`. An empty frame states itself
 through `empty`; a capped one gets an honest footer.
 
-The other three tiles:
+The other tiles:
 
 - `<gl-chart frame="frames/x" spec="specs/x.vl.json">` — a vega-lite
   view over the frame; the spec binds the named data source `frame`
@@ -95,16 +101,22 @@ The other three tiles:
   band or verdict through unformatted); `good` says which direction
   reads as healthy — the SQL computes the delta, the element only
   shows it.
+- `<gl-window frame="frames/axes">` — the viewer's grain and span as
+  links over the page URL (`grain`, `span`); it reads the metric's
+  resolution from a `metric_axes()` frame and offers the grains from
+  there up.
 
-After the docket's ruling write, the door answers
-`HX-Trigger: glossql:written`; the frame store drops its caches and
-every connected tile refetches in place — instruments keep their DOM.
+After the docket's two writes — a ruling, and re-measure (the
+profilers the cube admits on, re-run over the served columns) — the
+door answers `HX-Trigger: glossql:written`; the frame store drops its
+record caches and every connected tile refetches in place —
+instruments keep their DOM.
 
 ## The built-in docket
 
 `crates/apps/builtin/docket/` — the reference app and the standing
 example: what stands open for a human to judge, what has been settled,
 what waits on an act, the metric surfaces and the record behind them.
-Pages `index.html`, `metrics.html`, `record.html`; fifteen frames over
-the shipped reads and `metric_series()`; one spec. Every built-in
+Pages `index.html`, `metrics.html`, `record.html`; seventeen frames
+over the shipped reads and the cube's two reads; one spec. Every built-in
 frame parses under the test suite.

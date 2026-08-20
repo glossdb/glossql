@@ -34,9 +34,9 @@ always bound. Display logic — labels, percentages, a CSS class chosen
 by a verdict — is computed in the frame as columns; templates place
 values, they do not decide them. A frame plans through the same path
 as every other read, so every door is available inside one:
-`read.<metric>()` for a grounding, `metric_series()` for the measured
-cube, `whatif.<scenario>()` for a declared scenario beside the real
-books.
+`read.<metric>()` for a grounding, `metric_series()` for the cube's
+cells at a grain, `whatif.<scenario>()` for a declared scenario beside
+the real books.
 
 **Tiles** are tera macros placing what the frame computed — a value, a
 chart over a spec, a table, or a row surface with an authored

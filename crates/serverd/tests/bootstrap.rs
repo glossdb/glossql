@@ -68,10 +68,10 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         assert!(!stored.ends_with(".sql"), "{name} stored as a path");
     }
 
-    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");
-    // 11 measurement contracts + the KPI kit's 10 semantic aspects
-    // + the ruling channel + the four app parts an agent
-    // authors a surface with.
+    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "14");
+    // 10 measurement contracts + the KPI kit's 11 semantic aspects
+    // (the cube's floor and ladder among them) + the ruling channel +
+    // the four app parts an agent authors a surface with.
     assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "27");
     // The functions without RETURNS are the detectors.
     assert_eq!(

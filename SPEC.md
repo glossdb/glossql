@@ -510,11 +510,12 @@ the grid, reach, and support guard are machinery, never statement
 syntax; `misfit.<frame>()` (fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
-`metric_series()` serves the `metric_cube`
-measurement at the read's pin as long rows — metric names become data so
-a static frame (the built-in docket app) slices any metric with plain
-value filters; an extraction lands the cube, nothing computes at page
-load.
+`metric_series()` serves the cube's cells —
+every grounded metric at its judged resolution, computed at the read's
+pin from the groundings and the judged verdicts, cached, never landed —
+as long rows: metric names become data so a static frame (the built-in
+docket app) slices any metric with plain value filters; `metric_axes()`
+beside it says what the cube admitted.
 
 Deferred, not under discussion: access rights · portability · persistence
 backend and engine mapping.

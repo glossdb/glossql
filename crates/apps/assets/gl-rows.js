@@ -1,7 +1,10 @@
 // <gl-rows frame="frames/x" rows="200" empty="…"> — the stored frame
 // rendered through the author's own <template>: every {field} in text
 // or attribute values takes the row's value, formatted like a table
-// cell. Display logic — glyphs, classes, links — belongs to the
+// cell. With join="frames/y" on="key" a second frame's row with the
+// same key merges into each row — its fields win — which is how a
+// record frame and a data frame meet in one list without becoming one
+// fetch: the pulse's surfaces are the record, its numbers the cube. Display logic — glyphs, classes, links — belongs to the
 // frame's SQL; the template stays dumb and substitution is literal,
 // so a frame that feeds an href emits a URL-ready value — with one
 // guard: a substituted href/src carrying a script-capable scheme
@@ -80,11 +83,20 @@
       // A frame the write could not change keeps its cache entry, and
       // the identical promise says so — same rows, nothing to redraw.
       const pending = glStore.rows(this.getAttribute('frame'));
-      if (pending === this._rendered) return;
+      const join = this.getAttribute('join');
+      const joined = join ? glStore.rows(join) : null;
+      if (pending === this._rendered && joined === this._joined) return;
       this._rendered = pending;
+      this._joined = joined;
       this.setAttribute('aria-busy', 'true');
       try {
-        const rows = await pending;
+        let rows = await pending;
+        if (joined) {
+          const on = this.getAttribute('on');
+          const byKey = new Map();
+          for (const r of await joined) byKey.set(r[on], r);
+          rows = rows.map((r) => Object.assign({}, r, byKey.get(r[on]) || {}));
+        }
         if (!this.isConnected) return;
         const cap = Number(this.getAttribute('rows')) || 200;
         const out = [];
@@ -119,6 +131,7 @@
       } catch (e) {
         // A failed fetch is not rendered state — retry on the next load.
         this._rendered = null;
+        this._joined = null;
         this.replaceChildren(template, glStore.errorBox(e.message || String(e)));
       } finally {
         this.removeAttribute('aria-busy');

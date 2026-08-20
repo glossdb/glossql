@@ -152,21 +152,6 @@ DECLARE ASPECT metric_bands WITH $${
   }
 }$$ AS MEASUREMENT ON DATASET;
 
-DECLARE ASPECT metric_cube WITH $${
-  "type": "object", "required": ["applicable"],
-  "properties": {
-    "applicable": {"type": "boolean"},
-    "metrics": {"type": "array", "items": {"type": "object",
-      "properties": {
-        "metric": {"type": "string"}, "applicable": {"type": "boolean"},
-        "reason": {"type": "string"}, "behavior": {"type": "string"},
-        "dims": {"type": "array", "items": {"type": "string"}},
-        "alternative": {"type": "string"},
-        "alternative_error": {"type": "string"},
-        "rows": {"type": "array", "items": {"type": "object"}}}}}
-  }
-}$$ AS MEASUREMENT ON DATASET;
-
 DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 
@@ -201,9 +186,6 @@ DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.sql$$;
 
 DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
   RETURNS metric_bands;
-
-DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.sql$$
-  RETURNS metric_cube;
 
 DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
 

@@ -15,7 +15,7 @@ use crate::Plane;
 ///
 /// Nothing lands on disk: a function's body is data
 /// (fixture 24), so the reference library arrives as
-/// fifteen ordinary declarations and reads back through the `functions`
+/// fourteen ordinary declarations and reads back through the `functions`
 /// relation like anything else an agent wrote.
 pub async fn bootstrap(
     plane: &Plane,

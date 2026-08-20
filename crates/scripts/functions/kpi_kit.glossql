@@ -11,10 +11,11 @@
 -- that ships them: `recipe_change` (the agent brief counts pending
 -- approvals by that aspect name), `x-kind` / `title` in QUERY-aspect
 -- blobs and `unit` / `meaning` in a `definitions` entry (the docket's
--- metric faces and `metric_surfaces`), and `none` as the
--- judged negative in enum aspects ("examined, does not apply" — a
--- different fact from an unassessed row, and the one that lets the
--- backlog read walk to zero).
+-- metric faces and `metric_surfaces`), `cube` (the resolution floor
+-- and the window ladder the cube reads, defaults in its schema), and
+-- `none` as the judged negative in enum aspects ("examined, does not
+-- apply" — a different fact from an unassessed row, and the one that
+-- lets the backlog read walk to zero).
 
 -- Column vocabulary. role classes every column; behavior and unit are
 -- the witnessed enum/valued claims on measures. Unwritten, each one
@@ -98,6 +99,34 @@ DECLARE ASPECT formulas WITH $${
 
 DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}
+}$$ AS FACT ON DATASET;
+
+-- The cube's shape: a metric's cells are computed at its judged
+-- cadence and never finer than `resolution`, the floor; `windows` is
+-- the retention ladder — per resolution the maximum window, measured
+-- back from the data's own edge, the finer the resolution the shorter
+-- the window. A metric's window is the rung of its own resolution.
+-- The defaults ride the schema; a gloss overrides any rung or the
+-- floor and supersedes like any gloss. Witness-free: a setting is not
+-- a claim about the data and owes no backlog row. The cube itself is a
+-- query result — cached, never recorded — read through
+-- `metric_series()` and `metric_axes()`.
+
+DECLARE ASPECT cube WITH $${
+  "type": "object",
+  "properties": {
+    "resolution": {"enum": ["minute", "hour", "day", "week", "month"],
+                   "default": "day"},
+    "windows": {"type": "object", "properties": {
+      "minute":  {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "1 day"},
+      "hour":    {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "1 month"},
+      "day":     {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "18 months"},
+      "week":    {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "3 years"},
+      "month":   {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "48 months"},
+      "quarter": {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "10 years"},
+      "year":    {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "20 years"}
+    }}
+  }
 }$$ AS FACT ON DATASET;
 
 -- The recipe-correction channel: the human gloss is the approval, the

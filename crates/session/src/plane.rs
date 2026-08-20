@@ -1,6 +1,6 @@
 //! The shared plane behind the doors: one store, one lake, one script
-//! runtime, and the workspace's channels — sessions keyed
-//! (actor, dataset). The transports are stateless (the 2026-07-28 MCP
+//! runtime, one cube cache, and the workspace's channels — sessions
+//! keyed (actor, dataset). The transports are stateless (the 2026-07-28 MCP
 //! revision removed transport sessions), so continuity lives here. A
 //! channel's binding is fixed at construction; `USE` selects which
 //! channel an actor's statements land on, it never rebinds a session —
@@ -15,11 +15,16 @@ use glossql_glossary::{Actor, Store};
 use glossql_parser::{GlossqlParser, Statement};
 use tokio::sync::RwLock;
 
+use crate::cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
 
 pub struct Plane {
     store: Store,
     runtime: Arc<dyn FunctionRuntime>,
+    /// The cube cache every channel reads and fills — one set of
+    /// entries for the process, bounded by `with_cube_cache`. Not the
+    /// Store's: the Store is the record, and the cube is not.
+    cube: CubeCache,
     /// One session per (actor, dataset), created on first sight and kept
     /// for the server's life; `None` is the actor's unbound channel —
     /// where they speak before any `USE`.
@@ -41,6 +46,7 @@ impl Plane {
         Plane {
             store,
             runtime,
+            cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
             channels: RwLock::new(HashMap::new()),
             current: RwLock::new(HashMap::new()),
             row_cap: usize::MAX,
@@ -52,6 +58,20 @@ impl Plane {
     pub fn with_row_cap(mut self, cap: usize) -> Self {
         self.row_cap = cap;
         self
+    }
+
+    /// The process-wide byte budget for cubes, in megabytes (serverd's
+    /// `--cube-cache`). The `cube` aspect bounds one cube; this bounds
+    /// them all. Set before the first channel is built.
+    pub fn with_cube_cache(mut self, megabytes: u64) -> Self {
+        self.cube = CubeCache::new(megabytes);
+        self
+    }
+
+    /// The cache itself — for the doors' instruments and the tests that
+    /// count builds.
+    pub fn cube_cache(&self) -> &CubeCache {
+        &self.cube
     }
 
     /// The workspace's declared datasets — for doors that bind by
@@ -87,7 +107,8 @@ impl Plane {
         }
         let session = Session::new(self.store.clone(), actor)?
             .with_row_cap(self.row_cap)
-            .with_runtime(Arc::clone(&self.runtime));
+            .with_runtime(Arc::clone(&self.runtime))
+            .with_cube_cache(self.cube.clone());
         let session = Arc::new(session);
         if let Some(dataset) = dataset {
             session.bind(dataset).await?;

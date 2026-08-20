@@ -1,10 +1,11 @@
 # The shipped reads
 
-Eight relations every workspace serves. Each is one `.sql` file
-shipped in the binary; the same file answers the doors, the built-in
-app's frames, and the skills' examples. The names are reserved — a
-read shadows both a table and a CTE of the same name, which is what
-keeps the set small.
+Seven relations every workspace serves, and the cube's two table
+functions beside them (the last section). Each relation is one `.sql`
+file shipped in the binary; the same file answers the doors, the
+built-in app's frames, and the skills' examples. The names are
+reserved — a read shadows both a table and a CTE of the same name,
+which is what keeps the set small.
 
 A read expands as a derived relation: filter with `WHERE`, order at
 the call site (an inner ordering does not survive planning — none of
@@ -17,12 +18,11 @@ The map of surfaces: what kind of thing can be declared or written
 here, how much of it stands, what is open on it. Not a task queue and
 not an order — judgment about what to do next stays the agent's.
 Columns: `surface` (sources, tables, relationships, aspects, claims,
-functions, metrics, scenarios, samples, rulings, cube, apps) · `how`
-(the statement that extends the surface) · `stands` (what exists) ·
-`open` (what is unfinished; 0 where nothing can be owed — a function
-is never "open", it computes when a read needs it). A table is open
-while its landing's casts nulled cells; the cube is open while a later
-write has orphaned it.
+functions, metrics, scenarios, samples, rulings, apps) · `how` (the
+statement that extends the surface) · `stands` (what exists) · `open`
+(what is unfinished; 0 where nothing can be owed — a function is never
+"open", it computes when a read needs it). A table is open while its
+landing's casts nulled cells.
 
 ### open_questions
 
@@ -77,15 +77,15 @@ whose key still stands below full confidence).
 
 ### metric_surfaces
 
-Every declared metric with where it stands — the pulse list and the
-dossier header both render this. Columns: `metric`, `title`, `kind`
-(the `x-kind` tooling flag), `unit` and `meaning` (from the
-`definitions` registry — the aspect blob keeps only display label and
-flag), `period` / `value` / `delta` (latest cube month and the move
-into it), `axes` (the dimensions the cube admitted), `formula` (from
-the `formulas` registry, or the stated base-concept default),
-`grounded`. Values come from the `metric_cube` measurement: a metric
-with no cube rows carries nulls until the cube runs. Open counts and
+Every declared metric with where it stands — the record only; the
+pulse list and the dossier header both render this. Columns: `metric`,
+`title`, `kind` (the `x-kind` tooling flag), `unit` and `meaning`
+(from the `definitions` registry — the aspect blob keeps only display
+label and flag), `formula` (from the `formulas` registry, or the
+stated base-concept default), `grounded`. The numbers — a metric's
+latest period, its move, the axes the cube admitted — are the cube's
+reads below, joined by `metric`; keeping them apart is what lets a
+ruling refresh this read without touching the cube. Open counts and
 ruled-at live in workspace-wide relations — callers join
 `open_questions` and `ruling_entries` scoped to their own dataset.
 
@@ -97,3 +97,47 @@ Apps authored as glosses, one row per file. Columns: `app`, `path`
 content as the gloss spelled it), `actor_kind`. Two collapses in
 order: newest writing per (subject, aspect, actor kind), then the
 human's over the agent's.
+
+## The cube's reads
+
+Two table functions over the cube — every grounded metric's cells at
+its resolution, a query result computed at the read's pin from the
+grounding and the judged verdicts, cached in memory, never recorded.
+Both build what is not built; a cache entry is never stale, it is a
+hit or a miss (a moved pin or version misses). The resolution is the
+metric's judged cadence (`temporal_profile`), never finer than the
+`cube` aspect's floor; the window is that aspect's rung for the
+resolution, measured back from the data's own edge (see the KPI kit).
+
+### metric_series(grain => …)
+
+The cells: `metric`, `dimension` (`''` the total, `'alternative'` the
+disclosed rival, anything else a judged dimension column), `member`,
+`period` (a typed timestamp, the bucket's start), `value`, `num` /
+`den` (a ratio's summed halves, NULL elsewhere), `behavior` (the verb
+that made the row — `flow`, `stock` or `ratio`; a rival's may differ
+from the metric's). Without a grain each metric serves at its own
+resolution; with one (`minute` … `year`) every metric at or finer than
+it is re-bucketed on the server by the row's verb — a flow sums, a
+stock takes the bucket's last period, a ratio divides its summed
+halves — and a metric coarser than the asked grain serves no rows.
+The one argument is the grain; filters ride `WHERE`.
+
+### metric_axes()
+
+One row per current grounding — what the cube admitted and why not:
+`metric`, `applicable`, `judged_current`, `reason` (the road out when
+it abstains — no judged time column, no value column, a grounding the
+engine refused), `behavior`, `resolution`, `window`, `dims`, `bucketed`
+(the dimensions wider than 24 members, served as their top 23 by
+weight plus `'other'`), `alternative`, `alternative_error`.
+Record-class: it says what the judged verdicts admitted.
+
+The verdicts are the newest landed per served column, whatever pin
+they were judged at. A measurement is reachable at its own pin and
+every write moves the pin, so after a ruling or an import the axes
+stand on verdicts from an earlier moment: the cube still builds — the
+numbers are current — and `judged_current` is false until the
+profilers run again (`temporal()` over the served date columns,
+`dimension_relevance()` over the rest; the docket's re-measure button
+does exactly that).

@@ -582,10 +582,11 @@ details.contest[open] summary { color: var(--muted); }
   border: 1px solid var(--rule);
   border-radius: 2px;
   padding: 0.1rem 0.55rem;
+  text-decoration: none;
   cursor: pointer;
 }
 .wbtn:hover { color: var(--muted); border-color: var(--muted); }
 .wbtn.on { color: var(--open); border-color: var(--open-dim); }
 
 gl-window { display: block; margin: 0.4rem 0 0.8rem; }
-gl-drivers { display: block; }
+.remeasure { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }

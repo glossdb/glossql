@@ -303,7 +303,7 @@ async fn concept_rows(
         ));
     };
 
-    // The three verbs, the same ones metric_cube and metric_bands read.
+    // The three verbs, the same ones the cube and metric_bands read.
     //
     // A RATIO declares itself by serving `num` and `den` beside `value`,
     // and reads as sum(num)/sum(den). Summing it instead adds member

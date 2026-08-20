@@ -235,6 +235,9 @@ impl Session {
             runtime: RwLock::new(Arc::new(NoRuntime)),
             context: RwLock::new(None),
             ctx: RwLock::new(None),
+            cube: RwLock::new(crate::cube::CubeCache::new(
+                crate::cube::DEFAULT_CUBE_CACHE_MB,
+            )),
         });
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "postgres")
@@ -292,6 +295,60 @@ impl Session {
         }
         *self.shared.runtime.write().expect("runtime lock") = runtime;
         self
+    }
+
+    /// The cube cache this session reads and fills — the Plane's, so
+    /// every channel shares one set of entries. A session built
+    /// without a Plane carries its own from construction.
+    pub fn with_cube_cache(self, cache: crate::cube::CubeCache) -> Self {
+        *self.shared.cube.write().expect("cube lock") = cache;
+        self
+    }
+
+    /// Re-run the profilers the cube admits on: every function returning
+    /// `temporal_profile` over each served date column, every function
+    /// returning `dimension_relevance` over each other served column,
+    /// of every current grounding — the extractions an agent would
+    /// run, as statements of this session. A verdict already standing
+    /// at this pin serves without landing; the rest land, the version
+    /// moves, and the next cube read rebuilds with `judged_current`.
+    /// Returns how many extractions ran.
+    pub async fn remeasure_cube(&self) -> Result<usize, SessionError> {
+        use datafusion::sql::sqlparser::ast::Ident;
+        let subjects = crate::cube::admission_subjects(&self.shared).await?;
+        let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+        let ctx = self.shared.read_context().await?;
+        let returning = |aspect: &str| -> Vec<String> {
+            ctx.functions
+                .iter()
+                .filter(|f| {
+                    f.returns.as_deref() == Some(aspect)
+                        && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+                })
+                .map(|f| f.name.clone())
+                .collect()
+        };
+        let (temporal, relevance) = (
+            returning("temporal_profile"),
+            returning("dimension_relevance"),
+        );
+        let mut ran = 0;
+        for (table, column, is_time) in subjects {
+            let functions = if is_time { &temporal } else { &relevance };
+            for function in functions {
+                // The AST directly, never statement text: a served
+                // column's name is whatever the recipe cast it as.
+                self.extract(Extract {
+                    calls: vec![Ident::new(function.clone())],
+                    subject: Subject::Path(glossql_parser::Path {
+                        segments: vec![Ident::new(table.clone()), Ident::new(column.clone())],
+                    }),
+                })
+                .await?;
+                ran += 1;
+            }
+        }
+        Ok(ran)
     }
 
     fn lake(&self) -> Lake {
@@ -823,8 +880,8 @@ impl Session {
             unreachable!("just matched")
         };
         // Named string params bind into the AST before the pre-pass, so
-        // door arguments (`metric_days($metric)`) resolve; everything
-        // else still binds through the plan below.
+        // door arguments (`metric_series(grain => $grain)`) resolve;
+        // everything else still binds through the plan below.
         if let Some(ParamValues::Map(map)) = &params {
             crate::measure::bind_params(&mut statement, map);
         }

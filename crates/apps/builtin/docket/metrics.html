@@ -18,24 +18,46 @@
   <span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
-  <gl-rows frame="frames/stale" empty="">
-    <template><p class="hint">{note}</p></template>
+  {# The axes banner: the cube's numbers are always current, its axes
+     stand on the latest verdicts — judged at an earlier pin after a
+     ruling or an import. One row while that holds; the button re-runs
+     the profilers over the served columns, the record frames refetch
+     on the write event, and the next cube read rebuilds. #}
+  <gl-rows frame="frames/remeasure" empty="">
+    <template>
+      <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
+        <span class="hint">The axes of {metrics} were judged before the last change — the numbers are current, the axes may not be.</span>
+        <button type="submit" class="wbtn">Re-measure</button>
+      </form>
+    </template>
   </gl-rows>
 
-  {# The viewer's window: grain and span ride the URL as display
-     params (`w.*`) — nothing refetches, the charts re-derive from
-     rows in hand. Day and week read the live day frame. #}
-  <gl-window daily="frames/daily"></gl-window>
+  {# The viewer's window: grain and span are page params, bound into
+     the frames as $grain and $span — the frame SQL is the filter. The
+     references below carry the defaults; the URL overrides them. The
+     control reads the cube's fact row so it offers only the grains
+     the metric's cells can answer, and changing one is navigation:
+     only the frames whose URL changed refetch. #}
+  <gl-window frame="frames/axes"></gl-window>
 
-  {{ tiles::chart(frame="frames/trend", spec="specs/series.vl.json",
-       title="The story · " ~ metric, chip="metric_series()",
-       note="The measured cube's total series at the grounding's own verb, and the disclosed rival beside it where the grounding names one. Quarter and year re-derive by the verb; a ratio divides its summed halves. Day and week compute at read from the grounding (metric_days).",
-       windowed=true, daily="frames/daily") }}
+  {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
+       title="The story · " ~ metric, chip="metric_series(grain => $grain)",
+       note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing.") }}
 
   <section class="tile">
     <header><span class="eyebrow">What moved · {{ metric }}</span>
-      <code class="chip" title="Each admitted dimension's members ranked by their own move between the last two windowed periods — from the landed cube's cells, computed in the browser.">metric_series()</code></header>
-    <gl-drivers frame="frames/drivers"></gl-drivers>
+      <code class="chip" title="Each admitted dimension's members ranked by their own move between the newest two periods at the viewer's grain — the cube's cells, ranked in the frame's SQL. A member's move is at the metric's verb, never a share of the total.">metric_series(grain => $grain)</code></header>
+    <gl-rows frame="frames/drivers?grain=month" empty="no member moves at this grain — the cube holds fewer than two periods here, or no axis was admitted">
+      <template>
+        <div class="rrow" style="grid-template-columns:8rem 1fr 7rem 9rem 12rem">
+          <span class="r-subj asp">{dimension}</span>
+          <span class="r-what">{member}</span>
+          <span class="r-num">{delta}</span>
+          <span class="r-meta">{from_value} → {to_value}</span>
+          <span class="r-meta">{prev_period} → {last_period}</span>
+        </div>
+      </template>
+    </gl-rows>
   </section>
 
   <div class="half">
@@ -57,9 +79,9 @@
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Slice</span>
-      <code class="chip" title="The axes the cube admitted from judged verdicts: applicable dimension_relevance, relevance first; a wide axis serves its top members by weight plus 'other'.">metric_series()</code></header>
+      <code class="chip" title="The axes the cube admitted from judged verdicts: applicable dimension_relevance, relevance first; a wide axis serves its top members by weight plus 'other' (metric_axes() names which).">metric_series()</code></header>
     <p class="hint">pick an axis — the slice rides the URL, so what you look at is shareable and re-derivable.</p>
-    <gl-rows frame="frames/dims" empty="no axes admitted — the grounding serves no usable dimension column, or the cube has not run">
+    <gl-rows frame="frames/dims?grain=month&span=24" empty="no axes admitted — the grounding serves no judged dimension column, or no judged time column anchors it (metric_axes() says which)">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:1fr auto">
           <span class="r-subj">{dimension}</span>
@@ -71,11 +93,23 @@
   </div>
 
   {% if dim %}
-  {{ tiles::chart(frame="frames/slices", spec="specs/series.vl.json",
-       title="By " ~ dim, chip="metric_series()",
-       note="One admitted dimension's members over the cube's months, at the grounding's own verb. The viewer's window applies; members re-derive by the verb.",
-       windowed=true) }}
+  {{ tiles::chart(frame="frames/slices?grain=month&span=24", spec="specs/series.vl.json",
+       title="By " ~ dim, chip="metric_series(grain => $grain)",
+       note="One admitted dimension's members at the viewer's grain, at the grounding's own verb — the cube's member cells re-bucketed on the server; a ratio member divides its own summed halves.") }}
   {% endif %}
+
+  <section class="tile">
+    <header><span class="eyebrow">The cube's reasons · {{ metric }}</span>
+      <code class="chip" title="What the cube admitted for this metric and why not: the resolution its cells stand at (its judged cadence, never finer than the declared floor), the window (the ladder's rung for that resolution), the verb, the axes, the rival's outcome. A metric that abstains states its reason.">metric_axes()</code></header>
+    <gl-rows frame="frames/axes" empty="no current grounding named {{ metric }}">
+      <template>
+        <div class="rrow" style="grid-template-columns:1fr">
+          <span class="r-meta">resolution {resolution} · window {window} · {behavior} · axes: {dims}</span>
+          <span class="r-meta">{reason} {alternative_error}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
 
   <section class="tile">
     <header><span class="eyebrow">The assumptions behind it</span>
@@ -116,14 +150,24 @@
   <a href="/app/docket/p/record">Record</a>
 </nav>
 <div class="tiles">
-  <gl-rows frame="frames/stale" empty="">
-    <template><p class="hint">{note}</p></template>
+  {# The axes banner: the cube's numbers are always current, its axes
+     stand on the latest verdicts — judged at an earlier pin after a
+     ruling or an import. One row while that holds; the button re-runs
+     the profilers over the served columns, the record frames refetch
+     on the write event, and the next cube read rebuilds. #}
+  <gl-rows frame="frames/remeasure" empty="">
+    <template>
+      <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
+        <span class="hint">The axes of {metrics} were judged before the last change — the numbers are current, the axes may not be.</span>
+        <button type="submit" class="wbtn">Re-measure</button>
+      </form>
+    </template>
   </gl-rows>
 
   <section class="tile">
     <header><span class="eyebrow">Metric surfaces</span>
-      <code class="chip" title="Every declared QUERY aspect with its latest cube month, the move into it, the admitted axes, and where its judgment stands. The open count is the docket's own.">metric_surfaces</code></header>
-    <gl-rows frame="frames/pulse" empty="no metric surfaces declared yet">
+      <code class="chip" title="Every declared QUERY aspect with where its judgment stands — the record — and, joined by the metric's name, the cube's newest period, the move into it and the admitted axes — the data. Two frames: a ruling refreshes the first and leaves the cube alone.">metric_surfaces · metric_series()</code></header>
+    <gl-rows frame="frames/pulse" join="frames/latest" on="name" empty="no metric surfaces declared yet">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 8rem">
           <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>

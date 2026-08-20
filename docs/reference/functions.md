@@ -139,34 +139,6 @@ point records the band quantiles (p05–p95) and its PIT — the quantile
 at which the actual landed. This measurement only reports; the
 `band_breach` detector adjudicates.
 
-### metric_cube → `metric_cube`
-
-`SELECT metric_cube() FROM <dataset>`. Every grounded metric's monthly
-series — the total, the slices along its served dimension columns, and
-the named rival where a grounding discloses `alternative_sql` — landed
-as one measurement that `metric_series()` then serves to any frame.
-The axes come from judged verdicts, never from the data's own shape:
-a served column enters as a dimension when its collapsed
-`dimension_relevance` is applicable, relevance orders the admitted,
-and the time axis is the served date column whose collapsed
-`temporal_profile` shows a named cadence, highest completeness first.
-A column without a verdict is a gap, not a candidate — run the
-profilers over the served columns before the cube.
-Caps, stated in the result: 4 dims, 48 months, and a bucketing target
-of 24 members: at 24 or under every member is named, above that the
-top 23 by weight
-keep their names and the rest fold into `other` (each metric's
-`bucketed` field names the dimensions this happened to). A ratio cell
-carries its summed halves (`num`, `den`) so a coarser window can
-re-derive the division, and `metric_series()` serves them beside
-`behavior`, the metric's verb. Extraction
-serves the
-summary; the whole cube reads back via
-`GLOSSARY(<dataset>::metric_cube)`. `metric_days('<metric>')` is the
-cube's live sibling: one metric's last 90 observed days at the same
-verb and the same judged time axis, computed at read from the
-grounding — the cube stays monthly.
-
 ## Detectors
 
 ### slot_entropy

@@ -47,6 +47,10 @@ pub(crate) struct Shared {
     /// collects table references per statement, so a grounding's tables
     /// resolve even when the outer statement never names them.
     pub ctx: RwLock<Option<SessionContext>>,
+    /// The cube cache — the Plane's, shared by every channel, or the
+    /// session's own when it was built without one. A query result,
+    /// never the record: it lives beside the store, not in it.
+    pub cube: RwLock<crate::cube::CubeCache>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -88,6 +92,10 @@ impl Shared {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
 
+    pub fn cube(&self) -> crate::cube::CubeCache {
+        self.cube.read().expect("cube lock").clone()
+    }
+
     /// The session's own context — set right after construction, so
     /// absence is a construction bug, never a runtime state.
     pub fn session_ctx(&self) -> SessionContext {
@@ -123,9 +131,8 @@ impl Shared {
         // Freshness is the pin AND the store's derived version: the pin
         // covers inputs only, so a measurement landed on any channel
         // moves neither its pin nor this cache — checked by pin alone,
-        // the cached context kept serving the view from before that
-        // landing — the docket's charts stayed empty
-        // while the agent's channel served the cube it had computed.
+        // a cached context keeps serving the view from before that
+        // landing on every channel but the one that computed it.
         // The version is enumerated from the catalog, so every store
         // write — today's relations and any added later — misses here.
         let version = self.store.version().await?;
@@ -430,7 +437,7 @@ impl RelationPlanner for GlossqlReads {
         }
         // A compute door the pre-pass evaluated — `whatif.<x>()`,
         // `misfit.<x>()`, `glossary(...)`, `attest(...)`,
-        // `metric_series()`, the store's relations. Keyed by the factor's
+        // `metric_series(grain => …)`, the store's relations. Keyed by the factor's
         // own rendering, which is what arrives here again: a lookup —
         // nothing computes, fetches or blocks during planning.
         if let Some(batch) = self.resolved.batch(&relation.to_string()) {
@@ -495,13 +502,17 @@ impl RelationPlanner for GlossqlReads {
     }
 }
 
-/// Whether a factor [`compute_batch`] resolves reads the glossary —
-/// directly (`glossary`, `GLOSSARY()`, `ATTEST()`) or through collapsed
-/// slots (the metric doors read groundings, collisions and anchors read
-/// claims). The pre-pass derives the statement's frame class from this
-/// (`record`/`data`): a `record` answer can change
-/// under a glossary write, a `data` answer cannot. A new arm in the
-/// match below decides its class here, in the same file.
+/// Whether a factor [`compute_batch`] resolves serves the record —
+/// the glossary directly (`glossary`, `GLOSSARY()`, `ATTEST()`) or
+/// what collapsed slots say (the walk reads groundings, collisions and
+/// anchors read claims, `metric_axes()` says what the cube admitted).
+/// The pre-pass derives the statement's frame class from this
+/// (`record`/`data`): a `record` answer can change under a glossary
+/// write, a `data` answer cannot. The class is about what a door
+/// SERVES, not what its build consumed: `metric_series()` enumerates
+/// groundings to find its cells, but what it serves is the data at a
+/// grain, so it stays out. A new arm in the match below decides its
+/// class here, in the same file.
 pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
     let TableFactor::Table { name, .. } = f else {
         return false;
@@ -515,9 +526,8 @@ pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
             "glossary"
                 | "attest"
                 | "grounding_collisions"
-                | "metric_cube_slices"
                 | "metric_band_walk"
-                | "metric_days"
+                | "metric_axes"
                 | "behavior_anchors"
         )
     })
@@ -620,18 +630,6 @@ pub(crate) async fn compute_batch(
                 crate::behavior::behavior_anchors(shared, resolved, &subject).await?,
             ))
         }
-        ("metric_cube_slices", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_cube_slices takes one quoted dataset: \
-                     metric_cube_slices('dataset')"
-                        .into(),
-                )
-            })?;
-            Ok(Some(
-                crate::search::metric_cube_slices(shared, &dataset).await?,
-            ))
-        }
         ("metric_band_walk", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(
@@ -694,21 +692,19 @@ pub(crate) async fn compute_batch(
         }
         ("glossary", Some(a)) => Ok(Some(glossary_read(shared, &a.args).await?)),
         ("attest", Some(a)) => Ok(Some(attest_read(shared, &a.args).await?)),
+        // The cube's two reads (crate::cube): the cells at a grain and
+        // the fact row per metric. Both build what is not built.
         ("metric_series", Some(a)) => {
+            let grain = crate::cube::grain_arg(&a.args)?;
+            Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
+        }
+        ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {
                 return Err(SessionError::BadSubject(
-                    "metric_series() takes no arguments — filters ride WHERE".into(),
+                    "metric_axes() takes no arguments — filters ride WHERE".into(),
                 ));
             }
-            Ok(Some(metric_series_read(shared).await?))
-        }
-        ("metric_days", Some(a)) => {
-            let metric = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_days takes one quoted metric: metric_days('metric')".into(),
-                )
-            })?;
-            Ok(Some(crate::search::metric_days(shared, &metric).await?))
+            Ok(Some(crate::cube::metric_axes_batch(shared).await?))
         }
         // The store's relations, readable as plain tables. Which names
         // qualify lives in one place: the store's RELATIONS table.
@@ -811,118 +807,6 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
             glossql_glossary::Store::collapsed_read(&dataset, &scope, aspect, &ctx, &verdicts),
         ))
     }
-}
-
-/// The cube flattened: `(metric, dimension, member, period, value,
-/// num, den, behavior, current)`. Dimension `''` is the monthly total,
-/// `'alternative'` the
-/// disclosed rival reading, anything else a served dimension column
-/// with its member in `member`. `num`/`den` are a ratio cell's summed
-/// halves (NULL elsewhere) and `behavior` is the metric's verb — what
-/// a client needs to re-derive a coarser window honestly. Served from the `measurements`
-/// relation: the NEWEST landed cube whatever its pin, with `current`
-/// saying whether it was computed at the standing pin — a workspace
-/// write marks every chart stale instead of blanking it —
-/// blanking would empty the docket after any gloss.
-/// Recomputing stays a pull: `SELECT metric_cube() FROM <dataset>`
-/// lands a fresh one, and nothing computes at page load. An empty
-/// relation still serves nothing — the cube has never been measured.
-async fn metric_series_read(shared: &Shared) -> Result<RecordBatch, SessionError> {
-    struct Row {
-        metric: String,
-        dimension: String,
-        member: String,
-        period: String,
-        value: f64,
-        num: Option<f64>,
-        den: Option<f64>,
-        behavior: String,
-    }
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
-    let ctx = shared.read_context().await?;
-    let mut rows: Vec<Row> = Vec::new();
-    let mut current = true;
-    if let Some((measured, is_current)) = shared
-        .store
-        .measurement_latest(&ctx, &dataset, &dataset, "metric_cube")
-        .await?
-    {
-        current = is_current;
-        let body: Value = serde_json::from_str(&measured.body).map_err(|e| {
-            SessionError::BadSubject(format!("metric_series(): the measured cube is not JSON: {e}"))
-        })?;
-        for m in body["metrics"].as_array().into_iter().flatten() {
-            let Some(metric) = m["metric"].as_str() else {
-                continue;
-            };
-            let behavior = m["behavior"].as_str().unwrap_or("flow");
-            for r in m["rows"].as_array().into_iter().flatten() {
-                // Cube rows are records since stage 5 — the tuple form
-                // was a script-ism arrow could not carry.
-                let (Some(dim), Some(member), Some(period), Some(value)) = (
-                    r["dimension"].as_str(),
-                    r["member"].as_str(),
-                    r["period"].as_str(),
-                    r["value"].as_f64(),
-                ) else {
-                    continue;
-                };
-                rows.push(Row {
-                    metric: metric.to_string(),
-                    dimension: dim.to_string(),
-                    member: member.to_string(),
-                    period: period.to_string(),
-                    value,
-                    num: r["num"].as_f64(),
-                    den: r["den"].as_f64(),
-                    behavior: behavior.to_string(),
-                });
-            }
-        }
-    }
-    let schema = Arc::new(Schema::new(vec![
-        utf8("metric"),
-        utf8("dimension"),
-        utf8("member"),
-        utf8("period"),
-        Field::new("value", DataType::Float64, false),
-        Field::new("num", DataType::Float64, true),
-        Field::new("den", DataType::Float64, true),
-        utf8("behavior"),
-        Field::new("current", DataType::Boolean, false),
-    ]));
-    Ok(batch(
-        schema,
-        vec![
-            Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.metric.as_str()),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.dimension.as_str()),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.member.as_str()),
-            )),
-            Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.period.as_str()),
-            )),
-            Arc::new(Float64Array::from_iter_values(rows.iter().map(|r| r.value))),
-            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.num))),
-            Arc::new(Float64Array::from_iter(rows.iter().map(|r| r.den))),
-            Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.behavior.as_str()),
-            )),
-            Arc::new(datafusion::arrow::array::BooleanArray::from(vec![
-                current;
-                rows.len()
-            ])),
-        ],
-    ))
 }
 
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
@@ -1229,10 +1113,10 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
 /// the measurement at the read's pin (whether this run landed it or an
 /// earlier one did).
 /// Extraction serves the function-authored `summary` when the body
-/// carries one (metric_cube's 54 KB body was
-/// write-only through the door, and 65 profiles pushed their whole
-/// bodies through the agent while warming). The full body stays in
-/// the measurement, read back uncapped via `GLOSSARY(subject::aspect)`.
+/// carries one — a large body is write-only through the door, and a
+/// warm-up run pushes every body through the agent. The full body
+/// stays in the measurement, read back uncapped via
+/// `GLOSSARY(subject::aspect)`.
 fn served_body(body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()

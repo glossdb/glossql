@@ -1,20 +1,22 @@
-//! The shipped metric_cube body over a real session — since stage 5 the
-//! slicing is the metric_cube_slices door and the body is SQL: two
-//! grounded metrics (a flow with served dimension columns and a
-//! disclosed rival, a marked stock with none), asserting dimension
-//! admission and ranking, the month window, the rival series, and the
-//! stock and ratio verbs. No model, no weights — the cube is plain SQL
-//! policy.
+//! The cube over a real session, through its two reads — nothing
+//! lands: `metric_series(grain => …)` serves the cells, `metric_axes()`
+//! the fact row per metric. Grounded metrics with served dimension
+//! columns, a disclosed rival, a marked stock and a ratio; the judged
+//! verdicts the cube reads come from judge functions serving fixed
+//! answers, so the tests exercise the cube's read policy, not the
+//! shipped profilers. No model, no weights — the cube is plain SQL
+//! policy over the judged surface, under the shipped `cube` aspect.
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch, StringArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::array::{
+    Date32Array, Float64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
+};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::datasource::MemTable;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{Outcome, Session};
-use serde_json::{Value, json};
+use glossql_session::{CubeCache, Outcome, Session};
 
 /// Date32 day offsets for each month's first day from 2024-01 (leap)
 /// through 2026-06; 19723 = 2024-01-01.
@@ -24,16 +26,40 @@ const MONTH_STARTS: [i32; 30] = [
     731, 762, 790, 821, 851, 882, // 2026
 ];
 
+/// The SHIPPED `cube` aspect, cut from the KPI kit the binary
+/// bootstraps — the floor and the ladder a real workspace computes
+/// under, defaults included.
+fn shipped_cube_declaration() -> &'static str {
+    let kit = glossql_scripts::library::KIT;
+    let start = kit
+        .find("DECLARE ASPECT cube")
+        .expect("the kit ships the cube aspect");
+    let len = kit[start..]
+        .find("AS FACT ON DATASET;")
+        .expect("the declaration closes")
+        + "AS FACT ON DATASET;".len();
+    &kit[start..start + len]
+}
+
 async fn cube_session(
     dir: &std::path::Path,
     tables: Vec<(&str, RecordBatch)>,
     glosses: &[&str],
 ) -> Session {
+    cube_session_with(dir, tables, glosses, None).await
+}
+
+async fn cube_session_with(
+    dir: &std::path::Path,
+    tables: Vec<(&str, RecordBatch)>,
+    glosses: &[&str],
+    cache: Option<CubeCache>,
+) -> Session {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
     let store = Store::open(lake).await.unwrap();
-    let session = Session::new(
+    let mut session = Session::new(
         store,
         Actor {
             kind: ActorKind::Agent,
@@ -41,6 +67,9 @@ async fn cube_session(
         },
     )
     .unwrap();
+    if let Some(cache) = cache {
+        session = session.with_cube_cache(cache);
+    }
     session
         .execute("DECLARE DATASET fin SET (purpose: 'the cube'); USE fin;")
         .await
@@ -57,22 +86,21 @@ async fn cube_session(
     }
     // A measurement is never hand-glossed (SPEC.md §5.2) — the judged
     // verdicts the cube reads land through extractions. The judge
-    // functions serve fixed verdicts so the tests exercise the cube's
-    // read policy, not the shipped profilers.
-    let declarations = glossql_scripts::library::splice(
-        r#"DECLARE ASPECT temporal_profile WITH $${
+    // functions serve fixed verdicts keyed by subject: a named cadence
+    // per table, irregular for an attribute date.
+    let declarations = format!(
+        r#"DECLARE ASPECT temporal_profile WITH $${{
              "type": "object", "required": ["applicable"],
-             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
-           DECLARE ASPECT dimension_relevance WITH $${
+             "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+           DECLARE ASPECT dimension_relevance WITH $${{
              "type": "object", "required": ["applicable"],
-             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
-           DECLARE ASPECT metric_cube WITH $${
-             "type": "object", "required": ["applicable"],
-             "properties": {"applicable": {"type": "boolean"},
-                            "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
+             "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+           {cube}
            DECLARE FUNCTION judge_time FOR GLOBAL AS
              $$SELECT true AS applicable,
                       CASE WHEN $subject LIKE '%.signed' THEN 'irregular'
+                           WHEN $subject LIKE 'ticks.%' THEN 'minute'
+                           WHEN $subject LIKE 'daily.%' THEN 'day'
                            ELSE 'month' END AS granularity,
                       CASE WHEN $subject LIKE '%.signed' THEN NULL
                            WHEN $subject LIKE '%.booked' THEN named_struct('ratio', 0.5)
@@ -82,40 +110,14 @@ async fn cube_session(
              $$SELECT true AS applicable,
                       CASE WHEN $subject LIKE '%.note' THEN 0.9
                            ELSE 0.7 END AS relevance$$
-             RETURNS dimension_relevance;
-           DECLARE FUNCTION metric_cube FOR GLOBAL AS $$metric_cube.sql$$
-             RETURNS metric_cube;"#,
-    )
-    .expect("shipped body splices");
+             RETURNS dimension_relevance;"#,
+        cube = shipped_cube_declaration()
+    );
     session.execute(&declarations).await.unwrap();
     for g in glosses {
         session.execute(g).await.unwrap();
     }
-    session.execute("SELECT metric_cube() FROM fin;").await.unwrap();
     session
-}
-
-async fn cube(session: &Session) -> Value {
-    let outcomes = session
-        .execute("SELECT value FROM GLOSSARY(fin::metric_cube) WHERE state = 'current';")
-        .await
-        .unwrap();
-    let Some(Outcome::Rows(batches)) = outcomes.last() else {
-        panic!("a value row")
-    };
-    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
-    let text =
-        datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap();
-    serde_json::from_str(&text).unwrap()
-}
-
-fn rows_of<'v>(metric: &'v Value, dimension: &str) -> Vec<&'v Value> {
-    metric["rows"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|r| r["dimension"] == dimension)
-        .collect()
 }
 
 /// One read, rendered as text — for asserts over served relations.
@@ -127,6 +129,45 @@ async fn grid(session: &Session, sql: &str) -> String {
     datafusion::arrow::util::pretty::pretty_format_batches(batches)
         .unwrap()
         .to_string()
+}
+
+/// The first cell of a one-value read, as text.
+async fn cell(session: &Session, sql: &str) -> String {
+    let outcomes = session
+        .execute(sql)
+        .await
+        .unwrap_or_else(|e| panic!("`{sql}`: {e}"));
+    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("rows")
+    };
+    let batch = batches
+        .iter()
+        .find(|b| b.num_rows() > 0)
+        .unwrap_or_else(|| panic!("`{sql}` served no row"));
+    datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap()
+}
+
+async fn number(session: &Session, sql: &str) -> f64 {
+    let text = cell(session, sql).await;
+    text.parse()
+        .unwrap_or_else(|_| panic!("`{sql}` served `{text}`, not a number"))
+}
+
+fn near(got: f64, want: f64, what: &str) {
+    assert!((got - want).abs() < 1e-9, "{what}: got {got}, want {want}");
+}
+
+fn dated(
+    fields: Vec<Field>,
+    dates: Vec<i32>,
+    columns: Vec<Arc<dyn datafusion::arrow::array::Array>>,
+) -> RecordBatch {
+    let mut all: Vec<Field> = vec![Field::new("date", DataType::Date32, false)];
+    all.extend(fields);
+    let mut cols: Vec<Arc<dyn datafusion::arrow::array::Array>> =
+        vec![Arc::new(Date32Array::from(dates))];
+    cols.extend(columns);
+    RecordBatch::try_new(Arc::new(Schema::new(all)), cols).unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -150,51 +191,33 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
             }
         }
     }
-    let lines = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
+    let lines = dated(
+        vec![
             Field::new("value", DataType::Float64, false),
             Field::new("region", DataType::Utf8, false),
             Field::new("channel", DataType::Utf8, false),
             Field::new("note", DataType::Utf8, false),
-        ])),
+        ],
+        dates,
         vec![
-            Arc::new(Date32Array::from(dates)),
             Arc::new(Float64Array::from(values)),
             Arc::new(StringArray::from(regions)),
             Arc::new(StringArray::from(channels)),
             Arc::new(StringArray::from(notes)),
         ],
-    )
-    .unwrap();
-    let alt = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new("value", DataType::Float64, false),
-        ])),
-        vec![
-            Arc::new(Date32Array::from(
-                MONTH_STARTS.iter().map(|s| 19723 + s).collect::<Vec<_>>(),
-            )),
-            Arc::new(Float64Array::from(vec![90.0; 30])),
-        ],
-    )
-    .unwrap();
-    let levels = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new("value", DataType::Float64, false),
-        ])),
-        vec![
-            Arc::new(Date32Array::from(
-                MONTH_STARTS[..18].iter().map(|s| 19723 + s).collect::<Vec<_>>(),
-            )),
-            Arc::new(Float64Array::from(
-                (0..18).map(|i| 1000.0 + 5.0 * i as f64).collect::<Vec<_>>(),
-            )),
-        ],
-    )
-    .unwrap();
+    );
+    let alt = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        MONTH_STARTS.iter().map(|s| 19723 + s).collect(),
+        vec![Arc::new(Float64Array::from(vec![90.0; 30]))],
+    );
+    let levels = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        MONTH_STARTS[..18].iter().map(|s| 19723 + s).collect(),
+        vec![Arc::new(Float64Array::from(
+            (0..18).map(|i| 1000.0 + 5.0 * i as f64).collect::<Vec<_>>(),
+        ))],
+    );
 
     let session = cube_session(
         dir.path(),
@@ -227,56 +250,109 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
         ],
     )
     .await;
-    let out = cube(&session).await;
 
-    assert_eq!(out["applicable"], json!(true));
-    let metrics = out["metrics"].as_array().unwrap();
-    assert_eq!(metrics.len(), 2);
+    // The fact row: admission by judged verdict — the 40-member note
+    // column leads on relevance (and enters bucketed), the 0.7 tie
+    // breaks by fewest members. A month cadence under the day floor is
+    // month, and the month rung of the ladder is its window.
+    let fact = |col: &'static str| {
+        let session = &session;
+        async move {
+            cell(
+                session,
+                &format!("SELECT {col} FROM metric_axes() WHERE metric = 'revenue';"),
+            )
+            .await
+        }
+    };
+    assert_eq!(fact("applicable").await, "true");
+    assert_eq!(fact("judged_current").await, "true");
+    assert_eq!(fact("behavior").await, "flow");
+    assert_eq!(fact("resolution").await, "month");
+    assert_eq!(fact("\"window\"").await, "48 months");
+    assert_eq!(fact("array_to_string(dims, ',')").await, "note,region,channel");
+    assert_eq!(fact("array_to_string(bucketed, ',')").await, "note");
+    assert_eq!(fact("alternative").await, "all invoiced");
 
-    let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
-    // admission by judged verdict: the 40-member note column leads on
-    // relevance (and enters bucketed), the 0.7 tie breaks by fewest
-    // members
-    assert_eq!(revenue["dims"], json!(["note", "region", "channel"]));
-    assert_eq!(revenue["bucketed"], json!(["note"]));
-    assert_eq!(revenue["behavior"], json!("flow"));
-    assert_eq!(revenue["alternative"], json!("all invoiced"));
+    // The cells: all 30 generated months fit under the 48-month rung;
+    // the period is a typed timestamp, the bucket's start.
+    let count = |filter: &'static str| {
+        let session = &session;
+        async move {
+            number(
+                session,
+                &format!("SELECT count(*) FROM metric_series() WHERE metric = 'revenue' AND {filter};"),
+            )
+            .await
+        }
+    };
+    near(count("dimension = ''").await, 30.0, "total periods");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT min(period) FROM metric_series() WHERE metric = 'revenue' AND dimension = '';",
+        )
+        .await,
+        "2024-01-01T00:00:00"
+    );
+    near(count("dimension = 'region'").await, 90.0, "region cells");
+    near(count("dimension = 'channel'").await, 150.0, "channel cells");
+    near(count("dimension = 'alternative'").await, 30.0, "rival cells");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT DISTINCT member FROM metric_series() WHERE dimension = 'alternative';",
+        )
+        .await,
+        "all invoiced"
+    );
 
-    // the window: all 30 generated months fit under the 48 cap
-    let total = rows_of(revenue, "");
-    assert_eq!(total.len(), 30);
-    assert_eq!(total[0]["period"], json!("2024-01"));
-    assert_eq!(rows_of(revenue, "region").len(), 3 * 30);
-    assert_eq!(rows_of(revenue, "channel").len(), 5 * 30);
-    let rival = rows_of(revenue, "alternative");
-    assert_eq!(rival.len(), 30);
-    assert_eq!(rival[0]["member"], json!("all invoiced"));
-
-    // the bucketed dimension: at most 24 members counting 'other', and
+    // The bucketed dimension: at most 24 members counting 'other', and
     // bucketing loses nothing — each month's note slices still sum to
-    // the month's 15 rows
-    let notes = rows_of(revenue, "note");
-    let members: std::collections::HashSet<&str> = notes
-        .iter()
-        .map(|r| r["member"].as_str().unwrap())
-        .collect();
-    assert!(members.len() <= 24, "{} members", members.len());
-    assert!(members.contains("other"));
-    let mut by_month: std::collections::HashMap<&str, f64> = Default::default();
-    for r in &notes {
-        *by_month.entry(r["period"].as_str().unwrap()).or_default() +=
-            r["value"].as_f64().unwrap();
-    }
-    assert_eq!(by_month.len(), 30);
-    for (period, sum) in by_month {
-        assert!((sum - 15.0).abs() < 1e-9, "{period}: {sum}");
-    }
+    // the month's 15 rows.
+    let members = number(
+        &session,
+        "SELECT count(DISTINCT member) FROM metric_series() \
+         WHERE metric = 'revenue' AND dimension = 'note';",
+    )
+    .await;
+    assert!(members <= 24.0, "{members} members");
+    assert!(
+        count("dimension = 'note' AND member = 'other'").await > 0.0,
+        "the fold-in member exists"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT bool_and(s = 15.0) FROM (SELECT period, sum(value) AS s FROM metric_series() \
+             WHERE metric = 'revenue' AND dimension = 'note' GROUP BY period);",
+        )
+        .await,
+        "true"
+    );
 
-    // the stock: no served dimensions, its own 18-month window
-    let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();
-    assert_eq!(inventory["behavior"], json!("stock"));
-    assert_eq!(inventory["dims"], json!([]));
-    assert_eq!(rows_of(inventory, "").len(), 18);
+    // The stock: no served dimensions, its own 18 months.
+    assert_eq!(
+        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';").await,
+        "stock"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(dims, ',') FROM metric_axes() WHERE metric = 'inventory';",
+        )
+        .await,
+        ""
+    );
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series() WHERE metric = 'inventory' AND dimension = '';",
+        )
+        .await,
+        18.0,
+        "stock periods",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -298,16 +374,13 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
         let parts: Vec<i32> = d.split('-').map(|p| p.parse().unwrap()).collect();
         19723 + [0, 31][(parts[1] - 1) as usize] + parts[2] - 1
     };
-    let levels = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
+    let levels = dated(
+        vec![
             Field::new("value", DataType::Float64, false),
             Field::new("product", DataType::Utf8, false),
-        ])),
+        ],
+        days.iter().map(|(d, _, _)| epoch(d)).collect(),
         vec![
-            Arc::new(Date32Array::from(
-                days.iter().map(|(d, _, _)| epoch(d)).collect::<Vec<_>>(),
-            )),
             Arc::new(Float64Array::from(
                 days.iter().map(|(_, v, _)| *v).collect::<Vec<_>>(),
             )),
@@ -315,8 +388,7 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
                 days.iter().map(|(_, _, p)| *p).collect::<Vec<_>>(),
             )),
         ],
-    )
-    .unwrap();
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let session = cube_session(
@@ -330,52 +402,65 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
         ],
     )
     .await;
-    let out = cube(&session).await;
 
-    let metrics = out["metrics"].as_array().unwrap();
-    let inventory = metrics.iter().find(|m| m["metric"] == "inventory").unwrap();
-    assert_eq!(inventory["behavior"], json!("stock"));
+    assert_eq!(
+        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';").await,
+        "stock"
+    );
     // product (2 members) is a served dimension on the real context
-    assert_eq!(inventory["dims"], json!(["product"]));
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(dims, ',') FROM metric_axes() WHERE metric = 'inventory';",
+        )
+        .await,
+        "product"
+    );
 
     // the total: the month-end snapshot summed across products
-    let total = rows_of(inventory, "");
-    let by_period: Vec<(&str, f64)> = total
-        .iter()
-        .map(|r| (r["period"].as_str().unwrap(), r["value"].as_f64().unwrap()))
-        .collect();
-    assert_eq!(by_period, vec![("2024-01", 300.0), ("2024-02", 320.0)]);
+    let total = grid(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'inventory' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    assert!(total.contains("2024-01-01T00:00:00 | 300.0"), "{total}");
+    assert!(total.contains("2024-02-01T00:00:00 | 320.0"), "{total}");
 
     // the member series: each product's own latest observation
-    let members = rows_of(inventory, "product");
-    let got: Vec<(&str, &str, f64)> = members
-        .iter()
-        .map(|r| {
-            (
-                r["member"].as_str().unwrap(),
-                r["period"].as_str().unwrap(),
-                r["value"].as_f64().unwrap(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        got,
-        vec![
-            ("p1", "2024-01", 100.0),
-            ("p2", "2024-01", 200.0),
-            ("p1", "2024-02", 110.0),
-            ("p2", "2024-02", 210.0),
-        ]
-    );
+    let members = grid(
+        &session,
+        "SELECT member, period, value FROM metric_series() \
+         WHERE metric = 'inventory' AND dimension = 'product' ORDER BY period, member;",
+    )
+    .await;
+    for want in [
+        "p1     | 2024-01-01T00:00:00 | 100.0",
+        "p2     | 2024-01-01T00:00:00 | 200.0",
+        "p1     | 2024-02-01T00:00:00 | 110.0",
+        "p2     | 2024-02-01T00:00:00 | 210.0",
+    ] {
+        assert!(members.contains(want), "{want} in\n{members}");
+    }
+
+    // A coarser grain takes the bucket's LAST period for a stock: the
+    // quarter stands at February's level, never the sum of the months.
+    let quarter = grid(
+        &session,
+        "SELECT period, value, behavior FROM metric_series(grain => 'quarter') \
+         WHERE metric = 'inventory' AND dimension = '';",
+    )
+    .await;
+    assert!(quarter.contains("2024-01-01T00:00:00 | 320.0 | stock"), "{quarter}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
-    // The defect this exists for: a ratio
-    // is neither stock nor flow, so it took the flow path and every
-    // sliced ratio reported the SUM of its members. DSO for one month
-    // came back 928.3 days against a true 75.6 — the grounding served
-    // segment x region, so twelve member ratios were added together.
+    // The defect this exists for: a ratio is neither stock nor flow,
+    // so it took the flow path and every sliced ratio reported the SUM
+    // of its members. DSO for one month came back 928.3 days against a
+    // true 75.6 — the grounding served segment x region, so twelve
+    // member ratios were added together.
     //
     // Four cells a month, chosen so the right answer and the old wrong
     // one cannot be confused: summing the per-row ratios gives 0.65,
@@ -394,19 +479,16 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
         let parts: Vec<i32> = d.split('-').map(|p| p.parse().unwrap()).collect();
         19723 + [0, 31][(parts[1] - 1) as usize] + parts[2] - 1
     };
-    let batch = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
+    let batch = dated(
+        vec![
             Field::new("value", DataType::Float64, false),
             Field::new("num", DataType::Float64, false),
             Field::new("den", DataType::Float64, false),
             Field::new("segment", DataType::Utf8, false),
             Field::new("region", DataType::Utf8, false),
-        ])),
+        ],
+        cells.iter().map(|c| epoch(c.0)).collect(),
         vec![
-            Arc::new(Date32Array::from(
-                cells.iter().map(|c| epoch(c.0)).collect::<Vec<_>>(),
-            )),
             // `value` is each row's own ratio — what the old code summed.
             Arc::new(Float64Array::from(
                 cells.iter().map(|c| c.1 / c.2).collect::<Vec<_>>(),
@@ -424,8 +506,7 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
                 cells.iter().map(|c| c.4).collect::<Vec<_>>(),
             )),
         ],
-    )
-    .unwrap();
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let session = cube_session(
@@ -433,106 +514,122 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
         vec![("cells", batch)],
         &[
             r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
-            r#"GLOSS dso ON fin AS $${"sql": "SELECT date, value, num, den, segment, region FROM cells"}$$;"#,
+            // The rival is a ratio too: it serves num and den, at twice
+            // the numerator — so at every grain it reads as exactly
+            // twice the chosen reading, which only holds if the rival's
+            // cells carry their halves and re-derive the division.
+            r#"GLOSS dso ON fin AS $${"sql": "SELECT date, value, num, den, segment, region FROM cells",
+                 "assumptions": [
+                     {"dimension": "definition", "assumption": "net of credit notes",
+                      "alternative": "gross", "confidence": 0.6,
+                      "alternative_sql": "SELECT date, value * 2 AS value, num * 2 AS num, den FROM cells"}
+                 ]}$$;"#,
             "SELECT judge_time() FROM cells.date;",
             "SELECT judge_axis() FROM cells.segment;",
             "SELECT judge_axis() FROM cells.region;",
         ],
     )
     .await;
-    let out = cube(&session).await;
 
-    let metrics = out["metrics"].as_array().unwrap();
-    let dso = metrics.iter().find(|m| m["metric"] == "dso").unwrap();
-    assert_eq!(dso["behavior"], json!("ratio"), "{dso}");
-
+    assert_eq!(
+        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'dso';").await,
+        "ratio"
+    );
     // The halves are measures, not axes: num/den must never be offered
     // as dimensions to slice along.
-    let dims: Vec<&str> = dso["dims"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|d| d.as_str().unwrap())
-        .collect();
-    assert!(dims.contains(&"segment") && dims.contains(&"region"), "{dims:?}");
-    assert!(!dims.contains(&"num") && !dims.contains(&"den"), "{dims:?}");
+    let dims = cell(
+        &session,
+        "SELECT array_to_string(dims, ',') FROM metric_axes() WHERE metric = 'dso';",
+    )
+    .await;
+    assert!(dims.contains("segment") && dims.contains("region"), "{dims}");
+    assert!(!dims.contains("num") && !dims.contains("den"), "{dims}");
 
-    let near = |got: f64, want: f64, what: &str| {
-        assert!((got - want).abs() < 1e-9, "{what}: got {got}, want {want}");
-    };
-    let at = |rows: &[&Value], member: &str, period: &str| -> f64 {
-        rows.iter()
-            .find(|r| r["member"] == member && r["period"] == period)
-            .unwrap_or_else(|| panic!("no {member}/{period}"))["value"]
-            .as_f64()
-            .unwrap()
+    let at = |dimension: &'static str, member: &'static str, period: &'static str, col: &'static str| {
+        let session = &session;
+        async move {
+            number(
+                session,
+                &format!(
+                    "SELECT {col} FROM metric_series() WHERE metric = 'dso' \
+                     AND dimension = '{dimension}' AND member = '{member}' \
+                     AND period = TIMESTAMP '{period}';"
+                ),
+            )
+            .await
+        }
     };
 
     // The total: sum(num)/sum(den), never the 0.65 that adding the four
     // per-row ratios would give.
-    let total = rows_of(dso, "");
-    near(at(&total, "", "2024-01"), 1000.0 / 6000.0, "january total");
-    near(at(&total, "", "2024-02"), 1040.0 / 6400.0, "february total");
+    near(at("", "", "2024-01-01", "value").await, 1000.0 / 6000.0, "january total");
+    near(at("", "", "2024-02-01", "value").await, 1040.0 / 6400.0, "february total");
 
     // Each member likewise divides its own summed halves — segment A is
     // 300/2000, not the 0.3 its two region rows add up to.
-    let by_segment = rows_of(dso, "segment");
-    near(at(&by_segment, "A", "2024-01"), 300.0 / 2000.0, "segment A");
-    near(at(&by_segment, "B", "2024-01"), 700.0 / 4000.0, "segment B");
-    let by_region = rows_of(dso, "region");
-    near(at(&by_region, "EMEA", "2024-01"), 400.0 / 3000.0, "region EMEA");
-    near(at(&by_region, "APAC", "2024-01"), 600.0 / 3000.0, "region APAC");
+    near(at("segment", "A", "2024-01-01", "value").await, 300.0 / 2000.0, "segment A");
+    near(at("segment", "B", "2024-01-01", "value").await, 700.0 / 4000.0, "segment B");
+    near(at("region", "EMEA", "2024-01-01", "value").await, 400.0 / 3000.0, "region EMEA");
+    near(at("region", "APAC", "2024-01-01", "value").await, 600.0 / 3000.0, "region APAC");
 
-    // Every ratio cell carries its summed halves — the client's
-    // coarser windows re-derive the division from them, never from
-    // the monthly ratio values.
-    let jan = total
-        .iter()
-        .find(|r| r["period"] == "2024-01")
-        .unwrap();
-    near(jan["num"].as_f64().unwrap(), 1000.0, "january num");
-    near(jan["den"].as_f64().unwrap(), 6000.0, "january den");
-    let seg_a = by_segment
-        .iter()
-        .find(|r| r["member"] == "A" && r["period"] == "2024-01")
-        .unwrap();
-    near(seg_a["num"].as_f64().unwrap(), 300.0, "segment A num");
-    near(seg_a["den"].as_f64().unwrap(), 2000.0, "segment A den");
+    // Every ratio cell carries its summed halves — a coarser grain
+    // re-derives the division from them, never from the ratio values.
+    near(at("", "", "2024-01-01", "num").await, 1000.0, "january num");
+    near(at("", "", "2024-01-01", "den").await, 6000.0, "january den");
+    near(at("segment", "A", "2024-01-01", "num").await, 300.0, "segment A num");
+    near(at("segment", "A", "2024-01-01", "den").await, 2000.0, "segment A den");
+    // The rival too, at its own verb.
+    near(at("alternative", "gross", "2024-01-01", "num").await, 2000.0, "rival num");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT DISTINCT behavior FROM metric_series() WHERE metric = 'dso' AND dimension = 'alternative';",
+        )
+        .await,
+        "ratio"
+    );
 
-    // The flattened read serves the halves and the verb beside every
-    // value.
-    let series = grid(
-        &session,
-        "SELECT period, value, num, den, behavior FROM metric_series() \
-         WHERE metric = 'dso' AND dimension = '' ORDER BY period;",
-    )
-    .await;
-    assert!(series.contains("ratio") && series.contains("6000.0"), "{series}");
-
-    // The day drill computes at read from the grounding, same judged
-    // time axis, same verb, halves included.
-    let days = grid(
-        &session,
-        "SELECT period, value, num, den, behavior FROM metric_days('dso') ORDER BY period;",
-    )
-    .await;
-    assert!(days.contains("2024-01-31") && days.contains("2024-02-29"), "{days}");
-    assert!(
-        days.contains("ratio") && days.contains("1000.0") && days.contains("6000.0"),
-        "{days}"
+    // The quarter re-derives by the verb: the two months' halves summed
+    // then divided — for the total, for a member, and for the rival,
+    // which reads as exactly twice the chosen reading.
+    let quarter = |dimension: &'static str, member: &'static str, col: &'static str| {
+        let session = &session;
+        async move {
+            number(
+                session,
+                &format!(
+                    "SELECT {col} FROM metric_series(grain => 'quarter') WHERE metric = 'dso' \
+                     AND dimension = '{dimension}' AND member = '{member}';"
+                ),
+            )
+            .await
+        }
+    };
+    near(quarter("", "", "value").await, 2040.0 / 12400.0, "Q1 total");
+    near(quarter("", "", "num").await, 2040.0, "Q1 num");
+    near(quarter("segment", "A", "value").await, 620.0 / 4200.0, "Q1 segment A");
+    near(quarter("alternative", "gross", "value").await, 4080.0 / 12400.0, "Q1 rival");
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'quarter') WHERE metric = 'dso' AND dimension = '';",
+        )
+        .await,
+        1.0,
+        "one quarter",
     );
 
     // A frame's named param binds into the door argument before the
-    // pre-pass — the app's day drill rides `metric_days($metric)`.
+    // pre-pass — the app's frames ride `metric_series(grain => $grain)`.
     let mut values: std::collections::HashMap<String, datafusion::common::ScalarValue> =
         Default::default();
     values.insert(
-        "metric".into(),
-        datafusion::common::ScalarValue::Utf8(Some("dso".into())),
+        "grain".into(),
+        datafusion::common::ScalarValue::Utf8(Some("quarter".into())),
     );
     let query = session
         .query_stream_with_params(
-            "SELECT count(*) AS n FROM metric_days($metric)",
+            "SELECT count(*) AS n FROM metric_series(grain => $grain) WHERE dimension = ''",
             Some(datafusion::common::ParamValues::from(values)),
         )
         .await
@@ -545,20 +642,19 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     let n = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
         .unwrap()
         .to_string();
-    assert!(n.contains("| 2 "), "{n}");
+    assert!(n.contains("| 1 "), "{n}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
-    // The glos onboarding shape: the served frame leads with an
-    // attribute date (all contracts signed in one month), a sparser
-    // date follows, the event date comes last among the three; a
-    // low-cardinality column rides along with no verdict landed.
-    // Schema order would anchor the series on `signed` (one period
-    // instead of thirty) and cardinality would admit `channel`; the
-    // judged verdicts pick `date` — irregular never anchors, and among
-    // named cadences the higher completeness wins — and `region`
-    // alone.
+    // The onboarding shape: the served frame leads with an attribute
+    // date (all contracts signed in one month), a sparser date follows,
+    // the event date comes last among the three; a low-cardinality
+    // column rides along with no verdict landed. Schema order would
+    // anchor the series on `signed` (one period instead of thirty) and
+    // cardinality would admit `channel`; the judged verdicts pick
+    // `date` — irregular never anchors, and among named cadences the
+    // higher completeness wins — and `region` alone.
     let (mut signed, mut booked, mut dates, mut values, mut regions, mut channels) = (
         Vec::new(),
         Vec::new(),
@@ -596,17 +692,11 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         ],
     )
     .unwrap();
-    let bare = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new("value", DataType::Float64, false),
-        ])),
-        vec![
-            Arc::new(Date32Array::from(vec![19723])),
-            Arc::new(Float64Array::from(vec![1.0])),
-        ],
-    )
-    .unwrap();
+    let bare = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        vec![19723],
+        vec![Arc::new(Float64Array::from(vec![1.0]))],
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let session = cube_session(
@@ -627,54 +717,301 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         ],
     )
     .await;
-    let out = cube(&session).await;
 
-    let metrics = out["metrics"].as_array().unwrap();
-    let revenue = metrics.iter().find(|m| m["metric"] == "revenue").unwrap();
-    assert_eq!(revenue["applicable"], json!(true), "{revenue}");
+    assert_eq!(
+        cell(&session, "SELECT applicable FROM metric_axes() WHERE metric = 'revenue';").await,
+        "true"
+    );
     // the judged axis, not the first temporal column: thirty monthly
     // periods, not one
-    let total = rows_of(revenue, "");
-    assert_eq!(total.len(), 30, "{revenue}");
-    assert_eq!(total[0]["period"], json!("2024-01"));
-    assert_eq!(total[29]["period"], json!("2026-06"));
+    let span = grid(
+        &session,
+        "SELECT count(*) AS n, min(period) AS first, max(period) AS last FROM metric_series() \
+         WHERE metric = 'revenue' AND dimension = '';",
+    )
+    .await;
+    assert!(span.contains("| 30 "), "{span}");
+    assert!(span.contains("2024-01-01T00:00:00") && span.contains("2026-06-01T00:00:00"), "{span}");
     // the judged dimension alone — the unjudged column is a gap, not a
     // candidate
-    assert_eq!(revenue["dims"], json!(["region"]));
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(dims, ',') FROM metric_axes() WHERE metric = 'revenue';",
+        )
+        .await,
+        "region"
+    );
 
     // a frame whose date column carries no verdict abstains with the
-    // road out
-    let raw = metrics.iter().find(|m| m["metric"] == "raw").unwrap();
-    assert_eq!(raw["applicable"], json!(false), "{raw}");
-    assert!(
-        raw["reason"]
-            .as_str()
-            .unwrap()
-            .contains("no judged time column"),
-        "{raw}"
+    // road out — in the fact row, and with no cells
+    assert_eq!(
+        cell(&session, "SELECT applicable FROM metric_axes() WHERE metric = 'raw';").await,
+        "false"
+    );
+    let reason = cell(&session, "SELECT reason FROM metric_axes() WHERE metric = 'raw';").await;
+    assert!(reason.contains("no judged time column"), "{reason}");
+    near(
+        number(&session, "SELECT count(*) FROM metric_series() WHERE metric = 'raw';").await,
+        0.0,
+        "an abstaining metric serves no cells",
     );
 
     // a flow cell carries no halves — the keys exist only where a
     // division has to be re-derivable
-    assert!(total[0].get("num").is_none_or(Value::is_null), "{:?}", total[0]);
+    near(
+        number(&session, "SELECT count(num) + count(den) FROM metric_series() WHERE metric = 'revenue';")
+            .await,
+        0.0,
+        "flow halves",
+    );
+}
 
-    // the day drill anchors on the same judged axis (thirty event
-    // days, three rows summing per day) and refuses the unjudged
-    // frame with the same road out
-    let days = grid(
-        &session,
-        "SELECT count(*) AS n, sum(value) AS v FROM metric_days('revenue');",
+#[tokio::test(flavor = "multi_thread")]
+async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_rung() {
+    // Three cadences under the shipped ladder (floor day): a day table
+    // of 730 days, a minute table of three days, a month table of 60
+    // months. The day metric serves day cells over the day rung (18
+    // months); the minute metric is held at the floor; the month metric
+    // serves months over the month rung (48). A gloss then lowers the
+    // floor to the hour and shortens the month rung — each resolution
+    // follows its own rung, the others stand.
+    let daily = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        (0..730).map(|i| 19723 + i).collect(),
+        vec![Arc::new(Float64Array::from(vec![1.0; 730]))],
+    );
+    // 2026-03-01T00:00 .. 2026-03-03T23:59, one row per minute.
+    let start_us: i64 = (19723 + 790) as i64 * 86_400 * 1_000_000;
+    let ticks = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("ts", DataType::Timestamp(TimeUnit::Microsecond, None), false),
+            Field::new("value", DataType::Float64, false),
+        ])),
+        vec![
+            Arc::new(TimestampMicrosecondArray::from(
+                (0..3 * 1440).map(|i| start_us + i * 60 * 1_000_000).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(vec![1.0; 3 * 1440])),
+        ],
+    )
+    .unwrap();
+    // 60 month starts from 2021-01-01 (18628) to 2025-12-01.
+    let month_starts: Vec<i32> = {
+        let mut out = Vec::new();
+        let days_in = |y: i32, m: i32| -> i32 {
+            match m {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                _ => {
+                    if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                        29
+                    } else {
+                        28
+                    }
+                }
+            }
+        };
+        let mut d = 18628;
+        for y in 2021..=2025 {
+            for m in 1..=12 {
+                out.push(d);
+                d += days_in(y, m);
+            }
+        }
+        out
+    };
+    let months = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        month_starts,
+        vec![Arc::new(Float64Array::from(vec![1.0; 60]))],
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("daily", daily), ("ticks", ticks), ("months", months)],
+        &[
+            r#"DECLARE ASPECT by_day WITH $${"title": "By day"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT by_minute WITH $${"title": "By minute"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT by_month WITH $${"title": "By month"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS by_day ON fin AS $${"sql": "SELECT date, value FROM daily"}$$;"#,
+            r#"GLOSS by_minute ON fin AS $${"sql": "SELECT ts, value FROM ticks"}$$;"#,
+            r#"GLOSS by_month ON fin AS $${"sql": "SELECT date, value FROM months"}$$;"#,
+            "SELECT judge_time() FROM daily.date;",
+            "SELECT judge_time() FROM ticks.ts;",
+            "SELECT judge_time() FROM months.date;",
+        ],
     )
     .await;
-    assert!(days.contains("| 30 ") && days.contains("90.0"), "{days}");
-    let e = session
-        .execute("SELECT * FROM metric_days('raw');")
+
+    let axes = grid(
+        &session,
+        "SELECT metric, resolution, \"window\" FROM metric_axes() ORDER BY metric;",
+    )
+    .await;
+    assert!(axes.contains("by_day    | day        | 18 months"), "{axes}");
+    assert!(axes.contains("by_minute | day        | 18 months"), "{axes}");
+    assert!(axes.contains("by_month  | month      | 48 months"), "{axes}");
+
+    let cells = |metric: &'static str, grain: &'static str| {
+        let session = &session;
+        async move {
+            let from = if grain.is_empty() {
+                "metric_series()".to_string()
+            } else {
+                format!("metric_series(grain => '{grain}')")
+            };
+            number(
+                session,
+                &format!("SELECT count(*) FROM {from} WHERE metric = '{metric}' AND dimension = '';"),
+            )
+            .await
+        }
+    };
+    // The day rung from the data's edge: 2025-12-30 less 18 months is
+    // 2024-06-30, and the buckets after it number 548.
+    near(cells("by_day", "").await, 548.0, "day cells under the day rung");
+    // Minutes held at the floor: three day cells of 1,440 minutes.
+    near(cells("by_minute", "").await, 3.0, "minute metric at the day floor");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT min(value) = 1440.0 AND max(value) = 1440.0 FROM metric_series() WHERE metric = 'by_minute';",
+        )
+        .await,
+        "true"
+    );
+    near(cells("by_month", "").await, 48.0, "month cells under the month rung");
+
+    // Coarser grains derive from the cells by the verb: the day
+    // metric's months are its days summed, month by month, and a grain
+    // finer than a metric's resolution serves nothing — honest absence.
+    near(cells("by_day", "month").await, 18.0, "the day metric at month grain");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT bool_and(m.value = d.s) FROM metric_series(grain => 'month') m \
+             JOIN (SELECT date_trunc('month', period) AS p, sum(value) AS s FROM metric_series() \
+                   WHERE metric = 'by_day' AND dimension = '' GROUP BY 1) d ON d.p = m.period \
+             WHERE m.metric = 'by_day' AND m.dimension = '';",
+        )
+        .await,
+        "true"
+    );
+    near(cells("by_month", "day").await, 0.0, "a month metric at day grain");
+    near(cells("by_month", "year").await, 4.0, "a month metric at year grain");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT min(value) = 12.0 AND max(value) = 12.0 FROM metric_series(grain => 'year') WHERE metric = 'by_month';",
+        )
+        .await,
+        "true"
+    );
+
+    // A gloss on the dataset overrides the floor and one rung: the
+    // minute metric now stands at the hour under the hour rung (one
+    // day back from its edge: 24 cells of 60), the month metric holds
+    // 12, and the day metric is untouched. The gloss moves the pin;
+    // the verdicts judged before it still admit (serve and mark), and
+    // the fact row says they are no longer current.
+    session
+        .execute(r#"GLOSS cube ON fin AS $${"resolution": "hour", "windows": {"hour": "1 day", "month": "12 months"}}$$;"#)
         .await
-        .unwrap_err();
-    assert!(e.to_string().contains("no judged time column"), "{e}");
-    let e = session
-        .execute("SELECT * FROM metric_days('nope');")
+        .unwrap();
+    let axes = grid(
+        &session,
+        "SELECT metric, resolution, \"window\", judged_current FROM metric_axes() ORDER BY metric;",
+    )
+    .await;
+    assert!(axes.contains("by_minute | hour       | 1 day     | false"), "{axes}");
+    assert!(axes.contains("by_month  | month      | 12 months | false"), "{axes}");
+    near(cells("by_minute", "").await, 24.0, "hourly cells under the hour rung");
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT min(value) = 60.0 AND max(value) = 60.0 FROM metric_series() WHERE metric = 'by_minute';",
+        )
+        .await,
+        "true"
+    );
+    near(cells("by_month", "").await, 12.0, "the shortened month rung");
+    near(cells("by_day", "").await, 548.0, "the day rung stands");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
+    let batch = || {
+        dated(
+            vec![Field::new("value", DataType::Float64, false)],
+            MONTH_STARTS.iter().map(|s| 19723 + s).collect(),
+            vec![Arc::new(Float64Array::from(vec![1.0; 30]))],
+        )
+    };
+    let glosses = [
+        r#"DECLARE ASPECT a WITH $${"title": "A"}$$ AS QUERY ON DATASET;"#,
+        r#"DECLARE ASPECT b WITH $${"title": "B"}$$ AS QUERY ON DATASET;"#,
+        r#"GLOSS a ON fin AS $${"sql": "SELECT date, value FROM t"}$$;"#,
+        r#"GLOSS b ON fin AS $${"sql": "SELECT date, value * 2 AS value FROM t"}$$;"#,
+        "SELECT judge_time() FROM t.date;",
+    ];
+
+    // Two concurrent reads of one key share one build: the series and
+    // the facts asked together cost two builds for two metrics, not
+    // four; a repeat is a hit.
+    let dir = tempfile::tempdir().unwrap();
+    let cache = CubeCache::new(64);
+    let session = cube_session_with(dir.path(), vec![("t", batch())], &glosses, Some(cache.clone())).await;
+    let (series, facts) = tokio::join!(
+        session.execute("SELECT count(*) FROM metric_series();"),
+        session.execute("SELECT count(*) FROM metric_axes();")
+    );
+    series.unwrap();
+    facts.unwrap();
+    assert_eq!(cache.builds(), 2, "one build per metric, shared by the two readers");
+    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells");
+    assert_eq!(cache.builds(), 2, "a repeat at the same pin is a hit");
+
+    assert_eq!(
+        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        "true"
+    );
+
+    // A gloss moves the pin: the next read misses and rebuilds. No
+    // dump, no invalidation — a complete key. The verdicts were judged
+    // at the old pin; a measurement is reachable at its own pin, so
+    // the rebuild admits on the newest landed ones and marks them —
+    // the numbers are current, the axes say they may not be.
+    session
+        .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
-        .unwrap_err();
-    assert!(e.to_string().contains("no current QUERY grounding"), "{e}");
+        .unwrap();
+    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells at the new pin");
+    assert_eq!(cache.builds(), 4, "a moved pin is a miss for every metric");
+    assert_eq!(
+        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        "false"
+    );
+
+    // Re-measure: the session runs the profilers the cube admits on
+    // over its served columns. A landing moves the version, the key's
+    // other half — the next read misses, rebuilds, and the verdicts
+    // are current again.
+    let ran = session.remeasure_cube().await.unwrap();
+    assert_eq!(ran, 1, "one served date column, one judge returning temporal_profile");
+    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells again");
+    assert_eq!(cache.builds(), 6, "a moved version is a miss for every metric");
+    assert_eq!(
+        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        "true"
+    );
+
+    // A cache with no room evicts what it builds: every read rebuilds.
+    let dir = tempfile::tempdir().unwrap();
+    let tiny = CubeCache::new(0);
+    let session = cube_session_with(dir.path(), vec![("t", batch())], &glosses, Some(tiny.clone())).await;
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    assert_eq!(tiny.builds(), 4, "nothing stays under a zero cap");
 }

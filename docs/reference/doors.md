@@ -4,11 +4,11 @@ One binary, one listener, three doors:
 
 ```
 serverd --workspace <dir> [--addr <ip:port>] [--agent <id>]
-        [--row-cap <n>] [--round-wait <secs>]
+        [--row-cap <n>] [--round-wait <secs>] [--cube-cache <megabytes>]
 ```
 
 Defaults: `127.0.0.1:8080`, agent fallback id `agent`, row cap 200,
-round wait 120 s. The workspace directory holds `catalog.sqlite`, the
+round wait 120 s, cube cache 2048 MB. The workspace directory holds `catalog.sqlite`, the
 `warehouse/` (created at boot), `apps/`, and the band model's
 `weights/`. A fresh workspace receives the shipped system — the
 measurement library and the KPI kit — before any door opens.
