@@ -73,6 +73,9 @@ pub enum SessionError {
         /// read of `imports` just to learn what stood.
         context: String,
         source: Box<SessionError>,
+        /// The outcomes of the statements that stood, in order — what
+        /// a refusal must not discard: they landed.
+        landed: Vec<Outcome>,
     },
 }
 
@@ -305,50 +308,66 @@ impl Session {
         self
     }
 
-    /// Re-run the profilers the cube admits on: every function returning
-    /// `temporal_profile` over each served date column, every function
-    /// returning `dimension_relevance` over each other served column,
-    /// of every current grounding — the extractions an agent would
-    /// run, as statements of this session. A verdict already standing
-    /// at this pin serves without landing; the rest land, the version
-    /// moves, and the next cube read rebuilds with `judged_current`.
-    /// Returns how many extractions ran.
-    pub async fn remeasure_cube(&self) -> Result<usize, SessionError> {
+    /// Re-measure: re-run every measurement whose newest landing stands
+    /// at an earlier pin — each as the extraction an agent would run,
+    /// `SELECT f() FROM subject`, built from the measurement row (the
+    /// AST directly, never statement text). A voice served and marked
+    /// (SPEC.md §7) is current again; each landing moves the version,
+    /// and the next read — the witnesses, the cube — rebuilds on the
+    /// new rows. A function no longer declared, or a subject the path
+    /// grammar cannot name (a relationship), cannot re-run and stays
+    /// marked. Every runnable extraction runs; the ones the engine
+    /// refused are reported together afterwards. Returns how many
+    /// landed.
+    pub async fn remeasure(&self) -> Result<usize, SessionError> {
         use datafusion::sql::sqlparser::ast::Ident;
-        let subjects = crate::cube::admission_subjects(&self.shared).await?;
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
         let ctx = self.shared.read_context().await?;
-        let returning = |aspect: &str| -> Vec<String> {
-            ctx.functions
-                .iter()
-                .filter(|f| {
-                    f.returns.as_deref() == Some(aspect)
+        let mut stale: Vec<(String, Vec<String>)> = ctx
+            .measurements
+            .iter()
+            .filter(|r| {
+                r.get(0) == Some(dataset.as_str()) && r.get(5) != Some(ctx.pin.text.as_str())
+            })
+            .filter_map(|r| {
+                let (function, subject) = (r.get(1)?, r.get(2)?);
+                let declared = ctx.functions.iter().any(|f| {
+                    f.name == function
+                        && f.returns.is_some()
                         && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
-                })
-                .map(|f| f.name.clone())
-                .collect()
-        };
-        let (temporal, relevance) = (
-            returning("temporal_profile"),
-            returning("dimension_relevance"),
-        );
+                });
+                if !declared || subject.contains(' ') || subject.contains('(') {
+                    return None;
+                }
+                Some((
+                    function.to_string(),
+                    subject.split('.').map(str::to_string).collect(),
+                ))
+            })
+            .collect();
+        stale.sort();
         let mut ran = 0;
-        for (table, column, is_time) in subjects {
-            let functions = if is_time { &temporal } else { &relevance };
-            for function in functions {
-                // The AST directly, never statement text: a served
-                // column's name is whatever the recipe cast it as.
-                self.extract(Extract {
-                    calls: vec![Ident::new(function.clone())],
-                    subject: Subject::Path(glossql_parser::Path {
-                        segments: vec![Ident::new(table.clone()), Ident::new(column.clone())],
-                    }),
-                })
-                .await?;
-                ran += 1;
+        let mut refused = Vec::new();
+        for (function, segments) in stale {
+            let extract = Extract {
+                calls: vec![Ident::new(function.clone())],
+                subject: Subject::Path(glossql_parser::Path {
+                    segments: segments.iter().map(|s| Ident::new(s.clone())).collect(),
+                }),
+            };
+            match self.extract(extract).await {
+                Ok(_) => ran += 1,
+                Err(e) => refused.push(format!("{function}() over {}: {e}", segments.join("."))),
             }
         }
-        Ok(ran)
+        if refused.is_empty() {
+            Ok(ran)
+        } else {
+            Err(SessionError::Runtime(format!(
+                "re-measure landed {ran} and was refused on {}",
+                refused.join("; ")
+            )))
+        }
     }
 
     fn lake(&self) -> Lake {
@@ -426,6 +445,7 @@ impl Session {
                         total,
                         context: sequence_context(idx + 1, total),
                         source: Box::new(e),
+                        landed: std::mem::take(&mut outcomes),
                     });
                 }
                 Err(e) => return Err(e),

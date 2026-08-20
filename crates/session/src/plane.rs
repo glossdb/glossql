@@ -142,21 +142,30 @@ impl Plane {
         let total = statements.len();
         // A refusal names its GLOBAL place in the call: runs between
         // `USE`s report local indices, rebased here on the outcomes
-        // already standing — one outcome per completed statement.
-        let rebase = |e: SessionError, base: usize| -> SessionError {
+        // already standing — one outcome per completed statement, and
+        // those outcomes ride the refusal.
+        let rebase = |e: SessionError, mut standing: Vec<Outcome>| -> SessionError {
             if total <= 1 {
                 return e;
             }
-            let (local, source) = match e {
-                SessionError::Sequence { index, source, .. } => (index, source),
-                other => (1, Box::new(other)),
+            let base = standing.len();
+            let (local, source, mut landed) = match e {
+                SessionError::Sequence {
+                    index,
+                    source,
+                    landed,
+                    ..
+                } => (index, source, landed),
+                other => (1, Box::new(other), Vec::new()),
             };
+            standing.append(&mut landed);
             let index = base + local;
             SessionError::Sequence {
                 index,
                 total,
                 context: crate::session::sequence_context(index, total),
                 source,
+                landed: standing,
             }
         };
         let mut outcomes = Vec::with_capacity(total);
@@ -164,16 +173,15 @@ impl Plane {
         for statement in statements {
             if let Statement::Use(u) = statement {
                 if !run.is_empty() {
-                    let base = outcomes.len();
                     let session = self.session(actor.clone()).await?;
                     match session.execute_statements(std::mem::take(&mut run)).await {
                         Ok(mut o) => outcomes.append(&mut o),
-                        Err(e) => return Err(rebase(e, base)),
+                        Err(e) => return Err(rebase(e, std::mem::take(&mut outcomes))),
                     }
                 }
                 let name = u.dataset.value;
                 if let Err(e) = self.channel(actor.clone(), Some(&name)).await {
-                    return Err(rebase(e, outcomes.len()));
+                    return Err(rebase(e, std::mem::take(&mut outcomes)));
                 }
                 self.current
                     .write()
@@ -185,11 +193,10 @@ impl Plane {
             }
         }
         if !run.is_empty() {
-            let base = outcomes.len();
             let session = self.session(actor).await?;
             match session.execute_statements(run).await {
                 Ok(mut o) => outcomes.append(&mut o),
-                Err(e) => return Err(rebase(e, base)),
+                Err(e) => return Err(rebase(e, std::mem::take(&mut outcomes))),
             }
         }
         Ok(outcomes)

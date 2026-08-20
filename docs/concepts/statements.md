@@ -41,8 +41,8 @@ actor rides the connection and the engine stamps every statement
   (subject, aspect) with the precedence pick, band, score, and a
   `state` that makes every gap visible — `unassessed`, `contested`,
   `current`, `stale`. Absence is a visible row, never an omission.
-- `GLOSSARY(subject, all => true)` — the raw read: every current slot
-  side by side; precedence is the reader's business.
+- `GLOSSARY(subject, all => true)` — the raw read: every slot side by
+  side, marked `current`; precedence is the reader's business.
 - `ATTEST(subject)` — the verdict surface: band and score per witness.
 - `SELECT f() FROM subject` — extraction: runs a measurement at the
   read's pin ([functions](functions.md)).

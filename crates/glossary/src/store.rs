@@ -56,6 +56,11 @@ pub struct ReadContext {
     /// The store, resolved once with the pin: one statement, one read of
     /// every relation — the rules below do no IO of their own.
     pub glossary: std::sync::Arc<Vec<GlossRow>>,
+    /// Every (function, subject)'s newest landing in the dataset,
+    /// whatever its pin — the serve-and-mark rule (SPEC.md §7): a voice
+    /// from an earlier pin still serves, and the pin column says so.
+    /// [`Store::measurement_in`] is the pin-exact lookup extraction
+    /// serves a repeat from.
     pub measurements: std::sync::Arc<Vec<glossql_catalog::Row>>,
     pub functions: std::sync::Arc<Vec<FunctionRow>>,
     pub witnesses: std::sync::Arc<Vec<WitnessRow>>,
@@ -789,9 +794,9 @@ impl Store {
     // -- reads -----------------------------------------------------------
 
     /// The current slots under a scope: gloss slots by supersession (one per
-    /// actor kind), plus the measurement slot of every returning function,
-    /// from the `measurements` relation at the read's pin. Both read
-    /// shapes build from these.
+    /// actor kind), plus the measurement slot of every returning function —
+    /// its newest landing whatever the pin, marked `current` only when
+    /// that pin is the read's. Both read shapes build from these.
     fn slots(
         dataset: &str,
         scope: &Scope,
@@ -838,6 +843,7 @@ impl Store {
                         body: g.body.clone(),
                         written_at: g.written_at.clone(),
                         snapshot_id: g.snapshot_id,
+                        current: true,
                     },
                 )
             })
@@ -865,18 +871,10 @@ impl Store {
         .map(|(.., slot)| slot)
         .collect();
 
-        // The measurement slot: each returning function's value at THIS
-        // pin. A row at another pin is unreachable here — the drift
-        // record, not a stale serving.
-        let measurements = ctx
-            .measurements
-            .iter()
-            .filter(|r| {
-                r.get(0) == Some(dataset)
-                    && r.get(5) == Some(ctx.pin.text.as_str())
-                    && r.get(2).is_some_and(|s| scope.admits(s))
-            })
-            .collect::<Vec<_>>();
+        // The measurement slot: each returning function's newest landing
+        // per subject, whatever its pin — served, and marked `current`
+        // only at its own. Older rows are the drift record, never
+        // served.
         let returning = ctx.functions.iter().filter_map(|f| {
             f.returns
                 .as_deref()
@@ -884,16 +882,11 @@ impl Store {
                 .map(|r| (f.name.clone(), r.to_string()))
         });
         for (f, a) in returning {
-            let per_subject = rules::latest_by(
-                measurements
-                    .iter()
-                    .copied()
-                    .filter(|r| r.get(1) == Some(f.as_str()))
-                    .collect::<Vec<_>>(),
-                |r| r.get(2).map(str::to_string),
-                |r| r.seq,
-            );
-            for r in per_subject {
+            for r in ctx.measurements.iter().filter(|r| {
+                r.get(0) == Some(dataset)
+                    && r.get(1) == Some(f.as_str())
+                    && r.get(2).is_some_and(|s| scope.admits(s))
+            }) {
                 rows.push(Slot {
                     subject: text(&r.cells, 2),
                     aspect: a.clone(),
@@ -903,6 +896,7 @@ impl Store {
                     body: text(&r.cells, 6),
                     written_at: text(&r.cells, 7),
                     snapshot_id: None,
+                    current: r.get(5) == Some(ctx.pin.text.as_str()),
                 });
             }
         }
@@ -943,6 +937,7 @@ impl Store {
                 actor: s.actor,
                 body: s.body,
                 written_at: s.written_at,
+                current: s.current,
             })
             .collect()
     }
@@ -1005,13 +1000,20 @@ impl Store {
             }
             let serving = group[rules::serving(&group).expect("a group is never empty")];
             let current = table_of(&subject).and_then(|t| ctx.snapshots.get(t)).copied();
+            // Served and marked either way: a gloss whose table moved
+            // on, or a voice landed at an earlier pin.
+            let state = if serving.current {
+                rules::state(serving.snapshot_id, current)
+            } else {
+                "stale"
+            };
             rows.push(CollapsedRow {
                 subject,
                 aspect,
                 value: Some(serving.body.clone()),
                 band,
                 score,
-                state: rules::state(serving.snapshot_id, current).into(),
+                state: state.into(),
             });
         }
 
@@ -1281,7 +1283,7 @@ impl Store {
         let pin = self.pin(dataset, &snapshots).await?;
         Ok(ReadContext {
             glossary: std::sync::Arc::new(self.glossary_history().await?),
-            measurements: std::sync::Arc::new(self.measurements_at(&pin).await?),
+            measurements: std::sync::Arc::new(self.measurements_newest(dataset).await?),
             functions: std::sync::Arc::new(self.functions_all().await?),
             witnesses: std::sync::Arc::new(self.witnesses_all().await?),
             sources: std::sync::Arc::new(self.sources_all().await?),
@@ -1358,11 +1360,19 @@ impl Store {
 
     /// The measurements at one pin — the digest pushed into the format's
     /// scan, so the drift record's history is never read to serve today.
-    async fn measurements_at(&self, pin: &Pin) -> Result<Vec<glossql_catalog::Row>> {
-        Ok(self
+    /// Every (function, subject)'s newest landing in the dataset,
+    /// whatever its pin — what a read context serves from. One scan of
+    /// the relation by dataset; older rows stay as the drift record.
+    async fn measurements_newest(&self, dataset: &str) -> Result<Vec<glossql_catalog::Row>> {
+        let rows = self
             .metadata
-            .scan_where("measurements", "pin_digest", &pin.digest)
-            .await?)
+            .scan_where("measurements", "dataset", dataset)
+            .await?;
+        Ok(rules::latest_by(
+            rows,
+            |r| (r.get(1).map(str::to_string), r.get(2).map(str::to_string)),
+            |r| r.seq,
+        ))
     }
 
     /// The measurement at the context's pin, newest write winning — two
@@ -1391,76 +1401,21 @@ impl Store {
             })
     }
 
-    /// The newest measurement whatever its pin, with whether it is
-    /// `current` (computed at the context's pin) — the serving rule for
-    /// surfaces that should show the last computed state marked stale
-    /// rather than go blank (the docket after any workspace
-    /// write). Recomputing stays a pull —
-    /// `SELECT <function>() FROM <dataset>` — and the flag is what
-    /// tells a reader to ask. The context already holds the current
-    /// pin's rows, so history is only scanned when nothing stands
-    /// there; a row found that way is stale by construction.
-    pub async fn measurement_latest(
-        &self,
+    /// Every subject's newest measurement by `function` — the context's
+    /// rows, each marked `current` when it stands at the context's pin.
+    /// Pure over the context: the statement already read the relation.
+    pub fn measurements_in(
         ctx: &ReadContext,
         dataset: &str,
-        subject: &str,
         function: &str,
-    ) -> Result<Option<(MeasurementRow, bool)>> {
-        if let Some(row) = Self::measurement_in(ctx, dataset, subject, function) {
-            return Ok(Some((row, true)));
-        }
-        Ok(self
-            .metadata
-            .scan_where("measurements", "function", function)
-            .await?
+    ) -> Vec<(MeasurementRow, bool)> {
+        ctx.measurements
             .iter()
-            .filter(|r| r.get(0) == Some(dataset) && r.get(2) == Some(subject))
-            .max_by_key(|r| r.seq)
+            .filter(|r| r.get(0) == Some(dataset) && r.get(1) == Some(function))
             .map(|r| {
                 (
                     MeasurementRow {
-                        subject: subject.to_string(),
-                        function: function.to_string(),
-                        body: text(&r.cells, 6),
-                        computed_at: text(&r.cells, 7),
-                    },
-                    false,
-                )
-            }))
-    }
-
-    /// Every subject's newest measurement by `function` whatever its
-    /// pin, each marked `current` when it stands at the context's pin —
-    /// [`Store::measurement_latest`]'s rule for a reader that admits on
-    /// verdicts across many subjects (the cube's axes) and must say,
-    /// per subject, whether the verdict is from this moment or an
-    /// earlier one. One scan of the relation by function name.
-    pub async fn measurements_latest(
-        &self,
-        ctx: &ReadContext,
-        dataset: &str,
-        function: &str,
-    ) -> Result<Vec<(MeasurementRow, bool)>> {
-        let rows = self
-            .metadata
-            .scan_where("measurements", "function", function)
-            .await?;
-        let mut newest: std::collections::HashMap<&str, &glossql_catalog::Row> =
-            std::collections::HashMap::new();
-        for r in rows.iter().filter(|r| r.get(0) == Some(dataset)) {
-            let Some(subject) = r.get(2) else { continue };
-            let standing = newest.entry(subject).or_insert(r);
-            if r.seq > standing.seq {
-                *standing = r;
-            }
-        }
-        Ok(newest
-            .into_iter()
-            .map(|(subject, r)| {
-                (
-                    MeasurementRow {
-                        subject: subject.to_string(),
+                        subject: text(&r.cells, 2),
                         function: function.to_string(),
                         body: text(&r.cells, 6),
                         computed_at: text(&r.cells, 7),
@@ -1468,7 +1423,7 @@ impl Store {
                     r.get(5) == Some(ctx.pin.text.as_str()),
                 )
             })
-            .collect())
+            .collect()
     }
 
     /// Land one measurement; the served row comes back so the caller

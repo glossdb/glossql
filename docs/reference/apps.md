@@ -85,13 +85,11 @@ through `empty`; a capped one gets an honest footer.
 
 The other tiles:
 
-- `<gl-chart frame="frames/x" spec="specs/x.vl.json">` — a vega-lite
-  view over the frame; the spec binds the named data source `frame`
-  and the store supplies the rows; width defaults to the container.
-  With `drill-field`, clicking a mark navigates: the clicked datum's
-  field lands in the URL under `drill-param` (default: the field
-  name), and `drill-type="date"` turns a temporal datum into the ISO
-  day — drill is navigation, the server renders the narrowed state.
+- `<gl-chart frame="frames/x" spec="specs/x.vl.json" empty="…">` — a
+  vega-lite view over the frame; the spec binds the named data source
+  `frame` and the store supplies the rows; width defaults to the
+  container. An empty frame states itself through `empty`, as
+  `gl-rows` does, instead of drawing a blank view.
 - `<gl-table frame="frames/x" rows="50">` — the frame as a plain HTML
   table, first N rows (default 50), total row count in the footer.
 - `<gl-value frame="frames/kpis" field="billings"
@@ -108,8 +106,8 @@ The other tiles:
 
 After the docket's two writes the door answers with an event, never a
 navigation: a ruling with `HX-Trigger: glossql:written`, on which the
-frame store drops its record-class caches; re-measure (the profilers
-the cube admits on, re-run over the served columns) with
+frame store drops its record-class caches; re-measure (every
+measurement standing from before the last change, re-run) with
 `glossql:remeasured, glossql:written`, on which the data-class caches
 go too — a re-measure can change the cube, a ruling cannot. Every
 connected tile refetches in place; instruments keep their DOM.

@@ -18,15 +18,16 @@
   <span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
-  {# The axes banner: the cube's numbers are always current, its axes
-     stand on the latest verdicts — judged at an earlier pin after a
-     ruling or an import. One row while that holds; the button re-runs
-     the profilers over the served columns, the record frames refetch
-     on the write event, and the next cube read rebuilds. #}
+  {# The re-measure banner: every write moves the pin, and a function
+     voice landed at an earlier pin is served and marked — the numbers
+     are current, the judged axes and the check verdicts stand on
+     those voices. One row while any does; the button re-runs them,
+     the frames refetch on the write event, and the next cube read
+     rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
       <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
-        <span class="hint">The axes of {metrics} were judged before the last change — the numbers are current, the axes may not be.</span>
+        <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>
     </template>
@@ -42,6 +43,7 @@
 
   {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
+       empty="no cells at this grain — the cube's reasons below say what it admitted; a grain finer than the metric's resolution serves nothing",
        note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing.") }}
 
   <section class="tile">
@@ -95,6 +97,7 @@
   {% if dim %}
   {{ tiles::chart(frame="frames/slices?grain=month&span=24", spec="specs/series.vl.json",
        title="By " ~ dim, chip="metric_series()",
+       empty="no member cells at this grain",
        note="One admitted dimension's members at the viewer's grain, at the grounding's own verb — the cube's member cells re-bucketed on the server; a ratio member divides its own summed halves.") }}
   {% endif %}
 
@@ -150,15 +153,16 @@
   <a href="/app/docket/p/record">Record</a>
 </nav>
 <div class="tiles">
-  {# The axes banner: the cube's numbers are always current, its axes
-     stand on the latest verdicts — judged at an earlier pin after a
-     ruling or an import. One row while that holds; the button re-runs
-     the profilers over the served columns, the record frames refetch
-     on the write event, and the next cube read rebuilds. #}
+  {# The re-measure banner: every write moves the pin, and a function
+     voice landed at an earlier pin is served and marked — the numbers
+     are current, the judged axes and the check verdicts stand on
+     those voices. One row while any does; the button re-runs them,
+     the frames refetch on the write event, and the next cube read
+     rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
       <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
-        <span class="hint">The axes of {metrics} were judged before the last change — the numbers are current, the axes may not be.</span>
+        <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>
     </template>

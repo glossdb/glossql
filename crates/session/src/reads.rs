@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use datafusion::arrow::array::{Array, ArrayRef, Float64Array, StringArray, StructArray};
+use datafusion::arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, StringArray, StructArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result as DFResult};
@@ -176,6 +176,14 @@ pub(crate) async fn verdicts(
         if slots.is_empty() {
             continue;
         }
+        // Served and marked: a verdict is current when every voice it
+        // read stands at this pin — a voice landed at an earlier one
+        // still speaks, and the attest row says so.
+        let mut current: std::collections::HashMap<String, bool> = Default::default();
+        for s in &slots {
+            let entry = current.entry(s.subject.clone()).or_insert(true);
+            *entry &= s.current;
+        }
         let function = ctx
             .functions
             .iter()
@@ -194,15 +202,17 @@ pub(crate) async fn verdicts(
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
         for (subject, band, score) in rows {
+            let verdict = glossql_glossary::Verdict {
+                witness: w.name.clone(),
+                band,
+                score,
+                threshold: w.threshold,
+                computed_at: computed_at.clone(),
+                current: current.get(&subject).copied().unwrap_or(true),
+            };
             out.entry((subject, w.aspect.clone()))
                 .or_default()
-                .push(glossql_glossary::Verdict {
-                    witness: w.name.clone(),
-                    band,
-                    score,
-                    threshold: w.threshold,
-                    computed_at: computed_at.clone(),
-                });
+                .push(verdict);
         }
     }
     Ok(out)
@@ -304,6 +314,7 @@ fn slots_batch(rows: Vec<RawRow>) -> RecordBatch {
         utf8("witness"),
         utf8("actor"),
         utf8("speaker"),
+        Field::new("current", DataType::Boolean, false),
         utf8("written_at"),
         Field::new("body", body.data_type().clone(), true),
     ]));
@@ -328,6 +339,7 @@ fn slots_batch(rows: Vec<RawRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.speaker.as_str()),
             )),
+            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.written_at.as_str()),
             )),
@@ -824,6 +836,7 @@ async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatc
                 band: v.band,
                 score: v.score,
                 computed_at: v.computed_at,
+                current: v.current,
             })
         })
         .collect();
@@ -1047,6 +1060,7 @@ fn raw_batch(rows: Vec<RawRow>) -> RecordBatch {
         utf8("actor"),
         utf8("body"),
         utf8("written_at"),
+        Field::new("current", DataType::Boolean, false),
     ]));
     batch(
         schema,
@@ -1072,11 +1086,13 @@ fn raw_batch(rows: Vec<RawRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.written_at.as_str()),
             )),
+            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
         ],
     )
 }
 
-/// `(subject, aspect, witness, band, score, computed_at)` — §7.2.
+/// `(subject, aspect, witness, band, score, computed_at, current)` —
+/// §7.2.
 fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         utf8("subject"),
@@ -1085,6 +1101,7 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
         utf8("band"),
         Field::new("score", DataType::Float64, false),
         utf8("computed_at"),
+        Field::new("current", DataType::Boolean, false),
     ]));
     batch(
         schema,
@@ -1105,6 +1122,7 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.computed_at.as_str()),
             )),
+            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
         ],
     )
 }
@@ -1189,6 +1207,7 @@ mod detector_tests {
             body: body.to_string(),
             written_at: "2026-01-01T00:00:00.000Z".into(),
             speaker: "agent".into(),
+            current: true,
         }
     }
 
@@ -1276,12 +1295,16 @@ mod detector_tests {
         let rows = detect(RATE_TOLERANCE, slots, None).await.unwrap();
         assert_eq!(rows, vec![("v".into(), "green".into(), 0.2)]);
 
-        // The witness's THRESHOLD overrides the authored tolerance when
-        // set — the wired judgment outranks the expectation prose.
+        // The authored tolerance wins over the witness's THRESHOLD —
+        // the expectation is the record's judgment on the subject; the
+        // threshold is the witness's default for subjects without one.
         let slots = vec![
             slot("v", json!({"tolerance": 0.5})),
             slot("v", json!({"breach_rate": 0.2})),
         ];
+        let rows = detect(RATE_TOLERANCE, slots, Some(0.05)).await.unwrap();
+        assert_eq!(rows, vec![("v".into(), "green".into(), 0.2)]);
+        let slots = vec![slot("v", json!({"tolerance": null, "breach_rate": 0.2}))];
         let rows = detect(RATE_TOLERANCE, slots, Some(0.05)).await.unwrap();
         assert_eq!(rows, vec![("v".into(), "red".into(), 0.2)]);
     }

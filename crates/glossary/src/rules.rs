@@ -45,6 +45,10 @@ pub struct Slot {
     pub body: String,
     pub written_at: String,
     pub snapshot_id: Option<i64>,
+    /// Whether the slot stands at the read's pin. A gloss always does;
+    /// a function voice is the newest landing whatever its pin, and
+    /// says here when that pin is an earlier one — served and marked.
+    pub current: bool,
 }
 
 /// **Supersession.** Of rows sharing a key, the one written last stands;
@@ -191,6 +195,7 @@ mod tests {
             body: body.into(),
             written_at: "2026-08-17".into(),
             snapshot_id: None,
+            current: true,
         }
     }
 

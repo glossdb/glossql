@@ -42,7 +42,7 @@
 //! row names the bucketed dimensions so `'other'` is never read as a
 //! business member.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -71,9 +71,8 @@ const DIMS_CAP: usize = 4;
 const MEMBERS_CAP: i64 = 24;
 
 /// The one refusal every judged reader shares.
-const NO_JUDGED_TIME: &str = "no judged time column: no served date column carries a current \
-     temporal_profile with a named cadence — run temporal() over the \
-     metric's date column first";
+const NO_JUDGED_TIME: &str = "no judged time column: no served date column carries an applicable \
+     temporal_profile — run temporal() over the metric's date column first";
 
 /// A calendar resolution — the rungs of the ladder, finest first, and
 /// the grains a read may ask for. Ordered, so the coarser of two is
@@ -119,7 +118,7 @@ impl Resolution {
     /// A judged cadence (`temporal_profile.granularity`) as a
     /// resolution. `second` is finer than the finest rung, so it reads
     /// as the finest and the floor decides; `irregular` and `unknown`
-    /// name no cadence and never anchor a periodic series.
+    /// name no cadence — such a column anchors at the floor.
     fn cadence(granularity: &str) -> Option<Resolution> {
         match granularity {
             "second" => Some(Resolution::Minute),
@@ -301,24 +300,23 @@ struct Judged {
 
 /// One measurement aspect's verdicts: the newest landing per subject
 /// by any function returning the aspect, whatever its pin, marked
-/// current when it stands at this one. Only functions speak on a
-/// measurement aspect (SPEC.md §5.2), so there is no collapse to run;
-/// what this decides is reachability, and the rule is serve and mark
-/// — a verdict judged at an earlier pin still admits an axis, and the
-/// fact row says it is not current.
-async fn judged_bodies(
-    shared: &Arc<Shared>,
+/// current when it stands at this one — the read context's own serve-
+/// and-mark rule (SPEC.md §7). Only functions speak on a measurement
+/// aspect (§5.2), so there is no collapse to run; a verdict judged at
+/// an earlier pin still admits an axis, and the fact row says it is
+/// not current.
+fn judged_bodies(
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
     aspect: &str,
-) -> Result<HashMap<String, Verdict>, SessionError> {
+) -> HashMap<String, Verdict> {
     let mut out: HashMap<String, (String, Verdict)> = HashMap::new();
     let returning = rctx.functions.iter().filter(|f| {
         f.returns.as_deref() == Some(aspect)
             && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
     });
     for f in returning {
-        for (row, current) in shared.store.measurements_latest(rctx, dataset, &f.name).await? {
+        for (row, current) in glossql_glossary::Store::measurements_in(rctx, dataset, &f.name) {
             let Ok(body) = serde_json::from_str::<Value>(&row.body) else {
                 continue;
             };
@@ -330,19 +328,21 @@ async fn judged_bodies(
             }
         }
     }
-    Ok(out.into_iter().map(|(s, (_, v))| (s, v)).collect())
+    out.into_iter().map(|(s, (_, v))| (s, v)).collect()
 }
 
 /// The judged time axis over a served frame: the date column whose
-/// `temporal_profile` names a cadence, highest completeness first,
-/// schema order on a tie — with that cadence and whether the verdict
-/// is current. A column without a verdict is a gap, not a candidate.
+/// `temporal_profile` is applicable — a named cadence before none,
+/// highest completeness first, schema order on a tie — with its
+/// cadence (none for `irregular` and `unknown`, which anchor at the
+/// floor) and whether the verdict is current. A column without a
+/// verdict is a gap, not a candidate.
 fn judged_time_column(
     fields: &datafusion::common::DFSchemaRef,
     subjects: &HashMap<String, String>,
     temporal: &HashMap<String, Verdict>,
-) -> Option<(String, Resolution, bool)> {
-    let mut best: Option<(String, Resolution, bool, f64)> = None;
+) -> Option<(String, Option<Resolution>, bool)> {
+    let mut best: Option<(String, Option<Resolution>, bool, (bool, f64))> = None;
     for f in fields.fields() {
         if !crate::whatif::is_temporal(f.data_type()) {
             continue;
@@ -353,73 +353,18 @@ fn judged_time_column(
         if v.body["applicable"].as_bool() != Some(true) {
             continue;
         }
-        let Some(ratio) = v.body["completeness"]["ratio"].as_f64() else {
-            continue;
-        };
-        let Some(cadence) = v.body["granularity"].as_str().and_then(Resolution::cadence) else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(.., b)| ratio > *b) {
-            best = Some((f.name().clone(), cadence, v.current, ratio));
+        let cadence = v.body["granularity"].as_str().and_then(Resolution::cadence);
+        // A cadence-less verdict carries no completeness: it ranks
+        // below every named cadence, and by nothing among its own.
+        let rank = (
+            cadence.is_some(),
+            v.body["completeness"]["ratio"].as_f64().unwrap_or(0.0),
+        );
+        if best.as_ref().is_none_or(|(.., b)| rank > *b) {
+            best = Some((f.name().clone(), cadence, v.current, rank));
         }
     }
     best.map(|(c, r, current, _)| (c, r, current))
-}
-
-/// The subjects the cube admits on, for every current grounding: each
-/// served column's source `(table, column)` and whether it is
-/// time-typed — what a re-measure profiles (`temporal_profile` over
-/// the time-typed, `dimension_relevance` over the rest). Planned
-/// fresh; a grounding the engine refuses contributes nothing.
-pub(crate) async fn admission_subjects(
-    shared: &Arc<Shared>,
-) -> Result<Vec<(String, String, bool)>, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
-    let rctx = shared.read_context().await?;
-    let ctx = shared.session_ctx();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut out = Vec::new();
-    for slot in current_query_slots(shared, &rctx, &dataset).await? {
-        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
-            continue;
-        };
-        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(probe) = Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await else {
-            continue;
-        };
-        let fields = probe.schema();
-        let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
-        let is_ratio = has("num") && has("den");
-        let subjects = crate::provenance::served_subjects(&probe, &dataset);
-        for f in fields.fields() {
-            let n = f.name().as_str();
-            if n == "value" || (is_ratio && (n == "num" || n == "den")) {
-                continue;
-            }
-            let Some(subject) = subjects.get(n) else {
-                continue;
-            };
-            let Some((table, column)) = subject.split_once('.') else {
-                continue;
-            };
-            if seen.insert(subject.clone()) {
-                out.push((
-                    table.to_string(),
-                    column.to_string(),
-                    crate::whatif::is_temporal(f.data_type()),
-                ));
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
 }
 
 /// Every current grounding's cube, built where missing. The slots are
@@ -453,9 +398,8 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
         if judged.is_none() {
             judged = Some((
                 Judged {
-                    temporal: judged_bodies(shared, &rctx, &dataset, "temporal_profile").await?,
-                    relevance: judged_bodies(shared, &rctx, &dataset, "dimension_relevance")
-                        .await?,
+                    temporal: judged_bodies(&rctx, &dataset, "temporal_profile"),
+                    relevance: judged_bodies(&rctx, &dataset, "dimension_relevance"),
                 },
                 settings(shared, &rctx, &dataset).await?,
             ));
@@ -548,9 +492,10 @@ async fn build(
     // Whether every verdict admitted on stands at this pin — the time
     // axis now, each admitted dimension below.
     let mut judged_current = time_current;
-    // The coarser of the judged cadence and the declared floor; the
-    // window is that rung of the ladder.
-    let resolution = cadence.max(settings.floor);
+    // The coarser of the judged cadence and the declared floor — the
+    // floor alone where the verdict names no cadence; the window is
+    // that rung of the ladder.
+    let resolution = cadence.map_or(settings.floor, |c| c.max(settings.floor));
     let window = settings.windows.get(&resolution).cloned();
 
     // A ratio declares itself by serving both halves of its division —

@@ -1,15 +1,13 @@
-//! The docket's second write, a compute act: re-run the profilers the
-//! cube admits on — `temporal_profile` over the served date columns,
-//! `dimension_relevance` over the served dimension columns, of every
-//! current grounding.
+//! The docket's second write, a compute act: re-run every measurement
+//! that stands from before the last change.
 //!
-//! A measurement is reachable at its own pin and every write moves the
-//! pin, so after a ruling or an import the cube's axes stand on
-//! verdicts from an earlier moment. The numbers are current (the cube
-//! rebuilds at every pin); the axes may not be. The banner says so
-//! (`metric_axes().judged_current`), and this lands the next verdicts
-//! — the same extractions an agent would run, nothing authored: the
-//! functions speak.
+//! Every write moves the pin, and a function voice landed at an earlier
+//! pin is served and marked (SPEC.md §7): the numbers are current (the
+//! cube rebuilds at every pin); the judged axes and the check verdicts
+//! stand on those voices until they run again. The banner counts them
+//! (the raw read's `current`), and this lands the next rows — the same
+//! extractions an agent would run, nothing authored: the functions
+//! speak.
 //!
 //! The response is the write event, as the ruling's is — and it names
 //! itself: 204 with `HX-Trigger: glossql:remeasured, glossql:written`.
@@ -52,7 +50,7 @@ pub async fn remeasure(State(door): State<AppDoor>, Path(app): Path<String>) -> 
         Ok(session) => session,
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    match human.remeasure_cube().await {
+    match human.remeasure().await {
         Ok(_) => (StatusCode::NO_CONTENT, REMEASURED).into_response(),
         Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }

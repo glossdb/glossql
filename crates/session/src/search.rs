@@ -1593,6 +1593,12 @@ fn collision_shape() -> Vec<Field> {
 /// containing `(` as a crash guard and was blind to booksql's entire
 /// declared graph. Endpoints whose sides disagree in width cannot join
 /// and are skipped, like the malformed paths the script skipped.
+///
+/// A relationship within one table is a nest (recorded finer →
+/// coarser), not a join: what it asserts is that every finer value
+/// determines one coarser value. Its orphans are the rows whose finer
+/// value maps to more than one, and it carries no temporal evidence —
+/// a date pair across a table and itself says nothing.
 pub(crate) async fn relationship_checks(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,
@@ -1699,6 +1705,35 @@ pub(crate) async fn relationship_checks(
             .map_err(|e| bad(e.to_string()))?;
         let filled = int_column(&run(plan).await?, "filled").map_err(&bad)?[0];
 
+        let nest = e.ct == e.pt;
+        let orphans = if nest {
+            // The dependency, in one pass: rows per (finer, coarser),
+            // then coarser values per finer; a finer value with more
+            // than one fails, and its rows are the orphans.
+            use datafusion::functions::expr_fn::coalesce;
+            use datafusion::functions_aggregate::expr_fn::sum;
+            let keys: Vec<Expr> = e.cc.iter().chain(e.pc.iter()).map(ident).collect();
+            let finer: Vec<Expr> = e.cc.iter().map(ident).collect();
+            let plan = scan(&e.ct, &child)
+                .and_then(|b| b.filter(all_present(&e.cc).and(all_present(&e.pc))))
+                .and_then(|b| b.aggregate(keys, vec![count(lit(1)).alias("n")]))
+                .and_then(|b| {
+                    b.aggregate(
+                        finer,
+                        vec![count(lit(1)).alias("k"), sum(ident("n")).alias("n")],
+                    )
+                })
+                .and_then(|b| b.filter(ident("k").gt(lit(1))))
+                .and_then(|b| {
+                    b.aggregate(
+                        Vec::<Expr>::new(),
+                        vec![coalesce(vec![sum(ident("n")), lit(0i64)]).alias("orphans")],
+                    )
+                })
+                .and_then(|b| b.build())
+                .map_err(|e| bad(e.to_string()))?;
+            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+        } else {
         // Orphans: complete from-side keys that resolve to no to-side
         // row — the NOT IN with its null guards, as an anti join.
         let plan = scan(&e.ct, &child)
@@ -1720,7 +1755,8 @@ pub(crate) async fn relationship_checks(
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("orphans")]))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let orphans = int_column(&run(plan).await?, "orphans").map_err(&bad)?[0];
+        int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+        };
         let orphan_rate = if filled > 0 {
             orphans as f64 / filled as f64
         } else {
@@ -1737,7 +1773,7 @@ pub(crate) async fn relationship_checks(
             })
             .collect();
         let mut temporal: Vec<(usize, &(String, String), i64, i64)> = Vec::new();
-        if !pairs.is_empty() {
+        if !nest && !pairs.is_empty() {
             // Exact-name qualified columns — `col()` would normalize a
             // mixed-case name to lowercase and miss it.
             let cq = |name: &str| {

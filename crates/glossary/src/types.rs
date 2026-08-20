@@ -115,6 +115,9 @@ pub struct RawRow {
     /// Which slot spoke — `human` | `agent` | `function`. Not part of the
     /// §5.3 shape; detectors receive it in their slots document.
     pub speaker: String,
+    /// Whether the slot stands at the read's pin — false for a function
+    /// voice landed at an earlier one, which still serves (§7).
+    pub current: bool,
 }
 
 /// One row of the collapsed `GLOSSARY(subject)` read (SPEC.md §5.3).
@@ -144,6 +147,9 @@ pub struct AttestRow {
     pub band: String,
     pub score: f64,
     pub computed_at: String,
+    /// Whether every function voice the verdict read stands at the
+    /// read's pin — false when a voice was landed at an earlier one.
+    pub current: bool,
 }
 
 /// A measurement served from the `measurements` relation: one function's
@@ -199,6 +205,9 @@ pub struct Verdict {
     pub score: f64,
     pub threshold: Option<f64>,
     pub computed_at: String,
+    /// Whether every function voice in the subject's slots stands at
+    /// the read's pin.
+    pub current: bool,
 }
 
 /// Verdicts keyed (subject, aspect) — the session computes them (it

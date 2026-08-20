@@ -674,6 +674,7 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         score,
         threshold: Some(threshold),
         computed_at: "t".into(),
+        current: true,
     };
     write(
         &s,

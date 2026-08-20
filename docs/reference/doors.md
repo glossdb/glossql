@@ -36,6 +36,11 @@ plain tables through the tool; skills teach the grammar and the flows.
   early, so what the agent won't see is never computed. Metadata reads
   — `GLOSSARY()`, `ATTEST()`, the store relations — are exempt: the
   map must be whole, and the store bounds it.
+- **A refusal keeps what landed.** A refused statement is a tool error
+  whose text is the refusal; in a sequence it names its place, and a
+  second block carries the outcomes of the statements that stood
+  (`{"landed": […]}`, the usual shape) — they landed, and the
+  statements after the refusal were never attempted.
 - **The question round.** While `open_questions` derives rows, calls
   that read the record carry one question each (an owed enum becomes a
   choice form, a loose assumption confirm/correct) — landings and
@@ -56,8 +61,9 @@ engine — batches encode as they arrive, memory rides one batch, no
 cap, and a client that hangs up cancels the work upstream. An error
 after bytes flowed breaks the stream, which is the truth. Everything
 else — statement sequences, declarations, writes — answers in the wire
-JSON shape; a refused statement is 422 with the reason. pyarrow reads
-the stream directly.
+JSON shape; a refused statement is 422 with the reason, and a refused
+sequence carries the outcomes of the statements that stood under
+`landed`. pyarrow reads the stream directly.
 
 ## `/app` — the app door
 

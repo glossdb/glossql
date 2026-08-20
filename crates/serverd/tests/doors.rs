@@ -278,6 +278,10 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     assert!(text.contains("statement 2 of 3 refused"), "{text}");
     assert!(text.contains("statement 1 landed"), "{text}");
     assert!(text.contains("statement 3 not run"), "{text}");
+    // What landed rides beside the refusal, in the usual shape — the
+    // first statement's rows are not discarded with the second's error.
+    let landed = body["result"]["content"][1]["text"].as_str().unwrap();
+    assert!(landed.contains("\"landed\"") && landed.contains("\"a\""), "{landed}");
 
     // The connect-time brief: every initialize after
     // a call serves live counts in its instructions — an agent

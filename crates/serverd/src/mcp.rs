@@ -884,6 +884,9 @@ impl ServerHandler for GlossqlMcp {
         // (GLOSSARY(), ATTEST(), the store relations) are exempt from
         // the cap: the map must be whole,
         // and the store bounds it. Everything else runs through execute.
+        // What a refused sequence had already landed rides beside the
+        // refusal, in the usual shape — the writes stood.
+        let mut landed_json: Option<serde_json::Value> = None;
         let rendered = match session.query_stream(statements).await {
             Ok(query) => {
                 let cap = if query.metadata_only {
@@ -899,7 +902,14 @@ impl ServerHandler for GlossqlMcp {
             // actor's channel there, never rebinds a session.
             Err(SessionError::NotOneRead) => match self.plane.execute(actor, statements).await {
                 Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
-                Err(e) => Err(e.to_string()),
+                Err(e) => {
+                    if let SessionError::Sequence { landed, .. } = &e
+                        && !landed.is_empty()
+                    {
+                        landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
+                    }
+                    Err(e.to_string())
+                }
             },
             Err(e) => Err(e.to_string()),
         };
@@ -943,6 +953,11 @@ impl ServerHandler for GlossqlMcp {
             Err(e) => {
                 println!("glossql !! {id}: {e}");
                 let mut blocks = vec![ContentBlock::text(e)];
+                if let Some(landed) = landed_json {
+                    blocks.push(ContentBlock::text(
+                        serde_json::json!({ "landed": landed }).to_string(),
+                    ));
+                }
                 if let Some(brief) = brief_moved {
                     blocks.push(ContentBlock::text(brief));
                 }

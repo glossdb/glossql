@@ -653,8 +653,10 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
     // column rides along with no verdict landed. Schema order would
     // anchor the series on `signed` (one period instead of thirty) and
     // cardinality would admit `channel`; the judged verdicts pick
-    // `date` — irregular never anchors, and among named cadences the
-    // higher completeness wins — and `region` alone.
+    // `date` — a named cadence ranks before an irregular verdict, and
+    // among named cadences the higher completeness wins — and
+    // `region` alone. Served alone, the irregular column anchors at
+    // the floor.
     let (mut signed, mut booked, mut dates, mut values, mut regions, mut channels) = (
         Vec::new(),
         Vec::new(),
@@ -705,11 +707,13 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         &[
             r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT raw WITH $${"title": "Raw"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT signings WITH $${"title": "Signings"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS revenue ON fin AS $${"sql": "SELECT signed, booked, date, value, region, channel FROM lines"}$$;"#,
             r#"GLOSS raw ON fin AS $${"sql": "SELECT date, value FROM bare"}$$;"#,
+            r#"GLOSS signings ON fin AS $${"sql": "SELECT signed, value FROM lines"}$$;"#,
             // The attribute date carries a verdict too — irregular, no
             // completeness — proving a landed verdict without a named
-            // cadence never anchors, not merely an absent one.
+            // cadence ranks below one, not merely an absent one.
             "SELECT judge_time() FROM lines.signed;",
             "SELECT judge_time() FROM lines.booked;",
             "SELECT judge_time() FROM lines.date;",
@@ -742,6 +746,17 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         .await,
         "region"
     );
+
+    // the irregular column alone anchors at the floor: day cells over
+    // the day rung — twenty-eight signing days, not one month
+    let floor = grid(
+        &session,
+        "SELECT resolution, window, (SELECT count(*) FROM metric_series() \
+         WHERE metric = 'signings' AND dimension = '') AS n \
+         FROM metric_axes() WHERE metric = 'signings';",
+    )
+    .await;
+    assert!(floor.contains("| day ") && floor.contains("| 18 months ") && floor.contains("| 28 "), "{floor}");
 
     // a frame whose date column carries no verdict abstains with the
     // road out — in the fact row, and with no cells
@@ -980,9 +995,8 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
 
     // A gloss moves the pin: the next read misses and rebuilds. No
     // dump, no invalidation — a complete key. The verdicts were judged
-    // at the old pin; a measurement is reachable at its own pin, so
-    // the rebuild admits on the newest landed ones and marks them —
-    // the numbers are current, the axes say they may not be.
+    // at the old pin and are served and marked, so the rebuild admits
+    // on them — the numbers are current, the axes say they may not be.
     session
         .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
@@ -994,12 +1008,12 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
         "false"
     );
 
-    // Re-measure: the session runs the profilers the cube admits on
-    // over its served columns. A landing moves the version, the key's
+    // Re-measure: the session re-runs every measurement that stands
+    // from before the write. A landing moves the version, the key's
     // other half — the next read misses, rebuilds, and the verdicts
     // are current again.
-    let ran = session.remeasure_cube().await.unwrap();
-    assert_eq!(ran, 1, "one served date column, one judge returning temporal_profile");
+    let ran = session.remeasure().await.unwrap();
+    assert_eq!(ran, 1, "one measurement stood stale: the judge over the date column");
     near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells again");
     assert_eq!(cache.builds(), 6, "a moved version is a miss for every metric");
     assert_eq!(

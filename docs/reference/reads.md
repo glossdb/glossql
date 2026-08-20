@@ -134,10 +134,10 @@ weight plus `'other'`), `alternative`, `alternative_error`.
 Record-class: it says what the judged verdicts admitted.
 
 The verdicts are the newest landed per served column, whatever pin
-they were judged at. A measurement is reachable at its own pin and
-every write moves the pin, so after a ruling or an import the axes
-stand on verdicts from an earlier moment: the cube still builds — the
-numbers are current — and `judged_current` is false until the
-profilers run again (`temporal()` over the served date columns,
-`dimension_relevance()` over the rest; the docket's re-measure button
-does exactly that).
+they were judged at — served and marked, as every function voice is,
+and every write moves the pin. After a ruling or an import the cube
+still builds — the numbers are current — and `judged_current` is
+false until the profilers run again: `temporal()` over the served
+date columns, `dimension_relevance()` over the rest, or the docket's
+re-measure, which re-runs every measurement standing from before the
+last change.

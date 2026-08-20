@@ -42,8 +42,21 @@ pub async fn query(State(state): State<AppState>, body: String) -> Response {
                 Ok(rendered) => Json(rendered).into_response(),
                 Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),
             },
-            // The statement was refused: the body says why.
-            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+            // The statement was refused: the body says why — and what
+            // a sequence had already landed rides beside the reason.
+            Err(e) => {
+                let landed = match &e {
+                    SessionError::Sequence { landed, .. } if !landed.is_empty() => {
+                        wire::outcomes_json(landed, state.row_cap).ok()
+                    }
+                    _ => None,
+                };
+                let mut body = serde_json::json!({ "error": e.to_string() });
+                if let Some(landed) = landed {
+                    body["landed"] = landed;
+                }
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
+            }
         },
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }

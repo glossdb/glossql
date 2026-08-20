@@ -37,9 +37,10 @@ in the raw read.
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
-The raw read returns every current slot side by side —
-`(subject, aspect, kind, witness, actor, body, written_at)` —
-precedence between them is the reader's business.
+The raw read returns every slot side by side —
+`(subject, aspect, kind, witness, actor, body, written_at, current)` —
+precedence between them is the reader's business; `current` is false
+for a function voice landed at an earlier pin, served and marked.
 
 ## What this buys
 

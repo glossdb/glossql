@@ -118,7 +118,10 @@ Ordered by overlap.
 join asserts, checked against the rows: filled count, orphan count and
 rate, and child-before-parent date incoherence per temporal column
 pair. The two facts no column-shaped check can see on a
-high-cardinality key.
+high-cardinality key. A relationship within one table — a recorded
+nest, finer → coarser — is checked as a dependency: its orphans are
+the rows whose finer value maps to more than one coarser value, and
+it carries no temporal pair.
 
 ### detect_grounding_collisions → `grounding_collisions`
 

@@ -1,11 +1,13 @@
-// <gl-chart frame="frames/x" spec="specs/x.vl.json"> — a vega-lite
-// view over a stored frame. The spec binds the named data source
-// "frame"; the store supplies the rows. What the chart shows is what
-// the frame served — a window over a series is the frame's params,
-// never a re-aggregation here. On a write the chart asks the store
-// again and redraws only when the frame's promise changed — a frame
-// the write could not change keeps its entry, and the identical
-// promise says so.
+// <gl-chart frame="frames/x" spec="specs/x.vl.json" empty="…"> — a
+// vega-lite view over a stored frame. The spec binds the named data
+// source "frame"; the store supplies the rows. What the chart shows is
+// what the frame served — a window over a series is the frame's
+// params, never a re-aggregation here. An empty frame states itself
+// through `empty` the way gl-rows does (absent: "nothing here";
+// `empty=""`: silent) instead of drawing a blank view. On a write the
+// chart asks the store again and redraws only when the frame's
+// promise changed — a frame the write could not change keeps its
+// entry, and the identical promise says so.
 (function () {
   'use strict';
 
@@ -54,6 +56,24 @@
           pending,
         ]);
         if (!this.isConnected || pending !== this._rendered) return;
+        if (rows.length === 0) {
+          if (this._view) {
+            this._view.finalize();
+            this._view = null;
+          }
+          const stated = this.getAttribute('empty');
+          if (stated === '') {
+            this.replaceChildren();
+          } else {
+            const note = document.createElement('p');
+            note.className = 'rows-empty';
+            note.textContent = stated || 'nothing here';
+            this.replaceChildren(note);
+          }
+          return;
+        }
+        // The mount may have given way to a note or an error box.
+        if (!this._mount.isConnected) this.replaceChildren(this._mount);
         spec.data = { name: 'frame', values: rows };
         if (spec.width === undefined) spec.width = 'container';
         // A fresh embed per frame: the scales re-derive their domains,

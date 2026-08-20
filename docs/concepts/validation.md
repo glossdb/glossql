@@ -70,8 +70,9 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 ```
 
 The attest shape is fixed: `(subject, aspect, witness, band, score,
-computed_at)` — `band` in green | yellow | orange | red, `score` the
-disagreement in 0..1. Sweeps are WHERE clauses, never a special form;
+computed_at, current)` — `band` in green | yellow | orange | red,
+`score` the disagreement in 0..1, `current` whether every function
+voice the verdict read stands at the read's pin. Sweeps are WHERE clauses, never a special form;
 with no argument, `ATTEST()` sweeps the `USE`'d dataset.
 
 The collapsed `GLOSSARY()` read carries the same judgment as `state`:

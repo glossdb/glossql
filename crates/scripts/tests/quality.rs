@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Date32Array, Float64Array, Int64Array, RecordBatch};
+use datafusion::arrow::array::{Date32Array, Float64Array, Int64Array, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
@@ -210,10 +210,22 @@ async fn coherence_reads_what_the_declared_join_asserts() {
         })
         .chain([500, 501])
         .collect();
+    // A nest beside the join: city determines country, except that
+    // city b is filed under two countries on its last two rows.
+    let cities: Vec<&str> = (1..=20).map(|i| if i <= 10 { "a" } else { "b" }).collect();
+    let countries: Vec<&str> = (1..=20)
+        .map(|i| match i {
+            1..=10 => "X",
+            11..=18 => "Y",
+            _ => "Z",
+        })
+        .collect();
     let payments = Arc::new(Schema::new(vec![
         Field::new("payment_id", DataType::Int64, true),
         Field::new("invoice_id", DataType::Int64, true),
         Field::new("pay_date", DataType::Date32, true),
+        Field::new("city", DataType::Utf8, true),
+        Field::new("country", DataType::Utf8, true),
     ]));
     write_table(
         &root,
@@ -224,6 +236,8 @@ async fn coherence_reads_what_the_declared_join_asserts() {
                 Arc::new(Int64Array::from((1..=20).collect::<Vec<i64>>())),
                 Arc::new(Int64Array::from(pay_inv)),
                 Arc::new(Date32Array::from(pay_dates)),
+                Arc::new(StringArray::from(cities)),
+                Arc::new(StringArray::from(countries)),
             ],
         )
         .unwrap(),
@@ -247,7 +261,8 @@ async fn coherence_reads_what_the_declared_join_asserts() {
              $$SELECT * FROM read_parquet('invoices/*.parquet')$$;\n\
              DECLARE RECIPE payments ON fin FROM erp AS \
              $$SELECT * FROM read_parquet('payments/*.parquet')$$;\n\
-             DECLARE RELATIONSHIP payments.invoice_id -> invoices.invoice_id;",
+             DECLARE RELATIONSHIP payments.invoice_id -> invoices.invoice_id;\n\
+             DECLARE RELATIONSHIP payments.city -> payments.country;",
             root.display()
         ))
         .await
@@ -264,8 +279,23 @@ async fn coherence_reads_what_the_declared_join_asserts() {
     let doc: serde_json::Value = serde_json::from_str(&value).unwrap();
     assert_eq!(doc["applicable"], true);
     let rels = doc["relationships"].as_array().unwrap();
-    assert_eq!(rels.len(), 1);
-    let rel = &rels[0];
+    assert_eq!(rels.len(), 2);
+
+    // The nest is a dependency, not a join: the ten rows of city b,
+    // filed under two countries, are its orphans; no date pair is
+    // measured across a table and itself.
+    let nest = rels
+        .iter()
+        .find(|r| r["relationship"] == "payments.city -> payments.country")
+        .expect("the nest is measured");
+    assert_eq!(nest["filled"], 20);
+    assert_eq!(nest["orphans"], 10);
+    assert_eq!(nest["temporal"].as_array().unwrap().len(), 0);
+
+    let rel = rels
+        .iter()
+        .find(|r| r["relationship"] == "payments.invoice_id -> invoices.invoice_id")
+        .expect("the join is measured");
     assert_eq!(rel["filled"], 20);
     assert_eq!(rel["orphans"], 2);
     let temporal = rel["temporal"].as_array().unwrap();

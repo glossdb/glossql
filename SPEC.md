@@ -303,16 +303,19 @@ the read never hides one:
   score say how badly.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the table's snapshot moved on since the
-  write. Staleness never suppresses judgment; it shows beside it.
+  write, or the serving function voice was landed at an earlier pin (§7).
+  Staleness never suppresses judgment; it shows beside it.
 
 ```sql
 SELECT * FROM GLOSSARY(orders.amount, all => true);
 ```
 
 The raw read: one row per (subject, aspect, kind, witness) —
-`(subject, aspect, kind, witness, actor, body, written_at)` — all current
-values side by side; precedence between them is the reader's business.
-`kind` is the aspect's kind; who spoke is `actor`, under `witness`.
+`(subject, aspect, kind, witness, actor, body, written_at, current)` —
+every slot side by side; precedence between them is the reader's
+business. `kind` is the aspect's kind; who spoke is `actor`, under
+`witness`; `current` is false for a function voice landed at an earlier
+pin (§7).
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
 itself and what lies under it: a table serves its columns and every
@@ -378,9 +381,9 @@ $$;
 - **No `RETURNS` declares a detector** — role by shape. A detector is
   named only in a witness's `DETECTOR` clause. Its query plans over
   the `slots` relation — the witness's raw rows (§5.3),
-  narrowed to its aspect, with `speaker` beside them and `body` typed by
-  the slots' own JSON — and the witness `THRESHOLD` binds as
-  `$threshold`. Each returned row must satisfy the standard attest
+  narrowed to its aspect, with `speaker` and `current` beside them and
+  `body` typed by the slots' own JSON — and the witness `THRESHOLD`
+  binds as `$threshold`. Each returned row must satisfy the standard attest
   contract (§7.2) — the engine's contract, not authored.
 - A measurement receives its subject as `$subject`; a detector's
   relation carries `subject` per row, so one query answers every
@@ -417,9 +420,10 @@ land in `measurements`.
 ## 7. Witnesses
 
 A witness is declared per aspect, dataset-wide. Per (subject, aspect) it
-holds one slot per speaker: each function voice (the measurement, at the
-read's pin, of a function whose `RETURNS` names the aspect, §6), the
-agent's gloss, the human's gloss — one current value each.
+holds one slot per speaker: each function voice (the newest measurement
+of a function whose `RETURNS` names the aspect, §6 — whatever its pin,
+served and marked `current` only at the read's own), the agent's gloss,
+the human's gloss — one value each.
 
 ### 7.1 Declaration
 
@@ -454,8 +458,10 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 ```
 
 The **standard attest schema** is fixed:
-`(subject, aspect, witness, band, score, computed_at)` — `band` in
-`green | yellow | orange | red`, `score` the disagreement/entropy in 0..1.
+`(subject, aspect, witness, band, score, computed_at, current)` — `band`
+in `green | yellow | orange | red`, `score` the disagreement/entropy in
+0..1, `current` whether every function voice the verdict read stands at
+the read's pin.
 A detector's query returns the authored third of it — one
 `(subject, band, score)` row per subject — and the engine completes
 each row with the witness, its aspect, and its own clock.

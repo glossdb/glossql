@@ -19,8 +19,9 @@ extraction, and `GLOSSARY()` serves it as-is.
 - Filling a **MEASUREMENT** aspect makes the function that aspect's
   producer — exactly one function returns it.
 - Filling a **FACT** aspect makes the function a **voice**: a
-  data-grounded speaker whose landed output — the measurement at the
-  read's pin — joins the human's and agent's slots. The check half of
+  data-grounded speaker whose landed output — its newest measurement,
+  served and marked `current` only at the read's pin — joins the
+  human's and agent's slots. The check half of
   a validation is a voice ([validation](validation.md)).
 
 ```glossql
@@ -73,8 +74,8 @@ finding.
 
 A detector is named only in a witness's `DETECTOR` clause. Its query
 plans over the `slots` relation — the witness's raw rows,
-narrowed to its aspect, with `speaker` beside them and `body` typed by
-the slots' own JSON. The witness `THRESHOLD` binds as `$threshold`.
+narrowed to its aspect, with `speaker` and `current` beside them and
+`body` typed by the slots' own JSON. The witness `THRESHOLD` binds as `$threshold`.
 The query
 returns one row per subject — `subject`, `band`, `score` — and the
 engine completes the attest row with the witness, its aspect, and its

@@ -1,10 +1,13 @@
--- One row while any metric's axes stand on verdicts judged at an
--- earlier pin — the workspace has been written or re-imported since
--- the profilers ran. The numbers are current (the cube rebuilds at
--- every pin); the axes may not be. Record-class, so the banner appears
--- with the ruling that caused it and clears when re-measure lands.
+-- One row while any measurement in the dataset stands from before the
+-- last change — a function voice landed at an earlier pin, served and
+-- marked (the raw read's `current`). The numbers are current: the cube
+-- rebuilds at every pin; the judged axes and the check verdicts stand
+-- on those voices until they run again. Record-class, so the banner
+-- appears with the write that caused it and clears when re-measure
+-- lands.
 SELECT * FROM (
-  SELECT count(*) AS n,
-         arrow_cast(coalesce(string_agg(metric, ', '), ''), 'Utf8') AS metrics
-  FROM (SELECT metric FROM metric_axes() WHERE NOT judged_current ORDER BY metric)
+  SELECT sum(n) AS n,
+         arrow_cast(coalesce(string_agg(actor, ', '), ''), 'Utf8') AS functions
+  FROM (SELECT actor, count(*) AS n FROM GLOSSARY(all => true)
+        WHERE NOT current GROUP BY actor ORDER BY actor)
 ) WHERE n > 0
