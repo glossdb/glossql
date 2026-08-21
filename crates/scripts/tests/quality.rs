@@ -415,5 +415,8 @@ async fn coherence_joins_composite_endpoints() {
         .find(|t| t["child_column"] == "txn_date" && t["parent_column"] == "since")
         .expect("the date pair is measured across the tuple join");
     assert_eq!(pair["joined"], 3, "{pair}");
-    assert_eq!(pair["precedes"], 1, "the txn before its party existed: {pair}");
+    assert_eq!(
+        pair["precedes"], 1,
+        "the txn before its party existed: {pair}"
+    );
 }

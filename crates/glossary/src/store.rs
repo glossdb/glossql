@@ -14,12 +14,11 @@ use glossql_parser::{
     SourceDecl, Speaker, WitnessDecl,
 };
 
-use crate::schemas::grounding_schema;
 use crate::rules::{self, Slot, admit_grain, grain_of, rank_of};
+use crate::schemas::grounding_schema;
 use crate::types::{
     Actor, ActorKind, AspectRow, CollapsedRow, Error, FunctionRow, GlossRow, MeasurementRow,
-    RawRow,
-    RecipeAdmission, RecipeRow, Result, WitnessRow,
+    RawRow, RecipeAdmission, RecipeRow, Result, WitnessRow,
 };
 
 /// What a read sweeps over (SPEC.md §5.3, §7.2): the whole dataset, or a
@@ -149,7 +148,6 @@ pub const RELATIONS: &[Relation] = &[
         partition: &["dataset"],
         key: &[],
     },
-
     Relation {
         name: "imports",
         columns: &[
@@ -235,7 +233,6 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
     RELATIONS.iter().find(|r| r.name == name).map(|r| r.columns)
 }
 
-
 /// Where every crossed relation lives: one namespace, one table per
 /// relation. A workspace holds many datasets — that scopes rows by a
 /// `dataset` KEY column, with the physical per-dataset split supplied by
@@ -270,8 +267,7 @@ async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadat
             partition: r.partition,
         })
         .collect();
-    let relations = glossql_catalog::IcebergMetadata::open(lake, STORE_NAMESPACE, &moved)
-        .await?;
+    let relations = glossql_catalog::IcebergMetadata::open(lake, STORE_NAMESPACE, &moved).await?;
     Ok(Arc::new(relations))
 }
 
@@ -310,7 +306,6 @@ impl Store {
     pub fn lake(&self) -> Lake {
         self.lake.clone()
     }
-
 
     /// The connect-time brief's raw counts: what an agent connecting
     /// right now should know exists
@@ -381,10 +376,14 @@ impl Store {
                 .into_iter()
                 .any(|a| {
                     let body: Value = serde_json::from_str(&a.body).unwrap_or(Value::Null);
-                    body["assumptions"].as_array().into_iter().flatten().any(|ja| {
-                        ja["key"].as_str() == Some(key)
-                            && ja["confidence"].as_f64().unwrap_or(0.0) < 1.0
-                    })
+                    body["assumptions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|ja| {
+                            ja["key"].as_str() == Some(key)
+                                && ja["confidence"].as_f64().unwrap_or(0.0) < 1.0
+                        })
                 });
                 if owed {
                     rulings_owed += 1;
@@ -484,11 +483,7 @@ impl Store {
     }
 
     pub async fn recipe(&self, dataset: &str, table: &str) -> Result<Option<RecipeRow>> {
-        let Some(props) = self
-            .lake
-            .table_properties(dataset, table)
-            .await?
-        else {
+        let Some(props) = self.lake.table_properties(dataset, table).await? else {
             return Ok(None);
         };
         match (props.get(RECIPE_SOURCE_PROP), props.get(RECIPE_SQL_PROP)) {
@@ -790,19 +785,13 @@ impl Store {
             .count() as i64)
     }
 
-
     // -- reads -----------------------------------------------------------
 
     /// The current slots under a scope: gloss slots by supersession (one per
     /// actor kind), plus the measurement slot of every returning function —
     /// its newest landing whatever the pin, marked `current` only when
     /// that pin is the read's. Both read shapes build from these.
-    fn slots(
-        dataset: &str,
-        scope: &Scope,
-        aspect: Option<&str>,
-        ctx: &ReadContext,
-    ) -> Vec<Slot> {
+    fn slots(dataset: &str, scope: &Scope, aspect: Option<&str>, ctx: &ReadContext) -> Vec<Slot> {
         let source_names: std::collections::HashSet<&str> =
             ctx.sources.iter().map(|(name, _)| name.as_str()).collect();
         let source_aspects: std::collections::HashSet<&str> = ctx
@@ -999,7 +988,9 @@ impl Store {
                 continue;
             }
             let serving = group[rules::serving(&group).expect("a group is never empty")];
-            let current = table_of(&subject).and_then(|t| ctx.snapshots.get(t)).copied();
+            let current = table_of(&subject)
+                .and_then(|t| ctx.snapshots.get(t))
+                .copied();
             // Served and marked either way: a gloss whose table moved
             // on, or a voice landed at an earlier pin.
             let state = if serving.current {
@@ -1028,11 +1019,11 @@ impl Store {
             .filter(|w| aspect.is_none_or(|a| w.aspect == a))
             .map(|w| w.aspect.clone())
             .collect();
-        witnessed.extend(ctx.functions.iter().filter_map(|f| {
-            f.returns
-                .clone()
-                .filter(|r| aspect.is_none_or(|a| a == r))
-        }));
+        witnessed.extend(
+            ctx.functions
+                .iter()
+                .filter_map(|f| f.returns.clone().filter(|r| aspect.is_none_or(|a| a == r))),
+        );
         let mut grain_map: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
         let mut condition_map: std::collections::HashMap<String, (String, String)> =
@@ -1162,10 +1153,7 @@ impl Store {
     /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
     /// and `ORDER BY` used to do.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
-        let history = self
-            .metadata
-            .scan(relation.name)
-            .await?;
+        let history = self.metadata.scan(relation.name).await?;
         let key: Vec<usize> = relation
             .key
             .iter()
@@ -1215,12 +1203,7 @@ impl Store {
         if name == STORE_NAMESPACE {
             return Ok(false);
         }
-        Ok(self
-            .lake
-            .namespaces()
-            .await?
-            .iter()
-            .any(|(n, _)| n == name))
+        Ok(self.lake.namespaces().await?.iter().any(|(n, _)| n == name))
     }
 
     async fn dataset_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
@@ -1233,7 +1216,12 @@ impl Store {
             .map(|(name, props)| {
                 vec![
                     Some(name),
-                    Some(props.get(SETTINGS_PROP).cloned().unwrap_or_else(|| "{}".into())),
+                    Some(
+                        props
+                            .get(SETTINGS_PROP)
+                            .cloned()
+                            .unwrap_or_else(|| "{}".into()),
+                    ),
                 ]
             })
             .collect();
@@ -1243,19 +1231,11 @@ impl Store {
 
     async fn import_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
         let mut rows = Vec::new();
-        for (dataset, _) in self
-            .lake
-            .namespaces()
-            .await?
-        {
+        for (dataset, _) in self.lake.namespaces().await? {
             if dataset == STORE_NAMESPACE {
                 continue;
             }
-            for l in self
-                .lake
-                .landings(&dataset)
-                .await?
-            {
+            for l in self.lake.landings(&dataset).await? {
                 rows.push(vec![
                     Some(l.dataset),
                     Some(l.table),
@@ -1304,9 +1284,7 @@ impl Store {
             .store_snapshots()
             .await?
             .into_iter()
-            .map(|(t, snap)| {
-                format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string()))
-            })
+            .map(|(t, snap)| format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string())))
             .collect();
         parts.sort();
         Ok(parts.join(","))
@@ -1522,7 +1500,12 @@ impl Store {
     /// (comma-joined, lowercase), `None` when the aspect speaks to all
     /// grains.
     pub async fn aspect(&self, name: &str) -> Result<Option<(Value, String, Option<String>)>> {
-        let Some(a) = self.aspects_all().await?.into_iter().find(|a| a.name == name) else {
+        let Some(a) = self
+            .aspects_all()
+            .await?
+            .into_iter()
+            .find(|a| a.name == name)
+        else {
             return Ok(None);
         };
         let schema = serde_json::from_str(&a.schema)
@@ -1533,7 +1516,12 @@ impl Store {
     /// Resolve a function visible from `dataset` (`FOR` scope or GLOBAL,
     /// SPEC.md §6). `None` skips the visibility check.
     pub async fn function(&self, name: &str, dataset: Option<&str>) -> Result<Option<FunctionRow>> {
-        let Some(f) = self.functions_all().await?.into_iter().find(|f| f.name == name) else {
+        let Some(f) = self
+            .functions_all()
+            .await?
+            .into_iter()
+            .find(|f| f.name == name)
+        else {
             return Ok(None);
         };
         match (dataset, &f.scope_dataset) {
@@ -1695,4 +1683,3 @@ fn validate(schema: &Value, instance: &Value, which: String) -> Result<()> {
     crate::schemas::validate_instance(schema, instance)
         .map_err(|detail| Error::BodyRejected { which, detail })
 }
-

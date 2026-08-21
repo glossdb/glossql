@@ -237,7 +237,9 @@ impl IcebergMetadata {
         if catalog.table_exists(&ident).await? {
             return Ok(());
         }
-        self.lake.ensure_namespace(&self.namespace, HashMap::new()).await?;
+        self.lake
+            .ensure_namespace(&self.namespace, HashMap::new())
+            .await?;
         let fields = spec
             .columns
             .iter()
@@ -260,16 +262,12 @@ impl IcebergMetadata {
             let mut partition = UnboundPartitionSpec::builder();
             for name in spec.partition {
                 // Field ids are 1-based positions in the declared order.
-                let source = spec
-                    .columns
-                    .iter()
-                    .position(|c| c == name)
-                    .ok_or_else(|| {
-                        crate::Error::Workspace(format!(
-                            "`{}` partitions by `{name}`, which is not one of its columns",
-                            spec.name
-                        ))
-                    })?;
+                let source = spec.columns.iter().position(|c| c == name).ok_or_else(|| {
+                    crate::Error::Workspace(format!(
+                        "`{}` partitions by `{name}`, which is not one of its columns",
+                        spec.name
+                    ))
+                })?;
                 partition =
                     partition.add_partition_field(source as i32 + 1, *name, Transform::Identity)?;
             }
@@ -315,8 +313,7 @@ impl IcebergMetadata {
         self.scan_filtered(
             relation,
             Some(
-                iceberg::expr::Reference::new(column)
-                    .equal_to(iceberg::spec::Datum::string(value)),
+                iceberg::expr::Reference::new(column).equal_to(iceberg::spec::Datum::string(value)),
             ),
         )
         .await
@@ -325,7 +322,11 @@ impl IcebergMetadata {
     /// Append rows as one write. Ordering inside one append is by
     /// position, so a caller that appends two rows sharing a supersession
     /// key gets the later one.
-    pub async fn append(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()> {
+    pub async fn append(
+        &self,
+        relation: &str,
+        rows: Vec<Vec<Option<String>>>,
+    ) -> crate::Result<()> {
         if rows.is_empty() {
             return Ok(());
         }

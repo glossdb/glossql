@@ -18,11 +18,10 @@ mod types;
 pub use glossql_catalog::{Lake, Row};
 pub use rules::admit_grain;
 pub use store::{
-    BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, ReadContext,
-    Pin, Relation, Scope, Store, relation_columns,
+    BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, Pin, ReadContext,
+    Relation, Scope, Store, relation_columns,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, GlossRow, MeasurementRow,
-    RawRow, Verdict, Verdicts,
-    RecipeAdmission, RecipeRow, Result, WitnessRow,
+    RawRow, RecipeAdmission, RecipeRow, Result, Verdict, Verdicts, WitnessRow,
 };

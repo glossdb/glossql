@@ -190,11 +190,7 @@ async fn a_single_instant_and_a_non_temporal_column_abstain_their_own_ways() {
     // A column that is not a point in time abstains — and the reason
     // names the type, so a date landed as text reads as a typing gap
     // rather than a dead end.
-    let out = temporal(
-        "SELECT * FROM (VALUES (1.5), (2.5)) AS t(d)",
-        "events.d",
-    )
-    .await;
+    let out = temporal("SELECT * FROM (VALUES (1.5), (2.5)) AS t(d)", "events.d").await;
     assert_eq!(out["applicable"], json!(false));
     let reason = out["reason"].as_str().unwrap();
     assert!(

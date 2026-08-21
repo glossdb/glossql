@@ -115,7 +115,6 @@ async fn fixture(root: &std::path::Path) {
     .await;
 }
 
-
 /// The extraction's own outcome: the served body. An abstention naming
 /// missing inputs never lands, so it exists only here — a landed value
 /// also reads back through `GLOSSARY(subject::aspect)`.

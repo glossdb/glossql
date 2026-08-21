@@ -102,7 +102,11 @@ pub(crate) fn body_value(batches: &[RecordBatch]) -> Result<Value, SessionError>
     let width = batches.first().map_or(0, RecordBatch::num_columns);
     Ok(match (rows.len(), width) {
         (1, 1) => match rows.remove(0) {
-            Value::Object(mut o) => o.values_mut().next().map(Value::take).unwrap_or(Value::Null),
+            Value::Object(mut o) => o
+                .values_mut()
+                .next()
+                .map(Value::take)
+                .unwrap_or(Value::Null),
             other => other,
         },
         (1, _) => rows.remove(0),
@@ -120,7 +124,10 @@ mod tests {
 
     use super::*;
 
-    fn batch(names: &[&str], columns: Vec<Arc<dyn datafusion::arrow::array::Array>>) -> RecordBatch {
+    fn batch(
+        names: &[&str],
+        columns: Vec<Arc<dyn datafusion::arrow::array::Array>>,
+    ) -> RecordBatch {
         let fields: Vec<Field> = names
             .iter()
             .zip(&columns)
@@ -173,7 +180,10 @@ mod tests {
     fn role_by_shape_reads_the_body() {
         assert!(sql_body("SELECT 1").is_some());
         assert!(sql_body("-- a comment\nSELECT count(*) FROM t").is_some());
-        assert!(sql_body("let x = 1; x + 1").is_none(), "a script is not SQL");
+        assert!(
+            sql_body("let x = 1; x + 1").is_none(),
+            "a script is not SQL"
+        );
         assert!(sql_body("SELECT 1; SELECT 2").is_none(), "one query only");
         assert!(
             sql_body("INSERT INTO t VALUES (1)").is_none(),

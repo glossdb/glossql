@@ -159,12 +159,13 @@ impl BandModel {
             ));
         }
         let model = self.get()?;
-        let pred = compute_pool()
-            .install(|| {
-                tabicl_candle::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
-                    .predict(test, 1, &self.device)
-            })
-            .map_err(|e| e.to_string())?;
+        let pred =
+            compute_pool()
+                .install(|| {
+                    tabicl_candle::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
+                        .predict(test, 1, &self.device)
+                })
+                .map_err(|e| e.to_string())?;
         let q: Vec<f32> = pred
             .quantiles(levels)
             .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
@@ -794,7 +795,11 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// convention) under the ported gates. Returns per-convention
 /// summaries; support policy (Wilson, winner, alternatives) stays in
 /// the door.
-fn reconcile_kernel(y: &[RecordBatch], m: &[RecordBatch], terms: Vec<String>) -> ScriptResult<Value> {
+fn reconcile_kernel(
+    y: &[RecordBatch],
+    m: &[RecordBatch],
+    terms: Vec<String>,
+) -> ScriptResult<Value> {
     let k = terms.len();
     if k == 0 {
         return fail("reconcile needs at least one movement term");
@@ -951,7 +956,10 @@ fn reconcile_kernel(y: &[RecordBatch], m: &[RecordBatch], terms: Vec<String>) ->
         };
         let mut s = serde_json::Map::new();
         s.insert("convention".into(), json!(conv_names[c]));
-        s.insert("terms".into(), json!(if t2.is_some() { 2i64 } else { 1i64 }));
+        s.insert(
+            "terms".into(),
+            json!(if t2.is_some() { 2i64 } else { 1i64 }),
+        );
         s.insert("verdict".into(), json!(verdict));
         s.insert("voted".into(), json!(voted as i64));
         s.insert("winners".into(), json!(winners as i64));
@@ -1030,7 +1038,6 @@ fn reconcile_kernel(y: &[RecordBatch], m: &[RecordBatch], terms: Vec<String>) ->
         "summaries": summaries,
     }))
 }
-
 
 #[cfg(test)]
 mod band_grid_filter {

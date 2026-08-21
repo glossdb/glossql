@@ -328,4 +328,3 @@ fn struct_scalar(fields: &Fields, value: &Value) -> Result<ScalarValue> {
         .ok_or_else(|| DataFusionError::Execution("the profile decoded to nothing".into()))?;
     Ok(ScalarValue::Struct(Arc::new(StructArray::from(batch))))
 }
-

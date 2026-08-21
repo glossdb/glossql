@@ -145,8 +145,7 @@ async fn walked(session: &glossql_session::Session) -> Value {
         panic!("a value row")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
-    let text =
-        datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap();
+    let text = datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -266,7 +265,10 @@ async fn metric_bands_walks_and_reads_the_breach() {
     let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
         panic!("attest rows")
     };
-    let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a verdict");
+    let batch = batches
+        .iter()
+        .find(|b| b.num_rows() > 0)
+        .expect("a verdict");
     let text = |c: usize| {
         datafusion::arrow::util::display::array_value_to_string(batch.column(c), 0).unwrap()
     };

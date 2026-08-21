@@ -68,7 +68,6 @@ fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
         },
     )
     .unwrap()
-    
     .with_runtime(runtime())
 }
 

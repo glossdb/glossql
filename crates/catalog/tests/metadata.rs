@@ -83,7 +83,9 @@ async fn the_dataset_is_a_partition_not_a_namespace() {
     assert_eq!(spec.fields().len(), 1, "identity partition on the key");
     assert_eq!(spec.fields()[0].name, "dataset");
     assert_eq!(
-        lake.table_columns("glossql", "relationships").await.unwrap(),
+        lake.table_columns("glossql", "relationships")
+            .await
+            .unwrap(),
         vec!["dataset", "left_path", "op", "right_path"],
         "the dataset is an explicit key column, not a naming convention"
     );

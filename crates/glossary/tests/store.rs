@@ -245,8 +245,7 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
 #[tokio::test]
 async fn a_detector_is_a_function_without_returns() {
     let (_dir, s) = store().await;
-    let Declaration::Function(f) =
-        decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
+    let Declaration::Function(f) = decl("DECLARE FUNCTION vibes FOR fin AS $$#{}$$ RETURNS unit;")
     else {
         unreachable!()
     };
@@ -334,7 +333,12 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
     )
     .await
     .unwrap();
-    let rows = Store::raw_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await);
+    let rows = Store::raw_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+    );
     assert_eq!(rows.len(), 1, "agent slot holds one current value");
     assert!(
         rows[0].body.contains("EUR"),
@@ -349,7 +353,12 @@ async fn supersession_is_per_subject_aspect_actor_kind() {
     )
     .await
     .unwrap();
-    let rows = Store::raw_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await);
+    let rows = Store::raw_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+    );
     assert_eq!(rows.len(), 2, "human slot is separate");
 }
 
@@ -364,7 +373,13 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     )
     .await
     .unwrap();
-    let rows = Store::collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await, &verdicts);
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
     assert_eq!(rows.len(), 1);
     assert!(rows[0].value.as_deref().unwrap().contains("EUR"));
     assert_eq!(rows[0].state, "current");
@@ -376,7 +391,13 @@ async fn collapse_serves_by_precedence_human_over_agent() {
     )
     .await
     .unwrap();
-    let rows = Store::collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await, &verdicts);
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
     assert_eq!(rows.len(), 1);
     assert!(
         rows[0].value.as_deref().unwrap().contains("USD"),
@@ -389,8 +410,7 @@ async fn collapse_serves_by_precedence_human_over_agent() {
 #[tokio::test]
 async fn function_scope_gates_visibility() {
     let (_dir, s) = store().await;
-    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin AS $$#{}$$;"#)
-    else {
+    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION profile FOR fin AS $$#{}$$;"#) else {
         unreachable!()
     };
     s.declare_function(&f).await.unwrap();
@@ -430,16 +450,10 @@ async fn the_strike_is_parked_and_says_so() {
     // iceberg-rust 0.11, so `DELETE FROM glossary` refuses by name —
     // and anything but the glossary refuses as ever.
     let (_dir, s) = store().await;
-    let e = s
-        .forward_delete("glossary")
-        .await
-        .unwrap_err();
+    let e = s.forward_delete("glossary").await.unwrap_err();
     assert!(matches!(e, Error::StrikeParked), "{e}");
     assert!(e.to_string().contains("delete write path"), "{e}");
-    let e = s
-        .forward_delete("aspects")
-        .await
-        .unwrap_err();
+    let e = s.forward_delete("aspects").await.unwrap_err();
     assert!(matches!(e, Error::ForwardRejected(_)), "{e}");
 }
 
@@ -534,20 +548,33 @@ async fn a_condition_narrows_what_a_subject_owes() {
         };
         s.declare_witness(&w).await.unwrap();
     }
-    let uni = || vec!["orders.amount".to_string(), "orders.customer_id".to_string()];
+    let uni = || {
+        vec![
+            "orders.amount".to_string(),
+            "orders.customer_id".to_string(),
+        ]
+    };
 
     // Before any role is spoken, no column owes behavior — role is the
     // whole backlog.
-    let rows = Store::collapsed_read("fin", &Scope::Dataset, None, &s.read_context("fin", uni(), Default::default()).await.unwrap(), &Default::default());
-    assert!(
-        !rows.iter().any(|r| r.aspect == "behavior"),
-        "{rows:?}"
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Dataset,
+        None,
+        &s.read_context("fin", uni(), Default::default())
+            .await
+            .unwrap(),
+        &Default::default(),
     );
+    assert!(!rows.iter().any(|r| r.aspect == "behavior"), "{rows:?}");
 
     // role lands — measure on amount, key on customer_id — and behavior
     // is owed on the measure alone.
     for (subject, body) in [
-        ("orders.amount", r#"GLOSS role ON orders.amount AS $${"value": "measure"}$$;"#),
+        (
+            "orders.amount",
+            r#"GLOSS role ON orders.amount AS $${"value": "measure"}$$;"#,
+        ),
         (
             "orders.customer_id",
             r#"GLOSS role ON orders.customer_id AS $${"value": "key"}$$;"#,
@@ -558,7 +585,15 @@ async fn a_condition_narrows_what_a_subject_owes() {
             .await
             .unwrap();
     }
-    let rows = Store::collapsed_read("fin", &Scope::Dataset, None, &s.read_context("fin", uni(), Default::default()).await.unwrap(), &Default::default());
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Dataset,
+        None,
+        &s.read_context("fin", uni(), Default::default())
+            .await
+            .unwrap(),
+        &Default::default(),
+    );
     let behavior_states: Vec<(String, String)> = rows
         .iter()
         .filter(|r| r.aspect == "behavior")
@@ -573,10 +608,25 @@ async fn a_condition_narrows_what_a_subject_owes() {
     // A spoken slot outside its condition still serves — the condition
     // bounds disclosure, never writes.
     let g = gloss(r#"GLOSS behavior ON orders.customer_id AS $${"value": "none"}$$;"#);
-    s.gloss("fin", &agent(), "behavior", "orders.customer_id", &g.body, None)
-        .await
-        .unwrap();
-    let rows = Store::collapsed_read("fin", &Scope::Dataset, None, &s.read_context("fin", uni(), Default::default()).await.unwrap(), &Default::default());
+    s.gloss(
+        "fin",
+        &agent(),
+        "behavior",
+        "orders.customer_id",
+        &g.body,
+        None,
+    )
+    .await
+    .unwrap();
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Dataset,
+        None,
+        &s.read_context("fin", uni(), Default::default())
+            .await
+            .unwrap(),
+        &Default::default(),
+    );
     assert!(
         rows.iter().any(|r| r.aspect == "behavior"
             && r.subject == "orders.customer_id"
@@ -620,7 +670,6 @@ async fn a_condition_is_validated_at_declare() {
     s.declare_aspect(&currency).await.unwrap();
 }
 
-
 #[tokio::test]
 async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
     // `_` is LIKE's single-character wildcard, so `order_items` used to
@@ -632,7 +681,12 @@ async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
             .await
             .unwrap();
     }
-    let rows = Store::raw_read("fin", &Scope::Subject("order_items".into()), None, &rctx(&s).await);
+    let rows = Store::raw_read(
+        "fin",
+        &Scope::Subject("order_items".into()),
+        None,
+        &rctx(&s).await,
+    );
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].subject, "order_items.qty");
     let scope = Scope::Subject("order_items".into());
@@ -694,7 +748,13 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         ("orders.amount".into(), "unit".into()),
         vec![at("w_a", "green", 0.2, 0.9), at("w_b", "red", 0.7, 0.5)],
     );
-    let rows = Store::collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await, &verdicts);
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].state, "current", "{:?}", rows[0]);
     assert_eq!(rows[0].band.as_deref(), Some("red"), "{:?}", rows[0]);
@@ -714,7 +774,13 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
     )
     .await
     .unwrap();
-    let rows = Store::collapsed_read("fin", &Scope::Subject("orders.amount".into()), None, &rctx(&s).await, &verdicts);
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("orders.amount".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
     assert_eq!(rows[0].state, "contested", "{:?}", rows[0]);
     assert!(rows[0].value.is_none());
 
@@ -728,7 +794,13 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         ("invoices.total".into(), "unit".into()),
         vec![at("w_a", "yellow", 0.6, 0.9), at("w_b", "green", 0.3, 0.5)],
     );
-    let rows = Store::collapsed_read("fin", &Scope::Subject("invoices.total".into()), None, &rctx(&s).await, &verdicts);
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Subject("invoices.total".into()),
+        None,
+        &rctx(&s).await,
+        &verdicts,
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].state, "current", "{:?}", rows[0]);
     assert!(rows[0].value.as_deref().unwrap().contains("USD"));
@@ -783,7 +855,11 @@ async fn the_band_withholds_a_value_and_the_raw_score_never_does() {
         &verdicts,
     );
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].state, "current", "green never withholds: {:?}", rows[0]);
+    assert_eq!(
+        rows[0].state, "current",
+        "green never withholds: {:?}",
+        rows[0]
+    );
     assert!(rows[0].value.is_some(), "{:?}", rows[0]);
 
     // And red withholds on the band alone, with the score below the
@@ -845,7 +921,13 @@ async fn source_grain_slots_read_and_supersede_workspace_wide() {
     s.gloss("glos", &agent(), "conventions", "glos_erp", &g.body, None)
         .await
         .unwrap();
-    let rows = Store::collapsed_read("fin2", &Scope::Subject("glos_erp".into()), None, &rctx(&s).await, &Default::default());
+    let rows = Store::collapsed_read(
+        "fin2",
+        &Scope::Subject("glos_erp".into()),
+        None,
+        &rctx(&s).await,
+        &Default::default(),
+    );
     let row = rows
         .iter()
         .find(|r| r.aspect == "conventions")
@@ -859,7 +941,13 @@ async fn source_grain_slots_read_and_supersede_workspace_wide() {
     s.gloss("fin2", &agent(), "conventions", "glos_erp", &g2.body, None)
         .await
         .unwrap();
-    let rows = Store::collapsed_read("glos", &Scope::Subject("glos_erp".into()), None, &rctx(&s).await, &Default::default());
+    let rows = Store::collapsed_read(
+        "glos",
+        &Scope::Subject("glos_erp".into()),
+        None,
+        &rctx(&s).await,
+        &Default::default(),
+    );
     let row = rows.iter().find(|r| r.aspect == "conventions").unwrap();
     assert!(
         row.value.as_ref().unwrap().to_string().contains("cured"),
@@ -889,13 +977,20 @@ async fn an_unspoken_source_aspect_is_owed_on_every_declared_source() {
         unreachable!()
     };
     s.declare_aspect(&a).await.unwrap();
-    let Declaration::Witness(w) = decl("DECLARE WITNESS conventions_w ON conventions BY (AGENT, HUMAN);")
+    let Declaration::Witness(w) =
+        decl("DECLARE WITNESS conventions_w ON conventions BY (AGENT, HUMAN);")
     else {
         unreachable!()
     };
     s.declare_witness(&w).await.unwrap();
 
-    let rows = Store::collapsed_read("fin", &Scope::Dataset, None, &rctx(&s).await, &Default::default());
+    let rows = Store::collapsed_read(
+        "fin",
+        &Scope::Dataset,
+        None,
+        &rctx(&s).await,
+        &Default::default(),
+    );
     assert!(
         rows.iter().any(|r| r.subject == "glos_erp"
             && r.aspect == "conventions"
@@ -940,7 +1035,13 @@ async fn a_source_subject_is_refused_outside_source_grain() {
         .await
         .unwrap_err();
     assert!(
-        matches!(e, Error::GrainRefused { grain: "source", .. }),
+        matches!(
+            e,
+            Error::GrainRefused {
+                grain: "source",
+                ..
+            }
+        ),
         "{e}"
     );
 
@@ -957,7 +1058,9 @@ async fn a_source_subject_is_refused_outside_source_grain() {
         "{rows:?}"
     );
     assert!(
-        !rows.iter().any(|r| r.subject == "erp" && r.aspect == "entity"),
+        !rows
+            .iter()
+            .any(|r| r.subject == "erp" && r.aspect == "entity"),
         "{rows:?}"
     );
 }
@@ -999,4 +1102,3 @@ async fn a_source_named_after_its_dataset_is_still_a_source() {
         .await
         .expect("a source keeps source grain even where it spells its dataset");
 }
-

@@ -11,8 +11,7 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor,
-    visit_relations,
+    FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor, visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
 use futures::StreamExt as _;
@@ -609,8 +608,14 @@ impl Session {
             glossql_glossary::LANDING_CASTS_PROP.to_string(),
             landed.casts.to_json().to_string(),
         );
-        self.land(dataset, table, Arc::clone(&landed.schema), &landed.batches, facts)
-            .await?;
+        self.land(
+            dataset,
+            table,
+            Arc::clone(&landed.schema),
+            &landed.batches,
+            facts,
+        )
+        .await?;
         Ok((summary, cast_summary(&landed.casts)))
     }
 
@@ -770,10 +775,7 @@ impl Session {
                     })?;
                     // RETURNS lands under the aspect too: the extraction
                     // subject must sit in the aspect's declared grain.
-                    let is_source = store
-                        .source_settings(&resolved.subject)
-                        .await?
-                        .is_some();
+                    let is_source = store.source_settings(&resolved.subject).await?.is_some();
                     glossql_glossary::admit_grain(
                         &returns,
                         grains.as_deref(),

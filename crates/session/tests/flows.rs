@@ -144,9 +144,7 @@ async fn extraction_computes_once_then_serves_the_pin() {
 
     // Each compute lands one `measurements` row; a pin hit serves the
     // landed row and lands nothing.
-    let computes = || async {
-        table(&session, "SELECT count(*) AS n FROM measurements;").await
-    };
+    let computes = || async { table(&session, "SELECT count(*) AS n FROM measurements;").await };
     run(&session, "SELECT outliers() FROM fin;").await;
     assert!(computes().await.contains("| 1"), "one landing");
     run(&session, "SELECT outliers() FROM fin;").await;
@@ -157,11 +155,7 @@ async fn extraction_computes_once_then_serves_the_pin() {
 
     // Any input moving makes a new pin — a gloss moves the glossary head,
     // so the next extraction recomputes. No sweep, only a miss.
-    run(
-        &session,
-        r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#,
-    )
-    .await;
+    run(&session, r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#).await;
     run(&session, "SELECT outliers() FROM fin;").await;
     assert!(computes().await.contains("| 2"), "the moved pin recomputes");
 }
@@ -864,7 +858,11 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
     // No grounding, no rows and no facts — honest absence; nothing
     // computes, nothing lands (the cube is a query result, never a
     // measurement). The scripts suite holds the cube's own semantics.
-    let empty = table(&session, "SELECT count(*) AS n FROM metric_series(grain => 'month');").await;
+    let empty = table(
+        &session,
+        "SELECT count(*) AS n FROM metric_series(grain => 'month');",
+    )
+    .await;
     assert!(empty.contains("| 0"), "{empty}");
     let facts = table(&session, "SELECT count(*) AS n FROM metric_axes();").await;
     assert!(facts.contains("| 0"), "{facts}");
@@ -898,7 +896,10 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
         "SELECT metric, applicable, reason FROM metric_axes();",
     )
     .await;
-    assert!(facts.contains("dso") && facts.contains("false") && facts.contains("no value column"), "{facts}");
+    assert!(
+        facts.contains("dso") && facts.contains("false") && facts.contains("no value column"),
+        "{facts}"
+    );
     let empty = table(&session, "SELECT count(*) AS n FROM metric_series();").await;
     assert!(empty.contains("| 0"), "{empty}");
 

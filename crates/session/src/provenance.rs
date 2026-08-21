@@ -199,10 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn group_keys_descend_and_aggregates_do_not() {
-        let map = subjects(
-            "SELECT region, sum(amount) AS value FROM lines GROUP BY region",
-        )
-        .await;
+        let map = subjects("SELECT region, sum(amount) AS value FROM lines GROUP BY region").await;
         assert_eq!(map.get("region").unwrap(), "lines.region");
         assert!(!map.contains_key("value"));
     }

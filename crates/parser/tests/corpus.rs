@@ -76,7 +76,10 @@ fn corpus_and_spec_behave_as_tagged() {
     let root = repo_root();
     let mut all = Vec::new();
     for file in &files {
-        let rel = format!("tests/corpus/{}", file.file_name().unwrap().to_string_lossy());
+        let rel = format!(
+            "tests/corpus/{}",
+            file.file_name().unwrap().to_string_lossy()
+        );
         all.extend(blocks(
             file,
             &rel,

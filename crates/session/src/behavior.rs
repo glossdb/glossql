@@ -139,7 +139,10 @@ struct Align {
 }
 
 fn numeric_dtype(d: &str) -> bool {
-    d.starts_with("Int") || d.starts_with("UInt") || d.starts_with("Float") || d.starts_with("Decimal")
+    d.starts_with("Int")
+        || d.starts_with("UInt")
+        || d.starts_with("Float")
+        || d.starts_with("Decimal")
 }
 
 fn temporal_dtype(d: &str) -> bool {
@@ -245,7 +248,9 @@ pub(crate) async fn behavior_anchors(
         let (Some((lt, lc)), Some((rt, rc))) = (endpoint(left), endpoint(right)) else {
             continue;
         };
-        if lc.len() != rc.len() || !schemas.contains_key(lt.as_str()) || !schemas.contains_key(rt.as_str())
+        if lc.len() != rc.len()
+            || !schemas.contains_key(lt.as_str())
+            || !schemas.contains_key(rt.as_str())
         {
             continue;
         }
@@ -297,8 +302,7 @@ pub(crate) async fn behavior_anchors(
                 }
                 for (name, dtype) in &schemas[p.dst_t.as_str()] {
                     if temporal_dtype(dtype) {
-                        let label =
-                            format!("{}.{name} via {}", p.dst_t, cols_label(&p.src_cols));
+                        let label = format!("{}.{name} via {}", p.dst_t, cols_label(&p.src_cols));
                         if !axes.iter().any(|a| a.label == label) {
                             axes.push(Axis {
                                 label,
@@ -456,11 +460,8 @@ pub(crate) async fn behavior_anchors(
                         if q2.src_t != q1.dst_t || q2.dst_t == *ev {
                             continue;
                         }
-                        let e_via = Some((
-                            q1.dst_t.clone(),
-                            q1.src_cols.clone(),
-                            q1.dst_cols.clone(),
-                        ));
+                        let e_via =
+                            Some((q1.dst_t.clone(), q1.src_cols.clone(), q1.dst_cols.clone()));
                         if q2.dst_t == table {
                             aligns.push(Align {
                                 m_cols: q2.dst_cols.clone(),
@@ -471,9 +472,7 @@ pub(crate) async fn behavior_anchors(
                             continue;
                         }
                         for p in &pointers {
-                            if p.src_t == table
-                                && p.dst_t == q2.dst_t
-                                && p.dst_cols == q2.dst_cols
+                            if p.src_t == table && p.dst_t == q2.dst_t && p.dst_cols == q2.dst_cols
                             {
                                 aligns.push(Align {
                                     m_cols: p.src_cols.clone(),
@@ -499,11 +498,7 @@ pub(crate) async fn behavior_anchors(
                     .as_ref()
                     .map(|(t, _, _)| format!(">{t}"))
                     .unwrap_or_default();
-                let k = format!(
-                    "{via}{e_via}{}={}",
-                    a.m_cols.join(","),
-                    a.e_cols.join(",")
-                );
+                let k = format!("{via}{e_via}{}={}", a.m_cols.join(","), a.e_cols.join(","));
                 if !seen.contains(&k) {
                     seen.push(k);
                     deduped.push(a);
@@ -637,10 +632,7 @@ pub(crate) async fn behavior_anchors(
                             // Viability, on one probe: fewer than two
                             // entities with 4+ periods cannot clear the
                             // voting floor.
-                            let vkey = format!(
-                                "viable|{}|{alabel}|{grain}|{scope}",
-                                maxis.label
-                            );
+                            let vkey = format!("viable|{}|{alabel}|{grain}|{scope}", maxis.label);
                             if !viable_cache.contains_key(&vkey) {
                                 let vq = run(format!(
                                     "SELECT count(*) AS v FROM \
@@ -681,8 +673,7 @@ pub(crate) async fn behavior_anchors(
                             // Measure-side series, cached per (axis,
                             // entity, grain, scope); the kernel consumes
                             // the grouped result directly.
-                            let ykey =
-                                format!("{}|{alabel}|{grain}|{scope}", maxis.label);
+                            let ykey = format!("{}|{alabel}|{grain}|{scope}", maxis.label);
                             if !y_cache.contains_key(&ykey) {
                                 let yq = run(format!(
                                     "SELECT {m_e} AS e, \
@@ -702,12 +693,7 @@ pub(crate) async fn behavior_anchors(
                             // Event-side sums for every term at once.
                             let sel: String = terms_pool
                                 .iter()
-                                .map(|c| {
-                                    format!(
-                                        ", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"",
-                                        qi(c)
-                                    )
-                                })
+                                .map(|c| format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c)))
                                 .collect();
                             let mq = run(format!(
                                 "SELECT {e_e} AS e, \
@@ -723,19 +709,14 @@ pub(crate) async fn behavior_anchors(
                                 .reconcile(&yq, &mq, &terms_pool)
                                 .map_err(SessionError::Runtime)?;
                             let n_common = rec["n_common"].as_i64().unwrap_or(0);
-                            let mut summaries: Vec<Value> = rec["summaries"]
-                                .as_array()
-                                .cloned()
-                                .unwrap_or_default();
+                            let mut summaries: Vec<Value> =
+                                rec["summaries"].as_array().cloned().unwrap_or_default();
                             for s in &mut summaries {
-                                let winners =
-                                    s["winners"].as_f64().unwrap_or(0.0);
+                                let winners = s["winners"].as_f64().unwrap_or(0.0);
                                 s["support"] = json!(wilson_lcb(winners, n_common));
                             }
 
-                            anchors.push(judge_anchor(
-                                base, n_common, &summaries,
-                            ));
+                            anchors.push(judge_anchor(base, n_common, &summaries));
                         }
                     }
                 }
@@ -842,8 +823,7 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
             };
             winner = if simple.get("bic").is_some_and(|v| !v.is_null())
                 && complex.get("bic").is_some_and(|v| !v.is_null())
-                && simple["bic"].as_f64().unwrap_or(0.0)
-                    - complex["bic"].as_f64().unwrap_or(0.0)
+                && simple["bic"].as_f64().unwrap_or(0.0) - complex["bic"].as_f64().unwrap_or(0.0)
                     > 10.0
             {
                 Some(complex)
@@ -947,9 +927,8 @@ where
          FROM {from} WHERE {texpr} IS NOT NULL"
     ))
     .await?;
-    let cell = |name: &str| -> Option<i64> {
-        crate::search::int_column(&g, name).ok().map(|v| v[0])
-    };
+    let cell =
+        |name: &str| -> Option<i64> { crate::search::int_column(&g, name).ok().map(|v| v[0]) };
     Ok(match (cell("ny"), cell("nq"), cell("nm")) {
         (None, _, _) => "empty".into(),
         (Some(0), _, _) => "year".into(),

@@ -160,7 +160,8 @@ async fn settings(
     let mut windows: HashMap<Resolution, String> = Resolution::ALL
         .into_iter()
         .filter_map(|r| {
-            let w = schema["properties"]["windows"]["properties"][r.as_str()]["default"].as_str()?;
+            let w =
+                schema["properties"]["windows"]["properties"][r.as_str()]["default"].as_str()?;
             Some((r, w.to_string()))
         })
         .collect();
@@ -168,9 +169,10 @@ async fn settings(
     // agent, a witness honoured if one is ever declared on it.
     let scope = glossql_glossary::Scope::Subject(dataset.to_string());
     let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some("cube")).await?;
-    let row = glossql_glossary::Store::collapsed_read(dataset, &scope, Some("cube"), rctx, &verdicts)
-        .into_iter()
-        .find(|r| r.subject == dataset && r.aspect == "cube" && r.state == "current");
+    let row =
+        glossql_glossary::Store::collapsed_read(dataset, &scope, Some("cube"), rctx, &verdicts)
+            .into_iter()
+            .find(|r| r.subject == dataset && r.aspect == "cube" && r.state == "current");
     if let Some(body) = row
         .and_then(|r| r.value)
         .and_then(|v| serde_json::from_str::<Value>(&v).ok())
@@ -485,8 +487,8 @@ async fn build(
     settings: &Settings,
 ) -> Result<Cube, Abstain> {
     let metric = slot.aspect.as_str();
-    let body: Value =
-        serde_json::from_str(&slot.body).map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
+    let body: Value = serde_json::from_str(&slot.body)
+        .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
     let sql = body
         .get("sql")
         .and_then(Value::as_str)
@@ -546,7 +548,9 @@ async fn build(
             !crate::whatif::is_temporal(f.data_type())
         })
         .filter_map(|f| {
-            let v = subjects.get(f.name()).and_then(|s| judged.relevance.get(s))?;
+            let v = subjects
+                .get(f.name())
+                .and_then(|s| judged.relevance.get(s))?;
             if v.body["applicable"].as_bool() != Some(true) {
                 return None;
             }
@@ -564,7 +568,12 @@ async fn build(
             .enumerate()
             .map(|(i, (c, ..))| format!("count(DISTINCT \"{c}\") AS \"n_{i}\""))
             .collect();
-        let batches = run(shared, ctx, &format!("SELECT {} FROM ({sql})", parts.join(", "))).await?;
+        let batches = run(
+            shared,
+            ctx,
+            &format!("SELECT {} FROM ({sql})", parts.join(", ")),
+        )
+        .await?;
         for (i, (c, r, current)) in cand.iter().enumerate() {
             let n = int_column(&batches, &format!("n_{i}")).map_err(Abstain)?[0];
             counts.push((c.clone(), *r, n, *current));
@@ -608,7 +617,9 @@ async fn build(
                 .find(|b| b.num_rows() > 0)
                 .and_then(|b| {
                     let col = b.column_by_name("since")?;
-                    (!col.is_null(0)).then(|| array_value_to_string(col, 0).ok()).flatten()
+                    (!col.is_null(0))
+                        .then(|| array_value_to_string(col, 0).ok())
+                        .flatten()
                 })
                 .map(|t| format!("TIMESTAMP '{t}'"))
         }
@@ -616,19 +627,20 @@ async fn build(
     };
 
     let mut cells: Vec<Cell> = Vec::new();
-    let push = |cells: &mut Vec<Cell>, dimension: &str, rows: Vec<SeriesRow>, verb: &'static str| {
-        for (period, member, value, num, den) in rows {
-            cells.push(Cell {
-                dimension: dimension.to_string(),
-                member: member.unwrap_or_default(),
-                period,
-                value,
-                num,
-                den,
-                behavior: verb,
-            });
-        }
-    };
+    let push =
+        |cells: &mut Vec<Cell>, dimension: &str, rows: Vec<SeriesRow>, verb: &'static str| {
+            for (period, member, value, num, den) in rows {
+                cells.push(Cell {
+                    dimension: dimension.to_string(),
+                    member: member.unwrap_or_default(),
+                    period,
+                    value,
+                    num,
+                    den,
+                    behavior: verb,
+                });
+            }
+        };
 
     // The total series.
     let total = series(
@@ -650,9 +662,16 @@ async fn build(
         let since = since.as_deref();
         async move {
             let member = if bucketed {
-                let weight = if verb == "ratio" { "sum(den)" } else { "sum(value)" };
+                let weight = if verb == "ratio" {
+                    "sum(den)"
+                } else {
+                    "sum(value)"
+                };
                 let clause = since.map_or(String::new(), |s| {
-                    format!(" AND {} > {s}", period_expr(&format!("\"{tcol}\""), resolution))
+                    format!(
+                        " AND {} > {s}",
+                        period_expr(&format!("\"{tcol}\""), resolution)
+                    )
                 });
                 let q = format!(
                     "SELECT CAST(\"{dcol}\" AS VARCHAR) AS mc_member FROM ({sql}) \
@@ -661,12 +680,17 @@ async fn build(
                     MEMBERS_CAP - 1
                 );
                 let mut named = Vec::new();
-                for b in run(shared, ctx, &q).await?.iter().filter(|b| b.num_rows() > 0) {
+                for b in run(shared, ctx, &q)
+                    .await?
+                    .iter()
+                    .filter(|b| b.num_rows() > 0)
+                {
                     let col = b
                         .column_by_name("mc_member")
                         .ok_or_else(|| Abstain("the member pass served no mc_member".into()))?;
                     for i in 0..b.num_rows() {
-                        let m = array_value_to_string(col, i).map_err(|e| Abstain(e.to_string()))?;
+                        let m =
+                            array_value_to_string(col, i).map_err(|e| Abstain(e.to_string()))?;
                         named.push(format!("'{}'", m.replace('\'', "''")));
                     }
                 }
@@ -714,7 +738,14 @@ async fn build(
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
             match rival_series(
-                shared, ctx, alt_sql, dataset, judged, verb, resolution, since.as_deref(),
+                shared,
+                ctx,
+                alt_sql,
+                dataset,
+                judged,
+                verb,
+                resolution,
+                since.as_deref(),
             )
             .await
             {
@@ -843,7 +874,13 @@ fn period_expr(time: &str, resolution: Resolution) -> String {
 /// the period reads as sum(num)/sum(den), the summed halves beside it
 /// — the only material a coarser grain can re-derive the division
 /// from.
-fn total_sql(sql: &str, tcol: &str, verb: &str, resolution: Resolution, since: Option<&str>) -> String {
+fn total_sql(
+    sql: &str,
+    tcol: &str,
+    verb: &str,
+    resolution: Resolution,
+    since: Option<&str>,
+) -> String {
     let p = period_expr(&format!("\"{tcol}\""), resolution);
     let w = since.map_or(String::new(), |s| format!(" WHERE {p} > {s}"));
     match verb {
@@ -909,7 +946,11 @@ fn member_sql(
 
 /// Plan through the session's own pipeline and run — a refusal at
 /// either step is the metric's abstention, not the read's error.
-async fn run(shared: &Arc<Shared>, ctx: &SessionContext, sql: &str) -> Result<Vec<RecordBatch>, Abstain> {
+async fn run(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+) -> Result<Vec<RecordBatch>, Abstain> {
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
     ctx.execute_logical_plan(plan)
         .await
@@ -946,13 +987,20 @@ async fn series(
                 .map(Some)
                 .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
         };
-        let period = cast(col("period")?, &DataType::Timestamp(TimeUnit::Nanosecond, None))
-            .map_err(|e| Abstain(e.to_string()))?;
+        let period = cast(
+            col("period")?,
+            &DataType::Timestamp(TimeUnit::Nanosecond, None),
+        )
+        .map_err(|e| Abstain(e.to_string()))?;
         let period = period
             .as_any()
             .downcast_ref::<TimestampNanosecondArray>()
             .ok_or_else(|| Abstain("period did not read as a timestamp".into()))?;
-        let member = if with_member { Some(col("member")?) } else { None };
+        let member = if with_member {
+            Some(col("member")?)
+        } else {
+            None
+        };
         let value = floats("value")?.ok_or_else(|| Abstain("the series served no value".into()))?;
         let num = floats("num")?;
         let den = floats("den")?;
@@ -1023,7 +1071,9 @@ fn cells_batch(cells: &[Cell]) -> RecordBatch {
             Arc::new(TimestampNanosecondArray::from_iter_values(
                 cells.iter().map(|c| c.period),
             )),
-            Arc::new(Float64Array::from_iter_values(cells.iter().map(|c| c.value))),
+            Arc::new(Float64Array::from_iter_values(
+                cells.iter().map(|c| c.value),
+            )),
             Arc::new(Float64Array::from_iter(cells.iter().map(|c| c.num))),
             Arc::new(Float64Array::from_iter(cells.iter().map(|c| c.den))),
             Arc::new(StringArray::from_iter_values(
@@ -1051,31 +1101,42 @@ pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, Sess
     let names = "minute, hour, day, week, month, quarter, year";
     match args {
         [] => Ok(None),
-        [FunctionArg::ExprNamed {
-            name: SQLExpr::Identifier(n),
-            arg: FunctionArgExpr::Expr(v),
-            ..
-        }]
-        | [FunctionArg::Named {
-            name: n,
-            arg: FunctionArgExpr::Expr(v),
-            ..
-        }] if n.value.eq_ignore_ascii_case("grain") => match v {
+        [
+            FunctionArg::ExprNamed {
+                name: SQLExpr::Identifier(n),
+                arg: FunctionArgExpr::Expr(v),
+                ..
+            },
+        ]
+        | [
+            FunctionArg::Named {
+                name: n,
+                arg: FunctionArgExpr::Expr(v),
+                ..
+            },
+        ] if n.value.eq_ignore_ascii_case("grain") => match v {
             SQLExpr::Value(v) => match &v.value {
-                SQLValue::SingleQuotedString(s) => Resolution::parse(s).map(Some).ok_or_else(|| {
-                    refuse(format!("grain => '{s}'): a grain is one of {names}"))
-                }),
+                SQLValue::SingleQuotedString(s) => Resolution::parse(s)
+                    .map(Some)
+                    .ok_or_else(|| refuse(format!("grain => '{s}'): a grain is one of {names}"))),
                 SQLValue::Placeholder(p) => Err(refuse(format!(
                     "grain => {p}): the grain is unbound — a frame binds it from its URL, \
                      a statement spells it: grain => 'month'"
                 ))),
-                other => Err(refuse(format!("grain => {other}): the grain is a quoted name — one of {names}"))),
+                other => Err(refuse(format!(
+                    "grain => {other}): the grain is a quoted name — one of {names}"
+                ))),
             },
-            other => Err(refuse(format!("grain => {other}): the grain is a quoted name — one of {names}"))),
+            other => Err(refuse(format!(
+                "grain => {other}): the grain is a quoted name — one of {names}"
+            ))),
         },
         _ => Err(refuse(format!(
             "{}): the one argument is grain => '<grain>' — filters ride WHERE",
-            args.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            args.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         ))),
     }
 }
@@ -1105,7 +1166,8 @@ pub(crate) async fn metric_series_batch(
     if parts.is_empty() {
         return Ok(RecordBatch::new_empty(schema));
     }
-    let batch = concat_batches(&schema, &parts).map_err(|e| SessionError::Runtime(e.to_string()))?;
+    let batch =
+        concat_batches(&schema, &parts).map_err(|e| SessionError::Runtime(e.to_string()))?;
     match grain {
         None => Ok(batch),
         Some(g) => aggregate(batch, g).await,
@@ -1159,7 +1221,8 @@ async fn aggregate(cells: RecordBatch, grain: Resolution) -> Result<RecordBatch,
         let col = merged
             .column_by_name(field.name())
             .ok_or_else(|| SessionError::Runtime(format!("metric_series: no {}", field.name())))?;
-        columns.push(cast(col, field.data_type()).map_err(|e| SessionError::Runtime(e.to_string()))?);
+        columns
+            .push(cast(col, field.data_type()).map_err(|e| SessionError::Runtime(e.to_string()))?);
     }
     RecordBatch::try_new(schema, columns).map_err(|e| SessionError::Runtime(e.to_string()))
 }
@@ -1272,7 +1335,11 @@ mod tests {
         let roomy = CubeCache::new(64);
         let a = roomy.inner.get_with(key("a"), async { cube(1000) }).await;
         let again = roomy.inner.get_with(key("a"), async { cube(1) }).await;
-        assert_eq!(again.cells.num_rows(), a.cells.num_rows(), "a hit serves the entry");
+        assert_eq!(
+            again.cells.num_rows(),
+            a.cells.num_rows(),
+            "a hit serves the entry"
+        );
         assert_eq!(roomy.entries().await, 1);
 
         let tiny = CubeCache::new(0);
@@ -1314,7 +1381,10 @@ mod tests {
             Resolution::Month,
             None,
         );
-        assert!(q.contains("PARTITION BY CAST(date_trunc('month', \"d\") AS TIMESTAMP), \"r\""), "{q}");
+        assert!(
+            q.contains("PARTITION BY CAST(date_trunc('month', \"d\") AS TIMESTAMP), \"r\""),
+            "{q}"
+        );
         assert!(!q.contains(" AND "), "{q}");
     }
 }

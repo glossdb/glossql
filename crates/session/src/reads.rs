@@ -8,7 +8,9 @@
 
 use std::sync::{Arc, RwLock};
 
-use datafusion::arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, StringArray, StructArray};
+use datafusion::arrow::array::{
+    Array, ArrayRef, BooleanArray, Float64Array, StringArray, StructArray,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result as DFResult};
@@ -142,7 +144,10 @@ impl Shared {
             ctx.snapshots = snapshots;
             return Ok(ctx);
         }
-        let ctx = self.store.read_context(&dataset, universe, snapshots).await?;
+        let ctx = self
+            .store
+            .read_context(&dataset, universe, snapshots)
+            .await?;
         *self.context.write().expect("context lock") = Some(ctx.clone());
         Ok(ctx)
     }
@@ -187,9 +192,7 @@ pub(crate) async fn verdicts(
         let function = ctx
             .functions
             .iter()
-            .find(|f| {
-                f.name == detector && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
-            })
+            .find(|f| f.name == detector && f.scope_dataset.as_deref().is_none_or(|s| s == dataset))
             .cloned()
             .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
         let statement = crate::measure::sql_body(&function.script).ok_or_else(|| {
@@ -264,16 +267,21 @@ async fn run_detector(
             let array = batch
                 .column_by_name(name)
                 .expect("checked on the plan schema");
-            datafusion::arrow::compute::cast(array, to).map_err(|e| {
-                SessionError::Runtime(format!("`{detector}` output: {name} {e}"))
-            })
+            datafusion::arrow::compute::cast(array, to)
+                .map_err(|e| SessionError::Runtime(format!("`{detector}` output: {name} {e}")))
         };
         let subjects = column("subject", &DataType::Utf8)?;
         let bands = column("band", &DataType::Utf8)?;
         let scores = column("score", &DataType::Float64)?;
-        let subjects = subjects.as_any().downcast_ref::<StringArray>().expect("cast");
+        let subjects = subjects
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("cast");
         let bands = bands.as_any().downcast_ref::<StringArray>().expect("cast");
-        let scores = scores.as_any().downcast_ref::<Float64Array>().expect("cast");
+        let scores = scores
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("cast");
         for i in 0..batch.num_rows() {
             let row = json!({
                 "subject": (!subjects.is_null(i)).then(|| subjects.value(i)),
@@ -339,7 +347,9 @@ fn slots_batch(rows: Vec<RawRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.speaker.as_str()),
             )),
-            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
+            Arc::new(BooleanArray::from_iter(
+                rows.iter().map(|r| Some(r.current)),
+            )),
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.written_at.as_str()),
             )),
@@ -370,8 +380,7 @@ fn shredded_bodies(rows: &[RawRow]) -> Option<ArrayRef> {
         .ok()?;
     decoder.serialize(&values).ok()?;
     let decoded = decoder.flush().ok()??;
-    (decoded.num_rows() == rows.len())
-        .then(|| Arc::new(StructArray::from(decoded)) as ArrayRef)
+    (decoded.num_rows() == rows.len()).then(|| Arc::new(StructArray::from(decoded)) as ArrayRef)
 }
 
 #[derive(Debug)]
@@ -502,9 +511,12 @@ impl RelationPlanner for GlossqlReads {
             _ => None,
         };
         if let Some(provider) = pinned {
-            let plan =
-                LogicalPlanBuilder::scan(display_name(&relation), provider_as_source(provider), None)?
-                    .build()?;
+            let plan = LogicalPlanBuilder::scan(
+                display_name(&relation),
+                provider_as_source(provider),
+                None,
+            )?
+            .build()?;
             return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
                 plan,
                 alias.clone(),
@@ -593,7 +605,9 @@ pub(crate) async fn compute_batch(
                     door.value
                 )));
             }
-            return Ok(Some(Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?));
+            return Ok(Some(
+                Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?,
+            ));
         }
         if prefix.value.eq_ignore_ascii_case("misfit") {
             let Some(a) = args else { return Ok(None) };
@@ -604,7 +618,9 @@ pub(crate) async fn compute_batch(
                     door.value
                 )));
             }
-            return Ok(Some(Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?));
+            return Ok(Some(
+                Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?,
+            ));
         }
         return Ok(None);
     }
@@ -752,7 +768,10 @@ impl GlossqlReads {
 /// What a `read.<aspect>()` may expand: a QUERY aspect with a current
 /// collapsed grounding on the `USE`'d dataset — human outranking agent,
 /// so a pinned definition is literally what runs.
-pub(crate) async fn served_grounding(shared: &Shared, aspect: &str) -> Result<String, SessionError> {
+pub(crate) async fn served_grounding(
+    shared: &Shared,
+    aspect: &str,
+) -> Result<String, SessionError> {
     let dataset = shared
         .dataset
         .read()
@@ -773,7 +792,8 @@ pub(crate) async fn served_grounding(shared: &Shared, aspect: &str) -> Result<St
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(aspect)).await?;
-    let rows = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts);
+    let rows =
+        glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts);
     let row = rows
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == aspect && r.state != "unassessed");
@@ -810,14 +830,14 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     let aspect = aspect.as_deref();
     let ctx = shared.read_context().await?;
     if all {
-        Ok(raw_batch(
-            glossql_glossary::Store::raw_read(&dataset, &scope, aspect, &ctx),
-        ))
+        Ok(raw_batch(glossql_glossary::Store::raw_read(
+            &dataset, &scope, aspect, &ctx,
+        )))
     } else {
         let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect).await?;
-        Ok(collapsed_batch(
-            glossql_glossary::Store::collapsed_read(&dataset, &scope, aspect, &ctx, &verdicts),
-        ))
+        Ok(collapsed_batch(glossql_glossary::Store::collapsed_read(
+            &dataset, &scope, aspect, &ctx, &verdicts,
+        )))
     }
 }
 
@@ -1086,7 +1106,9 @@ fn raw_batch(rows: Vec<RawRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.written_at.as_str()),
             )),
-            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
+            Arc::new(BooleanArray::from_iter(
+                rows.iter().map(|r| Some(r.current)),
+            )),
         ],
     )
 }
@@ -1122,7 +1144,9 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.computed_at.as_str()),
             )),
-            Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.current)))),
+            Arc::new(BooleanArray::from_iter(
+                rows.iter().map(|r| Some(r.current)),
+            )),
         ],
     )
 }
@@ -1313,9 +1337,7 @@ mod detector_tests {
     async fn rate_tolerance_without_a_voice_is_yellow() {
         // The expectation stands, the check has not spoken: yellow,
         // never green.
-        let slots = vec![
-            slot("v", json!({"tolerance": 0.1, "breach_rate": null})),
-        ];
+        let slots = vec![slot("v", json!({"tolerance": 0.1, "breach_rate": null}))];
         let rows = detect(RATE_TOLERANCE, slots, None).await.unwrap();
         assert_eq!(rows, vec![("v".into(), "yellow".into(), 0.0)]);
     }

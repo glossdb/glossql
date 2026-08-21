@@ -282,7 +282,11 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
     assert_eq!(summary["voted"], 3, "{summary}");
     assert!(summary["support"].as_f64().unwrap() > 0.0, "{summary}");
     assert!(summary["anchors"].as_u64().unwrap() >= 1, "{summary}");
-    assert_eq!(summary["verdict"], moves_anchor(&balance)["verdict"], "{summary}");
+    assert_eq!(
+        summary["verdict"],
+        moves_anchor(&balance)["verdict"],
+        "{summary}"
+    );
     assert_eq!(turnover["summary"]["verdict"], "flow", "{turnover}");
     assert_eq!(noise["summary"]["verdict"], "abstain", "{noise}");
     assert_eq!(noise["summary"]["decided"], 0, "{noise}");

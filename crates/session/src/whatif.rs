@@ -62,7 +62,6 @@ struct Row {
     basis: String,
 }
 
-
 pub(crate) async fn whatif_batch(
     shared: &Arc<Shared>,
     scenario: &str,
@@ -90,7 +89,8 @@ pub(crate) async fn whatif_batch(
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(scenario)).await?;
-    let collapsed = glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts);
+    let collapsed =
+        glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts);
     let current = collapsed
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == scenario)
@@ -218,7 +218,8 @@ async fn compute(
     // where the cube anchors wherever a verdict stands.
     let judged_temporal = crate::cube::judged_bodies(&read_ctx, dataset, "temporal_profile");
     let all_verdicts = verdicts(shared, &read_ctx, dataset, &scope, None).await?;
-    let collapsed = glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
+    let collapsed =
+        glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
 
     let mut out = Vec::new();
     for c in collapsed {
@@ -344,8 +345,8 @@ async fn concept_rows(
     // observed date. `row_number() = 1` kept ONE arbitrary row — a
     // receivables grounding emitting one row per open invoice replayed
     // as 4,325 against a true 42M, and inventory as 12k against 12.4M.
-    let is_ratio = fields.iter().any(|f| f.name() == "num")
-        && fields.iter().any(|f| f.name() == "den");
+    let is_ratio =
+        fields.iter().any(|f| f.name() == "num") && fields.iter().any(|f| f.name() == "den");
     let is_stock = !is_ratio && body["behavior"].as_str() == Some("stock");
     let verb = if is_ratio {
         "ratio"
@@ -657,7 +658,10 @@ fn same_roster(a: &[(String, f64)], b: &[(String, f64)]) -> bool {
 /// The first date-typed column, the same discovery every reader does.
 /// The one temporal-column test every monthly reader shares.
 pub(crate) fn is_temporal(dt: &DataType) -> bool {
-    matches!(dt, DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _))
+    matches!(
+        dt,
+        DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _)
+    )
 }
 
 pub(crate) fn date_column(fields: &Fields) -> Option<String> {

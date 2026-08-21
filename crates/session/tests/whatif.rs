@@ -296,7 +296,9 @@ async fn a_scenario_beyond_the_recorded_history_is_refused_with_the_reason() {
     );
 }
 
-async fn session_with_sales(rows: &[(f64, i32)]) -> (tempfile::TempDir, Session, Arc<LinearKernel>) {
+async fn session_with_sales(
+    rows: &[(f64, i32)],
+) -> (tempfile::TempDir, Session, Arc<LinearKernel>) {
     let (dir, session, kernel) = session_with_kernel().await;
     run(
         &session,

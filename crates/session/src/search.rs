@@ -464,10 +464,7 @@ fn plan_count(
     provider: &Arc<dyn datafusion::catalog::TableProvider>,
 ) -> datafusion::common::Result<datafusion::logical_expr::LogicalPlan> {
     LogicalPlanBuilder::scan(table, provider_as_source(Arc::clone(provider)), None)?
-        .aggregate(
-            Vec::<Expr>::new(),
-            vec![count(lit(1)).alias("n")],
-        )?
+        .aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("n")])?
         .build()
 }
 
@@ -514,10 +511,7 @@ fn plan_colstat(
     use datafusion::logical_expr::col;
 
     plan_long(table, provider, cols, false)?
-        .aggregate(
-            vec![col("ci"), col("val")],
-            vec![count(lit(1)).alias("c")],
-        )?
+        .aggregate(vec![col("ci"), col("val")], vec![count(lit(1)).alias("c")])?
         .aggregate(
             vec![col("ci")],
             vec![
@@ -550,7 +544,9 @@ fn plan_pairs(
     use datafusion::logical_expr::col;
 
     let a = plan_long(table, provider, cols, true)?.alias("a")?;
-    let b = plan_long(table, provider, cols, true)?.alias("b")?.build()?;
+    let b = plan_long(table, provider, cols, true)?
+        .alias("b")?
+        .build()?;
     let cells = a
         .join(
             b,
@@ -653,7 +649,6 @@ fn hierarchy_shape() -> Vec<Field> {
     ]
 }
 
-
 fn derivation_shape() -> Vec<Field> {
     vec![
         Field::new("applicable", DataType::Boolean, true),
@@ -674,7 +669,10 @@ fn derivation_shape() -> Vec<Field> {
 /// A door's fixed shape, decoded from JSON rows through the format's
 /// own decoder — the same trick the profile aggregate uses, so there is
 /// no hand-built array assembly to drift.
-pub(crate) fn rows_batch(rows: Vec<Value>, fields: Vec<Field>) -> Result<RecordBatch, SessionError> {
+pub(crate) fn rows_batch(
+    rows: Vec<Value>,
+    fields: Vec<Field>,
+) -> Result<RecordBatch, SessionError> {
     let schema = Arc::new(Schema::new(fields));
     let mut decoder = arrow_json::ReaderBuilder::new(schema)
         .build_decoder()
@@ -759,7 +757,9 @@ pub(crate) async fn relationship_candidates(
     }
     let mut cols: Vec<ColShape> = Vec::new();
     for t in &tables {
-        let provider = resolved.pin(t).ok_or_else(|| bad(format!("no pin for `{t}`")))?;
+        let provider = resolved
+            .pin(t)
+            .ok_or_else(|| bad(format!("no pin for `{t}`")))?;
         let fields = provider.schema();
         if fields.fields().is_empty() {
             continue;
@@ -796,9 +796,7 @@ pub(crate) async fn relationship_candidates(
                 filled,
                 distinct,
                 unique: filled > 0 && distinct == filled,
-                key_like: filled > 0
-                    && distinct >= 2
-                    && distinct as f64 / filled as f64 >= 0.9,
+                key_like: filled > 0 && distinct >= 2 && distinct as f64 / filled as f64 >= 0.9,
             });
         }
     }
@@ -873,9 +871,9 @@ pub(crate) async fn relationship_candidates(
                 if vals.is_null(r) {
                     continue;
                 }
-                sets.entry(ci[r] as usize).or_default().insert(
-                    array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?,
-                );
+                sets.entry(ci[r] as usize)
+                    .or_default()
+                    .insert(array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?);
             }
         }
     }
@@ -971,9 +969,7 @@ pub(crate) async fn relationship_candidates(
             // product of the legs' distinct counts — a product under
             // 0.9 of the co-filled floor can never key the table.
             let floor = cols[p.k].filled.min(cols[s.k].filled);
-            if (cols[p.k].distinct as f64) * (cols[s.k].distinct as f64)
-                < 0.9 * floor as f64
-            {
+            if (cols[p.k].distinct as f64) * (cols[s.k].distinct as f64) < 0.9 * floor as f64 {
                 continue;
             }
             let key = format!(
@@ -998,7 +994,11 @@ pub(crate) async fn relationship_candidates(
                 continue;
             }
             seen.insert(key);
-            attempts.push(Attempt { p: pi, s: si, order });
+            attempts.push(Attempt {
+                p: pi,
+                s: si,
+                order,
+            });
             order += 1;
         }
     }
@@ -1020,7 +1020,13 @@ pub(crate) async fn relationship_candidates(
             to_combos.push(key);
         }
     }
-    let to_stats = combo_stats(&ctx, resolved, &format!("relationship_candidates('{dataset}')"), &to_combos).await?;
+    let to_stats = combo_stats(
+        &ctx,
+        resolved,
+        &format!("relationship_candidates('{dataset}')"),
+        &to_combos,
+    )
+    .await?;
     let to_ok = |i: usize| {
         let t = &to_stats[i];
         t.filled > 0 && t.distinct >= 2 && t.distinct as f64 / t.filled as f64 >= 0.9
@@ -1049,7 +1055,13 @@ pub(crate) async fn relationship_candidates(
             from_combos.push(key);
         }
     }
-    let from_stats = combo_stats(&ctx, resolved, &format!("relationship_candidates('{dataset}')"), &from_combos).await?;
+    let from_stats = combo_stats(
+        &ctx,
+        resolved,
+        &format!("relationship_candidates('{dataset}')"),
+        &from_combos,
+    )
+    .await?;
 
     // Phase 3, no scans: the two-leg resolution is a set intersection.
     // First passing scope per anchor, in overlap order.
@@ -1160,7 +1172,6 @@ pub(crate) async fn relationship_candidates(
     rows_batch(out, relationship_shape())
 }
 
-
 /// One combination's co-presence: how many rows carry both legs, and
 /// the distinct (a, b) pairs — probed once per combination through one
 /// union-of-distincts plan and one union of counts.
@@ -1220,20 +1231,12 @@ async fn combo_stats(
             Some(u) => u.union(arm).map_err(|e| bad(e.to_string()))?,
         });
         count_plans.push(
-            LogicalPlanBuilder::scan(
-                table.as_str(),
-                provider_as_source(provider),
-                None,
-            )
-            .and_then(|p| p.filter(both))
-            .and_then(|p| {
-                p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")])
-            })
-            .and_then(|p| {
-                p.project(vec![lit(id as i64).alias("ci"), col("c")])
-            })
-            .and_then(|p| p.build())
-            .map_err(|e| bad(e.to_string()))?,
+            LogicalPlanBuilder::scan(table.as_str(), provider_as_source(provider), None)
+                .and_then(|p| p.filter(both))
+                .and_then(|p| p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")]))
+                .and_then(|p| p.project(vec![lit(id as i64).alias("ci"), col("c")]))
+                .and_then(|p| p.build())
+                .map_err(|e| bad(e.to_string()))?,
         );
     }
     for _ in 0..combos.len() {
@@ -1393,10 +1396,11 @@ pub(crate) async fn grounding_collisions(
         else {
             continue;
         };
-        series_buckets
-            .entry(fp)
-            .or_default()
-            .push((slot.aspect.as_str(), slot.subject.as_str(), canon.as_str()));
+        series_buckets.entry(fp).or_default().push((
+            slot.aspect.as_str(),
+            slot.subject.as_str(),
+            canon.as_str(),
+        ));
     }
     let mut series_collisions: Vec<Collision> = Vec::new();
     for (fp, members) in &series_buckets {
@@ -1485,7 +1489,9 @@ async fn series_fingerprint(
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await.ok()?;
+    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql))
+        .await
+        .ok()?;
     let fields = probe.schema();
     let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
     // The same verb rule every monthly reader applies: a ratio serves
@@ -1514,7 +1520,9 @@ async fn series_fingerprint(
         "flow"
     };
     let q = monthly_sql(sql, &tcol, verb);
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await.ok()?;
+    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q))
+        .await
+        .ok()?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -1711,7 +1719,10 @@ pub(crate) async fn relationship_checks(
         let filled_expr = if let [c] = e.cc.as_slice() {
             count(ident(c))
         } else {
-            count(lit(1)).filter(all_present(&e.cc)).build().map_err(|e| bad(e.to_string()))?
+            count(lit(1))
+                .filter(all_present(&e.cc))
+                .build()
+                .map_err(|e| bad(e.to_string()))?
         };
         let plan = scan(&e.ct, &child)
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![filled_expr.alias("filled")]))
@@ -1748,28 +1759,30 @@ pub(crate) async fn relationship_checks(
                 .map_err(|e| bad(e.to_string()))?;
             int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
         } else {
-        // Orphans: complete from-side keys that resolve to no to-side
-        // row — the NOT IN with its null guards, as an anti join.
-        let plan = scan(&e.ct, &child)
-            .and_then(|b| b.filter(all_present(&e.cc)))
-            .and_then(|b| {
-                let p = scan(&e.pt, &parent)?
-                    .filter(all_present(&e.pc))?
-                    .build()?;
-                b.join(
-                    p,
-                    JoinType::LeftAnti,
-                    (
-                        e.cc.iter().map(|c| datafusion::common::Column::from_name(c)).collect::<Vec<_>>(),
-                        e.pc.iter().map(|c| datafusion::common::Column::from_name(c)).collect::<Vec<_>>(),
-                    ),
-                    None,
-                )
-            })
-            .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("orphans")]))
-            .and_then(|b| b.build())
-            .map_err(|e| bad(e.to_string()))?;
-        int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+            // Orphans: complete from-side keys that resolve to no to-side
+            // row — the NOT IN with its null guards, as an anti join.
+            let plan = scan(&e.ct, &child)
+                .and_then(|b| b.filter(all_present(&e.cc)))
+                .and_then(|b| {
+                    let p = scan(&e.pt, &parent)?.filter(all_present(&e.pc))?.build()?;
+                    b.join(
+                        p,
+                        JoinType::LeftAnti,
+                        (
+                            e.cc.iter()
+                                .map(|c| datafusion::common::Column::from_name(c))
+                                .collect::<Vec<_>>(),
+                            e.pc.iter()
+                                .map(|c| datafusion::common::Column::from_name(c))
+                                .collect::<Vec<_>>(),
+                        ),
+                        None,
+                    )
+                })
+                .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("orphans")]))
+                .and_then(|b| b.build())
+                .map_err(|e| bad(e.to_string()))?;
+            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
         };
         let orphan_rate = if filled > 0 {
             orphans as f64 / filled as f64
@@ -1790,12 +1803,8 @@ pub(crate) async fn relationship_checks(
         if !nest && !pairs.is_empty() {
             // Exact-name qualified columns — `col()` would normalize a
             // mixed-case name to lowercase and miss it.
-            let cq = |name: &str| {
-                Expr::Column(datafusion::common::Column::new(Some("c"), name))
-            };
-            let pq = |name: &str| {
-                Expr::Column(datafusion::common::Column::new(Some("p"), name))
-            };
+            let cq = |name: &str| Expr::Column(datafusion::common::Column::new(Some("c"), name));
+            let pq = |name: &str| Expr::Column(datafusion::common::Column::new(Some("p"), name));
             let mut aggs = Vec::new();
             for (k, (cd, pd)) in pairs.iter().enumerate() {
                 aggs.push(
@@ -1821,12 +1830,10 @@ pub(crate) async fn relationship_checks(
                         p,
                         JoinType::Inner,
                         (
-                            e.cc
-                                .iter()
+                            e.cc.iter()
                                 .map(|c| datafusion::common::Column::new(Some("c"), c))
                                 .collect::<Vec<_>>(),
-                            e.pc
-                                .iter()
+                            e.pc.iter()
                                 .map(|c| datafusion::common::Column::new(Some("p"), c))
                                 .collect::<Vec<_>>(),
                         ),
@@ -1985,21 +1992,19 @@ async fn run_grain(
                 .downcast_ref::<Float64Array>()
                 .cloned()
                 .map(Some)
-                .ok_or_else(|| {
-                    SessionError::Runtime(format!("{name} did not read as a number"))
-                })
+                .ok_or_else(|| SessionError::Runtime(format!("{name} did not read as a number")))
         };
         let value = float_col("value")?
             .ok_or_else(|| SessionError::Runtime("value did not read as a number".into()))?;
         let num = float_col("num")?;
         let den = float_col("den")?;
         let at = |c: &Option<Float64Array>, i: usize| {
-            c.as_ref()
-                .and_then(|c| (!c.is_null(i)).then(|| c.value(i)))
+            c.as_ref().and_then(|c| (!c.is_null(i)).then(|| c.value(i)))
         };
         for i in 0..b.num_rows() {
             out.push((
-                array_value_to_string(period, i).map_err(|e| SessionError::Runtime(e.to_string()))?,
+                array_value_to_string(period, i)
+                    .map_err(|e| SessionError::Runtime(e.to_string()))?,
                 (!value.is_null(i)).then(|| value.value(i)),
                 at(&num, i),
                 at(&den, i),
@@ -2110,8 +2115,7 @@ pub(crate) async fn metric_band_walk(
         };
         let axis_judged = judged_axis.is_some();
         let is_ratio = has("num") && has("den");
-        let is_stock = !is_ratio
-            && body.get("behavior").and_then(Value::as_str) == Some("stock");
+        let is_stock = !is_ratio && body.get("behavior").and_then(Value::as_str) == Some("stock");
         let verb = if is_ratio {
             "ratio"
         } else if is_stock {
@@ -2150,8 +2154,8 @@ pub(crate) async fn metric_band_walk(
             let lag1 = v[i - 1];
             let lo = i.saturating_sub(3);
             let present: Vec<f64> = (lo..i).filter_map(|j| v[j]).collect();
-            let lag3m = (!present.is_empty())
-                .then(|| present.iter().sum::<f64>() / present.len() as f64);
+            let lag3m =
+                (!present.is_empty()).then(|| present.iter().sum::<f64>() / present.len() as f64);
             let lag12 = if i >= 12 { v[i - 12] } else { None };
             feats.push([Some(i as f64), Some(moy), lag1, lag3m, lag12]);
             labels.push(v[i]);
@@ -2178,13 +2182,12 @@ pub(crate) async fn metric_band_walk(
                     *fill = m;
                 }
             }
-            let filled =
-                |row: &[Option<f64>; 5]| -> Vec<f64> {
-                    row.iter()
-                        .enumerate()
-                        .map(|(c, v)| v.unwrap_or(fills[c]))
-                        .collect()
-                };
+            let filled = |row: &[Option<f64>; 5]| -> Vec<f64> {
+                row.iter()
+                    .enumerate()
+                    .map(|(c, v)| v.unwrap_or(fills[c]))
+                    .collect()
+            };
             let mut train_x = Vec::new();
             let mut train_y = Vec::new();
             for r in 0..t.saturating_sub(1) {

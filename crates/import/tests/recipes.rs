@@ -66,7 +66,10 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     )
     .await
     .unwrap();
-    assert_eq!(landed.source_scans, vec![("orders/*.parquet".to_string(), 2)]);
+    assert_eq!(
+        landed.source_scans,
+        vec![("orders/*.parquet".to_string(), 2)]
+    );
     assert_eq!(landed.dropped_rows(), Some(0), "SELECT * drops nothing");
     let (schema, batches) = (landed.schema, landed.batches);
 
@@ -186,7 +189,11 @@ async fn a_multi_provider_recipe_accounts_each_source() {
         "id,customer\n1,a\n2,b\n3,a\n",
     )
     .unwrap();
-    std::fs::write(dir.path().join("customers.csv"), "customer,region\na,x\nb,y\n").unwrap();
+    std::fs::write(
+        dir.path().join("customers.csv"),
+        "customer,region\na,x\nb,y\n",
+    )
+    .unwrap();
 
     let landed = run_recipe(
         &spec("csv", dir.path()),

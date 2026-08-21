@@ -276,7 +276,10 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(fact("behavior_basis").await, "default");
     assert_eq!(fact("resolution").await, "month");
     assert_eq!(fact("window").await, "48 months");
-    assert_eq!(fact("array_to_string(dims, ',')").await, "note,region,channel");
+    assert_eq!(
+        fact("array_to_string(dims, ',')").await,
+        "note,region,channel"
+    );
     assert_eq!(fact("array_to_string(bucketed, ',')").await, "note");
     assert_eq!(fact("alternative").await, "all invoiced");
 
@@ -287,7 +290,9 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
         async move {
             number(
                 session,
-                &format!("SELECT count(*) FROM metric_series() WHERE metric = 'revenue' AND {filter};"),
+                &format!(
+                    "SELECT count(*) FROM metric_series() WHERE metric = 'revenue' AND {filter};"
+                ),
             )
             .await
         }
@@ -303,7 +308,11 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     );
     near(count("dimension = 'region'").await, 90.0, "region cells");
     near(count("dimension = 'channel'").await, 150.0, "channel cells");
-    near(count("dimension = 'alternative'").await, 30.0, "rival cells");
+    near(
+        count("dimension = 'alternative'").await,
+        30.0,
+        "rival cells",
+    );
     assert_eq!(
         cell(
             &session,
@@ -339,7 +348,11 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
 
     // The stock: no served dimensions, its own 18 months.
     assert_eq!(
-        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';").await,
+        cell(
+            &session,
+            "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';"
+        )
+        .await,
         "stock"
     );
     assert_eq!(
@@ -418,7 +431,11 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
     .await;
 
     assert_eq!(
-        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';").await,
+        cell(
+            &session,
+            "SELECT behavior FROM metric_axes() WHERE metric = 'inventory';"
+        )
+        .await,
         "stock"
     );
     // product (2 members) is a served dimension on the real context
@@ -465,7 +482,10 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
          WHERE metric = 'inventory' AND dimension = '';",
     )
     .await;
-    assert!(quarter.contains("2024-01-01T00:00:00 | 320.0 | stock"), "{quarter}");
+    assert!(
+        quarter.contains("2024-01-01T00:00:00 | 320.0 | stock"),
+        "{quarter}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -546,7 +566,11 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     .await;
 
     assert_eq!(
-        cell(&session, "SELECT behavior FROM metric_axes() WHERE metric = 'dso';").await,
+        cell(
+            &session,
+            "SELECT behavior FROM metric_axes() WHERE metric = 'dso';"
+        )
+        .await,
         "ratio"
     );
     // A ratio never consults the marker: both halves served, the
@@ -567,44 +591,84 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
         "SELECT array_to_string(dims, ',') FROM metric_axes() WHERE metric = 'dso';",
     )
     .await;
-    assert!(dims.contains("segment") && dims.contains("region"), "{dims}");
+    assert!(
+        dims.contains("segment") && dims.contains("region"),
+        "{dims}"
+    );
     assert!(!dims.contains("num") && !dims.contains("den"), "{dims}");
 
-    let at = |dimension: &'static str, member: &'static str, period: &'static str, col: &'static str| {
-        let session = &session;
-        async move {
-            number(
-                session,
-                &format!(
-                    "SELECT {col} FROM metric_series() WHERE metric = 'dso' \
+    let at =
+        |dimension: &'static str, member: &'static str, period: &'static str, col: &'static str| {
+            let session = &session;
+            async move {
+                number(
+                    session,
+                    &format!(
+                        "SELECT {col} FROM metric_series() WHERE metric = 'dso' \
                      AND dimension = '{dimension}' AND member = '{member}' \
                      AND period = TIMESTAMP '{period}';"
-                ),
-            )
-            .await
-        }
-    };
+                    ),
+                )
+                .await
+            }
+        };
 
     // The total: sum(num)/sum(den), never the 0.65 that adding the four
     // per-row ratios would give.
-    near(at("", "", "2024-01-01", "value").await, 1000.0 / 6000.0, "january total");
-    near(at("", "", "2024-02-01", "value").await, 1040.0 / 6400.0, "february total");
+    near(
+        at("", "", "2024-01-01", "value").await,
+        1000.0 / 6000.0,
+        "january total",
+    );
+    near(
+        at("", "", "2024-02-01", "value").await,
+        1040.0 / 6400.0,
+        "february total",
+    );
 
     // Each member likewise divides its own summed halves — segment A is
     // 300/2000, not the 0.3 its two region rows add up to.
-    near(at("segment", "A", "2024-01-01", "value").await, 300.0 / 2000.0, "segment A");
-    near(at("segment", "B", "2024-01-01", "value").await, 700.0 / 4000.0, "segment B");
-    near(at("region", "EMEA", "2024-01-01", "value").await, 400.0 / 3000.0, "region EMEA");
-    near(at("region", "APAC", "2024-01-01", "value").await, 600.0 / 3000.0, "region APAC");
+    near(
+        at("segment", "A", "2024-01-01", "value").await,
+        300.0 / 2000.0,
+        "segment A",
+    );
+    near(
+        at("segment", "B", "2024-01-01", "value").await,
+        700.0 / 4000.0,
+        "segment B",
+    );
+    near(
+        at("region", "EMEA", "2024-01-01", "value").await,
+        400.0 / 3000.0,
+        "region EMEA",
+    );
+    near(
+        at("region", "APAC", "2024-01-01", "value").await,
+        600.0 / 3000.0,
+        "region APAC",
+    );
 
     // Every ratio cell carries its summed halves — a coarser grain
     // re-derives the division from them, never from the ratio values.
     near(at("", "", "2024-01-01", "num").await, 1000.0, "january num");
     near(at("", "", "2024-01-01", "den").await, 6000.0, "january den");
-    near(at("segment", "A", "2024-01-01", "num").await, 300.0, "segment A num");
-    near(at("segment", "A", "2024-01-01", "den").await, 2000.0, "segment A den");
+    near(
+        at("segment", "A", "2024-01-01", "num").await,
+        300.0,
+        "segment A num",
+    );
+    near(
+        at("segment", "A", "2024-01-01", "den").await,
+        2000.0,
+        "segment A den",
+    );
     // The rival too, at its own verb.
-    near(at("alternative", "gross", "2024-01-01", "num").await, 2000.0, "rival num");
+    near(
+        at("alternative", "gross", "2024-01-01", "num").await,
+        2000.0,
+        "rival num",
+    );
     assert_eq!(
         cell(
             &session,
@@ -632,8 +696,16 @@ async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     };
     near(quarter("", "", "value").await, 2040.0 / 12400.0, "Q1 total");
     near(quarter("", "", "num").await, 2040.0, "Q1 num");
-    near(quarter("segment", "A", "value").await, 620.0 / 4200.0, "Q1 segment A");
-    near(quarter("alternative", "gross", "value").await, 4080.0 / 12400.0, "Q1 rival");
+    near(
+        quarter("segment", "A", "value").await,
+        620.0 / 4200.0,
+        "Q1 segment A",
+    );
+    near(
+        quarter("alternative", "gross", "value").await,
+        4080.0 / 12400.0,
+        "Q1 rival",
+    );
     near(
         number(
             &session,
@@ -748,7 +820,11 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
     .await;
 
     assert_eq!(
-        cell(&session, "SELECT applicable FROM metric_axes() WHERE metric = 'revenue';").await,
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'revenue';"
+        )
+        .await,
         "true"
     );
     // the judged axis, not the first temporal column: thirty monthly
@@ -760,7 +836,10 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
     )
     .await;
     assert!(span.contains("| 30 "), "{span}");
-    assert!(span.contains("2024-01-01T00:00:00") && span.contains("2026-06-01T00:00:00"), "{span}");
+    assert!(
+        span.contains("2024-01-01T00:00:00") && span.contains("2026-06-01T00:00:00"),
+        "{span}"
+    );
     // the judged dimension alone — the unjudged column is a gap, not a
     // candidate
     assert_eq!(
@@ -781,18 +860,33 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
          FROM metric_axes() WHERE metric = 'signings';",
     )
     .await;
-    assert!(floor.contains("| day ") && floor.contains("| 18 months ") && floor.contains("| 28 "), "{floor}");
+    assert!(
+        floor.contains("| day ") && floor.contains("| 18 months ") && floor.contains("| 28 "),
+        "{floor}"
+    );
 
     // a frame whose date column carries no verdict abstains with the
     // road out — in the fact row, and with no cells
     assert_eq!(
-        cell(&session, "SELECT applicable FROM metric_axes() WHERE metric = 'raw';").await,
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'raw';"
+        )
+        .await,
         "false"
     );
-    let reason = cell(&session, "SELECT reason FROM metric_axes() WHERE metric = 'raw';").await;
+    let reason = cell(
+        &session,
+        "SELECT reason FROM metric_axes() WHERE metric = 'raw';",
+    )
+    .await;
     assert!(reason.contains("no judged time column"), "{reason}");
     near(
-        number(&session, "SELECT count(*) FROM metric_series() WHERE metric = 'raw';").await,
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series() WHERE metric = 'raw';",
+        )
+        .await,
         0.0,
         "an abstaining metric serves no cells",
     );
@@ -800,8 +894,11 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
     // a flow cell carries no halves — the keys exist only where a
     // division has to be re-derivable
     near(
-        number(&session, "SELECT count(num) + count(den) FROM metric_series() WHERE metric = 'revenue';")
-            .await,
+        number(
+            &session,
+            "SELECT count(num) + count(den) FROM metric_series() WHERE metric = 'revenue';",
+        )
+        .await,
         0.0,
         "flow halves",
     );
@@ -825,12 +922,18 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
     let start_us: i64 = (19723 + 790) as i64 * 86_400 * 1_000_000;
     let ticks = RecordBatch::try_new(
         Arc::new(Schema::new(vec![
-            Field::new("ts", DataType::Timestamp(TimeUnit::Microsecond, None), false),
+            Field::new(
+                "ts",
+                DataType::Timestamp(TimeUnit::Microsecond, None),
+                false,
+            ),
             Field::new("value", DataType::Float64, false),
         ])),
         vec![
             Arc::new(TimestampMicrosecondArray::from(
-                (0..3 * 1440).map(|i| start_us + i * 60 * 1_000_000).collect::<Vec<_>>(),
+                (0..3 * 1440)
+                    .map(|i| start_us + i * 60 * 1_000_000)
+                    .collect::<Vec<_>>(),
             )),
             Arc::new(Float64Array::from(vec![1.0; 3 * 1440])),
         ],
@@ -890,9 +993,18 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         "SELECT metric, resolution, window FROM metric_axes() ORDER BY metric;",
     )
     .await;
-    assert!(axes.contains("by_day    | day        | 18 months"), "{axes}");
-    assert!(axes.contains("by_minute | day        | 18 months"), "{axes}");
-    assert!(axes.contains("by_month  | month      | 48 months"), "{axes}");
+    assert!(
+        axes.contains("by_day    | day        | 18 months"),
+        "{axes}"
+    );
+    assert!(
+        axes.contains("by_minute | day        | 18 months"),
+        "{axes}"
+    );
+    assert!(
+        axes.contains("by_month  | month      | 48 months"),
+        "{axes}"
+    );
 
     let cells = |metric: &'static str, grain: &'static str| {
         let session = &session;
@@ -904,16 +1016,26 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
             };
             number(
                 session,
-                &format!("SELECT count(*) FROM {from} WHERE metric = '{metric}' AND dimension = '';"),
+                &format!(
+                    "SELECT count(*) FROM {from} WHERE metric = '{metric}' AND dimension = '';"
+                ),
             )
             .await
         }
     };
     // The day rung from the data's edge: 2025-12-30 less 18 months is
     // 2024-06-30, and the buckets after it number 548.
-    near(cells("by_day", "").await, 548.0, "day cells under the day rung");
+    near(
+        cells("by_day", "").await,
+        548.0,
+        "day cells under the day rung",
+    );
     // Minutes held at the floor: three day cells of 1,440 minutes.
-    near(cells("by_minute", "").await, 3.0, "minute metric at the day floor");
+    near(
+        cells("by_minute", "").await,
+        3.0,
+        "minute metric at the day floor",
+    );
     assert_eq!(
         cell(
             &session,
@@ -922,12 +1044,20 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         .await,
         "true"
     );
-    near(cells("by_month", "").await, 48.0, "month cells under the month rung");
+    near(
+        cells("by_month", "").await,
+        48.0,
+        "month cells under the month rung",
+    );
 
     // Coarser grains derive from the cells by the verb: the day
     // metric's months are its days summed, month by month, and a grain
     // finer than a metric's resolution serves nothing — honest absence.
-    near(cells("by_day", "month").await, 18.0, "the day metric at month grain");
+    near(
+        cells("by_day", "month").await,
+        18.0,
+        "the day metric at month grain",
+    );
     assert_eq!(
         cell(
             &session,
@@ -939,8 +1069,16 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         .await,
         "true"
     );
-    near(cells("by_month", "day").await, 0.0, "a month metric at day grain");
-    near(cells("by_month", "year").await, 4.0, "a month metric at year grain");
+    near(
+        cells("by_month", "day").await,
+        0.0,
+        "a month metric at day grain",
+    );
+    near(
+        cells("by_month", "year").await,
+        4.0,
+        "a month metric at year grain",
+    );
     assert_eq!(
         cell(
             &session,
@@ -965,9 +1103,19 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         "SELECT metric, resolution, window, judged_current FROM metric_axes() ORDER BY metric;",
     )
     .await;
-    assert!(axes.contains("by_minute | hour       | 1 day     | false"), "{axes}");
-    assert!(axes.contains("by_month  | month      | 12 months | false"), "{axes}");
-    near(cells("by_minute", "").await, 24.0, "hourly cells under the hour rung");
+    assert!(
+        axes.contains("by_minute | hour       | 1 day     | false"),
+        "{axes}"
+    );
+    assert!(
+        axes.contains("by_month  | month      | 12 months | false"),
+        "{axes}"
+    );
+    near(
+        cells("by_minute", "").await,
+        24.0,
+        "hourly cells under the hour rung",
+    );
     assert_eq!(
         cell(
             &session,
@@ -976,7 +1124,11 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         .await,
         "true"
     );
-    near(cells("by_month", "").await, 12.0, "the shortened month rung");
+    near(
+        cells("by_month", "").await,
+        12.0,
+        "the shortened month rung",
+    );
     near(cells("by_day", "").await, 548.0, "the day rung stands");
 }
 
@@ -1002,19 +1154,37 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     // four; a repeat is a hit.
     let dir = tempfile::tempdir().unwrap();
     let cache = CubeCache::new(64);
-    let session = cube_session_with(dir.path(), vec![("t", batch())], &glosses, Some(cache.clone())).await;
+    let session = cube_session_with(
+        dir.path(),
+        vec![("t", batch())],
+        &glosses,
+        Some(cache.clone()),
+    )
+    .await;
     let (series, facts) = tokio::join!(
         session.execute("SELECT count(*) FROM metric_series();"),
         session.execute("SELECT count(*) FROM metric_axes();")
     );
     series.unwrap();
     facts.unwrap();
-    assert_eq!(cache.builds(), 2, "one build per metric, shared by the two readers");
-    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells");
+    assert_eq!(
+        cache.builds(),
+        2,
+        "one build per metric, shared by the two readers"
+    );
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "cells",
+    );
     assert_eq!(cache.builds(), 2, "a repeat at the same pin is a hit");
 
     assert_eq!(
-        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        cell(
+            &session,
+            "SELECT bool_and(judged_current) FROM metric_axes();"
+        )
+        .await,
         "true"
     );
 
@@ -1026,10 +1196,18 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
         .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
         .unwrap();
-    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells at the new pin");
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "cells at the new pin",
+    );
     assert_eq!(cache.builds(), 4, "a moved pin is a miss for every metric");
     assert_eq!(
-        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        cell(
+            &session,
+            "SELECT bool_and(judged_current) FROM metric_axes();"
+        )
+        .await,
         "false"
     );
 
@@ -1038,18 +1216,39 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     // other half — the next read misses, rebuilds, and the verdicts
     // are current again.
     let ran = session.remeasure().await.unwrap();
-    assert_eq!(ran, 1, "one measurement stood stale: the judge over the date column");
-    near(number(&session, "SELECT count(*) FROM metric_series();").await, 60.0, "cells again");
-    assert_eq!(cache.builds(), 6, "a moved version is a miss for every metric");
     assert_eq!(
-        cell(&session, "SELECT bool_and(judged_current) FROM metric_axes();").await,
+        ran, 1,
+        "one measurement stood stale: the judge over the date column"
+    );
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "cells again",
+    );
+    assert_eq!(
+        cache.builds(),
+        6,
+        "a moved version is a miss for every metric"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT bool_and(judged_current) FROM metric_axes();"
+        )
+        .await,
         "true"
     );
 
     // A cache with no room evicts what it builds: every read rebuilds.
     let dir = tempfile::tempdir().unwrap();
     let tiny = CubeCache::new(0);
-    let session = cube_session_with(dir.path(), vec![("t", batch())], &glosses, Some(tiny.clone())).await;
+    let session = cube_session_with(
+        dir.path(),
+        vec![("t", batch())],
+        &glosses,
+        Some(tiny.clone()),
+    )
+    .await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
     assert_eq!(tiny.builds(), 4, "nothing stays under a zero cap");

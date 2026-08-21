@@ -180,7 +180,10 @@ pub fn sibling_winners(slots: &[Slot]) -> std::collections::HashMap<String, Stri
     for slot in slots {
         let Some(value) = serde_json::from_str::<Value>(&slot.body)
             .ok()
-            .and_then(|b| b.pointer("/value").and_then(|v| v.as_str().map(String::from)))
+            .and_then(|b| {
+                b.pointer("/value")
+                    .and_then(|v| v.as_str().map(String::from))
+            })
         else {
             continue;
         };
@@ -226,7 +229,10 @@ mod tests {
             |r| r.2,
         );
         kept.sort();
-        assert_eq!(kept, vec![("a", "agent", 3), ("a", "human", 7), ("b", "human", 2)]);
+        assert_eq!(
+            kept,
+            vec![("a", "agent", 3), ("a", "human", 7), ("b", "human", 2)]
+        );
     }
 
     #[test]
@@ -234,7 +240,11 @@ mod tests {
         // Ties cannot happen while ids autoincrement, but they can once
         // ordering is a commit sequence number shared by a batch — so the
         // rule is stated rather than left to chance.
-        let kept = latest_by(vec![("k", 5, "first"), ("k", 5, "second")], |r| r.0, |r| r.1);
+        let kept = latest_by(
+            vec![("k", 5, "first"), ("k", 5, "second")],
+            |r| r.0,
+            |r| r.1,
+        );
         assert_eq!(kept, vec![("k", 5, "first")]);
     }
 
@@ -251,7 +261,10 @@ mod tests {
 
     #[test]
     fn one_voice_cannot_contest_itself() {
-        assert!(!contested(true, 1), "a lone measurement shows its band, not a withheld body");
+        assert!(
+            !contested(true, 1),
+            "a lone measurement shows its band, not a withheld body"
+        );
         assert!(contested(true, 2));
         assert!(!contested(false, 5));
     }
@@ -272,10 +285,7 @@ mod tests {
         assert_eq!(grain_of("fin", "orders.amount"), "column");
         assert_eq!(grain_of("fin", "orders.id -> customers.id"), "relationship");
         // A composite endpoint is its pair's grain, never a column.
-        assert_eq!(
-            grain_of("fin", "t.(a, b) -> u.(a, b)"),
-            "relationship"
-        );
+        assert_eq!(grain_of("fin", "t.(a, b) -> u.(a, b)"), "relationship");
     }
 
     #[test]
@@ -291,7 +301,10 @@ mod tests {
     fn absence_of_the_sibling_is_decisive() {
         assert!(condition_holds("measure", Some("measure")));
         assert!(!condition_holds("measure", Some("dimension")));
-        assert!(!condition_holds("measure", None), "nothing spoken, nothing owed");
+        assert!(
+            !condition_holds("measure", None),
+            "nothing spoken, nothing owed"
+        );
     }
 
     #[test]

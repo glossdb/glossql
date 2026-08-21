@@ -245,9 +245,12 @@ async fn document_keyed_events_reconcile_at_month_grain() {
         .unwrap();
 
     let find = |ev: &serde_json::Value, event: &str, grain: &str| -> Option<serde_json::Value> {
-        ev["anchors"].as_array().unwrap().iter().find(|a| {
-            a["event"] == event && a["grain"] == grain && a["verdict"] != "abstain"
-        }).cloned()
+        ev["anchors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["event"] == event && a["grain"] == grain && a["verdict"] != "abstain")
+            .cloned()
     };
 
     // The two-hop dimension alignment at the month variant settles the
