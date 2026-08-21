@@ -76,17 +76,25 @@ routing, one session per actor and dataset), `catalog` + `import`
 kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
-One listener, three doors:
+One listener, three doors, each over one dataset — the dataset is the
+resource and the doors are protocols over it, so a call arrives
+already bound and no door keeps a cursor:
 
-- **`/mcp`** — the MCP door: one `glossql` tool that takes statements
-  and returns outcomes. Agents connect here; question forms for the
-  human ride the same channel when the client supports them.
-- **`/query`** — Arrow IPC streaming for programmatic reads.
-- **`/app`** — server-rendered data apps (htmx + vega-lite, URL as the
-  only state). A built-in docket app ships in the binary: what stands
-  open for a human to judge, what has been settled, and the metric
-  surfaces and record behind it. A workspace can author its own — as a
-  directory, or as glosses, which is the shape an agent can write.
+- **`/<dataset>/mcp`** — the MCP door: one `glossql` tool that takes
+  statements and returns outcomes. Agents connect here; question forms
+  for the human ride the same call.
+- **`/<dataset>/query`** — Arrow IPC streaming for programmatic reads.
+- **`/<dataset>/app`** — server-rendered data apps (htmx + vega-lite,
+  URL as the only state). A built-in docket app ships in the binary:
+  what stands open for a human to judge, what has been settled, and
+  the metric surfaces and record behind it. A workspace can author its
+  own — as a directory, or as glosses, which is the shape an agent can
+  write.
+
+Who is speaking is a bearer token verified against a public key: `sub`
+is the actor id, `kind` is the actor kind. Human outranks agent at
+every read, so that claim being signed is what keeps an agent out of
+the human's slot.
 
 The door tells, skills teach: everything an agent must *learn* ships
 as skills — the glossin plugin, in the vendor-neutral Agent

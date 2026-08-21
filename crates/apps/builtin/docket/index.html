@@ -11,8 +11,8 @@
    the right says where it stands. #}
 <nav class="crumbs">
   <span class="here">Open</span>
-  <a href="/app/docket/p/metrics">Metrics</a>
-  <a href="/app/docket/p/record">Record</a>
+  <a href="/{{ dataset }}/app/docket/p/metrics">Metrics</a>
+  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
 </nav>
 
 <div class="tiles">
@@ -40,6 +40,7 @@
           </span>
           <a class="r-subj" href="{link}">{subj}<br><span class="r-meta">{asp}</span></a>
           <span class="r-what">{what}<br>
+            <span class="r-meta">rather: {rival}</span><br>
             <span class="r-meta">basis: {basis} {sibling}</span>
           </span>
           {# The one write the door takes. Only the claim's identity is
@@ -49,7 +50,7 @@
              server answers 204 + HX-Trigger glossql:written, the store
              drops its caches, and every panel refetches in place —
              no navigation, nothing to go back to. #}
-          <form class="rule" hx-post="/app/docket/rule" hx-swap="none">
+          <form class="rule" hx-post="/{{ dataset }}/app/docket/rule" hx-swap="none">
             <input type="hidden" name="subject" value="{subj_id}">
             <input type="hidden" name="aspect" value="{asp_id}">
             <input type="hidden" name="key" value="{key_id}">

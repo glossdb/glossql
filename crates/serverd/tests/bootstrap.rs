@@ -16,7 +16,7 @@ fn human() -> Actor {
 }
 
 async fn count(plane: &Plane, sql: &str) -> String {
-    let session = plane.session(human()).await.unwrap();
+    let session = plane.channel(human(), None).await.unwrap();
     let outcomes = session.execute(sql).await.unwrap();
     let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
         panic!("`{sql}` produced no rows");
@@ -37,13 +37,9 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
     let store = Store::open(lake).await.unwrap();
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
 
-    bootstrap(&plane, human())
-        .await
-        .unwrap();
+    bootstrap(&plane, human()).await.unwrap();
     // Every boot calls it; the second changes nothing.
-    bootstrap(&plane, human())
-        .await
-        .unwrap();
+    bootstrap(&plane, human()).await.unwrap();
 
     // Nothing lands on disk (fixture 24): a body is data, so the
     // workspace keeps no `functions/` directory at all.

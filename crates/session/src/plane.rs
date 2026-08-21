@@ -1,12 +1,20 @@
 //! The shared plane behind the doors: one store, one lake, one script
 //! runtime, one cube cache, and the workspace's channels — sessions
-//! keyed (actor, dataset). The transports are stateless (the 2026-07-28 MCP
-//! revision removed transport sessions), so continuity lives here. A
-//! channel's binding is fixed at construction; `USE` selects which
-//! channel an actor's statements land on, it never rebinds a session —
-//! so channels serving concurrent readers (the app door's frames) hold
-//! still under load. It lives in the session crate because every door
-//! needs it (serverd's `/mcp` and `/query`, the app door's frame reads).
+//! keyed (actor, dataset). A channel's binding is fixed at
+//! construction; `USE` selects which channel the statements after it
+//! land on, it never rebinds a session — so channels serving concurrent
+//! readers (the app door's frames) hold still under load.
+//!
+//! Nothing here is keyed by a connection. The dataset a call speaks to
+//! arrives with the call — the URL's first segment on every door — and
+//! `USE` moves it for the rest of *that* call only. The channels map is
+//! a pool of bound sessions, rebuildable at any moment and holding no
+//! caller's intent; a pointer remembering where someone last was would
+//! be the one piece of state a restart could lose, and losing it loses
+//! whatever the caller said next.
+//!
+//! It lives in the session crate because every door needs it (serverd's
+//! `/mcp` and `/query`, the app door's frame reads).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +26,17 @@ use tokio::sync::RwLock;
 use crate::cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
 
+/// A caller a door has verified, carried in the request's extensions
+/// so every door reads identity the same way. It lives here rather than
+/// in one door because all three resolve it and the app door cannot see
+/// the door crate that does the verifying.
+///
+/// Absent means no token was presented and the server did not insist —
+/// each door then falls back to the identity it used before there were
+/// tokens.
+#[derive(Clone, Debug)]
+pub struct Caller(pub Actor);
+
 pub struct Plane {
     store: Store,
     runtime: Arc<dyn FunctionRuntime>,
@@ -26,12 +45,9 @@ pub struct Plane {
     /// Store's: the Store is the record, and the cube is not.
     cube: CubeCache,
     /// One session per (actor, dataset), created on first sight and kept
-    /// for the server's life; `None` is the actor's unbound channel —
-    /// where they speak before any `USE`.
+    /// for the server's life; `None` is the unbound channel — a
+    /// workspace-wide read that names no dataset.
     channels: RwLock<HashMap<(String, Option<String>), Arc<Session>>>,
-    /// The dataset each actor last `USE`d: which channel their next
-    /// statement lands on.
-    current: RwLock<HashMap<String, Option<String>>>,
     row_cap: usize,
 }
 
@@ -48,7 +64,6 @@ impl Plane {
             runtime,
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
             channels: RwLock::new(HashMap::new()),
-            current: RwLock::new(HashMap::new()),
             row_cap: usize::MAX,
         }
     }
@@ -117,27 +132,21 @@ impl Plane {
         Ok(session)
     }
 
-    /// The channel the actor's `USE` pointer selects — the unbound one
-    /// until they `USE` a dataset. Actor rides the connection (SPEC.md
-    /// §1): the doors resolve who is speaking, this resolves where their
-    /// statements land.
-    pub async fn session(&self, actor: Actor) -> Result<Arc<Session>, SessionError> {
-        let dataset = self
-            .current
-            .read()
-            .await
-            .get(&Self::key(&actor))
-            .cloned()
-            .flatten();
-        self.channel(actor, dataset.as_deref()).await
-    }
-
-    /// The statement loop over an actor's channels: `USE` moves the
-    /// pointer (building the channel if it is new — an unknown dataset
-    /// refuses here and the pointer stays); everything between `USE`s
-    /// runs on the channel the pointer names. A failing statement stops
-    /// the sequence, as it does inside a session.
-    pub async fn execute(&self, actor: Actor, sql: &str) -> Result<Vec<Outcome>, SessionError> {
+    /// The statement loop over an actor's channels. `dataset` is where
+    /// the call arrives — the URL's first segment — and a `USE` inside
+    /// it moves the statements after it onto another channel (an
+    /// unknown dataset refuses there, and nothing has moved). The move
+    /// lives as long as this call and no longer: the next call arrives
+    /// on its own URL again.
+    ///
+    /// A failing statement stops the sequence, as it does inside a
+    /// session.
+    pub async fn execute(
+        &self,
+        actor: Actor,
+        dataset: Option<&str>,
+        sql: &str,
+    ) -> Result<Vec<Outcome>, SessionError> {
         let statements = GlossqlParser::parse_sql(sql)?;
         let total = statements.len();
         // A refusal names its GLOBAL place in the call: runs between
@@ -170,10 +179,11 @@ impl Plane {
         };
         let mut outcomes = Vec::with_capacity(total);
         let mut run: Vec<Statement> = Vec::new();
+        let mut on = dataset.map(str::to_string);
         for statement in statements {
             if let Statement::Use(u) = statement {
                 if !run.is_empty() {
-                    let session = self.session(actor.clone()).await?;
+                    let session = self.channel(actor.clone(), on.as_deref()).await?;
                     match session.execute_statements(std::mem::take(&mut run)).await {
                         Ok(mut o) => outcomes.append(&mut o),
                         Err(e) => return Err(rebase(e, std::mem::take(&mut outcomes))),
@@ -183,17 +193,14 @@ impl Plane {
                 if let Err(e) = self.channel(actor.clone(), Some(&name)).await {
                     return Err(rebase(e, std::mem::take(&mut outcomes)));
                 }
-                self.current
-                    .write()
-                    .await
-                    .insert(Self::key(&actor), Some(name.clone()));
+                on = Some(name.clone());
                 outcomes.push(Outcome::Done(format!("USE {name}")));
             } else {
                 run.push(statement);
             }
         }
         if !run.is_empty() {
-            let session = self.session(actor).await?;
+            let session = self.channel(actor, on.as_deref()).await?;
             match session.execute_statements(run).await {
                 Ok(mut o) => outcomes.append(&mut o),
                 Err(e) => return Err(rebase(e, std::mem::take(&mut outcomes))),

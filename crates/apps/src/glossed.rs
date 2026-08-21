@@ -26,24 +26,17 @@ pub struct Part {
     pub text: String,
 }
 
-/// Every glossed app part in the workspace. A workspace with no
-/// dataset, no glossed apps, or a store that will not read serves
+/// Every glossed app part the dataset carries. A dataset that does not
+/// exist, holds no glossed apps, or a store that will not read serves
 /// none — the built-ins and the workspace directories still answer.
-pub(crate) async fn parts(door: &AppDoor) -> Vec<Part> {
-    let Ok(mut names) = door.plane.datasets().await else {
-        return Vec::new();
-    };
-    names.sort();
-    let Some(dataset) = names.into_iter().next() else {
-        return Vec::new();
-    };
+pub(crate) async fn parts(door: &AppDoor, dataset: &str) -> Vec<Part> {
     // The loader reads as a Human — the same standing every frame
     // takes, and the read collapses human over agent anyway.
     let actor = Actor {
         kind: ActorKind::Human,
         id: "app:loader".into(),
     };
-    let Ok(session) = door.plane.channel(actor, Some(&dataset)).await else {
+    let Ok(session) = door.plane.channel(actor, Some(dataset)).await else {
         return Vec::new();
     };
     let Ok(query) = session

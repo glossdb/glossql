@@ -101,6 +101,21 @@ a { color: inherit; text-decoration: none; }
 .ws { color: var(--muted); }
 .ws b { color: var(--ink); font-weight: 600; }
 
+/* The dataset picker: a place, not a setting. It rewrites the first
+   path segment, so switching is an ordinary navigation and the back
+   button means what it says. */
+.ds-pick {
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.15rem 0.4rem;
+  max-width: 12rem;
+}
+.ds-pick:hover { border-color: var(--faint); }
+.ds-pick option { background: var(--ground); color: var(--ink); }
+
 .shell-nav nav {
   margin-left: auto;
   display: flex;

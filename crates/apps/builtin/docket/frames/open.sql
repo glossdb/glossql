@@ -17,6 +17,10 @@ SELECT o.conf,
        arrow_cast(o.assumption, 'Utf8') AS what,
        arrow_cast(coalesce(o.basis, 'unstated'), 'Utf8') AS basis,
        arrow_cast(coalesce(o.sibling, ''), 'Utf8') AS sibling,
+       -- The rival reading the agent named beside the claim. Empty
+       -- when none was named, which is itself worth seeing: a claim
+       -- with no rival is one nobody has argued against.
+       arrow_cast(coalesce(o.alternative, ''), 'Utf8') AS rival,
        -- The three columns the ruling form posts back. They are the
        -- claim's identity and nothing else: the page never sends the
        -- prose, because the door re-derives it from this same read

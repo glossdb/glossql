@@ -153,7 +153,9 @@ async fn every_doc_function_body_compiles() {
                 continue;
             };
             let after = &part[open + 5..];
-            let Some(close) = after.find("$$") else { continue };
+            let Some(close) = after.find("$$") else {
+                continue;
+            };
             let body = &after[..close];
             // A body is SQL — a measurement over data, a detector over
             // `slots` (§6) — so the check is the session's shape rule.
@@ -183,7 +185,7 @@ async fn every_doc_read_names_columns_that_exist() {
     // One session for the run, with a dataset in use — the names the
     // examples actually spell, so a read reaches its columns instead
     // of stopping at the binding.
-    let session = plane.session(human()).await.unwrap();
+    let session = plane.channel(human(), None).await.unwrap();
     for name in ["ops", "orders", "erp_export"] {
         session
             .execute(&format!(

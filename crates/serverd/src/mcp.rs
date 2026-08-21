@@ -13,14 +13,17 @@ use axum::middleware::Next;
 use axum::response::Response;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
-    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, EnumSchema,
-    Implementation, InputRequest, InputRequests, InputRequiredResult, ListToolsResult,
-    PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, Implementation,
+    InputRequest, InputRequests, InputRequiredResult, ListToolsResult, PaginatedRequestParams,
+    ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler};
 
 use glossql_glossary::{Actor, ActorKind};
+use glossql_session::Caller;
+
+use crate::auth::Dataset;
 use glossql_session::{Plane, Session, SessionError};
 
 use crate::wire;
@@ -154,44 +157,14 @@ pub struct GlossqlMcp {
     /// Shared across the per-session handler instances; refreshed after
     /// every tool call.
     brief: Arc<Brief>,
-    /// Questions the human declined — transport state, never the
-    /// store (no ledger). A decline rests only
-    /// until the workspace moves: any writing call clears the set,
-    /// so "not now" never hardens into "never". A landed slot stops
-    /// deriving on its own.
-    deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    /// Questions asked on the session lifecycle and not yet answered.
-    /// The ask does not block the agent's call,
-    /// so nothing else would stop the next read from asking the same
-    /// thing again — and a person should be looking at one form, not a
-    /// stack of them. Non-empty means an ask is in flight and the
-    /// round stays quiet until it resolves.
-    asking: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-}
-
-/// Take a set without letting a poisoned lock end the door. A panic
-/// inside the round is a bug to fix, never a reason for every later
-/// call to fail on the mutex it left behind.
-fn set_of(
-    lock: &std::sync::Mutex<std::collections::HashSet<String>>,
-) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
-    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl GlossqlMcp {
-    pub fn new(
-        plane: Arc<Plane>,
-        doors: crate::DoorConfig,
-        brief: Arc<Brief>,
-        deferred: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-        asking: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    ) -> Self {
+    pub fn new(plane: Arc<Plane>, doors: crate::DoorConfig, brief: Arc<Brief>) -> Self {
         GlossqlMcp {
             plane,
             doors,
             brief,
-            deferred,
-            asking,
         }
     }
 
@@ -226,7 +199,11 @@ impl GlossqlMcp {
                     line.push_str(&format!(
                         "; {} approved recipe change{} await the re-declare",
                         counts.approvals_pending,
-                        if counts.approvals_pending == 1 { "" } else { "s" },
+                        if counts.approvals_pending == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
                     ));
                 }
                 if counts.rulings_owed > 0 {
@@ -254,15 +231,15 @@ impl GlossqlMcp {
                     ". Start with the brief the glossql skill teaches — human slots, \
                      contested, red bands, the open queue — before acting.",
                 );
-                (
-                    Some(BriefFacts { counts, questions }),
-                    line,
-                )
+                (Some(BriefFacts { counts, questions }), line)
             }
             // No facts on a failed read: the door says so in the line
             // and tells the next caller again rather than recording a
             // silence as "nothing moved".
-            Err(e) => (None, format!("Live now: the brief could not be read ({e}).")),
+            Err(e) => (
+                None,
+                format!("Live now: the brief could not be read ({e})."),
+            ),
         }
     }
 
@@ -274,17 +251,45 @@ impl GlossqlMcp {
     /// the door never asks the human for it. A workspace with no
     /// dataset bound (or nothing open) derives nothing, and the round
     /// stays silent.
-    async fn derive_question(&self, session: &Session) -> Option<Question> {
-        let deferred = set_of(&self.deferred).clone();
+    /// The round: every open claim on ONE grounding, and how many
+    /// stand open in the whole workspace.
+    ///
+    /// The bound is the grounding, not a number. An aspect's
+    /// assumptions were authored in one act against one query and are
+    /// read together, so they are what one sitting is. The reason a
+    /// bound is needed at all is mechanical: the client fulfils every
+    /// entry of a round before it retries the call, so the agent's
+    /// read does not return until the human has cleared the whole
+    /// batch. A round is what someone can finish, and a grounding is
+    /// where the record already draws that line.
+    ///
+    /// The total rides back so every dialog can say where it sits in
+    /// it. A bounded round that did not would let someone answer three
+    /// questions, see the queue end, and believe they were done while
+    /// nine claims the numbers rest on stood untouched.
+    async fn derive_round(&self, session: &Session) -> (Vec<(usize, Question)>, usize) {
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
             println!("glossql ?? question-round: the loose derivation failed: {e}");
         }
-        loose
-            .ok()?
-            .iter()
-            .filter_map(loose_from)
-            .find(|q| !deferred.contains(&q.id()))
+        let open: Vec<Question> = loose
+            .map(|rows| rows.iter().filter_map(loose_from).collect())
+            .unwrap_or_default();
+        let total = open.len();
+        // The read orders by confidence, so the least settled claim
+        // picks which grounding is asked.
+        let Some(first) = open.first().map(|q| q.aspect.clone()) else {
+            return (Vec::new(), 0);
+        };
+        // The rank is against the whole, never against the round, so
+        // the count means the same thing on every dialog.
+        let round = open
+            .into_iter()
+            .enumerate()
+            .filter(|(_, q)| q.aspect == first)
+            .map(|(i, q)| (i + 1, q))
+            .collect();
+        (round, total)
     }
 
     /// The retry is stateless, so re-derivation is the only trust: an
@@ -301,23 +306,42 @@ impl GlossqlMcp {
 
     /// Land what the human said — or defer, or hand a correction to
     /// the agent. The monitor note is the whole account.
+    ///
+    /// The boxes are independent, so more than one can be ticked, and
+    /// the order below is what a ruling means when they are. Unclear
+    /// wins: it refuses the question, and a refused question has
+    /// nothing left to confirm. Then the rival, then the prior ruling,
+    /// then the plain confirmation — each a narrower claim than the
+    /// one before. Words the human typed outrank every box, because
+    /// they are the only part of the answer nobody wrote for them.
     async fn digest_round(&self, key: &str, answer: ElicitResult, session: &Session) -> String {
+        // Two outcomes, not three. Accepting with something said is
+        // the save; every other way out of the dialog is a defer, and
+        // a defer is not an opinion. Nothing is recorded, the claim
+        // still derives, and the next round asks it again — answering
+        // is owed, and a door that let someone opt out of being asked
+        // would be a door that hides what the numbers rest on.
+        //
+        // Refusing the QUESTION is different, and it is an answer: the
+        // unclear box with the words beside it, which lands and buys a
+        // reformulation.
         if answer.action != ElicitationAction::Accept {
-            set_of(&self.deferred).insert(key.to_string());
-            return format!("question-round: deferred ({:?})", answer.action);
+            return format!("question-round: `{key}` deferred — unanswered, it stands open");
         }
         let Some(content) = answer.content else {
-            return "question-round: accepted without content".into();
+            return format!("question-round: `{key}` deferred — nothing said, it stands open");
         };
         let Some(question) = self.question_for_key(session, key).await else {
             return "question-round: the question no longer stands — nothing landed".into();
         };
         let Question {
+            dataset,
             subject,
             aspect,
             key,
             dimension,
             assumption,
+            alternative,
             sibling_stance,
             sibling_note,
             ..
@@ -331,73 +355,106 @@ impl GlossqlMcp {
             stance: "confirmed",
             note: None,
         };
-        match content.get("stance").and_then(|v| v.as_str()) {
-            Some("stands as stated") => self.land_ruling(session, entry).await,
-            // The sibling ruling, replayed onto this aspect: the same
-            // stance and the same words the human wrote next door, now
-            // standing here in its own right. Nothing is inferred — the
-            // human chose it.
-            Some(said) if said.starts_with(SAME_AS) => {
-                let Some(stance) = sibling_stance.as_deref() else {
-                    return "question-round: nothing stands on that key to repeat".into();
-                };
-                let note = self
-                    .land_ruling(
-                        session,
-                        RulingEntry {
-                            stance,
-                            note: sibling_note.clone(),
-                            ..entry
-                        },
-                    )
-                    .await;
-                format!("{note} — repeated from the ruling already standing on that key")
-            }
-            // The question itself missed — the human refuses it rather
-            // than the claim. The entry holds this key closed; the
-            // agent owes a reformulation under a new key, which derives
-            // its own question — without this stance a sloppily worded
-            // fold-in question can only be deferred.
-            Some("unclear — ask differently") => {
-                let note = content
-                    .get("correction")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.trim().to_string());
-                self.land_ruling(
-                    session,
+        let ticked = |name: &str| content.get(name).and_then(|v| v.as_bool()).unwrap_or(false);
+        let typed = content
+            .get(CORRECTION)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        // The question itself missed — the human refuses it rather
+        // than the claim. The entry holds this key closed; the agent
+        // owes a reformulation under a new key, which derives its own
+        // question — without this a sloppily worded question can only
+        // be deferred.
+        if ticked(UNCLEAR) {
+            return self
+                .land_ruling(
+                    &dataset,
                     RulingEntry {
                         stance: "unclear",
-                        note,
+                        note: typed,
                         ..entry
                     },
                 )
-                .await
-            }
-            Some("wrong") => {
-                let correction = content
-                    .get("correction")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(no correction text)");
-                // The correction writes its own record — a message
-                // alone would leave the question deriving
-                // forever. The re-grounding stays the agent's
-                // work; the ruling holds the question closed while
-                // they do it.
-                let note = self
-                    .land_ruling(
-                        session,
-                        RulingEntry {
-                            stance: "corrected",
-                            note: Some(correction.to_string()),
-                            ..entry
-                        },
-                    )
-                    .await;
-                format!("{note} — the human's correction: {correction}")
-            }
-            _ => "question-round: the answer names no stance".into(),
+                .await;
         }
+        // The rival taken. Its words are the agent's own, read off the
+        // same derivation that drew the question — so the note is
+        // workspace prose, never something a form supplied. Words the
+        // human typed replace it.
+        if ticked(RATHER) {
+            let Some(rival) = alternative else {
+                return "question-round: no rival stands on that claim to take".into();
+            };
+            let note = typed.clone().unwrap_or(rival);
+            let landed = self
+                .land_ruling(
+                    &dataset,
+                    RulingEntry {
+                        stance: "corrected",
+                        note: Some(note.clone()),
+                        ..entry
+                    },
+                )
+                .await;
+            return format!("{landed} — the rival taken: {note}");
+        }
+        // The sibling ruling, replayed onto this aspect: the same
+        // stance and the same words the human wrote next door, now
+        // standing here in its own right. Nothing is inferred — the
+        // human chose it.
+        if ticked(SAME_AS) {
+            let Some(stance) = sibling_stance.as_deref() else {
+                return "question-round: nothing stands on that key to repeat".into();
+            };
+            let landed = self
+                .land_ruling(
+                    &dataset,
+                    RulingEntry {
+                        stance,
+                        note: typed.or(sibling_note),
+                        ..entry
+                    },
+                )
+                .await;
+            return format!("{landed} — repeated from the ruling already standing on that key");
+        }
+        if ticked(STANDS) {
+            return self
+                .land_ruling(
+                    &dataset,
+                    RulingEntry {
+                        note: typed,
+                        ..entry
+                    },
+                )
+                .await;
+        }
+        // No box, but words: a human who writes what is right instead
+        // of ticking has still ruled, and the correction writes its own
+        // record — a message alone would leave the question deriving
+        // forever. The re-grounding stays the agent's work; the ruling
+        // holds the question closed while they do it.
+        if let Some(correction) = typed {
+            let landed = self
+                .land_ruling(
+                    &dataset,
+                    RulingEntry {
+                        stance: "corrected",
+                        note: Some(correction.clone()),
+                        ..entry
+                    },
+                )
+                .await;
+            return format!("{landed} — the human's correction: {correction}");
+        }
+        // Saved with nothing ticked and nothing typed. An empty form
+        // says as little as a dismissed one, so it is the same defer.
+        format!(
+            "question-round: `{subject}:{aspect}:{key}` deferred — nothing said, it stands open"
+        )
     }
 
     /// The human rules an assumption: the ruling lands as ITS OWN
@@ -412,7 +469,7 @@ impl GlossqlMcp {
     /// human slot is forbidden: the frozen
     /// copy would outrank every later correction — the human slot
     /// carries only what the human actually said.
-    async fn land_ruling(&self, session: &Session, ruling: RulingEntry<'_>) -> String {
+    async fn land_ruling(&self, dataset: &str, ruling: RulingEntry<'_>) -> String {
         let RulingEntry {
             subject,
             aspect,
@@ -439,9 +496,6 @@ impl GlossqlMcp {
         // questions when a person comes back to a page rather than to a
         // form. This door's part is to say WHO is speaking: the
         // anonymous human, on their own channel, witnessed here.
-        let Some(dataset) = session.dataset() else {
-            return "question-round: no dataset is bound — USE one first".into();
-        };
         let human = match self
             .plane
             .channel(
@@ -449,7 +503,7 @@ impl GlossqlMcp {
                     kind: ActorKind::Human,
                     id: crate::HUMAN.into(),
                 },
-                Some(&dataset),
+                Some(dataset),
             )
             .await
         {
@@ -510,49 +564,40 @@ async fn read_rows(session: &Session, sql: &str) -> Result<Vec<serde_json::Value
     Ok(out["rows"].as_array().cloned().unwrap_or_default())
 }
 
-/// How many questions the round would serve right now — the same two
-/// derivations, counted on the human's channel of the first dataset
-/// (the binding an unpinned app uses). No dataset, no count: a
-/// workspace before its first landing has nothing to ask.
+/// How many questions the workspace would serve right now — every
+/// dataset, not the one this call happens to be pointed at. The brief
+/// is the place the total belongs: a round asks about the dataset in
+/// the URL, so without a workspace-wide count here, questions standing
+/// on another dataset would be invisible until someone opened its page.
+/// No dataset, no count: a workspace before its first landing has
+/// nothing to ask.
 async fn open_question_count(plane: &Plane) -> Option<usize> {
-    let mut names = plane.datasets().await.ok()?;
-    names.sort();
-    let dataset = names.into_iter().next()?;
+    let names = plane.datasets().await.ok()?;
     let actor = Actor {
         kind: ActorKind::Human,
         id: crate::HUMAN.into(),
     };
-    let session = plane.channel(actor, Some(&dataset)).await.ok()?;
-    read_rows(&session, "SELECT count(*) AS n FROM open_questions")
-        .await
-        .ok()?
-        .first()
-        .and_then(|r| r["n"].as_u64())
-        .map(|n| n as usize)
+    let mut total = 0usize;
+    let mut counted = false;
+    for dataset in names {
+        let Ok(session) = plane.channel(actor.clone(), Some(&dataset)).await else {
+            continue;
+        };
+        if let Some(n) = read_rows(&session, "SELECT count(*) AS n FROM open_questions")
+            .await
+            .ok()
+            .and_then(|rows| rows.first().and_then(|r| r["n"].as_u64()))
+        {
+            total += n as usize;
+            counted = true;
+        }
+    }
+    counted.then_some(total)
 }
 
 /// The round's opaque state tag, echoed by MRTR retries. Untrusted —
 /// landing rests on re-derivation, never on the echo.
 const ROUND_STATE: &str = "question-round:v1";
-
-/// The answer that replays the ruling already standing on this key
-/// under another aspect. The form appends which one, so the option
-/// reads "same as before (corrected on dpo)".
-const SAME_AS: &str = "same as before";
-
-/// How long the round waits for a person before treating the silence
-/// as a decline (`--round-wait`).
-///
-/// Run 4 waited 120s per read, repeatedly, for a human who was simply
-/// not at the keyboard, and the first correction cut it to 25s. That
-/// over-corrected: the cost of being away is already bounded by the
-/// rest-on-decline rule below — one stall per question per workspace
-/// move, never one per read — so the wait does not have to pay for
-/// absence a second time. What it does have to cover is a person who
-/// IS there, reading a definitional question with a named alternative
-/// and thinking before answering, and 25s does not.
-/// Sized for the present human; tune with the flag.
-pub const DEFAULT_ROUND_WAIT_SECS: u64 = 120;
 
 /// One entry of the human's `ruling` slot, as the door composes it.
 /// `key` names the claim (the join column); `assumption` is the prose
@@ -577,16 +622,18 @@ struct RulingEntry<'a> {
 /// the app's docket renders the same read. Least-confident first, and
 /// the ordering rides here because an inner ORDER BY does not survive
 /// a derived relation.
-const LOOSE_SQL: &str =
-    "SELECT * FROM open_questions ORDER BY conf ASC, subject, aspect, idx";
+const LOOSE_SQL: &str = "SELECT * FROM open_questions ORDER BY conf ASC, subject, aspect, idx";
 
 fn loose_from(row: &serde_json::Value) -> Option<Question> {
     Some(Question {
+        dataset: row["dataset"].as_str()?.into(),
         subject: row["subject"].as_str()?.into(),
         aspect: row["aspect"].as_str()?.into(),
         key: row["key"].as_str()?.into(),
         dimension: row["dimension"].as_str().unwrap_or("-").into(),
         assumption: row["assumption"].as_str().unwrap_or("").into(),
+        basis: row["basis"].as_str().unwrap_or("not stated").into(),
+        alternative: row["alternative"].as_str().map(str::to_string),
         confidence: row["conf"].as_f64().unwrap_or(0.0),
         sibling: row["sibling"].as_str().map(str::to_string),
         sibling_stance: row["sibling_stance"].as_str().map(str::to_string),
@@ -597,15 +644,28 @@ fn loose_from(row: &serde_json::Value) -> Option<Question> {
 /// One open question, derived — never stored. `key` is the agent's
 /// declared identity for the claim; `assumption` is the prose the
 /// human reads — two aspects may word one claim differently, and only
-/// the key pairs them. `sibling` is what the human already ruled on
-/// that same key under another aspect, carried by the read so the form
-/// can say so while asking.
+/// the key pairs them. `alternative` is the rival reading the agent
+/// named beside it, and `sibling` is what the human already ruled on
+/// that same key under another aspect; both are carried by the read so
+/// the round can offer them as answers rather than only naming them.
 struct Question {
+    /// The dataset the claim belongs to, carried by the read. A
+    /// workspace holds many datasets and the agent's `USE` is its own
+    /// cursor, not the claim's address: a ruling lands where the
+    /// question came from, whatever the caller happens to be pointed
+    /// at — and lands even when the caller is pointed at nothing.
+    dataset: String,
     subject: String,
     aspect: String,
     key: String,
     dimension: String,
     assumption: String,
+    basis: String,
+    /// The rival reading, when the agent named one. It is the only
+    /// answer the record already holds that says something: a stance
+    /// is a verdict on a sentence, a rival is a reading to take
+    /// instead.
+    alternative: Option<String>,
     confidence: f64,
     sibling: Option<String>,
     /// The sibling ruling in parts, so the round can offer it back as
@@ -613,6 +673,26 @@ struct Question {
     sibling_stance: Option<String>,
     sibling_note: Option<String>,
 }
+
+/// The answers, as the schema names them.
+///
+/// Every one is a field the renderer draws without being opened: a
+/// boolean puts its checkbox in the list, an enum hides its options
+/// behind a keypress. That is the whole reason the stances are not one
+/// enum.
+///
+/// The digits carry the order. `ElicitationSchema` holds its
+/// properties in a `BTreeMap` and its `property_order` is
+/// `#[serde(skip)]`, so the wire order is the sorted key order and the
+/// order they were built in is lost. Sorted alphabetically the form
+/// opens on the free-text box with the claim third; sorted by these
+/// prefixes it opens on the claim, which is what the human came to
+/// read. Nobody sees these names — the titles are what render.
+const STANDS: &str = "1_stands";
+const RATHER: &str = "2_rather";
+const SAME_AS: &str = "3_same_as";
+const UNCLEAR: &str = "4_unclear";
+const CORRECTION: &str = "5_correction";
 
 impl Question {
     /// The round's transport id — the MRTR map key and the deferred
@@ -623,89 +703,96 @@ impl Question {
         format!("loose:{}:{}:{}", self.subject, self.aspect, self.key)
     }
 
-    fn params(&self) -> Result<ElicitRequestParams, String> {
+    /// The form: identity in the message, the answers in the fields.
+    ///
+    /// Where each piece of text may live is decided by the renderer,
+    /// measured against 2.1.237. The message is clipped to three lines
+    /// and each line truncated to the terminal width. A field's title
+    /// is truncated too — it shares its line with the value, so a
+    /// claim put there arrives as `an entry is a row in results —
+    /// every car the ex…`. A field's *description* is the only surface
+    /// that renders whole: it wraps under the field with a gutter and
+    /// nothing caps its length.
+    ///
+    /// So the titles are short fixed labels and the substance rides
+    /// the descriptions — the claim and its basis under the box that
+    /// confirms it, the rival under the box that takes it, the prior
+    /// words under the box that repeats them. The human reads a
+    /// reading and picks one, rather than reading a sentence and
+    /// voting on it.
+    ///
+    /// Every box carries `false` rather than nothing, so it draws as
+    /// an empty checkbox instead of the words `not set`.
+    ///
+    /// Nothing is required. A required field holds the confirm button
+    /// closed until it is set, which would make "I have no answer"
+    /// unreachable except by leaving the form.
+    fn params(&self, rank: usize, total: usize) -> Result<ElicitRequestParams, String> {
         let Question {
             subject,
             aspect,
             dimension,
             assumption,
+            basis,
+            alternative,
             confidence,
             sibling,
+            sibling_note,
             ..
         } = self;
-        // One decision spelled with one key across several groundings
-        // is asked once per grounding, because a human may rule the
-        // same key differently on two aspects and has. What the repeat
-        // must not cost is a re-reading: where they already ruled this
-        // key next door, that ruling is offered back as a third answer,
-        // so agreeing is one choice and differing is still open.
-        let mut stances = vec![
-            "stands as stated".to_string(),
-            "wrong".to_string(),
-            "unclear — ask differently".to_string(),
-        ];
-        if let Some(s) = sibling {
-            stances.push(format!("{SAME_AS} ({s})"));
+        let mut schema = ElicitationSchema::builder().optional_bool_with(STANDS, |b| {
+            b.title("Stands as stated")
+                .description(format!("{assumption}\nbasis: {basis}"))
+                .with_default(false)
+        });
+        // The rival, offered as itself. Taking it is a correction
+        // whose words the agent already wrote down.
+        if let Some(rival) = alternative {
+            schema = schema.optional_bool_with(RATHER, |b| {
+                b.title("Rather, this reading")
+                    .description(rival.clone())
+                    .with_default(false)
+            });
         }
-        let schema = ElicitationSchema::builder()
-            .required_enum_schema("stance", EnumSchema::builder(stances).build())
-            .optional_string("correction")
-            .build()
-            .map_err(|e| e.to_string())?;
-        // What they already ruled on this same claim elsewhere rides
-        // the message, so the answer is given knowingly.
-        let pointer = match sibling {
-            Some(s) => format!(" Note: you ruled this same claim {s}."),
-            None => String::new(),
-        };
-        // The form's message is the one prose surface the client
-        // renders, and it clips a long line at the terminal's width.
-        // Four parts on their own lines, the prose wrapped by words.
-        let message = format!(
-            "{subject} · {aspect} — {dimension}\n{}\n(confidence {confidence}).{pointer}\n{}",
-            wrap(&format!("\"{assumption}\""), WRAP),
-            wrap(
-                "Does this stand? If wrong, say what is right. If the question \
-                 itself is unclear, say so — it will be reformulated and asked \
-                 again. Decline to defer.",
-                WRAP
-            ),
-        );
+        // What they already ruled on this same claim elsewhere, offered
+        // back as an answer. One decision spelled with one key across
+        // several groundings is asked once per grounding, because a
+        // human may rule the same key differently on two aspects and
+        // has. What the repeat must not cost is a re-reading.
+        if let Some(prior) = sibling {
+            let note = sibling_note.clone().unwrap_or_default();
+            schema = schema.optional_bool_with(SAME_AS, |b| {
+                b.title("Same as before")
+                    .description(format!("{prior}\n{note}"))
+                    .with_default(false)
+            });
+        }
+        schema = schema
+            .optional_bool_with(UNCLEAR, |b| {
+                b.title("The question itself is unclear")
+                    .description(
+                        "Refuses the question, not the claim: it will be reformulated \
+                         and asked again.",
+                    )
+                    .with_default(false)
+            })
+            .optional_string_with(CORRECTION, |s| {
+                s.title("What is right instead")
+                    .description("Your own words. They outrank every box above.")
+            });
         Ok(ElicitRequestParams::FormElicitationParams {
             meta: None,
-            message,
-            requested_schema: schema,
+            // Identity, then where this sits in everything that stands
+            // open. The position is the whole point of a bounded
+            // round: nobody reaches the end of one and believes it was
+            // the end of the work.
+            message: format!(
+                "{subject} · {aspect} — {dimension} · confidence {confidence} \
+                 · {rank} of {total} open"
+            ),
+            requested_schema: schema.build().map_err(|e| e.to_string())?,
         })
     }
-}
-
-/// The column the question's prose breaks at.
-const WRAP: usize = 72;
-
-/// Greedy word wrap: each line holds as many whole words as fit in
-/// `width` characters; a word longer than the width stands on its own
-/// line. Existing line breaks are kept.
-fn wrap(text: &str, width: usize) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / width + 1);
-    for (i, paragraph) in text.split('\n').enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        let mut line_len = 0;
-        for word in paragraph.split_whitespace() {
-            let len = word.chars().count();
-            if line_len > 0 && line_len + 1 + len > width {
-                out.push('\n');
-                line_len = 0;
-            } else if line_len > 0 {
-                out.push(' ');
-                line_len += 1;
-            }
-            out.push_str(word);
-            line_len += len;
-        }
-    }
-    out
 }
 
 impl ServerHandler for GlossqlMcp {
@@ -744,24 +831,38 @@ impl ServerHandler for GlossqlMcp {
             .and_then(|v| v.as_str())
             .ok_or_else(|| McpError::invalid_params("`statements` (string) is required", None))?;
 
-        // Actor rides the connection: the handshake names the client, and
-        // that name is the agent actor for the session. `client_info()`
-        // reads the per-request `_meta` stamp on the sessionless lifecycle
-        // (the transport's own `peer_info()` is synthetic there) and the
-        // initialize handshake on legacy sessions.
-        let id = context
-            .client_info()
-            .map(|info| info.name)
-            .unwrap_or_else(|| self.doors.agent.clone());
+        // Actor rides the transport (SPEC.md §1). A token proves it: the
+        // gate verified one and left the caller in the HTTP extensions,
+        // which rmcp forwards to this handler as `http::request::Parts`.
+        // Without one — a server run without `--require-token` — the
+        // handshake's own name stands in, which is a name and not a
+        // proof, so it can only ever carry agent standing.
+        let parts = context.extensions.get::<axum::http::request::Parts>();
+        let actor = parts
+            .and_then(|parts| parts.extensions.get::<Caller>())
+            .map(|caller| caller.0.clone())
+            .unwrap_or_else(|| Actor {
+                kind: ActorKind::Agent,
+                id: context
+                    .client_info()
+                    .map(|info| info.name)
+                    .unwrap_or_else(|| self.doors.agent.clone()),
+            });
+        let id = actor.id.clone();
+        // The dataset is the URL's first segment. Over this door a name
+        // the workspace does not hold yet is not an error: the call
+        // opens unbound, and `DECLARE DATASET` there is what brings the
+        // name into being — which is what makes the URL an intent.
+        let named = parts
+            .and_then(|parts| parts.extensions.get::<Dataset>())
+            .map(|d| d.0.clone());
+        let known = self.plane.datasets().await.unwrap_or_default();
+        let dataset = named.filter(|name| known.iter().any(|n| n == name));
         // The monitor line: what the agent actually sends, as it sends it.
         println!("glossql <- {id}: {statements}");
-        let actor = Actor {
-            kind: ActorKind::Agent,
-            id: id.clone(),
-        };
         let session = self
             .plane
-            .session(actor.clone())
+            .channel(actor.clone(), dataset.as_deref())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -780,102 +881,64 @@ impl ServerHandler for GlossqlMcp {
         // capability must come from the request's own stamp — the
         // transport's peer_info is synthetic on the sessionless path.
         let shape = glossql_session::call_shape(statements);
-        if shape.writes {
-            set_of(&self.deferred).clear();
-        }
         let mut probed = None;
         if let Some(responses) = &request.input_responses {
             let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
                 "question-round: a retry without the echoed state".to_string()
-            } else if let Some((key, raw)) = responses.iter().next() {
-                match serde_json::from_value::<ElicitResult>(raw.clone()) {
-                    Ok(answer) => self.digest_round(key, answer, &session).await,
-                    Err(e) => format!("question-round: the answer does not parse: {e}"),
+            } else if !responses.is_empty() {
+                // A round is a batch, so a retry carries a batch. Each
+                // answer is digested against its own re-derived
+                // question; one that no longer stands is said and
+                // skipped, never taken as a verdict on another.
+                let mut notes = Vec::new();
+                for (key, raw) in responses.iter() {
+                    notes.push(match serde_json::from_value::<ElicitResult>(raw.clone()) {
+                        Ok(answer) => self.digest_round(key, answer, &session).await,
+                        Err(e) => format!("question-round: the answer does not parse: {e}"),
+                    });
                 }
+                notes.join("\n")
             } else {
                 "question-round: the retry carries no answer".into()
             };
             println!("glossql ?? {id}: {note}");
             probed = Some(note);
         } else if shape.reviews
-            && set_of(&self.asking).is_empty()
+            && context
+                .protocol_version()
+                .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
             && context
                 .client_capabilities()
                 .and_then(|caps| caps.elicitation)
                 .is_some()
         {
-            if let Some(question) = self.derive_question(&session).await {
-                match question.params() {
+            // The whole batch travels in one result. The call ends
+            // normally, the client fulfils every entry before it
+            // retries, and nothing on the server waits: the round
+            // costs the agent no time whether or not a person is
+            // there.
+            let (round, total) = self.derive_round(&session).await;
+            let mut asks = InputRequests::new();
+            let mut ids = Vec::new();
+            for (rank, q) in &round {
+                match q.params(*rank, total) {
                     Ok(params) => {
-                        if context
-                            .protocol_version()
-                            .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
-                        {
-                            let mut asks = InputRequests::new();
-                            asks.insert(
-                                question.id(),
-                                InputRequest::Elicitation(ElicitRequest::new(params)),
-                            );
-                            println!("glossql ?? {id}: question-round: asking {}", question.id());
-                            return Ok(InputRequiredResult::new(
-                                Some(asks),
-                                Some(ROUND_STATE.into()),
-                            )
-                            .into());
-                        }
-                        // Session lifecycle: the ask rides this call's
-                        // own stream, the answer routes back through
-                        // the transport session.
-                        //
-                        // The wait is bounded and it is spent once. On
-                        // this lifecycle the ask travels on THIS call's
-                        // stream, and the stream closes when the call
-                        // returns — so the request cannot be fired and
-                        // forgotten without losing it, and the handler
-                        // has to stay for the answer.
-                        //
-                        // What can be fixed is the price of nobody
-                        // being there. Run 4 waited two minutes per
-                        // record read for a person who was away, over
-                        // and over, because the next read asked the
-                        // same question again. So: a wait short enough
-                        // that a present human still answers it, and a
-                        // silence treated as a decline — the question
-                        // defers exactly like a "not now", and the
-                        // round stays quiet until a writing call moves
-                        // the workspace and re-opens it. One stall per
-                        // question per move, never a stall per read.
-                        let qid = question.id();
-                        let wait = self.doors.round_wait_secs;
-                        set_of(&self.asking).insert(qid.clone());
-                        let asked = context
-                            .peer
-                            .create_elicitation_with_timeout(
-                                params,
-                                Some(std::time::Duration::from_secs(wait)),
-                            )
-                            .await;
-                        set_of(&self.asking).remove(&qid);
-                        let note = match asked {
-                            Ok(answer) => self.digest_round(&qid, answer, &session).await,
-                            Err(e) => {
-                                set_of(&self.deferred).insert(qid.clone());
-                                format!(
-                                    "question-round: no answer within {wait}s \
-                                     ({e}) — `{qid}` rests like a decline and will not \
-                                     be asked again until a write moves the workspace"
-                                )
-                            }
-                        };
-                        println!("glossql ?? {id}: {note}");
-                        probed = Some(note);
+                        ids.push(q.id());
+                        asks.insert(
+                            q.id(),
+                            InputRequest::Elicitation(ElicitRequest::new(params)),
+                        );
                     }
-                    Err(e) => {
-                        let note = format!("question-round: form refused: {e}");
-                        println!("glossql ?? {id}: {note}");
-                        probed = Some(note);
-                    }
+                    Err(e) => println!("glossql ?? {id}: question-round: form refused: {e}"),
                 }
+            }
+            if !asks.is_empty() {
+                println!(
+                    "glossql ?? {id}: question-round: asking {} of {total} open — {}",
+                    ids.len(),
+                    ids.join(", ")
+                );
+                return Ok(InputRequiredResult::new(Some(asks), Some(ROUND_STATE.into())).into());
             }
         }
 
@@ -898,9 +961,14 @@ impl ServerHandler for GlossqlMcp {
                     .await
                     .map(|rows| serde_json::Value::Array(vec![rows]))
             }
-            // Statement sequences run at the plane: `USE` selects the
-            // actor's channel there, never rebinds a session.
-            Err(SessionError::NotOneRead) => match self.plane.execute(actor, statements).await {
+            // Statement sequences run at the plane: `USE` moves the
+            // statements after it onto another channel for the rest of
+            // this call, and never rebinds a session.
+            Err(SessionError::NotOneRead) => match self
+                .plane
+                .execute(actor, dataset.as_deref(), statements)
+                .await
+            {
                 Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
                 Err(e) => {
                     if let SessionError::Sequence { landed, .. } = &e
@@ -930,8 +998,7 @@ impl ServerHandler for GlossqlMcp {
             let before = self.brief.facts.read().ok().and_then(|f| f.clone());
             Self::refresh_brief(&self.plane, &self.brief).await;
             let after = self.brief.facts.read().ok().and_then(|f| f.clone());
-            (after.is_some() && after != before)
-                .then(|| format!("brief: {}", self.brief.line()))
+            (after.is_some() && after != before).then(|| format!("brief: {}", self.brief.line()))
         } else {
             None
         };
@@ -970,24 +1037,135 @@ impl ServerHandler for GlossqlMcp {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap;
+    use super::*;
 
-    #[test]
-    fn wrap_breaks_by_words_within_the_width() {
-        let text = "classified finishers with a grid slot only; a retirement after the \
-                    start still counts as a start and keeps its grid position";
-        let wrapped = wrap(text, 40);
-        assert!(wrapped.lines().all(|l| l.chars().count() <= 40), "{wrapped}");
-        assert_eq!(
-            wrapped.split_whitespace().collect::<Vec<_>>(),
-            text.split_whitespace().collect::<Vec<_>>()
-        );
-        assert!(wrapped.lines().count() > 1);
+    fn question() -> Question {
+        Question {
+            dataset: "f1".into(),
+            subject: "f1".into(),
+            aspect: "race_entries".into(),
+            key: "entry-means-a-results-row".into(),
+            dimension: "scope".into(),
+            assumption: "an entry is a row in results, including cars that never started".into(),
+            basis: "results carries no did-not-start marker beyond status_id".into(),
+            alternative: None,
+            confidence: 0.7,
+            sibling: None,
+            sibling_stance: None,
+            sibling_note: None,
+        }
     }
 
+    fn form(q: &Question) -> (String, serde_json::Value) {
+        match q.params(3, 12).expect("the form builds") {
+            ElicitRequestParams::FormElicitationParams {
+                message,
+                requested_schema,
+                ..
+            } => (
+                message,
+                serde_json::to_value(&requested_schema).expect("schema serializes"),
+            ),
+            other => panic!("form mode expected, got {other:?}"),
+        }
+    }
+
+    /// The message is the one surface the client clips, so it carries
+    /// identity only — never the claim, which has to be read whole —
+    /// and the position, so a bounded round never reads as the end of
+    /// the work.
     #[test]
-    fn wrap_keeps_line_breaks_and_long_words() {
-        assert_eq!(wrap("a b\nc", 10), "a b\nc");
-        assert_eq!(wrap("short averyveryverylongword end", 8), "short\naveryveryverylongword\nend");
+    fn the_message_is_identity_and_position() {
+        let (message, _) = form(&question());
+        assert_eq!(message.lines().count(), 1, "{message}");
+        assert!(message.contains("race_entries"), "{message}");
+        assert!(message.contains("3 of 12 open"), "{message}");
+        assert!(!message.contains("an entry is a row"), "{message}");
+    }
+
+    /// Every answer is its own field: the renderer draws a checkbox in
+    /// the list and hides an enum's options behind a keypress.
+    #[test]
+    fn every_answer_is_a_visible_field() {
+        let (_, schema) = form(&question());
+        let props = &schema["properties"];
+        for name in [STANDS, UNCLEAR] {
+            assert_eq!(props[name]["type"], "boolean", "{name} in {schema}");
+        }
+        assert_eq!(props[CORRECTION]["type"], "string", "{schema}");
+        assert!(
+            schema
+                .get("required")
+                .is_none_or(serde_json::Value::is_null),
+            "nothing is required, or the confirm button never opens: {schema}"
+        );
+    }
+
+    /// A title shares its line with the value and is truncated; a
+    /// description renders whole. So the claim and its basis ride the
+    /// description of the box that confirms them, and the title is a
+    /// short fixed label.
+    #[test]
+    fn the_claim_rides_the_description_of_stands() {
+        let q = question();
+        let (_, schema) = form(&q);
+        let stands = &schema["properties"][STANDS];
+        assert_eq!(stands["title"], "Stands as stated");
+        let said = stands["description"].as_str().expect("a description");
+        assert!(said.contains(&q.assumption), "{schema}");
+        assert!(said.contains(&q.basis), "{schema}");
+    }
+
+    /// The wire order is the sorted key order, so the names carry the
+    /// order: the form must open on the claim, not on the text box.
+    #[test]
+    fn the_form_opens_on_the_claim() {
+        let offered = Question {
+            alternative: Some("starters only".into()),
+            sibling: Some("corrected on finish_rate".into()),
+            sibling_stance: Some("corrected".into()),
+            sibling_note: Some("status_id = 1".into()),
+            ..question()
+        };
+        let (_, schema) = form(&offered);
+        let order: Vec<&str> = schema["properties"]
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            order,
+            vec![STANDS, RATHER, SAME_AS, UNCLEAR, CORRECTION],
+            "the claim first, the free text last"
+        );
+    }
+
+    /// A box for a reading the record does not hold would be a box
+    /// that cannot be answered, so neither appears unless it stands.
+    #[test]
+    fn the_rival_and_the_prior_ruling_appear_only_when_they_stand() {
+        let (_, bare) = form(&question());
+        assert!(bare["properties"].get(RATHER).is_none(), "{bare}");
+        assert!(bare["properties"].get(SAME_AS).is_none(), "{bare}");
+
+        let offered = Question {
+            alternative: Some("starters only, excluding rows whose grid slot is 0".into()),
+            sibling: Some("corrected on finish_rate".into()),
+            sibling_stance: Some("corrected".into()),
+            sibling_note: Some("status_id = 1 is the finish marker".into()),
+            ..question()
+        };
+        let (_, schema) = form(&offered);
+        assert_eq!(
+            schema["properties"][RATHER]["description"],
+            offered.alternative.clone().unwrap()
+        );
+        assert!(
+            schema["properties"][SAME_AS]["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("corrected on finish_rate")),
+            "{schema}"
+        );
     }
 }

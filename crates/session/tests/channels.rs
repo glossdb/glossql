@@ -65,8 +65,8 @@ fn single_value(outcomes: &[Outcome]) -> String {
     }
 }
 
-/// `USE` moves the actor's pointer between channels; each channel's
-/// binding is fixed at construction and survives the switch.
+/// `USE` moves the statements after it onto another channel; each
+/// channel's binding is fixed at construction and survives the switch.
 #[tokio::test(flavor = "multi_thread")]
 async fn use_selects_a_channel_and_never_rebinds_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -76,28 +76,79 @@ async fn use_selects_a_channel_and_never_rebinds_one() {
     plane
         .execute(
             actor.clone(),
+            None,
             "DECLARE DATASET fin SET (purpose: 'p');\n\
-             DECLARE DATASET ops SET (purpose: 'p');\n\
-             USE fin;",
+             DECLARE DATASET ops SET (purpose: 'p');",
         )
         .await
         .unwrap();
-    let on_fin = plane.session(actor.clone()).await.unwrap();
+    let on_fin = plane.channel(actor.clone(), Some("fin")).await.unwrap();
+    let on_ops = plane.channel(actor.clone(), Some("ops")).await.unwrap();
     assert_eq!(on_fin.dataset().as_deref(), Some("fin"));
-
-    plane.execute(actor.clone(), "USE ops;").await.unwrap();
-    let on_ops = plane.session(actor.clone()).await.unwrap();
+    // Two channels, two bindings — a `USE` between them moves the
+    // statements, never a session.
     assert_eq!(on_ops.dataset().as_deref(), Some("ops"));
-    // The fin channel did not move — it is a different session.
-    assert_eq!(on_fin.dataset().as_deref(), Some("fin"));
 
-    // An unknown dataset refuses at the switch; the pointer stays.
-    plane
-        .execute(actor.clone(), "USE nope;")
+    // An unknown dataset refuses at the switch, and what ran before it
+    // stands.
+    let refused = plane
+        .execute(actor.clone(), Some("fin"), "SELECT 1; USE nope;")
         .await
         .expect_err("USE of an undeclared dataset must refuse");
-    let still = plane.session(actor).await.unwrap();
-    assert_eq!(still.dataset().as_deref(), Some("ops"));
+    assert!(format!("{refused}").contains("nope"), "{refused}");
+    assert_eq!(on_fin.dataset().as_deref(), Some("fin"));
+}
+
+/// Where a call arrives is where it lands, and a `USE` inside one
+/// expires with it. Nothing on the plane remembers a caller's last
+/// dataset: the URL says it every time, so a restart cannot lose it and
+/// a second caller cannot move it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_use_does_not_outlive_its_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let erp_root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&erp_root).unwrap();
+    parquet_fixture(&erp_root).await;
+    let plane = plane(dir.path()).await;
+    let actor = agent("agent-1");
+
+    // `orders` exists in fin and nowhere else, so an unprefixed name is
+    // the whole observation: it resolves exactly when the statement is
+    // running on fin.
+    plane
+        .execute(
+            actor.clone(),
+            None,
+            &format!(
+                "DECLARE DATASET fin SET (purpose: 'p');\n\
+                 DECLARE DATASET ops SET (purpose: 'p');\n\
+                 USE fin;\n\
+                 DECLARE SOURCE erp_export SET (type: parquet, location: '{}');\n\
+                 DECLARE RECIPE orders ON fin FROM erp_export AS $$\
+                   SELECT order_id FROM read_parquet('orders/*.parquet')$$;",
+                erp_root.display()
+            ),
+        )
+        .await
+        .unwrap();
+
+    // Inside one call the `USE` decides, whatever the call arrived on.
+    let moved = plane
+        .execute(
+            actor.clone(),
+            Some("ops"),
+            "USE fin; SELECT count(*) FROM orders;",
+        )
+        .await
+        .unwrap();
+    assert_eq!(single_value(&moved), "3");
+
+    // The next call arrives on its own dataset with no memory of that
+    // one — the whole reason nothing here is keyed by a connection.
+    plane
+        .execute(actor.clone(), Some("ops"), "SELECT count(*) FROM orders;")
+        .await
+        .expect_err("a `USE` from an earlier call must not still be in force");
 }
 
 /// What one actor lands, another reads bare through their own channel —
@@ -114,6 +165,7 @@ async fn a_landed_table_reads_across_channels() {
     plane
         .execute(
             agent("engineer"),
+            None,
             &format!(
                 "DECLARE DATASET fin SET (purpose: 'p');\n\
                  USE fin;\n\
@@ -130,7 +182,11 @@ async fn a_landed_table_reads_across_channels() {
     // A different actor, a fresh channel: the bare name resolves through
     // the default schema — no aliases, no remount, no USE re-run.
     let read = plane
-        .execute(agent("analyst"), "USE fin; SELECT count(*) FROM orders;")
+        .execute(
+            agent("analyst"),
+            None,
+            "USE fin; SELECT count(*) FROM orders;",
+        )
         .await
         .unwrap();
     assert_eq!(single_value(&read), "3");
@@ -159,6 +215,7 @@ async fn a_re_land_stales_other_channels_reads_too() {
     plane
         .execute(
             agent("engineer"),
+            None,
             &format!(
                 "DECLARE DATASET fin SET (purpose: 'p');\n\
                  USE fin;\n\
@@ -177,6 +234,7 @@ async fn a_re_land_stales_other_channels_reads_too() {
     plane
         .execute(
             agent("analyst"),
+            None,
             r#"USE fin;
                DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
                GLOSS note ON orders AS $${"value": "landed"}$$;"#,
@@ -184,11 +242,13 @@ async fn a_re_land_stales_other_channels_reads_too() {
         .await
         .unwrap();
     // No USE on the reads below: `USE` clears the session's own cache,
-    // which would mask exactly the defect this test pins. The actor's
-    // channel pointer persists across calls.
+    // which would mask exactly the defect this test pins. The call
+    // arrives already bound instead, which is how every door reaches
+    // the same channel again.
     let before = plane
         .execute(
             agent("analyst"),
+            Some("fin"),
             "SELECT state FROM GLOSSARY(orders) WHERE aspect = 'note';",
         )
         .await
@@ -201,6 +261,7 @@ async fn a_re_land_stales_other_channels_reads_too() {
     plane
         .execute(
             agent("engineer"),
+            None,
             "USE fin;\n\
              DECLARE RECIPE orders ON fin FROM erp_export AS $$\
                SELECT order_id, try_cast(amount AS DOUBLE) AS amount \
@@ -211,6 +272,7 @@ async fn a_re_land_stales_other_channels_reads_too() {
     let after = plane
         .execute(
             agent("analyst"),
+            Some("fin"),
             "SELECT state FROM GLOSSARY(orders) WHERE aspect = 'note';",
         )
         .await

@@ -12,9 +12,9 @@
    deeper, not going somewhere else. Choosing another metric replaces
    this tab, since there is one metric in view at a time. #}
 <nav class="crumbs">
-  <a href="/app/docket">Open</a>
+  <a href="/{{ dataset }}/app/docket">Open</a>
   <a href="?">Metrics</a>
-  <a href="/app/docket/p/record">Record</a>
+  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
   <span class="here">{{ metric }}</span>
 </nav>
 <div class="tiles">
@@ -26,7 +26,7 @@
      rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
-      <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
+      <form class="remeasure" hx-post="/{{ dataset }}/app/docket/remeasure" hx-swap="none">
         <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>
@@ -148,9 +148,9 @@
 {% else %}
 {# ---- the surfaces list ------------------------------------------- #}
 <nav class="crumbs">
-  <a href="/app/docket">Open</a>
+  <a href="/{{ dataset }}/app/docket">Open</a>
   <span class="here">Metrics</span>
-  <a href="/app/docket/p/record">Record</a>
+  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
 </nav>
 <div class="tiles">
   {# The re-measure banner: every write moves the pin, and a function
@@ -161,7 +161,7 @@
      rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
-      <form class="remeasure" hx-post="/app/docket/remeasure" hx-swap="none">
+      <form class="remeasure" hx-post="/{{ dataset }}/app/docket/remeasure" hx-swap="none">
         <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>

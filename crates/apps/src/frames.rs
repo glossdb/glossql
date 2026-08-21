@@ -28,10 +28,17 @@ pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 
 pub async fn frame(
     State(door): State<AppDoor>,
-    Path((app, frame)): Path<(String, String)>,
+    Path((dataset, app, frame)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let glossed = crate::glossed::parts(&door).await;
+    let known = crate::known(&door).await;
+    if !known.contains(&dataset) {
+        return fail(
+            StatusCode::NOT_FOUND,
+            crate::no_such_dataset(&dataset, &known),
+        );
+    }
+    let glossed = crate::glossed::parts(&door, &dataset).await;
     let def = match AppDef::load(&door.workspace, &app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return fail(StatusCode::NOT_FOUND, format!("no app `{app}`")),
@@ -45,16 +52,12 @@ pub async fn frame(
     };
     // The app's channel on the plane — Human-kind, like `/query`, keyed
     // (actor, dataset). The binding is fixed at channel construction,
-    // so concurrent frames never steer each other; an unknown dataset
-    // fails the channel here, before any query runs.
-    let Some(dataset) = bound_dataset(&door, &def).await else {
-        return fail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "no dataset in the workspace yet — the app binds once a source \
-             lands"
-                .to_string(),
-        );
-    };
+    // so concurrent frames never steer each other; a dataset that does
+    // not exist fails the channel here, before any query runs.
+    //
+    // A frame reads; it does not write, and the reads collapse human
+    // over agent anyway. So the app itself is the reader, whoever asked
+    // — one channel per app rather than one per visitor.
     let actor = Actor {
         kind: ActorKind::Human,
         id: format!("app:{}", def.name),
@@ -67,8 +70,8 @@ pub async fn frame(
         .into_iter()
         .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))
         .collect();
-    // The bound dataset, always available to frame SQL as `$dataset` —
-    // reserved, so a URL cannot override what the app is bound to.
+    // The dataset the URL bound, always available to frame SQL as
+    // `$dataset` — reserved, so a query string cannot override the path.
     // Frames must never scan the `datasets` relation for it: in a
     // multi-dataset workspace that fans every joined row out.
     values.insert("dataset".into(), ScalarValue::Utf8(Some(dataset.clone())));
@@ -140,22 +143,6 @@ pub(crate) async fn one_open_question(
         }));
     }
     Ok(None)
-}
-
-/// The same binding, for the page shell, which names the workspace an
-/// app is bound to in its bar. A page renders whether or not the
-/// binding resolves — its frames are what fail, and they say so — so
-/// this returns nothing rather than an error.
-pub(crate) async fn bound_dataset(
-    door: &crate::AppDoor,
-    def: &AppDef,
-) -> Option<String> {
-    if let Some(dataset) = &def.dataset {
-        return Some(dataset.clone());
-    }
-    let mut names = door.plane.datasets().await.ok()?;
-    names.sort();
-    names.into_iter().next()
 }
 
 /// The frame-class header: `record` when the frame's expansion reads

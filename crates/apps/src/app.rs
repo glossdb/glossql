@@ -1,8 +1,7 @@
-//! An app is a directory: `apps/<name>/app.toml` names its title and
-//! may pin the dataset its frames read; without the pin, the app binds
-//! to the first workspace dataset by name at request time (the
-//! one-dataset-per-workspace binding, SPEC.md §1 — a selector becomes
-//! a concern only when a second dataset does). Everything else in the
+//! An app is a directory: `apps/<name>/app.toml` names its title.
+//! It names no dataset — the URL does (`/<dataset>/app/<name>`), so one
+//! app serves every dataset in the workspace and the header's picker is
+//! a link rather than a feature. Everything else in the
 //! directory *is* the app — pages (`*.html`, tera), `frames/*.sql`,
 //! `specs/*.vl.json` — read fresh per request, so an author saves a
 //! file and reloads. Apps shipped in the binary (`builtin.rs`) resolve
@@ -18,9 +17,6 @@ use crate::builtin::{self, BuiltinApp};
 pub struct AppDef {
     pub name: String,
     pub title: String,
-    /// `None` binds by convention at request time: the workspace's sole
-    /// dataset.
-    pub dataset: Option<String>,
     source: Source,
 }
 
@@ -44,22 +40,25 @@ pub fn safe_segment(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// The manifest fields both sources share. `dataset` is optional —
-/// absent means bind at request time; an unknown name answers with the
-/// store's own refusal when the frame binds, never a pre-check here.
-fn manifest(origin: &str, text: &str) -> Result<(Option<String>, Option<String>), String> {
+/// The one manifest field: the title a page and the nav print. A
+/// `dataset` key is accepted and ignored — the URL binds now.
+fn manifest(origin: &str, text: &str) -> Result<Option<String>, String> {
     let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-    let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    Ok((field("title"), field("dataset")))
+    Ok(value
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
 }
 
-/// The manifest of a glossed app: the same two fields, arriving as the
+/// The manifest of a glossed app: the same field, arriving as the
 /// `app` aspect's body rather than as TOML text.
-fn manifest_json(origin: &str, text: &str) -> Result<(Option<String>, Option<String>), String> {
+fn manifest_json(origin: &str, text: &str) -> Result<Option<String>, String> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-    let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    Ok((field("title"), field("dataset")))
+    Ok(value
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
 }
 
 impl AppDef {
@@ -83,11 +82,10 @@ impl AppDef {
         if path.is_file() {
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            let (title, dataset) = manifest(&path.display().to_string(), &text)?;
+            let title = manifest(&path.display().to_string(), &text)?;
             return Ok(Some(AppDef {
                 title: title.unwrap_or_else(|| name.to_string()),
                 name: name.to_string(),
-                dataset,
                 source: Source::Dir(dir),
             }));
         }
@@ -117,17 +115,15 @@ impl AppDef {
             ));
         }
         if !files.is_empty() {
-            let (title, dataset) = match files.get("app") {
+            let title = match files.get("app") {
                 Some(body) => manifest_json(&format!("glossed app `{name}`"), body)?,
-                // Parts without a manifest still serve: the app is
-                // named by its subject and binds to the workspace's
-                // dataset, which is what an unpinned app.toml does.
-                None => (None, None),
+                // Parts without a manifest still serve: the app is named
+                // by its subject and bound by the URL like any other.
+                None => None,
             };
             return Ok(Some(AppDef {
                 title: title.unwrap_or_else(|| name.to_string()),
                 name: name.to_string(),
-                dataset,
                 source: Source::Glossed(files),
             }));
         }
@@ -140,11 +136,10 @@ impl AppDef {
             .find(|(p, _)| *p == "app.toml")
             .map(|(_, text)| *text)
             .unwrap_or("");
-        let (title, dataset) = manifest(&format!("builtin `{name}`"), toml)?;
+        let title = manifest(&format!("builtin `{name}`"), toml)?;
         Ok(Some(AppDef {
             title: title.unwrap_or_else(|| name.to_string()),
             name: name.to_string(),
-            dataset,
             source: Source::Builtin(app),
         }))
     }

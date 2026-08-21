@@ -3,12 +3,13 @@
 <h1>Apps</h1>
 {% if apps | length == 0 %}
 <p class="empty">No apps yet. An app is a directory under <code>apps/</code>
-in the workspace: <code>app.toml</code> (title, dataset), pages
-(<code>*.html</code>), <code>frames/*.sql</code>, <code>specs/*.vl.json</code>.</p>
+in the workspace: <code>app.toml</code> (title), pages
+(<code>*.html</code>), <code>frames/*.sql</code>, <code>specs/*.vl.json</code>.
+It names no dataset — this URL does.</p>
 {% else %}
 <ul class="cards">
   {% for a in apps %}
-  <li><a href="/app/{{ a.name }}"><strong>{{ a.title }}</strong><span>{{ a.dataset }}</span></a></li>
+  <li><a href="/{{ dataset }}/app/{{ a.name }}"><strong>{{ a.title }}</strong><span>{{ dataset }}</span></a></li>
   {% endfor %}
 </ul>
 {% endif %}

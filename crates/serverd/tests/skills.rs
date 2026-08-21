@@ -168,7 +168,9 @@ async fn every_skill_function_body_compiles() {
                 continue;
             };
             let after = &part[open + 5..];
-            let Some(close) = after.find("$$") else { continue };
+            let Some(close) = after.find("$$") else {
+                continue;
+            };
             checked += 1;
             let body = &after[..close];
             let is_sql = match glossql_parser::GlossqlParser::parse_sql(body) {
@@ -199,14 +201,12 @@ async fn every_skill_function_body_compiles() {
 async fn every_skill_read_names_columns_that_exist() {
     let (_dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
-    bootstrap(&plane, human())
-        .await
-        .unwrap();
+    bootstrap(&plane, human()).await.unwrap();
 
     // One session for the run, with a dataset in use — the names the
     // examples actually spell, so a read reaches its columns instead of
     // stopping at the binding.
-    let session = plane.session(human()).await.unwrap();
+    let session = plane.channel(human(), None).await.unwrap();
     for name in ["ops", "orders", "erp_export"] {
         session
             .execute(&format!(

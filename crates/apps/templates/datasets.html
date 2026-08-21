@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>glossql</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='1' fill='%23151a22'/%3E%3Ctext x='8' y='12' text-anchor='middle' font-family='monospace' font-size='11' fill='%23e2a33f'%3Eg%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<header class="shell-nav"><div class="bar-in">
+  <a class="brand" href="/">glossql<span class="dot">.</span></a>
+  <span class="ws">workspace</span>
+</div></header>
+<main>
+<h1>Datasets</h1>
+{% if datasets | length == 0 %}
+<p class="empty">This workspace holds no dataset yet. An agent declares
+one over <code>/&lt;name&gt;/mcp</code>: point at the name you intend and
+<code>DECLARE DATASET</code> there.</p>
+{% else %}
+<ul class="cards">
+  {% for d in datasets %}
+  <li><a href="/{{ d }}/app"><strong>{{ d }}</strong><span>apps</span></a></li>
+  {% endfor %}
+</ul>
+{% endif %}
+</main>
+</body>
+</html>

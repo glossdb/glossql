@@ -12,7 +12,7 @@ use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Float64Array;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{NoRuntime, Plane};
+use glossql_session::{Caller, NoRuntime, Plane};
 use tower::ServiceExt;
 
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
@@ -32,10 +32,13 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let store = Store::open(lake).await.unwrap();
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let session = plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap();
     session
@@ -55,11 +58,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let apps = dir.path().join("apps/perf");
     std::fs::create_dir_all(apps.join("frames")).unwrap();
     std::fs::create_dir_all(apps.join("specs")).unwrap();
-    std::fs::write(
-        apps.join("app.toml"),
-        "title = \"Perf\"\ndataset = \"perf\"\n",
-    )
-    .unwrap();
+    std::fs::write(apps.join("app.toml"), "title = \"Perf\"\n").unwrap();
     std::fs::write(
         apps.join("index.html"),
         "{% extends \"shell.html\" %}\n\
@@ -90,7 +89,10 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     .unwrap();
 
     let workspace = dir.path().to_path_buf();
-    let router = Router::new().nest("/app", glossql_apps::router(Arc::clone(&plane), workspace, "human".into()));
+    let router = Router::new().nest(
+        "/{dataset}/app",
+        glossql_apps::router(Arc::clone(&plane), workspace),
+    );
     (router, plane, dir)
 }
 
@@ -166,39 +168,39 @@ async fn pages_render_and_frames_stream() {
     let (app, _plane, _dir) = workspace().await;
 
     // Home lists the app.
-    let home = get(&app, "/app").await;
+    let home = get(&app, "/perf/app").await;
     assert_eq!(home.status(), StatusCode::OK);
     let home = text(home).await;
     assert!(home.contains("Perf"), "home should list the app:\n{home}");
 
     // The page renders through shell + macros, carrying the app root.
-    let page = get(&app, "/app/perf").await;
+    let page = get(&app, "/perf/app/perf").await;
     assert_eq!(page.status(), StatusCode::OK);
     let page = text(page).await;
-    assert!(page.contains("data-approot=\"/app/perf/\""), "{page}");
+    assert!(page.contains("data-approot=\"/perf/app/perf/\""), "{page}");
     assert!(
         page.contains("<gl-chart frame=\"frames/monthly\""),
         "{page}"
     );
     // A frame streams IPC: two months, summed.
-    let frame = get(&app, "/app/perf/frames/monthly").await;
+    let frame = get(&app, "/perf/app/perf/frames/monthly").await;
     assert_eq!(frame.status(), StatusCode::OK);
     assert_eq!(values(frame).await, vec![12.5, 4.0]);
 
     // URL params bind as plan placeholders — cohort a only.
-    let filtered = get(&app, "/app/perf/frames/by_cohort?cohort=a").await;
+    let filtered = get(&app, "/perf/app/perf/frames/by_cohort?cohort=a").await;
     assert_eq!(filtered.status(), StatusCode::OK);
     assert_eq!(values(filtered).await, vec![10.5, 4.0]);
 
     // An unbound placeholder is the read telling the author what the
     // URL owed it.
-    let unbound = get(&app, "/app/perf/frames/by_cohort").await;
+    let unbound = get(&app, "/perf/app/perf/frames/by_cohort").await;
     assert_eq!(unbound.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let unbound = text(unbound).await;
     assert!(unbound.contains("cohort"), "{unbound}");
 
     // The spec serves as authored.
-    let spec = get(&app, "/app/perf/specs/monthly.vl.json").await;
+    let spec = get(&app, "/perf/app/perf/specs/monthly.vl.json").await;
     assert_eq!(spec.status(), StatusCode::OK);
     assert!(text(spec).await.contains("\"mark\""));
 }
@@ -208,22 +210,25 @@ async fn the_door_refuses_what_it_should() {
     let (app, _plane, _dir) = workspace().await;
 
     // Frames read; a write in a frame file is not one query.
-    let evil = get(&app, "/app/perf/frames/evil").await;
+    let evil = get(&app, "/perf/app/perf/frames/evil").await;
     assert_eq!(evil.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     // Unknown app, unknown frame, unknown page.
-    assert_eq!(get(&app, "/app/nope").await.status(), StatusCode::NOT_FOUND);
     assert_eq!(
-        get(&app, "/app/perf/frames/nope").await.status(),
+        get(&app, "/perf/app/nope").await.status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        get(&app, "/app/perf/p/nope").await.status(),
+        get(&app, "/perf/app/perf/frames/nope").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&app, "/perf/app/perf/p/nope").await.status(),
         StatusCode::NOT_FOUND
     );
 
     // A frame name cannot walk out of the app directory.
-    let escape = get(&app, "/app/perf/frames/..%2Fapp.toml").await;
+    let escape = get(&app, "/perf/app/perf/frames/..%2Fapp.toml").await;
     assert_eq!(escape.status(), StatusCode::NOT_FOUND);
 }
 
@@ -237,7 +242,7 @@ async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
     let shadow = dir.path().join("apps/docket");
     std::fs::create_dir_all(&shadow).unwrap();
     std::fs::write(shadow.join("index.html"), "the author's page").unwrap();
-    let page = get(&app, "/app/docket").await;
+    let page = get(&app, "/perf/app/docket").await;
     assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let page = text(page).await;
     assert!(page.contains("app.toml"), "{page}");
@@ -245,7 +250,7 @@ async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
     // A directory naming no built-in refuses the same way — the app
     // exists in the workspace, it just cannot serve.
     std::fs::create_dir_all(dir.path().join("apps/draft")).unwrap();
-    let draft = get(&app, "/app/draft").await;
+    let draft = get(&app, "/perf/app/draft").await;
     assert_eq!(draft.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert!(text(draft).await.contains("app.toml"));
 }
@@ -261,10 +266,13 @@ async fn a_glossed_part_may_not_take_a_builtin_name() {
     // one frame under the built-in's name would resolve the whole app
     // to that single file and 404 every page the docket ships.
     let session = plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "author".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "author".into(),
+            },
+            None,
+        )
         .await
         .unwrap();
     session
@@ -277,7 +285,7 @@ async fn a_glossed_part_may_not_take_a_builtin_name() {
         .await
         .unwrap();
 
-    let page = get(&app, "/app/docket").await;
+    let page = get(&app, "/perf/app/docket").await;
     assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let page = text(page).await;
     assert!(page.contains("ships in the binary"), "{page}");
@@ -289,7 +297,7 @@ async fn a_glossed_part_may_not_take_a_builtin_name() {
         .await
         .unwrap();
     assert_eq!(
-        get(&app, "/app/cash/frames/mine").await.status(),
+        get(&app, "/perf/app/cash/frames/mine").await.status(),
         StatusCode::OK
     );
 }
@@ -318,9 +326,7 @@ async fn body_text(response: Response<Body>) -> String {
         let batch = batch.unwrap();
         for column in batch.columns() {
             for i in 0..batch.num_rows() {
-                if let Ok(v) =
-                    datafusion::arrow::util::display::array_value_to_string(column, i)
-                {
+                if let Ok(v) = datafusion::arrow::util::display::array_value_to_string(column, i) {
                     out.push_str(&v);
                     out.push('\n');
                 }
@@ -334,10 +340,13 @@ async fn body_text(response: Response<Body>) -> String {
 /// assumptions, a formulas map, and definitions.
 async fn seed_model_shapes(plane: &Arc<Plane>) {
     let agent = plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap();
     // The judged verdicts the cube reads land LAST: a measurement is
@@ -403,6 +412,75 @@ fn assert_classic(dt: &datafusion::arrow::datatypes::DataType, frame: &str, fiel
     }
 }
 
+/// A ruling is a human act, and the token says which the caller is.
+/// Downgrading an agent's post to a human's slot would file it under
+/// the wrong half of the supersession key — human outranks agent, so
+/// an agent that could write there would outrank every human.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_token_cannot_rule_and_a_human_token_signs_its_own_name() {
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let human = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Human,
+                id: "human".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    human.execute(shipped_ruling_declaration()).await.unwrap();
+
+    let post = |caller: Caller| {
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::post("/perf/app/docket/rule")
+                    .header(
+                        axum::http::header::CONTENT_TYPE,
+                        "application/x-www-form-urlencoded",
+                    )
+                    .extension(caller)
+                    .body(Body::from(
+                        "subject=perf&aspect=dso&key=per-line&stance=confirmed",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let refused = post(Caller(Actor {
+        kind: ActorKind::Agent,
+        id: "claude".into(),
+    }))
+    .await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+    let accepted = post(Caller(Actor {
+        kind: ActorKind::Human,
+        id: "ada".into(),
+    }))
+    .await;
+    assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
+    // And it is signed with the name the token carried, not an
+    // anonymous stand-in.
+    let signed = human
+        .execute("SELECT actor_id FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human';")
+        .await
+        .unwrap();
+    let glossql_session::Outcome::Rows(batches) = signed.last().unwrap() else {
+        panic!("expected rows");
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
+    assert_eq!(
+        datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap(),
+        "ada"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_builtin_frame_executes_and_serves_classic_types() {
     // Parse-only coverage lets two defect classes ship:
@@ -415,13 +493,15 @@ async fn every_builtin_frame_executes_and_serves_classic_types() {
 
     for builtin in glossql_apps::BUILTINS {
         for (path, _) in builtin.files {
-            let Some(stem) = path.strip_prefix("frames/").and_then(|p| p.strip_suffix(".sql"))
+            let Some(stem) = path
+                .strip_prefix("frames/")
+                .and_then(|p| p.strip_suffix(".sql"))
             else {
                 continue;
             };
             // Extra params are ignored by frames that bind none of them.
             let uri = format!(
-                "/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24",
+                "/perf/app/{}/frames/{stem}?metric=dso&subject=ledger&dim=region&grain=month&span=24",
                 builtin.name
             );
             let response = get(&app, &uri).await;
@@ -483,7 +563,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         let response = get(
             &app,
             &format!(
-                "/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24"
+                "/perf/app/docket/frames/{frame}?metric=dso&subject=ledger&dim=region&grain=month&span=24"
             ),
         )
         .await;
@@ -508,7 +588,7 @@ async fn the_dossier_faces_survive_a_second_dataset() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await; // seeds a second dataset
 
-    let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
+    let metric = get(&app, "/perf/app/docket/frames/metric?metric=dso").await;
     assert_eq!(metric.status(), StatusCode::OK);
     let served = body_text(metric).await;
     assert_eq!(served.lines().filter(|l| l.starts_with("dso")).count(), 1);
@@ -534,7 +614,7 @@ async fn the_dossier_faces_survive_a_second_dataset() {
         served.contains("DSO · metric · days"),
         "the meta line took its unit from the registry:\n{served}"
     );
-    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/perf/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(assumptions.status(), StatusCode::OK);
     assert_eq!(row_count(assumptions).await, 2);
 }
@@ -551,7 +631,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
     seed_model_shapes(&plane).await;
 
     // Seeded state: agent formulas + agent dso gloss — nothing waits.
-    let before = get(&app, "/app/docket/frames/owed").await;
+    let before = get(&app, "/perf/app/docket/frames/owed").await;
     assert_eq!(before.status(), StatusCode::OK);
     assert_eq!(row_count(before).await, 0);
 
@@ -572,7 +652,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
         .execute(r#"GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * 360"}}$$;"#)
         .await
         .unwrap();
-    let after = get(&app, "/app/docket/frames/owed").await;
+    let after = get(&app, "/perf/app/docket/frames/owed").await;
     assert_eq!(
         row_count(after).await,
         1,
@@ -582,10 +662,13 @@ async fn the_brief_counts_what_waits_on_the_agent() {
     // The agent re-records the materialization — the wait clears.
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     let agent = plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap();
     agent
@@ -597,7 +680,7 @@ async fn the_brief_counts_what_waits_on_the_agent() {
         )
         .await
         .unwrap();
-    let cleared = get(&app, "/app/docket/frames/owed").await;
+    let cleared = get(&app, "/perf/app/docket/frames/owed").await;
     assert_eq!(row_count(cleared).await, 0, "re-recording clears the wait");
 }
 
@@ -613,7 +696,7 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let before = get(&app, "/app/docket/frames/metric?metric=dso").await;
+    let before = get(&app, "/perf/app/docket/frames/metric?metric=dso").await;
     assert_eq!(before.status(), StatusCode::OK);
     assert_eq!(row_count(before).await, 1);
 
@@ -643,14 +726,14 @@ async fn the_metric_faces_serve_the_winning_slot_once() {
     // Still one row on the metric face, and it is the human's; the
     // assumptions ledger keeps serving the agent's working record —
     // its two disclosed assumptions — never a blend of the two bodies.
-    let metric = get(&app, "/app/docket/frames/metric?metric=dso").await;
+    let metric = get(&app, "/perf/app/docket/frames/metric?metric=dso").await;
     let served = body_text(metric).await;
     assert_eq!(served.lines().filter(|l| l.starts_with("dso")).count(), 1);
     assert!(
         served.contains("ar[end of w] / revenue[w] * 360"),
         "the human's formula must outrank the agent's:\n{served}"
     );
-    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/perf/app/docket/frames/assumptions?metric=dso").await;
     assert_eq!(
         row_count(assumptions).await,
         2,
@@ -668,7 +751,7 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
     seed_model_shapes(&plane).await;
 
     // The seed's loose `per line` assumption queues.
-    let queue = get(&app, "/app/docket/frames/open").await;
+    let queue = get(&app, "/perf/app/docket/frames/open").await;
     assert_eq!(row_count(queue).await, 1, "the loose assumption queues");
 
     // The human's ruling lands (the door writes it in production; a
@@ -695,9 +778,9 @@ async fn a_ruling_closes_its_question_and_annotates_the_ledger() {
 
     // The queue holds the question closed; the ledger shows the ruling
     // beside its assumption, still awaiting the fold-in.
-    let queue = get(&app, "/app/docket/frames/open").await;
+    let queue = get(&app, "/perf/app/docket/frames/open").await;
     assert_eq!(row_count(queue).await, 0, "the ruling closes the question");
-    let assumptions = get(&app, "/app/docket/frames/assumptions?metric=dso").await;
+    let assumptions = get(&app, "/perf/app/docket/frames/assumptions?metric=dso").await;
     let text = body_text(assumptions).await;
     assert!(text.contains("ruled: confirmed"), "{text}");
     assert!(text.contains("awaiting the fold-in"), "{text}");
@@ -727,18 +810,13 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
         )
         .await
         .unwrap();
-    human
-        .execute(
-            shipped_ruling_declaration(),
-        )
-        .await
-        .unwrap();
+    human.execute(shipped_ruling_declaration()).await.unwrap();
 
     let post = |form: &'static str| {
         let app = app.clone();
         async move {
             app.oneshot(
-                Request::post("/app/docket/rule")
+                Request::post("/perf/app/docket/rule")
                     .header(
                         axum::http::header::CONTENT_TYPE,
                         "application/x-www-form-urlencoded",
@@ -751,15 +829,17 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
         }
     };
 
-    assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 1);
+    assert_eq!(
+        row_count(get(&app, "/perf/app/docket/frames/open").await).await,
+        1
+    );
 
     // A correction with the human's own words. The answer is the write
     // event, not a navigation: 204 with the trigger header the store
     // and every component listen for.
-    let response = post(
-        "subject=perf&aspect=dso&key=per-line&stance=corrected&note=per+order,+not+per+line",
-    )
-    .await;
+    let response =
+        post("subject=perf&aspect=dso&key=per-line&stance=corrected&note=per+order,+not+per+line")
+            .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT, "{:?}", response);
     assert_eq!(
         response
@@ -771,11 +851,11 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
 
     // The question closes and the ruling stands in the human's words.
     assert_eq!(
-        row_count(get(&app, "/app/docket/frames/open").await).await,
+        row_count(get(&app, "/perf/app/docket/frames/open").await).await,
         0,
         "the ruling closes its question"
     );
-    let settled = body_text(get(&app, "/app/docket/frames/settled").await).await;
+    let settled = body_text(get(&app, "/perf/app/docket/frames/settled").await).await;
     assert!(settled.contains("per order, not per line"), "{settled}");
     assert!(settled.contains("corrected"), "{settled}");
 
@@ -783,8 +863,7 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
     // refuses instead of writing a second ruling from a stale page —
     // and the refusal carries the trigger too, so the stale tab's
     // panels re-derive to the current state on their own.
-    let response =
-        post("subject=perf&aspect=dso&key=per-line&stance=confirmed").await;
+    let response = post("subject=perf&aspect=dso&key=per-line&stance=confirmed").await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         response
@@ -793,7 +872,6 @@ async fn the_docket_takes_a_ruling_and_refuses_a_stale_one() {
             .and_then(|v| v.to_str().ok()),
         Some("glossql:written")
     );
-
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -817,17 +895,12 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
         )
         .await
         .unwrap();
-    human
-        .execute(
-            shipped_ruling_declaration(),
-        )
-        .await
-        .unwrap();
+    human.execute(shipped_ruling_declaration()).await.unwrap();
 
     let response = app
         .clone()
         .oneshot(
-            Request::post("/app/docket/rule")
+            Request::post("/perf/app/docket/rule")
                 .header(
                     axum::http::header::CONTENT_TYPE,
                     "application/x-www-form-urlencoded",
@@ -843,8 +916,11 @@ async fn an_unclear_ruling_closes_the_question_without_taking_a_side() {
 
     // The question closes — the refusal holds this key, and only a
     // re-record with a clearer assumption asks again.
-    assert_eq!(row_count(get(&app, "/app/docket/frames/open").await).await, 0);
-    let settled = body_text(get(&app, "/app/docket/frames/settled").await).await;
+    assert_eq!(
+        row_count(get(&app, "/perf/app/docket/frames/open").await).await,
+        0
+    );
+    let settled = body_text(get(&app, "/perf/app/docket/frames/settled").await).await;
     assert!(settled.contains("unclear"), "{settled}");
     assert!(settled.contains("which lines?"), "{settled}");
 }
@@ -859,10 +935,13 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
     let agent = plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap();
     agent
@@ -880,11 +959,14 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
     // The verdict computes at read — the detector's query answers over
     // the dso grounding's slot.
 
-    let checks = get(&app, "/app/docket/frames/checks").await;
+    let checks = get(&app, "/perf/app/docket/frames/checks").await;
     let status = checks.status();
     if status != StatusCode::OK {
         let body = to_bytes(checks.into_body(), usize::MAX).await.unwrap();
-        panic!("checks frame: {status} — {}", String::from_utf8_lossy(&body));
+        panic!(
+            "checks frame: {status} — {}",
+            String::from_utf8_lossy(&body)
+        );
     }
     assert_eq!(
         row_count(checks).await,
@@ -906,26 +988,45 @@ async fn the_metrics_faces_serve_the_cube() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let pulse = get(&app, "/app/docket/frames/pulse").await;
+    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
     assert_eq!(pulse.status(), StatusCode::OK);
     assert_eq!(row_count(pulse).await, 1, "one declared surface, one row");
 
-    let latest = get(&app, "/app/docket/frames/latest").await;
+    let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
-    assert_eq!(row_count(latest).await, 1, "the newest period of the one metric");
+    assert_eq!(
+        row_count(latest).await,
+        1,
+        "the newest period of the one metric"
+    );
 
-    let axes = get(&app, "/app/docket/frames/axes?metric=dso").await;
+    let axes = get(&app, "/perf/app/docket/frames/axes?metric=dso").await;
     assert_eq!(axes.status(), StatusCode::OK);
     assert_eq!(row_count(axes).await, 1, "one fact row for the metric");
 
-    let dims = get(&app, "/app/docket/frames/dims?metric=dso&grain=month&span=24").await;
+    let dims = get(
+        &app,
+        "/perf/app/docket/frames/dims?metric=dso&grain=month&span=24",
+    )
+    .await;
     assert_eq!(row_count(dims).await, 1, "cohort is the one admitted axis");
 
-    let slices =
-        get(&app, "/app/docket/frames/slices?metric=dso&dim=cohort&grain=month&span=all").await;
-    assert_eq!(row_count(slices).await, 3, "two members over two months, one sparse");
+    let slices = get(
+        &app,
+        "/perf/app/docket/frames/slices?metric=dso&dim=cohort&grain=month&span=all",
+    )
+    .await;
+    assert_eq!(
+        row_count(slices).await,
+        3,
+        "two members over two months, one sparse"
+    );
 
-    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
+    let trend = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=month&span=24",
+    )
+    .await;
     assert_eq!(
         row_count(trend).await,
         4,
@@ -933,13 +1034,25 @@ async fn the_metrics_faces_serve_the_cube() {
     );
     // The grain re-buckets on the server: both months fall in one
     // quarter, for the chosen reading and the rival alike.
-    let quarter = get(&app, "/app/docket/frames/trend?metric=dso&grain=quarter&span=24").await;
+    let quarter = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=quarter&span=24",
+    )
+    .await;
     assert_eq!(row_count(quarter).await, 2, "one quarter, two series");
     // The span clips the newest periods in the frame's SQL.
-    let clipped = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=1").await;
+    let clipped = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=month&span=1",
+    )
+    .await;
     assert_eq!(row_count(clipped).await, 2, "the newest month, two series");
 
-    let drivers = get(&app, "/app/docket/frames/drivers?metric=dso&grain=month").await;
+    let drivers = get(
+        &app,
+        "/perf/app/docket/frames/drivers?metric=dso&grain=month",
+    )
+    .await;
     assert_eq!(
         row_count(drivers).await,
         1,
@@ -947,7 +1060,7 @@ async fn the_metrics_faces_serve_the_cube() {
     );
 
     // The axes banner is silent while the verdicts stand at this pin.
-    let banner = get(&app, "/app/docket/frames/remeasure").await;
+    let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
     assert_eq!(banner.status(), StatusCode::OK);
     assert_eq!(row_count(banner).await, 0, "nothing to re-measure");
 
@@ -955,19 +1068,34 @@ async fn the_metrics_faces_serve_the_cube() {
     // the same numbers — the verdicts judged before the gloss still
     // admit the axes — and the banner says they are not current.
     plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap()
         .execute(r#"USE perf; GLOSS formulas ON perf AS $${"formulas": {"dso": "ar[end of w] / revenue[w] * days[w]"}}$$;"#)
         .await
         .unwrap();
-    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
-    assert_eq!(row_count(trend).await, 4, "the numbers stand after the gloss");
-    let banner = get(&app, "/app/docket/frames/remeasure").await;
-    assert_eq!(row_count(banner).await, 1, "the axes were judged before the gloss");
+    let trend = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=month&span=24",
+    )
+    .await;
+    assert_eq!(
+        row_count(trend).await,
+        4,
+        "the numbers stand after the gloss"
+    );
+    let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
+    assert_eq!(
+        row_count(banner).await,
+        1,
+        "the axes were judged before the gloss"
+    );
 
     // Re-measure — the docket's second write, a compute act: the
     // profilers run over the served columns, the response is the write
@@ -975,7 +1103,7 @@ async fn the_metrics_faces_serve_the_cube() {
     let response = app
         .clone()
         .oneshot(
-            Request::post("/app/docket/remeasure")
+            Request::post("/perf/app/docket/remeasure")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -989,9 +1117,17 @@ async fn the_metrics_faces_serve_the_cube() {
         response.headers()["HX-Trigger"],
         "glossql:remeasured, glossql:written"
     );
-    let banner = get(&app, "/app/docket/frames/remeasure").await;
-    assert_eq!(row_count(banner).await, 0, "re-measured: the verdicts are current again");
-    let trend = get(&app, "/app/docket/frames/trend?metric=dso&grain=month&span=24").await;
+    let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
+    assert_eq!(
+        row_count(banner).await,
+        0,
+        "re-measured: the verdicts are current again"
+    );
+    let trend = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=month&span=24",
+    )
+    .await;
     assert_eq!(row_count(trend).await, 4, "and the numbers stand");
 }
 
@@ -1003,18 +1139,18 @@ async fn the_metrics_pages_render_both_states() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let front = get(&app, "/app/docket/p/metrics").await;
+    let front = get(&app, "/perf/app/docket/p/metrics").await;
     assert_eq!(front.status(), StatusCode::OK);
     let front = text(front).await;
     assert!(front.contains("frames/pulse"), "{front}");
 
     // the front counts live on the docket itself, not the metric list
-    let open = text(get(&app, "/app/docket").await).await;
+    let open = text(get(&app, "/perf/app/docket").await).await;
     assert!(open.contains("frames/front"), "{open}");
     assert!(open.contains("frames/open"), "{open}");
     assert!(open.contains("frames/settled"), "{open}");
 
-    let dossier = text(get(&app, "/app/docket/p/metrics?metric=dso").await).await;
+    let dossier = text(get(&app, "/perf/app/docket/p/metrics?metric=dso").await).await;
     assert!(dossier.contains("frames/trend"), "{dossier}");
     assert!(dossier.contains("frames/dims"), "{dossier}");
     assert!(
@@ -1022,7 +1158,7 @@ async fn the_metrics_pages_render_both_states() {
         "no dim picked — the slice tile must not render"
     );
 
-    let sliced = text(get(&app, "/app/docket/p/metrics?metric=dso&dim=cohort").await).await;
+    let sliced = text(get(&app, "/perf/app/docket/p/metrics?metric=dso&dim=cohort").await).await;
     assert!(sliced.contains("frames/slices"), "{sliced}");
 }
 
@@ -1046,19 +1182,20 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
         )
         .await
         .unwrap()
-        .execute(
-            shipped_ruling_declaration(),
-        )
+        .execute(shipped_ruling_declaration())
         .await
         .unwrap();
     // One open question per case below: a ruling closes the question it
     // answered, so re-posting the same key would be refused as stale
     // and never reach the redirect at all.
     plane
-        .session(Actor {
-            kind: ActorKind::Agent,
-            id: "builder".into(),
-        })
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
         .await
         .unwrap()
         .execute(
@@ -1077,7 +1214,7 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
         .unwrap();
 
     // Pages are never cached: they are live views of a mutable record.
-    let page = get(&app, "/app/docket").await;
+    let page = get(&app, "/perf/app/docket").await;
     assert_eq!(
         page.headers()
             .get(axum::http::header::CACHE_CONTROL)
@@ -1089,7 +1226,7 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
     let post = |key: &'static str, referer: Option<&'static str>| {
         let app = app.clone();
         async move {
-            let mut request = Request::post("/app/docket/rule").header(
+            let mut request = Request::post("/perf/app/docket/rule").header(
                 axum::http::header::CONTENT_TYPE,
                 "application/x-www-form-urlencoded",
             );
@@ -1112,15 +1249,22 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
     // page, a forged Referer, no Referer at all: 204, the trigger, and
     // no Location for anything to follow.
     for (key, referer) in [
-        ("k0", Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso")),
+        (
+            "k0",
+            Some("http://127.0.0.1:8113/app/docket/p/metrics?metric=dso"),
+        ),
         ("k1", Some("http://evil.example/steal")),
         ("k2", Some("//evil.example/steal")),
-        ("k3", Some("/app/other/p/metrics")),
+        ("k3", Some("/perf/app/other/p/metrics")),
         ("k4", Some("not a url at all")),
         ("k5", None),
     ] {
         let response = post(key, referer).await;
-        assert_eq!(response.status(), StatusCode::NO_CONTENT, "referer {referer:?}");
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "referer {referer:?}"
+        );
         assert_eq!(
             response
                 .headers()
@@ -1130,7 +1274,10 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
             "referer {referer:?}"
         );
         assert!(
-            response.headers().get(axum::http::header::LOCATION).is_none(),
+            response
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .is_none(),
             "referer {referer:?}"
         );
     }

@@ -11,7 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Int64Array;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_serverd::{ARROW_STREAM, DoorConfig, HUMAN, Plane, bootstrap, router};
+use glossql_serverd::{ARROW_STREAM, DoorConfig, Gate, HUMAN, Plane, bootstrap, router};
 use glossql_session::NoRuntime;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -20,11 +20,35 @@ async fn app_with(doors: DoorConfig) -> (Router, tempfile::TempDir) {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
-    (router(plane, doors, std::env::temp_dir()), dir)
+    let workspace = dir.path().to_path_buf();
+    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
+    (router(plane, doors, workspace, gate), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
     app_with(DoorConfig::default()).await
+}
+
+/// The same doors over a workspace that already holds one dataset.
+/// `/query` and `/app` are dataset-scoped and 404 on a name the
+/// workspace does not hold — only `/mcp` may bring one into being.
+async fn app_on_fin() -> (Router, tempfile::TempDir) {
+    let (app, dir) = app().await;
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                1,
+                "DECLARE DATASET fin SET (purpose: 'door test');",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    (app, dir)
 }
 
 async fn body_json(response: Response<Body>) -> Value {
@@ -34,10 +58,11 @@ async fn body_json(response: Response<Body>) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_docket_app_ships_in_the_binary() {
-    // The workspace carries no apps — the built-in answers for the name.
-    let (app, _dir) = app().await;
+    // The workspace carries no apps — the built-in answers for the name,
+    // on whichever dataset the URL names.
+    let (app, _dir) = app_on_fin().await;
     let response = app
-        .oneshot(Request::get("/app/docket").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/fin/app/docket").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -47,29 +72,42 @@ async fn the_docket_app_ships_in_the_binary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_builtin_frame_names_the_missing_dataset() {
-    // No dataset in the workspace: the frame states the condition
-    // instead of failing opaquely — the tile renders the message.
-    let (app, _dir) = app().await;
+async fn a_dataset_the_workspace_does_not_hold_is_a_404() {
+    // The URL is the binding, so a name nobody declared is a missing
+    // resource, not a query that fails oddly three layers down. The
+    // answer names what the workspace does hold — a mistyped dataset
+    // should not require a second request to recover from.
+    let (app, _dir) = app_on_fin().await;
     let response = app
+        .clone()
         .oneshot(
-            Request::get("/app/docket/frames/census")
+            Request::get("/nope/app/docket/frames/census")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = app
+        .oneshot(
+            Request::post("/nope/query")
+                .body(Body::from("SELECT 1"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     let body = body_json(response).await;
-    assert!(body["error"].as_str().unwrap().contains("no dataset"));
+    assert!(body["error"].as_str().unwrap().contains("fin"), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_streams_arrow_ipc() {
-    let (app, _dir) = app().await;
+    let (app, _dir) = app_on_fin().await;
     let response = app
         .oneshot(
-            Request::post("/query")
+            Request::post("/fin/query")
                 .body(Body::from("SELECT 1 + 1 AS two"))
                 .unwrap(),
         )
@@ -95,10 +133,10 @@ async fn the_query_door_streams_arrow_ipc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_answers_a_statement_sequence_in_json() {
-    let (app, _dir) = app().await;
+    let (app, _dir) = app_on_fin().await;
     let response = app
         .oneshot(
-            Request::post("/query")
+            Request::post("/fin/query")
                 .body(Body::from("SELECT 1 AS a; SELECT 2 AS b"))
                 .unwrap(),
         )
@@ -115,10 +153,10 @@ async fn the_query_door_answers_a_statement_sequence_in_json() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_answers_a_refusal_in_the_body() {
-    let (app, _dir) = app().await;
+    let (app, _dir) = app_on_fin().await;
     let response = app
         .oneshot(
-            Request::post("/query")
+            Request::post("/fin/query")
                 .body(Body::from("USE nothing"))
                 .unwrap(),
         )
@@ -133,11 +171,127 @@ async fn the_query_door_answers_a_refusal_in_the_body() {
     );
 }
 
+/// The gate: a bearer token is what proves who is speaking. Until now
+/// nothing did, and the supersession key's `actor kind` leg rested on
+/// callers being well behaved.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
+    let (dir, store) = scratch_store().await;
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let workspace = dir.path().to_path_buf();
+    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
+    let token = gate.mint(ActorKind::Agent, "ada", 1).unwrap();
+    let app = router(plane, DoorConfig::default(), workspace, Arc::clone(&gate));
+
+    // The token's subject is the actor, over the handshake's own name:
+    // `clientInfo` is a name a client picks for itself, a claim is
+    // signed.
+    let request = Request::post("/fin/mcp")
+        .header(header::HOST, "127.0.0.1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/call")
+        .header("mcp-name", "glossql")
+        .body(Body::from(
+            call_with(
+                meta(),
+                1,
+                "DECLARE DATASET fin SET (purpose: 'token test');\n\
+                 USE fin;\n\
+                 DECLARE ASPECT note WITH $${\"type\": \"object\"}$$ AS FACT ON DATASET;\n\
+                 GLOSS note ON fin AS $${\"value\": \"mine\"}$$;\n\
+                 SELECT actor_id, actor_kind FROM glossary WHERE aspect = 'note';",
+                None,
+            )
+            .to_string(),
+        ))
+        .unwrap();
+    let body = expect_ok(app.clone().oneshot(request).await.unwrap()).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).expect(text);
+    let last = outcomes.as_array().unwrap().last().unwrap();
+    assert_eq!(last["rows"][0]["actor_id"], json!("ada"), "{outcomes}");
+    assert_eq!(last["rows"][0]["actor_kind"], json!("agent"), "{outcomes}");
+
+    // A token this server did not sign opens nothing, and the refusal
+    // points at the discovery document a client can act on.
+    let response = app
+        .oneshot(
+            Request::post("/fin/query")
+                .header(header::AUTHORIZATION, "Bearer not.a.token")
+                .body(Body::from("SELECT 1"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let challenge = response.headers()[header::WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        challenge.contains("oauth-protected-resource"),
+        "{challenge}"
+    );
+}
+
+/// `--require-token` is the posture a server takes when it knows where
+/// its tokens come from. Without it a request that brings none is
+/// served as the door's own default, which is how a fresh workspace is
+/// opened before anyone holds one.
+#[tokio::test(flavor = "multi_thread")]
+async fn require_token_refuses_a_request_that_brings_none() {
+    let (dir, store) = scratch_store().await;
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let workspace = dir.path().to_path_buf();
+    let gate = Arc::new(Gate::local(&workspace, "http://test", true).unwrap());
+    let app = router(plane, DoorConfig::default(), workspace, gate);
+    let response = app
+        .oneshot(
+            Request::post("/fin/query")
+                .body(Body::from("SELECT 1"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The startup link carries the token once. The door swaps it for a
+/// cookie and sends the browser to the bare path, so the credential
+/// does not live on in the address bar or the history.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_token_in_the_url_becomes_a_cookie() {
+    let (dir, store) = scratch_store().await;
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let workspace = dir.path().to_path_buf();
+    let gate = Arc::new(Gate::local(&workspace, "http://test", true).unwrap());
+    let token = gate.mint(ActorKind::Human, "ada", 1).unwrap();
+    let app = router(plane, DoorConfig::default(), workspace, gate);
+    let response = app
+        .oneshot(
+            Request::get(format!("/?token={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[header::LOCATION], "/");
+    let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+    assert!(cookie.contains(&token), "{cookie}");
+}
+
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
 /// transport session; json_response mode answers in plain JSON).
 async fn mcp(app: Router, payload: Value) -> Response<Body> {
     let method = payload["method"].as_str().unwrap().to_string();
-    let mut request = Request::post("/mcp")
+    let mut request = Request::post("/fin/mcp")
         // oneshot skips what every real client sends; the transport's
         // rebinding guard (allowed_hosts) rightly insists on it.
         .header(header::HOST, "127.0.0.1")
@@ -281,7 +435,10 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     // What landed rides beside the refusal, in the usual shape — the
     // first statement's rows are not discarded with the second's error.
     let landed = body["result"]["content"][1]["text"].as_str().unwrap();
-    assert!(landed.contains("\"landed\"") && landed.contains("\"a\""), "{landed}");
+    assert!(
+        landed.contains("\"landed\"") && landed.contains("\"a\""),
+        "{landed}"
+    );
 
     // The connect-time brief: every initialize after
     // a call serves live counts in its instructions — an agent
@@ -338,14 +495,17 @@ async fn the_round_never_asks_the_human_for_statistics() {
     let store = Store::open(lake).await.unwrap();
     // The kit's witnesses carry detectors (slot_entropy), and reads
     // adjudicate — this test needs the real script runtime.
-    let runtime = Arc::new(glossql_scripts::KernelRuntime::new(dir.path().to_path_buf()));
+    let runtime = Arc::new(glossql_scripts::KernelRuntime::new(
+        dir.path().to_path_buf(),
+    ));
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     let human = Actor {
         kind: ActorKind::Human,
         id: HUMAN.into(),
     };
     bootstrap(&plane, human).await.unwrap();
-    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf());
+    let gate = Arc::new(Gate::local(dir.path(), "http://test", false).unwrap());
+    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf(), gate);
 
     let setup = format!(
         r#"DECLARE DATASET perf SET (purpose: 'kit test');
@@ -364,7 +524,12 @@ async fn the_round_never_asks_the_human_for_statistics() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 71, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+            call_with(
+                meta_elicit(),
+                71,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                None,
+            ),
         )
         .await,
     )
@@ -378,10 +543,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
     // And the brief counts no open question — the claim is agent work.
     let body = expect_ok(mcp(app, initialize()).await).await;
     let instructions = body["result"]["instructions"].as_str().unwrap();
-    assert!(
-        !instructions.contains("question"),
-        "{instructions}"
-    );
+    assert!(!instructions.contains("question"), "{instructions}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -424,7 +586,10 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
                 .await,
             )
             .await;
-            let text = body["result"]["content"][0]["text"].as_str().unwrap().to_string();
+            let text = body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let outcomes: Value = serde_json::from_str(&text).unwrap();
             outcomes[0]["rows"].as_array().cloned().unwrap_or_default()
         }
@@ -436,16 +601,18 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
     let review = "SELECT subject, aspect FROM glossary LIMIT 5";
 
     // dio asks first (aspect order) and the human corrects it. With
-    // nothing yet ruled on this key, the form offers two stances.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 182, review, None)).await).await;
+    // nothing yet ruled on this key, there is no box to repeat one.
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 182, review, None)).await).await;
     let first = &body["result"]["inputRequests"]["loose:fin:dio:days-in-period"];
     assert!(first.is_object(), "{body}");
-    let stances = first["params"]["requestedSchema"]["properties"]["stance"]["enum"].to_string();
-    assert!(!stances.contains("same as before"), "nothing to repeat yet: {stances}");
+    let boxes = &first["params"]["requestedSchema"]["properties"];
+    assert!(
+        boxes.get("3_same_as").is_none(),
+        "nothing to repeat yet: {boxes}"
+    );
 
     let corrected = json!({"action": "accept",
-        "content": {"stance": "wrong", "correction": "use a fixed 30-day month"}});
+        "content": {"5_correction": "use a fixed 30-day month"}});
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -463,21 +630,24 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
 
     // dso asks next. The same key is already ruled next door, so the
     // form both names it and offers it back.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 184, review, None)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 184, review, None)).await).await;
     let second = &body["result"]["inputRequests"]["loose:fin:dso:days-in-period"];
     assert!(second.is_object(), "{body}");
-    let message = second["params"]["message"].as_str().unwrap();
-    assert!(message.contains("corrected on dio"), "{message}");
-    let stances = second["params"]["requestedSchema"]["properties"]["stance"]["enum"].to_string();
+    // The prior ruling is its own box, and its title says which one.
+    // The message carries identity only — it is the one surface the
+    // client clips.
+    let repeat = &second["params"]["requestedSchema"]["properties"]["3_same_as"];
+    assert_eq!(repeat["type"], json!("boolean"), "{second}");
     assert!(
-        stances.contains("same as before (corrected on dio)"),
-        "the repeat must be one click: {stances}"
+        repeat["description"]
+            .as_str()
+            .is_some_and(|d| d.contains("corrected on dio")),
+        "the repeat must be one click: {second}"
     );
 
-    // Taking it replays the stance AND the human's own words.
+    // Ticking it replays the stance AND the human's own words.
     let same = json!({"action": "accept",
-        "content": {"stance": "same as before (corrected on dio)"}});
+        "content": {"3_same_as": true}});
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -492,7 +662,9 @@ async fn a_repeated_key_is_answered_by_repeating_the_ruling() {
     )
     .await;
     assert!(
-        body["result"]["content"].to_string().contains("ruled (corrected)"),
+        body["result"]["content"]
+            .to_string()
+            .contains("ruled (corrected)"),
         "{body}"
     );
 
@@ -555,7 +727,12 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 61, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+            call_with(
+                meta_elicit(),
+                61,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                None,
+            ),
         )
         .await,
     )
@@ -567,9 +744,17 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     );
     let ask = &body["result"]["inputRequests"]["loose:fin:dso:per-line"];
     assert_eq!(ask["method"], json!("elicitation/create"), "{body}");
-    assert!(ask["params"]["message"].to_string().contains("per line"), "{body}");
+    // The claim rides the description of the box that confirms it: a
+    // message is clipped at three lines and a title is truncated to
+    // share its line with the value, while a description renders whole.
+    assert!(
+        ask["params"]["requestedSchema"]["properties"]["1_stands"]["description"]
+            .as_str()
+            .is_some_and(|d| d.contains("per line")),
+        "{body}"
+    );
 
-    let answer = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+    let answer = json!({"action": "accept", "content": {"1_stands": true}});
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -585,7 +770,9 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     assert!(
-        body["result"]["content"].to_string().contains("ruled (confirmed)"),
+        body["result"]["content"]
+            .to_string()
+            .contains("ruled (confirmed)"),
         "{body}"
     );
 
@@ -607,7 +794,11 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).unwrap();
     assert_eq!(outcomes[0]["row_count"], json!(1), "{outcomes}");
-    assert_eq!(outcomes[0]["rows"][0]["aspect"], json!("ruling"), "{outcomes}");
+    assert_eq!(
+        outcomes[0]["rows"][0]["aspect"],
+        json!("ruling"),
+        "{outcomes}"
+    );
     let human_body = outcomes[0]["rows"][0]["body"].as_str().unwrap();
     assert!(human_body.contains("per line"), "{human_body}");
     assert!(human_body.contains("confirmed"), "{human_body}");
@@ -620,7 +811,12 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 64, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+            call_with(
+                meta_elicit(),
+                64,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                None,
+            ),
         )
         .await,
     )
@@ -651,12 +847,13 @@ async fn the_round_rules_a_loose_assumption_on_retry() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_declined_question_rests_until_the_workspace_moves() {
-    // Decline is defer: transport state, never the store — the app
-    // still shows the open row. It rests only while the workspace
-    // holds still; a writing call clears the deferral, so the next
-    // review asks again — "not now"
-    // never hardens into "never".
+async fn every_way_out_that_is_not_an_answer_is_a_defer() {
+    // The dialog has two outcomes. Accepting with something said is
+    // the save; Decline, Esc, and a form confirmed empty are all the
+    // same defer — nothing recorded, the claim still derives, and the
+    // next review asks it again. Nobody may opt out of being asked:
+    // the question is what the numbers rest on, and the way to make it
+    // stop is to answer it, `unclear` included.
     let (app, _dir) = app().await;
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'defer test');
@@ -671,50 +868,68 @@ async fn a_declined_question_rests_until_the_workspace_moves() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     let review = "SELECT subject, aspect FROM glossary LIMIT 5";
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 71, review, None)).await).await;
+    let mut id = 71;
+    for way_out in [
+        json!({"action": "decline"}),
+        json!({"action": "cancel"}),
+        json!({"action": "accept", "content": {}}),
+    ] {
+        let body =
+            expect_ok(mcp(app.clone(), call_with(meta_elicit(), id, review, None)).await).await;
+        assert_eq!(
+            body["result"]["resultType"],
+            json!("input_required"),
+            "still open before {way_out}: {body}"
+        );
+        let body = expect_ok(
+            mcp(
+                app.clone(),
+                call_with(
+                    meta_elicit(),
+                    id + 1,
+                    review,
+                    Some(("loose:fin:dso:per-line", way_out.clone())),
+                ),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            body["result"]["content"].to_string().contains("deferred"),
+            "{way_out} defers: {body}"
+        );
+        id += 2;
+    }
+
+    // No write in between, and it is asked again every time — a defer
+    // buys no quiet, because the claim is still what the numbers rest
+    // on.
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), id, review, None)).await).await;
     assert_eq!(
         body["result"]["resultType"],
         json!("input_required"),
-        "{body}"
+        "a deferred question stands open: {body}"
     );
 
-    let declined = json!({"action": "decline"});
+    // And nothing was recorded by any of the three.
     let body = expect_ok(
         mcp(
-            app.clone(),
-            call_with(meta_elicit(), 72, review, Some(("loose:fin:dso:per-line", declined))),
-        )
-        .await,
-    )
-    .await;
-    assert!(body["result"]["content"].to_string().contains("deferred"), "{body}");
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 73, review, None)).await).await;
-    assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
-
-    // The workspace moves — an unrelated declaration — and the same
-    // question stands again at the next review.
-    let body = expect_ok(
-        mcp(
-            app.clone(),
+            app,
             call_with(
-                meta_elicit(),
-                74,
-                r#"DECLARE ASPECT note WITH $${"title": "note"}$$ AS FACT;"#,
+                meta(),
+                id + 1,
+                "SELECT count(*) AS n FROM ruling_entries;",
                 None,
             ),
         )
         .await,
     )
     .await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    let body =
-        expect_ok(mcp(app, call_with(meta_elicit(), 75, review, None)).await).await;
-    assert_eq!(
-        body["result"]["resultType"],
-        json!("input_required"),
-        "declined question must re-derive after a write: {body}"
+    assert!(
+        body["result"]["content"][0]["text"]
+            .to_string()
+            .contains("\\\"n\\\":0"),
+        "a defer records nothing: {body}"
     );
 }
 
@@ -751,20 +966,38 @@ async fn the_round_never_interrupts_a_working_call() {
         .await,
     )
     .await;
-    assert_ne!(body["result"]["resultType"], json!("input_required"), "{body}");
+    assert_ne!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     // A plain data read: judging work, not a review — no form either.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 92, "SELECT 1 AS ok", None)).await)
-            .await;
-    assert_ne!(body["result"]["resultType"], json!("input_required"), "{body}");
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta_elicit(), 92, "SELECT 1 AS ok", None),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(
+        body["result"]["resultType"],
+        json!("input_required"),
+        "{body}"
+    );
 
     // The review-shaped call carries the form.
     let body = expect_ok(
         mcp(
             app,
-            call_with(meta_elicit(), 93, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+            call_with(
+                meta_elicit(),
+                93,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                None,
+            ),
         )
         .await,
     )
@@ -778,133 +1011,6 @@ async fn the_round_never_interrupts_a_working_call() {
 
 /// The session-carrying lifecycle (≤ 2025-11-25) gets the same round
 /// as a server→client request on the call's own stream.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_round_rides_a_transport_session_too() {
-    use futures::StreamExt;
-
-    let (app, _dir) = app().await;
-    let setup = r#"
-        DECLARE DATASET fin SET (purpose: 'session round');
-        USE fin;
-        DECLARE ASPECT ruling WITH $${"type": "object", "required": ["rulings"],
-          "properties": {"rulings": {"type": "array"}}}$$ AS FACT;
-        DECLARE ASPECT dso WITH $${"title": "DSO", "x-kind": "metric"}$$ AS QUERY ON DATASET;
-        GLOSS dso ON fin AS $${"sql": "SELECT 1 AS v",
-          "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.7}]}$$;
-    "#;
-    let body = expect_ok(mcp(app.clone(), call_with(meta(), 80, setup, None)).await).await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-
-    let session_request = |session: Option<&str>, payload: String| {
-        let mut request = Request::post("/mcp")
-            .header(header::HOST, "127.0.0.1")
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::ACCEPT, "application/json, text/event-stream");
-        if let Some(id) = session {
-            request = request
-                .header("mcp-session-id", id)
-                .header("mcp-protocol-version", "2025-11-25");
-        }
-        request.body(Body::from(payload)).unwrap()
-    };
-    let init = json!({
-        "jsonrpc": "2.0", "id": 0, "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {"elicitation": {}},
-            "clientInfo": {"name": "doors-test", "version": "0"}
-        }
-    });
-    let response = app
-        .clone()
-        .oneshot(session_request(None, init.to_string()))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let sid = response
-        .headers()
-        .get("mcp-session-id")
-        .expect("a session id")
-        .to_str()
-        .unwrap()
-        .to_string();
-    let posted = app
-        .clone()
-        .oneshot(session_request(
-            Some(&sid),
-            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
-        ))
-        .await
-        .unwrap();
-    assert!(posted.status().is_success(), "{}", posted.status());
-
-    let asked = json!({
-        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "glossql",
-            "arguments": {"statements": "SELECT subject, aspect FROM glossary LIMIT 5"}}
-    });
-    let response = app
-        .clone()
-        .oneshot(session_request(Some(&sid), asked.to_string()))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut stream = response.into_body().into_data_stream();
-    let mut buffer = String::new();
-
-    let elicit_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let chunk = stream.next().await.expect("stream open").expect("chunk");
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(end) = buffer.find('\n') {
-                let line = buffer.drain(..=end).collect::<String>();
-                if let Some(data) = line.trim().strip_prefix("data: ") {
-                    let event: Value = serde_json::from_str(data).expect(data);
-                    if event["method"] == json!("elicitation/create") {
-                        return event["id"].clone();
-                    }
-                }
-            }
-        }
-    })
-    .await
-    .expect("the round must reach this stream");
-
-    let answer = json!({
-        "jsonrpc": "2.0", "id": elicit_id,
-        "result": {"action": "accept", "content": {"stance": "stands as stated"}}
-    });
-    let posted = app
-        .clone()
-        .oneshot(session_request(Some(&sid), answer.to_string()))
-        .await
-        .unwrap();
-    assert!(posted.status().is_success(), "{}", posted.status());
-
-    let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            while let Some(end) = buffer.find('\n') {
-                let line = buffer.drain(..=end).collect::<String>();
-                if let Some(data) = line.trim().strip_prefix("data: ") {
-                    let event: Value = serde_json::from_str(data).expect(data);
-                    if event["id"] == json!(2) {
-                        return event;
-                    }
-                }
-            }
-            let chunk = stream.next().await.expect("stream open").expect("chunk");
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-        }
-    })
-    .await
-    .expect("the tool result must arrive after the answer");
-    assert_ne!(done["result"]["isError"], json!(true), "{done}");
-    assert!(
-        done["result"]["content"].to_string().contains("ruled (confirmed)"),
-        "{done}"
-    );
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn the_actor_id_is_the_clients_name_not_the_transports() {
     let (app, _dir) = app().await;
@@ -1062,7 +1168,7 @@ async fn sequential_rulings_compose_instead_of_reverting() {
         "loose:fin:dso:flat-30-day-month",
         "loose:fin:dso:total-revenue-denominator",
     ] {
-        let answer = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+        let answer = json!({"action": "accept", "content": {"1_stands": true}});
         let body = expect_ok(
             mcp(
                 app.clone(),
@@ -1072,7 +1178,9 @@ async fn sequential_rulings_compose_instead_of_reverting() {
         )
         .await;
         assert!(
-            body["result"]["content"].to_string().contains("ruled (confirmed)"),
+            body["result"]["content"]
+                .to_string()
+                .contains("ruled (confirmed)"),
             "{key}: {body}"
         );
     }
@@ -1103,14 +1211,25 @@ async fn sequential_rulings_compose_instead_of_reverting() {
     );
     assert_eq!(human_body.matches("confirmed").count(), 2, "{human_body}");
     let agent_body = outcomes[1]["rows"][0]["body"].as_str().unwrap();
-    assert!(agent_body.contains("0.6"), "the agent body moved: {agent_body}");
-    assert!(agent_body.contains("0.7"), "the agent body moved: {agent_body}");
+    assert!(
+        agent_body.contains("0.6"),
+        "the agent body moved: {agent_body}"
+    );
+    assert!(
+        agent_body.contains("0.7"),
+        "the agent body moved: {agent_body}"
+    );
 
     // And the round is quiet — nothing re-derives.
     let body = expect_ok(
         mcp(
             app.clone(),
-            call_with(meta_elicit(), 83, "SELECT subject, aspect FROM glossary LIMIT 5", None),
+            call_with(
+                meta_elicit(),
+                83,
+                "SELECT subject, aspect FROM glossary LIMIT 5",
+                None,
+            ),
         )
         .await,
     )
@@ -1150,14 +1269,13 @@ async fn the_round_names_the_sibling_ruling_on_the_same_key() {
     let review = "SELECT subject, aspect FROM glossary LIMIT 5";
 
     // dpo asks first (aspect order); the human corrects it.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 101, review, None)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 101, review, None)).await).await;
     assert!(
         body["result"]["inputRequests"]["loose:fin:dpo:goods-only"].is_object(),
         "{body}"
     );
     let corrected = json!({"action": "accept",
-        "content": {"stance": "wrong", "correction": "all suppliers, not goods only"}});
+        "content": {"5_correction": "all suppliers, not goods only"}});
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -1173,22 +1291,25 @@ async fn the_round_names_the_sibling_ruling_on_the_same_key() {
     .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
-    // purchases asks next, and the form names what was already ruled
-    // on that same key — the `sibling` column, carried by the read.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 103, review, None)).await).await;
+    // purchases asks next, and the form offers what was already ruled
+    // on that same key as an answer — the `sibling` column, carried by
+    // the read, standing as its own box with the prior words beneath.
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 103, review, None)).await).await;
     let form = &body["result"]["inputRequests"]["loose:fin:purchases:goods-only"];
     assert!(form.is_object(), "{body}");
+    let repeat = &form["params"]["requestedSchema"]["properties"]["3_same_as"];
+    let said = repeat["description"].as_str().expect("a description");
     assert!(
-        form["params"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("corrected on dpo"),
-        "the form names the sibling ruling: {body}"
+        said.contains("corrected on dpo"),
+        "the form offers the sibling ruling: {body}"
+    );
+    assert!(
+        said.contains("all suppliers, not goods only"),
+        "the prior words ride with it: {body}"
     );
 
     // The human confirms it anyway — legitimate, different aspect.
-    let confirmed = json!({"action": "accept", "content": {"stance": "stands as stated"}});
+    let confirmed = json!({"action": "accept", "content": {"1_stands": true}});
     let body = expect_ok(
         mcp(
             app.clone(),
@@ -1206,8 +1327,7 @@ async fn the_round_names_the_sibling_ruling_on_the_same_key() {
 
     // Both rulings stand, each on its own aspect, and the round is
     // quiet — the record needs no third act.
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 105, review, None)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 105, review, None)).await).await;
     assert_eq!(body["result"]["resultType"], json!("complete"), "{body}");
 }
 
@@ -1233,7 +1353,10 @@ async fn the_brief_rides_the_call_that_moved_it() {
         .find(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: ")));
     let brief = brief.unwrap_or_else(|| panic!("the landing moved the brief: {body}"));
     assert!(
-        brief["text"].as_str().unwrap().contains("judgment question"),
+        brief["text"]
+            .as_str()
+            .unwrap()
+            .contains("judgment question"),
         "{body}"
     );
 
@@ -1289,8 +1412,7 @@ async fn an_unkeyed_assumption_is_never_asked() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     let review = "SELECT subject, aspect FROM glossary LIMIT 5";
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 131, review, None)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 131, review, None)).await).await;
     assert_eq!(
         body["result"]["resultType"],
         json!("complete"),
@@ -1302,8 +1424,7 @@ async fn an_unkeyed_assumption_is_never_asked() {
         "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;"#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 132, keyed, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    let body =
-        expect_ok(mcp(app.clone(), call_with(meta_elicit(), 133, review, None)).await).await;
+    let body = expect_ok(mcp(app.clone(), call_with(meta_elicit(), 133, review, None)).await).await;
     assert!(
         body["result"]["inputRequests"]["loose:fin:dso:per-line"].is_object(),
         "{body}"
@@ -1401,11 +1522,19 @@ async fn the_open_questions_read_composes_like_a_table() {
         .await,
     )
     .await;
+    // A round is one grounding: the least confident open claim picks
+    // the aspect, and every open claim on THAT aspect travels together.
+    // dpo and dso are two groundings, so only dpo's is asked — and the
+    // message says how many stand open in the whole, so the end of a
+    // round never reads as the end of the work.
     let asked = body["result"]["inputRequests"].as_object().unwrap();
-    assert_eq!(asked.len(), 1, "one question at a time: {body}");
+    assert_eq!(asked.len(), 1, "one grounding to a round: {body}");
+    let ask = &asked["loose:fin:dpo:goods-only"];
     assert!(
-        asked.contains_key("loose:fin:dpo:goods-only"),
-        "the least confident row is asked first: {body}"
+        ask["params"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("1 of 2 open")),
+        "the round names the whole it is part of: {body}"
     );
 }
 
@@ -1437,20 +1566,23 @@ async fn an_agent_authors_an_app_over_the_tool() {
     // The page the agent wrote is served by the app door.
     let response = app
         .clone()
-        .oneshot(Request::get("/app/cash").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/fin/app/cash").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let html = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(html.contains("What stands open"), "{html}");
-    assert!(html.contains("Monday cash"), "the manifest names it: {html}");
+    assert!(
+        html.contains("Monday cash"),
+        "the manifest names it: {html}"
+    );
 
     // And its frame runs, over a shipped read, as Arrow IPC.
     let response = app
         .clone()
         .oneshot(
-            Request::get("/app/cash/frames/open")
+            Request::get("/fin/app/cash/frames/open")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1465,7 +1597,7 @@ async fn an_agent_authors_an_app_over_the_tool() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 151, edit, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let response = app
-        .oneshot(Request::get("/app/cash").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/fin/app/cash").body(Body::empty()).unwrap())
         .await
         .unwrap();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -1570,8 +1702,7 @@ async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
     let read = |sql: &'static str, id: u64| {
         let app = app.clone();
         async move {
-            let body =
-                expect_ok(mcp(app, call_with(meta(), id, sql, None)).await).await;
+            let body = expect_ok(mcp(app, call_with(meta(), id, sql, None)).await).await;
             let text = body["result"]["content"][0]["text"]
                 .as_str()
                 .unwrap_or_default()
@@ -1580,7 +1711,11 @@ async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
         }
     };
 
-    let whole = read("SELECT surface, stands FROM workspace_next ORDER BY surface;", 171).await;
+    let whole = read(
+        "SELECT surface, stands FROM workspace_next ORDER BY surface;",
+        171,
+    )
+    .await;
     let whole_rows = whole[0]["rows"].as_array().unwrap().clone();
     let standing = |rows: &[Value], name: &str| -> i64 {
         rows.iter()

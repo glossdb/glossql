@@ -23,12 +23,14 @@ The server: one binary, one workspace, three doors. How it is built is
   candle-ported in-context model
   ([functions](../reference/functions.md),
   [methods](../methods/README.md)).
-- **The doors** — `/mcp` (one `glossql` tool, stateless, row cap),
-  `/query` (streaming Arrow IPC), `/app` (directory apps, the built-in
-  docket, one write — the ruling form)
-  ([doors](../reference/doors.md)). The doors carry no authentication
-  while governance stays a held-open question; `/query` speaks as the
-  anonymous `human` actor, so door choice is rank choice.
+- **The doors** — `/<dataset>/mcp` (one `glossql` tool, stateless, row
+  cap), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`
+  (directory apps, the built-in docket, the ruling form)
+  ([doors](../reference/doors.md)). The dataset is the resource and the
+  doors are protocols over it: a call arrives already bound, no door
+  keeps a cursor. Who is speaking is a bearer token's signed claims —
+  `sub` the actor id, `kind` the actor kind — verified against a public
+  key; what a kind may *do* beyond that is governance, still held open.
 - **Skills** — the glossin plugin (Agent Plugins shape, one skill
   per `skills/*/SKILL.md`), where a door-connected agent learns the
   language; every skill is gated by the server's test suite like

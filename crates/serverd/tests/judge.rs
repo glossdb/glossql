@@ -11,7 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
+use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -38,7 +38,10 @@ async fn app() -> (Router, tempfile::TempDir) {
     .await
     .unwrap();
     let workspace = dir.path().to_path_buf();
-    (router(plane, DoorConfig::default(), workspace), dir)
+    // Untokened: the doors serve as they did before there were tokens,
+    // which is what these tests are about.
+    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
+    (router(plane, DoorConfig::default(), workspace, gate), dir)
 }
 
 /// The agent's door: one `glossql` tool call, outcomes parsed from the
@@ -56,7 +59,7 @@ async fn agent(app: &Router, id: u64, statements: &str) -> Value {
             "arguments": {"statements": statements}
         }
     });
-    let request = Request::post("/mcp")
+    let request = Request::post("/fin/mcp")
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
@@ -81,7 +84,7 @@ async fn human(app: &Router, statements: &str) -> Value {
     let response = app
         .clone()
         .oneshot(
-            Request::post("/query")
+            Request::post("/fin/query")
                 .body(Body::from(statements.to_string()))
                 .unwrap(),
         )
@@ -100,7 +103,7 @@ async fn human_refused(app: &Router, statements: &str) -> String {
     let response = app
         .clone()
         .oneshot(
-            Request::post("/query")
+            Request::post("/fin/query")
                 .body(Body::from(statements.to_string()))
                 .unwrap(),
         )

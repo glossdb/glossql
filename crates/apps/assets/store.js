@@ -20,11 +20,13 @@
 
   // The app root follows the pushed pathname: hx-boost swaps the page
   // but never re-swaps body[data-approot], so cross-app navigation
-  // resolved frames against the app the tab was opened on. The
-  // attribute stays as the fallback for pages outside /app/<name>.
+  // resolved frames against the app the tab was opened on. The dataset
+  // is the first segment, so the same match carries it and a frame can
+  // never be fetched against another dataset than the page's. The
+  // attribute stays as the fallback.
   function approot() {
-    const m = document.location.pathname.match(/^(\/app\/[^/]+)(\/|$)/);
-    const root = m ? m[1] + '/' : document.body.dataset.approot || '/app/';
+    const m = document.location.pathname.match(/^(\/[^/]+\/app\/[^/]+)(\/|$)/);
+    const root = m ? m[1] + '/' : document.body.dataset.approot || '/';
     return new URL(root, document.location.origin);
   }
 

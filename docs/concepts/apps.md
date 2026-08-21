@@ -1,11 +1,12 @@
 # Apps
 
-A data app is its own page, served at `/app/<name>`, and **its URL is
-the whole state**: every filter a reader picks lands in the query
-string, so any view is a link they can paste to somebody else. Not a
-dashboard to log into — a page to send. An app binds to one dataset; a
-manifest that names none binds to the first workspace dataset by name
-at request time.
+A data app is its own page, served at `/<dataset>/app/<name>`, and
+**its URL is the whole state**: the dataset is its first segment and
+every filter a reader picks lands in the query string, so any view is
+a link they can paste to somebody else. Not a dashboard to log into —
+a page to send. An app names no dataset of its own, so one app serves
+every dataset in the workspace and the picker in the header is a link
+that rewrites the first segment.
 
 ## An app is glosses
 

@@ -29,7 +29,7 @@ mod subject;
 mod whatif;
 
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
-pub use plane::Plane;
+pub use plane::{Caller, Plane};
 pub use session::{
     CallShape, FunctionRuntime, NoRuntime, Outcome, Session, SessionError, call_shape,
 };

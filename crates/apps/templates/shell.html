@@ -6,26 +6,33 @@
 <meta name="htmx-config" content='{"globalViewTransitions":true}'>
 <title>{% block title %}{% if app %}{{ app.title }}{% else %}glossql{% endif %}{% endblock %}</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='1' fill='%23151a22'/%3E%3Ctext x='8' y='12' text-anchor='middle' font-family='monospace' font-size='11' fill='%23e2a33f'%3Eg%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/app/assets/app.css">
-<script src="/app/assets/vendor/htmx.min.js"></script>
-<script src="/app/assets/vendor/vega.min.js"></script>
-<script src="/app/assets/vendor/vega-lite.min.js"></script>
-<script src="/app/assets/vendor/vega-embed.min.js"></script>
-<script src="/app/assets/vendor/arrow.min.js"></script>
-<script src="/app/assets/store.js"></script>
-<script src="/app/assets/gl-window.js"></script>
-<script src="/app/assets/gl-chart.js"></script>
-<script src="/app/assets/gl-value.js"></script>
-<script src="/app/assets/gl-rows.js"></script>
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/vendor/htmx.min.js"></script>
+<script src="/assets/vendor/vega.min.js"></script>
+<script src="/assets/vendor/vega-lite.min.js"></script>
+<script src="/assets/vendor/vega-embed.min.js"></script>
+<script src="/assets/vendor/arrow.min.js"></script>
+<script src="/assets/store.js"></script>
+<script src="/assets/gl-window.js"></script>
+<script src="/assets/gl-chart.js"></script>
+<script src="/assets/gl-value.js"></script>
+<script src="/assets/gl-rows.js"></script>
 </head>
-<body hx-boost="true" hx-indicator=".load-bar"{% if app %} data-approot="/app/{{ app.name }}/"{% endif %}>
+<body hx-boost="true" hx-indicator=".load-bar"{% if app %} data-approot="/{{ dataset }}/app/{{ app.name }}/"{% endif %}>
 <header class="shell-nav">
   <div class="bar-in">
-    <a class="brand" href="/app">glossql<span class="dot">.</span></a>
-    {% if app %}<span class="ws">{{ app.title }}{% if app.dataset %} · workspace <b>{{ app.dataset }}</b>{% endif %}</span>{% endif %}
+    <a class="brand" href="/">glossql<span class="dot">.</span></a>
+    {# The picker rewrites the first path segment — a dataset is a place,
+       not a setting, so switching is a plain navigation and the browser's
+       back button means what it says. #}
+    <select class="ds-pick" aria-label="dataset"
+            onchange="location.assign('/' + this.value + '/app{% if app %}/{{ app.name }}{% endif %}')">
+      {% for d in datasets %}<option value="{{ d }}"{% if d == dataset %} selected{% endif %}>{{ d }}</option>{% endfor %}
+    </select>
+    {% if app %}<span class="ws">{{ app.title }}</span>{% endif %}
     <nav>
-      {% for a in apps %}{% if not app or a.name != app.name %}<a href="/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
-      <a{% if not app %} class="current"{% endif %} href="/app">Apps</a>
+      {% for a in apps %}{% if not app or a.name != app.name %}<a href="/{{ dataset }}/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
+      <a{% if not app %} class="current"{% endif %} href="/{{ dataset }}/app">Apps</a>
     </nav>
   </div>
 </header>

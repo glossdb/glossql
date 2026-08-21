@@ -12,6 +12,10 @@
 //! and the ruling lands exactly where the round's would — the human's
 //! own slot, on the human's own channel, witnessed by this server.
 //!
+//! Who that human is comes from the token the request carries. A token
+//! with agent standing is refused here rather than downgraded: the one
+//! write this door takes is the one thing only a person can supply.
+//!
 //! The response is an event, not a navigation (not a 303 back to
 //! the Referer — PRG bent out of shape, since
 //! the reader never leaves the page and the docket is client-rendered
@@ -21,11 +25,12 @@
 //! trigger, so a tab that ruled a dead question re-derives to the
 //! current state instead of asking for a reload.
 
+use axum::Extension;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use glossql_glossary::{Actor, ActorKind};
+use glossql_session::Caller;
 use glossql_session::rulings::{self, Ruling};
 use serde::Deserialize;
 
@@ -55,25 +60,29 @@ pub(crate) const WRITTEN: [(&str, &str); 1] = [("HX-Trigger", "glossql:written")
 
 pub async fn rule(
     State(door): State<AppDoor>,
-    Path(app): Path<String>,
+    Path((dataset, app)): Path<(String, String)>,
+    caller: Option<Extension<Caller>>,
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = answer.stance.as_str();
-    let glossed = crate::glossed::parts(&door).await;
-    let def = match AppDef::load(&door.workspace, &app, &glossed) {
-        Ok(Some(def)) => def,
+    let known = crate::known(&door).await;
+    if !known.contains(&dataset) {
+        return plain(
+            StatusCode::NOT_FOUND,
+            crate::no_such_dataset(&dataset, &known),
+        );
+    }
+    let glossed = crate::glossed::parts(&door, &dataset).await;
+    match AppDef::load(&door.workspace, &app, &glossed) {
+        Ok(Some(_)) => {}
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let Some(dataset) = crate::frames::bound_dataset(&door, &def).await else {
+    let Some(actor) = crate::human(caller) else {
         return plain(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "no dataset is bound".to_string(),
+            StatusCode::FORBIDDEN,
+            "a ruling is a human act — this token carries agent standing".to_string(),
         );
-    };
-    let actor = Actor {
-        kind: ActorKind::Human,
-        id: door.human.clone(),
     };
     let human = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,

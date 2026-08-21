@@ -3,30 +3,57 @@
 //! arrive, memory rides one batch, no cap, and a client that hangs up
 //! cancels the work upstream. Everything else answers in the wire JSON
 //! shape.
+//!
+//! The dataset is the URL's first segment and one that does not exist
+//! is a 404 — this door reads and writes, it does not bring datasets
+//! into being. `USE` in the body still moves the statements after it,
+//! for the length of this request.
 
-use axum::Json;
 use axum::body::{Body, Bytes};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
 
 use arrow_ipc::writer::StreamWriter;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use glossql_glossary::{Actor, ActorKind};
-use glossql_session::SessionError;
+use glossql_session::{Caller, SessionError};
 
 use crate::AppState;
 use crate::wire;
 
 pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 
-pub async fn query(State(state): State<AppState>, body: String) -> Response {
-    let actor = Actor {
-        kind: ActorKind::Human,
-        id: crate::HUMAN.into(),
+pub async fn query(
+    State(state): State<AppState>,
+    Path(dataset): Path<String>,
+    caller: Option<Extension<Caller>>,
+    body: String,
+) -> Response {
+    let actor = match caller {
+        Some(Extension(Caller(actor))) => actor,
+        None => Actor {
+            kind: ActorKind::Human,
+            id: crate::HUMAN.into(),
+        },
     };
-    let session = match state.plane.session(actor.clone()).await {
+    let known = state.plane.datasets().await.unwrap_or_default();
+    if !known.contains(&dataset) {
+        return fail(
+            StatusCode::NOT_FOUND,
+            format!(
+                "no dataset `{dataset}` — this workspace holds {}",
+                if known.is_empty() {
+                    "none yet".to_string()
+                } else {
+                    known.join(", ")
+                }
+            ),
+        );
+    }
+    let session = match state.plane.channel(actor.clone(), Some(&dataset)).await {
         Ok(session) => session,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
@@ -37,27 +64,29 @@ pub async fn query(State(state): State<AppState>, body: String) -> Response {
         // Not one query: statement sequences, declarations, and writes
         // run at the plane (`USE` selects the actor's channel there)
         // and answer in JSON.
-        Err(SessionError::NotOneRead) => match state.plane.execute(actor, &body).await {
-            Ok(outcomes) => match wire::outcomes_json(&outcomes, state.row_cap) {
-                Ok(rendered) => Json(rendered).into_response(),
-                Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),
-            },
-            // The statement was refused: the body says why — and what
-            // a sequence had already landed rides beside the reason.
-            Err(e) => {
-                let landed = match &e {
-                    SessionError::Sequence { landed, .. } if !landed.is_empty() => {
-                        wire::outcomes_json(landed, state.row_cap).ok()
+        Err(SessionError::NotOneRead) => {
+            match state.plane.execute(actor, Some(&dataset), &body).await {
+                Ok(outcomes) => match wire::outcomes_json(&outcomes, state.row_cap) {
+                    Ok(rendered) => Json(rendered).into_response(),
+                    Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),
+                },
+                // The statement was refused: the body says why — and what
+                // a sequence had already landed rides beside the reason.
+                Err(e) => {
+                    let landed = match &e {
+                        SessionError::Sequence { landed, .. } if !landed.is_empty() => {
+                            wire::outcomes_json(landed, state.row_cap).ok()
+                        }
+                        _ => None,
+                    };
+                    let mut body = serde_json::json!({ "error": e.to_string() });
+                    if let Some(landed) = landed {
+                        body["landed"] = landed;
                     }
-                    _ => None,
-                };
-                let mut body = serde_json::json!({ "error": e.to_string() });
-                if let Some(landed) = landed {
-                    body["landed"] = landed;
+                    (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
                 }
-                (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
             }
-        },
+        }
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }
 }

@@ -5,7 +5,6 @@
 //! any agent connects; what stays the agent's work is the company's
 //! own vocabulary — metrics, validations, scenarios.
 
-
 use glossql_glossary::Actor;
 
 use crate::Plane;
@@ -25,7 +24,9 @@ pub async fn bootstrap(
     // re-declares, and a changed shipped body supersedes like any
     // re-declare — so what this build ships is what this build declares,
     // on fresh and existing workspaces alike.
-    let session = plane.session(actor).await?;
+    // The shipped system is the workspace's, not a dataset's: it
+    // declares on the unbound channel.
+    let session = plane.channel(actor, None).await?;
     session
         .execute(&glossql_scripts::library::declarations()?)
         .await?;

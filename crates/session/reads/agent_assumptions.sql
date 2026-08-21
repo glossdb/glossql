@@ -10,6 +10,10 @@
 -- `dataset` rides along because the plain `glossary` relation is
 -- workspace-wide: a consumer bound to one dataset must say so.
 --
+-- `alternative` is the rival reading the agent named beside the claim,
+-- absent when none was named. It is the strongest thing the round can
+-- offer as an answer, because it is a reading and not a stance.
+--
 -- `body` rides along as the whole writing the assumption sits inside,
 -- so a caller can show it or re-issue it as a statement. Read the
 -- columns above rather than reaching into it: json accessors applied
@@ -26,6 +30,7 @@ SELECT g.dataset AS dataset,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'key') AS key,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'assumption') AS assumption,
        json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'basis') AS basis,
+       json_get_str(json_get(json_get(g.body, 'assumptions'), i.i), 'alternative') AS alternative,
        json_get_float(json_get(json_get(g.body, 'assumptions'), i.i), 'confidence') AS conf,
        g.body AS body
 FROM glossary g

@@ -2,8 +2,9 @@
 //! macros ship embedded in the binary; an app's own pages load fresh
 //! from its directory on every request — save and reload, no rebuild.
 //! A page's context is the app, the workspace's app list (for the
-//! nav), and the URL's query params as `state` — the URL is the only
-//! state there is.
+//! nav), the dataset the URL bound and every dataset the workspace
+//! holds (for the picker), and the URL's query params as `state` — the
+//! URL is the only state there is.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
@@ -16,6 +17,7 @@ use crate::app::AppDef;
 
 const SHELL: &str = include_str!("../templates/shell.html");
 const HOME: &str = include_str!("../templates/home.html");
+const DATASETS: &str = include_str!("../templates/datasets.html");
 const TILES: &str = include_str!("../templates/modules/tiles.html");
 
 fn base_tera() -> Result<Tera, tera::Error> {
@@ -23,6 +25,7 @@ fn base_tera() -> Result<Tera, tera::Error> {
     tera.add_raw_templates(vec![
         ("shell.html", SHELL),
         ("home.html", HOME),
+        ("datasets.html", DATASETS),
         ("modules/tiles.html", TILES),
     ])?;
     tera.register_filter("urlencode", urlencode);
@@ -62,51 +65,77 @@ fn apps_json(workspace: &std::path::Path, glossed: &[crate::glossed::Part]) -> V
     Value::Array(
         AppDef::list(workspace, glossed)
             .iter()
-            .map(|a| {
-                json!({
-                    "name": a.name,
-                    "title": a.title,
-                    "dataset": a.dataset.clone().unwrap_or_default(),
-                })
-            })
+            .map(|a| json!({ "name": a.name, "title": a.title }))
             .collect(),
     )
 }
 
+/// The workspace's datasets, and whether the URL named one of them.
+async fn admit(door: &AppDoor, dataset: &str) -> Result<Vec<String>, Response> {
+    let names = crate::known(door).await;
+    if names.iter().any(|n| n == dataset) {
+        return Ok(names);
+    }
+    Err(plain(
+        StatusCode::NOT_FOUND,
+        crate::no_such_dataset(dataset, &names),
+    ))
+}
+
+/// The workspace root: every dataset, as a way in.
+pub async fn datasets(State(door): State<AppDoor>) -> Response {
+    let names = door.plane.datasets().await.unwrap_or_default();
+    let mut ctx = tera::Context::new();
+    ctx.insert("datasets", &names);
+    render("datasets.html", ctx, base_tera())
+}
+
 pub async fn home(
     State(door): State<AppDoor>,
+    Path(dataset): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let glossed = crate::glossed::parts(&door).await;
+    let datasets = match admit(&door, &dataset).await {
+        Ok(names) => names,
+        Err(response) => return response,
+    };
+    let glossed = crate::glossed::parts(&door, &dataset).await;
     let mut ctx = tera::Context::new();
     ctx.insert("apps", &apps_json(&door.workspace, &glossed));
+    ctx.insert("dataset", &dataset);
+    ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
     render("home.html", ctx, base_tera())
 }
 
 pub async fn index(
     State(door): State<AppDoor>,
-    Path(app): Path<String>,
+    Path((dataset, app)): Path<(String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, "index", params).await
+    page_response(&door, &dataset, &app, "index", params).await
 }
 
 pub async fn page(
     State(door): State<AppDoor>,
-    Path((app, page)): Path<(String, String)>,
+    Path((dataset, app, page)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    page_response(&door, &app, &page, params).await
+    page_response(&door, &dataset, &app, &page, params).await
 }
 
 async fn page_response(
     door: &AppDoor,
+    dataset: &str,
     app: &str,
     page: &str,
     params: Vec<(String, String)>,
 ) -> Response {
-    let glossed = crate::glossed::parts(door).await;
+    let datasets = match admit(door, dataset).await {
+        Ok(names) => names,
+        Err(response) => return response,
+    };
+    let glossed = crate::glossed::parts(door, dataset).await;
     let def = match AppDef::load(&door.workspace, app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
@@ -126,19 +155,10 @@ async fn page_response(
         Ok(tera)
     });
     let mut ctx = tera::Context::new();
-    // The bound dataset, not the manifest's pin: the docket pins none
-    // and binds to the workspace's sole dataset, and the bar names what
-    // the frames will actually read.
-    let bound = crate::frames::bound_dataset(door, &def).await;
-    ctx.insert(
-        "app",
-        &json!({
-            "name": def.name,
-            "title": def.title,
-            "dataset": bound.unwrap_or_default(),
-        }),
-    );
+    ctx.insert("app", &json!({ "name": def.name, "title": def.title }));
     ctx.insert("apps", &apps_json(&door.workspace, &glossed));
+    ctx.insert("dataset", dataset);
+    ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
     render(&format!("pages/{page}.html"), ctx, tera)
 }
@@ -146,9 +166,9 @@ async fn page_response(
 /// Sidecar vega-lite specs, served as they were authored.
 pub async fn spec(
     State(door): State<AppDoor>,
-    Path((app, spec)): Path<(String, String)>,
+    Path((dataset, app, spec)): Path<(String, String, String)>,
 ) -> Response {
-    let glossed = crate::glossed::parts(&door).await;
+    let glossed = crate::glossed::parts(&door, &dataset).await;
     let def = match AppDef::load(&door.workspace, &app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
@@ -174,11 +194,7 @@ fn render(name: &str, ctx: tera::Context, tera: Result<Tera, tera::Error>) -> Re
         // browser would serve the pre-ruling copy from cache and the
         // change would only appear on a manual reload.
         // The redirect was correct; the caching was the bug.
-        Ok(html) => (
-            [(header::CACHE_CONTROL, "no-store")],
-            Html(html),
-        )
-            .into_response(),
+        Ok(html) => ([(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
         Err(e) => {
             let mut lines = vec![e.to_string()];
             let mut source = std::error::Error::source(&e);

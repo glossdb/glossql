@@ -246,7 +246,7 @@ SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DE
 
 ## The docket
 
-Open `http://127.0.0.1:8080/app/docket`: what stands open to judge,
+Open `http://127.0.0.1:8080/fin/app/docket`: what stands open to judge,
 what has been settled, what waits on an act — with the metric surfaces
 and the record behind them. The ruling form there is the same write
 the question round lands; a person who stepped away has a way back
