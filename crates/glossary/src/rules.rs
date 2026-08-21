@@ -133,11 +133,24 @@ pub fn grain_of(dataset: &str, subject: &str) -> &'static str {
 /// …` only accepts subjects of those grains; `None` (no clause) admits
 /// all. A name that names a declared source is SOURCE grain, satisfying
 /// `source` and only `source`: a table-grain aspect that accepted
-/// `GLOSS entity ON erp` would put unfillable rows in the backlog. The
-/// source reading wins over every other, the dataset's own spelling
-/// included — a source may carry its dataset's name, and it stays
-/// addressable when it does. `is_source` is the caller's lookup against
-/// the `sources` relation, and the backlog mirrors this rule.
+/// `GLOSS entity ON erp` would put unfillable rows in the backlog.
+/// `is_source` is the caller's lookup against the `sources` relation,
+/// and the backlog mirrors this rule.
+///
+/// A source may carry its dataset's own name, and then the subject
+/// spells two things. **The aspect's declaration says which is meant**
+/// — either reading satisfying it is enough, so a dataset stays
+/// glossable when a source shares its name and the source stays
+/// addressable either way. There is no precedence between the two: the
+/// read side disambiguates the same way, treating a row as source-grain
+/// only when its aspect is source-grain too, never on the subject alone.
+///
+/// This resolves only the source/dataset collision, which the arguments
+/// here can see. A source sharing a *table's* name is not resolvable
+/// from a name — [`grain_of`] answers `table` for every bare word,
+/// whether or not a table by that name exists — so the source reading
+/// stands there, which is what keeps `GLOSS entity ON erp` out of the
+/// backlog.
 pub fn admit_grain(
     aspect: &str,
     grains: Option<&str>,
@@ -148,18 +161,27 @@ pub fn admit_grain(
     let Some(declared) = grains else {
         return Ok(());
     };
+    let admits = |grain: &str| declared.split(',').any(|g| g == grain);
     let effective = if is_source {
         "source"
     } else {
         grain_of(dataset, subject)
     };
-    if declared.split(',').any(|g| g == effective) {
+    if admits(effective) {
+        return Ok(());
+    }
+    let ambiguous = is_source && subject == dataset;
+    if ambiguous && admits("dataset") {
         return Ok(());
     }
     Err(Error::GrainRefused {
         aspect: aspect.into(),
         subject: subject.into(),
-        grain: effective,
+        grain: if ambiguous {
+            "source or dataset"
+        } else {
+            effective
+        },
         declared: declared.to_uppercase().replace(',', ", "),
     })
 }

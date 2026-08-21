@@ -1102,3 +1102,76 @@ async fn a_source_named_after_its_dataset_is_still_a_source() {
         .await
         .expect("a source keeps source grain even where it spells its dataset");
 }
+
+#[tokio::test]
+async fn a_dataset_stays_glossable_when_a_source_shares_its_name() {
+    // The other half of the collision. A source may carry its dataset's
+    // name, and admission resolved such a name to SOURCE and stopped —
+    // so `GLOSS cube ON f1`, a DATASET-grain aspect on the dataset's own
+    // spelling, was refused with no way to reach it. Nothing about the
+    // subject decides this: the aspect's declaration says which reading
+    // is meant, and the collapsed read agrees, keying a row source-grain
+    // only when its aspect is source-grain too.
+    let (_dir, s) = store().await;
+    let Declaration::Dataset(ds) = decl("DECLARE DATASET f1 SET (purpose: 'p');") else {
+        unreachable!()
+    };
+    s.declare_dataset(&ds).await.unwrap();
+    let Declaration::Source(src) = decl("DECLARE SOURCE f1 SET (type: parquet, location: 'lake');")
+    else {
+        unreachable!()
+    };
+    s.declare_source(&src).await.unwrap();
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT topic WITH $${"type": "object"}$$ AS FACT ON DATASET;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+    let Declaration::Witness(w) = decl("DECLARE WITNESS topic_w ON topic BY (AGENT, HUMAN);")
+    else {
+        unreachable!()
+    };
+    s.declare_witness(&w).await.unwrap();
+
+    let g = gloss(r#"GLOSS topic ON f1 AS $${"value": "race results"}$$;"#);
+    s.gloss("f1", &agent(), "topic", "f1", &g.body, None)
+        .await
+        .expect("a dataset stays reachable when a source spells its name");
+
+    // And the backlog agrees with admission, in both directions: the row
+    // it takes is disclosed, the reading it refuses is not owed.
+    let ctx = s
+        .read_context("f1", vec![], Default::default())
+        .await
+        .unwrap();
+    let rows = Store::collapsed_read("f1", &Scope::Dataset, None, &ctx, &Default::default());
+    assert!(
+        rows.iter()
+            .any(|r| r.subject == "f1" && r.aspect == "topic" && r.state == "current"),
+        "{rows:?}"
+    );
+
+    // A grain neither reading supports still refuses, and names both.
+    let Declaration::Aspect(a) =
+        decl(r#"DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&a).await.unwrap();
+    let g = gloss(r#"GLOSS entity ON f1 AS $${"value": "not a table"}$$;"#);
+    let e = s
+        .gloss("f1", &agent(), "entity", "f1", &g.body, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            e,
+            Error::GrainRefused {
+                grain: "source or dataset",
+                ..
+            }
+        ),
+        "{e}"
+    );
+}

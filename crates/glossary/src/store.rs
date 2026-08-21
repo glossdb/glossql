@@ -1079,15 +1079,19 @@ impl Store {
                 let in_grain = match grain_map.get(a).and_then(|g| g.as_deref()) {
                     None => true,
                     // A source name is SOURCE grain, never table grain —
-                    // the admission rule above, mirrored so the backlog
-                    // never carries rows admission would refuse.
+                    // `rules::admit_grain`, mirrored so the backlog
+                    // carries exactly the rows admission would take: a
+                    // row it refuses is unfillable, and one it takes and
+                    // the backlog hides is owed in silence.
                     Some(declared) => {
-                        let effective = if source_names.contains(subject) {
+                        let is_source = source_names.contains(subject);
+                        let effective = if is_source {
                             "source"
                         } else {
                             grain_of(dataset, subject)
                         };
-                        declared.split(',').any(|g| g == effective)
+                        let admits = |grain: &str| declared.split(',').any(|g| g == grain);
+                        admits(effective) || (is_source && subject == dataset && admits("dataset"))
                     }
                 };
                 if !in_grain {

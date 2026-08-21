@@ -11,7 +11,7 @@ use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{NoRuntime, Outcome, Plane};
+use glossql_session::{MAX_CHANNELS, NoRuntime, Outcome, Plane};
 
 fn agent(id: &str) -> Actor {
     Actor {
@@ -278,4 +278,29 @@ async fn a_re_land_stales_other_channels_reads_too() {
         .await
         .unwrap();
     assert_eq!(single_value(&after), "stale");
+}
+
+/// The pool is bounded. Its key's actor half is not bounded by anything
+/// the server controls — a door serving untokened calls takes the
+/// client's own name for it — so an unbounded map is one loop away from
+/// a process that grows until it dies. Eviction costs a cold DataFusion
+/// context and nothing else: a channel is a cache in front of the store,
+/// and every read re-derives.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_channel_pool_is_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let plane = plane(dir.path()).await;
+    for i in 0..MAX_CHANNELS + 200 {
+        plane.channel(agent(&format!("a{i}")), None).await.unwrap();
+    }
+    assert!(
+        plane.channel_count().await <= MAX_CHANNELS,
+        "{} channels stand past a cap of {MAX_CHANNELS}",
+        plane.channel_count().await
+    );
+
+    // And an evicted channel is not a lost one: asked for again, it is
+    // rebuilt and serves.
+    let again = plane.channel(agent("a0"), None).await.unwrap();
+    assert_eq!(again.dataset(), None);
 }
