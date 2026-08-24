@@ -1,7 +1,13 @@
 //! The shared plane behind the doors: one store, one lake, one script
-//! runtime, one cube cache. Everything that outlives a call lives here
-//! or under the store; everything a call needs beyond that is built for
-//! the call and dropped with it.
+//! runtime, one cube cache, one engine runtime. Everything that outlives
+//! a call lives here or under the store; everything a call needs beyond
+//! that is built for the call and dropped with it.
+//!
+//! The engine runtime is here for that reason and not by preference. A
+//! channel is built per call, so anything a channel builds for itself is
+//! per-call — and a memory pool that is per-call is not a budget. What
+//! bounds the process has to outlive the call, which means it lives
+//! here and every channel is handed it.
 //!
 //! Nothing is keyed by a caller or a connection. A channel's binding is
 //! fixed at construction and `USE` selects which channel the statements
@@ -16,11 +22,67 @@
 
 use std::sync::Arc;
 
+use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
+use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
+
 use glossql_glossary::{Actor, Store};
 use glossql_parser::{GlossqlParser, Statement};
 
 use crate::cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
+
+/// The engine's memory ceiling for the whole process, in megabytes
+/// (serverd's `--memory-limit`).
+///
+/// Large but not the machine: a plan that would exceed it is refused by
+/// name, which is the trade this default is chosen for — a container
+/// killed for its memory says nothing about which query did it.
+///
+/// It does not cover the cube cache, which holds its own bytes outside
+/// the engine under [`DEFAULT_CUBE_CACHE_MB`]. The two are separate
+/// budgets and a deployment is sized for their sum.
+pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
+
+/// The execution runtime every channel is built on.
+///
+/// Three decisions, and each is a decision rather than a default:
+///
+/// **A bounded pool.** DataFusion's own default is unbounded, so without
+/// this nothing in the server has a memory ceiling at all. The pool
+/// tracks its largest consumers, so the refusal names what was holding
+/// the memory. DataFusion does not yet account for every operator, so
+/// this is a ceiling on what the engine knows it is holding, not on the
+/// process.
+///
+/// **No disk manager.** Nothing spills; a plan that outgrows the pool is
+/// refused instead. Spilling is worth having when a temp directory is a
+/// real disk, and in a container it is another way to run out of room —
+/// with a refusal traded for a slower failure somewhere else.
+///
+/// **No file caches.** The three DataFusion keeps are on by default and
+/// a limit of zero is how they are turned off. The one that decides it
+/// is the list-files cache: its TTL defaults to infinite, and the
+/// directories it would cache are the source globs a re-import is
+/// re-reading precisely because they changed. A cache that cannot see a
+/// new file is a wrong answer, not a slow one.
+fn runtime_env(megabytes: u64) -> Arc<RuntimeEnv> {
+    Arc::new(
+        RuntimeEnvBuilder::new()
+            .with_memory_limit((megabytes as usize) * 1024 * 1024, 1.0)
+            .with_disk_manager_builder(
+                DiskManagerBuilder::default().with_mode(DiskManagerMode::Disabled),
+            )
+            .with_metadata_cache_limit(0)
+            .with_object_list_cache_limit(0)
+            .with_file_statistics_cache_limit(0)
+            // The two things `build` can refuse are a temp directory it
+            // cannot make and a cache it cannot size. Disabled makes no
+            // directory and a zero limit sizes nothing, so neither is
+            // reachable from here.
+            .build()
+            .expect("a disabled disk manager and empty caches"),
+    )
+}
 
 /// A caller a door has verified, carried in the request's extensions
 /// so every door reads identity the same way. It lives here rather than
@@ -40,6 +102,11 @@ pub struct Plane {
     /// entries for the process, bounded by `with_cube_cache`. Not the
     /// Store's: the Store is the record, and the cube is not.
     cube: CubeCache,
+    /// The engine runtime every channel is built on — one memory pool,
+    /// one disk manager, one set of file caches for the process. It is
+    /// held here and not built per channel because a channel is built
+    /// per call: a pool each call carries its own of bounds one call.
+    env: Arc<RuntimeEnv>,
     row_cap: usize,
 }
 
@@ -55,6 +122,7 @@ impl Plane {
             store,
             runtime,
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
+            env: runtime_env(DEFAULT_MEMORY_LIMIT_MB),
             row_cap: usize::MAX,
         }
     }
@@ -71,6 +139,15 @@ impl Plane {
     /// them all. Set before the first channel is built.
     pub fn with_cube_cache(mut self, megabytes: u64) -> Self {
         self.cube = CubeCache::new(megabytes);
+        self
+    }
+
+    /// The engine's memory ceiling for the whole process, in megabytes
+    /// (serverd's `--memory-limit`). Separate from the cube cache, which
+    /// holds its bytes outside the engine. Set before the first channel
+    /// is built — a channel keeps the runtime it was handed.
+    pub fn with_memory_limit(mut self, megabytes: u64) -> Self {
+        self.env = runtime_env(megabytes);
         self
     }
 
@@ -107,7 +184,7 @@ impl Plane {
         actor: Actor,
         dataset: Option<&str>,
     ) -> Result<Arc<Session>, SessionError> {
-        let session = Session::new(self.store.clone(), actor)?
+        let session = Session::on_runtime(self.store.clone(), actor, Arc::clone(&self.env))?
             .with_row_cap(self.row_cap)
             .with_runtime(Arc::clone(&self.runtime))
             .with_cube_cache(self.cube.clone());

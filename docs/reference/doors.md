@@ -19,11 +19,15 @@ the dataset arrives in the statements.
 
 ```
 serverd --workspace <dir> [--addr <ip:port>]
-        [--row-cap <n>] [--cube-cache <megabytes>] [--require-token]
+        [--row-cap <n>] [--cube-cache <megabytes>]
+        [--memory-limit <megabytes>] [--require-token]
         [--public-key <key.pem> --issuer <iss>] [--audience <uri>]
 ```
 
-Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB. The workspace directory holds `catalog.sqlite`, the
+Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB, memory
+limit 4096 MB. The cube cache and the memory limit are two budgets, not
+one: the cache holds its bytes outside the engine, so a deployment is
+sized for their sum. The workspace directory holds `catalog.sqlite`, the
 `warehouse/` (created at boot), `apps/`, the band model's `weights/`,
 A fresh workspace receives
 the shipped system, the measurement library and the KPI kit, before any

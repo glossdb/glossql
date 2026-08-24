@@ -11,7 +11,7 @@ use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
 [--addr <ip:port>] [--row-cap <n>] \
-[--cube-cache <megabytes>] [--require-token] \
+[--cube-cache <megabytes>] [--memory-limit <megabytes>] [--require-token] \
 [--public-key <key.pem> --issuer <iss>] [--audience <uri>]";
 
 struct Args {
@@ -20,6 +20,10 @@ struct Args {
     doors: DoorConfig,
     /// The process-wide byte budget for cubes, in megabytes.
     cube_cache_mb: u64,
+    /// The engine's memory ceiling for the whole process, in megabytes.
+    /// A separate budget from the cubes: the cube cache holds its bytes
+    /// outside the engine, so a deployment is sized for the sum.
+    memory_limit_mb: u64,
     /// The public key tokens are verified against. Without it no token
     /// and verifies with its own.
     public_key: Option<PathBuf>,
@@ -37,6 +41,7 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut addr = "127.0.0.1:8080".to_string();
     let mut doors = DoorConfig::default();
     let mut cube_cache_mb = glossql_session::DEFAULT_CUBE_CACHE_MB;
+    let mut memory_limit_mb = glossql_session::DEFAULT_MEMORY_LIMIT_MB;
     let mut public_key = None;
     let mut issuer = None;
     let mut audience = None;
@@ -55,6 +60,11 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--cube-cache" => {
                 cube_cache_mb = value()?.parse().map_err(|e| format!("--cube-cache: {e}"))?;
+            }
+            "--memory-limit" => {
+                memory_limit_mb = value()?
+                    .parse()
+                    .map_err(|e| format!("--memory-limit: {e}"))?;
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -77,6 +87,7 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
         addr,
         doors,
         cube_cache_mb,
+        memory_limit_mb,
         public_key,
         issuer,
         audience,
@@ -99,7 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let plane = Arc::new(
         Plane::new(store.clone(), runtime)
             .with_row_cap(args.doors.row_cap)
-            .with_cube_cache(args.cube_cache_mb),
+            .with_cube_cache(args.cube_cache_mb)
+            .with_memory_limit(args.memory_limit_mb),
     );
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
@@ -188,5 +200,31 @@ mod tests {
             .into_iter(),
         );
         assert!(paired.is_ok(), "the pair stands together");
+    }
+
+    /// Two budgets, two flags, and neither borrows the other's default.
+    /// The cube cache holds its bytes outside the engine, so a
+    /// deployment is sized for the sum and the two numbers have to stay
+    /// separately nameable.
+    #[test]
+    fn the_engine_ceiling_and_the_cube_cache_are_separate_numbers() {
+        let default = parse(argv(&["--workspace", "/tmp/w"]).into_iter()).unwrap();
+        assert_eq!(
+            default.memory_limit_mb,
+            glossql_session::DEFAULT_MEMORY_LIMIT_MB
+        );
+        assert_eq!(
+            default.cube_cache_mb,
+            glossql_session::DEFAULT_CUBE_CACHE_MB
+        );
+
+        let set =
+            parse(argv(&["--workspace", "/tmp/w", "--memory-limit", "512"]).into_iter()).unwrap();
+        assert_eq!(set.memory_limit_mb, 512);
+        assert_eq!(
+            set.cube_cache_mb,
+            glossql_session::DEFAULT_CUBE_CACHE_MB,
+            "naming one budget must not move the other"
+        );
     }
 }

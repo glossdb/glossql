@@ -1,6 +1,14 @@
-//! The front door end to end: namespace → provider mount → CREATE via
-//! `SchemaProvider::register_table` → `INSERT INTO` → snapshot id → read.
+//! The two doors end to end: namespace → provider mount → CREATE via
+//! `SchemaProvider::register_table` → append → snapshot id → read.
+//!
+//! Creating and reading go through iceberg-datafusion — the mounted
+//! provider is what makes a table nameable in SQL at all. Writing does
+//! not: it goes through [`Lake::append_batches`], because a landing's
+//! facts ride the snapshot they describe and DataFusion's `INSERT INTO`
+//! commits without them. This test takes the same two doors the server
+//! takes, so the shapes it holds are the shapes in use.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
@@ -28,7 +36,7 @@ async fn mounted(lake: &Lake, ctx: &SessionContext, dataset: &str) -> Arc<dyn Sc
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn front_door_roundtrip() {
+async fn create_and_read_through_the_provider_write_through_the_lake() {
     let dir = tempfile::tempdir().unwrap();
     let lake = Lake::open(
         &dir.path().join("catalog.db"),
@@ -61,7 +69,8 @@ async fn front_door_roundtrip() {
     assert!(lake.table_exists("fin", "orders").await.unwrap());
     assert_eq!(lake.snapshot_id("fin", "orders").await.unwrap(), None);
 
-    // WRITE: staged batches through DataFusion's INSERT path.
+    // WRITE: through the lake's own append, carrying a fact — which is
+    // the reason this path exists rather than `INSERT INTO`.
     let batch = RecordBatch::try_new(
         orders_schema(),
         vec![
@@ -70,17 +79,28 @@ async fn front_door_roundtrip() {
         ],
     )
     .unwrap();
-    let staged = MemTable::try_new(orders_schema(), vec![vec![batch]]).unwrap();
-    ctx.register_table("__staged", Arc::new(staged)).unwrap();
-    ctx.sql("INSERT INTO fin.orders SELECT * FROM __staged")
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    lake.append_batches(
+        "fin",
+        "orders",
+        std::slice::from_ref(&batch),
+        HashMap::from([("glossql.source_rows".to_string(), "3".to_string())]),
+    )
+    .await
+    .unwrap();
 
     let snapshot = lake.snapshot_id("fin", "orders").await.unwrap();
     assert!(snapshot.is_some(), "commit must produce a snapshot");
+    let landings = lake.landings("fin").await.unwrap();
+    let [landing] = landings.as_slice() else {
+        panic!("one append, one landing, got {}", landings.len())
+    };
+    assert_eq!(
+        landing.properties.get("glossql.source_rows"),
+        Some(&"3".to_string()),
+        "the fact rides the snapshot it describes — the reason this is \
+         not `INSERT INTO`, whose commit carries no properties"
+    );
+    assert_eq!(landing.added_records, Some(3));
 
     // READ: fresh metadata per scan, no remount.
     let rows = ctx
@@ -96,12 +116,14 @@ async fn front_door_roundtrip() {
     );
 
     // A second append moves the snapshot forward.
-    ctx.sql("INSERT INTO fin.orders SELECT * FROM __staged")
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    lake.append_batches(
+        "fin",
+        "orders",
+        std::slice::from_ref(&batch),
+        HashMap::new(),
+    )
+    .await
+    .unwrap();
     let later = lake.snapshot_id("fin", "orders").await.unwrap();
     assert!(later.is_some());
     assert_ne!(later, snapshot);

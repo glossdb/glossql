@@ -7,6 +7,7 @@ use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider,
 use datafusion::common::{DataFusionError, ParamValues};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
@@ -230,7 +231,25 @@ pub struct Session {
 }
 
 impl Session {
+    /// A session on a runtime of its own — an unbounded memory pool, the
+    /// OS temp directory, and a fresh set of file caches. It is what a
+    /// test wants and what no server should run: the budget a runtime
+    /// carries is only a budget if more than one session answers to it,
+    /// and a server builds a session per call.
     pub fn new(store: Store, actor: Actor) -> Result<Self, SessionError> {
+        Self::on_runtime(store, actor, Arc::new(RuntimeEnv::default()))
+    }
+
+    /// A session on a given execution runtime — the memory pool, the disk
+    /// manager and the file caches every plan under it answers to.
+    /// [`Plane`](crate::Plane) builds one at boot and hands it to every
+    /// channel, which is what makes `--memory-limit` a ceiling on the
+    /// process rather than on each call.
+    pub fn on_runtime(
+        store: Store,
+        actor: Actor,
+        env: Arc<RuntimeEnv>,
+    ) -> Result<Self, SessionError> {
         let shared = Arc::new(Shared {
             store,
             dataset: RwLock::new(None),
@@ -254,6 +273,11 @@ impl Session {
         let state = SessionStateBuilder::new()
             .with_default_features()
             .with_config(config)
+            // Without this the builder makes its own (session_state.rs
+            // `build`), and since a channel is built per call that would
+            // be one unbounded memory pool per call — a limit set there
+            // would bound nothing.
+            .with_runtime_env(env)
             // The base planner resolves nothing: every statement builds its
             // own state carrying its own pre-pass result (`reads::state_with`).
             // This one only serves paths that name no SQL-bodied door.

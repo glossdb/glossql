@@ -460,9 +460,18 @@ struct ReadFiles {
 }
 
 impl TableFunctionImpl for ReadFiles {
-    fn call(&self, args: &[Expr]) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+    /// `call_with_args` rather than `call`: the older one is deprecated
+    /// (datafusion-catalog table.rs, since 53.0.0) and its default body
+    /// is an internal error, so an implementation that only had `call`
+    /// would still be reached through this. The arguments carry the
+    /// calling session as well as the expressions; this reader needs
+    /// only the expressions, and takes them by name.
+    fn call_with_args(
+        &self,
+        args: datafusion::catalog::TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
         let plan_err = |m: String| DataFusionError::Plan(m);
-        let rel = match args {
+        let rel = match args.exprs() {
             [Expr::Literal(ScalarValue::Utf8(Some(s)), _)] => s.clone(),
             _ => {
                 return Err(plan_err(

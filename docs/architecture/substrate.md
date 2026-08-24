@@ -37,9 +37,20 @@ its own cycle stack, one stack for the whole nesting.
 - **The catalog hierarchy as-is** — `CatalogProviderList` →
   `CatalogProvider` → `SchemaProvider` → `TableProvider`. Table names,
   columns, and snapshot ids are answered by the provider chain; there
-  is no parallel catalog API. Tables are created and written through
-  iceberg-datafusion's own front door: `SchemaProvider::register_table`
-  creates, `INSERT INTO` lands.
+  is no parallel catalog API. Tables are created through
+  iceberg-datafusion's own front door — `SchemaProvider::register_table`
+  — and written through one path of the workspace's own,
+  `Lake::append_batches`, which is what lets a landing's facts ride the
+  snapshot they describe.
+- **One `RuntimeEnv` for the process** — the memory pool, the disk
+  manager and the file caches every plan answers to. DataFusion builds
+  one per session state when it is handed none, and a channel is built
+  per call, so the runtime is created at boot and handed to every
+  channel instead: a pool each call carries its own of bounds one call.
+  The pool is bounded (`--memory-limit`), nothing spills, and the three
+  file caches are off — the list-files cache defaults to an infinite
+  TTL over exactly the source globs a re-import is re-reading because
+  they changed.
 - **Schema without execution** — a logical plan carries its schema, so
   column names and types are answered without reading a row.
 

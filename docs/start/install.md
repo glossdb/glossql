@@ -26,6 +26,7 @@ serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/a
 | `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
+| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A plan that would exceed it is refused by name; nothing spills, because a container is the wrong place to be writing overflow. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum |
 | `--require-token` | off | refuse a request that carries no token, instead of serving it as the door's default identity; needs `--public-key` and `--issuer` |
 | `--public-key <pem>` | — | the **public key** tokens are verified against, in PEM (not a certificate). Without it there is no gate at all |
 | `--issuer <iss>` | — | the issuer the token's `iss` must name; required with `--public-key` |

@@ -279,3 +279,49 @@ async fn a_re_land_stales_other_channels_reads_too() {
         .unwrap();
     assert_eq!(single_value(&after), "stale");
 }
+
+/// The engine's memory ceiling is the plane's, and a channel is built on
+/// it rather than on one of its own.
+///
+/// The distinction is the whole point of holding the runtime on the
+/// plane. DataFusion's builder makes a fresh runtime when it is handed
+/// none, and its default pool is unbounded; a channel is built per call,
+/// so a limit set the other way would bound one call and the server
+/// would have no ceiling at all. Behavioural rather than a pointer
+/// comparison: what matters is that a plan run through the door is
+/// refused by the pool, not that two `Arc`s match.
+///
+/// Refused and not spilled, because the disk manager is disabled — the
+/// aggregate has nowhere to put the overflow, which is the trade named
+/// in `runtime_env`.
+///
+/// A million-group aggregate rather than a sort: a sort feeding
+/// `count(*)` is removed by the optimizer before it reserves anything,
+/// while the group count decides the answer and so cannot be.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_memory_ceiling_is_the_planes_and_every_channel_answers_to_it() {
+    // A megabyte, against a hash table of a million distinct keys: over
+    // the ceiling by enough that no accounting detail decides it.
+    const SORT: &str = "SELECT count(*) AS n FROM \
+                        (SELECT value FROM generate_series(1, 1000000) GROUP BY value);";
+    let dir = tempfile::tempdir().unwrap();
+    let bounded = plane(dir.path()).await.with_memory_limit(1);
+    let refusal = bounded
+        .execute(agent("analyst"), None, SORT)
+        .await
+        .expect_err("a sort of 8 MB does not fit a 1 MB pool")
+        .to_string();
+    assert!(
+        refusal.contains("Resources exhausted"),
+        "the refusal should name the pool, not something downstream of it: {refusal}"
+    );
+
+    // The same statement, the same plane, no ceiling set: the query is
+    // ordinary, so the refusal above was the budget and nothing else.
+    let dir = tempfile::tempdir().unwrap();
+    let default = plane(dir.path()).await;
+    assert_eq!(
+        single_value(&default.execute(agent("analyst"), None, SORT).await.unwrap()),
+        "1000000"
+    );
+}
