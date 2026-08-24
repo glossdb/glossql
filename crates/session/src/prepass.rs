@@ -286,9 +286,16 @@ fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
     // `SELECT 1` and dropped the rest in silence. A door serves one
     // query; anything after it was authored and is not being run, which
     // the author has to be told rather than left to assume.
+    //
+    // Terminators first. A trailing `;` ends the query it follows and is
+    // not a second one — `parse_query` leaves it because only the
+    // multi-statement loop consumes it (sqlparser `parse_statements`).
+    // Refusing it would refuse the ordinary way a body is written.
+    while parser.consume_token(&Token::SemiColon) {}
     if parser.peek_token().token != Token::EOF {
         return Err(SessionError::BadSubject(format!(
-            "{what} is more than one query — a door serves one, and what follows it              would not run"
+            "{what} is more than one query — a door serves one, and \
+             what follows it would not run"
         )));
     }
     Ok(query)
@@ -513,4 +520,48 @@ pub(crate) async fn resolve_sql(
     let q = parse(sql, "the body")?;
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(q))));
     resolve(shared, ctx, &stmt).await
+}
+
+#[cfg(test)]
+mod body_tests {
+    //! What a door's body may be. One query, however it is punctuated;
+    //! never two, because only the first would run.
+
+    use super::*;
+
+    fn refusal(sql: &str) -> Option<String> {
+        parse(sql, "the body").err().map(|e| e.to_string())
+    }
+
+    #[test]
+    fn one_query_stands_however_it_is_terminated() {
+        for body in [
+            "SELECT 1 AS v",
+            "SELECT 1 AS v;",
+            "SELECT 1 AS v;  ",
+            "WITH c AS (SELECT 1 AS v) SELECT * FROM c;",
+        ] {
+            assert!(refusal(body).is_none(), "{body}: {:?}", refusal(body));
+        }
+    }
+
+    #[test]
+    fn a_second_query_is_refused_rather_than_dropped() {
+        // The point of the check: `parse_query` returns the first query
+        // and says nothing about the rest, so without this the second
+        // statement is silently not run.
+        for body in [
+            "SELECT 1 AS v; SELECT 2 AS v",
+            "SELECT 1 AS v; DROP TABLE t",
+            "SELECT 1 AS v;; SELECT 2 AS v;",
+        ] {
+            let e = refusal(body).unwrap_or_else(|| panic!("{body} was admitted"));
+            assert!(e.contains("more than one query"), "{body}: {e}");
+            assert!(
+                !e.contains("  "),
+                "the refusal carries a run of spaces from a broken \
+                 string literal: {e}"
+            );
+        }
+    }
 }
