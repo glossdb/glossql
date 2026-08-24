@@ -734,8 +734,9 @@ async fn witnesses_sharing_a_detector_hold_their_own_verdicts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn select_into_is_not_a_way_to_make_a_table() {
     // `SELECT … INTO t` parses as a Query and plans as CREATE MEMORY
-    // TABLE, so it walked through an allowlist keyed on the statement
-    // variant. Tables come from recipes.
+    // TABLE, so no check keyed on the statement variant can see it. The
+    // plan is what is verified, and it is verified before anything runs —
+    // minting happens at execution. Tables come from recipes.
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
     let e = session
@@ -748,29 +749,23 @@ async fn select_into_is_not_a_way_to_make_a_table() {
         "nothing was created"
     );
 
-    // A CTE is refused by the allowlist itself: `selects_into` reads the
-    // WITH list as well as the body, because a CTE is a query like any
-    // other and may carry the one spelling that makes a table.
+    // A CTE is a query like any other and may carry the spelling; the
+    // plan check reaches it because the CTE is part of the plan.
     let e = session
         .execute("WITH x AS (SELECT 1 AS a INTO sneak_cte) SELECT * FROM x;")
         .await
         .unwrap_err();
     assert!(e.to_string().contains("SELECT INTO"), "{e}");
 
-    // A derived table in FROM is not, and is left to the backstop: the
-    // planner nests its CreateMemoryTable inside the plan
-    // (datafusion-sql query.rs), and nested DDL has no physical plan, so
-    // execution refuses it. Reaching it from the allowlist would mean
-    // walking the FROM tree for a spelling the engine already stops.
-    // This pins the backstop across substrate upgrades — if this refusal
-    // ever turns into a success, the allowlist has to learn the spelling
-    // before the upgrade lands.
-    assert!(
-        session
-            .execute("SELECT * FROM (SELECT 1 AS a INTO sneak_sub) t;")
-            .await
-            .is_err()
-    );
+    // A derived table in FROM nests its CreateMemoryTable inside the plan
+    // (datafusion-sql query.rs). Refused by name like the others: the
+    // verification walks subqueries, so every nesting is one walk rather
+    // than one arm per spelling.
+    let e = session
+        .execute("SELECT * FROM (SELECT 1 AS a INTO sneak_sub) t;")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("SELECT INTO"), "{e}");
     for made in ["SELECT * FROM sneak_cte;", "SELECT * FROM sneak_sub;"] {
         assert!(
             session.execute(made).await.is_err(),
@@ -781,10 +776,9 @@ async fn select_into_is_not_a_way_to_make_a_table() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn select_into_is_refused_on_the_streaming_path_too() {
-    // The streaming door repeated the execute path's variant check but
-    // not its `selects_into` guard, so the same spelling minted a table
-    // there and materialized the whole source before the row cap
-    // applied.
+    // The streaming door plans through the same funnel as the execute
+    // path, so it inherits the same refusal — where a check per entry
+    // point had to be repeated at each.
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
     let e = session

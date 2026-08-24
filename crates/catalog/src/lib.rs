@@ -150,15 +150,8 @@ async fn write_files(
 pub struct PinnedTable {
     pub name: String,
     pub snapshot_id: Option<i64>,
-    /// The table's columns as the catalog holds them *now*, in schema
-    /// order — the current schema, not the pinned snapshot's.
-    ///
-    /// The two diverge after a commit that changes the schema, and the
-    /// caller that wants these wants the current one: they name what can
-    /// be glossed, and a column that exists is glossable the moment it
-    /// does. The provider beside them answers the other question — what
-    /// this statement's scans may read — which is why both are here and
-    /// neither is derived from the other.
+    /// The table's columns in schema order — what can be glossed, and
+    /// the same schema the provider beside them advertises.
     pub columns: Vec<String>,
     pub provider: Arc<dyn datafusion::catalog::TableProvider>,
 }
@@ -381,9 +374,6 @@ impl Lake {
         for ident in self.catalog.list_tables(&ns).await? {
             let table = self.catalog.load_table(&ident).await?;
             let snapshot_id = table.metadata().current_snapshot_id();
-            // Before the table moves into the provider, and from the
-            // current schema rather than the provider's: the provider
-            // resolves the pinned snapshot's.
             let columns = table
                 .metadata()
                 .current_schema()
@@ -392,18 +382,15 @@ impl Lake {
                 .iter()
                 .map(|f| f.name.clone())
                 .collect();
-            let provider: Arc<dyn datafusion::catalog::TableProvider> = match snapshot_id {
-                Some(id) => Arc::new(
-                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table_snapshot(
-                        table, id,
-                    )
-                    .await?,
-                ),
-                None => Arc::new(
-                    iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table)
-                        .await?,
-                ),
-            };
+            // One constructor for both: the provider holds the table it is
+            // given and never refreshes it, so a scan with no snapshot named
+            // resolves the current snapshot of *this* clone — the same one
+            // `snapshot_id` above records (iceberg-rust table/mod.rs:245-261,
+            // scan/mod.rs:216-231). A table with no snapshot yet scans empty
+            // through the same call (scan/mod.rs:218-229).
+            let provider: Arc<dyn datafusion::catalog::TableProvider> = Arc::new(
+                iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table).await?,
+            );
             out.push(PinnedTable {
                 name: ident.name,
                 snapshot_id,

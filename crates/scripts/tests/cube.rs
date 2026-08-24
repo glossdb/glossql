@@ -1220,6 +1220,15 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
         ran, 1,
         "one measurement stood stale: the judge over the date column"
     );
+    // Nothing stands stale twice. `measurements` is excluded from the pin
+    // (an output, not an input), so the landing above moved the version and
+    // not the pin — a re-measure that still finds work is comparing the
+    // wrong cell against it.
+    assert_eq!(
+        session.remeasure().await.unwrap(),
+        0,
+        "the re-measure landed at the current pin"
+    );
     near(
         number(&session, "SELECT count(*) FROM metric_series();").await,
         60.0,

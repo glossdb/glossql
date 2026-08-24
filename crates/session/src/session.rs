@@ -12,7 +12,7 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
-    FromTable, ObjectType, Query, SetExpr, Statement as SQLStatement, TableFactor, visit_relations,
+    FromTable, ObjectType, Statement as SQLStatement, TableFactor, visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
 use futures::StreamExt as _;
@@ -354,7 +354,7 @@ impl Session {
             .measurements
             .iter()
             .filter(|r| {
-                r.get(0) == Some(dataset.as_str()) && r.get(5) != Some(ctx.pin.text.as_str())
+                r.get(0) == Some(dataset.as_str()) && r.get(4) != Some(ctx.pin.text.as_str())
             })
             .filter_map(|r| {
                 let (function, subject) = (r.get(1)?, r.get(2)?);
@@ -868,11 +868,7 @@ impl Session {
         subject: &str,
     ) -> Result<Value, SessionError> {
         crate::measure::bind_subject(&mut statement, subject);
-        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
-        let plan = crate::reads::state_with(&self.ctx, &self.shared, resolved)
-            .statement_to_plan(statement)
-            .await?;
-        read_only().verify_plan(&plan)?;
+        let plan = self.plan_statement(statement).await?;
         let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
         crate::measure::body_value(&batches)
     }
@@ -906,7 +902,23 @@ impl Session {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
         let record = resolved.touches_record();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
-        Ok((state.statement_to_plan(statement).await?, record))
+        let plan = state.statement_to_plan(statement).await?;
+        // The substrate's own read-only verification, at the one place a
+        // plan is made. Planning mints nothing — `execute_logical_plan`
+        // does (datafusion context/mod.rs:699) — so the plan is what to
+        // check and here is where to check it.
+        //
+        // A query that plans to DDL is `SELECT … INTO t` and nothing
+        // else: the callers admit only queries, so that is the one
+        // spelling that arrives as a Query and leaves as a
+        // `CreateMemoryTable`. It is named by what the author wrote
+        // rather than by the engine's node, and the engine's walk reaches
+        // the nestings a check on the statement cannot — a derived table
+        // in FROM, a CTE, a subquery.
+        read_only()
+            .verify_plan(&plan)
+            .map_err(|_| SessionError::SubstrateClosed("SELECT INTO".into()))?;
+        Ok((plan, record))
     }
 
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
@@ -938,16 +950,6 @@ impl Session {
         // everything else still binds through the plan below.
         if let Some(ParamValues::Map(map)) = &params {
             crate::measure::bind_params(&mut statement, map);
-        }
-        // `SELECT … INTO t` is a Query to the parser and a `CREATE MEMORY
-        // TABLE` to the planner; the execute path refuses it and this path
-        // must too — planned here it would mint a table and materialize the
-        // whole source before the row cap applies.
-        if let DFStatement::Statement(inner) = &*statement
-            && let SQLStatement::Query(q) = inner.as_ref()
-            && selects_into(q)
-        {
-            return Err(SessionError::SubstrateClosed("SELECT INTO".into()));
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
@@ -991,9 +993,6 @@ impl Session {
         if let DFStatement::Explain(explain) = &statement {
             match explain.statement.as_ref() {
                 DFStatement::Statement(inner) => match inner.as_ref() {
-                    SQLStatement::Query(q) if selects_into(q) => {
-                        return Err(SessionError::SubstrateClosed("SELECT INTO".into()));
-                    }
                     SQLStatement::Query(_) => {}
                     other => {
                         return Err(SessionError::SubstrateClosed(format!(
@@ -1014,12 +1013,6 @@ impl Session {
                 return Err(SessionError::SubstrateClosed(statement_verb(&statement)));
             };
             match inner.as_ref() {
-                // `SELECT … INTO t` is a Query to the parser and a
-                // `CREATE MEMORY TABLE` to the planner — the one spelling
-                // that made tables without a recipe.
-                SQLStatement::Query(q) if selects_into(q) => {
-                    return Err(SessionError::SubstrateClosed("SELECT INTO".into()));
-                }
                 SQLStatement::Query(_) => {}
                 SQLStatement::ExplainTable { .. } => {}
                 SQLStatement::Drop {
@@ -1324,30 +1317,6 @@ fn cast_summary(casts: &glossql_import::CastAccounting) -> String {
         }
         CastAccounting::Unchecked(note) => format!("; casts unaccounted — {note}"),
     }
-}
-
-/// `SELECT … INTO t` anywhere in a query's body.
-fn selects_into(query: &Query) -> bool {
-    fn body_selects_into(body: &SetExpr) -> bool {
-        match body {
-            SetExpr::Select(select) => select.into.is_some(),
-            SetExpr::Query(q) => selects_into(q),
-            SetExpr::SetOperation { left, right, .. } => {
-                body_selects_into(left) || body_selects_into(right)
-            }
-            _ => false,
-        }
-    }
-    // The `WITH` list as well as the body. A CTE is a query like any
-    // other and may carry the one spelling that makes a table without a
-    // recipe, so a check that reads only the body refuses
-    // `SELECT … INTO t` and admits `WITH c AS (SELECT … INTO t)`.
-    query
-        .with
-        .iter()
-        .flat_map(|with| with.cte_tables.iter())
-        .any(|cte| selects_into(&cte.query))
-        || body_selects_into(&query.body)
 }
 
 /// `DELETE FROM glossary …` → the store's target name. Only the
