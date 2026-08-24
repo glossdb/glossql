@@ -258,6 +258,7 @@ impl Session {
             cube: RwLock::new(crate::cube::CubeCache::new(
                 crate::cube::DEFAULT_CUBE_CACHE_MB,
             )),
+            pins: RwLock::new(Default::default()),
         });
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "postgres")
@@ -448,6 +449,10 @@ impl Session {
         let total = statements.len();
         let mut outcomes = Vec::with_capacity(total);
         for (idx, statement) in statements.into_iter().enumerate() {
+            // The catalog walk is the statement's, never the sequence's:
+            // a `DECLARE RECIPE` that lands is followed by statements
+            // that must see what it landed.
+            self.shared.forget_pins();
             let result = match statement {
                 Statement::Declare(d) => self.declare(*d).await,
                 Statement::Use(u) => self.use_dataset(&u.dataset.value).await,

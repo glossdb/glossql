@@ -1157,3 +1157,141 @@ async fn scratch_store() -> (tempfile::TempDir, Store) {
     let store = Store::open(lake).await.unwrap();
     (dir, store)
 }
+
+/// A landing that failed leaves its shape behind, and the shape is
+/// still offered for assessment.
+///
+/// `land` creates the table through the mounted schema and only then
+/// commits the batches, so a commit that refuses leaves a table the
+/// catalog holds with a schema and no snapshot. Nothing else in the
+/// language produces one — every other route writes as it creates.
+///
+/// It is where the two halves of the catalog walk part company: the pin
+/// wants a snapshot and finds none, so the table adds no part to it,
+/// while the grid wants the columns and finds all of them. A walk that
+/// carried the snapshot's absence into the columns — or dropped the
+/// table for having no snapshot — reports nothing here.
+///
+/// What it does not hold is which schema the columns come from. The
+/// static provider reads `current_schema()` when there is no snapshot to
+/// resolve, so the two agree on exactly this shape; they diverge only
+/// after a commit that changes a schema without landing, which nothing
+/// in the language does today.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_landing_that_failed_still_offers_its_columns_for_assessment() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+
+    // No rows, so the commit has no data file to write and refuses —
+    // after the table itself was created.
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("amount", DataType::Float64, false),
+    ]));
+    let refused = session
+        .register_table(
+            "invoices",
+            Arc::new(
+                MemTable::try_new(
+                    Arc::clone(&schema),
+                    vec![vec![RecordBatch::new_empty(schema)]],
+                )
+                .unwrap(),
+            ),
+        )
+        .await
+        .expect_err("an empty landing has no data file to commit");
+    assert!(
+        refused.to_string().contains("manifest"),
+        "the refusal should come from the commit, not the create: {refused}"
+    );
+
+    // Only a witnessed aspect carries a backlog — an unassessed row is
+    // an aspect someone is expected to speak to.
+    run(
+        &session,
+        "DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN);",
+    )
+    .await;
+
+    let grid = table(
+        &session,
+        "SELECT subject, aspect, state FROM GLOSSARY(invoices) ORDER BY subject;",
+    )
+    .await;
+    for subject in ["invoices", "invoices.id", "invoices.amount"] {
+        assert!(
+            grid.contains(subject),
+            "`{subject}` should stand unassessed, got:\n{grid}"
+        );
+    }
+    assert!(grid.contains("unassessed"), "{grid}");
+}
+
+/// The catalog is walked once per statement, however many plans the
+/// statement builds under it.
+///
+/// A walk loads every table of the dataset and parses its metadata, and
+/// the doors build plans freely: `whatif`, `misfit`, `search` and the
+/// cube each resolve their own SQL, and each resolution used to start a
+/// fresh walk. The count is what says the statement pays for one.
+///
+/// The second half is the constraint that keeps it honest: the walk is
+/// the statement's, not the sequence's. A statement that lands must be
+/// visible to the next one, so the count rises again rather than being
+/// served from what the landing invalidated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_statement_walks_the_catalog_once_however_many_plans_it_builds() {
+    // The store's lake, kept so the walks can be counted — the session
+    // below is built on the same one, and the counter is shared.
+    let (_dir, store) = scratch_store().await;
+    let lake = store.lake();
+    let session = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&session, SETUP).await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("amount", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(Float64Array::from(vec![10.0, 32.5])),
+        ],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "orders",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    // One statement that reads a door and scans a table: the pre-pass
+    // pins the tables, the door derives its context, and before the
+    // walk was held both of those went to the catalog on their own.
+    let before = lake.walk_count();
+    run(
+        &session,
+        "SELECT count(*) FROM orders; SELECT subject FROM GLOSSARY(orders);",
+    )
+    .await;
+    let after = lake.walk_count();
+    assert_eq!(
+        after - before,
+        2,
+        "two statements, one walk each — got {} walks",
+        after - before
+    );
+
+    // And a single statement doing both stays at one.
+    let before = lake.walk_count();
+    run(
+        &session,
+        "SELECT (SELECT count(*) FROM orders) AS n, (SELECT count(*) FROM GLOSSARY(orders)) AS g;",
+    )
+    .await;
+    assert_eq!(lake.walk_count() - before, 1, "one statement, one walk");
+}

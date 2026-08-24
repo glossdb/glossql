@@ -129,6 +129,16 @@ async fn write_files(
 pub struct PinnedTable {
     pub name: String,
     pub snapshot_id: Option<i64>,
+    /// The table's columns as the catalog holds them *now*, in schema
+    /// order — the current schema, not the pinned snapshot's.
+    ///
+    /// The two diverge after a commit that changes the schema, and the
+    /// caller that wants these wants the current one: they name what can
+    /// be glossed, and a column that exists is glossable the moment it
+    /// does. The provider beside them answers the other question — what
+    /// this statement's scans may read — which is why both are here and
+    /// neither is derived from the other.
+    pub columns: Vec<String>,
     pub provider: Arc<dyn datafusion::catalog::TableProvider>,
 }
 
@@ -160,6 +170,13 @@ pub struct Lake {
     /// invalidates. Shared, because [`Lake`] is cloned per access and a
     /// counter copied per clone counts nothing.
     generation: Arc<std::sync::atomic::AtomicU64>,
+    /// How many times [`Lake::pin_dataset`] has walked a catalog, for
+    /// the tests that hold the walk to one per statement. A walk is a
+    /// load and a metadata parse per table, so how often it happens is a
+    /// property worth being able to assert rather than reason about.
+    /// Shared for the reason the generation is: a counter copied per
+    /// clone counts nothing.
+    walks: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Lake {
@@ -196,6 +213,7 @@ impl Lake {
             catalog: Arc::new(catalog),
             provider: Arc::new(std::sync::RwLock::new(None)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -306,12 +324,36 @@ impl Lake {
     /// against that set. The catalog-backed provider always reads
     /// current, so two scans in one query could otherwise straddle a
     /// landing.
+    ///
+    /// **The one walk over a dataset's catalog.** Loading a table is two
+    /// SQLite queries and a full parse of its metadata file, and
+    /// everything a caller asks about a table — its snapshot, its
+    /// columns, a provider to scan it — is one field or another of the
+    /// metadata this already holds. Asking separately meant loading each
+    /// table three times to read three fields of one document.
+    ///
+    /// A table listed here that will not load is a concurrent drop, and
+    /// it fails the read. Nothing in the language rules on that race, so
+    /// the catalog's own answer is the answer.
     pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
+        use std::sync::atomic::Ordering;
+        self.walks.fetch_add(1, Ordering::Relaxed);
         let ns = NamespaceIdent::new(dataset.to_string());
         let mut out = Vec::new();
         for ident in self.catalog.list_tables(&ns).await? {
             let table = self.catalog.load_table(&ident).await?;
             let snapshot_id = table.metadata().current_snapshot_id();
+            // Before the table moves into the provider, and from the
+            // current schema rather than the provider's: the provider
+            // resolves the pinned snapshot's.
+            let columns = table
+                .metadata()
+                .current_schema()
+                .as_struct()
+                .fields()
+                .iter()
+                .map(|f| f.name.clone())
+                .collect();
             let provider: Arc<dyn datafusion::catalog::TableProvider> = match snapshot_id {
                 Some(id) => Arc::new(
                     iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table_snapshot(
@@ -327,10 +369,16 @@ impl Lake {
             out.push(PinnedTable {
                 name: ident.name,
                 snapshot_id,
+                columns,
                 provider,
             });
         }
         Ok(out)
+    }
+
+    /// Catalog walks so far — see [`Lake::walks`] on the field.
+    pub fn walk_count(&self) -> u64 {
+        self.walks.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Single-part namespaces with their properties.
@@ -443,23 +491,5 @@ impl Lake {
     pub async fn table_exists(&self, dataset: &str, table: &str) -> Result<bool> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
         Ok(self.catalog.table_exists(&ident).await?)
-    }
-
-    /// Column names of `dataset.table`, empty when the table is missing —
-    /// the session's disclosure grid enumerates them as subjects.
-    pub async fn table_columns(&self, dataset: &str, table: &str) -> Result<Vec<String>> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        if !self.catalog.table_exists(&ident).await? {
-            return Ok(Vec::new());
-        }
-        let table = self.catalog.load_table(&ident).await?;
-        Ok(table
-            .metadata()
-            .current_schema()
-            .as_struct()
-            .fields()
-            .iter()
-            .map(|f| f.name.clone())
-            .collect())
     }
 }

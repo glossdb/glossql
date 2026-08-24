@@ -171,3 +171,47 @@ async fn provider_is_shared_until_a_namespace_lands() {
     assert!(rebuilt.schema("ops").is_some());
     assert!(rebuilt.schema("fin").is_some());
 }
+
+/// A table nothing has landed into is still a table: it carries its
+/// columns and no snapshot.
+///
+/// Both halves matter downstream and they part company here. The
+/// columns say what can be glossed, so they must be there the moment the
+/// shape exists — a column nobody has written to is a subject waiting to
+/// be assessed, not an absence. The snapshot is `None`, and the read
+/// context turns that into an absence rather than a null, because a
+/// table with nothing in it contributes no part to a statement's pin.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_table_with_no_landing_is_pinned_with_its_columns_and_no_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    lake.ensure_namespace("fin", Default::default())
+        .await
+        .unwrap();
+    let ctx = SessionContext::new();
+    let schema = mounted(&lake, &ctx, "fin").await;
+    let empty = RecordBatch::new_empty(orders_schema());
+    schema
+        .register_table(
+            "orders".into(),
+            Arc::new(MemTable::try_new(orders_schema(), vec![vec![empty]]).unwrap()),
+        )
+        .unwrap();
+
+    let pinned = lake.pin_dataset("fin").await.unwrap();
+    let [orders] = pinned.as_slice() else {
+        panic!("one table, got {}", pinned.len())
+    };
+    assert_eq!(orders.name, "orders");
+    assert_eq!(orders.snapshot_id, None, "nothing has landed");
+    assert_eq!(
+        orders.columns,
+        vec!["order_id", "amount"],
+        "the shape is glossable before anything is written to it"
+    );
+}

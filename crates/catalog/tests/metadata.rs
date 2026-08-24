@@ -83,10 +83,13 @@ async fn the_dataset_is_a_partition_not_a_namespace() {
     let spec = table.metadata().default_partition_spec().clone();
     assert_eq!(spec.fields().len(), 1, "identity partition on the key");
     assert_eq!(spec.fields()[0].name, "dataset");
+    let pinned = lake.pin_dataset("glossql").await.unwrap();
+    let relationships = pinned
+        .iter()
+        .find(|p| p.name == "relationships")
+        .expect("the relation was created above");
     assert_eq!(
-        lake.table_columns("glossql", "relationships")
-            .await
-            .unwrap(),
+        relationships.columns,
         vec!["dataset", "left_path", "op", "right_path"],
         "the dataset is an explicit key column, not a naming convention"
     );

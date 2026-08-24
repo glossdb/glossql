@@ -25,7 +25,7 @@ use datafusion::sql::sqlparser::ast::{
     TableAlias, TableFactor, Value as SQLValue,
 };
 
-use glossql_catalog::Lake;
+use glossql_catalog::{Lake, PinnedTable};
 use glossql_glossary::{AttestRow, CollapsedRow, RawRow, ReadContext, Scope, Store, schemas};
 use serde_json::{Value, json};
 
@@ -48,6 +48,19 @@ pub(crate) struct Shared {
     /// session's own when it was built without one. A query result,
     /// never the record: it lives beside the store, not in it.
     pub cube: RwLock<crate::cube::CubeCache>,
+    /// The catalog walk, held for the statement that asked for it and
+    /// dropped when the next one begins ([`Session::execute_statements`]).
+    ///
+    /// A statement asks the same question of the catalog many times over:
+    /// every plan built under it re-resolves the dataset's tables, and a
+    /// cube read builds a plan per metric and per admitted dimension. The
+    /// answer cannot change underneath it — no statement lands into the
+    /// dataset and then reads it back, so the walk that served the first
+    /// plan serves the last one.
+    ///
+    /// Keyed by dataset because a read can name one the session is not
+    /// bound to (`GLOSSARY(fin, …)`).
+    pub pins: RwLock<std::collections::HashMap<String, Arc<Vec<PinnedTable>>>>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -64,6 +77,32 @@ impl Shared {
         self.store.lake()
     }
 
+    /// The dataset's tables from the catalog, walked once for the
+    /// statement and served from [`Shared::pins`] after that.
+    ///
+    /// Two callers racing an empty entry both walk and both store. That
+    /// is the arrangement [`glossql_glossary::Store`] already makes for
+    /// the store's own head: a duplicate round trip is cheaper than an
+    /// async-aware lock, and within one statement the two answers agree.
+    async fn pinned(&self, dataset: &str) -> Result<Arc<Vec<PinnedTable>>, SessionError> {
+        if let Some(held) = self.pins.read().expect("pins lock").get(dataset) {
+            return Ok(Arc::clone(held));
+        }
+        let walked = Arc::new(self.lake().pin_dataset(dataset).await?);
+        self.pins
+            .write()
+            .expect("pins lock")
+            .insert(dataset.to_string(), Arc::clone(&walked));
+        Ok(walked)
+    }
+
+    /// Everything held from the catalog, dropped so the next statement
+    /// walks again. A landing one statement commits is visible to the
+    /// next, which is the whole of what this has to guarantee.
+    pub fn forget_pins(&self) {
+        self.pins.write().expect("pins lock").clear();
+    }
+
     /// The bound dataset's tables, each pinned at its current snapshot —
     /// resolved once per statement, so two scans can never straddle a
     /// landing.
@@ -77,11 +116,10 @@ impl Shared {
             return Ok(Default::default());
         };
         Ok(self
-            .lake()
-            .pin_dataset(&dataset)
+            .pinned(&dataset)
             .await?
-            .into_iter()
-            .map(|p| (p.name, p.provider))
+            .iter()
+            .map(|p| (p.name.clone(), Arc::clone(&p.provider)))
             .collect())
     }
 
@@ -124,17 +162,28 @@ impl Shared {
     /// binding decides what an *unqualified* name means; a qualified one
     /// decides for itself.
     pub async fn read_context_for(&self, dataset: &str) -> Result<ReadContext, SessionError> {
-        let lake = self.lake();
+        // Through the pin walk, which is the one walk over a dataset's
+        // catalog: the snapshot and the columns are two fields of the
+        // metadata it already loads. Asked separately they cost two more
+        // loads of the same file per table. The providers it also builds
+        // are dropped here — they are an Arrow schema conversion over
+        // metadata in hand, no IO, which is why one function serves both
+        // callers rather than two walking the same catalog.
         let mut universe = Vec::new();
         let mut snapshots = std::collections::HashMap::new();
-        for table in lake.table_names(dataset).await? {
-            if let Some(snapshot) = lake.snapshot_id(dataset, &table).await? {
-                snapshots.insert(table.clone(), snapshot);
+        for pinned in self.pinned(dataset).await?.iter() {
+            // Only `Some`: a table nothing has landed into is a subject
+            // that can be glossed but contributes no part to the pin
+            // ([`glossql_glossary::Store::pin`]). Letting the `None`
+            // through would rewrite every pin text in the workspace and
+            // miss every measurement stored under the old ones.
+            if let Some(snapshot) = pinned.snapshot_id {
+                snapshots.insert(pinned.name.clone(), snapshot);
             }
-            for column in lake.table_columns(dataset, &table).await? {
-                universe.push(format!("{table}.{column}"));
+            for column in &pinned.columns {
+                universe.push(format!("{}.{column}", pinned.name));
             }
-            universe.push(table);
+            universe.push(pinned.name.clone());
         }
         Ok(self
             .store
