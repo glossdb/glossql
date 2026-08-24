@@ -44,7 +44,7 @@ use iceberg::spec::{
 };
 use iceberg::{NamespaceIdent, TableCreation, TableIdent};
 
-use crate::Lake;
+use crate::{COMMIT_PROPERTIES, Lake};
 
 /// One stored row: its cells in the relation's declared column order,
 /// and what ordered the write.
@@ -146,12 +146,12 @@ impl IcebergMetadata {
         filter: Option<iceberg::expr::Predicate>,
     ) -> crate::Result<Vec<Row>> {
         let spec = self.spec(relation)?.clone();
-        let catalog = self.lake.catalog();
         let ident = self.ident(relation);
-        if !catalog.table_exists(&ident).await? {
+        // A relation nothing has written to yet has no table, and reads
+        // as empty rather than as an error.
+        let Some(table) = self.lake.load_if_present(&ident).await? else {
             return Ok(Vec::new());
-        }
-        let table = catalog.load_table(&ident).await?;
+        };
         // The ordering columns ride the projection: the rule reads them,
         // the caller never sees them.
         let mut select: Vec<String> = spec.columns.iter().map(|c| c.to_string()).collect();
@@ -243,13 +243,35 @@ impl IcebergMetadata {
             .name(spec.name.to_string())
             .schema(IcebergSchema::builder().with_fields(fields).build()?)
             .format_version(FormatVersion::V3)
-            .properties(HashMap::new());
+            // Every gloss in the workspace appends to one of these
+            // tables, so a burst of writers all contend for one metadata
+            // pointer. Iceberg retries a conflict itself — reload,
+            // re-base, exponential backoff — and its default budget of
+            // four is spent well before a burst clears: at twenty-four
+            // concurrent writers seventeen were refused. Raised here
+            // because this is the seam the format reads it from; a retry
+            // loop of our own around `commit` would only re-enter that
+            // backoff with no delay of its own.
+            .properties(
+                COMMIT_PROPERTIES
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect::<HashMap<String, String>>(),
+            );
         let creation = if spec.partition.is_empty() {
             builder.build()
         } else {
             let mut partition = UnboundPartitionSpec::builder();
             for name in spec.partition {
                 // Field ids are 1-based positions in the declared order.
+                // They are not decoration, even though
+                // `TableMetadataBuilder` reassigns them and rebinds the
+                // spec by name: `TableCreation` takes an *unbound* spec
+                // and its builder names a source only by id
+                // (iceberg spec/partition.rs, `add_partition_field`), so
+                // the id is how this says which column it partitions by.
+                // The by-name lookup is on the bound builder, which needs
+                // a schema that does not exist until the table does.
                 let source = spec.columns.iter().position(|c| c == name).ok_or_else(|| {
                     crate::Error::Workspace(format!(
                         "`{}` partitions by `{name}`, which is not one of its columns",

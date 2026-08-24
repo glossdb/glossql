@@ -21,8 +21,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::catalog::{Session, TableFunctionImpl, TableProvider};
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::catalog::{TableFunctionImpl, TableProvider};
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::csv::CsvFormat;
 use datafusion::datasource::file_format::json::JsonFormat;
@@ -515,37 +515,47 @@ impl TableFunctionImpl for ReadFiles {
 
         let format: Arc<dyn FileFormat> = match self.kind {
             SourceKind::Parquet => Arc::new(ParquetFormat::default()),
-            SourceKind::Csv => Arc::new(CsvFormat::default().with_has_header(true)),
+            // Raw text survives byte-exact because inference is switched
+            // off, not because its result is thrown away afterwards: a
+            // record cap of zero is how the format is told to call every
+            // field Utf8 whatever the content
+            // (datafusion-datasource-csv file_format.rs, the
+            // `schema_infer_max_rec` doc). Rebuilding the fields by hand
+            // ran full type inference first to discard it.
+            SourceKind::Csv => Arc::new(
+                CsvFormat::default()
+                    .with_has_header(true)
+                    .with_schema_infer_max_rec(0),
+            ),
             SourceKind::Json => Arc::new(JsonFormat::default()),
             SourceKind::RelationalDb => unreachable!("never registered"),
         };
-        let mut options = ListingOptions::new(format);
+        // The session's own listing options, not the constructor's
+        // defaults. `ListingOptions::new` starts at `target_partitions: 1`
+        // and `collect_stat: false`, so a recipe scan built from it read
+        // every file on one thread and carried no statistics — silently
+        // overriding the session that is about to run it.
+        let mut options =
+            ListingOptions::new(format).with_session_config_options(args.session().config());
         if rel.contains(['*', '?', '[']) {
             // the glob names the files; the extension filter would fight it
             options = options.with_file_extension("");
         }
         let url = ListingTableUrl::parse(target.display().to_string())?;
 
-        let state = SessionContext::new().state();
+        // Blocking, because `call_with_args` is synchronous and schema
+        // inference is not — the one place in this crate where that is
+        // forced by a trait rather than by a blocking driver. Against the
+        // calling session, so the object store, the runtime and the
+        // format options inference reads are the ones the scan will use.
+        let session = args.session();
         let inferred = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(options.infer_schema(&state as &dyn Session, &url))
+            tokio::runtime::Handle::current().block_on(options.infer_schema(session, &url))
         })?;
-        let schema = if self.kind == SourceKind::Csv {
-            Arc::new(Schema::new(
-                inferred
-                    .fields()
-                    .iter()
-                    .map(|f| Field::new(f.name(), DataType::Utf8, true))
-                    .collect::<Vec<_>>(),
-            ))
-        } else {
-            inferred
-        };
 
         let config = ListingTableConfig::new(url)
             .with_listing_options(options)
-            .with_schema(schema);
+            .with_schema(inferred);
         let provider: Arc<dyn TableProvider> = Arc::new(ListingTable::try_new(config)?);
         if let Some(seen) = &self.seen {
             seen.lock()

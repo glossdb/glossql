@@ -1334,7 +1334,16 @@ fn selects_into(query: &Query) -> bool {
             _ => false,
         }
     }
-    body_selects_into(&query.body)
+    // The `WITH` list as well as the body. A CTE is a query like any
+    // other and may carry the one spelling that makes a table without a
+    // recipe, so a check that reads only the body refuses
+    // `SELECT … INTO t` and admits `WITH c AS (SELECT … INTO t)`.
+    query
+        .with
+        .iter()
+        .flat_map(|with| with.cte_tables.iter())
+        .any(|cte| selects_into(&cte.query))
+        || body_selects_into(&query.body)
 }
 
 /// `DELETE FROM glossary …` → the store's target name. Only the

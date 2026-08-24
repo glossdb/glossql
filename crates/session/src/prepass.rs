@@ -33,6 +33,7 @@ use datafusion::sql::sqlparser::ast::{
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
+use datafusion::sql::sqlparser::tokenizer::Token;
 
 use crate::reads::{Shared, served_grounding};
 use crate::session::SessionError;
@@ -273,11 +274,24 @@ pub(crate) fn subject_column_arg(f: &TableFactor) -> Option<Result<String, Sessi
 }
 
 fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
-    Parser::new(&PostgreSqlDialect {})
+    let mut parser = Parser::new(&PostgreSqlDialect {})
         .try_with_sql(sql)
-        .and_then(|mut p| p.parse_query())
+        .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))?;
+    let query = parser
+        .parse_query()
         .map(|q| *q)
-        .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))
+        .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))?;
+    // `parse_query` stops at the end of one query and says nothing about
+    // what follows, so a body of `SELECT 1; DROP TABLE t` planned as
+    // `SELECT 1` and dropped the rest in silence. A door serves one
+    // query; anything after it was authored and is not being run, which
+    // the author has to be told rather than left to assume.
+    if parser.peek_token().token != Token::EOF {
+        return Err(SessionError::BadSubject(format!(
+            "{what} is more than one query — a door serves one, and what follows it              would not run"
+        )));
+    }
+    Ok(query)
 }
 
 /// The body behind a door, fetched or embedded.

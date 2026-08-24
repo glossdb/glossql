@@ -49,21 +49,42 @@ pub enum Error {
     Iceberg(#[from] iceberg::Error),
 }
 
-/// How many times a writer re-reads and re-stages before a conflict is
-/// the caller's news.
+/// How many times a provider build may be overtaken before the caller is
+/// told the catalog will not hold still.
 ///
-/// Iceberg commits optimistically: a writer stages against the metadata
-/// it read, and the catalog's conditional update refuses whichever of
-/// two writers read the same version second. That refusal is the format
-/// working — the loser has lost nothing but its turn, so the answer is
-/// to read again and re-stage, never to force. Bounded, because a
-/// conflict surviving this many honest attempts is contention someone
-/// should be told about rather than a race to ride out.
-pub const COMMIT_ATTEMPTS: usize = 5;
+/// Nothing to do with commits: a build that loses here has conflicted
+/// with nothing, it has frozen a table map a concurrent create already
+/// made stale. Bounded because creates arriving faster than the map can
+/// be assembled is worth reporting rather than looping on.
+const PROVIDER_BUILD_ATTEMPTS: usize = 5;
+
+/// The commit-retry arrangement the store relations are created with.
+///
+/// A store relation is one Iceberg table that every gloss in the
+/// workspace appends to, so writers contend for its metadata pointer far
+/// harder than they ever do for a data table's. Iceberg retries a
+/// conflict itself — reload, re-base, exponential backoff — and the
+/// whole arrangement is read from the table's own properties, which is
+/// why it is set here and not wrapped in a loop of ours.
+///
+/// The count and the curve are one setting, not two. The format's
+/// defaults are four retries backing off towards a minute, tuned for a
+/// remote object store; both halves are wrong here. Four was measured
+/// insufficient — seventeen of twenty-four concurrent writers were
+/// refused — while a minute of sleeping is absurd for a commit that is
+/// a local SQLite update. So: more attempts, over a curve that stays in
+/// the milliseconds, and a total bound so a pathological burst fails
+/// instead of hanging.
+const COMMIT_PROPERTIES: [(&str, &str); 4] = [
+    ("commit.retry.num-retries", "20"),
+    ("commit.retry.min-wait-ms", "20"),
+    ("commit.retry.max-wait-ms", "200"),
+    ("commit.retry.total-timeout-ms", "30000"),
+];
 
 /// Whether a failed commit was refused for conflicting, told by the
 /// error's own kind rather than by its text.
-pub fn is_commit_conflict(error: &iceberg::Error) -> bool {
+fn is_commit_conflict(error: &iceberg::Error) -> bool {
     error.kind() == iceberg::ErrorKind::CatalogCommitConflicts
 }
 
@@ -177,6 +198,17 @@ pub struct Lake {
     /// Shared for the reason the generation is: a counter copied per
     /// clone counts nothing.
     walks: Arc<std::sync::atomic::AtomicU64>,
+    /// How many commits reached a caller as a conflict — after iceberg
+    /// had already retried them to the end of its own budget.
+    ///
+    /// Not the raw contention: a lost race that the format's backoff
+    /// recovers never appears here, which is the point. One of these is
+    /// a writer that re-based `commit.retry.num-retries` times and still
+    /// lost, and that is the number worth knowing, because it is the one
+    /// that says the table's retry property is set too low. Shared for
+    /// the reason the others are: a counter copied per clone counts
+    /// nothing.
+    conflicts: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Lake {
@@ -195,15 +227,13 @@ impl Lake {
             std::fs::create_dir_all(parent)
                 .map_err(|e| Error::Workspace(format!("catalog dir {}: {e}", parent.display())))?;
         }
-        if !catalog_db.exists() {
-            // sqlx's sqlite URL opens read-write but does not create; an
-            // empty file is a valid empty database.
-            std::fs::File::create(catalog_db).map_err(|e| {
-                Error::Workspace(format!("catalog db {}: {e}", catalog_db.display()))
-            })?;
-        }
         let catalog = SqlCatalogBuilder::default()
-            .uri(format!("sqlite:{}", catalog_db.display()))
+            // `mode=rwc` is how sqlx is told to create the file — it
+            // parses the mode off the URL and sets `create_if_missing`.
+            // Touching an empty file first said the same thing in a
+            // second place, and only sqlite knows what an empty database
+            // is.
+            .uri(format!("sqlite:{}?mode=rwc", catalog_db.display()))
             .warehouse_location(warehouse.display().to_string())
             .sql_bind_style(SqlBindStyle::QMark)
             .with_storage_factory(Arc::new(LocalFsStorageFactory))
@@ -214,6 +244,7 @@ impl Lake {
             provider: Arc::new(std::sync::RwLock::new(None)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -261,27 +292,34 @@ impl Lake {
         // this sits several awaits below a door. Inlined it grows every
         // caller's frame for a state machine that lives for one call.
         let files = Box::pin(write_files(&table, batches)).await?;
-        // The data files are written once and stay valid whichever
-        // metadata they land against; only the metadata swap is
-        // contended, so only it repeats.
-        let mut table = table;
-        for attempt in 1..=COMMIT_ATTEMPTS {
-            let commit = Transaction::new(&table)
-                .fast_append()
-                .add_data_files(files.clone())
-                .set_snapshot_properties(properties.clone())
-                .apply(Transaction::new(&table))?
-                .commit(self.catalog.as_ref())
-                .await;
-            match commit {
-                Ok(_) => return Ok(()),
-                Err(e) if is_commit_conflict(&e) && attempt < COMMIT_ATTEMPTS => {
-                    table = self.catalog.load_table(&ident).await?;
+        // One commit, with no retry of ours around it. `Transaction::commit`
+        // already retries a conflict at iceberg's own seam: `do_commit`
+        // reloads the table, re-bases on the refreshed metadata and
+        // re-applies the actions, under an exponential backoff bounded by
+        // the table's `commit.retry.num-retries`; the SQL catalog marks
+        // its conflict retryable so that backoff fires. A loop out here
+        // only doubled the attempts and re-entered the backoff with no
+        // delay of its own.
+        match Transaction::new(&table)
+            .fast_append()
+            .add_data_files(files)
+            .set_snapshot_properties(properties)
+            .apply(Transaction::new(&table))?
+            .commit(self.catalog.as_ref())
+            .await
+        {
+            Ok(_) => Ok(()),
+            // Counted where it surfaces, which is after iceberg has spent
+            // its whole retry budget: one here is an exhausted backoff,
+            // never a single lost race.
+            Err(e) => {
+                if is_commit_conflict(&e) {
+                    self.conflicts
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-                Err(e) => return Err(e.into()),
+                Err(e.into())
             }
         }
-        unreachable!("the loop returns on its last attempt")
     }
 
     /// The shared catalog provider — built over the current namespace
@@ -290,7 +328,7 @@ impl Lake {
     /// and one wins the slot.
     pub async fn provider(&self) -> Result<Arc<IcebergCatalogProvider>> {
         use std::sync::atomic::Ordering;
-        for _ in 0..COMMIT_ATTEMPTS {
+        for _ in 0..PROVIDER_BUILD_ATTEMPTS {
             if let Some(shared) = self.provider.read().expect("provider lock").as_ref() {
                 return Ok(Arc::clone(shared));
             }
@@ -376,9 +414,17 @@ impl Lake {
         Ok(out)
     }
 
-    /// Catalog walks so far — see [`Lake::walks`] on the field.
+    /// Catalog walks so far — one per `pin_dataset`, which loads and
+    /// parses every table of the dataset.
     pub fn walk_count(&self) -> u64 {
         self.walks.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Commits that reached a caller as a conflict, after iceberg had
+    /// already retried them to the end of its own budget. A lost race
+    /// the format's backoff recovered is not one of these.
+    pub fn conflict_count(&self) -> u64 {
+        self.conflicts.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Single-part namespaces with their properties.
@@ -430,11 +476,10 @@ impl Lake {
         table: &str,
     ) -> Result<Option<HashMap<String, String>>> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        if !self.catalog.table_exists(&ident).await? {
-            return Ok(None);
-        }
-        let table = self.catalog.load_table(&ident).await?;
-        Ok(Some(table.metadata().properties().clone()))
+        Ok(self
+            .load_if_present(&ident)
+            .await?
+            .map(|t| t.metadata().properties().clone()))
     }
 
     /// Set properties on a table, one commit.
@@ -457,16 +502,32 @@ impl Lake {
         Ok(())
     }
 
+    /// A table the catalog holds, or `None` when it holds no such table.
+    ///
+    /// `load_table` opens with the same existence query a caller's own
+    /// pre-check would run and refuses with a typed kind
+    /// (iceberg-catalog-sql `catalog.rs`, `load_table`), so asking first
+    /// only ran it twice. Absence is read off the refusal instead.
+    pub(crate) async fn load_if_present(
+        &self,
+        ident: &TableIdent,
+    ) -> Result<Option<iceberg::table::Table>> {
+        match self.catalog.load_table(ident).await {
+            Ok(table) => Ok(Some(table)),
+            Err(e) if e.kind() == iceberg::ErrorKind::TableNotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Current snapshot id of `dataset.table`; `None` when the table does
     /// not exist (a subject may be glossed before its recipe lands) or has
     /// no snapshot yet.
     pub async fn snapshot_id(&self, dataset: &str, table: &str) -> Result<Option<i64>> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        if !self.catalog.table_exists(&ident).await? {
-            return Ok(None);
-        }
-        let table = self.catalog.load_table(&ident).await?;
-        Ok(table.metadata().current_snapshot_id())
+        Ok(self
+            .load_if_present(&ident)
+            .await?
+            .and_then(|t| t.metadata().current_snapshot_id()))
     }
 
     pub async fn namespace_exists(&self, name: &str) -> Result<bool> {

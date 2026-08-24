@@ -21,7 +21,7 @@ use datafusion::logical_expr::planner::{
 };
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
-    BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, FunctionArg, FunctionArgExpr,
+    BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, FunctionArg, FunctionArgExpr, Ident,
     TableAlias, TableFactor, Value as SQLValue,
 };
 
@@ -451,7 +451,7 @@ impl RelationPlanner for GlossqlReads {
     fn plan_relation(
         &self,
         relation: TableFactor,
-        _context: &mut dyn RelationPlannerContext,
+        context: &mut dyn RelationPlannerContext,
     ) -> DFResult<RelationPlanning> {
         let TableFactor::Table {
             name, alias, args, ..
@@ -536,14 +536,24 @@ impl RelationPlanner for GlossqlReads {
         // A data table of the bound dataset, pinned at the statement's
         // snapshot — bare or dataset-qualified. Another dataset's tables
         // fall through to the live provider.
+        //
+        // Through the planner's own normalizer, and that is not tidiness:
+        // if this lookup spells a name differently from the way
+        // DataFusion resolves it, the miss is silent. `FROM Orders` keyed
+        // raw finds no pin, falls through to the default path, and the
+        // catalog-backed provider serves it live — the same rows, and
+        // the statement's snapshot gone. `normalize_ident` is what the
+        // default path itself uses, so agreeing with it is the whole
+        // requirement.
+        let normal = |i: &Ident| context.normalize_ident(i.clone());
         let pinned = match name.0.as_slice() {
-            [t] if args.is_none() => t.as_ident().and_then(|i| self.resolved.pin(&i.value)),
+            [t] if args.is_none() => t.as_ident().and_then(|i| self.resolved.pin(&normal(i))),
             [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
                 (Some(d), Some(t))
                     if self.shared.dataset.read().expect("state lock").as_deref()
-                        == Some(d.value.as_str()) =>
+                        == Some(normal(d).as_str()) =>
                 {
-                    self.resolved.pin(&t.value)
+                    self.resolved.pin(&normal(t))
                 }
                 _ => None,
             },

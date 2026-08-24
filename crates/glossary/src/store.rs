@@ -1268,7 +1268,10 @@ impl Store {
         if name == STORE_NAMESPACE {
             return Ok(false);
         }
-        Ok(self.lake.namespaces().await?.iter().any(|(n, _)| n == name))
+        // One existence query, not the whole workspace. `namespaces()`
+        // lists every namespace and then reads the properties of each to
+        // answer a question that never looks at them.
+        Ok(self.lake.namespace_exists(name).await?)
     }
 
     async fn dataset_rows(&self) -> Result<Vec<Vec<Option<String>>>> {

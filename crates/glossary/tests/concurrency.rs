@@ -32,6 +32,8 @@ async fn store() -> (tempfile::TempDir, Store) {
     .await
     .unwrap();
     let store = Store::open(lake).await.unwrap();
+    // Setup writes of its own contend too; the counts below are taken
+    // after this returns, so they belong to the writers under test.
     let Declaration::Aspect(unit) = decl(
         r#"DECLARE ASPECT unit WITH $${
             "type": "object",
@@ -68,6 +70,7 @@ async fn concurrent_writers_all_land() {
     let store = Arc::new(store);
 
     let started = std::time::Instant::now();
+    let conflicts_before = store.lake().conflict_count();
     let mut writing = Vec::with_capacity(WRITERS);
     for n in 0..WRITERS {
         let store = Arc::clone(&store);
@@ -95,9 +98,18 @@ async fn concurrent_writers_all_land() {
         }
     }
     let elapsed = started.elapsed();
+    // Writers contend here — created without the retry arrangement the
+    // store relations carry, seventeen of these twenty-four are refused.
+    // The exhausted count is in the message rather than an assertion of
+    // its own: a writer that runs out of retries is a refusal, so this
+    // fires first either way, and what it needs to say is which of the
+    // two it was.
+    let exhausted = store.lake().conflict_count() - conflicts_before;
     assert!(
         refused.is_empty(),
-        "{} of {WRITERS} concurrent writers were refused:\n{}",
+        "{} of {WRITERS} concurrent writers were refused, {exhausted} of them for \
+         running out of retries — if that is most of them, the commit properties the \
+         relations are created with are too small for this contention:\n{}",
         refused.len(),
         refused.join("\n")
     );

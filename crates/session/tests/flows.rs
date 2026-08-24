@@ -748,19 +748,29 @@ async fn select_into_is_not_a_way_to_make_a_table() {
         "nothing was created"
     );
 
-    // The nested spellings walk past the allowlist — `selects_into` reads
-    // the query's body, not its WITH clause — but the planner nests their
-    // CreateMemoryTable inside the plan (datafusion-sql-53.1.0
-    // query.rs:73), and nested DDL has no physical plan, so execution
-    // refuses it. This pins that backstop across substrate upgrades: if a
-    // refusal below ever turns into a success, the allowlist must learn
-    // these spellings before the upgrade lands.
-    for sneak in [
-        "WITH x AS (SELECT 1 AS a INTO sneak_cte) SELECT * FROM x;",
-        "SELECT * FROM (SELECT 1 AS a INTO sneak_sub) t;",
-    ] {
-        assert!(session.execute(sneak).await.is_err(), "{sneak}");
-    }
+    // A CTE is refused by the allowlist itself: `selects_into` reads the
+    // WITH list as well as the body, because a CTE is a query like any
+    // other and may carry the one spelling that makes a table.
+    let e = session
+        .execute("WITH x AS (SELECT 1 AS a INTO sneak_cte) SELECT * FROM x;")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("SELECT INTO"), "{e}");
+
+    // A derived table in FROM is not, and is left to the backstop: the
+    // planner nests its CreateMemoryTable inside the plan
+    // (datafusion-sql query.rs), and nested DDL has no physical plan, so
+    // execution refuses it. Reaching it from the allowlist would mean
+    // walking the FROM tree for a spelling the engine already stops.
+    // This pins the backstop across substrate upgrades — if this refusal
+    // ever turns into a success, the allowlist has to learn the spelling
+    // before the upgrade lands.
+    assert!(
+        session
+            .execute("SELECT * FROM (SELECT 1 AS a INTO sneak_sub) t;")
+            .await
+            .is_err()
+    );
     for made in ["SELECT * FROM sneak_cte;", "SELECT * FROM sneak_sub;"] {
         assert!(
             session.execute(made).await.is_err(),
