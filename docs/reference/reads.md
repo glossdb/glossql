@@ -1,16 +1,40 @@
 # The shipped reads
 
-Seven relations every workspace serves, and the cube's two table
-functions beside them (the last section). Each relation is one `.sql`
-file shipped in the binary; the same file answers the doors, the
-built-in app's frames, and the skills' examples. The names are
+Eight relations every workspace serves, and the cube's two table
+functions beside them (the last section). Seven are one `.sql` file
+each, shipped in the binary; the same file answers the doors, the
+built-in app's frames, and the skills' examples. Those seven names are
 reserved — a read shadows both a table and a CTE of the same name,
-which is what keeps the set small.
+which is what keeps the set small. `current_dataset` is the eighth and
+is not a file: it serves session state, which no `.sql` file can reach,
+so it is built in Rust and a CTE of that name shadows it the ordinary
+way round.
 
 A read expands as a derived relation: filter with `WHERE`, order at
 the call site (an inner ordering does not survive planning — none of
 the reads carries one). Formatting, glyphs, and links are always the
 caller's business.
+
+So is scope, on the reads that have one. `open_questions`,
+`agent_assumptions`, `ruling_entries` and `app_parts` answer for the
+whole workspace and carry `dataset` on every row, because which dataset
+a caller means is the caller's to say — and the two callers of one read
+often differ: the MCP question round asks across every dataset from an
+unbound channel and routes each answer back by the row's own `dataset`,
+while the docket asks about the one it is bound to. `current_dataset`
+names the bound one. `owed` narrows itself, because what waits on an
+act waits on someone working in a single dataset. The rest read
+workspace vocabulary and have no dataset to narrow to.
+
+### current_dataset
+
+The session's bound dataset, as a relation: one row, column `dataset`,
+and no rows at all while nothing is bound. It is the name SQL cannot
+otherwise reach — a read written as a `.sql` file has no way to say
+which session it is answering for — so a read over a workspace-wide
+relation narrows itself by joining this. The empty case carries its
+own meaning: nothing bound, nothing to answer, without a read having
+to test for it.
 
 ### workspace_next
 
@@ -73,7 +97,9 @@ Columns: `kind`, `subject`, `what`, `why`, `since`. Four kinds:
 the approval) · `formula` (a human formula answer newer than the
 metric's recorded materialization) · `contest` (a slot withheld at
 read — voices differ or a detector crossed) · `fold-in` (a ruling
-whose key still stands below full confidence).
+whose key still stands below full confidence). All four answer for the
+session's dataset: this is the read that narrows itself, because what
+is owed is owed by someone working in one dataset.
 
 ### metric_surfaces
 
@@ -87,16 +113,19 @@ latest period, its move, the axes the cube admitted — are the cube's
 reads below, joined by `metric`; keeping them apart is what lets a
 ruling refresh this read without touching the cube. Open counts and
 ruled-at live in workspace-wide relations — callers join
-`open_questions` and `ruling_entries` scoped to their own dataset.
+`open_questions` and `ruling_entries` narrowed to a dataset, which
+`current_dataset` names.
 
 ### app_parts
 
-Apps authored as glosses, one row per file. Columns: `app`, `path`
-(where the part goes: `index.html`, `frames/open.sql`,
+Apps authored as glosses, one row per file. Columns: `dataset`, `app`,
+`path` (where the part goes: `index.html`, `frames/open.sql`,
 `specs/series.vl.json`, or `app` for the manifest), `text` (the file
 content as the gloss spelled it), `actor_kind`. Two collapses in
-order: newest writing per (subject, aspect, actor kind), then the
-human's over the agent's.
+order: newest writing per (dataset, subject, aspect, actor kind), then
+the human's over the agent's. Workspace-wide, like the three above —
+`workspace_next` counts every app the workspace holds, the app door
+serves one dataset's.
 
 ## The cube's reads
 

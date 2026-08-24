@@ -71,18 +71,20 @@ the typed table and import is a filter, not an ETL step.
 A Rust workspace (`crates/`) on DataFusion and Iceberg: `parser`
 (the grammar over DataFusion's parser), `glossary` (the store —
 slots, supersession, admission, collapse), `session` (statement
-routing, one session per actor and dataset), `catalog` + `import`
+routing, a channel per call), `catalog` + `import`
 (the Iceberg lake and recipe execution), `scripts` (the native
 kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
-One listener, three doors, each over one dataset — the dataset is the
-resource and the doors are protocols over it, so a call arrives
-already bound and no door keeps a cursor:
+One listener, three doors, and no door keeps a cursor. A browser is
+pointed at a dataset and stays there, so `/query` and `/app` carry it
+in the path; an agent moves between them, so `/mcp` is one endpoint and
+the dataset arrives in the statements:
 
-- **`/<dataset>/mcp`** — the MCP door: one `glossql` tool that takes
-  statements and returns outcomes. Agents connect here; question forms
-  for the human ride the same call.
+- **`/mcp`** — the MCP door: one `glossql` tool that takes
+  statements and returns outcomes. Agents connect here and open each
+  call with `USE <dataset>;`; question forms for the human ride the
+  same call.
 - **`/<dataset>/query`** — Arrow IPC streaming for programmatic reads.
 - **`/<dataset>/app`** — server-rendered data apps (htmx + vega-lite,
   URL as the only state). A built-in docket app ships in the binary:

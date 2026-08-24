@@ -113,10 +113,17 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
     if !ident_path(aspect, 1) {
         return Err(format!("`{aspect}` is not an aspect name"));
     }
+    // The join is what makes this a read-modify-write of *this*
+    // dataset's slot. `glossary` is workspace-wide and the write below
+    // lands where the session is bound, so without it a same-named
+    // subject in another dataset supplies the list being rewritten —
+    // this dataset's entries dropped, that one's imported.
     let read = format!(
-        "SELECT body FROM glossary \
-         WHERE subject = '{subject}' AND aspect = 'ruling' AND actor_kind = 'human' \
-         ORDER BY written_at DESC LIMIT 1"
+        "SELECT g.body FROM glossary g \
+         JOIN current_dataset d ON d.dataset = g.dataset \
+         WHERE g.subject = '{subject}' AND g.aspect = 'ruling' \
+           AND g.actor_kind = 'human' \
+         ORDER BY g.written_at DESC LIMIT 1"
     );
     let standing = human
         .execute(&read)

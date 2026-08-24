@@ -30,15 +30,24 @@ SELECT q.aspect,
            'no recorded formula'), 'Utf8') AS formula,
   q.actor,
   arrow_cast(substr(q.written_at, 1, 10), 'Utf8') AS written,
-  arrow_cast('GLOSS ' || q.aspect || ' ON ' || CAST($dataset AS VARCHAR) || ' AS $$' || q.body || '$$;', 'Utf8') AS statement
+  arrow_cast('GLOSS ' || q.aspect || ' ON '
+    || (SELECT dataset FROM current_dataset)
+    || ' AS $$' || q.body || '$$;', 'Utf8') AS statement
 FROM GLOSSARY(all => true) q
 JOIN aspects a ON a.name = q.aspect
 LEFT JOIN GLOSSARY() f ON f.aspect = 'formulas'
 LEFT JOIN GLOSSARY() d ON d.aspect = 'definitions'
 WHERE q.kind = 'query' AND q.aspect = $metric
+  -- The outer scan is GLOSSARY(), which serves this dataset; these two
+  -- drop into the raw relation, which serves the workspace. Without the
+  -- dataset leg the second one *suppresses*: a human writing on a
+  -- same-named subject in another dataset makes this dataset's agent
+  -- row vanish from the tile, which is worse than showing too much.
   AND (EXISTS (SELECT 1 FROM glossary me
-               WHERE me.subject = q.subject AND me.aspect = q.aspect
+               WHERE me.dataset = (SELECT dataset FROM current_dataset)
+                 AND me.subject = q.subject AND me.aspect = q.aspect
                  AND me.actor_id = q.actor AND me.actor_kind = 'human')
        OR NOT EXISTS (SELECT 1 FROM glossary h
-                      WHERE h.subject = q.subject AND h.aspect = q.aspect
+                      WHERE h.dataset = (SELECT dataset FROM current_dataset)
+                        AND h.subject = q.subject AND h.aspect = q.aspect
                         AND h.actor_kind = 'human'))

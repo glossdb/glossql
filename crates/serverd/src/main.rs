@@ -7,12 +7,12 @@ use std::sync::Arc;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, hand_out, router};
+use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> \
-[--addr <ip:port>] [--agent <id>] [--row-cap <n>] \
+[--addr <ip:port>] [--row-cap <n>] \
 [--cube-cache <megabytes>] [--require-token] \
-[--issuer-key <public-key.pem> --issuer <iss>] [--audience <uri>]";
+[--public-key <key.pem> --issuer <iss>] [--audience <uri>]";
 
 struct Args {
     workspace: PathBuf,
@@ -20,9 +20,9 @@ struct Args {
     doors: DoorConfig,
     /// The process-wide byte budget for cubes, in megabytes.
     cube_cache_mb: u64,
-    /// A configured issuer's public key. Without it the workspace mints
+    /// The public key tokens are verified against. Without it no token
     /// and verifies with its own.
-    issuer_key: Option<PathBuf>,
+    public_key: Option<PathBuf>,
     issuer: Option<String>,
     /// This server's canonical URI — the audience every token must name
     /// (RFC 8707 §2). Defaults to the address it listens on.
@@ -31,13 +31,13 @@ struct Args {
     require_token: bool,
 }
 
-fn parse(mut argv: std::env::Args) -> Result<Args, String> {
+fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     argv.next();
     let mut workspace = None;
     let mut addr = "127.0.0.1:8080".to_string();
     let mut doors = DoorConfig::default();
     let mut cube_cache_mb = glossql_session::DEFAULT_CUBE_CACHE_MB;
-    let mut issuer_key = None;
+    let mut public_key = None;
     let mut issuer = None;
     let mut audience = None;
     let mut require_token = false;
@@ -46,8 +46,7 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
         match flag.as_str() {
             "--workspace" => workspace = Some(PathBuf::from(value()?)),
             "--addr" => addr = value()?,
-            "--agent" => doors.agent = value()?,
-            "--issuer-key" => issuer_key = Some(PathBuf::from(value()?)),
+            "--public-key" => public_key = Some(PathBuf::from(value()?)),
             "--issuer" => issuer = Some(value()?),
             "--audience" => audience = Some(value()?),
             "--require-token" => require_token = true,
@@ -60,15 +59,25 @@ fn parse(mut argv: std::env::Args) -> Result<Args, String> {
             other => return Err(format!("unknown flag {other}")),
         }
     }
-    if issuer_key.is_some() != issuer.is_some() {
-        return Err("--issuer-key and --issuer name one arrangement: give both or neither".into());
+    if public_key.is_some() != issuer.is_some() {
+        return Err("--public-key and --issuer name one arrangement: give both or neither".into());
+    }
+    // Refusing a request needs something to verify the token against, so
+    // this pair is an arrangement too. Accepted alone it would read as
+    // "the door is shut" and leave it open.
+    if require_token && public_key.is_none() {
+        return Err(
+            "--require-token needs --public-key and --issuer: there is nothing to verify \
+             a token against without them"
+                .into(),
+        );
     }
     Ok(Args {
         workspace: workspace.ok_or("--workspace is required")?,
         addr,
         doors,
         cube_cache_mb,
-        issuer_key,
+        public_key,
         issuer,
         audience,
         require_token,
@@ -102,51 +111,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .await?;
 
-    // Who may speak. A configured issuer mints elsewhere and this only
-    // verifies; otherwise the workspace holds its own key and hands out
-    // one token per actor kind.
+    // Who may speak. Whoever holds the private half mints; this only
+    // ever verifies. Without a public key there is nothing to verify
+    // against and no gate at all — the doors write as they did before
+    // tokens existed, which is how a fresh workspace is opened.
     let audience = args
         .audience
         .unwrap_or_else(|| format!("http://{}", args.addr));
-    let gate = match (&args.issuer_key, &args.issuer) {
-        (Some(key), Some(issuer)) => Arc::new(Gate::issuer(
-            key, issuer, &audience,
-            // A server told where its tokens come from has no reason to
-            // serve anyone who brings none.
-            true,
-        )?),
+    let gate = match (&args.public_key, &args.issuer) {
+        (Some(key), Some(issuer)) => {
+            let gate = Arc::new(Gate::issuer(key, issuer, &audience, args.require_token)?);
+            println!(
+                "glossql verifying {} tokens for {audience}",
+                gate.minted_by()
+            );
+            if !gate.require_token {
+                println!(
+                    "  a request with no token is still served as the anonymous human \
+                     (agent over /mcp) — --require-token to refuse it instead"
+                );
+            }
+            Some(gate)
+        }
         _ => {
-            let gate = Arc::new(Gate::local(&args.workspace, &audience, args.require_token)?);
-            let handout = hand_out(
-                &gate,
-                &args.workspace,
-                glossql_serverd::HUMAN,
-                &args.doors.agent,
-            )?;
             println!(
-                "glossql tokens in {} — agent.jwt for an MCP client's headers",
-                handout.dir.display()
+                "glossql open — no --public-key, so no token is verified and every \
+                 request writes as the anonymous human (agent over /mcp).\n  \
+                 Development tokens and the key that verifies them are in dev/."
             );
-            println!(
-                "  open http://{}/?token={} (the door swaps it for a cookie)",
-                args.addr, handout.human
-            );
-            gate
+            None
         }
     };
-    if !gate.require_token {
-        println!(
-            "  a request with no token is served as the anonymous human \
-             (agent over /mcp) — --require-token to refuse it instead"
-        );
-    }
 
     let app = router(plane, args.doors, args.workspace.clone(), gate);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     println!(
-        "serverd on {} — / (datasets), /<dataset>/mcp, /<dataset>/query, /<dataset>/app",
+        "serverd on {} — / (datasets), /mcp, /<dataset>/query, /<dataset>/app",
         args.addr
     );
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+
+    fn argv(flags: &[&str]) -> Vec<String> {
+        std::iter::once("serverd")
+            .chain(flags.iter().copied())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// `--require-token` alone reads as "the door is shut" and leaves it
+    /// open: with no key there is no gate, so every request is served as
+    /// the door's own default. A flag whose only effect is to mislead is
+    /// refused at the boundary.
+    #[test]
+    fn require_token_without_a_key_is_refused() {
+        let alone = parse(argv(&["--workspace", "/tmp/w", "--require-token"]).into_iter())
+            .err()
+            .expect("--require-token alone must not be accepted");
+        assert!(alone.contains("--public-key"), "{alone}");
+
+        let paired = parse(
+            argv(&[
+                "--workspace",
+                "/tmp/w",
+                "--require-token",
+                "--public-key",
+                "/tmp/k.pem",
+                "--issuer",
+                "glossql-dev",
+            ])
+            .into_iter(),
+        );
+        assert!(paired.is_ok(), "the pair stands together");
+    }
 }

@@ -11,7 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, router};
+use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -40,8 +40,7 @@ async fn app() -> (Router, tempfile::TempDir) {
     let workspace = dir.path().to_path_buf();
     // Untokened: the doors serve as they did before there were tokens,
     // which is what these tests are about.
-    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
-    (router(plane, DoorConfig::default(), workspace, gate), dir)
+    (router(plane, DoorConfig::default(), workspace, None), dir)
 }
 
 /// The agent's door: one `glossql` tool call, outcomes parsed from the
@@ -59,7 +58,7 @@ async fn agent(app: &Router, id: u64, statements: &str) -> Value {
             "arguments": {"statements": statements}
         }
     });
-    let request = Request::post("/fin/mcp")
+    let request = Request::post("/mcp")
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
@@ -145,10 +144,10 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
     let attest = agent(
         &app,
         2,
-        "SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
+        "USE fin; SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
     )
     .await;
-    assert_eq!(attest[0]["rows"][0]["band"], json!("green"), "{attest}");
+    assert_eq!(attest[1]["rows"][0]["band"], json!("green"), "{attest}");
 
     // The human disagrees on the same slot, through their own door.
     human(
@@ -162,22 +161,22 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
     let attest = agent(
         &app,
         3,
-        "SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
+        "USE fin; SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
     )
     .await;
-    assert_eq!(attest[0]["rows"][0]["band"], json!("red"), "{attest}");
+    assert_eq!(attest[1]["rows"][0]["band"], json!("red"), "{attest}");
     let glossary = agent(
         &app,
         4,
-        "SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
+        "USE fin; SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
     )
     .await;
     assert_eq!(
-        glossary[0]["rows"][0]["state"],
+        glossary[1]["rows"][0]["state"],
         json!("contested"),
         "{glossary}"
     );
-    assert_eq!(glossary[0]["rows"][0]["value"], Value::Null, "{glossary}");
+    assert_eq!(glossary[1]["rows"][0]["value"], Value::Null, "{glossary}");
 
     // Closure by convergence: the human re-grounds, accepts the agent's
     // reading, and supersedes their own slot. The verdict is stale the
@@ -190,23 +189,23 @@ async fn the_judge_pattern_contests_then_converges_through_the_doors() {
     let attest = agent(
         &app,
         5,
-        "SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
+        "USE fin; SELECT band, score FROM ATTEST(trial_balance.debit_balance::behavior);",
     )
     .await;
-    assert_eq!(attest[0]["rows"][0]["band"], json!("green"), "{attest}");
+    assert_eq!(attest[1]["rows"][0]["band"], json!("green"), "{attest}");
     let glossary = agent(
         &app,
         6,
-        "SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
+        "USE fin; SELECT value, state FROM GLOSSARY(trial_balance.debit_balance::behavior);",
     )
     .await;
     assert_eq!(
-        glossary[0]["rows"][0]["state"],
+        glossary[1]["rows"][0]["state"],
         json!("current"),
         "{glossary}"
     );
     assert!(
-        glossary[0]["rows"][0]["value"]
+        glossary[1]["rows"][0]["value"]
             .as_str()
             .unwrap()
             .contains("flow"),
@@ -228,11 +227,11 @@ async fn closure_by_concession_while_the_strike_is_parked() {
     let glossary = agent(
         &app,
         2,
-        "SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
+        "USE fin; SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
     )
     .await;
     assert_eq!(
-        glossary[0]["rows"][0]["state"],
+        glossary[1]["rows"][0]["state"],
         json!("contested"),
         "{glossary}"
     );
@@ -256,29 +255,29 @@ async fn closure_by_concession_while_the_strike_is_parked() {
     agent(
         &app,
         3,
-        r#"GLOSS behavior ON trial_balance.credit_balance AS $${"value": "stock"}$$;"#,
+        r#"USE fin; GLOSS behavior ON trial_balance.credit_balance AS $${"value": "stock"}$$;"#,
     )
     .await;
     let attest = agent(
         &app,
         4,
-        "SELECT band, score FROM ATTEST(trial_balance.credit_balance::behavior);",
+        "USE fin; SELECT band, score FROM ATTEST(trial_balance.credit_balance::behavior);",
     )
     .await;
-    assert_eq!(attest[0]["rows"][0]["band"], json!("green"), "{attest}");
+    assert_eq!(attest[1]["rows"][0]["band"], json!("green"), "{attest}");
     let glossary = agent(
         &app,
         5,
-        "SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
+        "USE fin; SELECT value, state FROM GLOSSARY(trial_balance.credit_balance::behavior);",
     )
     .await;
     assert_eq!(
-        glossary[0]["rows"][0]["state"],
+        glossary[1]["rows"][0]["state"],
         json!("current"),
         "{glossary}"
     );
     assert!(
-        glossary[0]["rows"][0]["value"]
+        glossary[1]["rows"][0]["value"]
             .as_str()
             .unwrap()
             .contains("stock"),

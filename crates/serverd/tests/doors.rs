@@ -21,8 +21,7 @@ async fn app_with(doors: DoorConfig) -> (Router, tempfile::TempDir) {
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
     let workspace = dir.path().to_path_buf();
-    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
-    (router(plane, doors, workspace, gate), dir)
+    (router(plane, doors, workspace, None), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
@@ -172,6 +171,34 @@ async fn the_query_door_answers_a_refusal_in_the_body() {
 }
 
 /// The gate: a bearer token is what proves who is speaking. Until now
+/// The checked-in development credential — a public key whose private
+/// half was used once and discarded. Nothing in the tree can mint, so a
+/// test asserts what verification does, never that we can sign.
+fn dev(file: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../dev")
+        .join(file)
+}
+
+fn dev_gate(require_token: bool) -> Arc<Gate> {
+    Arc::new(
+        Gate::issuer(
+            &dev("public.pem"),
+            "glossql-dev",
+            "http://127.0.0.1:8080",
+            require_token,
+        )
+        .unwrap(),
+    )
+}
+
+fn dev_token(kind: &str) -> String {
+    std::fs::read_to_string(dev(format!("{kind}.jwt").as_str()))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
 /// nothing did, and the supersession key's `actor kind` leg rested on
 /// callers being well behaved.
 #[tokio::test(flavor = "multi_thread")]
@@ -179,14 +206,18 @@ async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let workspace = dir.path().to_path_buf();
-    let gate = Arc::new(Gate::local(&workspace, "http://test", false).unwrap());
-    let token = gate.mint(ActorKind::Agent, "ada", 1).unwrap();
-    let app = router(plane, DoorConfig::default(), workspace, Arc::clone(&gate));
+    let token = dev_token("agent");
+    let app = router(
+        plane,
+        DoorConfig::default(),
+        workspace,
+        Some(dev_gate(false)),
+    );
 
     // The token's subject is the actor, over the handshake's own name:
     // `clientInfo` is a name a client picks for itself, a claim is
     // signed.
-    let request = Request::post("/fin/mcp")
+    let request = Request::post("/mcp")
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
@@ -213,7 +244,11 @@ async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).expect(text);
     let last = outcomes.as_array().unwrap().last().unwrap();
-    assert_eq!(last["rows"][0]["actor_id"], json!("ada"), "{outcomes}");
+    assert_eq!(
+        last["rows"][0]["actor_id"],
+        json!("dev-agent"),
+        "{outcomes}"
+    );
     assert_eq!(last["rows"][0]["actor_kind"], json!("agent"), "{outcomes}");
 
     // A token this server did not sign opens nothing, and the refusal
@@ -247,8 +282,12 @@ async fn require_token_refuses_a_request_that_brings_none() {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let workspace = dir.path().to_path_buf();
-    let gate = Arc::new(Gate::local(&workspace, "http://test", true).unwrap());
-    let app = router(plane, DoorConfig::default(), workspace, gate);
+    let app = router(
+        plane,
+        DoorConfig::default(),
+        workspace,
+        Some(dev_gate(true)),
+    );
     let response = app
         .oneshot(
             Request::post("/fin/query")
@@ -260,38 +299,36 @@ async fn require_token_refuses_a_request_that_brings_none() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// The startup link carries the token once. The door swaps it for a
-/// cookie and sends the browser to the bare path, so the credential
-/// does not live on in the address bar or the history.
+/// The discovery document is what a 401 tells the client to read, so it
+/// is the one route that cannot sit behind the gate: a challenge
+/// pointing at a document that answers 401 points the client at itself.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_token_in_the_url_becomes_a_cookie() {
+async fn the_discovery_document_answers_without_a_token() {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let workspace = dir.path().to_path_buf();
-    let gate = Arc::new(Gate::local(&workspace, "http://test", true).unwrap());
-    let token = gate.mint(ActorKind::Human, "ada", 1).unwrap();
-    let app = router(plane, DoorConfig::default(), workspace, gate);
+    let app = router(
+        plane,
+        DoorConfig::default(),
+        workspace,
+        Some(dev_gate(true)),
+    );
     let response = app
         .oneshot(
-            Request::get(format!("/?token={token}"))
+            Request::get("/.well-known/oauth-protected-resource")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], "/");
-    let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
-    assert!(cookie.contains("HttpOnly"), "{cookie}");
-    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
-    assert!(cookie.contains(&token), "{cookie}");
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
 /// transport session; json_response mode answers in plain JSON).
 async fn mcp(app: Router, payload: Value) -> Response<Body> {
     let method = payload["method"].as_str().unwrap().to_string();
-    let mut request = Request::post("/fin/mcp")
+    let mut request = Request::post("/mcp")
         // oneshot skips what every real client sends; the transport's
         // rebinding guard (allowed_hosts) rightly insists on it.
         .header(header::HOST, "127.0.0.1")
@@ -504,8 +541,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
         id: HUMAN.into(),
     };
     bootstrap(&plane, human).await.unwrap();
-    let gate = Arc::new(Gate::local(dir.path(), "http://test", false).unwrap());
-    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf(), gate);
+    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf(), None);
 
     let setup = format!(
         r#"DECLARE DATASET perf SET (purpose: 'kit test');
@@ -1009,10 +1045,12 @@ async fn the_round_never_interrupts_a_working_call() {
     );
 }
 
-/// The session-carrying lifecycle (≤ 2025-11-25) gets the same round
-/// as a server→client request on the call's own stream.
+/// An untokened call writes under one constant. `clientInfo` carries a
+/// name here and the record must not take it: a caller names itself on
+/// every request, so the string proves nothing, and the actor column is
+/// where the record says who spoke.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_actor_id_is_the_clients_name_not_the_transports() {
+async fn an_untokened_call_writes_under_the_constant_not_the_clients_name() {
     let (app, _dir) = app().await;
     let call = |id: u64, statements: &str| {
         json!({
@@ -1025,9 +1063,10 @@ async fn the_actor_id_is_the_clients_name_not_the_transports() {
         })
     };
 
-    // The sessionless lifecycle synthesizes a transport-level peer
-    // identity ("rmcp"); the actor must come from the request's own
-    // `_meta` clientInfo stamp — the plane keys channels by it.
+    // `meta()` stamps a clientInfo name, and the transport synthesizes
+    // its own peer identity ("rmcp") when a client sends none. Neither
+    // may reach the record: without a token there is nothing to verify,
+    // and an unverified name recorded as an actor reads like an identity.
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'actor test');
         USE fin;
@@ -1048,7 +1087,7 @@ async fn the_actor_id_is_the_clients_name_not_the_transports() {
     );
     assert_eq!(
         outcomes[0]["rows"][0]["actor_id"],
-        json!("doors-test"),
+        json!(glossql_serverd::AGENT),
         "{outcomes}"
     );
 }
@@ -1071,8 +1110,10 @@ async fn metadata_reads_pass_the_cap_uncapped() {
         })
     };
 
-    // Five glosses through one batch call — the plane keeps the session,
-    // so USE survives into the read.
+    // Five glosses through one batch call. `USE` binds only the
+    // statements after it *within this call*; the reads below stand on
+    // their own, one naming its dataset and one reading a relation that
+    // has none.
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'cap test');
         USE fin;

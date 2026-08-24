@@ -15,7 +15,7 @@
 -- known, accepted gap); the dimension is not one the function map owns
 -- (`behavior`, `sign`, `grain` are statistics — no
 -- human is asked for a number); and no standing ruling names the same
--- (aspect, key). A ruling holds its question closed until the agent's
+-- (dataset, aspect, key). A ruling holds its question closed until the agent's
 -- fold-in raises that key to full confidence, at which point the row
 -- drops out on its own.
 --
@@ -53,13 +53,15 @@ SELECT o.dataset, o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, 
 FROM agent_assumptions o
 JOIN aspects a ON a.name = o.aspect AND a.kind = 'query'
 LEFT JOIN ruling_entries s
-  ON s.subject = o.subject AND s.key = o.key AND s.aspect <> o.aspect
+  ON s.dataset = o.dataset
+ AND s.subject = o.subject AND s.key = o.key AND s.aspect <> o.aspect
  -- `unclear` is not a judgment, so it is never offered back as one
  AND s.stance IN ('confirmed', 'corrected')
 WHERE o.conf < 1.0 AND o.key IS NOT NULL
   AND coalesce(o.dimension, '-') NOT IN ('behavior', 'sign', 'grain')
   AND NOT EXISTS (SELECT 1 FROM ruling_entries r
-                  WHERE r.subject = o.subject AND r.aspect = o.aspect
+                  WHERE r.dataset = o.dataset
+                    AND r.subject = o.subject AND r.aspect = o.aspect
                     AND r.key = o.key)
 GROUP BY o.dataset, o.subject, o.aspect, o.idx, o.dimension, o.key, o.assumption, o.basis,
          o.alternative, o.conf

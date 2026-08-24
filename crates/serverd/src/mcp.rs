@@ -6,11 +6,6 @@
 
 use std::sync::Arc;
 
-use axum::body::{Body, to_bytes};
-use axum::extract::Request;
-use axum::http::header;
-use axum::middleware::Next;
-use axum::response::Response;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
     ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, Implementation,
@@ -23,7 +18,6 @@ use rmcp::{ErrorData as McpError, ServerHandler};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::Caller;
 
-use crate::auth::Dataset;
 use glossql_session::{Plane, Session, SessionError};
 
 use crate::wire;
@@ -31,89 +25,10 @@ use crate::wire;
 const INSTRUCTIONS: &str = "glossql workspace server. One tool: `glossql` executes \
 statements — declarations, USE, GLOSS, extraction, probes, and plain SQL. Live state \
 (datasets, functions, aspects, witnesses, sources, glossary, measurements, imports) reads as \
-plain tables through the tool. The glossql skills teach the grammar and the flows; \
-start with SELECT * FROM datasets, then USE <dataset>.";
-
-/// Requests and tools/list responses on this door stay small; tool-call
-/// responses can be large and are never buffered here.
-const MCP_BODY_CAP: usize = 16 * 1024 * 1024;
-
-/// The 2026-07-28 revision's tools/list result carries list-caching
-/// metadata — `ttlMs` (number) and `cacheScope` (`"public" | "private"`)
-/// — beside the SEP-2322 `resultType` discriminator. rmcp 3.1.2 models
-/// the discriminator but not the caching fields, and a client on this
-/// revision validates all three (Claude Code:
-/// `ttlMs` "expected number", `cacheScope` "expected public|private",
-/// and an omitted `resultType` refused with "the absent-means-complete
-/// bridge applies only to earlier-revision servers"). Until the library
-/// carries them, the door injects what is true of this server: the tool
-/// list is static per process (an hour's TTL) and workspace-local
-/// (private). Only tools/list responses are buffered — everything else
-/// passes through untouched.
-pub async fn amend_tools_list(request: Request, next: Next) -> Response {
-    let (parts, body) = request.into_parts();
-    let bytes = match to_bytes(body, MCP_BODY_CAP).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Response::builder()
-                .status(axum::http::StatusCode::PAYLOAD_TOO_LARGE)
-                .body(Body::from(format!("request body: {e}")))
-                .expect("static response");
-        }
-    };
-    let message = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
-    let method = message
-        .as_ref()
-        .and_then(|v| v.get("method").and_then(|m| m.as_str()))
-        .unwrap_or("-")
-        .to_string();
-    let is_list = method == "tools/list";
-    println!("mcp    <- {method}");
-    let response = next
-        .run(Request::from_parts(parts, Body::from(bytes)))
-        .await;
-    if !is_list {
-        return response;
-    }
-    let json = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
-    if !json {
-        return response;
-    }
-    let (mut parts, body) = response.into_parts();
-    let bytes = match to_bytes(body, MCP_BODY_CAP).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Response::builder()
-                .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!("response body: {e}")))
-                .expect("static response");
-        }
-    };
-    let amended = serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|mut message| {
-            let result = message.get_mut("result")?.as_object_mut()?;
-            if !result.contains_key("tools") {
-                return None;
-            }
-            result
-                .entry("ttlMs")
-                .or_insert(serde_json::json!(3_600_000));
-            result
-                .entry("cacheScope")
-                .or_insert(serde_json::json!("private"));
-            serde_json::to_vec(&message).ok()
-        });
-    let body = match amended {
-        Some(body) => body,
-        None => bytes.to_vec(),
-    };
-    parts.headers.remove(header::CONTENT_LENGTH);
-    Response::from_parts(parts, Body::from(body))
-}
+plain tables through the tool. The glossql skills teach the grammar and the flows. \
+This door is one endpoint over the whole workspace and holds no binding between calls: \
+start with SELECT * FROM datasets, then open every call that names a dataset's tables \
+or columns with `USE <dataset>;`. A call without one is workspace-scoped.";
 
 /// What the brief is decided on: the store's counts plus the open
 /// question count. Movement is a comparison of these FACTS — never of
@@ -564,22 +479,23 @@ async fn read_rows(session: &Session, sql: &str) -> Result<Vec<serde_json::Value
     Ok(out["rows"].as_array().cloned().unwrap_or_default())
 }
 
-/// How many questions the workspace would serve right now — every
-/// dataset, not the one this call happens to be pointed at. The brief
-/// is the place the total belongs: a round asks about the dataset in
-/// the URL, so without a workspace-wide count here, questions standing
-/// on another dataset would be invisible until someone opened its page.
-/// No dataset, no count: a workspace before its first landing has
+/// How many questions the workspace would serve right now, across every
+/// dataset — the same span the round itself asks over, since each row
+/// carries its own dataset and a ruling lands where its question came
+/// from. No dataset, no count: a workspace before its first landing has
 /// nothing to ask.
+///
+/// One count, not one per dataset. `open_questions` derives from the
+/// workspace-wide `glossary`, so every channel already answers for the
+/// whole workspace; summing across channels multiplied the total by the
+/// number of datasets. A channel is opened only because the read needs
+/// one, which is why any dataset that admits one will do.
 async fn open_question_count(plane: &Plane) -> Option<usize> {
-    let names = plane.datasets().await.ok()?;
     let actor = Actor {
         kind: ActorKind::Human,
         id: crate::HUMAN.into(),
     };
-    let mut total = 0usize;
-    let mut counted = false;
-    for dataset in names {
+    for dataset in plane.datasets().await.ok()? {
         let Ok(session) = plane.channel(actor.clone(), Some(&dataset)).await else {
             continue;
         };
@@ -588,11 +504,10 @@ async fn open_question_count(plane: &Plane) -> Option<usize> {
             .ok()
             .and_then(|rows| rows.first().and_then(|r| r["n"].as_u64()))
         {
-            total += n as usize;
-            counted = true;
+            return Some(n as usize);
         }
     }
-    counted.then_some(total)
+    None
 }
 
 /// The round's opaque state tag, echoed by MRTR retries. Untrusted —
@@ -803,6 +718,18 @@ impl ServerHandler for GlossqlMcp {
         info
     }
 
+    /// One revision. An older client is refused with the list it could
+    /// have used (`UnsupportedProtocolVersionError`) rather than served
+    /// under semantics this door no longer implements — there is no
+    /// session for it to be given, and no server-initiated request for
+    /// it to receive.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+    }
+
+    /// The list is static per process — one tool, built from a constant
+    /// schema — so it is cacheable for an hour. `private` because a
+    /// workspace's door is not a shared intermediary's to hand on.
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -810,6 +737,8 @@ impl ServerHandler for GlossqlMcp {
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
             tools: vec![self.tool()],
+            ttl_ms: Some(3_600_000),
+            cache_scope: Some(rmcp::model::CacheScope::Private),
             ..Default::default()
         })
     }
@@ -835,51 +764,47 @@ impl ServerHandler for GlossqlMcp {
         // gate verified one and left the caller in the HTTP extensions,
         // which rmcp forwards to this handler as `http::request::Parts`.
         // Without one — a server run without `--require-token` — the
-        // handshake's own name stands in, which is a name and not a
-        // proof, so it can only ever carry agent standing.
+        // call writes under [`crate::AGENT`]. The client's own
+        // `clientInfo` name is not used: it is a string the caller picks
+        // for itself on each request, so recording it would put an
+        // unproven name in the actor column of the record.
         let parts = context.extensions.get::<axum::http::request::Parts>();
         let actor = parts
             .and_then(|parts| parts.extensions.get::<Caller>())
             .map(|caller| caller.0.clone())
             .unwrap_or_else(|| Actor {
                 kind: ActorKind::Agent,
-                id: context
-                    .client_info()
-                    .map(|info| info.name)
-                    .unwrap_or_else(|| self.doors.agent.clone()),
+                id: crate::AGENT.to_string(),
             });
         let id = actor.id.clone();
-        // The dataset is the URL's first segment. Over this door a name
-        // the workspace does not hold yet is not an error: the call
-        // opens unbound, and `DECLARE DATASET` there is what brings the
-        // name into being — which is what makes the URL an intent.
-        let named = parts
-            .and_then(|parts| parts.extensions.get::<Dataset>())
-            .map(|d| d.0.clone());
-        let known = self.plane.datasets().await.unwrap_or_default();
-        let dataset = named.filter(|name| known.iter().any(|n| n == name));
+        // The call opens unbound. There is no session to hold a dataset
+        // and no path segment to carry one: the statements say where
+        // they are, as `USE`, and `execute` moves with them. A call that
+        // names none is workspace-scoped, which is what reading
+        // `datasets` and writing a source-grain gloss both want.
         // The monitor line: what the agent actually sends, as it sends it.
         println!("glossql <- {id}: {statements}");
         let session = self
             .plane
-            .channel(actor.clone(), dataset.as_deref())
+            .channel(actor.clone(), None)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        // The question round rides ahead of execution, by the
-        // mechanism the negotiated lifecycle carries. 2026-07-28+ is
-        // sessionless: the ask is an MRTR `input_required` result
-        // (SEP-2322) and the answer arrives on the client's retry of
-        // this same call. Session lifecycles get the server→client
-        // request on this call's own stream instead. Cadence: forms
-        // ride only calls
-        // that read the record — a metadata read, no writes — so the
-        // brief sweep and the stage read-backs carry the round while
-        // landings and judging queries run uninterrupted. A writing
-        // call re-opens what a decline deferred. One question per
-        // call, only while the workspace derives open items; the
-        // capability must come from the request's own stamp — the
-        // transport's peer_info is synthetic on the sessionless path.
+        // The question round rides ahead of execution as an MRTR
+        // `input_required` result (SEP-2322): the ask is the result,
+        // and the answer arrives on the client's retry of this same
+        // call. There is no other mechanism — the spec is explicit that
+        // a server "MUST send server-to-client requests using the MRTR
+        // pattern", and the older server-initiated request is gone.
+        //
+        // Cadence: forms ride only calls that read the record — a
+        // metadata read, no writes — so the brief sweep and the stage
+        // read-backs carry the round while landings and judging queries
+        // run uninterrupted. A writing call re-opens what a decline
+        // deferred. One question per call, only while the workspace
+        // derives open items; the capability must come from the
+        // request's own stamp, since the transport's peer_info is
+        // synthetic when every request stands alone.
         let shape = glossql_session::call_shape(statements);
         let mut probed = None;
         if let Some(responses) = &request.input_responses {
@@ -904,9 +829,6 @@ impl ServerHandler for GlossqlMcp {
             println!("glossql ?? {id}: {note}");
             probed = Some(note);
         } else if shape.reviews
-            && context
-                .protocol_version()
-                .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
             && context
                 .client_capabilities()
                 .and_then(|caps| caps.elicitation)
@@ -964,21 +886,19 @@ impl ServerHandler for GlossqlMcp {
             // Statement sequences run at the plane: `USE` moves the
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
-            Err(SessionError::NotOneRead) => match self
-                .plane
-                .execute(actor, dataset.as_deref(), statements)
-                .await
-            {
-                Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
-                Err(e) => {
-                    if let SessionError::Sequence { landed, .. } = &e
-                        && !landed.is_empty()
-                    {
-                        landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
+            Err(SessionError::NotOneRead) => {
+                match self.plane.execute(actor, None, statements).await {
+                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
+                    Err(e) => {
+                        if let SessionError::Sequence { landed, .. } = &e
+                            && !landed.is_empty()
+                        {
+                            landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
+                        }
+                        Err(e.to_string())
                     }
-                    Err(e.to_string())
                 }
-            },
+            }
             Err(e) => Err(e.to_string()),
         };
         // The brief travels on the call that moved it: initialize

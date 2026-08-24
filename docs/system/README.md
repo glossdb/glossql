@@ -23,7 +23,7 @@ The server: one binary, one workspace, three doors. How it is built is
   candle-ported in-context model
   ([functions](../reference/functions.md),
   [methods](../methods/README.md)).
-- **The doors** — `/<dataset>/mcp` (one `glossql` tool, stateless, row
+- **The doors** — `/mcp` (one `glossql` tool, stateless, row
   cap), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`
   (directory apps, the built-in docket, the ruling form)
   ([doors](../reference/doors.md)). The dataset is the resource and the

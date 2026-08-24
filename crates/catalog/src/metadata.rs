@@ -18,32 +18,30 @@
 //!   subjects carries a `dataset` column and declares it as its
 //!   partition key — separate files per dataset and pruning on a
 //!   dataset filter are the format's own feature, not a namespace
-//!   convention of ours. iceberg-datafusion's insert path projects
-//!   partition values and fans out per partition
-//!   (`integrations/datafusion/src/table/mod.rs:172-190`). One table,
-//!   one scan, one append; `(seq, pos)` totally ordered with no caveat.
+//!   convention of ours. [`Lake::append_batches`] splits an append by
+//!   partition value and writes one file per value. One table, one scan,
+//!   one append; `(seq, pos)` totally ordered with no caveat.
 //! - **Every column is a string.** The relations already read back as
 //!   text through `relation_rows`, and the rules parse what they need.
 //!   A typed schema would be a second place for the shape to live.
 //!
 //! Metadata columns are readable through **iceberg-rust's own scan**, not
 //! through iceberg-datafusion's SQL surface, which is why this reads with
-//! `table.scan()` and writes through DataFusion's insert path.
+//! `table.scan()`. It writes with [`Lake::append_batches`], the one write
+//! path into an Iceberg table — a store relation is an Iceberg table like
+//! any other, and nothing about a row of metadata needs the engine to put
+//! it there.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::catalog::CatalogProvider;
-use datafusion::datasource::MemTable;
-use datafusion::prelude::SessionContext;
 use futures::StreamExt;
 use iceberg::spec::{
     FormatVersion, NestedField, PrimitiveType, Schema as IcebergSchema, Transform, Type,
     UnboundPartitionSpec,
 };
-use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::{NamespaceIdent, TableCreation, TableIdent};
 
 use crate::Lake;
@@ -94,7 +92,6 @@ pub struct IcebergMetadata {
     lake: Lake,
     namespace: String,
     specs: HashMap<String, RelationSpec>,
-    ctx: SessionContext,
 }
 
 impl std::fmt::Debug for IcebergMetadata {
@@ -127,7 +124,6 @@ impl IcebergMetadata {
                 .iter()
                 .map(|s| (s.name.to_string(), s.clone()))
                 .collect(),
-            ctx: SessionContext::new(),
         })
     }
 
@@ -142,21 +138,6 @@ impl IcebergMetadata {
             NamespaceIdent::new(self.namespace.clone()),
             relation.to_string(),
         )
-    }
-
-    /// Mount the store namespace into this instance's context so the
-    /// insert path can address its tables.
-    async fn mount(&self) -> crate::Result<()> {
-        let provider = self.lake.provider().await?;
-        let schema = provider.schema(&self.namespace).ok_or_else(|| {
-            crate::Error::Workspace(format!("namespace {} did not mount", self.namespace))
-        })?;
-        self.ctx
-            .catalog("datafusion")
-            .expect("default catalog")
-            .register_schema(&self.namespace, schema)
-            .map_err(|e| crate::Error::Workspace(e.to_string()))?;
-        Ok(())
     }
 
     async fn scan_filtered(
@@ -227,10 +208,16 @@ impl IcebergMetadata {
         Ok(out)
     }
 
-    /// Create the table at v3 if it is not there yet. `format-version` is
-    /// a reserved property and cannot be set at create (spike 7), so the
-    /// upgrade is a transaction of its own. Called from the append path
-    /// only — a read finding no table reads an empty relation.
+    /// Create the table at v3 if it is not there yet. Called from the
+    /// append path only — a read finding no table reads an empty
+    /// relation.
+    ///
+    /// The version rides the create rather than a second transaction
+    /// upgrading it, and that is a correctness requirement, not tidiness:
+    /// between a v2 create and its upgrade the table exists at v2, and a
+    /// concurrent writer that loads it there writes a snapshot with no
+    /// row range — which the catalog then refuses, because by the time it
+    /// applies, the table is v3 and v3 requires one.
     async fn ensure_table(&self, spec: &RelationSpec) -> crate::Result<()> {
         let ident = self.ident(spec.name);
         let catalog = self.lake.catalog();
@@ -255,6 +242,7 @@ impl IcebergMetadata {
         let builder = TableCreation::builder()
             .name(spec.name.to_string())
             .schema(IcebergSchema::builder().with_fields(fields).build()?)
+            .format_version(FormatVersion::V3)
             .properties(HashMap::new());
         let creation = if spec.partition.is_empty() {
             builder.build()
@@ -273,15 +261,21 @@ impl IcebergMetadata {
             }
             builder.partition_spec(partition.build()).build()
         };
-        let table = catalog
+        if let Err(e) = catalog
             .create_table(&NamespaceIdent::new(self.namespace.clone()), creation)
-            .await?;
-        Transaction::new(&table)
-            .upgrade_table_version()
-            .set_format_version(FormatVersion::V3)
-            .apply(Transaction::new(&table))?
-            .commit(catalog.as_ref())
-            .await?;
+            .await
+        {
+            // Another writer may have created it between the check above
+            // and this call. What this function promises is that the
+            // relation exists when it returns, not that we are the one
+            // who made it so — so the question a failure raises is
+            // whether it exists now, which is also the only question
+            // whose answer does not depend on how a backend spells its
+            // refusal.
+            if !catalog.table_exists(&ident).await? {
+                return Err(e.into());
+            }
+        }
         self.lake.invalidate_provider();
         Ok(())
     }
@@ -332,7 +326,6 @@ impl IcebergMetadata {
         }
         let spec = self.spec(relation)?.clone();
         self.ensure_table(&spec).await?;
-        self.mount().await?;
         let schema = arrow_schema(spec.columns);
         let arrays = (0..spec.columns.len())
             .map(|i| {
@@ -343,25 +336,14 @@ impl IcebergMetadata {
                 )) as datafusion::arrow::array::ArrayRef
             })
             .collect::<Vec<_>>();
-        let batch = RecordBatch::try_new(Arc::clone(&schema), arrays)
+        let batch = RecordBatch::try_new(schema, arrays)
             .map_err(|e| crate::Error::Workspace(e.to_string()))?;
-        let staged = MemTable::try_new(schema, vec![vec![batch]])
-            .map_err(|e| crate::Error::Workspace(e.to_string()))?;
-        let stage = format!("__append_{relation}");
-        let _ = self.ctx.deregister_table(stage.as_str());
-        self.ctx
-            .register_table(stage.as_str(), Arc::new(staged))
-            .map_err(|e| crate::Error::Workspace(e.to_string()))?;
-        let sql = format!(
-            "INSERT INTO {ns}.{relation} SELECT * FROM {stage}",
-            ns = self.namespace
-        );
-        let out = self.ctx.sql(&sql).await;
-        let _ = self.ctx.deregister_table(stage.as_str());
-        out.map_err(|e| crate::Error::Workspace(e.to_string()))?
-            .collect()
+        // Column order is the contract: the batch is built from
+        // `spec.columns` and so was the Iceberg schema in `ensure_table`,
+        // so the two line up field for field, which is what the
+        // partition split reads its source column through.
+        self.lake
+            .append_batches(&self.namespace, relation, &[batch], HashMap::new())
             .await
-            .map_err(|e| crate::Error::Workspace(e.to_string()))?;
-        Ok(())
     }
 }

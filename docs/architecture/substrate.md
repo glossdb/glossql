@@ -31,7 +31,9 @@ its own cycle stack, one stack for the whole nesting.
 - **The shipped reads ride the same resolution.** Each read is one
   `.sql` file embedded in the binary and planned like any served
   grounding — one file serves the door, an app frame, and a skill
-  example alike.
+  example alike. `current_dataset` is the exception, and for the reason
+  that makes the rule: it serves session state, which no `.sql` file can
+  reach, so it is a compute door the pre-pass evaluates into a batch.
 - **The catalog hierarchy as-is** — `CatalogProviderList` →
   `CatalogProvider` → `SchemaProvider` → `TableProvider`. Table names,
   columns, and snapshot ids are answered by the provider chain; there

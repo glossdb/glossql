@@ -22,8 +22,6 @@ rmcp = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["std", "pkcs8", "pem"] }
-getrandom = "0.3"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

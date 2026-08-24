@@ -1651,6 +1651,13 @@ pub(crate) async fn relationship_checks(
     }
     let mut entries = Vec::new();
     for row in shared.store.relation_rows("relationships").await? {
+        // `relationships` is workspace-wide and its first column says
+        // whose edge this is. Every edge below is resolved against the
+        // statement's pins and a miss is fatal, so another dataset's
+        // edge does not widen this read — it kills it.
+        if row[0].as_deref() != Some(dataset) {
+            continue;
+        }
         let (Some(left), Some(op), Some(right)) = (&row[1], &row[2], &row[3]) else {
             continue;
         };

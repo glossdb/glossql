@@ -1,2 +1,3 @@
 title = "Docket"
-# no dataset line: binds to the workspace's sole dataset at request time
+# no dataset line, ever: the URL binds it (/<dataset>/app/docket), so one
+# app serves every dataset and the header picker switches between them

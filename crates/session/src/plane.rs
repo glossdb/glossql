@@ -1,17 +1,15 @@
 //! The shared plane behind the doors: one store, one lake, one script
-//! runtime, one cube cache, and the workspace's channels — sessions
-//! keyed (actor, dataset). A channel's binding is fixed at
-//! construction; `USE` selects which channel the statements after it
-//! land on, it never rebinds a session — so channels serving concurrent
-//! readers (the app door's frames) hold still under load.
+//! runtime, one cube cache. Everything that outlives a call lives here
+//! or under the store; everything a call needs beyond that is built for
+//! the call and dropped with it.
 //!
-//! Nothing here is keyed by a connection. The dataset a call speaks to
-//! arrives with the call — the URL's first segment on every door — and
-//! `USE` moves it for the rest of *that* call only. The channels cache
-//! is a pool of bound sessions, rebuildable at any moment and holding no
-//! caller's intent; a pointer remembering where someone last was would
-//! be the one piece of state a restart could lose, and losing it loses
-//! whatever the caller said next.
+//! Nothing is keyed by a caller or a connection. A channel's binding is
+//! fixed at construction and `USE` selects which channel the statements
+//! after it land on, so a channel never rebinds under a concurrent
+//! reader. The dataset a call speaks to arrives with the call and `USE`
+//! moves it for the rest of *that* call only — a pointer remembering
+//! where someone last was would be the one piece of state a restart
+//! could lose, and losing it loses whatever the caller said next.
 //!
 //! It lives in the session crate because every door needs it (serverd's
 //! `/mcp` and `/query`, the app door's frame reads).
@@ -23,23 +21,6 @@ use glossql_parser::{GlossqlParser, Statement};
 
 use crate::cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 use crate::session::{FunctionRuntime, Outcome, Session, SessionError};
-
-/// How many channels the pool holds before it evicts the least recently
-/// used. Measured at ~84 kB of resident memory each — bound or unbound,
-/// since the lake's provider is shared — so this is a ceiling of roughly
-/// 90 MB.
-///
-/// It is a count rather than a byte budget because channels are uniform,
-/// unlike cubes. The bound exists because the key's actor half is not
-/// bounded by anything the server controls: with a token it is the
-/// subject, but a door serving untokened calls takes the client's own
-/// name for it, and a long-lived process would otherwise grow one
-/// channel per name it was ever handed.
-///
-/// Evicting one costs a cold DataFusion context on the next call and
-/// nothing else — a channel is a cache in front of the store, never a
-/// record, and every read re-derives.
-pub const MAX_CHANNELS: u64 = 1024;
 
 /// A caller a door has verified, carried in the request's extensions
 /// so every door reads identity the same way. It lives here rather than
@@ -59,12 +40,6 @@ pub struct Plane {
     /// entries for the process, bounded by `with_cube_cache`. Not the
     /// Store's: the Store is the record, and the cube is not.
     cube: CubeCache,
-    /// One session per (actor, dataset), built on first sight and held
-    /// until it is the least recently used of [`MAX_CHANNELS`]; `None`
-    /// is the unbound channel — a workspace-wide read that names no
-    /// dataset. A caller holding an `Arc` keeps its session alive across
-    /// its own eviction.
-    channels: moka::future::Cache<(String, Option<String>), Arc<Session>>,
     row_cap: usize,
 }
 
@@ -80,10 +55,6 @@ impl Plane {
             store,
             runtime,
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
-            channels: moka::future::Cache::builder()
-                .max_capacity(MAX_CHANNELS)
-                .eviction_policy(moka::policy::EvictionPolicy::lru())
-                .build(),
             row_cap: usize::MAX,
         }
     }
@@ -119,47 +90,31 @@ impl Plane {
             .collect())
     }
 
-    fn key(actor: &Actor) -> String {
-        format!("{}:{}", actor.kind, actor.id)
-    }
-
-    /// The actor's channel for a dataset, built and bound on first
-    /// sight. Every door comes here with the dataset its URL named;
+    /// A channel onto a dataset, built for this call and dropped with
+    /// it. Every door comes here with the dataset it was told;
     /// binding validates it, so an unknown one fails the channel rather
     /// than the query after it.
     ///
-    /// Building is single-flight per key (`try_get_with`): concurrent
-    /// first calls for one channel build it once and share it, and a
-    /// build that refuses is not cached — the next call tries again
-    /// rather than inheriting a stale refusal.
+    /// Nothing is pooled. A channel is a DataFusion context, its
+    /// function registry and the mounted catalog — measured at ~0.5 ms
+    /// to build, because everything expensive behind it is held
+    /// elsewhere: the lake's provider is shared, and the store's
+    /// resolved rows are held by the store under its own version. There
+    /// is no per-caller state left to keep, so there is no pool to
+    /// bound, evict, or key.
     pub async fn channel(
         &self,
         actor: Actor,
         dataset: Option<&str>,
     ) -> Result<Arc<Session>, SessionError> {
-        let key = (Self::key(&actor), dataset.map(str::to_string));
-        self.channels
-            .try_get_with(key, async {
-                let session = Session::new(self.store.clone(), actor)?
-                    .with_row_cap(self.row_cap)
-                    .with_runtime(Arc::clone(&self.runtime))
-                    .with_cube_cache(self.cube.clone());
-                if let Some(dataset) = dataset {
-                    session.bind(dataset).await?;
-                }
-                Ok::<_, SessionError>(Arc::new(session))
-            })
-            .await
-            // `try_get_with` hands the initializer's error back behind
-            // an Arc, so every waiter on that flight sees the same one.
-            .map_err(|e| SessionError::ChannelRefused(e.to_string()))
-    }
-
-    /// Channels standing right now, once moka's pending evictions have
-    /// run — for the doors' instruments and the tests that count them.
-    pub async fn channel_count(&self) -> u64 {
-        self.channels.run_pending_tasks().await;
-        self.channels.entry_count()
+        let session = Session::new(self.store.clone(), actor)?
+            .with_row_cap(self.row_cap)
+            .with_runtime(Arc::clone(&self.runtime))
+            .with_cube_cache(self.cube.clone());
+        if let Some(dataset) = dataset {
+            session.bind(dataset).await?;
+        }
+        Ok(Arc::new(session))
     }
 
     /// The statement loop over an actor's channels. `dataset` is where

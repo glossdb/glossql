@@ -19,5 +19,5 @@ SELECT arrow_cast(r.aspect, 'Utf8') AS subj,
        arrow_cast(substr(r.written_at, 1, 10), 'Utf8') AS at,
        arrow_cast('/app/docket/p/metrics?metric=' || r.aspect, 'Utf8') AS link
 FROM ruling_entries r
-WHERE r.dataset = CAST($dataset AS VARCHAR)
+JOIN current_dataset d ON d.dataset = r.dataset
 ORDER BY r.written_at DESC, subj

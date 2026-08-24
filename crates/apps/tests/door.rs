@@ -291,7 +291,7 @@ async fn a_glossed_part_may_not_take_a_builtin_name() {
     assert!(page.contains("ships in the binary"), "{page}");
 
     // The same part under its own name serves — including without a
-    // manifest, which binds to the workspace's sole dataset.
+    // manifest, which names no dataset — the URL binds it.
     session
         .execute(r#"GLOSS app_frame ON cash.mine AS $${"sql": "SELECT 1 AS v"}$$;"#)
         .await
@@ -584,7 +584,8 @@ async fn the_dossier_faces_survive_a_second_dataset() {
     // With two datasets in the
     // workspace, frames that scanned the `datasets` relation fanned
     // every joined row out — two formulas, two materializations. The
-    // bound dataset rides in as $dataset instead; one row per face.
+    // bound dataset rides in as `current_dataset` instead; one row per
+    // face.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await; // seeds a second dataset
 

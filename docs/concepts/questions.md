@@ -32,11 +32,20 @@ change not yet re-landed, a formula answer newer than its recorded
 materialization, a contested slot, an unfolded ruling. Those are
 acts, not questions.
 
+A question belongs to one dataset: a subject name is unique within a
+dataset and not across a workspace, so the same aspect on a same-named
+table in two datasets is two claims, ruled separately. `open_questions`
+answers for the whole workspace and carries `dataset` on every row —
+which dataset a reader means is the reader's to say, and
+`current_dataset` names the bound one. `owed` narrows itself, because
+what waits on an act waits on someone working in one dataset.
+
 The rows are the whole of what is owed to a human:
 
 ```sql
-SELECT aspect, dimension, key, assumption, conf
-FROM open_questions ORDER BY conf ASC;
+SELECT o.aspect, o.dimension, o.key, o.assumption, o.conf
+FROM open_questions o JOIN current_dataset d ON d.dataset = o.dataset
+ORDER BY o.conf ASC;
 ```
 
 ## The answer is a gloss

@@ -7,14 +7,15 @@
 -- alone. What is left here is formatting — the chip's wording and
 -- colour. The open count is the docket's own, so the chip and the
 -- queue cannot disagree. Both counts scope to the bound dataset: the
--- glossary relation is workspace-wide.
+-- glossary relation is workspace-wide, and `current_dataset` is what
+-- names the one this session is on.
 WITH asked AS (
-  SELECT aspect, count(*) AS n FROM open_questions
-  WHERE dataset = CAST($dataset AS VARCHAR) GROUP BY aspect
+  SELECT q.aspect, count(*) AS n FROM open_questions q
+  JOIN current_dataset d ON d.dataset = q.dataset GROUP BY q.aspect
 ),
 ruled AS (
-  SELECT aspect, max(written_at) AS at FROM ruling_entries
-  WHERE dataset = CAST($dataset AS VARCHAR) GROUP BY aspect
+  SELECT r.aspect, max(r.written_at) AS at FROM ruling_entries r
+  JOIN current_dataset d ON d.dataset = r.dataset GROUP BY r.aspect
 )
 SELECT s.title,
        s.metric AS name,

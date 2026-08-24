@@ -31,21 +31,23 @@ stop serving. Add an app under its own name instead.
 
 ```toml
 title = "Docket"
-# no dataset line: binds to the workspace's sole dataset at request time
 ```
 
-`dataset` pins the frames to one dataset; absent, the app binds to the
-workspace's sole dataset per request. App, page, frame, and spec names
-are flat segments — ASCII alphanumerics, `_`, `-`, `.`; nothing
-hidden, no dot-walking.
+**A manifest names no dataset.** The URL does — `/<dataset>/app/<name>` —
+so one app serves every dataset in the workspace and the header's picker
+switches between them. A `dataset` key is accepted and ignored. App,
+page, frame, and spec names are flat segments — ASCII alphanumerics,
+`_`, `-`, `.`; nothing hidden, no dot-walking.
 
 ## Frames
 
 A frame is one SQL file served as Arrow IPC. URL params bind as typed
 plan placeholders (`$from` in the SQL, `?from=…` on the URL); values
 arrive as Utf8 and the frame SQL casts explicitly, and a door argument
-binds the same way (`metric_series(grain => $grain)`). `$dataset` is
-reserved — always the bound dataset. Frames only read, and the browser
+binds the same way (`metric_series(grain => $grain)`). The bound
+dataset is not a parameter: the frame's channel is bound to the URL's
+dataset, and `current_dataset` names it inside the SQL. Frames only
+read, and the browser
 fetches each frame once per state, sharing the table across every tile
 bound to it. The URL is the only state; drill is navigation, and so is
 a viewer's window: `?grain=quarter&span=24` are ordinary params bound
@@ -57,7 +59,7 @@ refetch.
 Display logic — glyphs, classes, links — is computed in the frame's
 SQL, not in the template. The shipped reads (`open_questions`, `owed`,
 `metric_surfaces`, `metric_series()`, …) are the natural frame
-sources; scope workspace-wide reads to `$dataset`.
+sources; narrow a workspace-wide one by joining `current_dataset`.
 
 ## Pages and tiles
 

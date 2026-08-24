@@ -44,13 +44,14 @@ pub struct ReadContext {
     /// computes is keyed by.
     pub pin: Pin,
     /// The store's version when this context was built — every relation
-    /// table at its snapshot, derived from the catalog. The pin is the
-    /// *semantic* input key (measurements deliberately excluded: an
-    /// output, not an input) and a curated list; checking freshness by
-    /// pin alone kept a landed measurement invisible to every channel
-    /// but the one that computed it. Freshness compares this instead, and because it is
-    /// enumerated rather than listed, a relation added later can never
-    /// be missed the same way.
+    /// table at its snapshot, derived from the catalog. This is what the
+    /// cache is keyed by, and it is enumerated rather than curated so a
+    /// relation added later joins the key on its own.
+    ///
+    /// Not the pin: the pin is the *semantic* input key and deliberately
+    /// excludes `measurements`, an output. Keyed by pin, a landed
+    /// measurement would move nothing and stay invisible to every reader
+    /// but the one that computed it.
     pub version: String,
     /// The store, resolved once with the pin: one statement, one read of
     /// every relation — the rules below do no IO of their own.
@@ -271,10 +272,38 @@ async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadat
     Ok(Arc::new(relations))
 }
 
+/// Every store relation at its snapshot — what both the version and the
+/// pin are derived from, shared rather than copied because every read
+/// wants the same one.
+type Snapshots = Arc<Vec<(String, Option<i64>)>>;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
     metadata: Arc<glossql_catalog::IcebergMetadata>,
+    /// The store namespace's head: every relation at its snapshot,
+    /// walked once and held until a write moves it. The walk is a
+    /// catalog round trip per relation (~2.4 ms on a small workspace)
+    /// and it sits in front of every read, so holding it is the
+    /// difference between paying it per statement and paying it per
+    /// write.
+    ///
+    /// **A commit drops it** — see [`Store::put`], the one place a
+    /// store relation moves. Correct only while one process owns the
+    /// workspace: the head is this process's memory, and a second
+    /// writer's commit would leave it stale with nothing to say so.
+    /// Two processes need shared state, which is a different design.
+    head: Arc<std::sync::RwLock<Option<Snapshots>>>,
+    /// The resolved store behind a read, one entry per dataset, each
+    /// holding the version it was built at. A read whose version still
+    /// matches takes it; a read whose version moved replaces it. There
+    /// is no eviction rule because there is nothing to evict: a moved
+    /// version makes the old entry unreachable, and the map is bounded
+    /// by the workspace's datasets.
+    ///
+    /// Keyed by dataset because `measurements` is dataset-scoped; the
+    /// other five relations are workspace-wide and simply repeat.
+    contexts: Arc<std::sync::RwLock<std::collections::HashMap<String, ReadContext>>>,
 }
 
 /// What the connect-time brief is composed from — see
@@ -299,6 +328,8 @@ impl Store {
         Ok(Store {
             metadata: lake_metadata(lake.clone()).await?,
             lake,
+            head: Arc::new(std::sync::RwLock::new(None)),
+            contexts: Arc::new(std::sync::RwLock::new(Default::default())),
         })
     }
 
@@ -318,8 +349,13 @@ impl Store {
         // after the ruling was written. Landings read from the lake —
         // scoped to the datasets the standing approvals actually name,
         // never a walk of every landing in the workspace.
+        // Keyed with `dataset`, as the store's own collapse is: a
+        // subject name is unique within a dataset and not across a
+        // workspace, so a bare subject key collapses two datasets'
+        // approvals into one and under-reports what is pending.
         let approvals: Vec<(String, String, String)> = latest_rows(&history, |g| {
-            (g.actor_kind == "human" && g.aspect == "recipe_change").then(|| g.subject.clone())
+            (g.actor_kind == "human" && g.aspect == "recipe_change")
+                .then(|| (g.dataset.clone(), g.subject.clone()))
         })
         .into_iter()
         .filter_map(|g| {
@@ -362,15 +398,23 @@ impl Store {
         // question at once.
         let mut rulings_owed = 0i64;
         for r in latest_rows(&history, |g| {
-            (g.actor_kind == "human" && g.aspect == "ruling").then(|| g.subject.clone())
+            (g.actor_kind == "human" && g.aspect == "ruling")
+                .then(|| (g.dataset.clone(), g.subject.clone()))
         }) {
             let body: Value = serde_json::from_str(&r.body).unwrap_or(Value::Null);
             for jr in body["rulings"].as_array().into_iter().flatten() {
                 let (Some(key), Some(aspect)) = (jr["key"].as_str(), jr["aspect"].as_str()) else {
                     continue;
                 };
+                // `r.dataset` in the filter, not the key: the key is the
+                // unit, so every row admitted here collapses to one, and
+                // without this leg that one row can be another dataset's
+                // grounding — the fold-in debt read off the wrong body.
                 let owed = latest_rows(&history, |g| {
-                    (g.actor_kind == "agent" && g.subject == r.subject && g.aspect == aspect)
+                    (g.actor_kind == "agent"
+                        && g.dataset == r.dataset
+                        && g.subject == r.subject
+                        && g.aspect == aspect)
                         .then_some(())
                 })
                 .into_iter()
@@ -1145,12 +1189,29 @@ impl Store {
         self.put(name, cells).await
     }
 
-    /// One appended row into a crossed relation.
+    /// One appended row into a crossed relation — the only place a
+    /// store relation moves, and therefore the only place the head has
+    /// to be dropped.
+    ///
+    /// The drop follows the commit, never precedes it: dropped first, a
+    /// concurrent reader would re-walk the old snapshots and cache them
+    /// as current, and this write would land with nothing left to
+    /// invalidate. That ordering is the whole correctness argument, and
+    /// it holds because `append` returns only once the Iceberg commit
+    /// is in. **If appends are ever batched, the flush becomes this
+    /// place** — issuing a write is not what moves the head, landing it
+    /// is.
     async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
-        self.metadata
-            .append(relation, vec![cells])
-            .await
-            .map_err(Error::from)
+        let landed = self.metadata.append(relation, vec![cells]).await;
+        // Dropped on the way out whichever way the append went. A
+        // failed append is not a write that did not happen: `append`
+        // creates the relation before it fills it, so a failure between
+        // the two leaves a table the head does not know about, and a
+        // head that omits a relation is wrong in the direction that
+        // hides rows.
+        *self.head.write().expect("head lock") = None;
+        landed.map_err(Error::from)?;
+        Ok(())
     }
 
     /// A crossed relation's current rows: latest per [`Relation`] key in
@@ -1258,6 +1319,15 @@ impl Store {
     /// The statement's read context: the store resolved once. The
     /// session supplies what the lake knows (subjects and snapshots);
     /// this adds every relation's rows and the pin over the whole set.
+    ///
+    /// The six relation reads are the expensive half — one Iceberg scan
+    /// each, and each scan opens one small file per row ever written
+    /// there, so the cost tracks the workspace's write history rather
+    /// than its data. They are held per dataset under the version they
+    /// were read at, so a read whose version still stands pays none of
+    /// it. What the lake knows is *not* cached: `universe`, `snapshots`
+    /// and the pin they feed are rebuilt every read, so a landing is
+    /// visible the moment it commits.
     pub async fn read_context(
         &self,
         dataset: &str,
@@ -1265,7 +1335,23 @@ impl Store {
         snapshots: std::collections::HashMap<String, i64>,
     ) -> Result<ReadContext> {
         let pin = self.pin(dataset, &snapshots).await?;
-        Ok(ReadContext {
+        let version = self.version().await?;
+        let cached = self
+            .contexts
+            .read()
+            .expect("contexts lock")
+            .get(dataset)
+            .filter(|held| held.version == version)
+            .cloned();
+        // The six are behind `Arc`s, so what is cloned here is six
+        // pointers and the lake's own two fields.
+        if let Some(mut ctx) = cached {
+            ctx.universe = universe;
+            ctx.snapshots = snapshots;
+            ctx.pin = pin;
+            return Ok(ctx);
+        }
+        let ctx = ReadContext {
             glossary: std::sync::Arc::new(self.glossary_history().await?),
             measurements: std::sync::Arc::new(self.measurements_newest(dataset).await?),
             functions: std::sync::Arc::new(self.functions_all().await?),
@@ -1275,19 +1361,24 @@ impl Store {
             universe,
             snapshots,
             pin,
-            version: self.version().await?,
-        })
+            version,
+        };
+        self.contexts
+            .write()
+            .expect("contexts lock")
+            .insert(dataset.to_string(), ctx.clone());
+        Ok(ctx)
     }
 
     /// The store's version: every table currently in the store namespace
-    /// at its snapshot, sorted and joined — the freshness key a cached
-    /// [`ReadContext`] is checked against beside its pin. Enumerated
-    /// from the catalog, never curated, so any store write moves it.
+    /// at its snapshot, sorted and joined — the key a cached
+    /// [`ReadContext`] is held under. Enumerated from the catalog, never
+    /// curated, so any store write moves it.
     pub async fn version(&self) -> Result<String> {
         let mut parts: Vec<String> = self
             .store_snapshots()
             .await?
-            .into_iter()
+            .iter()
             .map(|(t, snap)| format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string())))
             .collect();
         parts.sort();
@@ -1299,16 +1390,25 @@ impl Store {
     /// than curated so a relation added later can never be missed. A
     /// fresh workspace has no store namespace until the first write
     /// crosses; its enumeration is empty, not an error.
-    async fn store_snapshots(&self) -> Result<Vec<(String, Option<i64>)>> {
-        if !self.lake.namespace_exists(STORE_NAMESPACE).await? {
-            return Ok(Vec::new());
+    ///
+    /// Served from [`Store::head`] once walked. Two readers racing an
+    /// empty head both walk and both store the same answer, which is
+    /// why the walk holds no lock: a duplicate catalog round trip is
+    /// cheaper than an async-aware lock, and the results agree.
+    async fn store_snapshots(&self) -> Result<Snapshots> {
+        if let Some(head) = self.head.read().expect("head lock").clone() {
+            return Ok(head);
         }
         let mut out = Vec::new();
-        for table in self.lake.table_names(STORE_NAMESPACE).await? {
-            let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
-            out.push((table, snap));
+        if self.lake.namespace_exists(STORE_NAMESPACE).await? {
+            for table in self.lake.table_names(STORE_NAMESPACE).await? {
+                let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
+                out.push((table, snap));
+            }
         }
-        Ok(out)
+        let head = Arc::new(out);
+        *self.head.write().expect("head lock") = Some(Arc::clone(&head));
+        Ok(head)
     }
 
     // -- the pin, and the measurements it keys -------------------------
@@ -1328,7 +1428,7 @@ impl Store {
         // `measurements` — an output, not an input — from the same
         // enumeration the version reads, so a relation added later
         // joins the pin on its own.
-        for (relation, snap) in self.store_snapshots().await? {
+        for (relation, snap) in self.store_snapshots().await?.iter() {
             if relation == "measurements" {
                 continue;
             }

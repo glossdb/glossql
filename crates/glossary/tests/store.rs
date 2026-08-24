@@ -1175,3 +1175,69 @@ async fn a_dataset_stays_glossable_when_a_source_shares_its_name() {
         "{e}"
     );
 }
+
+/// The store holds what it resolved under the version it read it at,
+/// and a write moves that version. This is the whole cache: there is no
+/// freshness check on the read path and no invalidation call at the
+/// write — a commit drops the head, the next read walks a new one, and
+/// a moved version simply misses.
+///
+/// Asserted on identity, not contents: the six relations ride behind
+/// `Arc`s, so a served-from-cache context shares their pointers and a
+/// rebuilt one cannot.
+#[tokio::test]
+async fn a_read_context_is_held_until_a_write_moves_the_version() {
+    let (_dir, store) = store().await;
+    let first = rctx(&store).await;
+    let again = rctx(&store).await;
+    assert_eq!(
+        first.version, again.version,
+        "no write stands between these reads"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&first.glossary, &again.glossary),
+        "the second read rebuilt a store nothing had moved"
+    );
+
+    write(
+        &store,
+        &agent(),
+        "GLOSS unit ON orders.amount AS $${\"value\":\"eur\"}$$;",
+    )
+    .await
+    .unwrap();
+
+    let after = rctx(&store).await;
+    assert_ne!(
+        first.version, after.version,
+        "a landed gloss left the store's version where it was"
+    );
+    assert!(
+        !std::sync::Arc::ptr_eq(&first.glossary, &after.glossary),
+        "a read after a write served the rows from before it"
+    );
+    assert_eq!(after.glossary.len(), first.glossary.len() + 1);
+}
+
+/// An idempotent re-declare writes nothing, so it must not move the
+/// version either — otherwise every restart would rebuild every context
+/// for no change at all.
+#[tokio::test]
+async fn a_re_declare_that_writes_nothing_moves_nothing() {
+    let (_dir, store) = store().await;
+    let before = rctx(&store).await;
+    let Declaration::Aspect(unit) = decl(
+        r#"DECLARE ASPECT unit WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}},
+            "additionalProperties": false
+        }$$ AS FACT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&unit).await.unwrap();
+    let after = rctx(&store).await;
+    assert_eq!(before.version, after.version);
+    assert!(std::sync::Arc::ptr_eq(&before.aspects, &after.aspects));
+}

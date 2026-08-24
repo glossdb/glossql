@@ -13,9 +13,10 @@
 -- what lets a ruling refresh this read without touching the cube.
 --
 -- No open count and no ruled-at here: both live in workspace-wide
--- relations, and only the caller knows which dataset it is bound to.
--- Callers join `open_questions` and `ruling_entries` scoped to their
--- own dataset — one line each, against reads that already exist.
+-- relations, and which dataset they should answer for is the caller's
+-- question, not this read's. Callers join `open_questions` and
+-- `ruling_entries` narrowed to a dataset — `current_dataset` names the
+-- bound one, so that is one line each against reads that already exist.
 -- Formatting, glyphs and links are the caller's.
 WITH grounded AS (
   SELECT DISTINCT aspect FROM GLOSSARY(all => true) WHERE kind = 'query'

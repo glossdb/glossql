@@ -24,6 +24,6 @@ SELECT
   (SELECT count(*) FROM aspects WHERE kind = 'query') AS metrics,
   (SELECT count(*) FROM witnesses) AS witnesses,
   (SELECT count(*) FROM raw WHERE kind = 'measurement') AS measurements,
-  (SELECT count(*) FROM open_questions
-   WHERE dataset = CAST($dataset AS VARCHAR)) AS needs,
+  (SELECT count(*) FROM open_questions q
+   JOIN current_dataset d ON d.dataset = q.dataset) AS needs,
   (SELECT count(*) FROM owed) + (SELECT n FROM unassessed_measures) AS waiting

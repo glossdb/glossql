@@ -13,6 +13,15 @@
 -- that surface, and `open` is 0 for surfaces where nothing can be
 -- owed. `how` is the statement that extends the surface.
 --
+-- Every count spans the workspace, deliberately: this is the read an
+-- agent runs to orient itself, and the MCP door's channel is bound to
+-- nothing when it does. So the counts are keyed the way the workspace
+-- identifies a thing — vocabulary by name, everything a dataset owns
+-- by (dataset, name) — rather than narrowed to one dataset. The
+-- surfaces that ARE dataset-scoped are read through `open_questions`,
+-- `ruling_entries` and `app_parts`, which carry `dataset` for exactly
+-- this reason.
+--
 -- Order is the caller's: a reader wants it by surface, an agent by
 -- what is open.
 --
@@ -37,6 +46,11 @@
 -- So the counts are taken once, in a single row, and the surfaces are a
 -- literal relation joined to it. A predicate on `surface` now lands on
 -- plain VALUES rows and cannot reach a subquery at all.
+-- `count(DISTINCT aspect)` here is deliberate and not the identity
+-- slip the two DISTINCTs below were: an aspect IS workspace
+-- vocabulary — the `aspects` relation carries no dataset — so `dso`
+-- with open questions in two datasets is one metric with open
+-- questions, which is what `n_metrics` counts it as.
 WITH asked AS (
   SELECT count(*) AS n, count(DISTINCT aspect) AS metrics FROM open_questions
 ),
@@ -45,7 +59,11 @@ ruled AS (
          count(*) FILTER (WHERE NOT folded_in) AS owed
   FROM ruling_entries
 ),
-apps AS (SELECT count(DISTINCT app) AS n FROM app_parts),
+-- Same identity rule as tables: the app door serves
+-- `/<dataset>/app/<name>`, so a `docket` in two datasets is two apps
+-- with two sets of parts.
+apps AS (SELECT count(*) AS n FROM
+           (SELECT DISTINCT dataset, app FROM app_parts) t),
 -- A landing is open work when its casts nulled cells: kept rows with
 -- holes in them, which is the one thing about an import that wants an
 -- author's attention. Run 4 read 11 of 11 clean tables as open, because
@@ -56,15 +74,24 @@ apps AS (SELECT count(DISTINCT app) AS n FROM app_parts),
 -- and the counter is only meaningful for a
 -- single-relation row-preserving recipe anyway.
 nulled AS (
-  SELECT count(DISTINCT i.table_name) AS n
-  FROM imports i
-  CROSS JOIN generate_series(0, 99) AS c(i)
-  WHERE c.i < json_length(i.cast_failures, 'checked')
-    AND json_get_int(json_get(json_get(i.cast_failures, 'checked'), c.i), 'failed') > 0
+  SELECT count(*) AS n FROM (
+    SELECT DISTINCT i.dataset, i.table_name
+    FROM imports i
+    CROSS JOIN generate_series(0, 99) AS c(i)
+    WHERE c.i < json_length(i.cast_failures, 'checked')
+      AND json_get_int(json_get(json_get(i.cast_failures, 'checked'), c.i), 'failed') > 0
+  ) t
 ),
 counts AS (
   SELECT (SELECT count(*) FROM sources) AS n_sources,
-         (SELECT count(DISTINCT table_name) FROM imports) AS n_tables,
+         -- A table is identified by (dataset, name), never by name:
+         -- `imports` is workspace-wide and two datasets each holding
+         -- `orders` are two tables. A bare DISTINCT on the name
+         -- collapses them and this surface *under*-reports, which is
+         -- the opposite failure from the rest of this read and the
+         -- easier one to miss.
+         (SELECT count(*) FROM
+            (SELECT DISTINCT dataset, table_name FROM imports) t) AS n_tables,
          (SELECT n FROM nulled) AS open_tables,
          (SELECT count(*) FROM relationships) AS n_relationships,
          (SELECT count(*) FROM aspects) AS n_aspects,

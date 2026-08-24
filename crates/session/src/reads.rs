@@ -38,11 +38,6 @@ pub(crate) struct Shared {
     pub store: Store,
     pub dataset: RwLock<Option<String>>,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
-    /// The statement context, reused while the pin holds: same pin, same
-    /// contents — the §10-sanctioned shape (in-memory, read-path, keyed
-    /// by the snapshots the computation reads). Measurements refresh per
-    /// statement regardless, because a landing does not move the pin.
-    pub context: RwLock<Option<ReadContext>>,
     /// The session's own context, set right after construction (the planner
     /// is built before the context exists). The metric bind plans each
     /// grounding through it as its own statement — `statement_to_plan`
@@ -110,46 +105,41 @@ impl Shared {
 
     /// What the store cannot know (SPEC.md §5.3): the subjects that exist —
     /// the recipe tables and their columns — and each table's current
-    /// snapshot. Rebuilt per read from the catalog, so every channel sees
-    /// a landing the moment it committed; the disclosure grid and the
-    /// staleness comparison ride on this.
+    /// snapshot. Read from the catalog every time, so a landing is
+    /// visible the moment it committed; the disclosure grid and the
+    /// staleness comparison ride on this. What the *store* knows is
+    /// held for us by [`Store::read_context`], keyed by its version.
     pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
         let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
             return Ok(ReadContext::default());
         };
+        self.read_context_for(&dataset).await
+    }
+
+    /// The same, for a read that resolved its own dataset from an
+    /// argument — `GLOSSARY(fin, …)` names `fin` whether or not a `USE`
+    /// bound it. Taking the binding there would answer an empty context,
+    /// and an empty context is not an error: it reads as "nothing is
+    /// glossed" rather than "you are not where you think you are". The
+    /// binding decides what an *unqualified* name means; a qualified one
+    /// decides for itself.
+    pub async fn read_context_for(&self, dataset: &str) -> Result<ReadContext, SessionError> {
         let lake = self.lake();
         let mut universe = Vec::new();
         let mut snapshots = std::collections::HashMap::new();
-        for table in lake.table_names(&dataset).await? {
-            if let Some(snapshot) = lake.snapshot_id(&dataset, &table).await? {
+        for table in lake.table_names(dataset).await? {
+            if let Some(snapshot) = lake.snapshot_id(dataset, &table).await? {
                 snapshots.insert(table.clone(), snapshot);
             }
-            for column in lake.table_columns(&dataset, &table).await? {
+            for column in lake.table_columns(dataset, &table).await? {
                 universe.push(format!("{table}.{column}"));
             }
             universe.push(table);
         }
-        let pin = self.store.pin(&dataset, &snapshots).await?;
-        // Freshness is the pin AND the store's derived version: the pin
-        // covers inputs only, so a measurement landed on any channel
-        // moves neither its pin nor this cache — checked by pin alone,
-        // a cached context keeps serving the view from before that
-        // landing on every channel but the one that computed it.
-        // The version is enumerated from the catalog, so every store
-        // write — today's relations and any added later — misses here.
-        let version = self.store.version().await?;
-        let cached = self.context.read().expect("context lock").clone();
-        if let Some(mut ctx) = cached.filter(|c| c.pin == pin && c.version == version) {
-            ctx.universe = universe;
-            ctx.snapshots = snapshots;
-            return Ok(ctx);
-        }
-        let ctx = self
+        Ok(self
             .store
-            .read_context(&dataset, universe, snapshots)
-            .await?;
-        *self.context.write().expect("context lock") = Some(ctx.clone());
-        Ok(ctx)
+            .read_context(dataset, universe, snapshots)
+            .await?)
     }
 }
 
@@ -734,6 +724,11 @@ pub(crate) async fn compute_batch(
             }
             Ok(Some(crate::cube::metric_axes_batch(shared).await?))
         }
+        // The `USE`'d dataset, as a relation — the one thing a read
+        // written in SQL cannot spell for itself, and the reason the
+        // reads over the workspace-wide relations had no way to narrow
+        // to the session they answer for.
+        ("current_dataset", None) => Ok(Some(current_dataset_batch(shared))),
         // The store's relations, readable as plain tables. Which names
         // qualify lives in one place: the store's RELATIONS table.
         (name, None) if glossql_glossary::relation_columns(name).is_some() => {
@@ -828,7 +823,7 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
     let (subject, all) = split_args(args, true)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let aspect = aspect.as_deref();
-    let ctx = shared.read_context().await?;
+    let ctx = shared.read_context_for(&dataset).await?;
     if all {
         Ok(raw_batch(glossql_glossary::Store::raw_read(
             &dataset, &scope, aspect, &ctx,
@@ -844,7 +839,7 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
     let (subject, _) = split_args(args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
-    let ctx = shared.read_context().await?;
+    let ctx = shared.read_context_for(&dataset).await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect.as_deref()).await?;
     let mut rows: Vec<AttestRow> = verdicts
         .into_iter()
@@ -1192,6 +1187,29 @@ pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::MeasurementRow>) -> R
                 rows.iter().map(|r| r.computed_at.as_str()),
             )),
         ],
+    )
+}
+
+/// `current_dataset` — the bound dataset as a one-row relation, or no
+/// rows at all when nothing is bound.
+///
+/// Zero rows rather than a NULL or a refusal, and that is the whole
+/// design: a read scopes itself by joining this, so an unbound session
+/// answers nothing instead of answering for every dataset in the
+/// workspace. `GLOSSARY()` refuses an unbound session outright
+/// ([`SessionError::NoDataset`]) because a sweep with no scope is a
+/// caller's mistake; a read that joins for its scope needs an empty
+/// relation, not an error, or every read building on it would have to
+/// handle the refusal.
+///
+/// It is session state, not the record: a glossary write cannot change
+/// it, only `USE` can, which is why it is absent from
+/// [`reads_the_record`].
+fn current_dataset_batch(shared: &Shared) -> RecordBatch {
+    let bound = shared.dataset.read().expect("state lock").clone();
+    batch(
+        Arc::new(Schema::new(vec![utf8("dataset")])),
+        vec![Arc::new(StringArray::from_iter(bound.iter().map(Some))) as ArrayRef],
     )
 }
 

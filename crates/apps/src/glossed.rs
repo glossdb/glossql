@@ -40,7 +40,12 @@ pub(crate) async fn parts(door: &AppDoor, dataset: &str) -> Vec<Part> {
         return Vec::new();
     };
     let Ok(query) = session
-        .query_stream("SELECT app, path, text FROM app_parts")
+        // `app_parts` answers for the workspace; this door serves one
+        // dataset, and the session above is bound to it.
+        .query_stream(
+            "SELECT p.app, p.path, p.text FROM app_parts p \
+             JOIN current_dataset d ON d.dataset = p.dataset",
+        )
         .await
     else {
         return Vec::new();

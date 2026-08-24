@@ -1,9 +1,10 @@
 # Connect
 
-Three doors, one listener, and **the dataset is the first path
-segment** — `/<dataset>/mcp`, `/<dataset>/query`, `/<dataset>/app`.
-`/` is the workspace itself: which datasets there are, and the way
-into each.
+Three doors, one listener. `/query` and `/app` carry the dataset in the
+path — `/<dataset>/query`, `/<dataset>/app` — because a browser is
+pointed at one and stays there. `/mcp` is a single endpoint, because an
+agent is pointed at a workspace and moves between its datasets. `/` is
+the workspace itself: which datasets there are, and the way into each.
 
 Who is speaking rides a bearer token. Its `kind` claim is the actor
 kind, and since a human slot outranks an agent slot at every read,
@@ -11,11 +12,12 @@ that claim is what the signature protects. A workspace running without
 a configured issuer mints its own — see
 [`install.md`](install.md#tokens).
 
-## `/<dataset>/mcp` — the agent door
+## `/mcp` — the agent door
 
-Streamable-HTTP MCP, stateless, one tool: `glossql`. Its `statements`
-argument takes a statement or a semicolon-separated sequence; the
-result is a JSON array, one outcome per statement:
+Streamable-HTTP MCP at revision `2026-07-28` — genuinely stateless, no
+sessions of any kind. One tool: `glossql`. Its `statements` argument
+takes a statement or a semicolon-separated sequence; the result is a
+JSON array, one outcome per statement:
 
 - a read — `{"columns": [...], "rows": [...], "row_count": n,
   "truncated": bool}`. `columns` carries the result's shape with
@@ -29,16 +31,18 @@ result is a JSON array, one outcome per statement:
   sequence, its place: what landed stayed landed, the rest was never
   attempted.
 
-The agent actor's id is the token's subject. Without a token the
-client name from the handshake stands in, and a call that named no
-client speaks as `--agent`.
+The agent actor's id is the token's subject. Without a token the call
+writes as `agent` — one constant, whatever the client calls itself,
+because a name a caller picks for itself proves nothing.
 
-The URL says which dataset. `USE <dataset>;` inside a call moves the
-statements after it and expires with the call — nothing on the server
-remembers where you were, so a call always lands where its URL says.
-A dataset the workspace does not hold yet is not an error here: the
-call opens unbound, and `DECLARE DATASET` is what brings the name into
-being.
+**`USE <dataset>;` opens every call that touches dataset-scoped
+names.** MCP has no session to hold a binding, so the statements carry
+it: `USE` moves the statements after it and expires with the call.
+Nothing on the server remembers where you were. A call that names no
+dataset is workspace-scoped — which is what `SELECT * FROM datasets`
+and a source-grain gloss both want — and a dataset the workspace does
+not hold yet is not an error here: `DECLARE DATASET` is what brings the
+name into being.
 
 The door also asks. While human-judgment questions stand open, a call
 that reads the record carries a round of forms (MCP elicitation); the
@@ -49,9 +53,12 @@ defers: the question stays open and is asked again.
 With Claude Code:
 
 ```bash
-claude mcp add --transport http glossql http://127.0.0.1:8080/fin/mcp \
-  --header "Authorization: Bearer $(cat ~/acme/tokens/agent.jwt)"
+claude mcp add --transport http glossql http://127.0.0.1:8080/mcp \
+  --header "Authorization: Bearer $(cat dev/agent.jwt)"
 ```
+
+One entry serves the whole workspace; the agent picks its dataset with
+`USE`.
 
 Agent knowledge — the grammar, the flows, the judgment — ships as the
 agent skills in this repository (`glossql`, `glossql-metrics`,

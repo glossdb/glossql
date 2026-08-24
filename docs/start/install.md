@@ -13,10 +13,9 @@ cargo build --release -p glossql-serverd
 The server prints its doors and listens:
 
 ```
-glossql tokens in /Users/you/acme/tokens — agent.jwt for an MCP client's headers
-  open http://127.0.0.1:8080/?token=eyJ… (the door swaps it for a cookie)
-  a request with no token is served as the anonymous human (agent over /mcp) — --require-token to refuse it instead
-serverd on 127.0.0.1:8080 — / (datasets), /<dataset>/mcp, /<dataset>/query, /<dataset>/app
+glossql open — no --public-key, so no token is verified and every request writes as the anonymous human (agent over /mcp).
+  Development tokens and the key that verifies them are in dev/.
+serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/app
 ```
 
 ## Flags
@@ -25,12 +24,11 @@ serverd on 127.0.0.1:8080 — / (datasets), /<dataset>/mcp, /<dataset>/query, /<
 |---|---|---|
 | `--workspace <dir>` | required | the workspace directory; created content lands here |
 | `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
-| `--agent <id>` | `agent` | fallback agent actor id for MCP calls whose initialize named no client |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
-| `--require-token` | off | refuse a request that carries no token, instead of serving it as the door's default identity |
-| `--issuer-key <pem>` | — | a configured issuer's **public key** in PEM (not a certificate). With it, the workspace mints nothing and every request must bring a token |
-| `--issuer <iss>` | — | the issuer the token's `iss` must name; required with `--issuer-key` |
+| `--require-token` | off | refuse a request that carries no token, instead of serving it as the door's default identity; needs `--public-key` and `--issuer` |
+| `--public-key <pem>` | — | the **public key** tokens are verified against, in PEM (not a certificate). Without it there is no gate at all |
+| `--issuer <iss>` | — | the issuer the token's `iss` must name; required with `--public-key` |
 | `--audience <uri>` | `http://<addr>` | this server's canonical URI, which every token's `aud` must name (RFC 8707 §2) |
 
 ## Tokens
@@ -45,19 +43,34 @@ glossql is an OAuth 2.1 resource server and never an authorization
 server. It verifies; it does not issue, and there is no login flow or
 user table inside a workspace.
 
-Without `--issuer-key`, the workspace holds its own key. First boot
-writes an Ed25519 keypair into `keys/` (the private half `0600`) and
-mints one long-lived token per actor kind into `tokens/`:
+**No private key comes near this process.** Whoever holds the private
+half mints; the server is given a public key and verifies. In a
+deployment that half belongs to your IdP.
 
-- `tokens/agent.jwt` goes into an MCP client's configured headers.
-- `tokens/human.jwt` reaches a browser through the startup link. The
-  door swaps it into an `HttpOnly; SameSite=Lax` cookie and redirects
-  to the bare path, so the credential does not stay in the address bar
-  or the history.
+For development the repository carries `dev/` — `public.pem` and two
+long-lived tokens, `human.jwt` and `agent.jwt`, minted for
+`http://127.0.0.1:8080` by a keypair that was used once and thrown
+away. They are committed on purpose: there is no secret in them worth
+keeping, and a credential you can read is one nobody has to be handed.
 
-Until `--require-token`, a request that brings none is still served —
-as the anonymous `human`, or as an agent over `/mcp`. That is how a
-fresh workspace is opened before anyone holds a token.
+```bash
+./target/release/serverd --workspace ~/acme \
+  --public-key dev/public.pem --issuer glossql-dev
+```
+
+The agent token goes into an MCP client's configured headers; the human
+token goes into a browser as a cookie named `glossql_token`
+(`HttpOnly; SameSite=Lax`).
+
+When they expire, mint a new pair the same way — an Ed25519 keypair, a
+JWT per actor kind carrying `iss`, `aud`, `sub`, `kind`, `exp`, `iat`,
+and then delete the private key. Nothing in this repository can sign,
+which is the property worth keeping.
+
+Without `--public-key` there is no gate: every request is served as the
+anonymous `human`, or as an agent over `/mcp`. That is how a fresh
+workspace is opened. With one, `--require-token` refuses a request that
+brings none instead of falling back.
 
 ## What boot does
 

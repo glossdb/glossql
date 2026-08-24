@@ -8,7 +8,15 @@
 -- themselves.
 --
 -- `dataset` rides along because the plain `glossary` relation is
--- workspace-wide: a consumer bound to one dataset must say so.
+-- workspace-wide: a consumer bound to one dataset must say so — and it
+-- is part of the supersession key below, not merely carried.
+--
+-- The store's collapse has one exception this does not: a source-grain
+-- row (its subject names a declared source AND its aspect opted into
+-- SOURCE grain) supersedes workspace-wide. Unreachable here — a
+-- grounding is glossed on a dataset or a table, never on a source — so
+-- the key is unconditional. **A source-grain aspect entering this read
+-- would need the exception.**
 --
 -- `alternative` is the rival reading the agent named beside the claim,
 -- absent when none was named. It is the strongest thing the round can
@@ -36,7 +44,13 @@ SELECT g.dataset AS dataset,
 FROM glossary g
 CROSS JOIN generate_series(0, 19) AS i(i)
 WHERE g.actor_kind = 'agent'
+  -- The supersession key carries `dataset`, matching the store's own
+  -- collapse: a dataset-scoped row is superseded only within its
+  -- dataset. Without this leg two datasets holding a same-named subject
+  -- collapse into one and the older dataset's assumptions vanish from
+  -- every read built on this — measured, not theorised.
   AND NOT EXISTS (SELECT 1 FROM glossary g2
-                  WHERE g2.subject = g.subject AND g2.aspect = g.aspect
+                  WHERE g2.dataset = g.dataset
+                    AND g2.subject = g.subject AND g2.aspect = g.aspect
                     AND g2.actor_kind = 'agent' AND g2.written_at > g.written_at)
   AND i.i < json_length(g.body, 'assumptions')

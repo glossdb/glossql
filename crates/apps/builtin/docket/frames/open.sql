@@ -30,5 +30,5 @@ SELECT o.conf,
        arrow_cast(o.key, 'Utf8') AS key_id,
        arrow_cast('/app/docket/p/metrics?metric=' || o.aspect, 'Utf8') AS link
 FROM open_questions o
-WHERE o.dataset = CAST($dataset AS VARCHAR)
+JOIN current_dataset d ON d.dataset = o.dataset
 ORDER BY o.conf ASC, subj, asp

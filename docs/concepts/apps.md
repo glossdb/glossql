@@ -30,8 +30,9 @@ The `app_parts` read serves what an app is made of, one row per file.
 per frame, streamed as Arrow IPC; the browser fetches each frame once
 per state and every tile bound to it shares that table. URL params
 bind as plan placeholders (`$region` in the SQL, `?region=EMEA` on the
-URL; everything arrives as text, so cast explicitly); `$dataset` is
-always bound. Display logic — labels, percentages, a CSS class chosen
+URL; everything arrives as text, so cast explicitly). The dataset the
+path named is not a param — the frame's channel is bound to it, and
+`current_dataset` is how the SQL says so. Display logic — labels, percentages, a CSS class chosen
 by a verdict — is computed in the frame as columns; templates place
 values, they do not decide them. A frame plans through the same path
 as every other read, so every door is available inside one:

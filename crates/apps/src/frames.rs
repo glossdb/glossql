@@ -66,15 +66,19 @@ pub async fn frame(
         Ok(session) => session,
         Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     };
-    let mut values: HashMap<String, ScalarValue> = params
+    let values: HashMap<String, ScalarValue> = params
         .into_iter()
         .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))
         .collect();
-    // The dataset the URL bound, always available to frame SQL as
-    // `$dataset` — reserved, so a query string cannot override the path.
-    // Frames must never scan the `datasets` relation for it: in a
-    // multi-dataset workspace that fans every joined row out.
-    values.insert("dataset".into(), ScalarValue::Utf8(Some(dataset.clone())));
+    // No `$dataset` param. The channel above is bound to the URL's
+    // dataset, so the session already knows which one it is on and the
+    // `current_dataset` relation says so inside the SQL — a frame joins
+    // it the way any read does. A reserved parameter would be a second
+    // spelling of the same fact, and the guard it needed (a query
+    // string must not override the path) exists only because there was
+    // something to override. Frames must still never scan the
+    // `datasets` relation for it: in a multi-dataset workspace that
+    // fans every joined row out.
     match session
         .query_stream_with_params(&sql, Some(ParamValues::from(values)))
         .await
@@ -108,10 +112,17 @@ pub(crate) async fn one_open_question(
     values.insert("key".into(), ScalarValue::Utf8(Some(key.into())));
     let query = session
         .query_stream_with_params(
-            "SELECT coalesce(dimension, '-') AS dimension, assumption FROM open_questions \
-             WHERE subject = CAST($subject AS VARCHAR) \
-               AND aspect = CAST($aspect AS VARCHAR) \
-               AND key = CAST($key AS VARCHAR) LIMIT 1",
+            // `open_questions` answers for the whole workspace and the
+            // gate is a write's, so the join is not tidiness: two
+            // datasets may hold the same subject under the same key,
+            // and without it another dataset's open question admits a
+            // ruling into this one — carrying that dataset's prose,
+            // since the words recorded are this read's.
+            "SELECT coalesce(o.dimension, '-') AS dimension, o.assumption \
+             FROM open_questions o JOIN current_dataset d ON d.dataset = o.dataset \
+             WHERE o.subject = CAST($subject AS VARCHAR) \
+               AND o.aspect = CAST($aspect AS VARCHAR) \
+               AND o.key = CAST($key AS VARCHAR) LIMIT 1",
             Some(ParamValues::from(values)),
         )
         .await

@@ -58,6 +58,7 @@ async fn rows_round_trip_and_an_empty_relation_is_empty() {
 async fn the_dataset_is_a_partition_not_a_namespace() {
     let dir = tempfile::tempdir().unwrap();
     let (lake, rel) = open(dir.path()).await;
+    let warehouse = dir.path().join("warehouse");
 
     // One append, two datasets: one table, the dataset an explicit key
     // column, the physical split per dataset the format's own.
@@ -95,6 +96,45 @@ async fn the_dataset_is_a_partition_not_a_namespace() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].get(0), Some("books"));
     assert_eq!(rows[1].get(0), Some("fin"));
+
+    // The declared spec is a claim; this is the claim honoured. One
+    // append carrying two datasets lands as two files, one per dataset
+    // value, in the directories the format names. A writer that emitted
+    // one undivided file would satisfy every assertion above and none of
+    // these — and a scan would then read every dataset's rows to serve
+    // one.
+    let mut partitions: Vec<String> = walk(&warehouse)
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "parquet"))
+        .filter_map(|p| {
+            p.parent()?
+                .file_name()
+                .map(|d| d.to_string_lossy().into_owned())
+        })
+        .collect();
+    partitions.sort();
+    assert_eq!(
+        partitions,
+        vec!["dataset=books", "dataset=fin"],
+        "one file per dataset, in the format's own partition directories"
+    );
+}
+
+/// Every file under `dir`, recursively.
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
 }
 
 #[tokio::test(flavor = "multi_thread")]

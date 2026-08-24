@@ -63,12 +63,6 @@ pub enum SessionError {
     DropRefused { table: String, reason: String },
     #[error("streaming takes exactly one query — everything else answers through execute")]
     NotOneRead,
-    /// A channel that refused to build, as the refusal read. The pool
-    /// builds each channel once and shares it, so concurrent callers
-    /// share one error behind an `Arc` — its words survive, its type
-    /// does not, and nothing matches on a channel's refusal.
-    #[error("{0}")]
-    ChannelRefused(String),
     #[error("statement {index} of {total} refused: {source} — {context}")]
     Sequence {
         index: usize,
@@ -241,7 +235,6 @@ impl Session {
             store,
             dataset: RwLock::new(None),
             runtime: RwLock::new(Arc::new(NoRuntime)),
-            context: RwLock::new(None),
             ctx: RwLock::new(None),
             cube: RwLock::new(crate::cube::CubeCache::new(
                 crate::cube::DEFAULT_CUBE_CACHE_MB,

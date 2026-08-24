@@ -240,8 +240,16 @@ pub(crate) async fn behavior_anchors(
     }
 
     // Declared edges as directed pointers; "<->" points both ways.
+    // `relationships` is workspace-wide and its first column says whose
+    // edge this is. The endpoint check below drops an edge naming a
+    // table this dataset lacks, but a foreign edge whose table name
+    // also exists here would pass it and supply the wrong evidence.
+    let bound = shared.dataset.read().expect("state lock").clone();
     let mut pointers: Vec<Pointer> = Vec::new();
     for row in shared.store.relation_rows("relationships").await? {
+        if row[0] != bound {
+            continue;
+        }
         let (Some(left), Some(op), Some(right)) = (&row[1], &row[2], &row[3]) else {
             continue;
         };
