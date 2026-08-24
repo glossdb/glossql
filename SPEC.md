@@ -399,7 +399,7 @@ SELECT outliers() FROM orders.amount;
 Extraction computes at the read's pin — the set of inputs, data and
 declarations, the statement resolved — and lands one row in the
 `measurements` relation:
-`(dataset, function, subject, aspect, pin_digest, pin, value, computed_at)`.
+`(dataset, function, subject, aspect, pin, value, computed_at)`.
 A later extraction at the same pin serves that row; any input moving
 makes a new pin, so there is no invalidation, only a miss, and old rows
 stand as the drift record. A body that carries a top-level `summary`

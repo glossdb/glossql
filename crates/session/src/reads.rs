@@ -20,6 +20,7 @@ use datafusion::logical_expr::planner::{
     PlannedRelation, RelationPlanner, RelationPlannerContext, RelationPlanning,
 };
 use datafusion::prelude::SessionContext;
+use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::sqlparser::ast::{
     BinaryOperator, DataType as SQLDataType, Expr as SQLExpr, FunctionArg, FunctionArgExpr, Ident,
     TableAlias, TableFactor, Value as SQLValue,
@@ -61,6 +62,10 @@ pub(crate) struct Shared {
     /// Keyed by dataset because a read can name one the session is not
     /// bound to (`GLOSSARY(fin, …)`).
     pub pins: RwLock<std::collections::HashMap<String, Arc<Vec<PinnedTable>>>>,
+    /// Whether this session's planner folds unquoted identifiers —
+    /// `datafusion.sql_parser.enable_ident_normalization`, read off the
+    /// config the session was built with. See [`Shared::idents`].
+    pub normalize_idents: bool,
 }
 
 impl std::fmt::Debug for Shared {
@@ -73,6 +78,22 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
+    /// How this session reads an identifier: quoted stays exact,
+    /// unquoted folds with ASCII case, and the session's
+    /// `enable_ident_normalization` decides whether the fold happens at
+    /// all (`datafusion-sql` planner.rs, `IdentNormalizer`).
+    ///
+    /// DataFusion's own normalizer rather than the same rule written out
+    /// here. Every seam in this crate that claims a name by matching it
+    /// has to read that name the way the planner will: a seam that folds
+    /// differently either claims a name the planner would have given to
+    /// something else, or fails to claim one and lets the default path
+    /// serve it — and the second is silent, because the default path
+    /// answers with plausible rows.
+    pub fn idents(&self) -> IdentNormalizer {
+        IdentNormalizer::new(self.normalize_idents)
+    }
+
     pub fn lake(&self) -> Lake {
         self.store.lake()
     }
@@ -473,10 +494,17 @@ impl RelationPlanner for GlossqlReads {
         if name.0.len() == 2
             && name.0[0]
                 .as_ident()
-                .is_some_and(|i| i.value.eq_ignore_ascii_case("read"))
+                .is_some_and(|i| context.normalize_ident(i.clone()) == "read")
         {
-            let (Some(aspect), Some(a)) = (name.0[1].as_ident().map(|i| i.value.clone()), args)
-            else {
+            // Normalized, because the pre-pass keyed the resolved plan
+            // by this same name and the two have to spell it the same
+            // way — see `prepass::doors_in`.
+            let (Some(aspect), Some(a)) = (
+                name.0[1]
+                    .as_ident()
+                    .map(|i| context.normalize_ident(i.clone())),
+                args,
+            ) else {
                 return Ok(RelationPlanning::Original(Box::new(relation)));
             };
             if !a.args.is_empty() {
@@ -492,7 +520,7 @@ impl RelationPlanner for GlossqlReads {
         // cannot ask about CTE scope, so declining here is what keeps a
         // CTE shadowing a same-named table — SQL's precedence, which the
         // pin and batch arms below would otherwise silently invert.
-        if self.resolved.shadowed(&relation) {
+        if self.resolved.shadowed(&self.shared.idents(), &relation) {
             return Ok(RelationPlanning::Original(Box::new(relation)));
         }
         // A compute door the pre-pass evaluated — `whatif.<x>()`,
@@ -521,15 +549,16 @@ impl RelationPlanner for GlossqlReads {
         if let [part] = name.0.as_slice()
             && let Some(ident) = part.as_ident()
             && args.is_none()
-            && crate::library::read_sql(&ident.value.to_lowercase()).is_some()
         {
-            let key = format!("read:{}", ident.value.to_lowercase());
-            return self.planned(&key, alias.clone());
+            let shipped = context.normalize_ident(ident.clone());
+            if crate::library::read_sql(&shipped).is_some() {
+                return self.planned(&format!("read:{shipped}"), alias.clone());
+            }
         }
         // `subject_column('table.column')` — the pre-pass built the
         // projection from the pin; a malformed argument is refused here
         // with the same reader the pre-pass used.
-        if let Some(arg) = crate::prepass::subject_column_arg(&relation) {
+        if let Some(arg) = crate::prepass::subject_column_arg(&self.shared.idents(), &relation) {
             let subject = arg.map_err(|e| DataFusionError::Plan(e.to_string()))?;
             return self.planned(&format!("subject_column:{subject}"), alias.clone());
         }
@@ -586,7 +615,7 @@ impl RelationPlanner for GlossqlReads {
 /// groundings to find its cells, but what it serves is the data at a
 /// grain, so it stays out. A new arm in the match below decides its
 /// class here, in the same file.
-pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
+pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> bool {
     let TableFactor::Table { name, .. } = f else {
         return false;
     };
@@ -595,7 +624,7 @@ pub(crate) fn reads_the_record(f: &TableFactor) -> bool {
     };
     part.as_ident().is_some_and(|i| {
         matches!(
-            i.value.to_lowercase().as_str(),
+            idents.normalize(i.clone()).as_str(),
             "glossary"
                 | "attest"
                 | "grounding_collisions"
@@ -645,7 +674,7 @@ pub(crate) async fn compute_batch(
     if let [prefix, door] = name.0.as_slice()
         && let (Some(prefix), Some(door)) = (prefix.as_ident(), door.as_ident())
     {
-        if prefix.value.eq_ignore_ascii_case("whatif") {
+        if shared.idents().normalize(prefix.clone()) == "whatif" {
             let Some(a) = args else { return Ok(None) };
             if !a.args.is_empty() {
                 return Err(SessionError::BadSubject(format!(
@@ -658,7 +687,7 @@ pub(crate) async fn compute_batch(
                 Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?,
             ));
         }
-        if prefix.value.eq_ignore_ascii_case("misfit") {
+        if shared.idents().normalize(prefix.clone()) == "misfit" {
             let Some(a) = args else { return Ok(None) };
             if !a.args.is_empty() {
                 return Err(SessionError::BadSubject(format!(
@@ -676,7 +705,10 @@ pub(crate) async fn compute_batch(
     let [part] = name.0.as_slice() else {
         return Ok(None);
     };
-    let Some(fname) = part.as_ident().map(|i| i.value.to_lowercase()) else {
+    let Some(fname) = part
+        .as_ident()
+        .map(|i| shared.idents().normalize(i.clone()))
+    else {
         return Ok(None);
     };
     match (fname.as_str(), args) {
@@ -879,7 +911,7 @@ pub(crate) async fn served_grounding(
 // -- argument decoding ---------------------------------------------------
 
 async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
-    let (subject, all) = split_args(args, true)?;
+    let (subject, all) = split_args(&shared.idents(), args, true)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let aspect = aspect.as_deref();
     let ctx = shared.read_context_for(&dataset).await?;
@@ -896,7 +928,7 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 }
 
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
-    let (subject, _) = split_args(args, false)?;
+    let (subject, _) = split_args(&shared.idents(), args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let ctx = shared.read_context_for(&dataset).await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect.as_deref()).await?;
@@ -921,10 +953,11 @@ async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatc
 }
 
 /// Split a read's argument list into (optional subject, `all` flag).
-fn split_args(
-    args: &[FunctionArg],
+fn split_args<'a>(
+    idents: &IdentNormalizer,
+    args: &'a [FunctionArg],
     allow_all: bool,
-) -> Result<(Option<&SQLExpr>, bool), SessionError> {
+) -> Result<(Option<&'a SQLExpr>, bool), SessionError> {
     let mut subject = None;
     let mut all = false;
     for arg in args {
@@ -936,12 +969,12 @@ fn split_args(
                 name: SQLExpr::Identifier(n),
                 arg: FunctionArgExpr::Expr(v),
                 ..
-            } if allow_all && n.value.eq_ignore_ascii_case("all") && is_true(v) => {
+            } if allow_all && idents.normalize(n.clone()) == "all" && is_true(v) => {
                 all = true;
             }
             FunctionArg::Named { name, arg, .. }
                 if allow_all
-                    && name.value.eq_ignore_ascii_case("all")
+                    && idents.normalize(name.clone()) == "all"
                     && matches!(arg, FunctionArgExpr::Expr(v) if is_true(v)) =>
             {
                 all = true;

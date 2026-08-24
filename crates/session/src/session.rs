@@ -250,16 +250,6 @@ impl Session {
         actor: Actor,
         env: Arc<RuntimeEnv>,
     ) -> Result<Self, SessionError> {
-        let shared = Arc::new(Shared {
-            store,
-            dataset: RwLock::new(None),
-            runtime: RwLock::new(Arc::new(NoRuntime)),
-            ctx: RwLock::new(None),
-            cube: RwLock::new(crate::cube::CubeCache::new(
-                crate::cube::DEFAULT_CUBE_CACHE_MB,
-            )),
-            pins: RwLock::new(Default::default()),
-        });
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "postgres")
             // Iceberg's arrow fields carry `PARQUET:field_id` metadata; any
@@ -271,6 +261,20 @@ impl Session {
                 "datafusion.execution.skip_physical_aggregate_schema_check",
                 true,
             );
+        // Built after the config and from it: the seams in `reads` and
+        // `prepass` match names ahead of the planner, so they have to fold
+        // the way this config says the planner will.
+        let shared = Arc::new(Shared {
+            store,
+            dataset: RwLock::new(None),
+            runtime: RwLock::new(Arc::new(NoRuntime)),
+            ctx: RwLock::new(None),
+            cube: RwLock::new(crate::cube::CubeCache::new(
+                crate::cube::DEFAULT_CUBE_CACHE_MB,
+            )),
+            pins: RwLock::new(Default::default()),
+            normalize_idents: config.options().sql_parser.enable_ident_normalization,
+        });
         let state = SessionStateBuilder::new()
             .with_default_features()
             .with_config(config)

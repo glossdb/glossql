@@ -1085,6 +1085,54 @@ async fn a_cte_shadows_a_same_named_table() {
     )
     .await;
     assert!(read.contains("| 7"), "{read}");
+
+    // And under a spelling the engine folds. An unquoted identifier is
+    // case-insensitive to DataFusion, so `CELLS` and `cells` are one
+    // name to the planner; a seam that decides shadowing by its own fold
+    // would decline one spelling and capture the other, and the capture
+    // is silent — the pinned table answers with plausible rows.
+    let read = table(
+        &session,
+        "WITH CELLS AS (SELECT 43 AS marker) SELECT marker FROM cells;",
+    )
+    .await;
+    assert!(read.contains("43"), "{read}");
+    let read = table(
+        &session,
+        "WITH cells AS (SELECT 44 AS marker) SELECT marker FROM CELLS;",
+    )
+    .await;
+    assert!(read.contains("44"), "{read}");
+}
+
+/// A shipped read answers to the name however it is cased, because
+/// DataFusion folds an unquoted identifier and the language's own words
+/// are read the same way as any other.
+///
+/// Two seams have to agree on it: the pre-pass resolves the door and
+/// keys the plan by this name, and the planner looks the plan up by the
+/// name it reads. When only one of them folded, the pre-pass never saw
+/// `GLOSSARY` as a door, and planning refused a name it had itself
+/// declined to resolve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shipped_read_answers_however_its_name_is_cased() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    for spelling in ["glossary", "GLOSSARY", "Glossary"] {
+        let sql = format!("SELECT subject FROM {spelling} LIMIT 1;");
+        let read = table(&session, &sql).await;
+        assert!(read.contains("subject"), "{spelling}: {read}");
+    }
+    // Quoted is exact, which is also DataFusion's rule: this one is not
+    // the shipped read and there is no such table.
+    let e = session
+        .execute("SELECT subject FROM \"GLOSSARY\" LIMIT 1;")
+        .await
+        .unwrap_err();
+    assert!(
+        e.to_string().contains("GLOSSARY"),
+        "a quoted name is a different name: {e}"
+    );
 }
 
 /// A measurement landed on one channel is visible on every other the

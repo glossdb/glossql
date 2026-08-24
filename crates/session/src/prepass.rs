@@ -27,9 +27,11 @@ use datafusion::datasource::provider_as_source;
 use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
+use datafusion::sql::planner::IdentNormalizer;
+use datafusion::sql::resolve::resolve_table_references;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, Ident, Query, Statement as SQLStatement, TableFactor,
-    Value as SqlValue, Visit, VisitMut, Visitor, VisitorMut,
+    Expr, FunctionArg, FunctionArgExpr, Query, Statement as SQLStatement, TableFactor,
+    Value as SqlValue, VisitMut, VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
@@ -81,8 +83,8 @@ impl Resolved {
 
     /// Whether this factor is a name the statement binds as a CTE — see
     /// [`shadowed`].
-    pub(crate) fn shadowed(&self, f: &TableFactor) -> bool {
-        shadowed(&self.ctes, f)
+    pub(crate) fn shadowed(&self, idents: &IdentNormalizer, f: &TableFactor) -> bool {
+        shadowed(idents, &self.ctes, f)
     }
 
     /// Whether the statement reads the glossary anywhere in its
@@ -92,44 +94,10 @@ impl Resolved {
     }
 }
 
-/// An identifier as DataFusion's normalizer will read it: quoted stays
-/// exact, unquoted folds to lowercase.
-fn normal(i: &Ident) -> String {
-    if i.quote_style.is_some() {
-        i.value.clone()
-    } else {
-        i.value.to_lowercase()
-    }
-}
-
-/// Every CTE name the query binds, at any depth. This planner seam runs
-/// *before* DataFusion's own CTE lookup and `RelationPlannerContext`
-/// cannot ask about CTE scope, so these names must decline the pin or
-/// the seam silently inverts SQL's precedence (a CTE shadows a table).
-/// Depth is not scope — a name bound only in some subquery declines the
-/// pin everywhere and out-of-scope uses fall through to the live
-/// provider, which is the honest limit without re-tracking scope.
-fn ctes_in(q: &Query) -> HashSet<String> {
-    struct Collect(HashSet<String>);
-    impl Visitor for Collect {
-        type Break = ();
-        fn pre_visit_query(&mut self, q: &Query) -> ControlFlow<()> {
-            if let Some(with) = &q.with {
-                self.0
-                    .extend(with.cte_tables.iter().map(|c| normal(&c.alias.name)));
-            }
-            ControlFlow::Continue(())
-        }
-    }
-    let mut c = Collect(HashSet::new());
-    let _ = q.visit(&mut c);
-    c.0
-}
-
 /// Whether the factor is a bare reference to one of the statement's CTE
 /// names — the planner leaves it alone so DataFusion's CTE lookup serves
 /// it. Shipped read names stay reserved over both tables and CTEs.
-fn shadowed(ctes: &HashSet<String>, f: &TableFactor) -> bool {
+fn shadowed(idents: &IdentNormalizer, ctes: &HashSet<String>, f: &TableFactor) -> bool {
     let TableFactor::Table {
         name, args: None, ..
     } = f
@@ -142,7 +110,8 @@ fn shadowed(ctes: &HashSet<String>, f: &TableFactor) -> bool {
     let Some(ident) = part.as_ident() else {
         return false;
     };
-    ctes.contains(&normal(ident)) && crate::library::read_sql(&ident.value.to_lowercase()).is_none()
+    let name = idents.normalize(ident.clone());
+    ctes.contains(&name) && crate::library::read_sql(&name).is_none()
 }
 
 /// A door reference this pass knows how to resolve ahead of planning:
@@ -197,21 +166,32 @@ impl Door {
 /// traversal via sqlparser's derive-generated visitor, so a scalar
 /// subquery in the SELECT list is covered like a FROM item. A
 /// hand-written walker misses positions; this one cannot.
-fn doors_in(q: &mut Query) -> Vec<Door> {
-    struct Collect(Vec<Door>);
-    impl VisitorMut for Collect {
+fn doors_in(idents: &IdentNormalizer, q: &mut Query) -> Vec<Door> {
+    struct Collect<'a>(Vec<Door>, &'a IdentNormalizer);
+    impl VisitorMut for Collect<'_> {
         type Break = ();
         fn pre_visit_table_factor(&mut self, f: &mut TableFactor) -> ControlFlow<()> {
             if let TableFactor::Table { name, args, .. } = f {
-                let parts: Vec<String> = name.0.iter().map(|p| p.to_string()).collect();
+                // Normalized here and nowhere else: a door's key is built
+                // from these parts and the planner rebuilds the same key
+                // from the same name, so the two fold identically or the
+                // lookup misses something that was resolved.
+                let Some(parts) = name
+                    .0
+                    .iter()
+                    .map(|p| p.as_ident().map(|i| self.1.normalize(i.clone())))
+                    .collect::<Option<Vec<String>>>()
+                else {
+                    return ControlFlow::Continue(());
+                };
                 match parts.as_slice() {
-                    [prefix, aspect] if prefix.eq_ignore_ascii_case("read") => {
+                    [prefix, aspect] if prefix == "read" => {
                         self.0.push(Door::Serve(aspect.clone()));
                     }
-                    [prefix, name] if prefix.eq_ignore_ascii_case("misfit") => {
+                    [prefix, name] if prefix == "misfit" => {
                         self.0.push(Door::Replay("misfit", name.clone()));
                     }
-                    [prefix, name] if prefix.eq_ignore_ascii_case("whatif") => {
+                    [prefix, name] if prefix == "whatif" => {
                         self.0.push(Door::Replay("whatif", name.clone()));
                     }
                     // A bare name with no arguments, if we ship a read of
@@ -223,7 +203,7 @@ fn doors_in(q: &mut Query) -> Vec<Door> {
                         // The malformed-argument case is left uncollected
                         // on purpose: the planner meets the factor, calls
                         // the same reader, and reports it.
-                        if let Some(Ok(subject)) = subject_column_arg(f) {
+                        if let Some(Ok(subject)) = subject_column_arg(self.1, f) {
                             self.0.push(Door::Column(subject));
                         }
                     }
@@ -232,7 +212,7 @@ fn doors_in(q: &mut Query) -> Vec<Door> {
             ControlFlow::Continue(())
         }
     }
-    let mut c = Collect(Vec::new());
+    let mut c = Collect(Vec::new(), idents);
     let _ = q.visit(&mut c);
     c.0.sort_by_key(Door::key);
     c.0.dedup();
@@ -245,7 +225,10 @@ fn doors_in(q: &mut Query) -> Vec<Door> {
 /// subject. Both sides of the seam call this — the pre-pass to collect,
 /// the planner to serve or refuse — so the two cannot disagree on what
 /// the door accepts.
-pub(crate) fn subject_column_arg(f: &TableFactor) -> Option<Result<String, SessionError>> {
+pub(crate) fn subject_column_arg(
+    idents: &IdentNormalizer,
+    f: &TableFactor,
+) -> Option<Result<String, SessionError>> {
     let TableFactor::Table {
         name,
         args: Some(a),
@@ -259,7 +242,7 @@ pub(crate) fn subject_column_arg(f: &TableFactor) -> Option<Result<String, Sessi
     };
     if !part
         .as_ident()
-        .is_some_and(|i| i.value.eq_ignore_ascii_case("subject_column"))
+        .is_some_and(|i| idents.normalize(i.clone()) == "subject_column")
     {
         return None;
     }
@@ -376,14 +359,14 @@ async fn compute_batches(
     q: &mut Query,
     resolved: &mut Resolved,
 ) -> Result<(), SessionError> {
-    let ctes = ctes_in(q);
+    let idents = shared.idents();
     for factor in factors_in(q) {
         let key = factor.to_string();
-        if resolved.batches.contains_key(&key) || shadowed(&ctes, &factor) {
+        if resolved.batches.contains_key(&key) || shadowed(&idents, &resolved.ctes, &factor) {
             continue;
         }
         if let Some(batch) = crate::reads::compute_batch(shared, &factor, resolved).await? {
-            if crate::reads::reads_the_record(&factor) {
+            if crate::reads::reads_the_record(&idents, &factor) {
                 resolved.record = true;
             }
             resolved.batches.insert(key, batch);
@@ -453,7 +436,7 @@ async fn resolve_door(
     };
 
     path.push(key.clone());
-    for child in doors_in(&mut body) {
+    for child in doors_in(&shared.idents(), &mut body) {
         Box::pin(resolve_door(shared, ctx, child, path, done, resolved)).await?;
     }
     path.pop();
@@ -467,10 +450,14 @@ async fn resolve_door(
     // sync planner finds instead of fetching. The body is its own CTE
     // scope, not the outer statement's.
     Box::pin(compute_batches(shared, &mut body, resolved)).await?;
-    let mut scoped = resolved.clone();
-    scoped.ctes = ctes_in(&body);
-    let state = crate::reads::state_with(ctx, shared, scoped);
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(body))));
+    let mut scoped = resolved.clone();
+    scoped.ctes = resolve_table_references(&stmt, shared.normalize_idents)?
+        .1
+        .iter()
+        .map(|c| c.table().to_string())
+        .collect();
+    let state = crate::reads::state_with(ctx, shared, scoped);
     let plan = state
         .statement_to_plan(stmt)
         .await
@@ -495,15 +482,27 @@ pub(crate) async fn resolve(
         return Ok(Resolved::default());
     };
     let mut q = (**q).clone();
+    let idents = shared.idents();
+    // The CTE names come from DataFusion, not from a visitor of ours.
+    // `resolve_table_references` returns them as its second element,
+    // folded with the same `enable_ident_normalization` the planner will
+    // use — which is the whole requirement, because these names decide
+    // whether a factor declines the pin. Its breadth is the same as a
+    // hand-rolled walk's: `all_ctes` is every CTE the statement defines
+    // at any depth, so a name bound only in a subquery still declines
+    // everywhere. That is the standing limit, not a regression — the
+    // seam runs before DataFusion's own CTE lookup and has no scope to
+    // ask about.
+    let (_, ctes) = resolve_table_references(statement, shared.normalize_idents)?;
     let mut resolved = Resolved {
         pins: shared.statement_pins().await?,
-        ctes: ctes_in(&q),
+        ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
         ..Resolved::default()
     };
     refuse_subject_relations(&mut q, &resolved)?;
     let mut done = HashSet::new();
     let mut path = Vec::new();
-    for door in doors_in(&mut q) {
+    for door in doors_in(&idents, &mut q) {
         resolve_door(shared, ctx, door, &mut path, &mut done, &mut resolved).await?;
     }
     compute_batches(shared, &mut q, &mut resolved).await?;

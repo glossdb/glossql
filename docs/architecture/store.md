@@ -27,7 +27,7 @@ query cannot straddle a landing. A pin stays addressable after later
 commits, which makes it a durable key.
 
 **Measurements are not a cache.** Measurement rows are keyed by the pin
-digest of the data they measured. Old rows are the drift record, not
+of the data they measured. Old rows are the drift record, not
 garbage; reads never write; a duplicate measurement row is harmless.
 Re-measuring the same pin answers the same fact.
 

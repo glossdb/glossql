@@ -73,26 +73,20 @@ pub struct ReadContext {
 /// the glossary at its write head while it still rides sqlite (its
 /// component becomes a snapshot like the rest when it crosses). Under a
 /// complete key there is no invalidation, only a miss.
+///
+/// The text is the whole pin. There is no hash beside it: every
+/// comparison in this crate is over the text, and the one caller that
+/// wanted a short key was a cache whose map hashes its keys already.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pin {
     pub text: String,
-    pub digest: String,
 }
 
 impl Pin {
     fn new(mut parts: Vec<String>) -> Pin {
         parts.sort();
-        let text = parts.join(",");
-        // FNV-1a over the canonical text: an index into the relation,
-        // never the truth — lookups compare the pin itself.
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in text.bytes() {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x100_0000_01b3);
-        }
         Pin {
-            digest: format!("{h:016x}"),
-            text,
+            text: parts.join(","),
         }
     }
 }
@@ -218,7 +212,6 @@ pub const RELATIONS: &[Relation] = &[
             "function",
             "subject",
             "aspect",
-            "pin_digest",
             "pin",
             "value",
             "computed_at",
@@ -926,10 +919,10 @@ impl Store {
                     rank: rules::RANK_FUNCTION,
                     actor: f.clone(),
                     witness: witness_on(&a),
-                    body: text(&r.cells, 6),
-                    written_at: text(&r.cells, 7),
+                    body: text(&r.cells, 5),
+                    written_at: text(&r.cells, 6),
                     snapshot_id: None,
-                    current: r.get(5) == Some(ctx.pin.text.as_str()),
+                    current: r.get(4) == Some(ctx.pin.text.as_str()),
                 });
             }
         }
@@ -1443,7 +1436,7 @@ impl Store {
         Ok(Pin::new(parts))
     }
 
-    /// The measurements at one pin — the digest pushed into the format's
+    /// The measurements at one pin — the pin pushed into the format's
     /// scan, so the drift record's history is never read to serve today.
     /// Every (function, subject)'s newest landing in the dataset,
     /// whatever its pin — what a read context serves from. One scan of
@@ -1475,14 +1468,14 @@ impl Store {
                 r.get(0) == Some(dataset)
                     && r.get(1) == Some(function)
                     && r.get(2) == Some(subject)
-                    && r.get(5) == Some(ctx.pin.text.as_str())
+                    && r.get(4) == Some(ctx.pin.text.as_str())
             })
             .max_by_key(|r| r.seq)
             .map(|r| MeasurementRow {
                 subject: subject.to_string(),
                 function: function.to_string(),
-                body: text(&r.cells, 6),
-                computed_at: text(&r.cells, 7),
+                body: text(&r.cells, 5),
+                computed_at: text(&r.cells, 6),
             })
     }
 
@@ -1502,10 +1495,10 @@ impl Store {
                     MeasurementRow {
                         subject: text(&r.cells, 2),
                         function: function.to_string(),
-                        body: text(&r.cells, 6),
-                        computed_at: text(&r.cells, 7),
+                        body: text(&r.cells, 5),
+                        computed_at: text(&r.cells, 6),
                     },
-                    r.get(5) == Some(ctx.pin.text.as_str()),
+                    r.get(4) == Some(ctx.pin.text.as_str()),
                 )
             })
             .collect()
@@ -1530,7 +1523,6 @@ impl Store {
                 Some(function.to_string()),
                 Some(subject.to_string()),
                 Some(aspect.to_string()),
-                Some(pin.digest.clone()),
                 Some(pin.text.clone()),
                 Some(value.to_string()),
                 Some(computed_at.clone()),

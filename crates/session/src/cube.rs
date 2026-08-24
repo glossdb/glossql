@@ -398,7 +398,7 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
         let key = CubeKey {
             dataset: dataset.clone(),
             metric: slot.aspect.clone(),
-            pin: rctx.pin.digest.clone(),
+            pin: rctx.pin.text.clone(),
             version: rctx.version.clone(),
         };
         if let Some(cube) = cache.inner.get(&key).await {
