@@ -1130,6 +1130,22 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         "the shortened month rung",
     );
     near(cells("by_day", "").await, 548.0, "the day rung stands");
+
+    // The floor reaches the top of the ladder: a season-grained dataset
+    // stands at the year, under the year rung.
+    session
+        .execute(
+            r#"GLOSS cube ON fin AS $${"resolution": "year", "windows": {"year": "3 years"}}$$;"#,
+        )
+        .await
+        .unwrap();
+    let axes = grid(
+        &session,
+        "SELECT metric, resolution, window FROM metric_axes() ORDER BY metric;",
+    )
+    .await;
+    assert!(axes.contains("by_month  | year       | 3 years"), "{axes}");
+    assert!(axes.contains("by_minute | year       | 3 years"), "{axes}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
