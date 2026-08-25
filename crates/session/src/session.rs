@@ -50,6 +50,12 @@ pub enum SessionError {
     DetectorNotExtractable(String),
     #[error("function runtime: {0}")]
     Runtime(String),
+    #[error("not an aspect name: `{0}`")]
+    BadAspectName(String),
+    #[error("the standing ruling slot is not a ruling body")]
+    RulingSlotNotRulings,
+    #[error("a body carrying `$$` cannot ride the dollar-quoted statement")]
+    DollarQuotedBody,
     #[error(transparent)]
     Lake(#[from] glossql_catalog::Error),
     #[error(transparent)]
@@ -821,10 +827,10 @@ impl Session {
                         is_source,
                     )
                     .map_err(SessionError::Store)?;
-                    schemas::validate_instance(&schema, &output).map_err(|detail| {
+                    schemas::validate_instance(&schema, &output).map_err(|e| {
                         SessionError::OutputRejected {
                             function: name.clone(),
-                            detail,
+                            detail: e.to_string(),
                         }
                     })?;
                     // An abstention naming absent inputs is an answer

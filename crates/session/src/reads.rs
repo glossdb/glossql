@@ -348,10 +348,10 @@ async fn run_detector(
                 "band": (!bands.is_null(i)).then(|| bands.value(i)),
                 "score": (!scores.is_null(i)).then(|| scores.value(i)),
             });
-            schemas::validate_instance(&contract, &row).map_err(|detail| {
+            schemas::validate_instance(&contract, &row).map_err(|e| {
                 SessionError::OutputRejected {
                     function: detector.to_string(),
-                    detail,
+                    detail: e.to_string(),
                 }
             })?;
             out.push((

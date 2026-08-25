@@ -3223,6 +3223,7 @@ dependencies = [
  "serde_json",
  "tabicl-candle",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
 ]
 

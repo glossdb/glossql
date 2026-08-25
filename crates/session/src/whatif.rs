@@ -72,7 +72,7 @@ pub(crate) async fn whatif_batch(
         .expect("state lock")
         .clone()
         .ok_or(SessionError::NoDataset)?;
-    let bad = |detail: String| SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"));
+    let bad = |detail: String| refused(scenario, &detail);
 
     let Some((_, kind, _)) = shared.store.aspect(scenario).await? else {
         return Err(bad(format!("no aspect `{scenario}` is declared")));
@@ -106,7 +106,7 @@ pub(crate) async fn whatif_batch(
         .as_deref()
         .and_then(|v| serde_json::from_str(v).ok())
         .ok_or_else(|| bad("the scenario body is not JSON".into()))?;
-    let overrides = decode_overrides(&body).map_err(bad)?;
+    let overrides = decode_overrides(scenario, &body)?;
     // Recomputed per read: the replay stays inside one plan set, and
     // whether repeated identical work earns an in-memory, pin-keyed
     // cache is a later, measured question.
@@ -114,27 +114,35 @@ pub(crate) async fn whatif_batch(
     Ok(row_batch(rows))
 }
 
-fn decode_overrides(body: &Value) -> Result<Vec<Override>, String> {
+/// A scenario read refused, named by the door's call.
+fn refused(scenario: &str, detail: &str) -> SessionError {
+    SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"))
+}
+
+fn decode_overrides(scenario: &str, body: &Value) -> Result<Vec<Override>, SessionError> {
+    let bad = |detail: &str| refused(scenario, detail);
     let list = body["overrides"]
         .as_array()
         .filter(|l| !l.is_empty())
-        .ok_or("the scenario body carries no overrides")?;
+        .ok_or_else(|| bad("the scenario body carries no overrides"))?;
     list.iter()
         .map(|o| {
             let column = o["column"]
                 .as_str()
-                .ok_or("an override names its `column` as `table.column`")?;
-            let (table, column) = column
-                .split_once('.')
-                .ok_or(format!("`{column}` — an override column is `table.column`"))?;
+                .ok_or_else(|| bad("an override names its `column` as `table.column`"))?;
+            let (table, column) = column.split_once('.').ok_or_else(|| {
+                bad(&format!(
+                    "`{column}` — an override column is `table.column`"
+                ))
+            })?;
             let factor = o["factor"]
                 .as_f64()
                 .filter(|f| *f > 0.0)
-                .ok_or("an override carries a positive `factor`")?;
+                .ok_or_else(|| bad("an override carries a positive `factor`"))?;
             let from = o["from"]
                 .as_str()
                 .filter(|f| f.len() == 7 && f.as_bytes()[4] == b'-')
-                .ok_or("an override carries `from` as \"YYYY-MM\"")?;
+                .ok_or_else(|| bad("an override carries `from` as \"YYYY-MM\""))?;
             Ok(Override {
                 table: table.to_string(),
                 column: column.to_string(),
@@ -155,7 +163,7 @@ async fn compute(
     overrides: &[Override],
 ) -> Result<Vec<Row>, SessionError> {
     let ctx = shared.session_ctx();
-    let bad = |detail: String| SessionError::BadSubject(format!("whatif.{scenario}(): {detail}"));
+    let bad = |detail: String| refused(scenario, &detail);
 
     // Every overridden column must exist, and its table must carry a
     // date column for the start-month condition — checked up front so a

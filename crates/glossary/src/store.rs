@@ -1783,6 +1783,8 @@ fn grains_str(grains: &[Grain]) -> Option<String> {
 }
 
 fn validate(schema: &Value, instance: &Value, which: String) -> Result<()> {
-    crate::schemas::validate_instance(schema, instance)
-        .map_err(|detail| Error::BodyRejected { which, detail })
+    crate::schemas::validate_instance(schema, instance).map_err(|e| Error::BodyRejected {
+        which,
+        detail: e.to_string(),
+    })
 }

@@ -31,7 +31,7 @@
 
 use datafusion::arrow::array::{Array, StringArray};
 
-use crate::session::{Outcome, Session};
+use crate::session::{Outcome, Session, SessionError};
 
 /// One judgment, ready to land. `key` is the claim's identity and the
 /// only thing the record joins on; `assumption` is the prose the human
@@ -95,7 +95,7 @@ fn first_body(outcomes: &[Outcome]) -> Option<String> {
 /// Land the ruling on the human's own channel. `human` must already be
 /// a session for the human actor, bound to the dataset — the caller
 /// owns who is speaking, this owns what is said.
-pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String> {
+pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, SessionError> {
     let Ruling {
         subject,
         aspect,
@@ -106,12 +106,12 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
         note,
     } = ruling;
     if !ident_path(subject, 3) {
-        return Err(format!(
+        return Err(SessionError::BadSubject(format!(
             "`{subject}` is not a path subject (identifier segments, dots between)"
-        ));
+        )));
     }
     if !ident_path(aspect, 1) {
-        return Err(format!("`{aspect}` is not an aspect name"));
+        return Err(SessionError::BadAspectName(aspect.to_string()));
     }
     // The join is what makes this a read-modify-write of *this*
     // dataset's slot. `glossary` is workspace-wide and the write below
@@ -125,15 +125,12 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
            AND g.actor_kind = 'human' \
          ORDER BY g.written_at DESC LIMIT 1"
     );
-    let standing = human
-        .execute(&read)
-        .await
-        .map_err(|e| format!("the ruling slot read failed: {e}"))?;
+    let standing = human.execute(&read).await?;
     let mut body = first_body(&standing)
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .unwrap_or_else(|| serde_json::json!({ "rulings": [] }));
     let Some(rulings) = body.get_mut("rulings").and_then(|r| r.as_array_mut()) else {
-        return Err("the standing ruling slot is not a ruling body".into());
+        return Err(SessionError::RulingSlotNotRulings);
     };
     rulings.retain(|r| !(r["aspect"] == aspect && r["key"] == key));
     let mut entry = serde_json::json!({
@@ -151,7 +148,7 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
     // After a `$$` the rest would parse as further statements, and this
     // writes exactly one gloss.
     if body.contains("$$") {
-        return Err("a body carrying `$$` cannot ride the dollar-quoted statement".into());
+        return Err(SessionError::DollarQuotedBody);
     }
     // The slot is `ruling` — always. `aspect` names what was ruled and
     // rides inside the body; writing to it instead would push a ruling
@@ -175,5 +172,4 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, String>
                 )
             }
         })
-        .map_err(|e| e.to_string())
 }

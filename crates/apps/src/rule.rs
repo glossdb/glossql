@@ -123,7 +123,7 @@ pub async fn rule(
     .await
     {
         Ok(_) => (StatusCode::NO_CONTENT, WRITTEN).into_response(),
-        Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => plain(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
     }
 }
 

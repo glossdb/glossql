@@ -577,7 +577,7 @@ async fn build(
         )
         .await?;
         for (i, (c, r, current)) in cand.iter().enumerate() {
-            let n = int_column(&batches, &format!("n_{i}")).map_err(Abstain)?[0];
+            let n = int_column(&batches, &format!("n_{i}")).map_err(|e| Abstain(e.to_string()))?[0];
             counts.push((c.clone(), *r, n, *current));
         }
     }

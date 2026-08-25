@@ -13,6 +13,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::common::DataFusionError;
 use datafusion::datasource::provider_as_source;
 use datafusion::functions::expr_fn::{abs, greatest};
 use datafusion::functions_aggregate::expr_fn::{avg, count};
@@ -333,7 +334,7 @@ pub(crate) async fn hierarchy_candidates(
     if names.is_empty() {
         // No long pass to ride: one count settles which abstention.
         let plan = plan_count(table, &provider).map_err(|e| bad(e.to_string()))?;
-        let n = int_column(&run(plan).await?, "n").map_err(bad)?[0];
+        let n = int_column(&run(plan).await?, "n").map_err(|e| bad(e.to_string()))?[0];
         return abstain(if n == 0 {
             "empty table"
         } else {
@@ -357,12 +358,15 @@ pub(crate) async fn hierarchy_candidates(
     let mut by_ci: Vec<Option<ColStat>> = vec![None; names.len()];
     let mut n = 0i64;
     for b in stats.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
-        let groups = int_column(std::slice::from_ref(b), "groups").map_err(&bad)?;
-        let modal = int_column(std::slice::from_ref(b), "modal").map_err(&bad)?;
-        let total = int_column(std::slice::from_ref(b), "total").map_err(&bad)?;
-        let dv = int_column(std::slice::from_ref(b), "distinct_vals").map_err(&bad)?;
-        let filled = int_column(std::slice::from_ref(b), "filled").map_err(&bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
+        let groups =
+            int_column(std::slice::from_ref(b), "groups").map_err(|e| bad(e.to_string()))?;
+        let modal = int_column(std::slice::from_ref(b), "modal").map_err(|e| bad(e.to_string()))?;
+        let total = int_column(std::slice::from_ref(b), "total").map_err(|e| bad(e.to_string()))?;
+        let dv =
+            int_column(std::slice::from_ref(b), "distinct_vals").map_err(|e| bad(e.to_string()))?;
+        let filled =
+            int_column(std::slice::from_ref(b), "filled").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             n = total[r];
             by_ci[ci[r] as usize] = Some(ColStat {
@@ -405,11 +409,12 @@ pub(crate) async fn hierarchy_candidates(
     }
     let mut pairs: std::collections::HashMap<(usize, usize), Pair> = Default::default();
     for b in paired.iter().filter(|b| b.num_rows() > 0) {
-        let ca = int_column(std::slice::from_ref(b), "ca").map_err(&bad)?;
-        let cb = int_column(std::slice::from_ref(b), "cb").map_err(&bad)?;
-        let pg = int_column(std::slice::from_ref(b), "pair_groups").map_err(&bad)?;
-        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(&bad)?;
-        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(&bad)?;
+        let ca = int_column(std::slice::from_ref(b), "ca").map_err(|e| bad(e.to_string()))?;
+        let cb = int_column(std::slice::from_ref(b), "cb").map_err(|e| bad(e.to_string()))?;
+        let pg =
+            int_column(std::slice::from_ref(b), "pair_groups").map_err(|e| bad(e.to_string()))?;
+        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(|e| bad(e.to_string()))?;
+        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             pairs.insert(
                 (ca[r] as usize, cb[r] as usize),
@@ -617,17 +622,19 @@ fn plan_pairs(
 }
 
 /// A named Int64 column of a one-batch result, materialized.
-pub(crate) fn int_column(batches: &[RecordBatch], name: &str) -> Result<Vec<i64>, String> {
-    let b = batches
-        .iter()
-        .find(|b| b.num_rows() > 0)
-        .ok_or_else(|| format!("`{name}`: the plan returned nothing"))?;
-    let idx = b.schema().index_of(name).map_err(|e| e.to_string())?;
+pub(crate) fn int_column(
+    batches: &[RecordBatch],
+    name: &str,
+) -> datafusion::common::Result<Vec<i64>> {
+    let b = batches.iter().find(|b| b.num_rows() > 0).ok_or_else(|| {
+        DataFusionError::Execution(format!("`{name}`: the plan returned nothing"))
+    })?;
+    let idx = b.schema().index_of(name)?;
     let a = b
         .column(idx)
         .as_any()
         .downcast_ref::<Int64Array>()
-        .ok_or_else(|| format!("`{name}` did not read as an integer"))?;
+        .ok_or_else(|| DataFusionError::Internal(format!("`{name}` did not read as an integer")))?;
     Ok((0..b.num_rows()).map(|r| a.value(r)).collect())
 }
 
@@ -864,7 +871,7 @@ pub(crate) async fn relationship_candidates(
             .build()
             .map_err(|e| bad(e.to_string()))?;
         for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-            let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
+            let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
             let val_idx = b.schema().index_of("val").map_err(|e| bad(e.to_string()))?;
             let vals = b.column(val_idx);
             for r in 0..b.num_rows() {
@@ -1260,8 +1267,8 @@ async fn combo_stats(
         .build()
         .map_err(|e| bad(e.to_string()))?;
     for b in run(counts).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
-        let c = int_column(std::slice::from_ref(b), "c").map_err(bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
+        let c = int_column(std::slice::from_ref(b), "c").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             out[ci[r] as usize].filled = c[r];
         }
@@ -1271,7 +1278,7 @@ async fn combo_stats(
         .build()
         .map_err(|e| bad(e.to_string()))?;
     for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
         let va_idx = b.schema().index_of("va").map_err(|e| bad(e.to_string()))?;
         let vb_idx = b.schema().index_of("vb").map_err(|e| bad(e.to_string()))?;
         let (va, vb) = (b.column(va_idx), b.column(vb_idx));
@@ -1737,7 +1744,7 @@ pub(crate) async fn relationship_checks(
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![filled_expr.alias("filled")]))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let filled = int_column(&run(plan).await?, "filled").map_err(&bad)?[0];
+        let filled = int_column(&run(plan).await?, "filled").map_err(|e| bad(e.to_string()))?[0];
 
         let nest = e.ct == e.pt;
         let orphans = if nest {
@@ -1766,7 +1773,7 @@ pub(crate) async fn relationship_checks(
                 })
                 .and_then(|b| b.build())
                 .map_err(|e| bad(e.to_string()))?;
-            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+            int_column(&run(plan).await?, "orphans").map_err(|e| bad(e.to_string()))?[0]
         } else {
             // Orphans: complete from-side keys that resolve to no to-side
             // row — the NOT IN with its null guards, as an anti join.
@@ -1791,7 +1798,7 @@ pub(crate) async fn relationship_checks(
                 .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("orphans")]))
                 .and_then(|b| b.build())
                 .map_err(|e| bad(e.to_string()))?;
-            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+            int_column(&run(plan).await?, "orphans").map_err(|e| bad(e.to_string()))?[0]
         };
         let orphan_rate = if filled > 0 {
             orphans as f64 / filled as f64
@@ -1854,11 +1861,12 @@ pub(crate) async fn relationship_checks(
                 .map_err(|e| bad(e.to_string()))?;
             let joined = run(plan).await?;
             for (k, pair) in pairs.iter().enumerate() {
-                let n = int_column(&joined, &format!("n_{k}")).map_err(&bad)?[0];
+                let n = int_column(&joined, &format!("n_{k}")).map_err(|e| bad(e.to_string()))?[0];
                 if n == 0 {
                     continue;
                 }
-                let pre = int_column(&joined, &format!("pre_{k}")).map_err(&bad)?[0];
+                let pre =
+                    int_column(&joined, &format!("pre_{k}")).map_err(|e| bad(e.to_string()))?[0];
                 temporal.push((k, pair, n, pre));
             }
         }

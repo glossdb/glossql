@@ -15,6 +15,7 @@ faer.workspace = true
 # manifest); the model loads lazily from the workspace's weights/.
 tabicl-candle = { workspace = true, features = ["metal"] }
 rayon.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 glossql-catalog = { path = "../catalog" }
