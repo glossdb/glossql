@@ -585,3 +585,147 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
     assert_eq!(anchor["voted"], 3, "{anchor}");
     assert_eq!(anchor["sign"]["primary"], 3, "{anchor}");
 }
+
+/// Two drivers over three seasons of eight rounds: `season_wins` is
+/// the running count of wins within a season, reset every year, and
+/// nothing in `results` reconciles against it — positions and lap
+/// counts, no wins column. The shape is the only evidence there is.
+async fn standings_fixture(root: &std::path::Path) {
+    write_table(
+        root,
+        "drivers",
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, true)])),
+            vec![Arc::new(StringArray::from(vec!["a", "b"]))],
+        )
+        .unwrap(),
+    )
+    .await;
+    let (mut s_driver, mut s_date, mut s_wins) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut r_driver, mut r_date, mut r_position, mut r_laps) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for year in 2022..=2024 {
+        let mut wins = [0.0f64, 0.0];
+        for round in 1..=8u32 {
+            let date = format!("{year}-{:02}-15", round + 2);
+            let winner = if round % 2 == 1 { 0 } else { 1 };
+            wins[winner] += 1.0;
+            for (i, d) in ["a", "b"].iter().enumerate() {
+                s_driver.push(*d);
+                s_date.push(date.clone());
+                s_wins.push(wins[i]);
+                r_driver.push(*d);
+                r_date.push(date.clone());
+                r_position.push(if i == winner { 1.0 } else { 2.0 });
+                r_laps.push(50.0 + round as f64);
+            }
+        }
+    }
+    write_table(
+        root,
+        "standings",
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("driver", DataType::Utf8, true),
+                Field::new("race_date", DataType::Utf8, true),
+                Field::new("season_wins", DataType::Float64, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(s_driver)),
+                Arc::new(StringArray::from(s_date)),
+                Arc::new(Float64Array::from(s_wins)),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+    write_table(
+        root,
+        "results",
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("driver", DataType::Utf8, true),
+                Field::new("race_date", DataType::Utf8, true),
+                Field::new("position", DataType::Float64, true),
+                Field::new("laps", DataType::Float64, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(r_driver)),
+                Arc::new(StringArray::from(r_date)),
+                Arc::new(Float64Array::from(r_position)),
+                Arc::new(Float64Array::from(r_laps)),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cumulative_that_resets_yearly_is_a_stock_by_its_shape_inside_the_year() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    standings_fixture(&root).await;
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE drivers ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('drivers/*.parquet')$$;\n\
+         DECLARE RECIPE standings ON fin FROM erp_export AS \
+         $$SELECT driver, CAST(race_date AS DATE) AS race_date, season_wins \
+         FROM read_parquet('standings/*.parquet')$$;\n\
+         DECLARE RECIPE results ON fin FROM erp_export AS \
+         $$SELECT driver, CAST(race_date AS DATE) AS race_date, position, laps \
+         FROM read_parquet('results/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP standings.driver -> drivers.id;\n\
+         DECLARE RELATIONSHIP results.driver -> drivers.id;",
+    )
+    .await;
+
+    session
+        .execute("SELECT behavior_evidence() FROM standings.season_wins;")
+        .await
+        .unwrap();
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(standings.season_wins::behavior_evidence) \
+             WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    let evidence: serde_json::Value = serde_json::from_str(&value).unwrap();
+    let anchors = evidence["anchors"].as_array().unwrap();
+    let monotone = |scope: &str| {
+        anchors
+            .iter()
+            .find(|a| a["convention"] == "monotone" && a["scope"] == scope)
+            .cloned()
+            .unwrap_or_else(|| panic!("no monotone anchor at scope {scope} in {evidence}"))
+    };
+
+    // Across seasons the count falls back to zero every March: the raw
+    // scope sees every entity decrease and abstains, saying so.
+    let raw = monotone("none");
+    assert_eq!(raw["verdict"], "abstain", "{raw}");
+    assert!(
+        raw["reason"]
+            .as_str()
+            .unwrap()
+            .contains("decrease within the scope"),
+        "{raw}"
+    );
+
+    // Inside a season it only ever rises: six driver-seasons, every one
+    // monotone, and the anchor votes stock on that alone.
+    let yearly = monotone("year");
+    assert_eq!(yearly["verdict"], "stock", "{yearly}");
+    assert_eq!(yearly["voted"], 6, "{yearly}");
+    assert_eq!(yearly["agreement"], 1.0, "{yearly}");
+
+    // Nothing in `results` reconciles a win count, so the shape is what
+    // the summary serves — and it names the scope the stock holds in.
+    let summary = &evidence["summary"];
+    assert_eq!(summary["verdict"], "stock", "{summary}");
+    assert_eq!(summary["convention"], "monotone", "{summary}");
+    assert_eq!(summary["scope"], "year", "{summary}");
+}

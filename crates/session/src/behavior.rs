@@ -45,8 +45,16 @@
 //!   the wrong one.
 //! - An alignment where fewer than two entities carry 4+ periods
 //!   abstains on one HAVING probe, before either side is scanned wide.
+//! - A measure that never decreases within an entity — 4+ periods at
+//!   the axis's native grain, inside the scope — is its own anchor,
+//!   convention `monotone`, voting stock. It is what a cumulative with
+//!   no event column to reconcile against (season wins beside a table
+//!   of finishing positions) has to say for itself, and a reset shows
+//!   as the year scope deciding where the raw one abstains. On equal
+//!   support a reconciliation outranks it: the movement explains the
+//!   level, monotonicity only describes it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
@@ -344,6 +352,10 @@ pub(crate) async fn behavior_anchors(
     let mut grain_cache: HashMap<String, String> = HashMap::new();
     let mut viable_cache: HashMap<String, i64> = HashMap::new();
     let mut y_cache: HashMap<String, Vec<RecordBatch>> = HashMap::new();
+    // The monotone read per (axis, entity, scope): entities with 4+
+    // periods, how many never decrease, the steps walked.
+    let mut mono_cache: HashMap<String, (i64, i64, i64)> = HashMap::new();
+    let mut mono_pushed: HashSet<String> = HashSet::new();
 
     let from_of = |t: &str, axis: &Axis| -> (String, String) {
         let mut from = format!("{} s", qi(t));
@@ -664,67 +676,151 @@ pub(crate) async fn behavior_anchors(
                                 "grain": grain, "scope": scope,
                                 "identifier_columns": identifier_cols,
                             });
-                            if viable_cache[&vkey] < 2 {
-                                let mut a = base.as_object().expect("object").clone();
-                                a.insert("viable_entities".into(), json!(viable_cache[&vkey]));
-                                a.insert("verdict".into(), json!("abstain"));
-                                a.insert(
+                            let mono_base = base.clone();
+                            'reconcile: {
+                                if viable_cache[&vkey] < 2 {
+                                    let mut a = base.as_object().expect("object").clone();
+                                    a.insert("viable_entities".into(), json!(viable_cache[&vkey]));
+                                    a.insert("verdict".into(), json!("abstain"));
+                                    a.insert(
                                     "reason".into(),
                                     json!(
                                         "fewer than two entities carry 4+ periods on this alignment"
                                     ),
                                 );
-                                anchors.push(Value::Object(a));
-                                continue;
-                            }
+                                    anchors.push(Value::Object(a));
+                                    break 'reconcile;
+                                }
 
-                            // Measure-side series, cached per (axis,
-                            // entity, grain, scope); the kernel consumes
-                            // the grouped result directly.
-                            let ykey = format!("{}|{alabel}|{grain}|{scope}", maxis.label);
-                            if !y_cache.contains_key(&ykey) {
-                                let yq = run(format!(
-                                    "SELECT {m_e} AS e, \
+                                // Measure-side series, cached per (axis,
+                                // entity, grain, scope); the kernel consumes
+                                // the grouped result directly.
+                                let ykey = format!("{}|{alabel}|{grain}|{scope}", maxis.label);
+                                if !y_cache.contains_key(&ykey) {
+                                    let yq = run(format!(
+                                        "SELECT {m_e} AS e, \
                                      date_trunc('{grain}', {m_ts}) AS b, \
                                      SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
                                      FROM {am_from} \
                                      WHERE {m_guard} AND {m_texpr} IS NOT NULL \
                                        AND s.{qcol} IS NOT NULL \
                                      GROUP BY 1, 2 ORDER BY 1, 2",
-                                    qcol = qi(column)
-                                ))
-                                .await?;
-                                y_cache.insert(ykey.clone(), yq);
-                            }
-                            let yq = y_cache[&ykey].clone();
+                                        qcol = qi(column)
+                                    ))
+                                    .await?;
+                                    y_cache.insert(ykey.clone(), yq);
+                                }
+                                let yq = y_cache[&ykey].clone();
 
-                            // Event-side sums for every term at once.
-                            let sel: String = terms_pool
-                                .iter()
-                                .map(|c| format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c)))
-                                .collect();
-                            let mq = run(format!(
-                                "SELECT {e_e} AS e, \
+                                // Event-side sums for every term at once.
+                                let sel: String = terms_pool
+                                    .iter()
+                                    .map(|c| {
+                                        format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c))
+                                    })
+                                    .collect();
+                                let mq = run(format!(
+                                    "SELECT {e_e} AS e, \
                                  date_trunc('{grain}', {e_ts}) AS b{sel} \
                                  FROM {ae_from} \
                                  WHERE {e_guard} AND {e_texpr} IS NOT NULL \
                                  GROUP BY 1, 2 ORDER BY 1, 2"
-                            ))
-                            .await?;
+                                ))
+                                .await?;
 
-                            // The discriminator in one kernel call.
-                            let rec = runtime
-                                .reconcile(&yq, &mq, &terms_pool)
-                                .map_err(SessionError::Runtime)?;
-                            let n_common = rec["n_common"].as_i64().unwrap_or(0);
-                            let mut summaries: Vec<Value> =
-                                rec["summaries"].as_array().cloned().unwrap_or_default();
-                            for s in &mut summaries {
-                                let winners = s["winners"].as_f64().unwrap_or(0.0);
-                                s["support"] = json!(wilson_lcb(winners, n_common));
+                                // The discriminator in one kernel call.
+                                let rec = runtime
+                                    .reconcile(&yq, &mq, &terms_pool)
+                                    .map_err(SessionError::Runtime)?;
+                                let n_common = rec["n_common"].as_i64().unwrap_or(0);
+                                let mut summaries: Vec<Value> =
+                                    rec["summaries"].as_array().cloned().unwrap_or_default();
+                                for s in &mut summaries {
+                                    let winners = s["winners"].as_f64().unwrap_or(0.0);
+                                    s["support"] = json!(wilson_lcb(winners, n_common));
+                                }
+
+                                anchors.push(judge_anchor(base, n_common, &summaries));
                             }
 
-                            anchors.push(judge_anchor(base, n_common, &summaries));
+                            // The monotone anchor, once per alignment and
+                            // scope, at the axis's native grain — after
+                            // the reconciliation, which is the anchor a
+                            // reader meets first.
+                            if !mono_pushed.insert(format!("{ev}|{alabel}|{scope}")) {
+                                continue;
+                            }
+                            let mkey = format!("mono|{}|{alabel}|{scope}", maxis.label);
+                            if !mono_cache.contains_key(&mkey) {
+                                let mq = run(format!(
+                                    "SELECT count(*) AS considered, \
+                                     coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
+                                                        THEN 1 ELSE 0 END), 0) AS monotone, \
+                                     coalesce(sum(steps), 0) AS steps \
+                                     FROM (SELECT e, count(*) AS steps, \
+                                             sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
+                                             sum(CASE WHEN yv > prev THEN 1 ELSE 0 END) AS increases \
+                                           FROM (SELECT e, b, yv, \
+                                                   lag(yv) OVER (PARTITION BY e ORDER BY b) AS prev \
+                                                 FROM (SELECT {m_e} AS e, \
+                                                         date_trunc('{m_native}', {m_ts}) AS b, \
+                                                         SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
+                                                       FROM {am_from} \
+                                                       WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                                                         AND s.{qcol} IS NOT NULL \
+                                                       GROUP BY 1, 2)) \
+                                           WHERE prev IS NOT NULL \
+                                           GROUP BY e HAVING count(*) >= 3)",
+                                    qcol = qi(column)
+                                ))
+                                .await?;
+                                let read = |name: &str| {
+                                    crate::search::int_column(&mq, name)
+                                        .map(|v| v[0])
+                                        .unwrap_or(0)
+                                };
+                                mono_cache.insert(
+                                    mkey.clone(),
+                                    (read("considered"), read("monotone"), read("steps")),
+                                );
+                            }
+                            let (considered, monotone, steps) = mono_cache[&mkey];
+                            let mut a = mono_base.as_object().expect("object").clone();
+                            a.insert("grain".into(), json!(m_native));
+                            a.insert("convention".into(), json!("monotone"));
+                            a.insert("entities".into(), json!(considered));
+                            a.insert("viable_entities".into(), json!(considered));
+                            a.insert("alternatives".into(), json!([]));
+                            if considered < 2 {
+                                a.insert("verdict".into(), json!("abstain"));
+                                a.insert(
+                                    "reason".into(),
+                                    json!("fewer than two entities carry 4+ periods at the native grain"),
+                                );
+                            } else {
+                                a.insert("voted".into(), json!(considered));
+                                a.insert(
+                                    "agreement".into(),
+                                    json!(monotone as f64 / considered as f64),
+                                );
+                                a.insert(
+                                    "support".into(),
+                                    json!(wilson_lcb(monotone as f64, considered)),
+                                );
+                                if monotone * 2 >= considered && monotone > 0 {
+                                    a.insert("verdict".into(), json!("stock"));
+                                } else {
+                                    a.insert("verdict".into(), json!("abstain"));
+                                    a.insert(
+                                        "reason".into(),
+                                        json!(format!(
+                                            "{} of {considered} entities decrease within the scope over {steps} steps — not a cumulative here",
+                                            considered - monotone
+                                        )),
+                                    );
+                                }
+                            }
+                            anchors.push(Value::Object(a));
                         }
                     }
                 }
@@ -745,13 +841,17 @@ pub(crate) async fn behavior_anchors(
     // serves the summary alone (run 4 spent 60KB of an agent's context
     // — 102 anchors — to learn the word "flow"); every anchor still
     // reads back via GLOSSARY when the judge wants the losers.
+    let sup = |v: &Value| v["support"].as_f64().unwrap_or(0.0);
+    let monotone = |v: &Value| v["convention"] == json!("monotone");
     let mut best: Option<&Value> = None;
     let mut decided = 0i64;
     for a in &anchors {
         if a["verdict"] != json!("abstain") {
             decided += 1;
+            // Support first; on equal support a reconciliation outranks
+            // the monotone shape — the movement explains the level.
             if best.is_none_or(|b| {
-                a["support"].as_f64().unwrap_or(0.0) > b["support"].as_f64().unwrap_or(0.0)
+                sup(a) > sup(b) || (sup(a) == sup(b) && monotone(b) && !monotone(a))
             }) {
                 best = Some(a);
             }
