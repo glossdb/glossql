@@ -15,18 +15,35 @@ use std::io::IsTerminal;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 
-/// The filter variable — `tracing`'s directive syntax (`info`,
-/// `debug`, `glossql_session=debug,info`). `RUST_LOG` is honoured when
-/// it is unset; `info` when neither is.
+/// The filter variable — `tracing`'s directive syntax. A bare level
+/// (`debug`) is this server's crates at that level and the substrate
+/// at `info`; directives (`glossql_session=debug,apache_avro=debug`)
+/// are taken as written. `RUST_LOG` is honoured when it is unset;
+/// `info` when neither is.
 pub const FILTER_VAR: &str = "GLOSSQL_LOG";
 
+/// The directives a bare level stands for. Targets match by prefix
+/// (tracing-subscriber `filter/env/directive.rs`), so `glossql` is
+/// every `glossql_*` crate and `serverd` the binary's own module.
+fn directives(level: &str) -> String {
+    format!("info,glossql={level},serverd={level}")
+}
+
 /// Install the subscriber: lines for a person when stdout is a
-/// terminal, JSON otherwise. `log` records — DataFusion's, sqlx's —
-/// are bridged into the same stream.
+/// terminal, JSON otherwise. `log` records — DataFusion's, sqlx's, the
+/// Avro reader's — are bridged into the same stream, which is why a
+/// bare level stays ours: at `debug` the Avro reader alone writes ten
+/// thousand lines per boot.
 pub fn install() {
-    let filter = EnvFilter::try_from_env(FILTER_VAR)
-        .or_else(|_| EnvFilter::try_from_default_env())
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let requested = std::env::var(FILTER_VAR)
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .unwrap_or_else(|_| "info".into());
+    let bare = !requested.contains(['=', ',']);
+    let filter = if bare {
+        EnvFilter::new(directives(requested.trim()))
+    } else {
+        EnvFilter::new(requested)
+    };
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_span_events(FmtSpan::CLOSE);
