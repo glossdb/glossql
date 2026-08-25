@@ -39,9 +39,19 @@ over the file, which is how a container is configured without one):
 | `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
+| `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter directive (`info` when unset, `debug` for the text of every call, `glossql_session=debug,info` per crate); `RUST_LOG` is honoured when it is unset |
 
 `.env.example` at the repository root lists them; `.env` is never
 committed.
+
+The record goes to stdout: lines for a person when that is a
+terminal, JSON otherwise. At `info` a call is its actor, the dataset
+it arrived on, the digest and length of its text, and the spans of the
+work it caused — each statement, each read's planning, each
+measurement run, each commit — closing with their busy and idle time.
+The text of a call is a `debug` event inside its span and nothing
+else, because statement bodies and groundings carry data. A refusal
+carries its reason and never the token.
 
 ## Tokens
 

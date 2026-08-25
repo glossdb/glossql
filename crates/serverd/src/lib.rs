@@ -33,6 +33,7 @@ mod bootstrap;
 mod login;
 mod mcp;
 mod query;
+pub mod telemetry;
 mod wire;
 
 pub use auth::{Endpoints, Gate};

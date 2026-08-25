@@ -189,7 +189,7 @@ async fn finish(
     {
         Ok(token) => token,
         Err(e) => {
-            println!("glossql login: the code exchange failed: {e}");
+            tracing::warn!(error = %e, "login: the code exchange failed");
             return plain(
                 StatusCode::BAD_GATEWAY,
                 &format!("the issuer did not exchange the code: {e}"),
@@ -200,7 +200,7 @@ async fn finish(
     // handed anything: a token the doors would refuse is not a login.
     let access = token.access_token().secret();
     if let Err(e) = login.gate.verify(access).await {
-        println!("glossql login: the issuer's token is refused: {e}");
+        tracing::warn!(error = %e, "login: the issuer's token is refused");
         return plain(
             StatusCode::UNAUTHORIZED,
             &format!("the issuer's token does not open this server: {e}"),

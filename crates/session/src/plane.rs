@@ -209,6 +209,26 @@ impl Plane {
         dataset: Option<&str>,
         sql: &str,
     ) -> Result<Vec<Outcome>, SessionError> {
+        let span = tracing::info_span!(
+            "call",
+            actor = %actor.kind,
+            subject = %actor.id,
+            dataset = dataset.unwrap_or(""),
+            sql_digest = %sql_digest(sql),
+            sql_len = sql.len(),
+        );
+        // Boxed for the reason `Session::query_stream_with_params` is.
+        tracing::Instrument::instrument(Box::pin(self.run(actor, dataset, sql)), span).await
+    }
+
+    /// The call, under its span.
+    async fn run(
+        &self,
+        actor: Actor,
+        dataset: Option<&str>,
+        sql: &str,
+    ) -> Result<Vec<Outcome>, SessionError> {
+        tracing::debug!(text = %sql, "the call's text");
         let statements = GlossqlParser::parse_sql(sql)?;
         let total = statements.len();
         // A refusal names its GLOBAL place in the call: runs between
@@ -270,4 +290,10 @@ impl Plane {
         }
         Ok(outcomes)
     }
+}
+
+/// The first sixteen hex digits of the text's BLAKE3 hash: what ties
+/// a call's spans to its text without carrying the text.
+pub fn sql_digest(sql: &str) -> String {
+    blake3::hash(sql.as_bytes()).to_hex().as_str()[..16].to_string()
 }

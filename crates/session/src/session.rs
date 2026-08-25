@@ -458,7 +458,9 @@ impl Session {
     }
 
     /// The statement loop over parsed statements — the plane's channel
-    /// router feeds it the runs between `USE`s.
+    /// router feeds it the runs between `USE`s. Each statement is a
+    /// span under the call's: its place, its kind, the dataset it ran
+    /// on.
     pub(crate) async fn execute_statements(
         &self,
         statements: Vec<Statement>,
@@ -471,14 +473,24 @@ impl Session {
             // a `DECLARE RECIPE` that lands is followed by statements
             // that must see what it landed.
             self.shared.forget_pins();
-            let result = match statement {
-                Statement::Declare(d) => self.declare(*d).await,
-                Statement::Use(u) => self.use_dataset(&u.dataset.value).await,
-                Statement::Gloss(g) => self.gloss(g).await,
-                Statement::Extract(e) => self.extract(e).await,
-                Statement::Probe(p) => self.probe(p).await,
-                Statement::Substrate(s) => self.substrate(*s).await,
+            let span = tracing::info_span!(
+                "statement",
+                index = idx + 1,
+                total,
+                kind = kind(&statement),
+                dataset = %self.dataset().unwrap_or_default(),
+            );
+            let run = async {
+                match statement {
+                    Statement::Declare(d) => self.declare(*d).await,
+                    Statement::Use(u) => self.use_dataset(&u.dataset.value).await,
+                    Statement::Gloss(g) => self.gloss(g).await,
+                    Statement::Extract(e) => self.extract(e).await,
+                    Statement::Probe(p) => self.probe(p).await,
+                    Statement::Substrate(s) => self.substrate(*s).await,
+                }
             };
+            let result = tracing::Instrument::instrument(run, span).await;
             match result {
                 Ok(outcome) => outcomes.push(outcome),
                 // A refusal in a sequence names its place, what landed
@@ -802,6 +814,12 @@ impl Session {
             let row = match measured {
                 Some(row) => row,
                 None => {
+                    tracing::info!(
+                        function = %name,
+                        dataset = %resolved.dataset,
+                        subject = %resolved.subject,
+                        "measuring"
+                    );
                     // A measurement's body is one SQL query the engine
                     // plans and runs (§6) — anything else is refused
                     // with the shape the declaration owes.
@@ -913,6 +931,19 @@ impl Session {
         &self,
         statement: datafusion::sql::parser::Statement,
     ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
+        // Boxed for the reason `query_stream_with_params` is.
+        tracing::Instrument::instrument(
+            Box::pin(self.plan_classed(statement)),
+            tracing::debug_span!("plan"),
+        )
+        .await
+    }
+
+    /// The planning, under its span.
+    async fn plan_classed(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
         let record = resolved.touches_record();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
@@ -949,6 +980,28 @@ impl Session {
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
+        let span = tracing::info_span!(
+            "read",
+            actor = %self.actor.kind,
+            subject = %self.actor.id,
+            dataset = %self.dataset().unwrap_or_default(),
+            sql_digest = %crate::plane::sql_digest(sql),
+            sql_len = sql.len(),
+        );
+        // Boxed: the read's future carries the pre-pass, every door body
+        // it plans and the cube builds behind them. Held by value under
+        // the span's wrapper, a debug build copies it onto the stack once
+        // more at construction — the ceiling the cube suite runs at.
+        tracing::Instrument::instrument(Box::pin(self.read_stream(sql, params)), span).await
+    }
+
+    /// The read, under its span.
+    async fn read_stream(
+        &self,
+        sql: &str,
+        params: Option<ParamValues>,
+    ) -> Result<QueryStream, SessionError> {
+        tracing::debug!(text = %sql, "the read's text");
         let mut statements = GlossqlParser::parse_sql(sql)?;
         let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
             if matches!(&**statement, DFStatement::Statement(inner)
@@ -1357,4 +1410,16 @@ fn store_delete(statement: &DFStatement) -> Option<String> {
     }
     let target = name.0[0].as_ident()?.value.to_lowercase();
     (target == "glossary").then_some(target)
+}
+
+/// A statement's kind, as its span names it.
+fn kind(statement: &Statement) -> &'static str {
+    match statement {
+        Statement::Declare(_) => "declare",
+        Statement::Use(_) => "use",
+        Statement::Gloss(_) => "gloss",
+        Statement::Extract(_) => "extract",
+        Statement::Probe(_) => "probe",
+        Statement::Substrate(_) => "substrate",
+    }
 }

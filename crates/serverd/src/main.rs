@@ -111,6 +111,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // already set in the environment wins over it, which is how a
     // container configures the same server without a file.
     dotenvy::dotenv().ok();
+    // After `.env`, so `GLOSSQL_LOG` may come from it; before anything
+    // opens, so the opening is on the record.
+    glossql_serverd::telemetry::install();
     let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr)
         .map_err(|e| format!("{e}\n{USAGE}"))?;
     let warehouse = args.workspace.join("warehouse");
@@ -141,19 +144,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Who may speak: whoever the issuer says. Its keys are discovered
     // here, and a server that cannot reach them does not open.
     let gate = Arc::new(Gate::discover(&auth.issuer, &auth.audience, &auth.client_id).await?);
-    println!(
-        "glossql verifying {} tokens for {} (application {})",
-        gate.issuer(),
-        auth.audience,
-        auth.client_id
+    tracing::info!(
+        issuer = %gate.issuer(),
+        audience = %auth.audience,
+        application = %auth.client_id,
+        "verifying tokens"
     );
     let login = Arc::new(Login::new(gate, &auth.client_secret)?);
 
     let app = router(plane, args.doors, args.workspace.clone(), login);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
-    println!(
-        "serverd on {} — / (datasets), /mcp, /<dataset>/query, /<dataset>/app",
-        args.addr
+    tracing::info!(
+        addr = %args.addr,
+        "serverd listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
     );
     axum::serve(listener, app).await?;
     Ok(())

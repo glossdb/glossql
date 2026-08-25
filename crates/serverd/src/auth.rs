@@ -375,7 +375,7 @@ pub async fn gate(
 /// A person arriving in a browser is not answered with a 401 to read
 /// but sent to sign in, and brought back to where they were going.
 fn refused(gate: &Gate, req: &Request, at: &str, why: &str) -> Response {
-    println!("glossql refused {at}: {why}");
+    tracing::warn!(at, why, "refused");
     if navigates(req) {
         let back = req
             .uri()

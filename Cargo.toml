@@ -82,3 +82,10 @@ toml = "0.8"
 uuid = { version = "1", features = ["v7"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+# Instrumentation. `tracing` is the facade every crate emits through —
+# already in the tree via axum, rmcp, iceberg and sqlx; the subscriber
+# is installed once, at the process edge (serverd). blake3 is in the
+# tree through iceberg; it keys a call's spans to its text by digest.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+blake3 = "1"

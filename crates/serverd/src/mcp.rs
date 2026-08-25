@@ -183,7 +183,7 @@ impl GlossqlMcp {
     async fn derive_round(&self, session: &Session) -> (Vec<(usize, Question)>, usize) {
         let loose = read_rows(session, LOOSE_SQL).await;
         if let Err(e) = &loose {
-            println!("glossql ?? question-round: the loose derivation failed: {e}");
+            tracing::warn!(error = %e, "question-round: the loose derivation failed");
         }
         let open: Vec<Question> = loose
             .map(|rows| rows.iter().filter_map(loose_from).collect())
@@ -789,8 +789,6 @@ impl ServerHandler for GlossqlMcp {
         // they are, as `USE`, and `execute` moves with them. A call that
         // names none is workspace-scoped, which is what reading
         // `datasets` and writing a source-grain gloss both want.
-        // The monitor line: what the agent actually sends, as it sends it.
-        println!("glossql <- {id}: {statements}");
         let session = self
             .plane
             .channel(actor.clone(), None)
@@ -833,7 +831,7 @@ impl ServerHandler for GlossqlMcp {
             } else {
                 "question-round: the retry carries no answer".into()
             };
-            println!("glossql ?? {id}: {note}");
+            tracing::info!(subject = %id, note = %note, "question-round");
             probed = Some(note);
         } else if shape.reviews
             && context
@@ -858,14 +856,18 @@ impl ServerHandler for GlossqlMcp {
                             InputRequest::Elicitation(ElicitRequest::new(params)),
                         );
                     }
-                    Err(e) => println!("glossql ?? {id}: question-round: form refused: {e}"),
+                    Err(e) => {
+                        tracing::warn!(subject = %id, error = %e, "question-round: form refused")
+                    }
                 }
             }
             if !asks.is_empty() {
-                println!(
-                    "glossql ?? {id}: question-round: asking {} of {total} open — {}",
-                    ids.len(),
-                    ids.join(", ")
+                tracing::info!(
+                    subject = %id,
+                    asking = ids.len(),
+                    open = total,
+                    ids = %ids.join(", "),
+                    "question-round"
                 );
                 return Ok(InputRequiredResult::new(Some(asks), Some(ROUND_STATE.into())).into());
             }
@@ -945,7 +947,7 @@ impl ServerHandler for GlossqlMcp {
             // and the brief still travels: an input_responses ruling
             // may have landed even when the statement then refused.
             Err(e) => {
-                println!("glossql !! {id}: {e}");
+                tracing::warn!(subject = %id, error = %e, "refused");
                 let mut blocks = vec![ContentBlock::text(e)];
                 if let Some(landed) = landed_json {
                     blocks.push(ContentBlock::text(
