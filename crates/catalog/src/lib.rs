@@ -283,6 +283,30 @@ impl Lake {
         batches: &[RecordBatch],
         properties: HashMap<String, String>,
     ) -> Result<()> {
+        let span = tracing::debug_span!(
+            "commit",
+            dataset,
+            table,
+            rows = batches.iter().map(|b| b.num_rows()).sum::<usize>()
+        );
+        // Boxed: this sits several awaits below a door, and a wrapper
+        // holding the writer chain by value would copy it onto the stack
+        // once more at construction in a debug build.
+        tracing::Instrument::instrument(
+            Box::pin(self.commit_append(dataset, table, batches, properties)),
+            span,
+        )
+        .await
+    }
+
+    /// The append, under its span.
+    async fn commit_append(
+        &self,
+        dataset: &str,
+        table: &str,
+        batches: &[RecordBatch],
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
         let table = self.catalog.load_table(&ident).await?;
         // Boxed: the writer stack is a deep chain of generic futures, and
@@ -312,6 +336,7 @@ impl Lake {
             // never a single lost race.
             Err(e) => {
                 if is_commit_conflict(&e) {
+                    tracing::warn!("commit conflict after iceberg's own retries");
                     self.conflicts
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }

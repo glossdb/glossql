@@ -216,6 +216,24 @@ fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
     }
 }
 
+/// The text as the one substrate query a read is, or
+/// [`SessionError::NotOneRead`]: anything else — a sequence, a
+/// statement of the language, a query that is not a `SELECT` —
+/// belongs in [`Session::execute`].
+fn one_read(sql: &str) -> Result<DFStatement, SessionError> {
+    let mut statements = GlossqlParser::parse_sql(sql)?;
+    let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
+        if matches!(&**statement, DFStatement::Statement(inner)
+            if matches!(inner.as_ref(), SQLStatement::Query(_))));
+    if !one_query {
+        return Err(SessionError::NotOneRead);
+    }
+    match statements.pop() {
+        Some(Statement::Substrate(statement)) => Ok(*statement),
+        _ => unreachable!("just matched"),
+    }
+}
+
 /// A script reads; it never writes. `SessionContext::sql` permits DDL, DML
 /// and statements by default (datafusion context/mod.rs:614), which would
 /// hand any declared function a door around the statement allowlist.
@@ -458,7 +476,9 @@ impl Session {
     }
 
     /// The statement loop over parsed statements — the plane's channel
-    /// router feeds it the runs between `USE`s.
+    /// router feeds it the runs between `USE`s. Each statement is a
+    /// span under the call's: its place, its kind, the dataset it ran
+    /// on.
     pub(crate) async fn execute_statements(
         &self,
         statements: Vec<Statement>,
@@ -471,14 +491,24 @@ impl Session {
             // a `DECLARE RECIPE` that lands is followed by statements
             // that must see what it landed.
             self.shared.forget_pins();
-            let result = match statement {
-                Statement::Declare(d) => self.declare(*d).await,
-                Statement::Use(u) => self.use_dataset(&u.dataset.value).await,
-                Statement::Gloss(g) => self.gloss(g).await,
-                Statement::Extract(e) => self.extract(e).await,
-                Statement::Probe(p) => self.probe(p).await,
-                Statement::Substrate(s) => self.substrate(*s).await,
+            let span = tracing::info_span!(
+                "statement",
+                index = idx + 1,
+                total,
+                kind = kind(&statement),
+                dataset = %self.dataset().unwrap_or_default(),
+            );
+            let run = async {
+                match statement {
+                    Statement::Declare(d) => self.declare(*d).await,
+                    Statement::Use(u) => self.use_dataset(&u.dataset.value).await,
+                    Statement::Gloss(g) => self.gloss(g).await,
+                    Statement::Extract(e) => self.extract(e).await,
+                    Statement::Probe(p) => self.probe(p).await,
+                    Statement::Substrate(s) => self.substrate(*s).await,
+                }
             };
+            let result = tracing::Instrument::instrument(run, span).await;
             match result {
                 Ok(outcome) => outcomes.push(outcome),
                 // A refusal in a sequence names its place, what landed
@@ -802,6 +832,12 @@ impl Session {
             let row = match measured {
                 Some(row) => row,
                 None => {
+                    tracing::info!(
+                        function = %name,
+                        dataset = %resolved.dataset,
+                        subject = %resolved.subject,
+                        "measuring"
+                    );
                     // A measurement's body is one SQL query the engine
                     // plans and runs (§6) — anything else is refused
                     // with the shape the declaration owes.
@@ -913,6 +949,19 @@ impl Session {
         &self,
         statement: datafusion::sql::parser::Statement,
     ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
+        // Boxed for the reason `query_stream_with_params` is.
+        tracing::Instrument::instrument(
+            Box::pin(self.plan_classed(statement)),
+            tracing::debug_span!("plan"),
+        )
+        .await
+    }
+
+    /// The planning, under its span.
+    async fn plan_classed(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
         let record = resolved.touches_record();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
@@ -949,16 +998,34 @@ impl Session {
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
-        let mut statements = GlossqlParser::parse_sql(sql)?;
-        let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
-            if matches!(&**statement, DFStatement::Statement(inner)
-                if matches!(inner.as_ref(), SQLStatement::Query(_))));
-        if !one_query {
-            return Err(SessionError::NotOneRead);
-        }
-        let Some(Statement::Substrate(mut statement)) = statements.pop() else {
-            unreachable!("just matched")
-        };
+        // Before the span: the door tries every call as a read first,
+        // and a sequence that goes on to execute is not a read that
+        // failed — it never opens one.
+        let statement = one_read(sql)?;
+        let span = tracing::info_span!(
+            "read",
+            actor = %self.actor.kind,
+            subject = %self.actor.id,
+            dataset = %self.dataset().unwrap_or_default(),
+            sql_digest = %crate::plane::sql_digest(sql),
+            sql_len = sql.len(),
+        );
+        // Boxed: the read's future carries the pre-pass, every door body
+        // it plans and the cube builds behind them. Held by value under
+        // the span's wrapper, a debug build copies it onto the stack once
+        // more at construction — the ceiling the cube suite runs at.
+        tracing::Instrument::instrument(Box::pin(self.read_stream(statement, sql, params)), span)
+            .await
+    }
+
+    /// The read, under its span.
+    async fn read_stream(
+        &self,
+        mut statement: DFStatement,
+        sql: &str,
+        params: Option<ParamValues>,
+    ) -> Result<QueryStream, SessionError> {
+        tracing::debug!(text = %sql, "the read's text");
         // Named string params bind into the AST before the pre-pass, so
         // door arguments (`metric_series(grain => $grain)`) resolve;
         // everything else still binds through the plan below.
@@ -967,17 +1034,27 @@ impl Session {
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
-        let (mut plan, record) = self.plan_statement_classed(*statement).await?;
+        let (mut plan, record) = self.plan_statement_classed(statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
+        // The engine's own path, in two steps instead of
+        // `DataFrame::execute_stream`, so the physical plan stays in
+        // hand: its operators' counts are read when the stream ends.
+        let physical = self
+            .ctx
+            .execute_logical_plan(plan)
+            .await?
+            .create_physical_plan()
+            .await?;
+        let stream =
+            datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
         Ok(QueryStream {
-            stream: self
-                .ctx
-                .execute_logical_plan(plan)
-                .await?
-                .execute_stream()
-                .await?,
+            stream: Box::pin(crate::execution::Metered::new(
+                stream,
+                physical,
+                tracing::Span::current(),
+            )),
             metadata_only,
             record,
         })
@@ -1040,13 +1117,23 @@ impl Session {
         }
         let plan = self.plan_statement(statement).await?;
         let frame = self.ctx.execute_logical_plan(plan).await?;
+        // The same two-step path as a streaming read, so the operators'
+        // counts close the statement's span when the stream is done —
+        // `USE ds; SELECT …`, the agent's usual call, reads here.
+        let physical = frame.create_physical_plan().await?;
+        let schema = physical.schema();
+        let stream =
+            datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
+        let mut stream = Box::pin(crate::execution::Metered::new(
+            stream,
+            physical,
+            tracing::Span::current(),
+        ));
         // Bounded like the streaming door, for the same reason: the reader
         // sees at most its cap, so the engine should not be asked for more
         // than that. One row past the cap is kept, which is how the door
         // knows the answer was truncated; collecting the whole result
         // and trimming at render would defeat the cap.
-        let mut stream = frame.execute_stream().await?;
-        let schema = stream.schema();
         let mut batches = Vec::new();
         let mut rows = 0usize;
         while let Some(batch) = stream.next().await {
@@ -1357,4 +1444,16 @@ fn store_delete(statement: &DFStatement) -> Option<String> {
     }
     let target = name.0[0].as_ident()?.value.to_lowercase();
     (target == "glossary").then_some(target)
+}
+
+/// A statement's kind, as its span names it.
+fn kind(statement: &Statement) -> &'static str {
+    match statement {
+        Statement::Declare(_) => "declare",
+        Statement::Use(_) => "use",
+        Statement::Gloss(_) => "gloss",
+        Statement::Extract(_) => "extract",
+        Statement::Probe(_) => "probe",
+        Statement::Substrate(_) => "substrate",
+    }
 }

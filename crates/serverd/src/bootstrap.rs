@@ -27,9 +27,13 @@ pub async fn bootstrap(
     // The shipped system is the workspace's, not a dataset's: it
     // declares on the unbound channel.
     let session = plane.channel(actor, None).await?;
-    session
-        .execute(&glossql_scripts::library::declarations()?)
-        .await?;
-    session.execute(glossql_scripts::library::KIT).await?;
+    let shipped = async {
+        session
+            .execute(&glossql_scripts::library::declarations()?)
+            .await?;
+        session.execute(glossql_scripts::library::KIT).await?;
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+    tracing::Instrument::instrument(Box::pin(shipped), tracing::info_span!("bootstrap")).await?;
     Ok(())
 }
