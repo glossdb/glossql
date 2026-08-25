@@ -98,9 +98,13 @@ pub fn install() -> Result<Telemetry, String> {
         EnvFilter::new(requested)
     };
     let traces = traces().map_err(|e| format!("{ENDPOINT_VAR}: {e}"))?;
-    let export = traces
-        .as_ref()
-        .map(|provider| tracing_opentelemetry::layer().with_tracer(provider.tracer("glossql")));
+    // No thread attributes: a span here is a task's, and the thread it
+    // was opened on says nothing about where it ran.
+    let export = traces.as_ref().map(|provider| {
+        tracing_opentelemetry::layer()
+            .with_threads(false)
+            .with_tracer(provider.tracer("glossql"))
+    });
     let registry = tracing_subscriber::registry().with(filter).with(export);
     let lines = tracing_subscriber::fmt::layer().with_span_events(FmtSpan::CLOSE);
     if std::io::stdout().is_terminal() {

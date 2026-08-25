@@ -1117,13 +1117,23 @@ impl Session {
         }
         let plan = self.plan_statement(statement).await?;
         let frame = self.ctx.execute_logical_plan(plan).await?;
+        // The same two-step path as a streaming read, so the operators'
+        // counts close the statement's span when the stream is done —
+        // `USE ds; SELECT …`, the agent's usual call, reads here.
+        let physical = frame.create_physical_plan().await?;
+        let schema = physical.schema();
+        let stream =
+            datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
+        let mut stream = Box::pin(crate::execution::Metered::new(
+            stream,
+            physical,
+            tracing::Span::current(),
+        ));
         // Bounded like the streaming door, for the same reason: the reader
         // sees at most its cap, so the engine should not be asked for more
         // than that. One row past the cap is kept, which is how the door
         // knows the answer was truncated; collecting the whole result
         // and trimming at render would defeat the cap.
-        let mut stream = frame.execute_stream().await?;
-        let schema = stream.schema();
         let mut batches = Vec::new();
         let mut rows = 0usize;
         while let Some(batch) = stream.next().await {
