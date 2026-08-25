@@ -40,7 +40,7 @@ over the file, which is how a container is configured without one):
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` is appended). Set, the record's spans are also exported there — OTLP over HTTP, protobuf, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_HEADERS` for a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES` for what names the deployment beyond `service.name=glossql` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` and `/v1/logs` are appended). Set, the record is also exported there — spans as traces, events as logs, OTLP over HTTP, protobuf, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_HEADERS` for a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES` for what names the deployment beyond `service.name=glossql` |
 
 `.env.example` at the repository root lists them; `.env` is never
 committed.
@@ -60,12 +60,16 @@ The text of a call is a `debug` event inside its span and nothing
 else, because statement bodies and groundings carry data. A refusal
 carries its reason and never the token.
 
-With `OTEL_EXPORTER_OTLP_ENDPOINT` set the same spans go to the
-collector as well, under `service.name=glossql`, with the events
-inside them; a `traceparent` header a client sends makes its request
-a child of the client's trace. The export runs on the OpenTelemetry
-SDK's own thread, never on the engine's runtime, and is flushed when
-the server stops on SIGINT or SIGTERM.
+With `OTEL_EXPORTER_OTLP_ENDPOINT` set the same record goes to the
+collector as well, under `service.name=glossql`: the spans as traces,
+with their events; the events as log records, each carrying the trace
+and span id it happened under, so a log line leads to its trace. A
+`traceparent` header a client sends makes its request a child of the
+client's trace. The export runs on the OpenTelemetry SDK's own
+threads, never on the engine's runtime, and is flushed when the server
+stops on SIGINT or SIGTERM. Metrics are not exported: what a
+deployment counts — request rates, latencies — a backend derives from
+the spans.
 
 ## Tokens
 

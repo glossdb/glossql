@@ -95,13 +95,15 @@ blake3 = "1"
 # reqwest already in the tree; tracing-opentelemetry is the bridge from
 # `tracing` spans to theirs and pins the opentelemetry it works with.
 opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
 # The exporter's own client. It rides reqwest 0.13 while iceberg-rust
 # (main, 0.12.12) and oauth2 5 pin 0.12, so the tree carries both. The
 # way back to one: oauth2-reqwest (same author, reqwest 0.13, alpha as
 # of 0.1.0-alpha.3) for the login, once iceberg-rust has moved too. The
 # SDK exports from its own thread, which is why the blocking client fits.
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client"] }
+# The bridge from `tracing` events to the SDK's log records.
+opentelemetry-appender-tracing = "0.32"
 # The request span on every door, and the `traceparent` a client sends
 # becoming its parent. tower-http is in the tree through reqwest.
 tower-http = { version = "0.6", features = ["trace"] }

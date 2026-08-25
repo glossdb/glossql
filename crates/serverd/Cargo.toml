@@ -31,6 +31,7 @@ opentelemetry-otlp = { workspace = true }
 tower-http = { workspace = true }
 opentelemetry-http = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 # The two fetches a resource server makes: the issuer's discovery
 # document and its key set. reqwest is already in the tree through
