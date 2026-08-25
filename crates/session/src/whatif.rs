@@ -37,7 +37,7 @@ use glossql_glossary::Scope;
 use serde_json::Value;
 
 use crate::reads::{Shared, verdicts};
-use crate::session::SessionError;
+use crate::session::{Matrix, SessionError};
 
 const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
 /// The bracket rule: strengths placed on both sides
@@ -466,7 +466,20 @@ async fn concept_rows(
     }
     let q = shared
         .runtime()
-        .band_grid(&train_x, rows, cols, &train_y, &test_x, post.len(), &ALPHAS)
+        .band_grid(
+            Matrix {
+                data: &train_x,
+                rows,
+                cols,
+            },
+            &train_y,
+            Matrix {
+                data: &test_x,
+                rows: post.len(),
+                cols,
+            },
+            &ALPHAS,
+        )
         .map_err(|e| refuse(format!("not served: the band kernel refused — {e}")))?;
     if q.len() != post.len() * ALPHAS.len() {
         return Err(SessionError::Runtime(format!(

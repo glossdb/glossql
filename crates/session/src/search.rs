@@ -21,7 +21,7 @@ use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident,
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::session::{Matrix, SessionError};
 
 /// `derivation_candidates('table')` — row-grain arithmetic identities
 /// among the table's numeric columns (`a = b * c` and `a = b + c`) with
@@ -874,11 +874,11 @@ pub(crate) async fn relationship_candidates(
             let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
             let val_idx = b.schema().index_of("val").map_err(|e| bad(e.to_string()))?;
             let vals = b.column(val_idx);
-            for r in 0..b.num_rows() {
+            for (r, &c) in ci.iter().enumerate() {
                 if vals.is_null(r) {
                     continue;
                 }
-                sets.entry(ci[r] as usize)
+                sets.entry(c as usize)
                     .or_default()
                     .insert(array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?);
             }
@@ -2215,16 +2215,13 @@ pub(crate) async fn metric_band_walk(
             if train_y.len() < MIN_TRAIN {
                 continue;
             }
+            let train = Matrix {
+                data: &train_x,
+                rows: train_y.len(),
+                cols: 5,
+            };
             let (q, pit) = runtime
-                .band_point(
-                    &train_x,
-                    train_y.len(),
-                    5,
-                    &train_y,
-                    &filled(&feats[t - 1]),
-                    &ALPHAS,
-                    actual,
-                )
+                .band_point(train, &train_y, &filled(&feats[t - 1]), &ALPHAS, actual)
                 .map_err(SessionError::Runtime)?;
             points.push(json!({
                 "period": &series[t].0[..7], "actual": actual,

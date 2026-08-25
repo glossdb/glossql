@@ -354,7 +354,14 @@ pub(crate) fn judged_time_column(
     subjects: &HashMap<String, String>,
     temporal: &HashMap<String, Verdict>,
 ) -> Option<(String, Option<Resolution>, bool)> {
-    let mut best: Option<(String, Option<Resolution>, bool, (bool, f64))> = None;
+    /// A judged column and the rank that put it ahead.
+    struct Ranked {
+        column: String,
+        cadence: Option<Resolution>,
+        current: bool,
+        rank: (bool, f64),
+    }
+    let mut best: Option<Ranked> = None;
     for f in fields.fields() {
         if !crate::whatif::is_temporal(f.data_type()) {
             continue;
@@ -372,11 +379,16 @@ pub(crate) fn judged_time_column(
             cadence.is_some(),
             v.body["completeness"]["ratio"].as_f64().unwrap_or(0.0),
         );
-        if best.as_ref().is_none_or(|(.., b)| rank > *b) {
-            best = Some((f.name().clone(), cadence, v.current, rank));
+        if best.as_ref().is_none_or(|b| rank > b.rank) {
+            best = Some(Ranked {
+                column: f.name().clone(),
+                cadence,
+                current: v.current,
+                rank,
+            });
         }
     }
-    best.map(|(c, r, current, _)| (c, r, current))
+    best.map(|b| (b.column, b.cadence, b.current))
 }
 
 /// Every current grounding's cube, built where missing. The slots are

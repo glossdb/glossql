@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session};
+use glossql_session::{FunctionRuntime, Matrix, Outcome, Session};
 
 /// A kernel that scores each row by its summed deviation from the
 /// column means — the mechanics stand-in for the density: a planted
@@ -26,7 +26,12 @@ struct MeanKernel {
 }
 
 impl FunctionRuntime for MeanKernel {
-    fn misfit_scores(&self, x: &[f64], rows: usize, cols: usize) -> Result<Vec<f64>, String> {
+    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+        let Matrix {
+            data: x,
+            rows,
+            cols,
+        } = x;
         self.fits.fetch_add(1, Ordering::SeqCst);
         let mut means = vec![0f64; cols];
         for (c, mean) in means.iter_mut().enumerate() {
@@ -59,8 +64,8 @@ impl FunctionRuntime for MeanKernel {
 struct NanKernel;
 
 impl FunctionRuntime for NanKernel {
-    fn misfit_scores(&self, _: &[f64], rows: usize, _: usize) -> Result<Vec<f64>, String> {
-        Ok(vec![f64::NAN; rows])
+    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+        Ok(vec![f64::NAN; x.rows])
     }
 }
 

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::{Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_scripts::KernelRuntime;
-use glossql_session::FunctionRuntime;
+use glossql_session::{FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
 fn sibling() -> &'static Path {
@@ -375,7 +375,20 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
     }
     let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
     let q = rt
-        .band_grid(&train_x, train_y.len(), 2, &train_y, &test_x, 6, &alphas)
+        .band_grid(
+            Matrix {
+                data: &train_x,
+                rows: train_y.len(),
+                cols: 2,
+            },
+            &train_y,
+            Matrix {
+                data: &test_x,
+                rows: 6,
+                cols: 2,
+            },
+            &alphas,
+        )
         .unwrap();
 
     assert_eq!(q.len(), 6 * alphas.len());
@@ -418,7 +431,13 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
         };
         x.extend([a, b, a + b]);
     }
-    let scores = rt.misfit_scores(&x, n, 3).unwrap();
+    let scores = rt
+        .misfit_scores(Matrix {
+            data: &x,
+            rows: n,
+            cols: 3,
+        })
+        .unwrap();
 
     assert_eq!(scores.len(), n);
     let worst = scores

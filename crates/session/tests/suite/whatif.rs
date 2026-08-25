@@ -14,7 +14,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{FunctionRuntime, Outcome, Session};
+use glossql_session::{FunctionRuntime, Matrix, Outcome, Session};
 
 /// A kernel that interpolates linearly along the factor axis within each
 /// month — the mechanics stand-in for the model: exact on the linear
@@ -27,14 +27,21 @@ struct LinearKernel {
 impl FunctionRuntime for LinearKernel {
     fn band_grid(
         &self,
-        train_x: &[f64],
-        rows: usize,
-        cols: usize,
+        train: Matrix<'_>,
         train_y: &[f64],
-        test_x: &[f64],
-        test_rows: usize,
+        test: Matrix<'_>,
         alphas: &[f64],
     ) -> Result<Vec<f64>, String> {
+        let Matrix {
+            data: train_x,
+            rows,
+            cols,
+        } = train;
+        let Matrix {
+            data: test_x,
+            rows: test_rows,
+            ..
+        } = test;
         self.fits.fetch_add(1, Ordering::SeqCst);
         let mut out = Vec::with_capacity(test_rows * alphas.len());
         for t in 0..test_rows {

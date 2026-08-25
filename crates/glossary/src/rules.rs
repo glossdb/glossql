@@ -24,6 +24,9 @@ use crate::{Error, Result};
 pub const RANK_HUMAN: u8 = 0;
 pub const RANK_AGENT: u8 = 1;
 pub const RANK_FUNCTION: u8 = 2;
+// The order is the ranking: lower outranks higher, and the three stay
+// in this order or `serving` serves the wrong voice.
+const _: () = assert!(RANK_HUMAN < RANK_AGENT && RANK_AGENT < RANK_FUNCTION);
 
 pub fn rank_of(actor_kind: &str) -> u8 {
     match actor_kind {
@@ -274,7 +277,6 @@ mod tests {
     fn a_human_outranks_an_agent_and_both_outrank_a_function() {
         assert_eq!(rank_of("human"), RANK_HUMAN);
         assert_eq!(rank_of("agent"), RANK_AGENT);
-        assert!(RANK_AGENT < RANK_FUNCTION);
         let (h, a) = (slot("t.c", RANK_HUMAN, "{}"), slot("t.c", RANK_AGENT, "{}"));
         assert_eq!(serving(&[&a, &h]), Some(1));
         assert_eq!(serving(&[&h, &a]), Some(0));

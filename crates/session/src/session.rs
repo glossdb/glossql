@@ -119,6 +119,15 @@ pub enum Outcome {
 /// its witness's `slots` — so nothing here evaluates a body; the seam
 /// carries only what SQL cannot: the model forwards and the reconcile
 /// discriminator. Tests inject fakes.
+/// A row-major matrix borrowed from the caller: `rows × cols` values,
+/// nulls as NaN where a kernel admits them.
+#[derive(Clone, Copy, Debug)]
+pub struct Matrix<'a> {
+    pub data: &'a [f64],
+    pub rows: usize,
+    pub cols: usize,
+}
+
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     /// The aggregate statistics the runtime ships (`profile` — the
     /// shape SQL lacks; `mad` and `entropy` ride inside its struct).
@@ -131,20 +140,16 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
 
     /// The band kernel behind the `whatif.` door:
     /// fit one estimator on the replayed worlds, quantiles at `alphas`
-    /// for every test row. Slices are row-major; the return is
-    /// row-major (test_rows × alphas). The runtime that carries the
-    /// model overrides this (the ensemble — sparse replay grids are the
-    /// regime it was ruled in for); the default refuses, and the door
-    /// reports why.
-    #[allow(clippy::too_many_arguments)]
+    /// for every test row. `train` and `test` share their columns; the
+    /// return is row-major (test rows × alphas). The runtime that
+    /// carries the model overrides this (the ensemble — sparse replay
+    /// grids are the regime it was ruled in for); the default refuses,
+    /// and the door reports why.
     fn band_grid(
         &self,
-        _train_x: &[f64],
-        _rows: usize,
-        _cols: usize,
+        _train: Matrix<'_>,
         _train_y: &[f64],
-        _test_x: &[f64],
-        _test_rows: usize,
+        _test: Matrix<'_>,
         _alphas: &[f64],
     ) -> Result<Vec<f64>, String> {
         Err("this runtime carries no band kernel".into())
@@ -153,10 +158,10 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     /// The misfit kernel behind the `misfit.` door (fixture 20): fit
     /// on the frame, score the same frame — one mean
     /// log density per row, log space end to end (higher = fits the
-    /// frame better). `x` is row-major (rows × cols), nulls as NaN.
-    /// The runtime that carries the model overrides this; the default
-    /// refuses, and the door reports why.
-    fn misfit_scores(&self, _x: &[f64], _rows: usize, _cols: usize) -> Result<Vec<f64>, String> {
+    /// frame better). Nulls ride as NaN. The runtime that carries the
+    /// model overrides this; the default refuses, and the door reports
+    /// why.
+    fn misfit_scores(&self, _x: Matrix<'_>) -> Result<Vec<f64>, String> {
         Err("this runtime carries no misfit kernel".into())
     }
 
@@ -178,16 +183,14 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     }
 
     /// One TabICL fit and read, behind the metric-bands walk (stage 5):
-    /// train on `rows` × `cols` features (row-major), predict one test
-    /// row, return the band value per alpha in order and the PIT — the
+    /// train on `train`, predict the one test row `test_x` (its width),
+    /// return the band value per alpha in order and the PIT — the
     /// quantile at which `actual` lands in the predicted distribution.
     /// The runtime that carries the model overrides this; the default
     /// refuses, and the door reports why.
     fn band_point(
         &self,
-        _train_x: &[f64],
-        _rows: usize,
-        _cols: usize,
+        _train: Matrix<'_>,
         _train_y: &[f64],
         _test_x: &[f64],
         _alphas: &[f64],
