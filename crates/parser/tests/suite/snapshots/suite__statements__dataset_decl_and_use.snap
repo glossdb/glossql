@@ -1,0 +1,38 @@
+---
+source: crates/parser/tests/suite/statements.rs
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE DATASET fin SET (purpose: 'working-capital analysis');\\nUSE fin;\").expect(\"must parse\")"
+---
+[
+    Declare(
+        Dataset(
+            DatasetDecl {
+                name: Ident {
+                    value: "fin",
+                    quote_style: None,
+                    span: Span(Location(1,17)..Location(1,20)),
+                },
+                settings: [
+                    Setting {
+                        key: Ident {
+                            value: "purpose",
+                            quote_style: None,
+                            span: Span(Location(1,26)..Location(1,33)),
+                        },
+                        value: String(
+                            "working-capital analysis",
+                        ),
+                    },
+                ],
+            },
+        ),
+    ),
+    Use(
+        Use {
+            dataset: Ident {
+                value: "fin",
+                quote_style: None,
+                span: Span(Location(2,5)..Location(2,8)),
+            },
+        },
+    ),
+]

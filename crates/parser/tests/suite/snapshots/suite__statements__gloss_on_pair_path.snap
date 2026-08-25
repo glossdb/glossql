@@ -1,0 +1,57 @@
+---
+source: crates/parser/tests/suite/statements.rs
+assertion_line: 52
+expression: "GlossqlParser ::\nparse_sql(r#\"GLOSS fk_note ON orders.customer_id -> customers.id AS $${\"value\": \"2% orphaned rows\"}$$;\"#).expect(\"must parse\")"
+---
+[
+    Gloss(
+        Gloss {
+            aspect: Ident {
+                value: "fk_note",
+                quote_style: None,
+                span: Span(Location(1,7)..Location(1,14)),
+            },
+            subject: Pair(
+                PairPath {
+                    left: RelSide {
+                        dataset: None,
+                        table: Ident {
+                            value: "orders",
+                            quote_style: None,
+                            span: Span(Location(1,18)..Location(1,24)),
+                        },
+                        columns: [
+                            Ident {
+                                value: "customer_id",
+                                quote_style: None,
+                                span: Span(Location(1,25)..Location(1,36)),
+                            },
+                        ],
+                    },
+                    op: ManyToOne,
+                    right: RelSide {
+                        dataset: None,
+                        table: Ident {
+                            value: "customers",
+                            quote_style: None,
+                            span: Span(Location(1,40)..Location(1,49)),
+                        },
+                        columns: [
+                            Ident {
+                                value: "id",
+                                quote_style: None,
+                                span: Span(Location(1,50)..Location(1,52)),
+                            },
+                        ],
+                    },
+                },
+            ),
+            body: JsonBody {
+                value: Object {
+                    "value": String("2% orphaned rows"),
+                },
+                raw: "{\"value\": \"2% orphaned rows\"}",
+            },
+        },
+    ),
+]

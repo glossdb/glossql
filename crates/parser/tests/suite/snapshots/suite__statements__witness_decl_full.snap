@@ -1,0 +1,36 @@
+---
+source: crates/parser/tests/suite/statements.rs
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN) DETECTOR behavior_entropy THRESHOLD 0.7;\").expect(\"must parse\")"
+---
+[
+    Declare(
+        Witness(
+            WitnessDecl {
+                name: Ident {
+                    value: "behavior_w",
+                    quote_style: None,
+                    span: Span(Location(1,17)..Location(1,27)),
+                },
+                aspect: Ident {
+                    value: "behavior",
+                    quote_style: None,
+                    span: Span(Location(1,31)..Location(1,39)),
+                },
+                speakers: [
+                    Agent,
+                    Human,
+                ],
+                detector: Some(
+                    Ident {
+                        value: "behavior_entropy",
+                        quote_style: None,
+                        span: Span(Location(1,67)..Location(1,83)),
+                    },
+                ),
+                threshold: Some(
+                    "0.7",
+                ),
+            },
+        ),
+    ),
+]

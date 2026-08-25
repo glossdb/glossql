@@ -22,8 +22,9 @@ linker_messages = "allow"
 large_futures = "warn"
 redundant_clone = "warn"
 
-# Each integration-test binary statically links datafusion + candle; with
-# default full debug info that was ~0.5GB per binary × ~25 test targets ×
+# Every test binary statically links datafusion + candle — one suite per
+# crate (tests/suite/main.rs) plus the unit-test binaries; with default
+# full debug info that was ~0.5GB per binary × every test target ×
 # every stale hashed copy — a target/ in the hundreds of GB and an AV scan
 # per link. Line tables keep workspace backtraces (file:line); dependencies
 # carry none.

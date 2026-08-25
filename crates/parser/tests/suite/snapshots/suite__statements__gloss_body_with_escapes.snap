@@ -1,0 +1,32 @@
+---
+source: crates/parser/tests/suite/statements.rs
+expression: "GlossqlParser ::\nparse_sql(r#\"GLOSS type_patterns ON fin AS $${\"expr\": \"STRPTIME(\\\"{col}\\\", '%d.%m.%Y')\"}$$;\"#).expect(\"must parse\")"
+---
+[
+    Gloss(
+        Gloss {
+            aspect: Ident {
+                value: "type_patterns",
+                quote_style: None,
+                span: Span(Location(1,7)..Location(1,20)),
+            },
+            subject: Path(
+                Path {
+                    segments: [
+                        Ident {
+                            value: "fin",
+                            quote_style: None,
+                            span: Span(Location(1,24)..Location(1,27)),
+                        },
+                    ],
+                },
+            ),
+            body: JsonBody {
+                value: Object {
+                    "expr": String("STRPTIME(\"{col}\", '%d.%m.%Y')"),
+                },
+                raw: "{\"expr\": \"STRPTIME(\\\"{col}\\\", '%d.%m.%Y')\"}",
+            },
+        },
+    ),
+]
