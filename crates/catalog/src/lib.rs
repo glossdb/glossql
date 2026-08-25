@@ -293,14 +293,15 @@ impl Lake {
         // its conflict retryable so that backoff fires. A loop out here
         // only doubled the attempts and re-entered the backoff with no
         // delay of its own.
-        match Transaction::new(&table)
+        // One transaction: the action is built from it and applied to it.
+        // `Transaction::new` clones the table (iceberg transaction/mod.rs),
+        // so a second one is a second copy of the metadata for nothing.
+        let tx = Transaction::new(&table);
+        let append = tx
             .fast_append()
             .add_data_files(files)
-            .set_snapshot_properties(properties)
-            .apply(Transaction::new(&table))?
-            .commit(self.catalog.as_ref())
-            .await
-        {
+            .set_snapshot_properties(properties);
+        match append.apply(tx)?.commit(self.catalog.as_ref()).await {
             Ok(_) => Ok(()),
             // Counted where it surfaces, which is after iceberg has spent
             // its whole retry budget: one here is an exhausted backoff,
@@ -370,9 +371,17 @@ impl Lake {
         use std::sync::atomic::Ordering;
         self.walks.fetch_add(1, Ordering::Relaxed);
         let ns = NamespaceIdent::new(dataset.to_string());
-        let mut out = Vec::new();
-        for ident in self.catalog.list_tables(&ns).await? {
-            let table = self.catalog.load_table(&ident).await?;
+        let idents = self.catalog.list_tables(&ns).await?;
+        // Every table's load in flight at once, as the substrate's own
+        // schema provider drives them (iceberg-datafusion schema.rs,
+        // `try_join_all`): a load is catalog round trips plus a metadata
+        // parse, and over a remote catalog the trips are the cost.
+        let tables = futures::future::try_join_all(
+            idents.iter().map(|ident| self.catalog.load_table(ident)),
+        )
+        .await?;
+        let mut out = Vec::with_capacity(tables.len());
+        for (ident, table) in idents.into_iter().zip(tables) {
             let snapshot_id = table.metadata().current_snapshot_id();
             let columns = table
                 .metadata()
@@ -478,14 +487,12 @@ impl Lake {
     ) -> Result<()> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
         let table = self.catalog.load_table(&ident).await?;
-        let mut action = Transaction::new(&table).update_table_properties();
+        let tx = Transaction::new(&table);
+        let mut action = tx.update_table_properties();
         for (k, v) in properties {
             action = action.set(k, v);
         }
-        action
-            .apply(Transaction::new(&table))?
-            .commit(self.catalog.as_ref())
-            .await?;
+        action.apply(tx)?.commit(self.catalog.as_ref()).await?;
         Ok(())
     }
 

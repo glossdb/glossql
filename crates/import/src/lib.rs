@@ -548,14 +548,15 @@ impl TableFunctionImpl for ReadFiles {
         // forced by a trait rather than by a blocking driver. Against the
         // calling session, so the object store, the runtime and the
         // format options inference reads are the ones the scan will use.
+        // The config infers its own schema rather than being handed one:
+        // a schema *specified* makes `ListingTable` decline the session's
+        // statistics cache, a schema *inferred* keeps it
+        // (datafusion-catalog-listing table.rs, `SchemaSource`).
         let session = args.session();
-        let inferred = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(options.infer_schema(session, &url))
+        let config = ListingTableConfig::new(url).with_listing_options(options);
+        let config = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(config.infer_schema(session))
         })?;
-
-        let config = ListingTableConfig::new(url)
-            .with_listing_options(options)
-            .with_schema(inferred);
         let provider: Arc<dyn TableProvider> = Arc::new(ListingTable::try_new(config)?);
         if let Some(seen) = &self.seen {
             seen.lock()

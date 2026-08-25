@@ -1,7 +1,7 @@
 //! `try_to_date` / `try_to_timestamp`: format parsing that yields NULL on
 //! failure — recipe vocabulary (SPEC.md §3: the recipe carries the casts,
 //! and one dirty value must cost a NULL cell, never the import). DataFusion
-//! 53's own `to_date`/`to_timestamp` abort the whole scan on one dirty
+//! 54's own `to_date`/`to_timestamp` abort the whole scan on one dirty
 //! value and ship no `try_` variants (verified in source), so
 //! these register in the recipe/probe context and in the session — usable
 //! in recipes, probes, scripts, and user SQL alike.
@@ -9,8 +9,9 @@
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    Array, ArrayRef, Date32Array, StringArray, TimestampMicrosecondArray,
+    Array, ArrayRef, AsArray, Date32Array, StringArray, StringArrayType, TimestampMicrosecondArray,
 };
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, TimeUnit};
 use datafusion::common::{Result as DFResult, exec_err};
 use datafusion::logical_expr::{
@@ -31,11 +32,16 @@ struct TryParse {
 }
 
 impl TryParse {
+    /// Any argument types: the value column arrives at whichever string
+    /// width the engine carries it (Utf8View off a parquet scan), and a
+    /// signature naming `Utf8` alone made the planner coerce the column
+    /// first — a copy of every row. `invoke_with_args` checks the types
+    /// itself and dispatches on the width.
     fn date() -> Self {
         TryParse {
             name: "try_to_date",
             returns: DataType::Date32,
-            signature: Signature::variadic(vec![DataType::Utf8], Volatility::Immutable),
+            signature: Signature::variadic_any(Volatility::Immutable),
         }
     }
 
@@ -43,7 +49,7 @@ impl TryParse {
         TryParse {
             name: "try_to_timestamp",
             returns: DataType::Timestamp(TimeUnit::Microsecond, None),
-            signature: Signature::variadic(vec![DataType::Utf8], Volatility::Immutable),
+            signature: Signature::variadic_any(Volatility::Immutable),
         }
     }
 }
@@ -79,16 +85,39 @@ impl ScalarUDFImpl for TryParse {
     /// ambiguous pair last, in the order the source system writes them.
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DFResult<ColumnarValue> {
         let arrays = ColumnarValue::values_to_arrays(&args.args)?;
-        let Some(values) = arrays[0].as_any().downcast_ref::<StringArray>() else {
-            return exec_err!("{} expects a string column", self.name);
-        };
+        // The formats are the author's literals; whatever width the
+        // planner spelled them at, Utf8 is one cast of a handful of
+        // strings (and none at all when they already are).
         let mut formats = Vec::with_capacity(arrays.len() - 1);
         for array in &arrays[1..] {
-            let Some(format) = array.as_any().downcast_ref::<StringArray>() else {
+            if !matches!(
+                array.data_type(),
+                DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
+            ) {
                 return exec_err!("{} expects string formats", self.name);
-            };
-            formats.push(format);
+            }
+            formats.push(cast(array, &DataType::Utf8)?);
         }
+        let formats: Vec<&StringArray> = formats.iter().map(|f| f.as_string::<i32>()).collect();
+        // The column at whichever width the engine carries it. A parquet
+        // scan under DataFusion 54 yields Utf8View, and a downcast to
+        // `StringArray` alone made the planner coerce the whole column
+        // first — a copy per row — before a single value was read. Three
+        // arms, as datafusion-functions' own datetime dispatch has them.
+        let values = &arrays[0];
+        let out = match values.data_type() {
+            DataType::Utf8 => self.parse(values.as_string::<i32>(), &formats),
+            DataType::LargeUtf8 => self.parse(values.as_string::<i64>(), &formats),
+            DataType::Utf8View => self.parse(values.as_string_view(), &formats),
+            other => return exec_err!("{} expects a string column, not {other}", self.name),
+        };
+        Ok(ColumnarValue::Array(out))
+    }
+}
+
+impl TryParse {
+    /// Every row through the format ladder, into the declared type.
+    fn parse<'a, V: StringArrayType<'a>>(&self, values: V, formats: &[&StringArray]) -> ArrayRef {
         // The first format that parses this row's value, in the order
         // the author named them.
         let parsed = |i: usize, take: &dyn Fn(&str, &str) -> Option<i64>| -> Option<i64> {
@@ -126,6 +155,6 @@ impl ScalarUDFImpl for TryParse {
                 ))
             }
         };
-        Ok(ColumnarValue::Array(out))
+        out
     }
 }

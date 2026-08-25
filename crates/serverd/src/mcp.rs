@@ -825,7 +825,7 @@ impl ServerHandler for GlossqlMcp {
                 let mut notes = Vec::new();
                 for (key, raw) in responses.iter() {
                     notes.push(match serde_json::from_value::<ElicitResult>(raw.clone()) {
-                        Ok(answer) => self.digest_round(key, answer, &session).await,
+                        Ok(answer) => Box::pin(self.digest_round(key, answer, &session)).await,
                         Err(e) => format!("question-round: the answer does not parse: {e}"),
                     });
                 }

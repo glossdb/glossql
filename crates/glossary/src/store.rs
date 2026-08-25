@@ -813,12 +813,16 @@ impl Store {
 
     /// Glosses at or under a table — what `DROP TABLE` refuses on.
     pub async fn glosses_under(&self, dataset: &str, table: &str) -> Result<i64> {
+        // `dataset` is the relation's partition column: asked of the
+        // scan, it prunes to the dataset's files; asked of the rows, it
+        // read the whole workspace first.
         let scope = Scope::Subject(table.to_string());
         Ok(self
-            .glossary_history()
+            .metadata
+            .scan_where("glossary", "dataset", dataset)
             .await?
             .iter()
-            .filter(|g| g.dataset == dataset && scope.admits(&g.subject))
+            .filter(|r| scope.admits(&text(&r.cells, 1)))
             .count() as i64)
     }
 

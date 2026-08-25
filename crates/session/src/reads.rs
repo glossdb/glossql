@@ -528,8 +528,11 @@ impl RelationPlanner for GlossqlReads {
         // `metric_series(grain => …)`, the store's relations. Keyed by the factor's
         // own rendering, which is what arrives here again: a lookup —
         // nothing computes, fetches or blocks during planning.
-        if let Some(batch) = self.resolved.batch(&relation.to_string()) {
-            let provider = MemTable::try_new(batch.schema(), vec![vec![batch.clone()]])?;
+        if let Some(served) = self.resolved.batch(&relation.to_string()) {
+            // One partition holding the door's batches in order: read as
+            // they stand, copied into nothing.
+            let provider =
+                MemTable::try_new(served.schema.clone(), vec![served.partitions.clone()])?;
             let plan = LogicalPlanBuilder::scan(
                 display_name(&relation),
                 provider_as_source(Arc::new(provider)),
@@ -667,7 +670,7 @@ pub(crate) async fn compute_batch(
     shared: &Arc<Shared>,
     factor: &TableFactor,
     resolved: &crate::prepass::Resolved,
-) -> Result<Option<RecordBatch>, SessionError> {
+) -> Result<Option<Served>, SessionError> {
     let TableFactor::Table { name, args, .. } = factor else {
         return Ok(None);
     };
@@ -684,7 +687,7 @@ pub(crate) async fn compute_batch(
                 )));
             }
             return Ok(Some(
-                Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?,
+                (Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?).into(),
             ));
         }
         if shared.idents().normalize(prefix.clone()) == "misfit" {
@@ -697,7 +700,7 @@ pub(crate) async fn compute_batch(
                 )));
             }
             return Ok(Some(
-                Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?,
+                (Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?).into(),
             ));
         }
         return Ok(None);
@@ -724,7 +727,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::derivation_candidates(shared, resolved, &table).await?,
+                (crate::search::derivation_candidates(shared, resolved, &table).await?).into(),
             ))
         }
         ("behavior_anchors", Some(a)) => {
@@ -736,7 +739,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::behavior::behavior_anchors(shared, resolved, &subject).await?,
+                (crate::behavior::behavior_anchors(shared, resolved, &subject).await?).into(),
             ))
         }
         ("metric_band_walk", Some(a)) => {
@@ -748,7 +751,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::metric_band_walk(shared, &dataset).await?,
+                (crate::search::metric_band_walk(shared, &dataset).await?).into(),
             ))
         }
         ("relationship_checks", Some(a)) => {
@@ -760,7 +763,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::relationship_checks(shared, resolved, &dataset).await?,
+                (crate::search::relationship_checks(shared, resolved, &dataset).await?).into(),
             ))
         }
         ("grounding_collisions", Some(a)) => {
@@ -772,7 +775,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::grounding_collisions(shared, &dataset).await?,
+                (crate::search::grounding_collisions(shared, &dataset).await?).into(),
             ))
         }
         ("relationship_candidates", Some(a)) => {
@@ -784,7 +787,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::relationship_candidates(shared, resolved, &dataset).await?,
+                (crate::search::relationship_candidates(shared, resolved, &dataset).await?).into(),
             ))
         }
         ("hierarchy_candidates", Some(a)) => {
@@ -796,16 +799,18 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                crate::search::hierarchy_candidates(shared, resolved, &table).await?,
+                (crate::search::hierarchy_candidates(shared, resolved, &table).await?).into(),
             ))
         }
-        ("glossary", Some(a)) => Ok(Some(glossary_read(shared, &a.args).await?)),
-        ("attest", Some(a)) => Ok(Some(attest_read(shared, &a.args).await?)),
+        ("glossary", Some(a)) => Ok(Some((glossary_read(shared, &a.args).await?).into())),
+        ("attest", Some(a)) => Ok(Some((attest_read(shared, &a.args).await?).into())),
         // The cube's two reads (crate::cube): the cells at a grain and
         // the fact row per metric. Both build what is not built.
         ("metric_series", Some(a)) => {
             let grain = crate::cube::grain_arg(&a.args)?;
-            Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
+            Ok(Some(
+                (crate::cube::metric_series_batch(shared, grain).await?).into(),
+            ))
         }
         ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {
@@ -813,18 +818,18 @@ pub(crate) async fn compute_batch(
                     "metric_axes() takes no arguments — filters ride WHERE".into(),
                 ));
             }
-            Ok(Some(crate::cube::metric_axes_batch(shared).await?))
+            Ok(Some((crate::cube::metric_axes_batch(shared).await?).into()))
         }
         // The `USE`'d dataset, as a relation — the one thing a read
         // written in SQL cannot spell for itself, and the reason the
         // reads over the workspace-wide relations had no way to narrow
         // to the session they answer for.
-        ("current_dataset", None) => Ok(Some(current_dataset_batch(shared))),
+        ("current_dataset", None) => Ok(Some((current_dataset_batch(shared)).into())),
         // The store's relations, readable as plain tables. Which names
         // qualify lives in one place: the store's RELATIONS table.
         (name, None) if glossql_glossary::relation_columns(name).is_some() => {
             let rows = shared.store.relation_rows(&fname).await?;
-            Ok(Some(relation_batch(&fname, rows)))
+            Ok(Some((relation_batch(&fname, rows)).into()))
         }
         _ => Ok(None),
     }
@@ -1471,5 +1476,25 @@ mod detector_tests {
             mixed.column_by_name("body").unwrap().data_type(),
             &DataType::Utf8
         );
+    }
+}
+
+/// What a compute door serves: a table, as the batches that make it up.
+/// The planner mounts them as one `MemTable` partition, so the batches
+/// are read in this order and none is copied into another — a door
+/// that already holds its rows in memory (the cube) hands them over as
+/// they are. A door with one batch is the one-batch case of this.
+#[derive(Clone, Debug)]
+pub(crate) struct Served {
+    pub schema: SchemaRef,
+    pub partitions: Vec<RecordBatch>,
+}
+
+impl From<RecordBatch> for Served {
+    fn from(batch: RecordBatch) -> Self {
+        Served {
+            schema: batch.schema(),
+            partitions: vec![batch],
+        }
     }
 }

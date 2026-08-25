@@ -21,7 +21,6 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::TableProvider;
 use datafusion::datasource::provider_as_source;
 use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
@@ -49,7 +48,7 @@ use crate::session::SessionError;
 pub(crate) struct Resolved {
     plans: HashMap<String, Arc<LogicalPlan>>,
     pins: HashMap<String, Arc<dyn TableProvider>>,
-    batches: HashMap<String, RecordBatch>,
+    batches: HashMap<String, crate::reads::Served>,
     ctes: HashSet<String>,
     /// Whether anything this statement resolved — at any expansion
     /// depth — reads the glossary: the relation itself, the GLOSSARY/
@@ -77,7 +76,7 @@ impl Resolved {
         self.pins.keys().cloned().collect()
     }
 
-    pub(crate) fn batch(&self, key: &str) -> Option<&RecordBatch> {
+    pub(crate) fn batch(&self, key: &str) -> Option<&crate::reads::Served> {
         self.batches.get(key)
     }
 
@@ -305,7 +304,7 @@ async fn body_of(shared: &Shared, door: &Door) -> Result<String, SessionError> {
 /// over a measurement is GLOSSARY. Refused here with the road out,
 /// where the engine would say "table not found" and mean it.
 fn refuse_subject_relations(q: &mut Query, resolved: &Resolved) -> Result<(), SessionError> {
-    for factor in factors_in(q) {
+    for factor in &factors_in(q) {
         let TableFactor::Table {
             name, args: None, ..
         } = &factor
@@ -360,7 +359,7 @@ async fn compute_batches(
     resolved: &mut Resolved,
 ) -> Result<(), SessionError> {
     let idents = shared.idents();
-    for factor in factors_in(q) {
+    for factor in &factors_in(q) {
         let key = factor.to_string();
         if resolved.batches.contains_key(&key) || shadowed(&idents, &resolved.ctes, &factor) {
             continue;
