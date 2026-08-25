@@ -348,10 +348,10 @@ async fn run_detector(
                 "band": (!bands.is_null(i)).then(|| bands.value(i)),
                 "score": (!scores.is_null(i)).then(|| scores.value(i)),
             });
-            schemas::validate_instance(&contract, &row).map_err(|detail| {
+            schemas::validate_instance(&contract, &row).map_err(|e| {
                 SessionError::OutputRejected {
                     function: detector.to_string(),
-                    detail,
+                    detail: e.to_string(),
                 }
             })?;
             out.push((
@@ -446,26 +446,32 @@ fn shredded_bodies(rows: &[RawRow]) -> Option<ArrayRef> {
 #[derive(Debug)]
 pub(crate) struct GlossqlReads {
     pub shared: Arc<Shared>,
-    /// Everything the pre-pass resolved for THIS statement. Immutable,
-    /// and never shared between statements — which is why concurrent
-    /// reads on one session need no lock (`sql_all` runs four at once).
+    /// Everything the pre-pass resolved for THIS statement — built
+    /// before planning, read by the planner, written by nothing after.
+    /// Each statement's state carries its own, so concurrent statements
+    /// on one session share no mutable planning state and need no lock.
     pub resolved: Arc<crate::prepass::Resolved>,
 }
 
 /// A session state for one statement, carrying that statement's resolved
-/// doors. Building from the existing state keeps the config, the
-/// catalogs and the registered functions; only the planner differs.
+/// doors: a clone of the session's state — config, catalogs, registered
+/// functions — with this statement's planner registered ahead of the
+/// base one, which resolves nothing (`Session::open`). A clone, not a
+/// rebuild: the builder re-registers every function and mints a new
+/// session id per statement for the same result.
 pub(crate) fn state_with(
     ctx: &datafusion::prelude::SessionContext,
     shared: &Arc<Shared>,
     resolved: crate::prepass::Resolved,
 ) -> datafusion::execution::SessionState {
-    datafusion::execution::SessionStateBuilder::new_from_existing(ctx.state())
-        .with_relation_planners(vec![Arc::new(GlossqlReads {
+    let mut state = ctx.state();
+    state
+        .register_relation_planner(Arc::new(GlossqlReads {
             shared: Arc::clone(shared),
             resolved: Arc::new(resolved),
-        })])
-        .build()
+        }))
+        .expect("registering a relation planner cannot fail (session_state.rs)");
+    state
 }
 
 impl RelationPlanner for GlossqlReads {

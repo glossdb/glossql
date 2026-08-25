@@ -1,0 +1,54 @@
+---
+source: crates/parser/tests/suite/statements.rs
+assertion_line: 32
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE RELATIONSHIP master_txn.(business_id, account) -> coa.(business_id, account_name);\").expect(\"must parse\")"
+---
+[
+    Declare(
+        Relationship(
+            RelationshipDecl {
+                left: RelSide {
+                    dataset: None,
+                    table: Ident {
+                        value: "master_txn",
+                        quote_style: None,
+                        span: Span(Location(1,22)..Location(1,32)),
+                    },
+                    columns: [
+                        Ident {
+                            value: "business_id",
+                            quote_style: None,
+                            span: Span(Location(1,34)..Location(1,45)),
+                        },
+                        Ident {
+                            value: "account",
+                            quote_style: None,
+                            span: Span(Location(1,47)..Location(1,54)),
+                        },
+                    ],
+                },
+                op: ManyToOne,
+                right: RelSide {
+                    dataset: None,
+                    table: Ident {
+                        value: "coa",
+                        quote_style: None,
+                        span: Span(Location(1,59)..Location(1,62)),
+                    },
+                    columns: [
+                        Ident {
+                            value: "business_id",
+                            quote_style: None,
+                            span: Span(Location(1,64)..Location(1,75)),
+                        },
+                        Ident {
+                            value: "account_name",
+                            quote_style: None,
+                            span: Span(Location(1,77)..Location(1,89)),
+                        },
+                    ],
+                },
+            },
+        ),
+    ),
+]

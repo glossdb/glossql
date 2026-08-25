@@ -24,7 +24,7 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_session::FunctionRuntime;
+use glossql_session::{FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
 /// The native kernels and their one lazily loaded model.
@@ -147,14 +147,17 @@ impl BandModel {
     /// [`FunctionRuntime::band_point`].
     fn bands_core(
         &self,
-        x: &[f64],
-        rows: usize,
-        cols: usize,
+        train: Matrix<'_>,
         y: &[f64],
         test: &[f64],
         levels: &[f64],
         actual: f64,
     ) -> Result<(Vec<f64>, f64), String> {
+        let Matrix {
+            data: x,
+            rows,
+            cols,
+        } = train;
         if rows < 2 || x.len() != rows * cols || y.len() != rows || test.len() != cols {
             return Err(format!(
                 "band_point: {rows} rows x {cols} features against {} values and {} test features",
@@ -221,15 +224,26 @@ impl FunctionRuntime for KernelRuntime {
     /// members in the original y space.
     fn band_grid(
         &self,
-        train_x: &[f64],
-        rows: usize,
-        cols: usize,
+        train: Matrix<'_>,
         train_y: &[f64],
-        test_x: &[f64],
-        test_rows: usize,
+        test: Matrix<'_>,
         alphas: &[f64],
     ) -> Result<Vec<f64>, String> {
-        if rows < 2 || train_x.len() != rows * cols || test_x.len() != test_rows * cols {
+        let Matrix {
+            data: train_x,
+            rows,
+            cols,
+        } = train;
+        let Matrix {
+            data: test_x,
+            rows: test_rows,
+            cols: test_cols,
+        } = test;
+        if rows < 2
+            || train_x.len() != rows * cols
+            || test_cols != cols
+            || test_x.len() != test_rows * cols
+        {
             return Err(format!(
                 "band_grid: {rows} train rows x {cols} features against {} train values \
                  and {} test values",
@@ -290,16 +304,14 @@ impl FunctionRuntime for KernelRuntime {
     /// typed.
     fn band_point(
         &self,
-        train_x: &[f64],
-        rows: usize,
-        cols: usize,
+        train: Matrix<'_>,
         train_y: &[f64],
         test_x: &[f64],
         alphas: &[f64],
         actual: f64,
     ) -> Result<(Vec<f64>, f64), String> {
         self.band_model
-            .bands_core(train_x, rows, cols, train_y, test_x, alphas, actual)
+            .bands_core(train, train_y, test_x, alphas, actual)
     }
 
     /// The `misfit.` door's kernel (fixture 20): the
@@ -309,7 +321,12 @@ impl FunctionRuntime for KernelRuntime {
     /// deterministic orderings — identity and reverse — so every
     /// feature conditions both early and late; nothing semantic rides
     /// the ordering stream (the port's own note). Log space end to end.
-    fn misfit_scores(&self, x: &[f64], rows: usize, cols: usize) -> Result<Vec<f64>, String> {
+    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+        let Matrix {
+            data: x,
+            rows,
+            cols,
+        } = x;
         if rows < 2 || cols < 2 || x.len() != rows * cols {
             return Err(format!(
                 "misfit_scores: {rows} rows x {cols} features against {} values",
@@ -1061,7 +1078,20 @@ mod band_grid_filter {
         let train_x = vec![1.0, 3.0, 1.0, 3.0, 1.0, 3.0];
         let train_y = vec![10.0, 11.0, 12.0];
         let e = rt
-            .band_grid(&train_x, 3, 2, &train_y, &[1.0, 3.0], 1, &[0.5])
+            .band_grid(
+                Matrix {
+                    data: &train_x,
+                    rows: 3,
+                    cols: 2,
+                },
+                &train_y,
+                Matrix {
+                    data: &[1.0, 3.0],
+                    rows: 1,
+                    cols: 2,
+                },
+                &[0.5],
+            )
             .unwrap_err();
         assert!(e.contains("constant"), "{e}");
     }
@@ -1110,12 +1140,17 @@ mod band_grid_filter {
         let alphas = [0.05, 0.50, 0.95];
         let q = rt
             .band_grid(
-                &train_x,
-                factors.len(),
-                2,
+                Matrix {
+                    data: &train_x,
+                    rows: factors.len(),
+                    cols: 2,
+                },
                 &train_y,
-                &[1.15, 11.0],
-                1,
+                Matrix {
+                    data: &[1.15, 11.0],
+                    rows: 1,
+                    cols: 2,
+                },
                 &alphas,
             )
             .unwrap();

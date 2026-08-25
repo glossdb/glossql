@@ -853,31 +853,38 @@ impl Store {
         // workspace-wide; every other row stays
         // dataset-scoped, and a dataset-scoped row from another dataset
         // is not in scope at all.
-        let history: Vec<((i64, i64), bool, &str, &str, Slot)> = ctx
+        /// One glossary row on its way to a slot: where it landed and
+        /// who spoke, which the supersession key is built from.
+        struct Landing<'a> {
+            seq: (i64, i64),
+            source_grain: bool,
+            dataset: &'a str,
+            kind: &'a str,
+            slot: Slot,
+        }
+        let history: Vec<Landing> = ctx
             .glossary
             .iter()
             .filter(|g| scope.admits(&g.subject) && aspect.is_none_or(|a| g.aspect == a))
-            .map(|g| {
-                (
-                    g.seq,
-                    source_names.contains(g.subject.as_str())
-                        && source_aspects.contains(g.aspect.as_str()),
-                    g.dataset.as_str(),
-                    g.actor_kind.as_str(),
-                    Slot {
-                        rank: rank_of(&g.actor_kind),
-                        witness: witness_on(&g.aspect),
-                        subject: g.subject.clone(),
-                        aspect: g.aspect.clone(),
-                        actor: g.actor_id.clone(),
-                        body: g.body.clone(),
-                        written_at: g.written_at.clone(),
-                        snapshot_id: g.snapshot_id,
-                        current: true,
-                    },
-                )
+            .map(|g| Landing {
+                seq: g.seq,
+                source_grain: source_names.contains(g.subject.as_str())
+                    && source_aspects.contains(g.aspect.as_str()),
+                dataset: g.dataset.as_str(),
+                kind: g.actor_kind.as_str(),
+                slot: Slot {
+                    rank: rank_of(&g.actor_kind),
+                    witness: witness_on(&g.aspect),
+                    subject: g.subject.clone(),
+                    aspect: g.aspect.clone(),
+                    actor: g.actor_id.clone(),
+                    body: g.body.clone(),
+                    written_at: g.written_at.clone(),
+                    snapshot_id: g.snapshot_id,
+                    current: true,
+                },
             })
-            .filter(|(_, source_grain, ds, _, _)| *source_grain || *ds == dataset)
+            .filter(|l| l.source_grain || l.dataset == dataset)
             .collect();
 
         // The key carries the dataset only where the row is dataset-scoped,
@@ -887,18 +894,18 @@ impl Store {
             // Keyed on actor KIND, not rank: rank folds every non-human
             // kind together, which is the same thing only while there are
             // exactly two of them.
-            |(_, source_grain, ds, kind, s)| {
+            |l| {
                 (
-                    (!*source_grain).then(|| ds.to_string()),
-                    s.subject.clone(),
-                    s.aspect.clone(),
-                    kind.to_string(),
+                    (!l.source_grain).then(|| l.dataset.to_string()),
+                    l.slot.subject.clone(),
+                    l.slot.aspect.clone(),
+                    l.kind.to_string(),
                 )
             },
-            |(seq, ..)| *seq,
+            |l| l.seq,
         )
         .into_iter()
-        .map(|(.., slot)| slot)
+        .map(|l| l.slot)
         .collect();
 
         // The measurement slot: each returning function's newest landing
@@ -1025,6 +1032,7 @@ impl Store {
                     band,
                     score,
                     state: "contested".into(),
+                    rank: None,
                 });
                 continue;
             }
@@ -1046,6 +1054,7 @@ impl Store {
                 band,
                 score,
                 state: state.into(),
+                rank: Some(serving.rank),
             });
         }
 
@@ -1154,6 +1163,7 @@ impl Store {
                         band: None,
                         score: None,
                         state: "unassessed".into(),
+                        rank: None,
                     });
                 }
             }
@@ -1783,6 +1793,8 @@ fn grains_str(grains: &[Grain]) -> Option<String> {
 }
 
 fn validate(schema: &Value, instance: &Value, which: String) -> Result<()> {
-    crate::schemas::validate_instance(schema, instance)
-        .map_err(|detail| Error::BodyRejected { which, detail })
+    crate::schemas::validate_instance(schema, instance).map_err(|e| Error::BodyRejected {
+        which,
+        detail: e.to_string(),
+    })
 }

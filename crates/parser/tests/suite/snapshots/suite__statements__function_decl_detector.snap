@@ -1,0 +1,27 @@
+---
+source: crates/parser/tests/suite/statements.rs
+assertion_line: 76
+expression: "GlossqlParser ::\nparse_sql(\"DECLARE FUNCTION slot_entropy FOR fin AS $$SELECT subject, 'green' AS band, 0.0 AS score FROM slots$$;\").expect(\"must parse\")"
+---
+[
+    Declare(
+        Function(
+            FunctionDecl {
+                name: Ident {
+                    value: "slot_entropy",
+                    quote_style: None,
+                    span: Span(Location(1,18)..Location(1,30)),
+                },
+                scope: Dataset(
+                    Ident {
+                        value: "fin",
+                        quote_style: None,
+                        span: Span(Location(1,35)..Location(1,38)),
+                    },
+                ),
+                script: "SELECT subject, 'green' AS band, 0.0 AS score FROM slots",
+                returns: None,
+            },
+        ),
+    ),
+]

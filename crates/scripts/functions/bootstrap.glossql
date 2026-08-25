@@ -148,7 +148,8 @@ DECLARE ASPECT metric_bands WITH $${
             "p05": {"type": "number"}, "p10": {"type": "number"},
             "p50": {"type": "number"}, "p90": {"type": "number"},
             "p95": {"type": "number"},
-            "pit": {"type": "number"}}}}}}}
+            "pit": {"type": ["number", "null"]},
+            "withheld": {"type": "string"}}}}}}}
   }
 }$$ AS MEASUREMENT ON DATASET;
 

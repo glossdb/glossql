@@ -51,8 +51,11 @@ pub fn attest_contract() -> Value {
     serde_json::from_str(ATTEST_CONTRACT).expect("SPEC §7.2 schema is valid JSON")
 }
 
-/// Validate `instance` against `schema`, first violation as the message.
-pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), String> {
-    let validator = jsonschema::validator_for(schema).map_err(|e| e.to_string())?;
-    validator.validate(instance).map_err(|e| e.to_string())
+/// Validate `instance` against `schema`: the first violation, or a
+/// schema that is not one, as the validator reports it.
+pub fn validate_instance<'i>(
+    schema: &Value,
+    instance: &'i Value,
+) -> Result<(), jsonschema::ValidationError<'i>> {
+    jsonschema::validator_for(schema)?.validate(instance)
 }

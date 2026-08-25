@@ -26,7 +26,7 @@ use glossql_glossary::Scope;
 use serde_json::Value;
 
 use crate::reads::{Shared, verdicts};
-use crate::session::SessionError;
+use crate::session::{Matrix, SessionError};
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
 /// The row cap bounds the kernel's context — a bigger population is
@@ -177,7 +177,11 @@ pub(crate) async fn misfit_batch(
     }
     let scores = shared
         .runtime()
-        .misfit_scores(&x, rows, cols)
+        .misfit_scores(Matrix {
+            data: &x,
+            rows,
+            cols,
+        })
         .map_err(|e| bad(format!("not served: the misfit kernel refused — {e}")))?;
     // Complementary null patterns can make a conditioning column's
     // impute mean NaN inside the kernel, and NaN survives its unique

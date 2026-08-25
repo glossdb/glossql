@@ -7,12 +7,13 @@
 //! optimizes recall: no thresholds here, the judgment lives in the
 //! measurement body that reads the door.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::common::DataFusionError;
 use datafusion::datasource::provider_as_source;
 use datafusion::functions::expr_fn::{abs, greatest};
 use datafusion::functions_aggregate::expr_fn::{avg, count};
@@ -20,7 +21,7 @@ use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident,
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::session::{Matrix, SessionError};
 
 /// `derivation_candidates('table')` — row-grain arithmetic identities
 /// among the table's numeric columns (`a = b * c` and `a = b + c`) with
@@ -333,7 +334,7 @@ pub(crate) async fn hierarchy_candidates(
     if names.is_empty() {
         // No long pass to ride: one count settles which abstention.
         let plan = plan_count(table, &provider).map_err(|e| bad(e.to_string()))?;
-        let n = int_column(&run(plan).await?, "n").map_err(bad)?[0];
+        let n = int_column(&run(plan).await?, "n").map_err(|e| bad(e.to_string()))?[0];
         return abstain(if n == 0 {
             "empty table"
         } else {
@@ -357,12 +358,15 @@ pub(crate) async fn hierarchy_candidates(
     let mut by_ci: Vec<Option<ColStat>> = vec![None; names.len()];
     let mut n = 0i64;
     for b in stats.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
-        let groups = int_column(std::slice::from_ref(b), "groups").map_err(&bad)?;
-        let modal = int_column(std::slice::from_ref(b), "modal").map_err(&bad)?;
-        let total = int_column(std::slice::from_ref(b), "total").map_err(&bad)?;
-        let dv = int_column(std::slice::from_ref(b), "distinct_vals").map_err(&bad)?;
-        let filled = int_column(std::slice::from_ref(b), "filled").map_err(&bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
+        let groups =
+            int_column(std::slice::from_ref(b), "groups").map_err(|e| bad(e.to_string()))?;
+        let modal = int_column(std::slice::from_ref(b), "modal").map_err(|e| bad(e.to_string()))?;
+        let total = int_column(std::slice::from_ref(b), "total").map_err(|e| bad(e.to_string()))?;
+        let dv =
+            int_column(std::slice::from_ref(b), "distinct_vals").map_err(|e| bad(e.to_string()))?;
+        let filled =
+            int_column(std::slice::from_ref(b), "filled").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             n = total[r];
             by_ci[ci[r] as usize] = Some(ColStat {
@@ -405,11 +409,12 @@ pub(crate) async fn hierarchy_candidates(
     }
     let mut pairs: std::collections::HashMap<(usize, usize), Pair> = Default::default();
     for b in paired.iter().filter(|b| b.num_rows() > 0) {
-        let ca = int_column(std::slice::from_ref(b), "ca").map_err(&bad)?;
-        let cb = int_column(std::slice::from_ref(b), "cb").map_err(&bad)?;
-        let pg = int_column(std::slice::from_ref(b), "pair_groups").map_err(&bad)?;
-        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(&bad)?;
-        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(&bad)?;
+        let ca = int_column(std::slice::from_ref(b), "ca").map_err(|e| bad(e.to_string()))?;
+        let cb = int_column(std::slice::from_ref(b), "cb").map_err(|e| bad(e.to_string()))?;
+        let pg =
+            int_column(std::slice::from_ref(b), "pair_groups").map_err(|e| bad(e.to_string()))?;
+        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(|e| bad(e.to_string()))?;
+        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             pairs.insert(
                 (ca[r] as usize, cb[r] as usize),
@@ -617,17 +622,19 @@ fn plan_pairs(
 }
 
 /// A named Int64 column of a one-batch result, materialized.
-pub(crate) fn int_column(batches: &[RecordBatch], name: &str) -> Result<Vec<i64>, String> {
-    let b = batches
-        .iter()
-        .find(|b| b.num_rows() > 0)
-        .ok_or_else(|| format!("`{name}`: the plan returned nothing"))?;
-    let idx = b.schema().index_of(name).map_err(|e| e.to_string())?;
+pub(crate) fn int_column(
+    batches: &[RecordBatch],
+    name: &str,
+) -> datafusion::common::Result<Vec<i64>> {
+    let b = batches.iter().find(|b| b.num_rows() > 0).ok_or_else(|| {
+        DataFusionError::Execution(format!("`{name}`: the plan returned nothing"))
+    })?;
+    let idx = b.schema().index_of(name)?;
     let a = b
         .column(idx)
         .as_any()
         .downcast_ref::<Int64Array>()
-        .ok_or_else(|| format!("`{name}` did not read as an integer"))?;
+        .ok_or_else(|| DataFusionError::Internal(format!("`{name}` did not read as an integer")))?;
     Ok((0..b.num_rows()).map(|r| a.value(r)).collect())
 }
 
@@ -864,14 +871,14 @@ pub(crate) async fn relationship_candidates(
             .build()
             .map_err(|e| bad(e.to_string()))?;
         for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-            let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
+            let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
             let val_idx = b.schema().index_of("val").map_err(|e| bad(e.to_string()))?;
             let vals = b.column(val_idx);
-            for r in 0..b.num_rows() {
+            for (r, &c) in ci.iter().enumerate() {
                 if vals.is_null(r) {
                     continue;
                 }
-                sets.entry(ci[r] as usize)
+                sets.entry(c as usize)
                     .or_default()
                     .insert(array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?);
             }
@@ -1260,8 +1267,8 @@ async fn combo_stats(
         .build()
         .map_err(|e| bad(e.to_string()))?;
     for b in run(counts).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
-        let c = int_column(std::slice::from_ref(b), "c").map_err(bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
+        let c = int_column(std::slice::from_ref(b), "c").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
             out[ci[r] as usize].filled = c[r];
         }
@@ -1271,7 +1278,7 @@ async fn combo_stats(
         .build()
         .map_err(|e| bad(e.to_string()))?;
     for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
         let va_idx = b.schema().index_of("va").map_err(|e| bad(e.to_string()))?;
         let vb_idx = b.schema().index_of("vb").map_err(|e| bad(e.to_string()))?;
         let (va, vb) = (b.column(va_idx), b.column(vb_idx));
@@ -1332,6 +1339,7 @@ pub(crate) async fn grounding_collisions(
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
+    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
     let slots = current_query_slots(shared, &rctx, dataset).await?;
 
     // Bucket by canonical SQL.
@@ -1394,7 +1402,15 @@ pub(crate) async fn grounding_collisions(
     let mut series_buckets: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for (slot, body, canon) in &grounded {
         let sql = body["sql"].as_str().expect("filtered above");
-        let Some(fp) = series_fingerprint(shared, &ctx, dataset, &judged_temporal, sql, body).await
+        let Some(fp) = series_fingerprint(
+            shared,
+            &ctx,
+            dataset,
+            (&judged_temporal, &judged_behavior),
+            sql,
+            body,
+        )
+        .await
         else {
             continue;
         };
@@ -1448,6 +1464,29 @@ pub(crate) struct QuerySlot {
 /// SPEC.md §5.3), narrowed to QUERY aspects: one slot per
 /// (subject, aspect) that serves a value. A contested grounding never
 /// enters a cube, a walk, or a collision bucket. In slot-key order.
+/// One FACT aspect's collapsed values across the dataset, keyed by
+/// subject, each with the serving voice's rank (0 human, 1 agent) — the
+/// read policy's view of what was said, human over agent, contested
+/// withheld.
+pub(crate) async fn current_fact_values(
+    shared: &Arc<Shared>,
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Result<HashMap<String, (Value, u8)>, SessionError> {
+    let scope = glossql_glossary::Scope::Dataset;
+    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some(aspect)).await?;
+    Ok(
+        glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), rctx, &verdicts)
+            .into_iter()
+            .filter_map(|r| {
+                let body = serde_json::from_str::<Value>(r.value.as_deref()?).ok()?;
+                Some((r.subject, (body, r.rank?)))
+            })
+            .collect(),
+    )
+}
+
 pub(crate) async fn current_query_slots(
     shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,
@@ -1484,7 +1523,10 @@ async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
-    judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
+    (judged_temporal, judged_behavior): (
+        &std::collections::HashMap<String, crate::cube::Verdict>,
+        &std::collections::HashMap<String, crate::cube::Verdict>,
+    ),
     sql: &str,
     body: &Value,
 ) -> Option<String> {
@@ -1514,13 +1556,7 @@ async fn series_fingerprint(
     let tcol = crate::cube::judged_time_column(fields, &subjects, judged_temporal)
         .map(|(column, ..)| column)
         .or_else(|| crate::whatif::date_column(fields.fields()))?;
-    let verb = if is_ratio {
-        "ratio"
-    } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
-        "stock"
-    } else {
-        "flow"
-    };
+    let verb = crate::cube::verb_of(body, is_ratio, &probe, dataset, judged_behavior).verb;
     let q = monthly_sql(sql, &tcol, verb);
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q))
         .await
@@ -1737,7 +1773,7 @@ pub(crate) async fn relationship_checks(
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![filled_expr.alias("filled")]))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let filled = int_column(&run(plan).await?, "filled").map_err(&bad)?[0];
+        let filled = int_column(&run(plan).await?, "filled").map_err(|e| bad(e.to_string()))?[0];
 
         let nest = e.ct == e.pt;
         let orphans = if nest {
@@ -1766,7 +1802,7 @@ pub(crate) async fn relationship_checks(
                 })
                 .and_then(|b| b.build())
                 .map_err(|e| bad(e.to_string()))?;
-            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+            int_column(&run(plan).await?, "orphans").map_err(|e| bad(e.to_string()))?[0]
         } else {
             // Orphans: complete from-side keys that resolve to no to-side
             // row — the NOT IN with its null guards, as an anti join.
@@ -1791,7 +1827,7 @@ pub(crate) async fn relationship_checks(
                 .and_then(|b| b.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("orphans")]))
                 .and_then(|b| b.build())
                 .map_err(|e| bad(e.to_string()))?;
-            int_column(&run(plan).await?, "orphans").map_err(&bad)?[0]
+            int_column(&run(plan).await?, "orphans").map_err(|e| bad(e.to_string()))?[0]
         };
         let orphan_rate = if filled > 0 {
             orphans as f64 / filled as f64
@@ -1854,11 +1890,12 @@ pub(crate) async fn relationship_checks(
                 .map_err(|e| bad(e.to_string()))?;
             let joined = run(plan).await?;
             for (k, pair) in pairs.iter().enumerate() {
-                let n = int_column(&joined, &format!("n_{k}")).map_err(&bad)?[0];
+                let n = int_column(&joined, &format!("n_{k}")).map_err(|e| bad(e.to_string()))?[0];
                 if n == 0 {
                     continue;
                 }
-                let pre = int_column(&joined, &format!("pre_{k}")).map_err(&bad)?[0];
+                let pre =
+                    int_column(&joined, &format!("pre_{k}")).map_err(|e| bad(e.to_string()))?[0];
                 temporal.push((k, pair, n, pre));
             }
         }
@@ -2068,6 +2105,7 @@ pub(crate) async fn metric_band_walk(
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
+    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
     let runtime = shared.runtime();
 
     // Median over the present values of one feature column. Even counts
@@ -2124,14 +2162,8 @@ pub(crate) async fn metric_band_walk(
         };
         let axis_judged = judged_axis.is_some();
         let is_ratio = has("num") && has("den");
-        let is_stock = !is_ratio && body.get("behavior").and_then(Value::as_str) == Some("stock");
-        let verb = if is_ratio {
-            "ratio"
-        } else if is_stock {
-            "stock"
-        } else {
-            "flow"
-        };
+        let verb = crate::cube::verb_of(&body, is_ratio, &probe, dataset, &judged_behavior).verb;
+        let is_stock = verb == "stock";
         let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
         let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
         let n = v.len();
@@ -2207,21 +2239,40 @@ pub(crate) async fn metric_band_walk(
             if train_y.len() < MIN_TRAIN {
                 continue;
             }
+            let train = Matrix {
+                data: &train_x,
+                rows: train_y.len(),
+                cols: 5,
+            };
             let (q, pit) = runtime
-                .band_point(
-                    &train_x,
-                    train_y.len(),
-                    5,
-                    &train_y,
-                    &filled(&feats[t - 1]),
-                    &ALPHAS,
-                    actual,
-                )
+                .band_point(train, &train_y, &filled(&feats[t - 1]), &ALPHAS, actual)
                 .map_err(SessionError::Runtime)?;
+            // A series that repeats values moves on a grid (a ratio over
+            // a fixed field, a count). A corridor narrower than the
+            // grid's step, with the actual inside a step of the median,
+            // is the model's noise around a value the series takes
+            // exactly: the PIT read against it says nothing, so the
+            // point serves its band and actual and withholds the PIT
+            // with the reason. An actual further off than a step is a
+            // real move whatever the corridor; a series that never
+            // repeats has no grid, and a tight corridor on it is earned.
+            let corridor = q[4] - q[0];
+            let withheld = match resolution_of(&train_y) {
+                Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
+                    Some(format!(
+                        "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
+                    ))
+                }
+                Some(res) if res == 0.0 && actual == train_y[0] => {
+                    Some("the training series is constant and the actual equals it".to_string())
+                }
+                _ => None,
+            };
             points.push(json!({
                 "period": &series[t].0[..7], "actual": actual,
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
-                "pit": pit,
+                "pit": withheld.is_none().then_some(pit),
+                "withheld": withheld,
             }));
         }
 
@@ -2261,6 +2312,27 @@ pub(crate) async fn metric_band_walk(
     rows_batch(out, band_shape())
 }
 
+/// The series' resolution, where it has one: a series that repeats a
+/// value moves on a grid, and the smallest gap between two of its
+/// values is the grid's step — 0.0 when it takes one value only. A
+/// series that never repeats is continuous as far as its history
+/// shows, and a tight corridor on it is earned, not noise: None.
+fn resolution_of(labels: &[f64]) -> Option<f64> {
+    let mut sorted = labels.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted.dedup();
+    if sorted.len() == labels.len() {
+        return None;
+    }
+    Some(
+        sorted
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .min_by(f64::total_cmp)
+            .unwrap_or(0.0),
+    )
+}
+
 fn band_shape() -> Vec<Field> {
     vec![
         Field::new("seq", DataType::Int64, true),
@@ -2283,5 +2355,7 @@ fn band_shape() -> Vec<Field> {
         Field::new("p90", DataType::Float64, true),
         Field::new("p95", DataType::Float64, true),
         Field::new("pit", DataType::Float64, true),
+        // Why a point carries no PIT, where it carries none.
+        Field::new("withheld", DataType::Utf8, true),
     ]
 }

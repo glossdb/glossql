@@ -6,8 +6,10 @@
 -- (`metric_band_walk`), graded against the published protocol; the
 -- model call is one kernel behind the runtime seam. Each walked point
 -- records its bands and its PIT — the quantile at which the actual
--- landed, 0..1 and ordinal by construction. The band_breach detector
--- adjudicates PITs; this measurement only reports.
+-- landed, 0..1 and ordinal by construction — or, where the corridor is
+-- narrower than the series' own resolution, no PIT and `withheld`
+-- saying why. The band_breach detector adjudicates PITs; this
+-- measurement only reports.
 --
 -- `axis` names the date column the walk anchored on and `axis_judged`
 -- says whether a temporal_profile verdict named it. The cadence is
@@ -19,7 +21,7 @@ WITH m AS (
          CASE WHEN applicable THEN coalesce(array_agg(named_struct(
            'period', period, 'actual', actual,
            'p05', p05, 'p10', p10, 'p50', p50, 'p90', p90, 'p95', p95,
-           'pit', pit
+           'pit', pit, 'withheld', withheld
          ) ORDER BY point_seq) FILTER (WHERE period IS NOT NULL), []) END AS points
   FROM metric_band_walk($subject)
   GROUP BY seq, metric, applicable, reason, grain, aggregation, trained_on,

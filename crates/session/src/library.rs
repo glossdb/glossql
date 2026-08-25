@@ -65,19 +65,14 @@ pub(crate) fn read_sql(name: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
-    use datafusion::sql::sqlparser::parser::Parser;
-
-    /// Every shipped read is a single query — the shape `plan_sql`
-    /// requires. A read that only fails at first use is a read nobody
-    /// finds until a run does.
+    /// Every shipped read is one query under the pre-pass's own rule —
+    /// the shape a door serves. A read that only fails at first use is
+    /// a read nobody finds until a run does.
     #[test]
     fn every_shipped_read_is_a_query() {
         for (name, sql) in super::LIBRARY {
-            Parser::new(&PostgreSqlDialect {})
-                .try_with_sql(sql)
-                .and_then(|mut p| p.parse_query())
-                .unwrap_or_else(|e| panic!("the shipped read `{name}` does not parse: {e}"));
+            crate::prepass::parse(sql, name)
+                .unwrap_or_else(|e| panic!("the shipped read `{name}`: {e}"));
         }
     }
 

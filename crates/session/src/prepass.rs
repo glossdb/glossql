@@ -255,7 +255,7 @@ pub(crate) fn subject_column_arg(
     )))
 }
 
-fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
+pub(crate) fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
     let mut parser = Parser::new(&PostgreSqlDialect {})
         .try_with_sql(sql)
         .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))?;
@@ -506,18 +506,6 @@ pub(crate) async fn resolve(
     }
     compute_batches(shared, &mut q, &mut resolved).await?;
     Ok(resolved)
-}
-
-/// Resolve the doors inside a body of SQL — for the callers that plan
-/// authored SQL of their own (`whatif`, `misfit`).
-pub(crate) async fn resolve_sql(
-    shared: &Arc<Shared>,
-    ctx: &SessionContext,
-    sql: &str,
-) -> Result<Resolved, SessionError> {
-    let q = parse(sql, "the body")?;
-    let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(q))));
-    resolve(shared, ctx, &stmt).await
 }
 
 #[cfg(test)]

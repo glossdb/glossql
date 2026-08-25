@@ -115,7 +115,7 @@ DECLARE ASPECT definitions WITH $${
 DECLARE ASPECT cube WITH $${
   "type": "object",
   "properties": {
-    "resolution": {"enum": ["minute", "hour", "day", "week", "month"],
+    "resolution": {"enum": ["minute", "hour", "day", "week", "month", "quarter", "year"],
                    "default": "day"},
     "windows": {"type": "object", "properties": {
       "minute":  {"type": "string", "pattern": "^[1-9][0-9]* (minute|hour|day|week|month|year)s?$", "default": "1 day"},

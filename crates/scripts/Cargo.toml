@@ -4,7 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-glossql-glossary = { path = "../glossary" }
 glossql-session = { path = "../session" }
 datafusion.workspace = true
 arrow-json.workspace = true
@@ -15,8 +14,10 @@ faer.workspace = true
 # manifest); the model loads lazily from the workspace's weights/.
 tabicl-candle = { workspace = true, features = ["metal"] }
 rayon.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+glossql-glossary = { path = "../glossary" }
 glossql-catalog = { path = "../catalog" }
 tokio.workspace = true
 tempfile.workspace = true

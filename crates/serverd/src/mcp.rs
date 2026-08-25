@@ -1086,7 +1086,7 @@ mod tests {
         let (_, schema) = form(&offered);
         assert_eq!(
             schema["properties"][RATHER]["description"],
-            offered.alternative.clone().unwrap()
+            offered.alternative.as_deref().unwrap()
         );
         assert!(
             schema["properties"][SAME_AS]["description"]

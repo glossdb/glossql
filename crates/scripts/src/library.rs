@@ -11,6 +11,16 @@
 //! test suites which run library functions compose the same
 //! declarations the door does, from the same text.
 
+/// What keeps the shipped library from declaring: a body that would
+/// close its own dollar quote, or a marker no body replaced.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("reference script `{0}` carries `$$`")]
+    DollarQuoted(&'static str),
+    #[error("a script marker had no embedded body: …{0}")]
+    Unspliced(String),
+}
+
 /// Every reference body the binary carries: file name, text. Every body
 /// is one SQL query the engine plans — a measurement over data, a
 /// detector over its witness's `slots`; role by shape (`RETURNS` or
@@ -79,7 +89,7 @@ pub const KIT: &str = include_str!("../functions/kpi_kit.glossql");
 /// Strict on purpose. An unreplaced marker would declare a function
 /// whose body is the string `profile.sql`, and that fails at the first
 /// invocation with a message nobody could trace back here.
-pub fn declarations() -> Result<String, String> {
+pub fn declarations() -> Result<String, Error> {
     splice(CONTRACTS)
 }
 
@@ -89,20 +99,19 @@ pub fn declarations() -> Result<String, String> {
 /// themselves, and a test writing a retired form is how a fixture comes
 /// to teach a shape that no longer exists. They write the marker and
 /// splice it exactly as the door does.
-pub fn splice(statements: &str) -> Result<String, String> {
+pub fn splice(statements: &str) -> Result<String, Error> {
     let mut out = statements.to_string();
     for (name, text) in SCRIPTS {
         // The body rides a dollar-quoted statement; a `$$` inside one
         // would close it early and parse the rest as further statements.
         if text.contains("$$") {
-            return Err(format!("reference script `{name}` carries `$$`"));
+            return Err(Error::DollarQuoted(name));
         }
         out = out.replace(&format!("$${name}$$"), &format!("$${text}$$"));
     }
     if let Some(at) = out.find(".sql$$") {
-        return Err(format!(
-            "a script marker had no embedded body: …{}",
-            &out[at.saturating_sub(40)..at + ".sql$$".len()]
+        return Err(Error::Unspliced(
+            out[at.saturating_sub(40)..at + ".sql$$".len()].to_string(),
         ));
     }
     Ok(out)

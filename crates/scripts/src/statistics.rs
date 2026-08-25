@@ -25,8 +25,8 @@ use datafusion::logical_expr::{
 use serde_json::{Value, json};
 
 use crate::{
-    Extremum, display_counts, entropy_of, extremum_of, interpolate, len_stats_of, mad_of, mean_of,
-    numeric_like, stddev_of, top_k, valid_floats,
+    Extremum, ScriptResult, display_counts, entropy_of, extremum_of, interpolate, len_stats_of,
+    mad_of, mean_of, numeric_like, stddev_of, top_k, valid_floats,
 };
 
 /// The shipped aggregate, for registration when the runtime attaches
@@ -242,14 +242,14 @@ fn profile_fields(dt: &DataType) -> Fields {
 /// against the goldens. `summary` is what extraction serves (full
 /// bodies through the door are the fan-out tax); the
 /// full body reads back via `GLOSSARY`.
-fn profile_value(a: &ArrayRef) -> Result<Value, String> {
+fn profile_value(a: &ArrayRef) -> ScriptResult<Value> {
     let n = a.len() as i64;
     let nulls = a.null_count() as i64;
     let non_null = n - nulls;
     let counts = display_counts(a)?;
     let distinct = counts.len() as i64;
     let null_ratio = if n == 0 { 0.0 } else { nulls as f64 / n as f64 };
-    let extremum = |min: bool| -> Result<Value, String> {
+    let extremum = |min: bool| -> ScriptResult<Value> {
         Ok(match extremum_of(a, min)? {
             Some(Extremum::Num(v)) => json!(v),
             Some(Extremum::Text(s)) => json!(s),

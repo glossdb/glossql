@@ -157,10 +157,29 @@ The one argument is the grain; filters ride `WHERE`.
 One row per current grounding — what the cube admitted and why not:
 `metric`, `applicable`, `judged_current`, `reason` (the road out when
 it abstains — no judged time column, no value column, a grounding the
-engine refused), `behavior`, `resolution`, `window`, `dims`, `bucketed`
-(the dimensions wider than 24 members, served as their top 23 by
-weight plus `'other'`), `alternative`, `alternative_error`.
+engine refused), `behavior` and `behavior_basis` (the verb and where
+it came from: `ratio` when the frame serves `num` and `den`, `marked`
+when the grounding carries `behavior`, `evidence` when the
+`behavior_evidence` verdict on the column the value is or sums
+decided, `default` when nothing said anything and it reads as a
+flow), `resolution`, `window`, `dims`, `basis`
+and `admitted_by` (per admitted dimension, in `dims` order: the column
+subject whose verdict admitted it, and what decided — `measurement`,
+or `human` / `agent` where a `dimension` gloss did), `bucketed` (the
+dimensions wider than 24 members, served as their top 23 by weight
+plus `'other'`), `alternative`, `alternative_error`.
 Record-class: it says what the judged verdicts admitted.
+
+A served column is an axis when a verdict admits it: its own
+`dimension_relevance`, or — for a label in a dimension table, a
+near-key there by construction — the verdict on the key column that
+reaches it through a declared relationship from a table the grounding
+scans; `basis` names that key. The collapsed `dimension` gloss on the
+column is the read policy over that, human over agent: `none` closes
+the axis whatever was measured, `primary` admits it and ranks it
+first, `supporting` admits it. The verdicts themselves are untouched —
+a measurement is never glossed — and `admitted_by` says whose word the
+axis stands on.
 
 The verdicts are the newest landed per served column, whatever pin
 they were judged at — served and marked, as every function voice is,
