@@ -29,10 +29,11 @@ the same catalog.
   alone. The appended rows are themselves the event record: who said
   what, as which kind, when.
 - **The one in-memory hold is the mounted catalog provider**, shared
-  by every session and invalidated when a namespace is created — the
-  namespace list is the one thing it freezes; table lookups inside a
-  namespace go to the catalog live. Nothing held in memory is ever the
-  record.
+  by every session and rebuilt when a namespace or a table is created
+  — it freezes the namespace list and each namespace's table map at
+  build; a table lookup inside a namespace reads that map, never the
+  catalog, and a recipe's table registered by a session enters it
+  live. Nothing held in memory is ever the record.
 
 ## The catalog
 

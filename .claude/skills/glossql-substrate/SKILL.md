@@ -110,10 +110,11 @@ Note `read.x()` parses as a table **function**, so a rename must clear
   engine should be able to ask for a different count.
 - `target_partitions` defaults to available parallelism
   (`datafusion-common/src/config.rs`).
-- **Never hand-roll a concurrency governor.** `sql_all`'s waves-of-4
-  exists because 16 concurrent independent plans exhausted the process
-  fd budget — a symptom of running N plans instead of one, fixed by
-  letting the engine schedule.
+- **Never hand-roll a concurrency governor.** N independent plans run
+  at once each open their own files and buffers, and the process fd
+  budget goes first; one plan the engine schedules over its partitions
+  shares them. Waves, semaphores and batch sizes are the symptom of
+  running N plans where one would do.
 - Cancellation is stream drop. `EnsureCooperative` is in the default
   physical rule set and wraps leaves that declare nothing, so a plan
   built from operators cancels correctly without effort.

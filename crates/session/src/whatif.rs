@@ -31,8 +31,6 @@ use datafusion::common::{Column, Result as DFResult};
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, cast, lit, when};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::Statement as SQLStatement;
-use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
-use datafusion::sql::sqlparser::parser::Parser;
 use glossql_glossary::Scope;
 use serde_json::Value;
 
@@ -548,16 +546,14 @@ pub(crate) async fn build_plan(
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<LogicalPlan, SessionError> {
-    let query = Parser::new(&PostgreSqlDialect {})
-        .try_with_sql(sql)
-        .and_then(|mut p| p.parse_query())
-        .map_err(|e| {
-            SessionError::BadSubject(format!("not served: the grounding does not parse: {e}"))
-        })?;
-    let statement =
-        datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(query)));
+    // Parsed once, under the pre-pass's one-query rule; the same
+    // statement is resolved and then planned.
+    let query = crate::prepass::parse(sql, "the grounding")?;
+    let statement = datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(
+        Box::new(query),
+    )));
     // A grounding body may name `read.<x>()`; resolve before planning.
-    let resolved = crate::prepass::resolve_sql(shared, ctx, sql).await?;
+    let resolved = crate::prepass::resolve(shared, ctx, &statement).await?;
     crate::reads::state_with(ctx, shared, resolved)
         .statement_to_plan(statement)
         .await
