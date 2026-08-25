@@ -5,6 +5,10 @@
 //! behind the engine's aggregate registrations and the runtime's typed
 //! methods.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 

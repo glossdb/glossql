@@ -813,12 +813,16 @@ impl Store {
 
     /// Glosses at or under a table — what `DROP TABLE` refuses on.
     pub async fn glosses_under(&self, dataset: &str, table: &str) -> Result<i64> {
+        // `dataset` is the relation's partition column: asked of the
+        // scan, it prunes to the dataset's files; asked of the rows, it
+        // read the whole workspace first.
         let scope = Scope::Subject(table.to_string());
         Ok(self
-            .glossary_history()
+            .metadata
+            .scan_where("glossary", "dataset", dataset)
             .await?
             .iter()
-            .filter(|g| g.dataset == dataset && scope.admits(&g.subject))
+            .filter(|r| scope.admits(&text(&r.cells, 1)))
             .count() as i64)
     }
 
@@ -1574,7 +1578,7 @@ impl Store {
             .lake_rows(relation("aspects"))
             .await?
             .iter()
-            .map(aspect_row)
+            .map(|cells| aspect_row(cells))
             .collect())
     }
 
@@ -1583,7 +1587,7 @@ impl Store {
             .lake_rows(relation("functions"))
             .await?
             .iter()
-            .map(function_row)
+            .map(|cells| function_row(cells))
             .collect())
     }
 
@@ -1591,7 +1595,7 @@ impl Store {
         self.lake_rows(relation("witnesses"))
             .await?
             .iter()
-            .map(witness_row)
+            .map(|cells| witness_row(cells))
             .collect()
     }
 
@@ -1662,10 +1666,10 @@ fn cell(cells: &[Option<String>], i: usize) -> Option<String> {
 
 /// The latest row per key, over the rows the key function admits — the
 /// supersession shape the brief counts share.
-fn latest_rows<'a, K: std::hash::Hash + Eq>(
-    history: &'a [GlossRow],
+fn latest_rows<K: std::hash::Hash + Eq>(
+    history: &[GlossRow],
     key: impl Fn(&GlossRow) -> Option<K>,
-) -> Vec<&'a GlossRow> {
+) -> Vec<&GlossRow> {
     rules::latest_by(
         history.iter().filter(|g| key(g).is_some()).collect(),
         |g| key(g).expect("filtered"),
@@ -1673,7 +1677,7 @@ fn latest_rows<'a, K: std::hash::Hash + Eq>(
     )
 }
 
-fn aspect_row(cells: &Vec<Option<String>>) -> AspectRow {
+fn aspect_row(cells: &[Option<String>]) -> AspectRow {
     AspectRow {
         name: text(cells, 0),
         kind: text(cells, 1),
@@ -1692,7 +1696,7 @@ fn parse_condition(text: &str) -> Option<(String, String)> {
     Some((aspect.to_string(), rest.strip_suffix('\'')?.to_string()))
 }
 
-fn function_row(cells: &Vec<Option<String>>) -> FunctionRow {
+fn function_row(cells: &[Option<String>]) -> FunctionRow {
     FunctionRow {
         name: text(cells, 0),
         scope_dataset: cell(cells, 1).filter(|s| s != "GLOBAL"),
@@ -1701,7 +1705,7 @@ fn function_row(cells: &Vec<Option<String>>) -> FunctionRow {
     }
 }
 
-fn witness_row(cells: &Vec<Option<String>>) -> Result<WitnessRow> {
+fn witness_row(cells: &[Option<String>]) -> Result<WitnessRow> {
     let speakers: Vec<String> = serde_json::from_str(&text(cells, 2))
         .map_err(|e| Error::Corrupt(format!("witness speakers: {e}")))?;
     let threshold = cell(cells, 4)

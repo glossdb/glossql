@@ -10,6 +10,10 @@
 //! (`orders.amount`, `orders.customer_id -> customers.id`); the session
 //! resolves dataset prefixes before the store sees anything.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 pub mod rules;
 pub mod schemas;
 mod store;

@@ -1,183 +1,401 @@
 //! Who is speaking, proved rather than declared.
 //!
-//! SPEC.md §1 says the actor rides the transport. Until now no door
-//! asked the transport for anything: `/mcp` took the client's own name
-//! for its id, `/query` and `/app` wrote as an anonymous human, and the
-//! supersession precedence — human outranks agent, key `(subject,
-//! aspect, actor kind)` — rested on every caller being well behaved.
-//! A signed token closes that: `kind` is a claim the issuer signs, so
-//! an agent cannot claim human standing, because it cannot sign.
+//! SPEC.md §1 says the actor rides the transport. This module is the
+//! transport's half of that: every door sits behind one gate, and the
+//! gate reads a bearer token the same way for all of them.
 //!
-//! The server is an OAuth 2.1 **resource server** and never an
-//! authorization server. It verifies a bearer token against a public
-//! key and maps its claims to an [`Actor`]. There is no login flow, no
-//! user table, and nothing to administer inside a workspace.
+//! The server is an OAuth 2.1 **resource server** (MCP authorization,
+//! 2026-07-28) and never an authorization server. It publishes RFC 9728
+//! metadata, answers a missing or bad token with 401 and the discovery
+//! pointer, and verifies tokens against the keys the issuer publishes.
+//! It issues nothing: the login, the consent, the client registration
+//! are the issuer's.
 //!
-//! **No private key comes near this process.** There is one
-//! configuration: `--public-key` (PEM), `--issuer`, `--audience`, and
-//! whoever holds the matching private half does the minting — an IdP in
-//! a deployment, and for development a keypair that was used once and
-//! discarded, leaving `dev/public.pem` and two long-lived tokens in the
-//! repository. Machines carry the token in `Authorization: Bearer`; a
-//! browser carries the same string in a cookie, which is what the htmx
-//! essay's advice comes to.
+//! **Identity is the token's; standing is the door's.** A token names a
+//! subject (`sub`) — the person who consented. Whether that person is
+//! speaking as themselves or through an agent is not a claim anyone
+//! signs; it is which door the request came through. `/mcp` is the
+//! agent door, everything else is a human door, and the gate stamps the
+//! door's kind on the caller. That is the supersession key's third leg
+//! (subject, aspect, actor kind), settled by the transport as §1 says.
 //!
-//! Standing that the server *witnesses* is a separate thing and is not
-//! governed here: an answer elicited mid-call (the MCP form, a `ui://`
-//! page's click) lands with human standing over an agent's token,
-//! because the server saw the act (SPEC.md §1). The token governs
-//! standing that is *claimed*.
+//! **What binds a token to this server.** RFC 8707, which the MCP
+//! authorization spec makes a MUST: the token's `aud` names this
+//! server's canonical URI. MCP clients ask for that with the `resource`
+//! parameter; an issuer that fills `aud` only from a parameter of its
+//! own, which no MCP client sends, mints `aud: []`. For those the gate
+//! binds on the other claim such an issuer does stamp: the application
+//! the token was minted for (`azp`, or `client_id` per RFC 9068), which
+//! must be this server's registered client. A token for another
+//! application, or for another resource, is refused either way.
+//!
+//! Standing the server *witnesses* is a separate matter and is not
+//! governed here: an answer elicited mid-call lands with human standing
+//! under the same subject, because the server saw the act.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::Caller;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
+use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk, JwkSet};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode_header};
+use serde::Deserialize;
 
-/// The cookie a browser carries the same token in. `HttpOnly` keeps it
-/// away from injected script, `SameSite=Lax` is the CSRF defence the
-/// htmx essay settles on, and `Path=/` covers every dataset — the
-/// dataset is a path segment, not a separate credential.
+/// The cookie a browser carries its token in. `HttpOnly` keeps it away
+/// from injected script, `SameSite=Lax` is the CSRF defence, and
+/// `Path=/` covers every dataset — the dataset is a path segment, not a
+/// separate credential.
 pub const COOKIE: &str = "glossql_token";
 
-#[derive(Serialize, Deserialize)]
-struct Claims {
-    iss: String,
-    aud: String,
-    sub: String,
-    /// `human` | `agent` — the actor kind, which is the third leg of
-    /// the supersession key and the reason the token exists.
-    kind: String,
-    exp: u64,
-    iat: u64,
+/// How soon the key set may be fetched again after an unknown `kid`. A
+/// rotation is rare; a flood of forged `kid`s must not become a flood
+/// of requests at the issuer.
+const REFRESH_FLOOR: Duration = Duration::from_secs(10);
+
+/// The issuer's two user-facing endpoints, read from its discovery
+/// document: where a browser is sent to sign in, and where a code is
+/// exchanged for a token ([`crate::login`]).
+#[derive(Clone, Debug)]
+pub struct Endpoints {
+    pub authorization: String,
+    pub token: String,
 }
 
 /// The verifying half, and only the verifying half.
 pub struct Gate {
-    decoding: DecodingKey,
-    validation: Validation,
     issuer: String,
-    /// The canonical URI of this server, the token's audience. RFC 8707
-    /// §2, which the MCP authorization spec makes a MUST for a resource
-    /// server: a token minted for somewhere else must not open this.
-    pub resource: String,
-    /// With no token at all: refuse (`true`), or serve as the door's
-    /// own default (`false`). False is how a fresh workspace is opened
-    /// and tested before anyone has a token in hand.
-    pub require_token: bool,
+    /// This server's canonical URI, the token's audience (RFC 8707 §2).
+    resource: String,
+    /// The application registered at the issuer for this server — what
+    /// a token minted for it carries as `azp`.
+    client_id: String,
+    endpoints: Endpoints,
+    keys: RwLock<JwkSet>,
+    /// Where fresh keys come from. `None` when the set is fixed, which is
+    /// the test arrangement — then an unknown `kid` is a plain refusal.
+    jwks_uri: Option<String>,
+    refreshed: Mutex<Instant>,
+    http: reqwest::Client,
+}
+
+/// The fields of the issuer's discovery document this server reads.
+#[derive(Deserialize)]
+struct Discovery {
+    issuer: String,
+    jwks_uri: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+}
+
+/// `aud` as RFC 7519 allows it: one string, or an array of them.
+#[derive(Deserialize, Default, Debug)]
+#[serde(untagged)]
+enum Audience {
+    One(String),
+    #[default]
+    None,
+    Many(Vec<String>),
+}
+
+impl Audience {
+    fn names(&self, resource: &str) -> bool {
+        match self {
+            Audience::One(a) => a == resource,
+            Audience::Many(all) => all.iter().any(|a| a == resource),
+            Audience::None => false,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Audience::One(_) => false,
+            Audience::Many(all) => all.is_empty(),
+            Audience::None => true,
+        }
+    }
+}
+
+impl std::fmt::Display for Audience {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Audience::One(a) => write!(f, "{a}"),
+            Audience::Many(all) => write!(f, "[{}]", all.join(", ")),
+            Audience::None => write!(f, "[]"),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Claims {
+    sub: String,
+    #[serde(default)]
+    aud: Audience,
+    /// The application the token was minted for, under either name it
+    /// goes by: `azp` (the OpenID Connect convention many issuers carry
+    /// onto access tokens) or `client_id` (RFC 9068 §2.2, the JWT
+    /// access-token profile).
+    azp: Option<String>,
+    client_id: Option<String>,
+}
+
+impl Claims {
+    fn application(&self) -> Option<&str> {
+        self.azp.as_deref().or(self.client_id.as_deref())
+    }
 }
 
 impl Gate {
-    /// A configured issuer's public key, in PEM. The family is read
-    /// from the key itself rather than named by a flag — an Ed25519,
-    /// EC, or RSA public key each admits exactly one set of algorithms,
-    /// and accepting more than the key can carry is how algorithm
-    /// confusion gets in.
-    pub fn issuer(
-        public_key: &Path,
+    /// An issuer, by discovery: its OpenID configuration names the key
+    /// set, and the key set is fetched once here and again only when a
+    /// token names a key that is not in it.
+    ///
+    /// Fails when the issuer cannot be read. There is nothing to verify
+    /// against without it, and a server that cannot verify does not
+    /// serve.
+    pub async fn discover(issuer: &str, resource: &str, client_id: &str) -> Result<Gate, String> {
+        let issuer = issuer.trim_end_matches('/');
+        let http = reqwest::Client::new();
+        let url = format!("{issuer}/.well-known/openid-configuration");
+        let doc: Discovery = fetch(&http, &url).await?;
+        if doc.issuer.trim_end_matches('/') != issuer {
+            return Err(format!(
+                "{url} names issuer `{}`, not `{issuer}` — the document must be the issuer's own",
+                doc.issuer
+            ));
+        }
+        let keys = fetch(&http, &doc.jwks_uri).await?;
+        Ok(Gate {
+            issuer: issuer.to_string(),
+            resource: resource.to_string(),
+            client_id: client_id.to_string(),
+            endpoints: Endpoints {
+                authorization: doc.authorization_endpoint,
+                token: doc.token_endpoint,
+            },
+            keys: RwLock::new(keys),
+            jwks_uri: Some(doc.jwks_uri),
+            refreshed: Mutex::new(Instant::now()),
+            http,
+        })
+    }
+
+    /// A fixed key set, for tests: whoever holds the private halves mints.
+    pub fn with_keys(
         issuer: &str,
         resource: &str,
-        require_token: bool,
-    ) -> Result<Gate, String> {
-        let pem =
-            std::fs::read(public_key).map_err(|e| format!("{}: {e}", public_key.display()))?;
-        let (decoding, algorithm) = if let Ok(key) = DecodingKey::from_ed_pem(&pem) {
-            (key, Algorithm::EdDSA)
-        } else if let Ok(key) = DecodingKey::from_ec_pem(&pem) {
-            (key, Algorithm::ES256)
-        } else {
-            (
-                DecodingKey::from_rsa_pem(&pem).map_err(|e| {
-                    format!(
-                        "{}: not an Ed25519, EC, or RSA public key in PEM ({e}) — \
-                         a certificate is not a key here; extract its public key first",
-                        public_key.display()
-                    )
-                })?,
-                Algorithm::RS256,
-            )
-        };
-        Ok(Gate {
-            decoding,
-            validation: validation(algorithm, issuer, resource),
-            issuer: issuer.into(),
-            resource: resource.into(),
-            require_token,
-        })
+        client_id: &str,
+        keys: JwkSet,
+        endpoints: Endpoints,
+    ) -> Gate {
+        Gate {
+            issuer: issuer.trim_end_matches('/').to_string(),
+            resource: resource.to_string(),
+            client_id: client_id.to_string(),
+            endpoints,
+            keys: RwLock::new(keys),
+            jwks_uri: None,
+            refreshed: Mutex::new(Instant::now()),
+            http: reqwest::Client::new(),
+        }
     }
 
-    /// Signature, issuer, audience, and expiry, then the claims that
-    /// make an actor. An unknown `kind` is refused rather than defaulted
-    /// — defaulting it would pick a standing on the holder's behalf.
-    pub fn verify(&self, token: &str) -> Result<Actor, String> {
-        let data = jsonwebtoken::decode::<Claims>(token, &self.decoding, &self.validation)
-            .map_err(|e| e.to_string())?;
-        let kind = match data.claims.kind.as_str() {
-            "human" => ActorKind::Human,
-            "agent" => ActorKind::Agent,
-            other => return Err(format!("unknown actor kind `{other}`")),
+    /// Signature, issuer, expiry, then the binding to this server, then
+    /// the subject.
+    ///
+    /// The key is the one the token names (`kid`); the algorithm is the
+    /// one that key's family admits, read off the key rather than off
+    /// the token, which is what keeps algorithm confusion out.
+    pub async fn verify(&self, token: &str) -> Result<String, String> {
+        let header = decode_header(token).map_err(|e| e.to_string())?;
+        let kid = header.kid.ok_or("the token names no key (`kid`)")?;
+        let key = match self.key(&kid) {
+            Some(key) => key,
+            None => {
+                self.refresh().await?;
+                self.key(&kid)
+                    .ok_or_else(|| format!("no key `{kid}` at {}", self.issuer))?
+            }
         };
-        if data.claims.sub.trim().is_empty() {
+        let (decoding, algorithm) = key;
+        let mut validation = Validation::new(algorithm);
+        validation.set_issuer(&[&self.issuer]);
+        // The audience is checked below, where an empty one has a
+        // second reading; the library's own check knows only the first.
+        validation.validate_aud = false;
+        validation.set_required_spec_claims(&["exp", "iss", "sub"]);
+        let claims = jsonwebtoken::decode::<Claims>(token, &decoding, &validation)
+            .map_err(|e| e.to_string())?
+            .claims;
+        let bound = claims.aud.names(&self.resource)
+            || (claims.aud.is_empty() && claims.application() == Some(&self.client_id));
+        if !bound {
+            return Err(format!(
+                "the token is for {} (application {}), this server is {} (application {})",
+                claims.aud,
+                claims.application().unwrap_or("unnamed"),
+                self.resource,
+                self.client_id
+            ));
+        }
+        if claims.sub.trim().is_empty() {
             return Err("the token names no subject".into());
         }
-        Ok(Actor {
-            kind,
-            id: data.claims.sub,
-        })
+        Ok(claims.sub)
     }
 
-    /// RFC 9728 protected resource metadata, which the MCP
-    /// authorization spec makes a MUST for a resource server. In local
-    /// mode the workspace is its own issuer and says so.
+    fn key(&self, kid: &str) -> Option<(DecodingKey, Algorithm)> {
+        let keys = self.keys.read().expect("jwks lock");
+        let jwk = keys.find(kid)?;
+        let algorithm = algorithm_of(jwk)?;
+        let decoding = DecodingKey::from_jwk(jwk).ok()?;
+        Some((decoding, algorithm))
+    }
+
+    async fn refresh(&self) -> Result<(), String> {
+        let Some(uri) = &self.jwks_uri else {
+            return Ok(());
+        };
+        {
+            let mut at = self.refreshed.lock().expect("refresh lock");
+            if at.elapsed() < REFRESH_FLOOR {
+                return Ok(());
+            }
+            *at = Instant::now();
+        }
+        let keys = fetch(&self.http, uri).await?;
+        *self.keys.write().expect("jwks lock") = keys;
+        Ok(())
+    }
+
     /// Who mints the tokens this gate verifies.
-    pub fn minted_by(&self) -> &str {
+    pub fn issuer(&self) -> &str {
         &self.issuer
     }
 
+    /// This server's canonical URI.
+    pub fn resource(&self) -> &str {
+        &self.resource
+    }
+
+    /// The application this server is registered as at the issuer.
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn endpoints(&self) -> &Endpoints {
+        &self.endpoints
+    }
+
+    /// Whether the browser's cookie must be marked `Secure` — it must
+    /// whenever the server is reached over TLS, and cannot be on plain
+    /// loopback HTTP, where a browser would drop it.
+    pub fn secure(&self) -> bool {
+        self.resource.starts_with("https://")
+    }
+
+    /// RFC 9728 protected resource metadata, which the MCP authorization
+    /// spec makes a MUST: where a client learns which authorization
+    /// server to go to for this resource.
     pub fn metadata(&self) -> serde_json::Value {
         serde_json::json!({
             "resource": self.resource,
             "authorization_servers": [self.issuer],
-            "bearer_methods_supported": ["header", "cookie"],
+            "bearer_methods_supported": ["header"],
         })
     }
 }
 
-fn validation(algorithm: Algorithm, issuer: &str, resource: &str) -> Validation {
-    let mut validation = Validation::new(algorithm);
-    if algorithm == Algorithm::ES256 {
-        validation.algorithms = vec![Algorithm::ES256, Algorithm::ES384];
-    }
-    validation.set_issuer(&[issuer]);
-    validation.set_audience(&[resource]);
-    validation.validate_exp = true;
-    validation
+async fn fetch<T: serde::de::DeserializeOwned>(
+    http: &reqwest::Client,
+    url: &str,
+) -> Result<T, String> {
+    http.get(url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("{url}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{url}: {e}"))
 }
 
-/// The one gate every door is behind.
-///
-/// One layer above every door, so identity is read the same way for all
-/// of them and no handler can forget to.
-pub async fn gate(State(gate): State<Arc<Gate>>, mut req: Request, next: Next) -> Response {
-    match bearer(&req).or_else(|| cookie(&req)) {
-        Some(token) => match gate.verify(&token) {
-            Ok(actor) => {
-                req.extensions_mut().insert(Caller(actor));
-            }
-            Err(e) => return challenge(&gate, &e),
-        },
-        // No token. Either the server insists, or the doors fall back to
-        // the identity they carried before tokens existed.
-        None if gate.require_token => return challenge(&gate, "no bearer token"),
-        None => {}
+/// The algorithm a published key admits. The key's own `alg` when it
+/// names one; otherwise the one its family implies. A family this
+/// server does not verify with (symmetric keys, P-521) yields none, and
+/// a token naming such a key is refused.
+fn algorithm_of(jwk: &Jwk) -> Option<Algorithm> {
+    if let Some(named) = &jwk.common.key_algorithm {
+        return named.to_string().parse().ok();
     }
-    next.run(req).await
+    match &jwk.algorithm {
+        AlgorithmParameters::RSA(_) => Some(Algorithm::RS256),
+        AlgorithmParameters::OctetKeyPair(_) => Some(Algorithm::EdDSA),
+        AlgorithmParameters::EllipticCurve(params) => match params.curve {
+            EllipticCurve::P256 => Some(Algorithm::ES256),
+            EllipticCurve::P384 => Some(Algorithm::ES384),
+            _ => None,
+        },
+        // Symmetric keys and whatever a later jsonwebtoken adds: a
+        // family this server does not verify with.
+        _ => None,
+    }
+}
+
+/// The gate, one layer above a door, carrying that door's standing.
+///
+/// Every door is behind one of these, so identity is read the same way
+/// for all of them and no handler can forget to. The kind is the
+/// door's: `/mcp` says agent, the others say human.
+pub async fn gate(
+    State((gate, kind)): State<(std::sync::Arc<Gate>, ActorKind)>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let at = format!("{} {}", req.method(), req.uri().path());
+    let Some(token) = bearer(&req).or_else(|| cookie(&req)) else {
+        return refused(&gate, &req, &at, "no bearer token");
+    };
+    match gate.verify(&token).await {
+        Ok(id) => {
+            req.extensions_mut().insert(Caller(Actor { kind, id }));
+            next.run(req).await
+        }
+        Err(e) => refused(&gate, &req, &at, &e),
+    }
+}
+
+/// A refusal, said out loud minus the token: the client sees only a
+/// 401, and whoever runs the server would otherwise see nothing.
+///
+/// A person arriving in a browser is not answered with a 401 to read
+/// but sent to sign in, and brought back to where they were going.
+fn refused(gate: &Gate, req: &Request, at: &str, why: &str) -> Response {
+    println!("glossql refused {at}: {why}");
+    if navigates(req) {
+        let back = req
+            .uri()
+            .path_and_query()
+            .map(|p| p.as_str())
+            .unwrap_or("/");
+        return see_other(&format!("/auth/login?{}", query(&[("next", back)])));
+    }
+    challenge(gate, why)
+}
+
+/// Whether the request is a person's browser going somewhere, as
+/// opposed to a machine's call: a GET that asks for HTML.
+fn navigates(req: &Request) -> bool {
+    req.method() == axum::http::Method::GET
+        && req
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html"))
 }
 
 /// 401 with the discovery pointer the MCP spec requires, so a client
@@ -208,10 +426,15 @@ fn bearer(req: &Request) -> Option<String> {
 }
 
 fn cookie(req: &Request) -> Option<String> {
-    for header in req.headers().get_all(header::COOKIE) {
+    cookie_named(req.headers(), COOKIE)
+}
+
+/// One cookie's value out of the request, by name.
+pub(crate) fn cookie_named(headers: &header::HeaderMap, name: &str) -> Option<String> {
+    for header in headers.get_all(header::COOKIE) {
         for pair in header.to_str().ok()?.split(';') {
-            if let Some((name, value)) = pair.split_once('=')
-                && name.trim() == COOKIE
+            if let Some((k, value)) = pair.split_once('=')
+                && k.trim() == name
             {
                 return Some(value.trim().to_string());
             }
@@ -220,95 +443,40 @@ fn cookie(req: &Request) -> Option<String> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The checked-in development credential: a public key and two
-    /// tokens whose private half was used once and thrown away. Nothing
-    /// in the tree can mint another, which is the point — these assert
-    /// what verification does, not that we can sign.
-    fn dev(file: &str) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../dev")
-            .join(file)
+/// A `Set-Cookie` value in the shape every cookie of this server takes:
+/// `HttpOnly`, `SameSite=Lax`, scoped to `path`, `Secure` behind TLS,
+/// and either good for `max_age` seconds or, at zero, cleared.
+pub(crate) fn set_cookie(
+    name: &str,
+    value: &str,
+    path: &str,
+    max_age: Option<u64>,
+    secure: bool,
+) -> HeaderValue {
+    let mut cookie = format!("{name}={value}; Path={path}; HttpOnly; SameSite=Lax");
+    if let Some(seconds) = max_age {
+        cookie.push_str(&format!("; Max-Age={seconds}"));
     }
-
-    fn gate(resource: &str) -> Gate {
-        Gate::issuer(&dev("public.pem"), "glossql-dev", resource, false).unwrap()
+    if secure {
+        cookie.push_str("; Secure");
     }
+    HeaderValue::from_str(&cookie).expect("a cookie is ASCII")
+}
 
-    fn token(kind: &str) -> String {
-        std::fs::read_to_string(dev(format!("{kind}.jwt").as_str()))
-            .unwrap()
-            .trim()
-            .to_string()
-    }
+/// 303: the browser goes there with a GET, whatever it just sent.
+pub(crate) fn see_other(location: &str) -> Response {
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, location.to_string())],
+    )
+        .into_response()
+}
 
-    #[test]
-    fn a_token_names_its_actor_and_its_kind() {
-        let gate = gate("http://127.0.0.1:8080");
-        let human = gate.verify(&token("human")).unwrap();
-        assert_eq!(human.kind, ActorKind::Human);
-        assert_eq!(human.id, "dev-human");
-        assert_eq!(gate.verify(&token("agent")).unwrap().kind, ActorKind::Agent);
+/// A query string, encoded.
+pub(crate) fn query(pairs: &[(&str, &str)]) -> String {
+    let mut out = oauth2::url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in pairs {
+        out.append_pair(k, v);
     }
-
-    #[test]
-    fn a_token_for_another_audience_does_not_open_this_one() {
-        // Same key, same issuer, different audience: the RFC 8707
-        // binding is the whole point of the claim.
-        assert!(
-            gate("https://elsewhere.example")
-                .verify(&token("human"))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn an_agent_cannot_carry_human_standing() {
-        let gate = gate("http://127.0.0.1:8080");
-        let agent = token("agent");
-        assert_eq!(gate.verify(&agent).unwrap().kind, ActorKind::Agent);
-        // Rewriting the claim breaks the signature, which is the only
-        // thing standing between an agent and the human's slot.
-        let mut parts: Vec<&str> = agent.split('.').collect();
-        let forged = r#"{"iss":"glossql-dev","aud":"http://127.0.0.1:8080","sub":"dev-agent","kind":"human","exp":9999999999,"iat":1}"#;
-        let encoded = base64_url(forged.as_bytes());
-        parts[1] = &encoded;
-        assert!(gate.verify(&parts.join(".")).is_err());
-    }
-
-    #[test]
-    fn a_private_key_never_enters_the_tree() {
-        // The guard on the whole arrangement: a resource server that can
-        // sign is an authorization server, whatever it is called.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dev");
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            let body = std::fs::read_to_string(&path).unwrap_or_default();
-            assert!(
-                !body.contains("PRIVATE KEY"),
-                "{} carries a private key",
-                path.display()
-            );
-        }
-    }
-
-    fn base64_url(bytes: &[u8]) -> String {
-        const SET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-        let mut out = String::new();
-        for chunk in bytes.chunks(3) {
-            let b = [
-                chunk[0],
-                *chunk.get(1).unwrap_or(&0),
-                *chunk.get(2).unwrap_or(&0),
-            ];
-            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-            for i in 0..chunk.len() + 1 {
-                out.push(SET[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
-            }
-        }
-        out
-    }
+    out.finish()
 }

@@ -26,7 +26,7 @@ use glossql_session::NoRuntime;
 fn human() -> Actor {
     Actor {
         kind: ActorKind::Human,
-        id: glossql_serverd::HUMAN.into(),
+        id: glossql_serverd::BOOTSTRAP.into(),
     }
 }
 

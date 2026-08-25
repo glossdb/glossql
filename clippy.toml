@@ -1,0 +1,4 @@
+# A test may unwrap: a panic there is the assertion. Library and binary
+# code may not — see `[workspace.lints.clippy]` in Cargo.toml.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

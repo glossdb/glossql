@@ -8,6 +8,8 @@ One binary, one listener.
 /<dataset>/query           the Arrow door
 /<dataset>/app             the app door
 /assets/<file>             the app door's embedded assets
+/auth/login, /auth/callback, /auth/logout
+                           the browser's way to a token
 /.well-known/oauth-protected-resource
 ```
 
@@ -18,11 +20,13 @@ workspace and moves between its datasets, so `/mcp` is one endpoint and
 the dataset arrives in the statements.
 
 ```
-serverd --workspace <dir> [--addr <ip:port>]
-        [--row-cap <n>] [--cube-cache <megabytes>]
-        [--memory-limit <megabytes>] [--require-token]
-        [--public-key <key.pem> --issuer <iss>] [--audience <uri>]
+serverd --workspace <dir> [--addr <ip:port>] [--row-cap <n>]
+        [--cube-cache <megabytes>] [--memory-limit <megabytes>]
 ```
+
+The authorization arrangement — `GLOSSQL_ISSUER`, `GLOSSQL_AUDIENCE`,
+`GLOSSQL_CLIENT_ID`, `GLOSSQL_CLIENT_SECRET` — is read from `.env` or
+the environment, never from flags ([install](../start/install.md)).
 
 Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB, memory
 limit 4096 MB. The cube cache and the memory limit are two budgets, not
@@ -58,44 +62,64 @@ DATASET` is what brings the name into being.
 
 Every door is behind one gate. A request carries a bearer token —
 `Authorization: Bearer <jwt>` from a machine, the same string in a
-`glossql_token` cookie from a browser — verified against a public key.
-Its claims are the actor: `sub` is the id, `kind` (`human` | `agent`)
-is the actor kind, and `aud` must be this server's canonical URI
-(RFC 8707 §2). glossql is an OAuth 2.1 **resource server** and never an
-authorization server: it verifies, it does not issue, and there is no
-login flow or user table inside a workspace.
+`glossql_token` cookie (`HttpOnly; SameSite=Lax`) from a browser —
+verified against the keys its issuer publishes. glossql is an OAuth 2.1
+**resource server** (MCP authorization, revision 2026-07-28) and never
+an authorization server: it verifies, it does not issue, and there is
+no login flow, no client registration and no user table inside a
+workspace. Those are the issuer's.
 
-`kind` being signed is the point. Human outranks agent at every read
-and the supersession key is (subject, aspect, actor kind), so an agent
-that could claim human standing would outrank every human. It cannot,
-because it cannot sign.
+**Identity is the token's; standing is the door's.** The token's `sub`
+is the actor id. The actor kind is which door the request came
+through: `/mcp` is the agent door, `/`, `/query` and `/app` are human
+doors — the actor rides the transport (SPEC.md §1). Nobody signs a
+standing; the supersession key's third leg, (subject, aspect, actor
+kind), is settled by where the request arrived.
 
-**No private key comes near this process.** The server is given
-`--public-key` (a public key in PEM, not a certificate), `--issuer` and
-`--audience`, and whoever holds the matching private half does the
-minting — an IdP in a deployment, and in `dev/` a keypair that was used
-once and discarded, leaving a public key and two long-lived tokens in
-the repository.
+The gate is configured by the arrangement in `.env`. `GLOSSQL_ISSUER`
+is the authorization server's URL: its OpenID configuration is read at
+boot and names the key set (`jwks_uri`), which is fetched then and
+again only when a token names a key not in it. `GLOSSQL_AUDIENCE` is
+this server's canonical URI, which a token's `aud` names (RFC 8707 §2)
+— a token minted for another resource does not open this one.
+`GLOSSQL_CLIENT_ID` is the application registered at the issuer for
+this server: when an issuer that does not implement RFC 8707 mints
+`aud: []` for an MCP client (which asks with `resource=`, never with
+the issuer's own `audience=`), the token is bound by the application
+it was minted for instead — `azp`, or `client_id` as RFC 9068 spells
+it — which must be that application. Signature (by the key
+the token's `kid` names, with the algorithm that key admits), `iss`,
+`exp` and the binding are checked on every request; a refusal is
+logged with its reason, never with the token. A server that cannot
+reach its issuer does not start.
 
-A machine carries the token in `Authorization: Bearer`; a browser
-carries the same string in a `glossql_token` cookie (`HttpOnly;
-SameSite=Lax`).
+Standing the server *witnesses* is separate and is not governed by the
+token: an answer elicited mid-call lands with human standing under the
+same subject over the agent's connection, because the server saw the
+act (SPEC.md §1).
 
-Without `--public-key` there is no gate: nothing to verify against, no
-resource-metadata document to serve, and every request is the door's
-own default — the anonymous `human`, or an agent over `/mcp`. That is
-how a fresh workspace is opened. With one, `--require-token` refuses a
-request that brings none instead of falling back.
+A missing or invalid token answers 401 with `WWW-Authenticate: Bearer
+resource_metadata="…"`, pointing at the RFC 9728 document at
+`/.well-known/oauth-protected-resource` (also under any path):
+`resource` (the audience) and `authorization_servers` (the issuer). A
+browser navigating to a door — a GET that asks for HTML — is sent to
+`/auth/login` instead and brought back afterwards.
 
-Standing the server *witnesses* is separate and is not governed by a
-token: an answer elicited mid-call lands with human standing over an
-agent's connection, because the server saw the act (SPEC.md §1).
+**The browser's token.** A machine obtains its token itself; a browser
+is walked through it: `/auth/login` sends it to the issuer's sign-in
+(authorization code with PKCE, RFC 7636, the resource named per RFC
+8707), `/auth/callback` exchanges the code at the issuer's token
+endpoint as the registered application, verifies the token with the
+same gate every door uses, and sets it as the `glossql_token` cookie.
+The issuer must list `<audience>/auth/callback` as a redirect URI. The
+login in progress — state, PKCE verifier, where to go back to — rides a
+ten-minute cookie scoped to `/auth`; the server holds no session.
+`/auth/logout` clears the cookie.
 
-An invalid or missing token answers 401 with `WWW-Authenticate: Bearer
-resource_metadata="…"`, pointing at the RFC 9728 document the MCP
-authorization spec requires. That document sits outside the gate: it is
-where a client learns how to authenticate, so requiring a token to read
-it would point the client at itself.
+Three things sit outside the gate: `/auth`, where a browser goes
+precisely because it holds no token; the discovery document, which is
+where a client learns how to authenticate; and `/assets`, the app
+door's own script and styles, which hold no data.
 
 ## `/mcp` — the agent door
 

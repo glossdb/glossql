@@ -11,21 +11,25 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Int64Array;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_serverd::{ARROW_STREAM, DoorConfig, Gate, HUMAN, Plane, bootstrap, router};
+use std::collections::HashMap;
+
+use glossql_serverd::{ARROW_STREAM, BOOTSTRAP, DoorConfig, Login, Plane, bootstrap, router};
+
+mod common;
 use glossql_session::NoRuntime;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-async fn app_with(doors: DoorConfig) -> (Router, tempfile::TempDir) {
+async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
     let workspace = dir.path().to_path_buf();
-    (router(plane, doors, workspace, None), dir)
+    (router(plane, doors, workspace, login), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
-    app_with(DoorConfig::default()).await
+    app_with(DoorConfig::default(), common::login()).await
 }
 
 /// The same doors over a workspace that already holds one dataset.
@@ -61,7 +65,12 @@ async fn the_docket_app_ships_in_the_binary() {
     // on whichever dataset the URL names.
     let (app, _dir) = app_on_fin().await;
     let response = app
-        .oneshot(Request::get("/fin/app/docket").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/fin/app/docket")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -81,6 +90,7 @@ async fn a_dataset_the_workspace_does_not_hold_is_a_404() {
         .clone()
         .oneshot(
             Request::get("/nope/app/docket/frames/census")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -91,6 +101,7 @@ async fn a_dataset_the_workspace_does_not_hold_is_a_404() {
     let response = app
         .oneshot(
             Request::post("/nope/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from("SELECT 1"))
                 .unwrap(),
         )
@@ -107,6 +118,7 @@ async fn the_query_door_streams_arrow_ipc() {
     let response = app
         .oneshot(
             Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from("SELECT 1 + 1 AS two"))
                 .unwrap(),
         )
@@ -136,6 +148,7 @@ async fn the_query_door_answers_a_statement_sequence_in_json() {
     let response = app
         .oneshot(
             Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from("SELECT 1 AS a; SELECT 2 AS b"))
                 .unwrap(),
         )
@@ -156,6 +169,7 @@ async fn the_query_door_answers_a_refusal_in_the_body() {
     let response = app
         .oneshot(
             Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from("USE nothing"))
                 .unwrap(),
         )
@@ -170,58 +184,21 @@ async fn the_query_door_answers_a_refusal_in_the_body() {
     );
 }
 
-/// The gate: a bearer token is what proves who is speaking. Until now
-/// The checked-in development credential — a public key whose private
-/// half was used once and discarded. Nothing in the tree can mint, so a
-/// test asserts what verification does, never that we can sign.
-fn dev(file: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../dev")
-        .join(file)
-}
-
-fn dev_gate(require_token: bool) -> Arc<Gate> {
-    Arc::new(
-        Gate::issuer(
-            &dev("public.pem"),
-            "glossql-dev",
-            "http://127.0.0.1:8080",
-            require_token,
-        )
-        .unwrap(),
-    )
-}
-
-fn dev_token(kind: &str) -> String {
-    std::fs::read_to_string(dev(format!("{kind}.jwt").as_str()))
-        .unwrap()
-        .trim()
-        .to_string()
-}
-
-/// nothing did, and the supersession key's `actor kind` leg rested on
-/// callers being well behaved.
+/// The gate. A bearer token from the issuer names who is speaking; the
+/// door names with which standing. Nothing in the tree signs a token
+/// except the test issuer in `common`.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
-    let (dir, store) = scratch_store().await;
-    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
-    let workspace = dir.path().to_path_buf();
-    let token = dev_token("agent");
-    let app = router(
-        plane,
-        DoorConfig::default(),
-        workspace,
-        Some(dev_gate(false)),
-    );
+async fn the_token_names_the_subject_and_the_door_names_the_standing() {
+    let (app, _dir) = app().await;
 
-    // The token's subject is the actor, over the handshake's own name:
-    // `clientInfo` is a name a client picks for itself, a claim is
-    // signed.
+    // Over the agent door: agent standing, the token's subject as the
+    // id — never the handshake's `clientInfo` name, which a client
+    // picks for itself on every request.
     let request = Request::post("/mcp")
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::AUTHORIZATION, common::bearer("ada"))
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", "tools/call")
         .header("mcp-name", "glossql")
@@ -232,7 +209,7 @@ async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
                 "DECLARE DATASET fin SET (purpose: 'token test');\n\
                  USE fin;\n\
                  DECLARE ASPECT note WITH $${\"type\": \"object\"}$$ AS FACT ON DATASET;\n\
-                 GLOSS note ON fin AS $${\"value\": \"mine\"}$$;\n\
+                 GLOSS note ON fin AS $${\"value\": \"through the agent door\"}$$;\n\
                  SELECT actor_id, actor_kind FROM glossary WHERE aspect = 'note';",
                 None,
             )
@@ -244,26 +221,55 @@ async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let outcomes: Value = serde_json::from_str(text).expect(text);
     let last = outcomes.as_array().unwrap().last().unwrap();
-    assert_eq!(
-        last["rows"][0]["actor_id"],
-        json!("dev-agent"),
-        "{outcomes}"
-    );
+    assert_eq!(last["rows"][0]["actor_id"], json!("ada"), "{outcomes}");
     assert_eq!(last["rows"][0]["actor_kind"], json!("agent"), "{outcomes}");
 
-    // A token this server did not sign opens nothing, and the refusal
-    // points at the discovery document a client can act on.
+    // The same token over a human door: the same subject, human
+    // standing. Both rows stand — the supersession key's third leg is
+    // the kind, and the door set it.
     let response = app
         .oneshot(
             Request::post("/fin/query")
-                .header(header::AUTHORIZATION, "Bearer not.a.token")
+                .header(header::AUTHORIZATION, common::bearer("ada"))
+                .body(Body::from(
+                    "GLOSS note ON fin AS $${\"value\": \"through the human door\"}$$;\n\
+                     SELECT actor_id, actor_kind FROM glossary WHERE aspect = 'note' \
+                     ORDER BY actor_kind;",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let rows = body[1]["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{body}"));
+    assert_eq!(rows.len(), 2, "{body}");
+    assert_eq!(rows[0]["actor_kind"], json!("agent"), "{body}");
+    assert_eq!(rows[1]["actor_kind"], json!("human"), "{body}");
+    assert!(rows.iter().all(|r| r["actor_id"] == json!("ada")), "{body}");
+}
+
+/// A request that brings no token, or one this issuer did not mint for
+/// this server, is refused with the discovery pointer an OAuth-capable
+/// client follows. Each refusal here is one check the gate makes:
+/// signature, key, issuer, audience, expiry.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_or_foreign_token_is_refused_with_the_discovery_pointer() {
+    let (app, _dir) = app().await;
+
+    let none = app
+        .clone()
+        .oneshot(
+            Request::post("/fin/query")
                 .body(Body::from("SELECT 1"))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let challenge = response.headers()[header::WWW_AUTHENTICATE]
+    assert_eq!(none.status(), StatusCode::UNAUTHORIZED);
+    let challenge = none.headers()[header::WWW_AUTHENTICATE]
         .to_str()
         .unwrap()
         .to_string();
@@ -271,49 +277,332 @@ async fn a_token_names_the_actor_and_a_bad_one_is_refused() {
         challenge.contains("oauth-protected-resource"),
         "{challenge}"
     );
-}
 
-/// `--require-token` is the posture a server takes when it knows where
-/// its tokens come from. Without it a request that brings none is
-/// served as the door's own default, which is how a fresh workspace is
-/// opened before anyone holds one.
-#[tokio::test(flavor = "multi_thread")]
-async fn require_token_refuses_a_request_that_brings_none() {
-    let (dir, store) = scratch_store().await;
-    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
-    let workspace = dir.path().to_path_buf();
-    let app = router(
-        plane,
-        DoorConfig::default(),
-        workspace,
-        Some(dev_gate(true)),
-    );
-    let response = app
+    // The agent door refuses before the protocol ever sees the body.
+    let agent_door = app
+        .clone()
         .oneshot(
-            Request::post("/fin/query")
-                .body(Body::from("SELECT 1"))
+            Request::post("/mcp")
+                .header(header::HOST, "127.0.0.1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(agent_door.status(), StatusCode::UNAUTHORIZED);
+
+    let foreign = [
+        ("not a token", "not.a.token".to_string()),
+        (
+            "another audience",
+            common::token_for(
+                "ada",
+                common::ISSUER,
+                "https://elsewhere.example",
+                common::far_future(),
+            ),
+        ),
+        (
+            "another issuer",
+            common::token_for(
+                "ada",
+                "https://other.issuer.test",
+                common::RESOURCE,
+                common::far_future(),
+            ),
+        ),
+        (
+            "expired",
+            common::token_for("ada", common::ISSUER, common::RESOURCE, 1),
+        ),
+        (
+            "a key the issuer does not publish",
+            common::token_under_kid("ada", "rotated-away"),
+        ),
+        (
+            "a rewritten subject",
+            common::forged(&common::token("ada"), "mallory"),
+        ),
+    ];
+    for (why, token) in foreign {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/fin/query")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from("SELECT 1"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{why}");
+    }
 }
 
-/// The discovery document is what a 401 tells the client to read, so it
-/// is the one route that cannot sit behind the gate: a challenge
-/// pointing at a document that answers 401 points the client at itself.
+/// An issuer that ignores RFC 8707 mints `aud: []` for an MCP client,
+/// which asks with `resource=` and has no way to say `audience=`. Such a
+/// token is bound to this server by the other claim the issuer does
+/// stamp — `azp`, the application it was minted for — and by nothing
+/// looser: another application's token is refused, and so is one that
+/// names some other resource outright, whichever application it came
+/// from.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_discovery_document_answers_without_a_token() {
-    let (dir, store) = scratch_store().await;
-    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
-    let workspace = dir.path().to_path_buf();
-    let app = router(
-        plane,
-        DoorConfig::default(),
-        workspace,
-        Some(dev_gate(true)),
-    );
+async fn a_token_with_no_audience_is_bound_by_the_application() {
+    let (app, _dir) = app_on_fin().await;
+    let query = |token: String| {
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::post("/fin/query")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from("SELECT 1 AS one; SELECT 2 AS two"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let ours = query(common::token_from_app("ada", common::CLIENT_ID)).await;
+    assert_eq!(ours.status(), StatusCode::OK);
+
+    // RFC 9068 spells the same claim `client_id`; the binding reads
+    // either name.
+    let rfc_9068 = query(common::token_with(json!({
+        "iss": common::ISSUER, "aud": [], "client_id": common::CLIENT_ID,
+        "sub": "ada", "exp": common::far_future(), "iat": 1
+    })))
+    .await;
+    assert_eq!(rfc_9068.status(), StatusCode::OK);
+
+    let other_app = query(common::token_from_app("ada", "some-other-app")).await;
+    assert_eq!(other_app.status(), StatusCode::UNAUTHORIZED);
+
+    let elsewhere = query(common::token_with(json!({
+        "iss": common::ISSUER, "aud": "https://elsewhere.example", "azp": common::CLIENT_ID,
+        "sub": "ada", "exp": common::far_future(), "iat": 1
+    })))
+    .await;
+    assert_eq!(elsewhere.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A person in a browser holds no token, so a navigation to a door is
+/// sent to sign in and brought back afterwards; a machine's call gets
+/// the 401 it can act on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_without_a_token_is_sent_to_sign_in() {
+    let (app, _dir) = app().await;
     let response = app
+        .oneshot(
+            Request::get("/fin/app/docket?page=2")
+                .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/auth/login?next=%2Ffin%2Fapp%2Fdocket%3Fpage%3D2"
+    );
+}
+
+/// The whole browser flow against a stand-in issuer: off to sign in
+/// with PKCE and the resource named, back with a code, the code
+/// exchanged at the token endpoint with the verifier and the
+/// application's secret in the body, the token verified by the gate and
+/// handed to the browser as the cookie — which then opens a human door.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
+    // The issuer's token endpoint, stood in for: it records what it was
+    // asked and answers with a token the test issuer signed.
+    let asked: Arc<std::sync::Mutex<Option<HashMap<String, String>>>> = Arc::default();
+    let recorder = Arc::clone(&asked);
+    let issuer = Router::new().route(
+        "/token",
+        axum::routing::post(
+            move |axum::Form(form): axum::Form<HashMap<String, String>>| {
+                let recorder = Arc::clone(&recorder);
+                async move {
+                    *recorder.lock().unwrap() = Some(form);
+                    axum::Json(json!({
+                        "access_token": common::token("ada"),
+                        "token_type": "Bearer",
+                        "expires_in": 3600
+                    }))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, issuer).await.unwrap() });
+
+    let (app, _dir) = app_with(DoorConfig::default(), common::login_with(&token_url)).await;
+    expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                1,
+                "DECLARE DATASET fin SET (purpose: 'login test');",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    // Off to the issuer, with everything the code flow needs.
+    let going = app
+        .clone()
+        .oneshot(
+            Request::get("/auth/login?next=/fin/app/docket")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(going.status(), StatusCode::SEE_OTHER);
+    let location = going.headers()[header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(location.starts_with(common::AUTHORIZE), "{location}");
+    let params: HashMap<String, String> = oauth2::url::Url::parse(&location)
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect();
+    assert_eq!(params["response_type"], "code");
+    assert_eq!(params["client_id"], common::CLIENT_ID);
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert_eq!(params["resource"], common::RESOURCE);
+    assert_eq!(
+        params["redirect_uri"],
+        format!("{}/auth/callback", common::RESOURCE)
+    );
+    let state = params["state"].clone();
+    let pending = going.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        pending.starts_with("glossql_login=")
+            && pending.contains("HttpOnly")
+            && pending.contains("Path=/auth"),
+        "{pending}"
+    );
+    let pending_cookie = pending.split(';').next().unwrap().to_string();
+
+    // Back with the wrong state: refused.
+    let wrong = app
+        .clone()
+        .oneshot(
+            Request::get("/auth/callback?code=abc&state=not-that-one")
+                .header(header::COOKIE, &pending_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+
+    // Back with the right one: exchanged, verified, handed over.
+    let back = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/auth/callback?code=abc&state={state}"))
+                .header(header::COOKIE, &pending_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = back.status();
+    let headers = back.headers().clone();
+    let said =
+        String::from_utf8_lossy(&to_bytes(back.into_body(), usize::MAX).await.unwrap()).to_string();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{said}");
+    assert_eq!(headers[header::LOCATION], "/fin/app/docket");
+    let cookies: Vec<String> = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|v| v.to_str().unwrap().to_string())
+        .collect();
+    let token_cookie = cookies
+        .iter()
+        .find(|c| c.starts_with("glossql_token="))
+        .unwrap_or_else(|| panic!("no token cookie in {cookies:?}"));
+    assert!(
+        token_cookie.contains("HttpOnly")
+            && token_cookie.contains("SameSite=Lax")
+            && token_cookie.contains("Path=/")
+            && token_cookie.contains("Max-Age=3600")
+            && !token_cookie.contains("Secure"),
+        "{token_cookie}"
+    );
+    assert!(
+        cookies
+            .iter()
+            .any(|c| c.starts_with("glossql_login=;") && c.contains("Max-Age=0")),
+        "the login in progress is cleared: {cookies:?}"
+    );
+    let exchange = asked
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the token endpoint was asked");
+    assert_eq!(exchange["grant_type"], "authorization_code");
+    assert_eq!(exchange["code"], "abc");
+    assert_eq!(exchange["client_id"], common::CLIENT_ID);
+    assert_eq!(exchange["client_secret"], common::CLIENT_SECRET);
+    assert_eq!(
+        exchange["redirect_uri"],
+        format!("{}/auth/callback", common::RESOURCE)
+    );
+    assert_eq!(exchange["resource"], common::RESOURCE);
+    assert!(exchange.contains_key("code_verifier"), "{exchange:?}");
+
+    // The cookie opens a human door.
+    let cookie = token_cookie.split(';').next().unwrap().to_string();
+    let docket = app
+        .clone()
+        .oneshot(
+            Request::get("/fin/app/docket")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(docket.status(), StatusCode::OK);
+
+    // And logout takes it away.
+    let out = app
+        .oneshot(Request::get("/auth/logout").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(out.status(), StatusCode::SEE_OTHER);
+    assert!(
+        out.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .starts_with("glossql_token=;")
+    );
+}
+
+/// The discovery document sits outside the gate — it is where a client
+/// learns how to authenticate, and a document that answered 401 would
+/// point the client at itself. So do the app's own assets, which hold
+/// no data.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_discovery_document_and_the_assets_answer_without_a_token() {
+    let (app, _dir) = app().await;
+    let response = app
+        .clone()
         .oneshot(
             Request::get("/.well-known/oauth-protected-resource")
                 .body(Body::empty())
@@ -322,6 +611,35 @@ async fn the_discovery_document_answers_without_a_token() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["resource"], json!(common::RESOURCE), "{body}");
+    assert_eq!(
+        body["authorization_servers"],
+        json!([common::ISSUER]),
+        "{body}"
+    );
+    // RFC 9728 §3.1: a client given `…/mcp` asks under that path first.
+    let under_path = app
+        .clone()
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/mcp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(under_path.status(), StatusCode::OK);
+    assert_eq!(body_json(under_path).await, body);
+
+    let asset = app
+        .oneshot(
+            Request::get("/assets/gl-rows.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(asset.status(), StatusCode::OK);
 }
 
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
@@ -334,6 +652,7 @@ async fn mcp(app: Router, payload: Value) -> Response<Body> {
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, common::bearer("dev-agent"))
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", method);
     if let Some(name) = payload["params"]["name"].as_str() {
@@ -538,10 +857,15 @@ async fn the_round_never_asks_the_human_for_statistics() {
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     let human = Actor {
         kind: ActorKind::Human,
-        id: HUMAN.into(),
+        id: BOOTSTRAP.into(),
     };
     bootstrap(&plane, human).await.unwrap();
-    let app = router(plane, DoorConfig::default(), dir.path().to_path_buf(), None);
+    let app = router(
+        plane,
+        DoorConfig::default(),
+        dir.path().to_path_buf(),
+        common::login(),
+    );
 
     let setup = format!(
         r#"DECLARE DATASET perf SET (purpose: 'kit test');
@@ -1045,12 +1369,12 @@ async fn the_round_never_interrupts_a_working_call() {
     );
 }
 
-/// An untokened call writes under one constant. `clientInfo` carries a
-/// name here and the record must not take it: a caller names itself on
-/// every request, so the string proves nothing, and the actor column is
-/// where the record says who spoke.
+/// The handshake's own name never reaches the record. `clientInfo`
+/// carries one here and the token carries another; the record takes
+/// the token's, because a caller names itself on every request and the
+/// string proves nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_untokened_call_writes_under_the_constant_not_the_clients_name() {
+async fn the_clients_own_name_never_reaches_the_record() {
     let (app, _dir) = app().await;
     let call = |id: u64, statements: &str| {
         json!({
@@ -1062,11 +1386,12 @@ async fn an_untokened_call_writes_under_the_constant_not_the_clients_name() {
             }
         })
     };
+    let claimed = meta()["io.modelcontextprotocol/clientInfo"]["name"].clone();
+    assert!(
+        claimed.is_string(),
+        "the handshake names a client: {claimed}"
+    );
 
-    // `meta()` stamps a clientInfo name, and the transport synthesizes
-    // its own peer identity ("rmcp") when a client sends none. Neither
-    // may reach the record: without a token there is nothing to verify,
-    // and an unverified name recorded as an actor reads like an identity.
     let setup = r#"
         DECLARE DATASET fin SET (purpose: 'actor test');
         USE fin;
@@ -1085,19 +1410,24 @@ async fn an_untokened_call_writes_under_the_constant_not_the_clients_name() {
         json!("agent"),
         "{outcomes}"
     );
+    // `mcp()` speaks with the test issuer's token for `dev-agent`.
     assert_eq!(
         outcomes[0]["rows"][0]["actor_id"],
-        json!(glossql_serverd::AGENT),
+        json!("dev-agent"),
         "{outcomes}"
     );
+    assert_ne!(outcomes[0]["rows"][0]["actor_id"], claimed, "{outcomes}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(DoorConfig {
-        row_cap: 3,
-        ..Default::default()
-    })
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..Default::default()
+        },
+        common::login(),
+    )
     .await;
     let call = |id: u64, statements: &str| {
         json!({
@@ -1153,10 +1483,13 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(DoorConfig {
-        row_cap: 3,
-        ..Default::default()
-    })
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..Default::default()
+        },
+        common::login(),
+    )
     .await;
     let body = expect_ok(
         mcp(
@@ -1607,7 +1940,12 @@ async fn an_agent_authors_an_app_over_the_tool() {
     // The page the agent wrote is served by the app door.
     let response = app
         .clone()
-        .oneshot(Request::get("/fin/app/cash").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/fin/app/cash")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -1624,6 +1962,7 @@ async fn an_agent_authors_an_app_over_the_tool() {
         .clone()
         .oneshot(
             Request::get("/fin/app/cash/frames/open")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1638,7 +1977,12 @@ async fn an_agent_authors_an_app_over_the_tool() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 151, edit, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let response = app
-        .oneshot(Request::get("/fin/app/cash").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/fin/app/cash")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();

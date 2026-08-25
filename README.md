@@ -93,10 +93,10 @@ the dataset arrives in the statements:
   own — as a directory, or as glosses, which is the shape an agent can
   write.
 
-Who is speaking is a bearer token verified against a public key: `sub`
-is the actor id, `kind` is the actor kind. Human outranks agent at
-every read, so that claim being signed is what keeps an agent out of
-the human's slot.
+Who is speaking is a bearer token from the workspace's issuer, verified
+against the keys it publishes: `sub` is the actor id. The actor kind is
+the door's — `/mcp` is the agent door, the others are human — so an
+agent's connection never reaches the human's slot.
 
 The door tells, skills teach: everything an agent must *learn* ships
 as skills — the glossin plugin, in the vendor-neutral Agent

@@ -33,7 +33,7 @@ const REMEASURED: [(&str, &str); 1] = [("HX-Trigger", "glossql:remeasured, gloss
 pub async fn remeasure(
     State(door): State<AppDoor>,
     Path((dataset, app)): Path<(String, String)>,
-    caller: Option<Extension<Caller>>,
+    Extension(Caller(actor)): Extension<Caller>,
 ) -> Response {
     let known = crate::known(&door).await;
     if !known.contains(&dataset) {
@@ -47,12 +47,6 @@ pub async fn remeasure(
         Ok(Some(_)) => {}
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
-    let Some(actor) = crate::human(caller) else {
-        return plain(
-            StatusCode::FORBIDDEN,
-            "re-measuring is a human act — this token carries agent standing".to_string(),
-        );
     };
     let human = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,

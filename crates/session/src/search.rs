@@ -357,12 +357,12 @@ pub(crate) async fn hierarchy_candidates(
     let mut by_ci: Vec<Option<ColStat>> = vec![None; names.len()];
     let mut n = 0i64;
     for b in stats.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(&[b.clone()], "ci").map_err(&bad)?;
-        let groups = int_column(&[b.clone()], "groups").map_err(&bad)?;
-        let modal = int_column(&[b.clone()], "modal").map_err(&bad)?;
-        let total = int_column(&[b.clone()], "total").map_err(&bad)?;
-        let dv = int_column(&[b.clone()], "distinct_vals").map_err(&bad)?;
-        let filled = int_column(&[b.clone()], "filled").map_err(&bad)?;
+        let ci = int_column(std::slice::from_ref(b), "ci").map_err(&bad)?;
+        let groups = int_column(std::slice::from_ref(b), "groups").map_err(&bad)?;
+        let modal = int_column(std::slice::from_ref(b), "modal").map_err(&bad)?;
+        let total = int_column(std::slice::from_ref(b), "total").map_err(&bad)?;
+        let dv = int_column(std::slice::from_ref(b), "distinct_vals").map_err(&bad)?;
+        let filled = int_column(std::slice::from_ref(b), "filled").map_err(&bad)?;
         for r in 0..b.num_rows() {
             n = total[r];
             by_ci[ci[r] as usize] = Some(ColStat {
@@ -405,11 +405,11 @@ pub(crate) async fn hierarchy_candidates(
     }
     let mut pairs: std::collections::HashMap<(usize, usize), Pair> = Default::default();
     for b in paired.iter().filter(|b| b.num_rows() > 0) {
-        let ca = int_column(&[b.clone()], "ca").map_err(&bad)?;
-        let cb = int_column(&[b.clone()], "cb").map_err(&bad)?;
-        let pg = int_column(&[b.clone()], "pair_groups").map_err(&bad)?;
-        let ab = int_column(&[b.clone()], "agree_ab").map_err(&bad)?;
-        let ba = int_column(&[b.clone()], "agree_ba").map_err(&bad)?;
+        let ca = int_column(std::slice::from_ref(b), "ca").map_err(&bad)?;
+        let cb = int_column(std::slice::from_ref(b), "cb").map_err(&bad)?;
+        let pg = int_column(std::slice::from_ref(b), "pair_groups").map_err(&bad)?;
+        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(&bad)?;
+        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(&bad)?;
         for r in 0..b.num_rows() {
             pairs.insert(
                 (ca[r] as usize, cb[r] as usize),
@@ -960,7 +960,9 @@ pub(crate) async fn relationship_candidates(
                     && cols[s.k].column != cols[p.k].column
             })
             .collect();
-        scopes.sort_by(|a, b| pairs[*b].overlap.partial_cmp(&pairs[*a].overlap).unwrap());
+        // Total order over floats: a NaN sorts last instead of panicking
+        // the read.
+        scopes.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
         let mut order = 0i64;
         for si in scopes {
             let s = &pairs[si];
@@ -1777,10 +1779,10 @@ pub(crate) async fn relationship_checks(
                         JoinType::LeftAnti,
                         (
                             e.cc.iter()
-                                .map(|c| datafusion::common::Column::from_name(c))
+                                .map(datafusion::common::Column::from_name)
                                 .collect::<Vec<_>>(),
                             e.pc.iter()
-                                .map(|c| datafusion::common::Column::from_name(c))
+                                .map(datafusion::common::Column::from_name)
                                 .collect::<Vec<_>>(),
                         ),
                         None,

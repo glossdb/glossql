@@ -11,7 +11,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Plane, bootstrap, router};
+use glossql_serverd::{BOOTSTRAP, DoorConfig, Plane, bootstrap, router};
+
+mod common;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -32,15 +34,16 @@ async fn app() -> (Router, tempfile::TempDir) {
         &plane,
         Actor {
             kind: ActorKind::Human,
-            id: glossql_serverd::HUMAN.into(),
+            id: BOOTSTRAP.into(),
         },
     )
     .await
     .unwrap();
     let workspace = dir.path().to_path_buf();
-    // Untokened: the doors serve as they did before there were tokens,
-    // which is what these tests are about.
-    (router(plane, DoorConfig::default(), workspace, None), dir)
+    (
+        router(plane, DoorConfig::default(), workspace, common::login()),
+        dir,
+    )
 }
 
 /// The agent's door: one `glossql` tool call, outcomes parsed from the
@@ -62,6 +65,7 @@ async fn agent(app: &Router, id: u64, statements: &str) -> Value {
         .header(header::HOST, "127.0.0.1")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, common::bearer("dev-agent"))
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", "tools/call")
         .header("mcp-name", "glossql")
@@ -84,6 +88,7 @@ async fn human(app: &Router, statements: &str) -> Value {
         .clone()
         .oneshot(
             Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from(statements.to_string()))
                 .unwrap(),
         )
@@ -103,6 +108,7 @@ async fn human_refused(app: &Router, statements: &str) -> String {
         .clone()
         .oneshot(
             Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
                 .body(Body::from(statements.to_string()))
                 .unwrap(),
         )

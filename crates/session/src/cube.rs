@@ -43,23 +43,24 @@
 //! business member.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, ListBuilder, RecordBatch, StringArray,
     StringBuilder, TimestampNanosecondArray,
 };
-use datafusion::arrow::compute::{cast, concat_batches};
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
     Expr as SQLExpr, FunctionArg, FunctionArgExpr, Value as SQLValue,
 };
 use serde_json::Value;
 
-use crate::reads::Shared;
+use crate::reads::{Served, Shared};
 use crate::search::{QuerySlot, current_query_slots, int_column};
 use crate::session::SessionError;
 
@@ -236,8 +237,9 @@ impl Fact {
     }
 }
 
-/// One metric's cube: the fact row and the cells at its resolution —
-/// `(dimension, member, period, value, num, den, behavior)`, dimension
+/// One metric's cube: the fact row and the cells at its resolution, in
+/// the shape `metric_series()` serves —
+/// `(metric, dimension, member, period, value, num, den, behavior)`, dimension
 /// `''` the total, `'alternative'` the rival, `behavior` the verb that
 /// produced the row (a rival's may differ from the metric's).
 #[derive(Debug)]
@@ -450,7 +452,7 @@ async fn build_metric(
         Ok(cube) => cube,
         Err(Abstain(reason)) => Cube {
             fact: Fact::abstain(&slot.aspect, reason),
-            cells: RecordBatch::new_empty(cells_schema()),
+            cells: RecordBatch::new_empty(series_schema()),
         },
     }
 }
@@ -503,7 +505,7 @@ async fn build(
     // verdicts key by subject, the frame names aliases.
     let subjects = crate::provenance::served_subjects(&probe, dataset);
     let (time_column, cadence, time_current) =
-        judged_time_column(&fields, &subjects, &judged.temporal)
+        judged_time_column(fields, &subjects, &judged.temporal)
             .ok_or_else(|| Abstain(NO_JUDGED_TIME.into()))?;
     let tcol = time_column.as_str();
     // Whether every verdict admitted on stands at this pin — the time
@@ -786,7 +788,7 @@ async fn build(
             alternative,
             alternative_error,
         },
-        cells: cells_batch(&cells),
+        cells: cells_batch(&slot.aspect, &cells),
     })
 }
 
@@ -816,7 +818,7 @@ async fn rival_series(
         return Err(Abstain("it serves no `value` column".into()));
     }
     let subjects = crate::provenance::served_subjects(&probe, dataset);
-    let tcol = match judged_time_column(&fields, &subjects, &judged.temporal) {
+    let tcol = match judged_time_column(fields, &subjects, &judged.temporal) {
         Some((column, ..)) => column,
         // No verdict on any served date column — common, because a
         // rival routinely reads a table the metric does not, and that
@@ -1047,21 +1049,30 @@ fn cell_fields() -> Vec<Field> {
     ]
 }
 
-fn cells_schema() -> SchemaRef {
-    Arc::new(Schema::new(cell_fields()))
-}
-
 /// The `metric_series()` shape: the cells, each row naming its metric.
-fn series_schema() -> SchemaRef {
+/// One schema for the process — every cube's cells carry it, and every
+/// read hands it on rather than rebuilding it.
+static SERIES: LazyLock<SchemaRef> = LazyLock::new(|| {
     let mut fields = vec![utf8("metric")];
     fields.extend(cell_fields());
     Arc::new(Schema::new(fields))
+});
+
+fn series_schema() -> SchemaRef {
+    Arc::clone(&SERIES)
 }
 
-fn cells_batch(cells: &[Cell]) -> RecordBatch {
+/// A cube's cells as the read serves them, the metric named on every
+/// row. Built once, at build time: what the cache holds is what a read
+/// hands the planner, so a read allocates nothing for the cells.
+fn cells_batch(metric: &str, cells: &[Cell]) -> RecordBatch {
     RecordBatch::try_new(
-        cells_schema(),
+        series_schema(),
         vec![
+            Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+                metric,
+                cells.len(),
+            ))),
             Arc::new(StringArray::from_iter_values(
                 cells.iter().map(|c| c.dimension.as_str()),
             )),
@@ -1082,15 +1093,6 @@ fn cells_batch(cells: &[Cell]) -> RecordBatch {
         ],
     )
     .expect("column shapes match the schema")
-}
-
-/// A cube's cells with the metric column in front.
-fn with_metric(metric: &str, cells: &RecordBatch) -> RecordBatch {
-    let mut columns: Vec<ArrayRef> = vec![Arc::new(StringArray::from_iter_values(
-        std::iter::repeat_n(metric, cells.num_rows()),
-    ))];
-    columns.extend(cells.columns().iter().cloned());
-    RecordBatch::try_new(series_schema(), columns).expect("column shapes match the schema")
 }
 
 // -- the reads ---------------------------------------------------------
@@ -1148,43 +1150,50 @@ pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, Sess
 /// each row carries, and a metric coarser than the asked grain serves
 /// no rows — honest absence. `period` is the bucket's start, a typed
 /// timestamp. A cache entry is never stale: it is a hit or a miss.
+///
+/// The cached cube is the table. Its cells are handed to the planner as
+/// they sit in the cache — one batch per metric, `Arc`-shared, copied
+/// into nothing — and a grain is a plan over them. The only rows a
+/// read allocates are the ones it answers with.
 pub(crate) async fn metric_series_batch(
     shared: &Arc<Shared>,
     grain: Option<Resolution>,
-) -> Result<RecordBatch, SessionError> {
+) -> Result<Served, SessionError> {
     let cubes = cubes(shared).await?;
-    let schema = series_schema();
-    let parts: Vec<RecordBatch> = cubes
+    let partitions: Vec<RecordBatch> = cubes
         .iter()
         .filter(|c| match (grain, c.fact.resolution) {
             (Some(g), Some(r)) => r <= g,
             (None, Some(_)) => true,
             (_, None) => false,
         })
-        .map(|c| with_metric(&c.fact.metric, &c.cells))
+        .map(|c| c.cells.clone())
         .collect();
-    if parts.is_empty() {
-        return Ok(RecordBatch::new_empty(schema));
-    }
-    let batch =
-        concat_batches(&schema, &parts).map_err(|e| SessionError::Runtime(e.to_string()))?;
+    let cells = Served {
+        schema: series_schema(),
+        partitions,
+    };
     match grain {
-        None => Ok(batch),
-        Some(g) => aggregate(batch, g).await,
+        None => Ok(cells),
+        Some(_) if cells.partitions.is_empty() => Ok(cells),
+        Some(g) => aggregate(cells, g).await,
     }
 }
 
 /// The cells re-bucketed to a coarser grain, each series by its own
-/// verb — the engine over the batch, the same three shapes the build
-/// uses applied to cells: a flow sums, a stock takes the bucket's last
-/// period, a ratio divides its summed halves and carries them on.
-async fn aggregate(cells: RecordBatch, grain: Resolution) -> Result<RecordBatch, SessionError> {
+/// verb — the engine over the cached batches, the same three shapes
+/// the build uses applied to cells: a flow sums, a stock takes the
+/// bucket's last period, a ratio divides its summed halves and carries
+/// them on.
+async fn aggregate(cells: Served, grain: Resolution) -> Result<Served, SessionError> {
     let fail = |e: datafusion::common::DataFusionError| {
         SessionError::Runtime(format!("metric_series(grain => '{}'): {e}", grain.as_str()))
     };
-    let schema = cells.schema();
+    let schema = cells.schema.clone();
     let ctx = SessionContext::new();
-    ctx.register_batch("cube_cells", cells).map_err(fail)?;
+    let table = MemTable::try_new(schema.clone(), vec![cells.partitions]).map_err(fail)?;
+    ctx.register_table("cube_cells", Arc::new(table))
+        .map_err(fail)?;
     let bucket = format!("date_trunc('{}', period)", grain.as_str());
     let sql = format!(
         "SELECT metric, dimension, member, period, value, num, den, behavior FROM (\
@@ -1208,23 +1217,32 @@ async fn aggregate(cells: RecordBatch, grain: Resolution) -> Result<RecordBatch,
         .collect()
         .await
         .map_err(fail)?;
-    // The engine's output types follow its own rules; the read's
-    // shape is fixed, so every column is cast back to it. No rows in
-    // means no batches out — the empty shape, never an index.
-    let Some(first) = batches.first() else {
-        return Ok(RecordBatch::new_empty(schema));
-    };
-    let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
-    let merged = concat_batches(&first.schema(), &batches)
-        .map_err(|e| SessionError::Runtime(e.to_string()))?;
-    for field in schema.fields() {
-        let col = merged
-            .column_by_name(field.name())
-            .ok_or_else(|| SessionError::Runtime(format!("metric_series: no {}", field.name())))?;
-        columns
-            .push(cast(col, field.data_type()).map_err(|e| SessionError::Runtime(e.to_string()))?);
+    // The engine's output types follow its own rules; the read's shape
+    // is fixed, so a batch whose types differ is cast back to it, batch
+    // by batch — a cast to the type a column already has is a shared
+    // pointer, not a copy. The batches stay the partitions they came
+    // out as.
+    let mut partitions = Vec::with_capacity(batches.len());
+    for batch in batches {
+        if batch.schema() == schema {
+            partitions.push(batch);
+            continue;
+        }
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            let col = batch.column_by_name(field.name()).ok_or_else(|| {
+                SessionError::Runtime(format!("metric_series: no {}", field.name()))
+            })?;
+            columns.push(
+                cast(col, field.data_type()).map_err(|e| SessionError::Runtime(e.to_string()))?,
+            );
+        }
+        partitions.push(
+            RecordBatch::try_new(schema.clone(), columns)
+                .map_err(|e| SessionError::Runtime(e.to_string()))?,
+        );
     }
-    RecordBatch::try_new(schema, columns).map_err(|e| SessionError::Runtime(e.to_string()))
+    Ok(Served { schema, partitions })
 }
 
 /// `metric_axes()` — one row per current grounding, the record read:
@@ -1315,7 +1333,7 @@ mod tests {
             .collect();
         Arc::new(Cube {
             fact: Fact::abstain("m", String::new()),
-            cells: cells_batch(&cells),
+            cells: cells_batch("m", &cells),
         })
     }
 

@@ -11,7 +11,7 @@ use glossql_session::{NoRuntime, Outcome};
 fn human() -> Actor {
     Actor {
         kind: ActorKind::Human,
-        id: glossql_serverd::HUMAN.into(),
+        id: glossql_serverd::BOOTSTRAP.into(),
     }
 }
 
