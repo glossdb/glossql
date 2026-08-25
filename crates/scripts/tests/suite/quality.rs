@@ -177,7 +177,7 @@ async fn coherence_reads_what_the_declared_join_asserts() {
 
     // invoices 1..=18, dated day 100 + id.
     let inv_ids: Vec<i64> = (1..=18).collect();
-    let inv_dates: Vec<i32> = (1..=18).map(|i| 100 + i as i32).collect();
+    let inv_dates: Vec<i32> = (1..=18).map(|i| 100 + i).collect();
     let invoices = Arc::new(Schema::new(vec![
         Field::new("invoice_id", DataType::Int64, true),
         Field::new("inv_date", DataType::Date32, true),
@@ -201,13 +201,7 @@ async fn coherence_reads_what_the_declared_join_asserts() {
     // which are dated BEFORE it — the wrong-pairing trace.
     let pay_inv: Vec<i64> = (1..=18).chain([98, 99]).collect();
     let pay_dates: Vec<i32> = (1..=18)
-        .map(|i| {
-            if i <= 3 {
-                100 + i as i32 - 10
-            } else {
-                100 + i as i32 + 30
-            }
-        })
+        .map(|i| if i <= 3 { 100 + i - 10 } else { 100 + i + 30 })
         .chain([500, 501])
         .collect();
     // A nest beside the join: city determines country, except that

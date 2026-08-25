@@ -1421,14 +1421,7 @@ async fn the_clients_own_name_never_reaches_the_record() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..Default::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_with(DoorConfig { row_cap: 3 }, common::login()).await;
     let call = |id: u64, statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1483,14 +1476,7 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..Default::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_with(DoorConfig { row_cap: 3 }, common::login()).await;
     let body = expect_ok(
         mcp(
             app,

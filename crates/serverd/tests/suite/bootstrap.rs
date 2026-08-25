@@ -55,7 +55,7 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
                 "SELECT script FROM functions WHERE script LIKE '%{}%' LIMIT 1;",
                 text.lines()
                     .find(|l| l.starts_with("//!"))
-                    .unwrap_or(&"")
+                    .unwrap_or("")
                     .replace('\'', "''")
             ),
         )

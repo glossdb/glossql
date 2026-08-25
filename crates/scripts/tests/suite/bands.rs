@@ -301,8 +301,8 @@ async fn the_stock_walk_sums_the_months_latest_snapshot() {
 
     let months = 18usize;
     let (mut dates, mut values) = (Vec::new(), Vec::new());
-    for m in 0..months {
-        let month_start = 19723 + FIRSTS[m];
+    for (m, &first) in FIRSTS.iter().enumerate().take(months) {
+        let month_start = 19723 + first;
         for v in [1000.0, 500.0, 250.0] {
             dates.push(month_start + 24);
             values.push(v + 10.0 * m as f64);
@@ -370,7 +370,7 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
         }
     }
     let mut test_x = Vec::new();
-    for m in months.clone() {
+    for m in months {
         test_x.extend([1.15, m as f64]);
     }
     let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
