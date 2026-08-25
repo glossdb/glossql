@@ -56,10 +56,13 @@ use tower_http::trace::TraceLayer;
 
 /// The server's own hand: the actor the shipped system is bootstrapped
 /// under, and the one the door reads with when a read needs a channel
-/// and no request is behind it. Human standing, so the shipped kit
-/// outranks what an agent later glosses on the same key. Never a
-/// request's actor — every request carries its own subject.
-pub const BOOTSTRAP: &str = "human";
+/// and no request is behind it. Human standing, because a person
+/// decided what ships, so the shipped kit outranks what an agent later
+/// glosses on the same key; the id names the mechanism, so a
+/// `GLOSSARY()` reader sees a gloss came with the system rather than
+/// from anyone at this workspace. Never a request's actor — every
+/// request carries its own subject, the token's.
+pub const BOOTSTRAP: &str = "bootstrap";
 
 /// How much an agent sees at once.
 #[derive(Clone)]
