@@ -49,6 +49,11 @@ terminal, JSON otherwise. At `info` a call is its actor, the dataset
 it arrived on, the digest and length of its text, and the spans of the
 work it caused — each statement, each read's planning, each
 measurement run, each commit — closing with their busy and idle time.
+A read closes when its client has taken the last row or dropped the
+stream, with the engine's own counts: rows served, whether it
+completed, the operators, their compute time and spills; at `debug`
+the physical plan annotated with those counts, as `EXPLAIN ANALYZE`
+prints it.
 The text of a call is a `debug` event inside its span and nothing
 else, because statement bodies and groundings carry data. A refusal
 carries its reason and never the token.

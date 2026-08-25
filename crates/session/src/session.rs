@@ -1024,13 +1024,23 @@ impl Session {
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
+        // The engine's own path, in two steps instead of
+        // `DataFrame::execute_stream`, so the physical plan stays in
+        // hand: its operators' counts are read when the stream ends.
+        let physical = self
+            .ctx
+            .execute_logical_plan(plan)
+            .await?
+            .create_physical_plan()
+            .await?;
+        let stream =
+            datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
         Ok(QueryStream {
-            stream: self
-                .ctx
-                .execute_logical_plan(plan)
-                .await?
-                .execute_stream()
-                .await?,
+            stream: Box::pin(crate::execution::Metered::new(
+                stream,
+                physical,
+                tracing::Span::current(),
+            )),
             metadata_only,
             record,
         })
