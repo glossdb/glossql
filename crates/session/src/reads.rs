@@ -808,9 +808,7 @@ pub(crate) async fn compute_batch(
         // the fact row per metric. Both build what is not built.
         ("metric_series", Some(a)) => {
             let grain = crate::cube::grain_arg(&a.args)?;
-            Ok(Some(
-                (crate::cube::metric_series_batch(shared, grain).await?).into(),
-            ))
+            Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
         }
         ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {

@@ -505,7 +505,7 @@ async fn build(
     // verdicts key by subject, the frame names aliases.
     let subjects = crate::provenance::served_subjects(&probe, dataset);
     let (time_column, cadence, time_current) =
-        judged_time_column(&fields, &subjects, &judged.temporal)
+        judged_time_column(fields, &subjects, &judged.temporal)
             .ok_or_else(|| Abstain(NO_JUDGED_TIME.into()))?;
     let tcol = time_column.as_str();
     // Whether every verdict admitted on stands at this pin — the time
@@ -818,7 +818,7 @@ async fn rival_series(
         return Err(Abstain("it serves no `value` column".into()));
     }
     let subjects = crate::provenance::served_subjects(&probe, dataset);
-    let tcol = match judged_time_column(&fields, &subjects, &judged.temporal) {
+    let tcol = match judged_time_column(fields, &subjects, &judged.temporal) {
         Some((column, ..)) => column,
         // No verdict on any served date column — common, because a
         // rival routinely reads a table the metric does not, and that

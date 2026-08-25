@@ -960,7 +960,9 @@ pub(crate) async fn relationship_candidates(
                     && cols[s.k].column != cols[p.k].column
             })
             .collect();
-        scopes.sort_by(|a, b| pairs[*b].overlap.partial_cmp(&pairs[*a].overlap).unwrap());
+        // Total order over floats: a NaN sorts last instead of panicking
+        // the read.
+        scopes.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
         let mut order = 0i64;
         for si in scopes {
             let s = &pairs[si];
@@ -1777,10 +1779,10 @@ pub(crate) async fn relationship_checks(
                         JoinType::LeftAnti,
                         (
                             e.cc.iter()
-                                .map(|c| datafusion::common::Column::from_name(c))
+                                .map(datafusion::common::Column::from_name)
                                 .collect::<Vec<_>>(),
                             e.pc.iter()
-                                .map(|c| datafusion::common::Column::from_name(c))
+                                .map(datafusion::common::Column::from_name)
                                 .collect::<Vec<_>>(),
                         ),
                         None,

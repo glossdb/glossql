@@ -11,6 +11,17 @@ edition = "2024"
 # note, nothing actionable; every crate opts in via [lints] workspace.
 linker_messages = "allow"
 
+# What a memory bug looks like at compile time, so nobody has to find it
+# with a stack overflow or a profiler. A future above 16 KB is boxed
+# (the planner recursion has overflowed a 2 MB test thread before); a
+# clone the borrow checker did not need is a copy. `unwrap_used` — a
+# panic waiting for the row that has it — is `#![warn]`ed in each
+# library and binary root instead: a lint here would reach the
+# integration tests, where a panic is the assertion.
+[workspace.lints.clippy]
+large_futures = "warn"
+redundant_clone = "warn"
+
 # Each integration-test binary statically links datafusion + candle; with
 # default full debug info that was ~0.5GB per binary × ~25 test targets ×
 # every stale hashed copy — a target/ in the hundreds of GB and an AV scan

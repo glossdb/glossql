@@ -12,6 +12,10 @@
 //! dataset in the workspace and switching is a link. Assets are not
 //! dataset-scoped and hang off the workspace root.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 mod app;
 mod assets;
 mod builtin;

@@ -361,11 +361,11 @@ async fn compute_batches(
     let idents = shared.idents();
     for factor in &factors_in(q) {
         let key = factor.to_string();
-        if resolved.batches.contains_key(&key) || shadowed(&idents, &resolved.ctes, &factor) {
+        if resolved.batches.contains_key(&key) || shadowed(&idents, &resolved.ctes, factor) {
             continue;
         }
-        if let Some(batch) = crate::reads::compute_batch(shared, &factor, resolved).await? {
-            if crate::reads::reads_the_record(&idents, &factor) {
+        if let Some(batch) = crate::reads::compute_batch(shared, factor, resolved).await? {
+            if crate::reads::reads_the_record(&idents, factor) {
                 resolved.record = true;
             }
             resolved.batches.insert(key, batch);

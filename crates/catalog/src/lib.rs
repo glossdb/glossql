@@ -13,6 +13,10 @@
 //! they describe, and it keeps the write path clear of the engine's
 //! process-wide session state.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

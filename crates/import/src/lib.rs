@@ -10,6 +10,10 @@
 //! module): the driver returns Arrow batches, so what the source computed
 //! is what lands.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 pub mod accounting;
 mod adbc;
 pub mod casts;

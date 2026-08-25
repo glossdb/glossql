@@ -13,6 +13,10 @@
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 mod behavior;
 mod cube;
 mod library;

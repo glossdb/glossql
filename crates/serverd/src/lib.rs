@@ -24,6 +24,10 @@
 //! against the issuer's published keys, says who is speaking; the door
 //! it came through says with which standing.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 mod auth;
 mod bootstrap;
 mod login;

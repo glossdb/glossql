@@ -1,6 +1,10 @@
 //! The serverd binary: open the workspace, verify who knocks, serve the
 //! doors.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

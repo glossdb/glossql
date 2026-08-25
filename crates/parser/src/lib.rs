@@ -19,6 +19,10 @@
 //! recipe tail fails the whole script — dollar quotes carry all three
 //! byte-exact, with no escaping.
 
+// An unwrap outside a test is a panic waiting for the row that has it;
+// tests are exempt (clippy.toml).
+#![warn(clippy::unwrap_used)]
+
 mod ast;
 mod parser;
 
