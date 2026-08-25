@@ -1339,6 +1339,7 @@ pub(crate) async fn grounding_collisions(
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
+    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
     let slots = current_query_slots(shared, &rctx, dataset).await?;
 
     // Bucket by canonical SQL.
@@ -1401,7 +1402,15 @@ pub(crate) async fn grounding_collisions(
     let mut series_buckets: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for (slot, body, canon) in &grounded {
         let sql = body["sql"].as_str().expect("filtered above");
-        let Some(fp) = series_fingerprint(shared, &ctx, dataset, &judged_temporal, sql, body).await
+        let Some(fp) = series_fingerprint(
+            shared,
+            &ctx,
+            dataset,
+            (&judged_temporal, &judged_behavior),
+            sql,
+            body,
+        )
+        .await
         else {
             continue;
         };
@@ -1514,7 +1523,10 @@ async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
-    judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
+    (judged_temporal, judged_behavior): (
+        &std::collections::HashMap<String, crate::cube::Verdict>,
+        &std::collections::HashMap<String, crate::cube::Verdict>,
+    ),
     sql: &str,
     body: &Value,
 ) -> Option<String> {
@@ -1544,13 +1556,7 @@ async fn series_fingerprint(
     let tcol = crate::cube::judged_time_column(fields, &subjects, judged_temporal)
         .map(|(column, ..)| column)
         .or_else(|| crate::whatif::date_column(fields.fields()))?;
-    let verb = if is_ratio {
-        "ratio"
-    } else if body.get("behavior").and_then(Value::as_str) == Some("stock") {
-        "stock"
-    } else {
-        "flow"
-    };
+    let verb = crate::cube::verb_of(body, is_ratio, &probe, dataset, judged_behavior).verb;
     let q = monthly_sql(sql, &tcol, verb);
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q))
         .await
@@ -2099,6 +2105,7 @@ pub(crate) async fn metric_band_walk(
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
+    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
     let runtime = shared.runtime();
 
     // Median over the present values of one feature column. Even counts
@@ -2155,14 +2162,8 @@ pub(crate) async fn metric_band_walk(
         };
         let axis_judged = judged_axis.is_some();
         let is_ratio = has("num") && has("den");
-        let is_stock = !is_ratio && body.get("behavior").and_then(Value::as_str) == Some("stock");
-        let verb = if is_ratio {
-            "ratio"
-        } else if is_stock {
-            "stock"
-        } else {
-            "flow"
-        };
+        let verb = crate::cube::verb_of(&body, is_ratio, &probe, dataset, &judged_behavior).verb;
+        let is_stock = verb == "stock";
         let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
         let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
         let n = v.len();

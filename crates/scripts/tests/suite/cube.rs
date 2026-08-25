@@ -128,7 +128,15 @@ async fn cube_session_on(
                            THEN 'near-key axis (distinct/filled >= 0.9)' END AS reason,
                       CASE WHEN $subject LIKE '%.note' THEN 0.9
                            ELSE 0.7 END AS relevance$$
-             RETURNS dimension_relevance;"#,
+             RETURNS dimension_relevance;
+           DECLARE ASPECT behavior_evidence WITH $${{
+             "type": "object", "required": ["applicable"],
+             "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+           DECLARE FUNCTION judge_behavior FOR GLOBAL AS
+             $$SELECT true AS applicable,
+                      named_struct('verdict', CASE WHEN $subject LIKE '%.level'
+                                                   THEN 'stock' ELSE 'flow' END) AS summary$$
+             RETURNS behavior_evidence;"#,
         cube = shipped_cube_declaration()
     );
     session.execute(&declarations).await.unwrap();
@@ -1474,4 +1482,88 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     number(&session, "SELECT count(*) FROM metric_series();").await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
     assert_eq!(tiny.builds(), 4, "nothing stays under a zero cap");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
+    // Two products, snapshotted mid-month and at month end. A stock
+    // folds the month to its last standing (300); a flow sums every
+    // row (330) — so the verb shows in the number, not only in the
+    // fact row.
+    let dir = tempfile::tempdir().unwrap();
+    let jan = |d: i32| 19723 + d - 1;
+    let levels = dated(
+        vec![
+            Field::new("level", DataType::Float64, false),
+            Field::new("product", DataType::Utf8, false),
+        ],
+        vec![jan(15), jan(15), jan(31), jan(31)],
+        vec![
+            Arc::new(Float64Array::from(vec![10.0, 20.0, 100.0, 200.0])),
+            Arc::new(StringArray::from(vec!["p1", "p2", "p1", "p2"])),
+        ],
+    );
+    let lines = dated(
+        vec![Field::new("amount", DataType::Float64, false)],
+        vec![jan(15), jan(31)],
+        vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+    );
+    let session = cube_session(
+        dir.path(),
+        vec![("levels", levels), ("lines", lines)],
+        &[
+            r#"DECLARE ASPECT stocked WITH $${"title": "Stocked"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT overruled WITH $${"title": "Overruled"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT flowed WITH $${"title": "Flowed"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT counted WITH $${"title": "Counted"}$$ AS QUERY ON DATASET;"#,
+            // Unmarked, one sum of a column judged a stock.
+            r#"GLOSS stocked ON fin AS $${"sql": "SELECT date, sum(level) AS value FROM levels GROUP BY date"}$$;"#,
+            // The same frame, marked: the grounding's own word wins.
+            r#"GLOSS overruled ON fin AS $${"sql": "SELECT date, sum(level) AS value FROM levels GROUP BY date", "behavior": "flow"}$$;"#,
+            // Unmarked, the value IS a column judged a flow.
+            r#"GLOSS flowed ON fin AS $${"sql": "SELECT date, amount AS value FROM lines"}$$;"#,
+            // Unmarked, a count: no column to read, so the default.
+            r#"GLOSS counted ON fin AS $${"sql": "SELECT date, count(*) * 1.0 AS value FROM lines GROUP BY date"}$$;"#,
+            "SELECT judge_time() FROM levels.date;",
+            "SELECT judge_time() FROM lines.date;",
+            "SELECT judge_behavior() FROM levels.level;",
+            "SELECT judge_behavior() FROM lines.amount;",
+        ],
+    )
+    .await;
+    let verb = |metric: &'static str| {
+        let session = &session;
+        async move {
+            cell(
+                session,
+                &format!(
+                    "SELECT behavior || ':' || behavior_basis FROM metric_axes() \
+                     WHERE metric = '{metric}';"
+                ),
+            )
+            .await
+        }
+    };
+    assert_eq!(verb("stocked").await, "stock:evidence");
+    assert_eq!(verb("overruled").await, "flow:marked");
+    assert_eq!(verb("flowed").await, "flow:evidence");
+    assert_eq!(verb("counted").await, "flow:default");
+    let total = |metric: &'static str| {
+        let session = &session;
+        async move {
+            number(
+                session,
+                &format!(
+                    "SELECT value FROM metric_series() WHERE metric = '{metric}' AND dimension = '';"
+                ),
+            )
+            .await
+        }
+    };
+    near(
+        total("stocked").await,
+        300.0,
+        "the evidence's stock, at its last standing",
+    );
+    near(total("overruled").await, 330.0, "the marker's flow, summed");
 }

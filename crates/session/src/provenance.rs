@@ -5,7 +5,10 @@
 //! table scan that serves it. A computed field (an aggregate, an
 //! expression, a union arm) descends from no single column and stays
 //! unmapped; under judged admission an unmapped field is a gap, never
-//! a candidate.
+//! a candidate. The one exception is the verb's: `summed_source` steps
+//! through a single `sum` for the served value alone, so a metric's
+//! stock/flow can be read off the column it sums without an aggregate
+//! ever becoming a dimension candidate.
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,44 +41,74 @@ pub(crate) fn served_subjects(plan: &LogicalPlan, dataset: &str) -> HashMap<Stri
     let mut out = HashMap::new();
     for (qualifier, field) in plan.schema().iter() {
         let col = Column::new(qualifier.cloned(), field.name());
-        if let Some(subject) = source_of(plan, &col, dataset) {
+        if let Some(subject) = source_of(plan, &col, dataset, false) {
             out.insert(field.name().clone(), subject);
         }
     }
     out
 }
 
-fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str) -> Option<String> {
+/// The column a served field is, or is one `sum` of — the verb's
+/// descent, and only the verb's. `sum` alone, because the cube folds
+/// by summing (a flow per period, a stock at its last standing), so
+/// `sum(x)` is the one aggregate that behaves as `x` does; a plain
+/// `sum` — no `DISTINCT`, no `FILTER` — over one column-bearing
+/// argument, once on the path. Anything else descends from nothing
+/// and the verb falls to its default.
+pub(crate) fn summed_source(plan: &LogicalPlan, field: &str, dataset: &str) -> Option<String> {
+    let (qualifier, f) = plan.schema().iter().find(|(_, f)| f.name() == field)?;
+    source_of(
+        plan,
+        &Column::new(qualifier.cloned(), f.name()),
+        dataset,
+        true,
+    )
+}
+
+/// `summed` is the verb's descent: past an aggregate's group keys the
+/// walk may step through one `sum`; admission never sets it.
+fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> Option<String> {
     let index = |p: &LogicalPlan| p.schema().index_of_column(col).ok();
     match plan {
-        LogicalPlan::Projection(p) => follow(&p.input, &p.expr[index(plan)?], dataset),
+        LogicalPlan::Projection(p) => follow(&p.input, &p.expr[index(plan)?], dataset, summed),
         LogicalPlan::SubqueryAlias(a) => {
             let (qualifier, field) = a.input.schema().qualified_field(index(plan)?);
             source_of(
                 &a.input,
                 &Column::new(qualifier.cloned(), field.name()),
                 dataset,
+                summed,
             )
         }
-        LogicalPlan::Filter(f) => source_of(&f.input, col, dataset),
-        LogicalPlan::Sort(s) => source_of(&s.input, col, dataset),
-        LogicalPlan::Limit(l) => source_of(&l.input, col, dataset),
-        LogicalPlan::Distinct(d) => source_of(d.input(), col, dataset),
+        LogicalPlan::Filter(f) => source_of(&f.input, col, dataset, summed),
+        LogicalPlan::Sort(s) => source_of(&s.input, col, dataset, summed),
+        LogicalPlan::Limit(l) => source_of(&l.input, col, dataset, summed),
+        LogicalPlan::Distinct(d) => source_of(d.input(), col, dataset, summed),
         // Window outputs pass the input columns through ahead of the
         // window expressions; only the pass-through half descends.
         LogicalPlan::Window(w) => {
             w.input.schema().index_of_column(col).ok()?;
-            source_of(&w.input, col, dataset)
+            source_of(&w.input, col, dataset, summed)
         }
         // Group keys lead the output schema in group-expression order;
         // an index past them names an aggregate, which descends from
-        // no single column.
-        LogicalPlan::Aggregate(a) => follow(&a.input, a.group_expr.get(index(plan)?)?, dataset),
+        // no single column — except one `sum`, on the verb's descent.
+        LogicalPlan::Aggregate(a) => {
+            let i = index(plan)?;
+            match a.group_expr.get(i) {
+                Some(key) => follow(&a.input, key, dataset, summed),
+                None if summed => {
+                    let arg = summed_arg(a.aggr_expr.get(i - a.group_expr.len())?)?;
+                    follow(&a.input, arg, dataset, false)
+                }
+                None => None,
+            }
+        }
         LogicalPlan::Join(j) => {
             if j.left.schema().index_of_column(col).is_ok() {
-                source_of(&j.left, col, dataset)
+                source_of(&j.left, col, dataset, summed)
             } else {
-                source_of(&j.right, col, dataset)
+                source_of(&j.right, col, dataset, summed)
             }
         }
         LogicalPlan::TableScan(t) => {
@@ -96,21 +129,36 @@ fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str) -> Option<String> 
 ///
 /// Arithmetic is deliberately not a call: `amount * 2` and `a + b`
 /// descend from nothing, because a computed number is not the column it
-/// was computed from. Aggregates are not reached at all — the
-/// `Aggregate` arm follows group expressions only, so `sum(x)` still
-/// has no subject; that descent belongs to the evidence link, the one
-/// caller that wants it and the one that can weigh what it costs
-/// dimension admission.
-fn follow(input: &LogicalPlan, expr: &Expr, dataset: &str) -> Option<String> {
+/// was computed from. Aggregates are not reached here — the `Aggregate`
+/// arm follows group expressions, and steps through one `sum` only on
+/// the verb's descent (`summed_source`).
+fn follow(input: &LogicalPlan, expr: &Expr, dataset: &str, summed: bool) -> Option<String> {
     match expr {
-        Expr::Alias(a) => follow(input, &a.expr, dataset),
-        Expr::Column(c) => source_of(input, c, dataset),
-        Expr::Cast(c) => follow(input, &c.expr, dataset),
-        Expr::TryCast(c) => follow(input, &c.expr, dataset),
+        Expr::Alias(a) => follow(input, &a.expr, dataset, summed),
+        Expr::Column(c) => source_of(input, c, dataset, summed),
+        Expr::Cast(c) => follow(input, &c.expr, dataset, summed),
+        Expr::TryCast(c) => follow(input, &c.expr, dataset, summed),
         Expr::ScalarFunction(f) => {
             let mut bearing = f.args.iter().filter(|a| !a.column_refs().is_empty());
             match (bearing.next(), bearing.next()) {
-                (Some(arg), None) => follow(input, arg, dataset),
+                (Some(arg), None) => follow(input, arg, dataset, summed),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The one column-bearing argument of a plain `sum`, or nothing.
+fn summed_arg(expr: &Expr) -> Option<&Expr> {
+    match expr {
+        Expr::Alias(a) => summed_arg(&a.expr),
+        Expr::AggregateFunction(f)
+            if f.func.name() == "sum" && !f.params.distinct && f.params.filter.is_none() =>
+        {
+            let mut bearing = f.params.args.iter().filter(|a| !a.column_refs().is_empty());
+            match (bearing.next(), bearing.next()) {
+                (Some(arg), None) => Some(arg),
                 _ => None,
             }
         }
@@ -219,5 +267,44 @@ mod tests {
         let map = subjects("SELECT region, sum(amount) AS value FROM lines GROUP BY region").await;
         assert_eq!(map.get("region").unwrap(), "lines.region");
         assert!(!map.contains_key("value"));
+    }
+
+    async fn summed(sql: &str) -> Option<String> {
+        let plan = ctx().await.state().create_logical_plan(sql).await.unwrap();
+        super::summed_source(&plan, "value", "fin")
+    }
+
+    #[tokio::test]
+    async fn the_verbs_descent_steps_through_one_plain_sum_and_nothing_else() {
+        // A column, and one sum of it, name the column.
+        assert_eq!(
+            summed("SELECT date, amount AS value FROM lines")
+                .await
+                .as_deref(),
+            Some("lines.amount")
+        );
+        assert_eq!(
+            summed("SELECT date, sum(amount) AS value FROM lines GROUP BY date")
+                .await
+                .as_deref(),
+            Some("lines.amount")
+        );
+        assert_eq!(
+            summed("SELECT date, sum(CAST(amount AS DOUBLE)) AS value FROM lines GROUP BY date")
+                .await
+                .as_deref(),
+            Some("lines.amount")
+        );
+        // Any other shape descends from nothing: a different aggregate, a
+        // distinct sum, arithmetic under the sum, two sums on the path.
+        for sql in [
+            "SELECT date, count(*) AS value FROM lines GROUP BY date",
+            "SELECT date, max(amount) AS value FROM lines GROUP BY date",
+            "SELECT date, sum(DISTINCT amount) AS value FROM lines GROUP BY date",
+            "SELECT date, sum(amount * 2) AS value FROM lines GROUP BY date",
+            "SELECT sum(v) AS value FROM (SELECT date, sum(amount) AS v FROM lines GROUP BY date)",
+        ] {
+            assert_eq!(summed(sql).await, None, "{sql}");
+        }
     }
 }

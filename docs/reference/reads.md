@@ -157,7 +157,12 @@ The one argument is the grain; filters ride `WHERE`.
 One row per current grounding — what the cube admitted and why not:
 `metric`, `applicable`, `judged_current`, `reason` (the road out when
 it abstains — no judged time column, no value column, a grounding the
-engine refused), `behavior`, `resolution`, `window`, `dims`, `basis`
+engine refused), `behavior` and `behavior_basis` (the verb and where
+it came from: `ratio` when the frame serves `num` and `den`, `marked`
+when the grounding carries `behavior`, `evidence` when the
+`behavior_evidence` verdict on the column the value is or sums
+decided, `default` when nothing said anything and it reads as a
+flow), `resolution`, `window`, `dims`, `basis`
 and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
 or `human` / `agent` where a `dimension` gloss did), `bucketed` (the

@@ -11,7 +11,10 @@ every anchor's full evidence readable back through
 
 Summing a stock or point-reading a flow corrupts a metric silently;
 `behavior` is the gloss that prevents it, and this measurement is the
-evidence the judge reads before glossing it.
+evidence the judge reads before glossing it. The cube reads it too:
+a grounding with no `behavior` marker folds by the verdict on the
+column its value is, or is one `sum` of — `metric_axes()` says so as
+`behavior_basis = 'evidence'`.
 
 ## Why reconciliation, not shape statistics
 

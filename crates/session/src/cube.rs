@@ -204,10 +204,11 @@ pub(crate) struct Fact {
     pub reason: Option<String>,
     pub behavior: Option<String>,
     /// Where the verb came from: `ratio` when the frame served both
-    /// halves and the marker was never consulted, `marked` when the
-    /// grounding carried `behavior`, `default` when it did not and the
-    /// metric is summed as a flow because nothing said otherwise. The
-    /// default is the common case and usually right — the point is
+    /// halves and nothing else was consulted, `marked` when the
+    /// grounding carried `behavior`, `evidence` when the
+    /// `behavior_evidence` verdict on the column the value is or sums
+    /// decided, `default` when nothing said anything and the metric is
+    /// summed as a flow. The default is usually right — the point is
     /// that reading it as a flow stops being a silent assumption.
     pub behavior_basis: Option<&'static str>,
     pub resolution: Option<Resolution>,
@@ -371,6 +372,9 @@ pub(crate) struct Verdict {
 struct Judged {
     temporal: HashMap<String, Verdict>,
     relevance: HashMap<String, Verdict>,
+    /// `behavior_evidence` per column — the verb's read where the
+    /// grounding carries no marker.
+    behavior: HashMap<String, Verdict>,
     dimension: HashMap<String, (Value, u8)>,
     pointers: Vec<crate::behavior::Pointer>,
 }
@@ -456,6 +460,52 @@ pub(crate) fn judged_time_column(
     best.map(|b| (b.column, b.cadence, b.current))
 }
 
+/// The verb a grounding folds by, and where it came from.
+pub(crate) struct Verb {
+    pub verb: &'static str,
+    /// `ratio`, `marked`, `evidence` or `default` — `Fact::behavior_basis`.
+    pub basis: &'static str,
+    /// Whether the verdict read stands at this pin; true where none was.
+    pub current: bool,
+}
+
+/// A grounding's verb: `ratio` when the frame serves both halves; else
+/// the grounding's top-level `behavior` marker — its own word, which
+/// outranks the measurement the way a gloss does (the metrics skill's
+/// convention); else the `behavior_evidence` verdict on the column the
+/// value is, or is one `sum` of (`provenance::summed_source`); else a
+/// flow, because nothing said otherwise. One function for the cube and
+/// the walk, so the two never fold one metric two ways.
+pub(crate) fn verb_of(
+    body: &Value,
+    is_ratio: bool,
+    probe: &datafusion::logical_expr::LogicalPlan,
+    dataset: &str,
+    behavior: &HashMap<String, Verdict>,
+) -> Verb {
+    let verb = |verb, basis, current| Verb {
+        verb,
+        basis,
+        current,
+    };
+    if is_ratio {
+        return verb("ratio", "ratio", true);
+    }
+    match body.get("behavior").and_then(Value::as_str) {
+        Some("stock") => return verb("stock", "marked", true),
+        Some("flow") => return verb("flow", "marked", true),
+        _ => {}
+    }
+    let judged = crate::provenance::summed_source(probe, "value", dataset)
+        .and_then(|subject| behavior.get(&subject))
+        .filter(|v| v.body["applicable"].as_bool() == Some(true));
+    match judged.map(|v| (v.body["summary"]["verdict"].as_str(), v.current)) {
+        Some((Some("stock"), current)) => verb("stock", "evidence", current),
+        Some((Some("flow"), current)) => verb("flow", "evidence", current),
+        _ => verb("flow", "default", true),
+    }
+}
+
 /// Every current grounding's cube, built where missing. The slots are
 /// the store's collapsed read — contested out, human over agent — so
 /// the enumeration itself costs no build; the judged surface is read
@@ -490,6 +540,7 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
                 Judged {
                     temporal: judged_bodies(&rctx, &dataset, "temporal_profile"),
                     relevance: judged_bodies(&rctx, &dataset, "dimension_relevance"),
+                    behavior: judged_bodies(&rctx, &dataset, "behavior_evidence"),
                     dimension: crate::search::current_fact_values(
                         shared,
                         &rctx,
@@ -604,20 +655,15 @@ async fn build(
     let window = settings.windows.get(&resolution).cloned();
 
     // A ratio declares itself by serving both halves of its division —
-    // checked before the stock marker so a ratio over stock components
-    // cannot be mistaken for a stock. The marker is the grounding's
-    // top-level `behavior` (the metrics skill's convention).
+    // checked before any marker so a ratio over stock components
+    // cannot be mistaken for a stock.
     let is_ratio = has("num") && has("den");
-    let marker = body.get("behavior").and_then(Value::as_str);
-    let (verb, behavior_basis): (&'static str, &'static str) = if is_ratio {
-        ("ratio", "ratio")
-    } else if marker == Some("stock") {
-        ("stock", "marked")
-    } else if marker == Some("flow") {
-        ("flow", "marked")
-    } else {
-        ("flow", "default")
-    };
+    let Verb {
+        verb,
+        basis: behavior_basis,
+        current: verb_current,
+    } = verb_of(&body, is_ratio, &probe, dataset, &judged.behavior);
+    judged_current &= verb_current;
 
     // Judged dimensions: a served column (neither the value nor
     // time-typed nor a ratio's own halves) enters when a verdict admits
