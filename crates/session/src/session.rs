@@ -216,6 +216,24 @@ fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
     }
 }
 
+/// The text as the one substrate query a read is, or
+/// [`SessionError::NotOneRead`]: anything else — a sequence, a
+/// statement of the language, a query that is not a `SELECT` —
+/// belongs in [`Session::execute`].
+fn one_read(sql: &str) -> Result<DFStatement, SessionError> {
+    let mut statements = GlossqlParser::parse_sql(sql)?;
+    let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
+        if matches!(&**statement, DFStatement::Statement(inner)
+            if matches!(inner.as_ref(), SQLStatement::Query(_))));
+    if !one_query {
+        return Err(SessionError::NotOneRead);
+    }
+    match statements.pop() {
+        Some(Statement::Substrate(statement)) => Ok(*statement),
+        _ => unreachable!("just matched"),
+    }
+}
+
 /// A script reads; it never writes. `SessionContext::sql` permits DDL, DML
 /// and statements by default (datafusion context/mod.rs:614), which would
 /// hand any declared function a door around the statement allowlist.
@@ -980,6 +998,10 @@ impl Session {
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
+        // Before the span: the door tries every call as a read first,
+        // and a sequence that goes on to execute is not a read that
+        // failed — it never opens one.
+        let statement = one_read(sql)?;
         let span = tracing::info_span!(
             "read",
             actor = %self.actor.kind,
@@ -992,26 +1014,18 @@ impl Session {
         // it plans and the cube builds behind them. Held by value under
         // the span's wrapper, a debug build copies it onto the stack once
         // more at construction — the ceiling the cube suite runs at.
-        tracing::Instrument::instrument(Box::pin(self.read_stream(sql, params)), span).await
+        tracing::Instrument::instrument(Box::pin(self.read_stream(statement, sql, params)), span)
+            .await
     }
 
     /// The read, under its span.
     async fn read_stream(
         &self,
+        mut statement: DFStatement,
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
         tracing::debug!(text = %sql, "the read's text");
-        let mut statements = GlossqlParser::parse_sql(sql)?;
-        let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
-            if matches!(&**statement, DFStatement::Statement(inner)
-                if matches!(inner.as_ref(), SQLStatement::Query(_))));
-        if !one_query {
-            return Err(SessionError::NotOneRead);
-        }
-        let Some(Statement::Substrate(mut statement)) = statements.pop() else {
-            unreachable!("just matched")
-        };
         // Named string params bind into the AST before the pre-pass, so
         // door arguments (`metric_series(grain => $grain)`) resolve;
         // everything else still binds through the plan below.
@@ -1020,7 +1034,7 @@ impl Session {
         }
         self.refresh_mount().await?;
         let metadata_only = reads_only_metadata(&statement);
-        let (mut plan, record) = self.plan_statement_classed(*statement).await?;
+        let (mut plan, record) = self.plan_statement_classed(statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }

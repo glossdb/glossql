@@ -37,9 +37,9 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// The filter variable — `tracing`'s directive syntax. A bare level
-/// (`debug`) is this server's crates at that level and the substrate
-/// at `info`; directives (`glossql_session=debug,apache_avro=debug`)
-/// are taken as written. `RUST_LOG` is honoured when it is unset;
+/// (`debug`) is this server's crates at that level, the substrate at
+/// `info` and the MCP library at `warn`; directives
+/// (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset;
 /// `info` when neither is.
 pub const FILTER_VAR: &str = "GLOSSQL_LOG";
 
@@ -53,9 +53,12 @@ pub const ENDPOINT_VAR: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
 /// The directives a bare level stands for. Targets match by prefix
 /// (tracing-subscriber `filter/env/directive.rs`), so `glossql` is
-/// every `glossql_*` crate and `serverd` the binary's own module.
+/// every `glossql_*` crate and `serverd` the binary's own module. The
+/// MCP library narrates every request's service lifecycle at `info` —
+/// initialized, stream terminated, finished — which the request span
+/// already says; its `warn` is where it reports a problem.
 fn directives(level: &str) -> String {
-    format!("info,glossql={level},serverd={level}")
+    format!("info,rmcp=warn,glossql={level},serverd={level}")
 }
 
 /// What `install` hands back: the export, to be drained once the

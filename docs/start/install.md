@@ -39,7 +39,7 @@ over the file, which is how a container is configured without one):
 | `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
-| `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level with the substrate held at `info`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
+| `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` is appended). Set, the record's spans are also exported there — OTLP over HTTP, protobuf, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_HEADERS` for a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES` for what names the deployment beyond `service.name=glossql` |
 
 `.env.example` at the repository root lists them; `.env` is never
