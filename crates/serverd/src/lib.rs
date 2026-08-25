@@ -52,6 +52,7 @@ use axum::routing::{get, post};
 use glossql_glossary::ActorKind;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+use tower_http::trace::TraceLayer;
 
 /// The server's own hand: the actor the shipped system is bootstrapped
 /// under, and the one the door reads with when a read needs a channel
@@ -177,5 +178,14 @@ pub fn router(
         .route(
             "/.well-known/oauth-protected-resource/{*path}",
             get(metadata),
+        )
+        // The request span, outermost: every door, the gate included,
+        // works inside it. tower-http's own layer; what the span holds
+        // is telemetry's to say.
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(telemetry::request_span)
+                .on_request(())
+                .on_response(telemetry::request_done),
         )
 }

@@ -5,6 +5,7 @@
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
 
+use std::future::IntoFuture;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -104,16 +105,26 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = parse(std::env::args()).map_err(|e| format!("{e}\n{USAGE}"))?;
     // `.env` in the working directory, when there is one; a variable
     // already set in the environment wins over it, which is how a
     // container configures the same server without a file.
     dotenvy::dotenv().ok();
-    // After `.env`, so `GLOSSQL_LOG` may come from it; before anything
-    // opens, so the opening is on the record.
-    glossql_serverd::telemetry::install();
+    // After `.env`, so `GLOSSQL_LOG` and the export switch may come
+    // from it; before anything opens, so the opening is on the record;
+    // outside the runtime, so the final flush comes after it.
+    let telemetry = glossql_serverd::telemetry::install()?;
+    let served = serve(args);
+    telemetry.shutdown();
+    served
+}
+
+/// The runtime's whole life: built by the macro, dropped when the
+/// server has stopped — before the export's final flush, on the main
+/// thread.
+#[tokio::main]
+async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr)
         .map_err(|e| format!("{e}\n{USAGE}"))?;
     let warehouse = args.workspace.join("warehouse");
@@ -158,8 +169,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         addr = %args.addr,
         "serverd listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
     );
-    axum::serve(listener, app).await?;
+    tokio::select! {
+        served = axum::serve(listener, app).into_future() => served?,
+        () = stop() => tracing::info!("stopping"),
+    }
     Ok(())
+}
+
+/// SIGINT or SIGTERM — the terminal's Ctrl-C or the platform's stop.
+/// Either ends the server through its own exit, so what is queued for
+/// export is sent rather than lost with the process.
+async fn stop() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("SIGTERM can be listened for on any unix");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
 }
 
 #[cfg(test)]
