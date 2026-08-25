@@ -61,7 +61,7 @@ pub(crate) const WRITTEN: [(&str, &str); 1] = [("HX-Trigger", "glossql:written")
 pub async fn rule(
     State(door): State<AppDoor>,
     Path((dataset, app)): Path<(String, String)>,
-    caller: Option<Extension<Caller>>,
+    Extension(Caller(actor)): Extension<Caller>,
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = answer.stance.as_str();
@@ -77,12 +77,6 @@ pub async fn rule(
         Ok(Some(_)) => {}
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
-    let Some(actor) = crate::human(caller) else {
-        return plain(
-            StatusCode::FORBIDDEN,
-            "a ruling is a human act — this token carries agent standing".to_string(),
-        );
     };
     let human = match door.plane.channel(actor, Some(&dataset)).await {
         Ok(session) => session,

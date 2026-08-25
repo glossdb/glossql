@@ -6,10 +6,9 @@ pointed at one and stays there. `/mcp` is a single endpoint, because an
 agent is pointed at a workspace and moves between its datasets. `/` is
 the workspace itself: which datasets there are, and the way into each.
 
-Who is speaking rides a bearer token. Its `kind` claim is the actor
-kind, and since a human slot outranks an agent slot at every read,
-that claim is what the signature protects. A workspace running without
-a configured issuer mints its own — see
+Who is speaking rides a bearer token from the workspace's issuer: its
+subject is the actor id. With which standing is the door's — `/mcp`
+is the agent door, the others are human doors — see
 [`install.md`](install.md#tokens).
 
 ## `/mcp` — the agent door
@@ -31,9 +30,10 @@ JSON array, one outcome per statement:
   sequence, its place: what landed stayed landed, the rest was never
   attempted.
 
-The agent actor's id is the token's subject. Without a token the call
-writes as `agent` — one constant, whatever the client calls itself,
-because a name a caller picks for itself proves nothing.
+The agent actor's id is the token's subject, never the name the client
+gives itself in the handshake — a name a caller picks for itself proves
+nothing. A call without a token is answered 401 with the discovery
+pointer an OAuth-capable client follows.
 
 **`USE <dataset>;` opens every call that touches dataset-scoped
 names.** MCP has no session to hold a binding, so the statements carry
@@ -53,9 +53,17 @@ defers: the question stays open and is asked again.
 With Claude Code:
 
 ```bash
-claude mcp add --transport http glossql http://127.0.0.1:8080/mcp \
-  --header "Authorization: Bearer $(cat dev/agent.jwt)"
+set -a; source .env; set +a      # the same application the server is registered as
+MCP_CLIENT_SECRET=$GLOSSQL_CLIENT_SECRET claude mcp add --transport http \
+  --client-id $GLOSSQL_CLIENT_ID --client-secret --callback-port 3118 \
+  glossql http://127.0.0.1:8080/mcp
+claude mcp login glossql
 ```
+
+The callback port is the loopback redirect the issuer's application
+must list (`http://localhost:3118/callback`) — any port but the
+server's own. `login` opens the issuer's sign-in in a browser and
+stores the token; Claude Code refreshes it on its own.
 
 One entry serves the whole workspace; the agent picks its dataset with
 `USE`.
@@ -104,5 +112,6 @@ someone can send. A workspace's own apps serve beside it at
 
 An app names no dataset; the URL does, so the same app serves every
 dataset and the picker in the header is a link that rewrites the first
-segment. The writes are human acts — a token carrying agent standing
-is refused rather than downgraded.
+segment. The writes are human acts, signed with the token's subject:
+this is a human door, so every caller that reaches it has human
+standing.

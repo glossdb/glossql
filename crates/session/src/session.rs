@@ -231,6 +231,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// Who this session writes as.
+    pub fn actor(&self) -> &Actor {
+        &self.actor
+    }
+
     /// A session on a runtime of its own — an unbounded memory pool, the
     /// OS temp directory, and a fresh set of file caches. It is what a
     /// test wants and what no server should run: the budget a runtime

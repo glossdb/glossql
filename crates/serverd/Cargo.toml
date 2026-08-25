@@ -21,13 +21,27 @@ futures.workspace = true
 rmcp = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+# The two fetches a resource server makes: the issuer's discovery
+# document and its key set. reqwest is already in the tree through
+# iceberg, without a TLS backend; the issuer speaks HTTPS, so one is
+# named here. rustls: pure Rust, no system library, the same in a
+# container as on a laptop.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# The authorization configuration lives in `.env` (or the environment),
+# not in flags: issuer, audience, client id and secret are one
+# arrangement, and the secret must never appear on a command line.
+dotenvy = "0.15"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 glossql-parser = { path = "../parser" }
 tower.workspace = true
 tempfile.workspace = true
+# Tests mint their own tokens with a key made at test time; the server
+# only ever verifies. Both are already in the tree through jsonwebtoken.
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+base64 = "0.22"
 
 [lints]
 workspace = true

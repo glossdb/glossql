@@ -21,8 +21,8 @@
 //! declares it.
 //!
 //! Every door is behind one gate ([`auth`]): a bearer token, verified
-//! against a public key, whose claims say who is speaking and with
-//! which standing.
+//! against the issuer's published keys, says who is speaking; the door
+//! it came through says with which standing.
 
 mod auth;
 mod bootstrap;
@@ -42,20 +42,16 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{get, post};
+use glossql_glossary::ActorKind;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
-/// Who a request with no token writes under, on the doors that write as
-/// a human. Reachable only while the server runs without
-/// `--require-token`; a verified caller is themselves.
-pub const HUMAN: &str = glossql_apps::ANONYMOUS;
-
-/// The same for the doors that write as an agent. A name a caller picks
-/// for itself is not a proof, so an untokened call writes under one
-/// constant rather than under whatever it called itself: the record
-/// then says plainly that nothing was verified, instead of carrying a
-/// string that reads like an identity and is not one.
-pub const AGENT: &str = "agent";
+/// The server's own hand: the actor the shipped system is bootstrapped
+/// under, and the one the door reads with when a read needs a channel
+/// and no request is behind it. Human standing, so the shipped kit
+/// outranks what an agent later glosses on the same key. Never a
+/// request's actor — every request carries its own subject.
+pub const BOOTSTRAP: &str = "human";
 
 /// How much an agent sees at once.
 #[derive(Clone)]
@@ -80,12 +76,7 @@ pub struct AppState {
 
 /// The doors. `/` is the workspace — which datasets there are;
 /// everything else hangs off one of them.
-pub fn router(
-    plane: Arc<Plane>,
-    doors: DoorConfig,
-    workspace: PathBuf,
-    gate: Option<Arc<Gate>>,
-) -> Router {
+pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, gate: Arc<Gate>) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
@@ -122,9 +113,12 @@ pub fn router(
         Arc::new(NeverSessionManager::default()),
         config,
     );
-    let doors_router = Router::new()
+    // One gate, instantiated per door with that door's standing: the
+    // agent door stamps agent, the human doors stamp human. Identity is
+    // read the same way at every door; only the kind differs, and it is
+    // the door's to say (SPEC.md §1, the actor rides the transport).
+    let human = Router::new()
         .merge(glossql_apps::root_router(root_plane, workspace.clone()))
-        .nest("/assets", glossql_apps::assets_router())
         .route(
             "/{dataset}/query",
             post(query::query).with_state(AppState {
@@ -133,28 +127,39 @@ pub fn router(
             }),
         )
         .nest("/{dataset}/app", glossql_apps::router(app_plane, workspace))
-        .nest_service("/mcp", mcp);
-    // No public key, no gate: there is nothing to verify against, and a
-    // resource-metadata document with no authorization server behind it
-    // would point a client at nowhere. The doors then write as they did
-    // before tokens existed.
-    let Some(gate) = gate else {
-        return doors_router;
-    };
-    let metadata = {
+        .layer(axum::middleware::from_fn_with_state(
+            (Arc::clone(&gate), ActorKind::Human),
+            auth::gate,
+        ));
+    let agent =
+        Router::new()
+            .nest_service("/mcp", mcp)
+            .layer(axum::middleware::from_fn_with_state(
+                (Arc::clone(&gate), ActorKind::Agent),
+                auth::gate,
+            ));
+    let metadata = move || {
         let gate = Arc::clone(&gate);
-        move || {
-            let gate = Arc::clone(&gate);
-            async move { axum::Json(gate.metadata()) }
-        }
+        async move { axum::Json(gate.metadata()) }
     };
-    doors_router
-        // One gate above every door, so identity is read the same way
-        // for all of them.
-        .layer(axum::middleware::from_fn_with_state(gate, auth::gate))
-        // Added after the layer, so it stays outside it: a 401 names
-        // this document as where to learn how to authenticate, and a
-        // document that answers 401 points the client at itself. axum
-        // applies a layer to the routes declared before the call.
-        .route("/.well-known/oauth-protected-resource", get(metadata))
+    Router::new()
+        .merge(human)
+        .merge(agent)
+        // Outside the gate, both: the assets are the app's own script
+        // and styles and hold no data, and the discovery document is
+        // where a client learns how to authenticate — a document that
+        // answered 401 would point the client at itself. The document
+        // answers at the root and under any path (RFC 9728 §3.1 forms
+        // the well-known URI from the resource's path, and a client
+        // given `…/mcp` asks for `…/oauth-protected-resource/mcp`
+        // first); there is one resource here, so one document.
+        .nest("/assets", glossql_apps::assets_router())
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(metadata.clone()),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/{*path}",
+            get(metadata),
+        )
 }

@@ -18,7 +18,6 @@ use axum::{Extension, Json};
 use arrow_ipc::writer::StreamWriter;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use glossql_glossary::{Actor, ActorKind};
 use glossql_session::{Caller, SessionError};
 
 use crate::AppState;
@@ -29,16 +28,9 @@ pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 pub async fn query(
     State(state): State<AppState>,
     Path(dataset): Path<String>,
-    caller: Option<Extension<Caller>>,
+    Extension(Caller(actor)): Extension<Caller>,
     body: String,
 ) -> Response {
-    let actor = match caller {
-        Some(Extension(Caller(actor))) => actor,
-        None => Actor {
-            kind: ActorKind::Human,
-            id: crate::HUMAN.into(),
-        },
-    };
     let known = state.plane.datasets().await.unwrap_or_default();
     if !known.contains(&dataset) {
         return fail(

@@ -27,11 +27,9 @@ pub use builtin::{BUILTINS, BuiltinApp};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Extension;
 use axum::Router;
 use axum::routing::get;
-use glossql_glossary::{Actor, ActorKind};
-use glossql_session::{Caller, Plane};
+use glossql_session::Plane;
 
 /// State behind the door: the shared plane and the workspace root the
 /// apps live under. Frames speak as a Human actor per app
@@ -42,14 +40,6 @@ pub struct AppDoor {
     pub plane: Arc<Plane>,
     pub workspace: PathBuf,
 }
-
-/// The id a request with no token writes under.
-///
-/// A token is what proves who is speaking; without one the server can
-/// still say it witnessed the act, which is the standing this id
-/// carries and all it carries. It is reachable only while the server
-/// runs without `--require-token`.
-pub const ANONYMOUS: &str = "human";
 
 /// The workspace's datasets, for the doors that must refuse a name it
 /// does not hold. The URL is the binding, so an unknown one is a
@@ -70,23 +60,9 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
     }
 }
 
-/// The human behind a write, or nothing.
-///
-/// A verified human is themselves. A verified agent is refused — the
-/// two writes this door takes are human acts, and downgrading one to
-/// agent standing would file it under the wrong half of the
-/// supersession key. No token at all is the anonymous human above.
-pub(crate) fn human(caller: Option<Extension<Caller>>) -> Option<Actor> {
-    match caller {
-        Some(Extension(Caller(actor))) => (actor.kind == ActorKind::Human).then_some(actor),
-        None => Some(Actor {
-            kind: ActorKind::Human,
-            id: ANONYMOUS.into(),
-        }),
-    }
-}
-
-/// The door takes exactly TWO writes, and both are human acts.
+/// The door takes exactly TWO writes, and both are human acts: this is
+/// a human door, so the gate stamps human standing on every caller
+/// that reaches it (`glossql_serverd::auth`).
 ///
 /// Every other affordance retired with the pins, and the reason holds:
 /// a page that can change the record invites a second way to say

@@ -61,9 +61,7 @@ impl Brief {
 #[derive(Clone)]
 pub struct GlossqlMcp {
     plane: Arc<Plane>,
-    /// The door's knobs: the fallback agent id for calls no handshake
-    /// named, the row cap. Human writes land as [`crate::HUMAN`] —
-    /// anonymous by ruling.
+    /// The door's knobs: the row cap.
     doors: crate::DoorConfig,
     /// The brief: one composed line over live counts, appended to
     /// the instructions every initialize/discover serves — and, since
@@ -230,6 +228,10 @@ impl GlossqlMcp {
     /// one before. Words the human typed outrank every box, because
     /// they are the only part of the answer nobody wrote for them.
     async fn digest_round(&self, key: &str, answer: ElicitResult, session: &Session) -> String {
+        // The person behind the agent: the token's subject, which the
+        // agent's session carries. Their answer lands under their own
+        // name with human standing — the server witnessed the act.
+        let who = session.actor().id.clone();
         // Two outcomes, not three. Accepting with something said is
         // the save; every other way out of the dialog is a defer, and
         // a defer is not an opinion. Nothing is recorded, the claim
@@ -287,6 +289,7 @@ impl GlossqlMcp {
             return self
                 .land_ruling(
                     &dataset,
+                    &who,
                     RulingEntry {
                         stance: "unclear",
                         note: typed,
@@ -307,6 +310,7 @@ impl GlossqlMcp {
             let landed = self
                 .land_ruling(
                     &dataset,
+                    &who,
                     RulingEntry {
                         stance: "corrected",
                         note: Some(note.clone()),
@@ -327,6 +331,7 @@ impl GlossqlMcp {
             let landed = self
                 .land_ruling(
                     &dataset,
+                    &who,
                     RulingEntry {
                         stance,
                         note: typed.or(sibling_note),
@@ -340,6 +345,7 @@ impl GlossqlMcp {
             return self
                 .land_ruling(
                     &dataset,
+                    &who,
                     RulingEntry {
                         note: typed,
                         ..entry
@@ -356,6 +362,7 @@ impl GlossqlMcp {
             let landed = self
                 .land_ruling(
                     &dataset,
+                    &who,
                     RulingEntry {
                         stance: "corrected",
                         note: Some(correction.clone()),
@@ -384,7 +391,7 @@ impl GlossqlMcp {
     /// human slot is forbidden: the frozen
     /// copy would outrank every later correction — the human slot
     /// carries only what the human actually said.
-    async fn land_ruling(&self, dataset: &str, ruling: RulingEntry<'_>) -> String {
+    async fn land_ruling(&self, dataset: &str, who: &str, ruling: RulingEntry<'_>) -> String {
         let RulingEntry {
             subject,
             aspect,
@@ -409,14 +416,15 @@ impl GlossqlMcp {
         // The composing and the writing are `glossql_session::rulings`,
         // shared with the app door — the docket answers these same
         // questions when a person comes back to a page rather than to a
-        // form. This door's part is to say WHO is speaking: the
-        // anonymous human, on their own channel, witnessed here.
+        // form. This door's part is to say WHO is speaking: the token's
+        // subject, with human standing, on their own channel — the
+        // server witnessed the act (SPEC.md §1).
         let human = match self
             .plane
             .channel(
                 Actor {
                     kind: ActorKind::Human,
-                    id: crate::HUMAN.into(),
+                    id: who.to_string(),
                 },
                 Some(dataset),
             )
@@ -493,7 +501,7 @@ async fn read_rows(session: &Session, sql: &str) -> Result<Vec<serde_json::Value
 async fn open_question_count(plane: &Plane) -> Option<usize> {
     let actor = Actor {
         kind: ActorKind::Human,
-        id: crate::HUMAN.into(),
+        id: crate::BOOTSTRAP.into(),
     };
     for dataset in plane.datasets().await.ok()? {
         let Ok(session) = plane.channel(actor.clone(), Some(&dataset)).await else {
@@ -760,22 +768,21 @@ impl ServerHandler for GlossqlMcp {
             .and_then(|v| v.as_str())
             .ok_or_else(|| McpError::invalid_params("`statements` (string) is required", None))?;
 
-        // Actor rides the transport (SPEC.md §1). A token proves it: the
-        // gate verified one and left the caller in the HTTP extensions,
-        // which rmcp forwards to this handler as `http::request::Parts`.
-        // Without one — a server run without `--require-token` — the
-        // call writes under [`crate::AGENT`]. The client's own
-        // `clientInfo` name is not used: it is a string the caller picks
-        // for itself on each request, so recording it would put an
-        // unproven name in the actor column of the record.
-        let parts = context.extensions.get::<axum::http::request::Parts>();
-        let actor = parts
+        // Actor rides the transport (SPEC.md §1). The gate verified a
+        // token and left the caller in the HTTP extensions, which rmcp
+        // forwards to this handler as `http::request::Parts`; this door
+        // is the agent door, so the gate stamped agent standing. The
+        // client's own `clientInfo` name is not used: it is a string the
+        // caller picks for itself on each request, so recording it would
+        // put an unproven name in the actor column of the record.
+        let actor = context
+            .extensions
+            .get::<axum::http::request::Parts>()
             .and_then(|parts| parts.extensions.get::<Caller>())
             .map(|caller| caller.0.clone())
-            .unwrap_or_else(|| Actor {
-                kind: ActorKind::Agent,
-                id: crate::AGENT.to_string(),
-            });
+            .ok_or_else(|| {
+                McpError::internal_error("the door is not behind the gate: no caller", None)
+            })?;
         let id = actor.id.clone();
         // The call opens unbound. There is no session to hold a dataset
         // and no path segment to carry one: the statements say where

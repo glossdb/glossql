@@ -84,14 +84,14 @@ fn runtime_env(megabytes: u64) -> Arc<RuntimeEnv> {
     )
 }
 
-/// A caller a door has verified, carried in the request's extensions
+/// A caller the gate has verified, carried in the request's extensions
 /// so every door reads identity the same way. It lives here rather than
 /// in one door because all three resolve it and the app door cannot see
 /// the door crate that does the verifying.
 ///
-/// Absent means no token was presented and the server did not insist —
-/// each door then falls back to the identity it used before there were
-/// tokens.
+/// The id is the token's subject; the kind is the door's — the gate
+/// stamps agent on the agent door and human on the others. Every door
+/// is behind the gate, so a request that reaches one carries this.
 #[derive(Clone, Debug)]
 pub struct Caller(pub Actor);
 

@@ -89,10 +89,18 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     .unwrap();
 
     let workspace = dir.path().to_path_buf();
-    let router = Router::new().nest(
-        "/{dataset}/app",
-        glossql_apps::router(Arc::clone(&plane), workspace),
-    );
+    // In the binary the gate sits above this door and leaves the
+    // verified caller in the request; here the layer stands in for it,
+    // with human standing, as the gate stamps on a human door.
+    let router = Router::new()
+        .nest(
+            "/{dataset}/app",
+            glossql_apps::router(Arc::clone(&plane), workspace),
+        )
+        .layer(axum::Extension(Caller(Actor {
+            kind: ActorKind::Human,
+            id: "ada".into(),
+        })));
     (router, plane, dir)
 }
 
@@ -412,12 +420,12 @@ fn assert_classic(dt: &datafusion::arrow::datatypes::DataType, frame: &str, fiel
     }
 }
 
-/// A ruling is a human act, and the token says which the caller is.
-/// Downgrading an agent's post to a human's slot would file it under
-/// the wrong half of the supersession key — human outranks agent, so
-/// an agent that could write there would outrank every human.
+/// A ruling is a human act, signed with the caller's own name. This is
+/// a human door: the gate stamps human standing on whoever reaches it,
+/// and the record takes the token's subject — nothing anonymous stands
+/// in for the person.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_token_cannot_rule_and_a_human_token_signs_its_own_name() {
+async fn a_ruling_is_signed_with_the_callers_own_name() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
     let human = plane
@@ -432,41 +440,23 @@ async fn an_agent_token_cannot_rule_and_a_human_token_signs_its_own_name() {
         .unwrap();
     human.execute(shipped_ruling_declaration()).await.unwrap();
 
-    let post = |caller: Caller| {
-        let app = app.clone();
-        async move {
-            app.oneshot(
-                Request::post("/perf/app/docket/rule")
-                    .header(
-                        axum::http::header::CONTENT_TYPE,
-                        "application/x-www-form-urlencoded",
-                    )
-                    .extension(caller)
-                    .body(Body::from(
-                        "subject=perf&aspect=dso&key=per-line&stance=confirmed",
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-        }
-    };
-
-    let refused = post(Caller(Actor {
-        kind: ActorKind::Agent,
-        id: "claude".into(),
-    }))
-    .await;
-    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-
-    let accepted = post(Caller(Actor {
-        kind: ActorKind::Human,
-        id: "ada".into(),
-    }))
-    .await;
+    let accepted = app
+        .oneshot(
+            Request::post("/perf/app/docket/rule")
+                .header(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(Body::from(
+                    "subject=perf&aspect=dso&key=per-line&stance=confirmed",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
-    // And it is signed with the name the token carried, not an
-    // anonymous stand-in.
+    // Signed with the name the gate carried in (`workspace()` stands
+    // in for it with `ada`), not with a stand-in.
     let signed = human
         .execute("SELECT actor_id FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human';")
         .await

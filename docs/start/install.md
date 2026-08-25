@@ -7,14 +7,15 @@ holds your data lake and everything declared over it.
 
 ```bash
 cargo build --release -p glossql-serverd
+cp .env.example .env            # then fill it in — see Tokens below
 ./target/release/serverd --workspace ~/acme
 ```
 
-The server prints its doors and listens:
+The server reads `.env`, reads the issuer's keys, prints its doors and
+listens:
 
 ```
-glossql open — no --public-key, so no token is verified and every request writes as the anonymous human (agent over /mcp).
-  Development tokens and the key that verifies them are in dev/.
+glossql verifying https://issuer.example tokens for http://127.0.0.1:8080 (application a1b2c3…)
 serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/app
 ```
 
@@ -27,51 +28,50 @@ serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/a
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
 | `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A plan that would exceed it is refused by name; nothing spills, because a container is the wrong place to be writing overflow. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum |
-| `--require-token` | off | refuse a request that carries no token, instead of serving it as the door's default identity; needs `--public-key` and `--issuer` |
-| `--public-key <pem>` | — | the **public key** tokens are verified against, in PEM (not a certificate). Without it there is no gate at all |
-| `--issuer <iss>` | — | the issuer the token's `iss` must name; required with `--public-key` |
-| `--audience <uri>` | `http://<addr>` | this server's canonical URI, which every token's `aud` must name (RFC 8707 §2) |
+
+The authorization arrangement is not a flag. It is read from `.env` in
+the working directory, or from the environment (a set variable wins
+over the file, which is how a container is configured without one):
+
+| variable | meaning |
+|---|---|
+| `GLOSSQL_ISSUER` | the authorization server's issuer URL; its OpenID configuration names the keys tokens are verified against |
+| `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
+| `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
+| `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
+
+`.env.example` at the repository root lists them; `.env` is never
+committed.
 
 ## Tokens
 
-Who is speaking is a signed claim, not a door's assumption: `sub` is
-the actor id and `kind` (`human` | `agent`) is the actor kind. Human
-outranks agent at every read, so an agent that could claim human
-standing would outrank every human — it cannot, because it cannot
-sign.
+Who is speaking is the token's subject; with which standing is the
+door's: `/mcp` writes as an agent, the other doors as a human. glossql
+is an OAuth 2.1 resource server and never an authorization server — it
+verifies against the keys the issuer publishes, it does not issue, and
+there is no login flow, client registration or user table inside a
+workspace. There is no open mode: a request without a valid token is
+answered 401, and a server without an issuer does not start.
 
-glossql is an OAuth 2.1 resource server and never an authorization
-server. It verifies; it does not issue, and there is no login flow or
-user table inside a workspace.
+The issuer is any OpenID Connect provider. Register this server there
+as an API whose identifier is `GLOSSQL_AUDIENCE`, and one application
+(`GLOSSQL_CLIENT_ID`) whose client id and secret an MCP client presents;
+the provider's discovery document
+(`<issuer>/.well-known/openid-configuration`) is everything the server
+needs. Tokens must be RS256, ES256/384 or EdDSA, name their key
+(`kid`), and carry `iss`, `sub`, `exp`.
 
-**No private key comes near this process.** Whoever holds the private
-half mints; the server is given a public key and verifies. In a
-deployment that half belongs to your IdP.
+A token is bound to this server by its `aud` naming the audience. MCP
+clients ask for that with the RFC 8707 `resource` parameter; an issuer
+that fills `aud` only from a parameter of its own mints `aud: []` for
+them, and such a token is bound instead by the application it was
+minted for —
+`azp`, or `client_id` as RFC 9068 spells it — which must be
+`GLOSSQL_CLIENT_ID`. A token for another application, or naming another
+resource, is refused either way.
 
-For development the repository carries `dev/` — `public.pem` and two
-long-lived tokens, `human.jwt` and `agent.jwt`, minted for
-`http://127.0.0.1:8080` by a keypair that was used once and thrown
-away. They are committed on purpose: there is no secret in them worth
-keeping, and a credential you can read is one nobody has to be handed.
-
-```bash
-./target/release/serverd --workspace ~/acme \
-  --public-key dev/public.pem --issuer glossql-dev
-```
-
-The agent token goes into an MCP client's configured headers; the human
-token goes into a browser as a cookie named `glossql_token`
-(`HttpOnly; SameSite=Lax`).
-
-When they expire, mint a new pair the same way — an Ed25519 keypair, a
-JWT per actor kind carrying `iss`, `aud`, `sub`, `kind`, `exp`, `iat`,
-and then delete the private key. Nothing in this repository can sign,
-which is the property worth keeping.
-
-Without `--public-key` there is no gate: every request is served as the
-anonymous `human`, or as an agent over `/mcp`. That is how a fresh
-workspace is opened. With one, `--require-token` refuses a request that
-brings none instead of falling back.
+How a client obtains a token is the client's flow with the issuer —
+[`connect.md`](connect.md) shows Claude Code's.
 
 ## What boot does
 
