@@ -136,6 +136,11 @@ pub struct CollapsedRow {
     pub band: Option<String>,
     pub score: Option<f64>,
     pub state: String,
+    /// The serving voice's rank — 0 human, 1 agent, 2 function — where a
+    /// value is served; None on a contested or unassessed row. Not a
+    /// served column: what a read policy needs to know whose word it is
+    /// acting on.
+    pub rank: Option<u8>,
 }
 
 /// One row of `ATTEST(...)` — the fixed attest shape (SPEC.md §7.2).

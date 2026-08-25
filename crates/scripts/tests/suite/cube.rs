@@ -59,6 +59,18 @@ async fn cube_session_with(
         .await
         .unwrap();
     let store = Store::open(lake).await.unwrap();
+    cube_session_on(store, tables, glosses, cache).await
+}
+
+/// The agent's session over a store the caller holds — one store per
+/// workspace, as the plane holds it: a second handle would carry its
+/// own head and never see this one's writes.
+async fn cube_session_on(
+    store: Store,
+    tables: Vec<(&str, RecordBatch)>,
+    glosses: &[&str],
+    cache: Option<CubeCache>,
+) -> Session {
     let mut session = Session::new(
         store,
         Actor {
@@ -106,8 +118,14 @@ async fn cube_session_with(
                            WHEN $subject LIKE '%.booked' THEN named_struct('ratio', 0.5)
                            ELSE named_struct('ratio', 1.0) END AS completeness$$
              RETURNS temporal_profile;
+           DECLARE ASPECT dimension WITH $${{
+             "type": "object", "required": ["value"],
+             "properties": {{"value": {{"enum": ["primary", "supporting", "none"]}},
+                            "grounds": {{"type": "string"}}}}}}$$ AS FACT ON COLUMN;
            DECLARE FUNCTION judge_axis FOR GLOBAL AS
-             $$SELECT true AS applicable,
+             $$SELECT CASE WHEN $subject LIKE '%.label' THEN false ELSE true END AS applicable,
+                      CASE WHEN $subject LIKE '%.label'
+                           THEN 'near-key axis (distinct/filled >= 0.9)' END AS reason,
                       CASE WHEN $subject LIKE '%.note' THEN 0.9
                            ELSE 0.7 END AS relevance$$
              RETURNS dimension_relevance;"#,
@@ -118,6 +136,185 @@ async fn cube_session_with(
         session.execute(g).await.unwrap();
     }
     session
+}
+
+/// A human's session over the same store, bound to the dataset.
+async fn human_on(store: Store) -> Session {
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Human,
+            id: "h".into(),
+        },
+    )
+    .unwrap();
+    session.execute("USE fin;").await.unwrap();
+    session
+}
+
+/// Twelve months of results for three constructors: the key column,
+/// a venue nobody judged, and the points.
+fn results() -> RecordBatch {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("date", DataType::Date32, false),
+        Field::new("constructor_id", DataType::Utf8, false),
+        Field::new("venue", DataType::Utf8, false),
+        Field::new("points", DataType::Float64, false),
+    ]));
+    let (mut dates, mut cids, mut venues, mut points) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (m, start) in MONTH_STARTS.iter().take(12).enumerate() {
+        for (i, cid) in ["c1", "c2", "c3"].iter().enumerate() {
+            dates.push(19723 + start);
+            cids.push(*cid);
+            venues.push(if m % 2 == 0 { "street" } else { "circuit" });
+            points.push(10.0 * (i + 1) as f64);
+        }
+    }
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Date32Array::from(dates)),
+            Arc::new(StringArray::from(cids)),
+            Arc::new(StringArray::from(venues)),
+            Arc::new(Float64Array::from(points)),
+        ],
+    )
+    .unwrap()
+}
+
+/// The constructors: one row per key, the label a near-key in its own
+/// table by construction.
+fn constructors() -> RecordBatch {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("constructor_id", DataType::Utf8, false),
+        Field::new("label", DataType::Utf8, false),
+    ]));
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(vec!["c1", "c2", "c3"])),
+            Arc::new(StringArray::from(vec!["Red", "Blue", "Green"])),
+        ],
+    )
+    .unwrap()
+}
+
+const POINTS_BY_TEAM: &[&str] = &[
+    r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#,
+    r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, c.label AS team, r.constructor_id AS cid, r.venue AS venue, r.points AS value FROM results r JOIN constructors c ON r.constructor_id = c.constructor_id"}$$;"#,
+    "SELECT judge_time() FROM results.date;",
+    "SELECT judge_axis() FROM constructors.label;",
+    "SELECT judge_axis() FROM results.constructor_id;",
+];
+
+const AXES: &str = "SELECT dims, basis, admitted_by FROM metric_axes();";
+
+/// The team is a label in its own table — a near-key there, never an
+/// axis by its own verdict — and every metric could be sliced by
+/// anything but the team. A declared edge reaches it from the results'
+/// key column, whose verdict admits it; the fact row names that key as
+/// the basis, and the cells slice by the label.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_label_reached_through_a_declared_edge_is_an_axis_on_the_keys_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        POINTS_BY_TEAM,
+    )
+    .await;
+
+    // No edge yet: the key admits itself, the label stays out.
+    let before = grid(&session, AXES).await;
+    assert!(
+        before.contains("[cid] | [results.constructor_id] | [measurement]"),
+        "{before}"
+    );
+
+    session
+        .execute("DECLARE RELATIONSHIP results.constructor_id -> constructors.constructor_id;")
+        .await
+        .unwrap();
+    let after = grid(&session, AXES).await;
+    assert!(
+        after.contains(
+            "[cid, team] | [results.constructor_id, results.constructor_id] | [measurement, measurement]"
+        ),
+        "the label rides the key's verdict, named as its basis: {after}"
+    );
+    let members = grid(
+        &session,
+        "SELECT DISTINCT member FROM metric_series() WHERE dimension = 'team' ORDER BY member;",
+    )
+    .await;
+    assert!(
+        members.contains("Blue") && members.contains("Green") && members.contains("Red"),
+        "{members}"
+    );
+}
+
+/// The collapsed `dimension` gloss is the read policy over what was
+/// measured: `primary` puts the axis first and the fact says whose
+/// word that was, `none` closes it whatever the verdict, and a column
+/// no verdict admits enters on a `primary` alone. The verdicts
+/// themselves are untouched — a measurement is never glossed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dimension_gloss_is_the_read_policy_over_the_measured_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    let session = cube_session_on(
+        store.clone(),
+        vec![("results", results()), ("constructors", constructors())],
+        POINTS_BY_TEAM,
+        None,
+    )
+    .await;
+    session
+        .execute("DECLARE RELATIONSHIP results.constructor_id -> constructors.constructor_id;")
+        .await
+        .unwrap();
+    let human = human_on(store).await;
+
+    human
+        .execute(r#"GLOSS dimension ON constructors.label AS $${"value": "primary", "grounds": "the team is what a reader slices by"}$$;"#)
+        .await
+        .unwrap();
+    let axes = grid(&session, AXES).await;
+    assert!(
+        axes.contains(
+            "[team, cid] | [results.constructor_id, results.constructor_id] | [human, measurement]"
+        ),
+        "primary leads, and the fact says a human put it there: {axes}"
+    );
+
+    human
+        .execute(r#"GLOSS dimension ON constructors.label AS $${"value": "none"}$$;"#)
+        .await
+        .unwrap();
+    let axes = grid(&session, AXES).await;
+    assert!(
+        axes.contains("[cid] | [results.constructor_id] | [measurement]"),
+        "none closes the axis whatever was measured: {axes}"
+    );
+
+    human
+        .execute(r#"GLOSS dimension ON results.venue AS $${"value": "primary"}$$;"#)
+        .await
+        .unwrap();
+    let axes = grid(&session, AXES).await;
+    assert!(
+        axes.contains(
+            "[venue, cid] | [results.venue, results.constructor_id] | [human, measurement]"
+        ),
+        "a column no verdict admits enters on the gloss alone, first: {axes}"
+    );
 }
 
 /// One read, rendered as text — for asserts over served relations.

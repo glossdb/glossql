@@ -7,10 +7,27 @@
 //! unmapped; under judged admission an unmapped field is a gap, never
 //! a candidate.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use datafusion::common::Column;
+use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion::logical_expr::{Expr, LogicalPlan};
+
+/// The dataset tables a plan scans, by name — every scan whose
+/// reference is unqualified or qualified by the bound dataset.
+pub(crate) fn scanned_tables(plan: &LogicalPlan, dataset: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    // The visitor never fails; the Result is the trait's shape.
+    let _ = plan.apply(|p| {
+        if let LogicalPlan::TableScan(t) = p
+            && t.table_name.schema().is_none_or(|q| q == dataset)
+        {
+            out.insert(t.table_name.table().to_string());
+        }
+        Ok(TreeNodeRecursion::Continue)
+    });
+    out
+}
 
 /// The source subject (`table.column`) of each served field, keyed by
 /// served name. `dataset` guards the terminal: a scan whose reference

@@ -116,12 +116,49 @@ pub(crate) fn endpoint(path: &str) -> Option<(String, Vec<String>)> {
     Some((t.to_string(), vec![c.to_string()]))
 }
 
-#[derive(Clone)]
-struct Pointer {
-    src_t: String,
-    src_cols: Vec<String>,
-    dst_t: String,
-    dst_cols: Vec<String>,
+/// One direction of a declared relationship, endpoints parsed.
+#[derive(Clone, Debug)]
+pub(crate) struct Pointer {
+    pub(crate) src_t: String,
+    pub(crate) src_cols: Vec<String>,
+    pub(crate) dst_t: String,
+    pub(crate) dst_cols: Vec<String>,
+}
+
+/// The dataset's declared edges as directed pointers; `<->` points
+/// both ways. `relationships` is workspace-wide and its first column
+/// says whose edge this is; a tuple endpoint must match arity.
+pub(crate) fn declared_pointers(rows: &[Vec<Option<String>>], dataset: &str) -> Vec<Pointer> {
+    let mut pointers = Vec::new();
+    for row in rows {
+        if row.first().and_then(|d| d.as_deref()) != Some(dataset) {
+            continue;
+        }
+        let (Some(left), Some(op), Some(right)) = (&row[1], &row[2], &row[3]) else {
+            continue;
+        };
+        let (Some((lt, lc)), Some((rt, rc))) = (endpoint(left), endpoint(right)) else {
+            continue;
+        };
+        if lc.len() != rc.len() {
+            continue;
+        }
+        pointers.push(Pointer {
+            src_t: lt.clone(),
+            src_cols: lc.clone(),
+            dst_t: rt.clone(),
+            dst_cols: rc.clone(),
+        });
+        if op == "<->" {
+            pointers.push(Pointer {
+                src_t: rt,
+                src_cols: rc,
+                dst_t: lt,
+                dst_cols: lc,
+            });
+        }
+    }
+    pointers
 }
 
 #[derive(Clone)]
@@ -247,44 +284,17 @@ pub(crate) async fn behavior_anchors(
         return bare(json!({"applicable": false}));
     }
 
-    // Declared edges as directed pointers; "<->" points both ways.
-    // `relationships` is workspace-wide and its first column says whose
-    // edge this is. The endpoint check below drops an edge naming a
-    // table this dataset lacks, but a foreign edge whose table name
-    // also exists here would pass it and supply the wrong evidence.
+    // The dataset's declared edges. The endpoint check drops an edge
+    // naming a table this dataset lacks, but a foreign edge whose table
+    // name also exists here would pass it and supply the wrong evidence.
     let bound = shared.dataset.read().expect("state lock").clone();
-    let mut pointers: Vec<Pointer> = Vec::new();
-    for row in shared.store.relation_rows("relationships").await? {
-        if row[0] != bound {
-            continue;
-        }
-        let (Some(left), Some(op), Some(right)) = (&row[1], &row[2], &row[3]) else {
-            continue;
-        };
-        let (Some((lt, lc)), Some((rt, rc))) = (endpoint(left), endpoint(right)) else {
-            continue;
-        };
-        if lc.len() != rc.len()
-            || !schemas.contains_key(lt.as_str())
-            || !schemas.contains_key(rt.as_str())
-        {
-            continue;
-        }
-        pointers.push(Pointer {
-            src_t: lt.clone(),
-            src_cols: lc.clone(),
-            dst_t: rt.clone(),
-            dst_cols: rc.clone(),
-        });
-        if op == "<->" {
-            pointers.push(Pointer {
-                src_t: rt,
-                src_cols: rc,
-                dst_t: lt,
-                dst_cols: lc,
-            });
-        }
-    }
+    let rows = shared.store.relation_rows("relationships").await?;
+    let pointers: Vec<Pointer> = declared_pointers(&rows, bound.as_deref().unwrap_or(""))
+        .into_iter()
+        .filter(|p| {
+            schemas.contains_key(p.src_t.as_str()) && schemas.contains_key(p.dst_t.as_str())
+        })
+        .collect();
 
     // A declared edge's legs are identifiers — every leg of a tuple too.
     let mut legs: std::collections::HashSet<(String, String)> = Default::default();

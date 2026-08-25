@@ -7,7 +7,7 @@
 //! optimizes recall: no thresholds here, the judgment lives in the
 //! measurement body that reads the door.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
@@ -1455,6 +1455,29 @@ pub(crate) struct QuerySlot {
 /// SPEC.md §5.3), narrowed to QUERY aspects: one slot per
 /// (subject, aspect) that serves a value. A contested grounding never
 /// enters a cube, a walk, or a collision bucket. In slot-key order.
+/// One FACT aspect's collapsed values across the dataset, keyed by
+/// subject, each with the serving voice's rank (0 human, 1 agent) — the
+/// read policy's view of what was said, human over agent, contested
+/// withheld.
+pub(crate) async fn current_fact_values(
+    shared: &Arc<Shared>,
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Result<HashMap<String, (Value, u8)>, SessionError> {
+    let scope = glossql_glossary::Scope::Dataset;
+    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some(aspect)).await?;
+    Ok(
+        glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), rctx, &verdicts)
+            .into_iter()
+            .filter_map(|r| {
+                let body = serde_json::from_str::<Value>(r.value.as_deref()?).ok()?;
+                Some((r.subject, (body, r.rank?)))
+            })
+            .collect(),
+    )
+}
+
 pub(crate) async fn current_query_slots(
     shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,

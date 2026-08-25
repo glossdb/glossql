@@ -1032,6 +1032,7 @@ impl Store {
                     band,
                     score,
                     state: "contested".into(),
+                    rank: None,
                 });
                 continue;
             }
@@ -1053,6 +1054,7 @@ impl Store {
                 band,
                 score,
                 state: state.into(),
+                rank: Some(serving.rank),
             });
         }
 
@@ -1161,6 +1163,7 @@ impl Store {
                         band: None,
                         score: None,
                         state: "unassessed".into(),
+                        rank: None,
                     });
                 }
             }

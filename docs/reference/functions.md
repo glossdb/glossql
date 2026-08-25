@@ -75,7 +75,10 @@ a named bucket, evenness is Pielou's index (entropy over its maximum),
 clamped to [0, 1]. No free parameters. Admission gates, each named in
 the abstention reason: a non-empty column, at least two buckets with
 NULL counted as one, `null_ratio ≤ 0.5`, and cardinality ratio < 0.9
-(a near-key is an identifier, not an axis). What the score deliberately does not do:
+(a near-key is an identifier, not an axis — a label in a dimension
+table is one in its own table, and the cube admits it through a
+declared relationship on the key column's verdict; see
+`metric_axes()`). What the score deliberately does not do:
 prefer few groups to many — which axis a reader wants first is
 business judgment.
 

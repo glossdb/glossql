@@ -213,6 +213,14 @@ pub(crate) struct Fact {
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
     pub dims: Vec<String>,
+    /// Per admitted dimension, in `dims` order: the column subject whose
+    /// verdict admitted it — its own, or the key column reached through
+    /// a declared edge when the axis is a label in the key's table.
+    pub basis: Vec<String>,
+    /// Per admitted dimension, in `dims` order, what decided:
+    /// `measurement` when the verdict alone did, `human` or `agent`
+    /// when a `dimension` gloss admitted it or put it first.
+    pub admitted_by: Vec<String>,
     pub bucketed: Vec<String>,
     pub alternative: Option<String>,
     pub alternative_error: Option<String>,
@@ -230,11 +238,63 @@ impl Fact {
             resolution: None,
             window: None,
             dims: Vec::new(),
+            basis: Vec::new(),
+            admitted_by: Vec::new(),
             bucketed: Vec::new(),
             alternative: None,
             alternative_error: None,
         }
     }
+}
+
+/// One served column on its way to being an axis.
+struct Candidate {
+    column: String,
+    relevance: f64,
+    current: bool,
+    basis: String,
+    admitted_by: &'static str,
+    /// A `primary` gloss: ranks ahead of every measured relevance.
+    primary: bool,
+}
+
+/// A label's admission through a declared edge: the served column
+/// descends from `T.c`, and a relationship joins `T` to a table the
+/// plan scans on a key column with an applicable verdict — that key's
+/// relevance, current flag and subject. Several edges: the best
+/// relevance.
+fn through_edge(
+    subject: &str,
+    scanned: &std::collections::HashSet<String>,
+    pointers: &[crate::behavior::Pointer],
+    relevance: &HashMap<String, Verdict>,
+) -> Option<(f64, bool, String)> {
+    let (table, _) = subject.split_once('.')?;
+    let mut best: Option<(f64, bool, String)> = None;
+    for p in pointers {
+        let key = if p.dst_t == table && p.src_t != table && scanned.contains(&p.src_t) {
+            (&p.src_t, &p.src_cols)
+        } else if p.src_t == table && p.dst_t != table && scanned.contains(&p.dst_t) {
+            (&p.dst_t, &p.dst_cols)
+        } else {
+            continue;
+        };
+        let [column] = key.1.as_slice() else {
+            continue;
+        };
+        let key_subject = format!("{}.{column}", key.0);
+        let Some(v) = relevance.get(&key_subject) else {
+            continue;
+        };
+        if v.body["applicable"].as_bool() != Some(true) {
+            continue;
+        }
+        let r = v.body["relevance"].as_f64().unwrap_or(0.0);
+        if best.as_ref().is_none_or(|(b, ..)| r > *b) {
+            best = Some((r, v.current, key_subject));
+        }
+    }
+    best
 }
 
 /// One metric's cube: the fact row and the cells at its resolution, in
@@ -304,10 +364,15 @@ pub(crate) struct Verdict {
 }
 
 /// The judged surface the build reads: verdicts by column subject,
-/// under the shipped bootstrap's aspect names.
+/// under the shipped bootstrap's aspect names — and beside them what
+/// admission reads that no function measured: the collapsed `dimension`
+/// gloss per column (human over agent) and the dataset's declared
+/// edges, through which a label's admission borrows a key's verdict.
 struct Judged {
     temporal: HashMap<String, Verdict>,
     relevance: HashMap<String, Verdict>,
+    dimension: HashMap<String, (Value, u8)>,
+    pointers: Vec<crate::behavior::Pointer>,
 }
 
 /// One measurement aspect's verdicts: the newest landing per subject
@@ -420,10 +485,19 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
             continue;
         }
         if judged.is_none() {
+            let edges = shared.store.relation_rows("relationships").await?;
             judged = Some((
                 Judged {
                     temporal: judged_bodies(&rctx, &dataset, "temporal_profile"),
                     relevance: judged_bodies(&rctx, &dataset, "dimension_relevance"),
+                    dimension: crate::search::current_fact_values(
+                        shared,
+                        &rctx,
+                        &dataset,
+                        "dimension",
+                    )
+                    .await?,
+                    pointers: crate::behavior::declared_pointers(&edges, &dataset),
                 },
                 settings(shared, &rctx, &dataset).await?,
             ));
@@ -546,41 +620,88 @@ async fn build(
     };
 
     // Judged dimensions: a served column (neither the value nor
-    // time-typed nor a ratio's own halves) enters when its collapsed
-    // dimension_relevance is applicable — relevance orders the
-    // admitted, fewest members break a tie, the cap keeps the top
+    // time-typed nor a ratio's own halves) enters when a verdict admits
+    // it — its own dimension_relevance, or, for a label whose own
+    // verdict is a near-key in its table, the verdict on the key
+    // column that reaches it through a declared edge. The collapsed
+    // `dimension` gloss on the column is the read policy over that:
+    // `none` closes the axis whatever was measured, `primary` admits
+    // it and ranks it first, `supporting` admits it. Relevance orders
+    // the admitted, fewest members break a tie, the cap keeps the top
     // four. Counting admits nothing; its two jobs are the served-frame
     // floor and the bucketing split, one aggregate pass.
-    let cand: Vec<(String, f64, bool)> = fields
-        .fields()
-        .iter()
-        .filter(|f| {
-            let n = f.name().as_str();
-            if n == "value" || (is_ratio && (n == "num" || n == "den")) {
-                return false;
-            }
-            !crate::whatif::is_temporal(f.data_type())
-        })
-        .filter_map(|f| {
-            let v = subjects
-                .get(f.name())
-                .and_then(|s| judged.relevance.get(s))?;
-            if v.body["applicable"].as_bool() != Some(true) {
-                return None;
-            }
-            Some((
-                f.name().clone(),
+    let scanned = crate::provenance::scanned_tables(&probe, dataset);
+    let mut cand: Vec<Candidate> = Vec::new();
+    for f in fields.fields() {
+        let n = f.name().as_str();
+        if n == "value"
+            || (is_ratio && (n == "num" || n == "den"))
+            || crate::whatif::is_temporal(f.data_type())
+        {
+            continue;
+        }
+        let Some(subject) = subjects.get(n) else {
+            continue;
+        };
+        let gloss = judged.dimension.get(subject);
+        let stance = gloss.and_then(|(v, _)| v["value"].as_str()).unwrap_or("");
+        if stance == "none" {
+            continue;
+        }
+        let speaker: &'static str = match gloss {
+            Some((_, 0)) => "human",
+            Some(_) => "agent",
+            None => "measurement",
+        };
+        let measured = match judged
+            .relevance
+            .get(subject)
+            .filter(|v| v.body["applicable"].as_bool() == Some(true))
+        {
+            Some(v) => Some((
                 v.body["relevance"].as_f64().unwrap_or(0.0),
                 v.current,
-            ))
-        })
-        .collect();
-    let mut counts: Vec<(String, f64, i64, bool)> = Vec::new();
+                subject.clone(),
+            )),
+            None => through_edge(subject, &scanned, &judged.pointers, &judged.relevance),
+        };
+        let candidate = match (measured, stance) {
+            (Some((relevance, current, basis)), "primary") => Candidate {
+                column: n.to_string(),
+                relevance,
+                current,
+                basis,
+                admitted_by: speaker,
+                primary: true,
+            },
+            (Some((relevance, current, basis)), _) => Candidate {
+                column: n.to_string(),
+                relevance,
+                current,
+                basis,
+                admitted_by: "measurement",
+                primary: false,
+            },
+            // Admitted on the gloss alone: a gloss always stands, and
+            // without a verdict `primary` leads, `supporting` trails.
+            (None, "primary" | "supporting") => Candidate {
+                column: n.to_string(),
+                relevance: if stance == "primary" { 1.0 } else { 0.0 },
+                current: true,
+                basis: subject.clone(),
+                admitted_by: speaker,
+                primary: stance == "primary",
+            },
+            (None, _) => continue,
+        };
+        cand.push(candidate);
+    }
+    let mut counts: Vec<(Candidate, i64)> = Vec::new();
     if !cand.is_empty() {
         let parts: Vec<String> = cand
             .iter()
             .enumerate()
-            .map(|(i, (c, ..))| format!("count(DISTINCT \"{c}\") AS \"n_{i}\""))
+            .map(|(i, c)| format!("count(DISTINCT \"{}\") AS \"n_{i}\"", c.column))
             .collect();
         let batches = run(
             shared,
@@ -588,30 +709,35 @@ async fn build(
             &format!("SELECT {} FROM ({sql})", parts.join(", ")),
         )
         .await?;
-        for (i, (c, r, current)) in cand.iter().enumerate() {
+        for (i, c) in cand.into_iter().enumerate() {
             let n = int_column(&batches, &format!("n_{i}")).map_err(|e| Abstain(e.to_string()))?[0];
-            counts.push((c.clone(), *r, n, *current));
+            counts.push((c, n));
         }
     }
-    counts.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.2.cmp(&b.2))
-            .then(a.0.cmp(&b.0))
+    counts.sort_by(|(a, an), (b, bn)| {
+        b.primary
+            .cmp(&a.primary)
+            .then(b.relevance.total_cmp(&a.relevance))
+            .then(an.cmp(bn))
+            .then(a.column.cmp(&b.column))
     });
     let mut dims: Vec<String> = Vec::new();
+    let mut basis: Vec<String> = Vec::new();
+    let mut admitted_by: Vec<String> = Vec::new();
     let mut bucketed: Vec<String> = Vec::new();
-    for (c, _, n, current) in &counts {
+    for (c, n) in &counts {
         if dims.len() >= DIMS_CAP {
             break;
         }
         if *n < 2 {
             continue;
         }
-        dims.push(c.clone());
-        judged_current &= *current;
+        dims.push(c.column.clone());
+        basis.push(c.basis.clone());
+        admitted_by.push(c.admitted_by.to_string());
+        judged_current &= c.current;
         if *n > MEMBERS_CAP {
-            bucketed.push(c.clone());
+            bucketed.push(c.column.clone());
         }
     }
 
@@ -796,6 +922,8 @@ async fn build(
             resolution: Some(resolution),
             window,
             dims,
+            basis,
+            admitted_by,
             bucketed,
             alternative,
             alternative_error,
@@ -1294,6 +1422,16 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
             true,
         ),
         Field::new(
+            "basis",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
+            "admitted_by",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
             "bucketed",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
@@ -1319,6 +1457,8 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
             text(|f| f.resolution.map(Resolution::as_str)),
             text(|f| f.window.as_deref()),
             list(|f| &f.dims),
+            list(|f| &f.basis),
+            list(|f| &f.admitted_by),
             list(|f| &f.bucketed),
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_error.as_deref()),
