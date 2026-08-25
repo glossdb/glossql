@@ -26,13 +26,15 @@
 
 mod auth;
 mod bootstrap;
+mod login;
 mod mcp;
 mod query;
 mod wire;
 
-pub use auth::Gate;
+pub use auth::{Endpoints, Gate};
 pub use bootstrap::bootstrap;
 pub use glossql_session::Plane;
+pub use login::Login;
 pub use mcp::GlossqlMcp;
 pub use query::ARROW_STREAM;
 pub use wire::DEFAULT_ROW_CAP;
@@ -75,8 +77,15 @@ pub struct AppState {
 }
 
 /// The doors. `/` is the workspace — which datasets there are;
-/// everything else hangs off one of them.
-pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, gate: Arc<Gate>) -> Router {
+/// everything else hangs off one of them. The login carries the gate
+/// every door verifies with.
+pub fn router(
+    plane: Arc<Plane>,
+    doors: DoorConfig,
+    workspace: PathBuf,
+    login: Arc<Login>,
+) -> Router {
+    let gate = Arc::clone(login.gate());
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
@@ -145,14 +154,16 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, gate: Ar
     Router::new()
         .merge(human)
         .merge(agent)
-        // Outside the gate, both: the assets are the app's own script
-        // and styles and hold no data, and the discovery document is
-        // where a client learns how to authenticate — a document that
+        // Outside the gate, all three: the login is where a browser
+        // goes to get a token; the assets are the app's own script and
+        // styles and hold no data; and the discovery document is where
+        // a client learns how to authenticate — a document that
         // answered 401 would point the client at itself. The document
         // answers at the root and under any path (RFC 9728 §3.1 forms
         // the well-known URI from the resource's path, and a client
         // given `…/mcp` asks for `…/oauth-protected-resource/mcp`
         // first); there is one resource here, so one document.
+        .merge(login::router(login))
         .nest("/assets", glossql_apps::assets_router())
         .route(
             "/.well-known/oauth-protected-resource",

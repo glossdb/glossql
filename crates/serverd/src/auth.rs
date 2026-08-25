@@ -37,7 +37,7 @@ use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use glossql_glossary::{Actor, ActorKind};
@@ -57,6 +57,15 @@ pub const COOKIE: &str = "glossql_token";
 /// of requests at the issuer.
 const REFRESH_FLOOR: Duration = Duration::from_secs(10);
 
+/// The issuer's two user-facing endpoints, read from its discovery
+/// document: where a browser is sent to sign in, and where a code is
+/// exchanged for a token ([`crate::login`]).
+#[derive(Clone, Debug)]
+pub struct Endpoints {
+    pub authorization: String,
+    pub token: String,
+}
+
 /// The verifying half, and only the verifying half.
 pub struct Gate {
     issuer: String,
@@ -65,6 +74,7 @@ pub struct Gate {
     /// The application registered at the issuer for this server — what
     /// a token minted for it carries as `azp`.
     client_id: String,
+    endpoints: Endpoints,
     keys: RwLock<JwkSet>,
     /// Where fresh keys come from. `None` when the set is fixed, which is
     /// the test arrangement — then an unknown `kid` is a plain refusal.
@@ -73,11 +83,13 @@ pub struct Gate {
     http: reqwest::Client,
 }
 
-/// The two fields of the issuer's discovery document this server reads.
+/// The fields of the issuer's discovery document this server reads.
 #[derive(Deserialize)]
 struct Discovery {
     issuer: String,
     jwks_uri: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
 }
 
 /// `aud` as RFC 7519 allows it: one string, or an array of them.
@@ -161,6 +173,10 @@ impl Gate {
             issuer: issuer.to_string(),
             resource: resource.to_string(),
             client_id: client_id.to_string(),
+            endpoints: Endpoints {
+                authorization: doc.authorization_endpoint,
+                token: doc.token_endpoint,
+            },
             keys: RwLock::new(keys),
             jwks_uri: Some(doc.jwks_uri),
             refreshed: Mutex::new(Instant::now()),
@@ -169,11 +185,18 @@ impl Gate {
     }
 
     /// A fixed key set, for tests: whoever holds the private halves mints.
-    pub fn with_keys(issuer: &str, resource: &str, client_id: &str, keys: JwkSet) -> Gate {
+    pub fn with_keys(
+        issuer: &str,
+        resource: &str,
+        client_id: &str,
+        keys: JwkSet,
+        endpoints: Endpoints,
+    ) -> Gate {
         Gate {
             issuer: issuer.trim_end_matches('/').to_string(),
             resource: resource.to_string(),
             client_id: client_id.to_string(),
+            endpoints,
             keys: RwLock::new(keys),
             jwks_uri: None,
             refreshed: Mutex::new(Instant::now()),
@@ -254,6 +277,27 @@ impl Gate {
         &self.issuer
     }
 
+    /// This server's canonical URI.
+    pub fn resource(&self) -> &str {
+        &self.resource
+    }
+
+    /// The application this server is registered as at the issuer.
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn endpoints(&self) -> &Endpoints {
+        &self.endpoints
+    }
+
+    /// Whether the browser's cookie must be marked `Secure` — it must
+    /// whenever the server is reached over TLS, and cannot be on plain
+    /// loopback HTTP, where a browser would drop it.
+    pub fn secure(&self) -> bool {
+        self.resource.starts_with("https://")
+    }
+
     /// RFC 9728 protected resource metadata, which the MCP authorization
     /// spec makes a MUST: where a client learns which authorization
     /// server to go to for this resource.
@@ -314,22 +358,44 @@ pub async fn gate(
 ) -> Response {
     let at = format!("{} {}", req.method(), req.uri().path());
     let Some(token) = bearer(&req).or_else(|| cookie(&req)) else {
-        return refused(&gate, &at, "no bearer token");
+        return refused(&gate, &req, &at, "no bearer token");
     };
     match gate.verify(&token).await {
         Ok(id) => {
             req.extensions_mut().insert(Caller(Actor { kind, id }));
             next.run(req).await
         }
-        Err(e) => refused(&gate, &at, &e),
+        Err(e) => refused(&gate, &req, &at, &e),
     }
 }
 
 /// A refusal, said out loud minus the token: the client sees only a
 /// 401, and whoever runs the server would otherwise see nothing.
-fn refused(gate: &Gate, at: &str, why: &str) -> Response {
+///
+/// A person arriving in a browser is not answered with a 401 to read
+/// but sent to sign in, and brought back to where they were going.
+fn refused(gate: &Gate, req: &Request, at: &str, why: &str) -> Response {
     println!("glossql refused {at}: {why}");
+    if navigates(req) {
+        let back = req
+            .uri()
+            .path_and_query()
+            .map(|p| p.as_str())
+            .unwrap_or("/");
+        return see_other(&format!("/auth/login?{}", query(&[("next", back)])));
+    }
     challenge(gate, why)
+}
+
+/// Whether the request is a person's browser going somewhere, as
+/// opposed to a machine's call: a GET that asks for HTML.
+fn navigates(req: &Request) -> bool {
+    req.method() == axum::http::Method::GET
+        && req
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html"))
 }
 
 /// 401 with the discovery pointer the MCP spec requires, so a client
@@ -360,14 +426,57 @@ fn bearer(req: &Request) -> Option<String> {
 }
 
 fn cookie(req: &Request) -> Option<String> {
-    for header in req.headers().get_all(header::COOKIE) {
+    cookie_named(req.headers(), COOKIE)
+}
+
+/// One cookie's value out of the request, by name.
+pub(crate) fn cookie_named(headers: &header::HeaderMap, name: &str) -> Option<String> {
+    for header in headers.get_all(header::COOKIE) {
         for pair in header.to_str().ok()?.split(';') {
-            if let Some((name, value)) = pair.split_once('=')
-                && name.trim() == COOKIE
+            if let Some((k, value)) = pair.split_once('=')
+                && k.trim() == name
             {
                 return Some(value.trim().to_string());
             }
         }
     }
     None
+}
+
+/// A `Set-Cookie` value in the shape every cookie of this server takes:
+/// `HttpOnly`, `SameSite=Lax`, scoped to `path`, `Secure` behind TLS,
+/// and either good for `max_age` seconds or, at zero, cleared.
+pub(crate) fn set_cookie(
+    name: &str,
+    value: &str,
+    path: &str,
+    max_age: Option<u64>,
+    secure: bool,
+) -> HeaderValue {
+    let mut cookie = format!("{name}={value}; Path={path}; HttpOnly; SameSite=Lax");
+    if let Some(seconds) = max_age {
+        cookie.push_str(&format!("; Max-Age={seconds}"));
+    }
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).expect("a cookie is ASCII")
+}
+
+/// 303: the browser goes there with a GET, whatever it just sent.
+pub(crate) fn see_other(location: &str) -> Response {
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, location.to_string())],
+    )
+        .into_response()
+}
+
+/// A query string, encoded.
+pub(crate) fn query(pairs: &[(&str, &str)]) -> String {
+    let mut out = oauth2::url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in pairs {
+        out.append_pair(k, v);
+    }
+    out.finish()
 }

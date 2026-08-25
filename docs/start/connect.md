@@ -115,3 +115,9 @@ dataset and the picker in the header is a link that rewrites the first
 segment. The writes are human acts, signed with the token's subject:
 this is a human door, so every caller that reaches it has human
 standing.
+
+A browser needs no setup: open `http://127.0.0.1:8080/` and it is sent
+to the issuer to sign in and brought back with the token in a cookie
+(`/auth/login`, `/auth/callback`; `/auth/logout` clears it). The person
+signing in is the token's subject — the same name an agent's connection
+carries when that person is behind it.

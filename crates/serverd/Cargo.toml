@@ -32,6 +32,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # not in flags: issuer, audience, client id and secret are one
 # arrangement, and the secret must never appear on a command line.
 dotenvy = "0.15"
+# The browser login on /app: this server is an OAuth client of the
+# issuer for that one flow (authorization code + PKCE). The crate rmcp's
+# own auth feature is built on; its reqwest rides the same rustls.
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+# The login-in-progress cookie: three strings sealed for the round trip
+# to the issuer and back.
+base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
@@ -39,9 +46,8 @@ glossql-parser = { path = "../parser" }
 tower.workspace = true
 tempfile.workspace = true
 # Tests mint their own tokens with a key made at test time; the server
-# only ever verifies. Both are already in the tree through jsonwebtoken.
+# only ever verifies. Already in the tree through jsonwebtoken.
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
-base64 = "0.22"
 
 [lints]
 workspace = true

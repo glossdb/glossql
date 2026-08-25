@@ -11,15 +11,21 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
 use ed25519_dalek::pkcs8::EncodePrivateKey;
-use glossql_serverd::Gate;
+use glossql_serverd::{Endpoints, Gate, Login};
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde_json::{Value, json};
 
 pub const ISSUER: &str = "https://issuer.test";
 pub const RESOURCE: &str = "http://127.0.0.1:8080";
-/// The application registered at the test issuer for this server.
+/// The application registered at the test issuer for this server, and
+/// its secret.
 pub const CLIENT_ID: &str = "glossql-app";
+pub const CLIENT_SECRET: &str = "glossql-app-secret";
+/// Where the test issuer would send a browser to sign in. Never
+/// reached: a test that goes there reads the redirect and stops.
+pub const AUTHORIZE: &str = "https://issuer.test/oauth2/auth";
+const TOKEN: &str = "https://issuer.test/oauth2/token";
 const KID: &str = "test-key";
 
 /// One fixed seed: the key is the same in every test, which is what
@@ -45,7 +51,31 @@ pub fn jwks() -> JwkSet {
 }
 
 pub fn gate() -> Arc<Gate> {
-    Arc::new(Gate::with_keys(ISSUER, RESOURCE, CLIENT_ID, jwks()))
+    gate_with(TOKEN)
+}
+
+/// A gate whose issuer exchanges codes at `token_url` — a test that
+/// stands the token endpoint in names where.
+pub fn gate_with(token_url: &str) -> Arc<Gate> {
+    Arc::new(Gate::with_keys(
+        ISSUER,
+        RESOURCE,
+        CLIENT_ID,
+        jwks(),
+        Endpoints {
+            authorization: AUTHORIZE.into(),
+            token: token_url.into(),
+        },
+    ))
+}
+
+/// The doors' whole arrangement: the login carries the gate.
+pub fn login() -> Arc<Login> {
+    Arc::new(Login::new(gate(), CLIENT_SECRET).unwrap())
+}
+
+pub fn login_with(token_url: &str) -> Arc<Login> {
+    Arc::new(Login::new(gate_with(token_url), CLIENT_SECRET).unwrap())
 }
 
 /// A token for `sub`, valid for this issuer and this resource.

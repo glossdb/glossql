@@ -54,9 +54,12 @@ workspace. There is no open mode: a request without a valid token is
 answered 401, and a server without an issuer does not start.
 
 The issuer is any OpenID Connect provider. Register this server there
-as an API whose identifier is `GLOSSQL_AUDIENCE`, and one application
-(`GLOSSQL_CLIENT_ID`) whose client id and secret an MCP client presents;
-the provider's discovery document
+as an API whose identifier is `GLOSSQL_AUDIENCE`, and one confidential
+application (`GLOSSQL_CLIENT_ID`) with two redirect URIs:
+`<audience>/auth/callback` for the browser login, and the loopback
+redirect of the MCP client that will sign in with it (Claude Code:
+`http://localhost:3118/callback`, see [`connect.md`](connect.md)). The
+provider's discovery document
 (`<issuer>/.well-known/openid-configuration`) is everything the server
 needs. Tokens must be RS256, ES256/384 or EdDSA, name their key
 (`kid`), and carry `iss`, `sub`, `exp`.

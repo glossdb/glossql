@@ -11,23 +11,25 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::Int64Array;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_serverd::{ARROW_STREAM, BOOTSTRAP, DoorConfig, Plane, bootstrap, router};
+use std::collections::HashMap;
+
+use glossql_serverd::{ARROW_STREAM, BOOTSTRAP, DoorConfig, Login, Plane, bootstrap, router};
 
 mod common;
 use glossql_session::NoRuntime;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-async fn app_with(doors: DoorConfig) -> (Router, tempfile::TempDir) {
+async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
     let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
     let workspace = dir.path().to_path_buf();
-    (router(plane, doors, workspace, common::gate()), dir)
+    (router(plane, doors, workspace, login), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
-    app_with(DoorConfig::default()).await
+    app_with(DoorConfig::default(), common::login()).await
 }
 
 /// The same doors over a workspace that already holds one dataset.
@@ -385,6 +387,213 @@ async fn a_token_with_no_audience_is_bound_by_the_application() {
     assert_eq!(elsewhere.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// A person in a browser holds no token, so a navigation to a door is
+/// sent to sign in and brought back afterwards; a machine's call gets
+/// the 401 it can act on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_without_a_token_is_sent_to_sign_in() {
+    let (app, _dir) = app().await;
+    let response = app
+        .oneshot(
+            Request::get("/fin/app/docket?page=2")
+                .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/auth/login?next=%2Ffin%2Fapp%2Fdocket%3Fpage%3D2"
+    );
+}
+
+/// The whole browser flow against a stand-in issuer: off to sign in
+/// with PKCE and the resource named, back with a code, the code
+/// exchanged at the token endpoint with the verifier and the
+/// application's secret in the body, the token verified by the gate and
+/// handed to the browser as the cookie — which then opens a human door.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
+    // The issuer's token endpoint, stood in for: it records what it was
+    // asked and answers with a token the test issuer signed.
+    let asked: Arc<std::sync::Mutex<Option<HashMap<String, String>>>> = Arc::default();
+    let recorder = Arc::clone(&asked);
+    let issuer = Router::new().route(
+        "/token",
+        axum::routing::post(
+            move |axum::Form(form): axum::Form<HashMap<String, String>>| {
+                let recorder = Arc::clone(&recorder);
+                async move {
+                    *recorder.lock().unwrap() = Some(form);
+                    axum::Json(json!({
+                        "access_token": common::token("ada"),
+                        "token_type": "Bearer",
+                        "expires_in": 3600
+                    }))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, issuer).await.unwrap() });
+
+    let (app, _dir) = app_with(DoorConfig::default(), common::login_with(&token_url)).await;
+    expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                1,
+                "DECLARE DATASET fin SET (purpose: 'login test');",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    // Off to the issuer, with everything the code flow needs.
+    let going = app
+        .clone()
+        .oneshot(
+            Request::get("/auth/login?next=/fin/app/docket")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(going.status(), StatusCode::SEE_OTHER);
+    let location = going.headers()[header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(location.starts_with(common::AUTHORIZE), "{location}");
+    let params: HashMap<String, String> = oauth2::url::Url::parse(&location)
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect();
+    assert_eq!(params["response_type"], "code");
+    assert_eq!(params["client_id"], common::CLIENT_ID);
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert_eq!(params["resource"], common::RESOURCE);
+    assert_eq!(
+        params["redirect_uri"],
+        format!("{}/auth/callback", common::RESOURCE)
+    );
+    let state = params["state"].clone();
+    let pending = going.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        pending.starts_with("glossql_login=")
+            && pending.contains("HttpOnly")
+            && pending.contains("Path=/auth"),
+        "{pending}"
+    );
+    let pending_cookie = pending.split(';').next().unwrap().to_string();
+
+    // Back with the wrong state: refused.
+    let wrong = app
+        .clone()
+        .oneshot(
+            Request::get("/auth/callback?code=abc&state=not-that-one")
+                .header(header::COOKIE, &pending_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+
+    // Back with the right one: exchanged, verified, handed over.
+    let back = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/auth/callback?code=abc&state={state}"))
+                .header(header::COOKIE, &pending_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = back.status();
+    let headers = back.headers().clone();
+    let said =
+        String::from_utf8_lossy(&to_bytes(back.into_body(), usize::MAX).await.unwrap()).to_string();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{said}");
+    assert_eq!(headers[header::LOCATION], "/fin/app/docket");
+    let cookies: Vec<String> = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|v| v.to_str().unwrap().to_string())
+        .collect();
+    let token_cookie = cookies
+        .iter()
+        .find(|c| c.starts_with("glossql_token="))
+        .unwrap_or_else(|| panic!("no token cookie in {cookies:?}"));
+    assert!(
+        token_cookie.contains("HttpOnly")
+            && token_cookie.contains("SameSite=Lax")
+            && token_cookie.contains("Path=/")
+            && token_cookie.contains("Max-Age=3600")
+            && !token_cookie.contains("Secure"),
+        "{token_cookie}"
+    );
+    assert!(
+        cookies
+            .iter()
+            .any(|c| c.starts_with("glossql_login=;") && c.contains("Max-Age=0")),
+        "the login in progress is cleared: {cookies:?}"
+    );
+    let exchange = asked
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the token endpoint was asked");
+    assert_eq!(exchange["grant_type"], "authorization_code");
+    assert_eq!(exchange["code"], "abc");
+    assert_eq!(exchange["client_id"], common::CLIENT_ID);
+    assert_eq!(exchange["client_secret"], common::CLIENT_SECRET);
+    assert_eq!(
+        exchange["redirect_uri"],
+        format!("{}/auth/callback", common::RESOURCE)
+    );
+    assert_eq!(exchange["resource"], common::RESOURCE);
+    assert!(exchange.contains_key("code_verifier"), "{exchange:?}");
+
+    // The cookie opens a human door.
+    let cookie = token_cookie.split(';').next().unwrap().to_string();
+    let docket = app
+        .clone()
+        .oneshot(
+            Request::get("/fin/app/docket")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(docket.status(), StatusCode::OK);
+
+    // And logout takes it away.
+    let out = app
+        .oneshot(Request::get("/auth/logout").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(out.status(), StatusCode::SEE_OTHER);
+    assert!(
+        out.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .starts_with("glossql_token=;")
+    );
+}
+
 /// The discovery document sits outside the gate — it is where a client
 /// learns how to authenticate, and a document that answered 401 would
 /// point the client at itself. So do the app's own assets, which hold
@@ -655,7 +864,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
         plane,
         DoorConfig::default(),
         dir.path().to_path_buf(),
-        common::gate(),
+        common::login(),
     );
 
     let setup = format!(
@@ -1212,10 +1421,13 @@ async fn the_clients_own_name_never_reaches_the_record() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(DoorConfig {
-        row_cap: 3,
-        ..Default::default()
-    })
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..Default::default()
+        },
+        common::login(),
+    )
     .await;
     let call = |id: u64, statements: &str| {
         json!({
@@ -1271,10 +1483,13 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(DoorConfig {
-        row_cap: 3,
-        ..Default::default()
-    })
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..Default::default()
+        },
+        common::login(),
+    )
     .await;
     let body = expect_ok(
         mcp(

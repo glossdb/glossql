@@ -7,7 +7,7 @@ use std::sync::Arc;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Gate, Plane, bootstrap, router};
+use glossql_serverd::{DoorConfig, Gate, Login, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd --workspace <dir> [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>]\n\
@@ -39,8 +39,10 @@ struct Auth {
     /// This server's canonical URI — the audience every token must name
     /// (RFC 8707 §2). Defaults to the address the server listens on.
     audience: String,
-    /// The application registered at the issuer for this server.
+    /// The application registered at the issuer for this server, and
+    /// its secret, which only the browser login uses.
     client_id: String,
+    client_secret: String,
 }
 
 impl Auth {
@@ -55,6 +57,7 @@ impl Auth {
         Ok(Auth {
             issuer: required("GLOSSQL_ISSUER")?,
             client_id: required("GLOSSQL_CLIENT_ID")?,
+            client_secret: required("GLOSSQL_CLIENT_SECRET")?,
             audience: get("GLOSSQL_AUDIENCE")
                 .filter(|v| !v.trim().is_empty())
                 .unwrap_or_else(|| format!("http://{addr}")),
@@ -140,8 +143,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         auth.audience,
         auth.client_id
     );
+    let login = Arc::new(Login::new(gate, &auth.client_secret)?);
 
-    let app = router(plane, args.doors, args.workspace.clone(), gate);
+    let app = router(plane, args.doors, args.workspace.clone(), login);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     println!(
         "serverd on {} — / (datasets), /mcp, /<dataset>/query, /<dataset>/app",
@@ -188,10 +192,21 @@ mod tests {
         .unwrap_err();
         assert!(issuer_only.contains("GLOSSQL_CLIENT_ID"), "{issuer_only}");
 
+        let no_secret = Auth::from(
+            env(&[
+                ("GLOSSQL_ISSUER", "https://issuer.test"),
+                ("GLOSSQL_CLIENT_ID", "app-1"),
+            ]),
+            "127.0.0.1:8080",
+        )
+        .unwrap_err();
+        assert!(no_secret.contains("GLOSSQL_CLIENT_SECRET"), "{no_secret}");
+
         let whole = Auth::from(
             env(&[
                 ("GLOSSQL_ISSUER", "https://issuer.test"),
                 ("GLOSSQL_CLIENT_ID", "app-1"),
+                ("GLOSSQL_CLIENT_SECRET", "s3cret"),
             ]),
             "127.0.0.1:8080",
         )
@@ -205,6 +220,7 @@ mod tests {
             env(&[
                 ("GLOSSQL_ISSUER", "https://issuer.test"),
                 ("GLOSSQL_CLIENT_ID", "app-1"),
+                ("GLOSSQL_CLIENT_SECRET", "s3cret"),
                 ("GLOSSQL_AUDIENCE", "https://glossql.example"),
             ]),
             "127.0.0.1:8080",

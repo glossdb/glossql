@@ -8,6 +8,8 @@ One binary, one listener.
 /<dataset>/query           the Arrow door
 /<dataset>/app             the app door
 /assets/<file>             the app door's embedded assets
+/auth/login, /auth/callback, /auth/logout
+                           the browser's way to a token
 /.well-known/oauth-protected-resource
 ```
 
@@ -98,10 +100,26 @@ act (SPEC.md §1).
 
 A missing or invalid token answers 401 with `WWW-Authenticate: Bearer
 resource_metadata="…"`, pointing at the RFC 9728 document at
-`/.well-known/oauth-protected-resource`: `resource` (the audience) and
-`authorization_servers` (the issuer). Two things sit outside the gate:
-that document, which is where a client learns how to authenticate, and
-`/assets`, the app door's own script and styles, which hold no data.
+`/.well-known/oauth-protected-resource` (also under any path):
+`resource` (the audience) and `authorization_servers` (the issuer). A
+browser navigating to a door — a GET that asks for HTML — is sent to
+`/auth/login` instead and brought back afterwards.
+
+**The browser's token.** A machine obtains its token itself; a browser
+is walked through it: `/auth/login` sends it to the issuer's sign-in
+(authorization code with PKCE, RFC 7636, the resource named per RFC
+8707), `/auth/callback` exchanges the code at the issuer's token
+endpoint as the registered application, verifies the token with the
+same gate every door uses, and sets it as the `glossql_token` cookie.
+The issuer must list `<audience>/auth/callback` as a redirect URI. The
+login in progress — state, PKCE verifier, where to go back to — rides a
+ten-minute cookie scoped to `/auth`; the server holds no session.
+`/auth/logout` clears the cookie.
+
+Three things sit outside the gate: `/auth`, where a browser goes
+precisely because it holds no token; the discovery document, which is
+where a client learns how to authenticate; and `/assets`, the app
+door's own script and styles, which hold no data.
 
 ## `/mcp` — the agent door
 
