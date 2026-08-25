@@ -2223,10 +2223,32 @@ pub(crate) async fn metric_band_walk(
             let (q, pit) = runtime
                 .band_point(train, &train_y, &filled(&feats[t - 1]), &ALPHAS, actual)
                 .map_err(SessionError::Runtime)?;
+            // A series that repeats values moves on a grid (a ratio over
+            // a fixed field, a count). A corridor narrower than the
+            // grid's step, with the actual inside a step of the median,
+            // is the model's noise around a value the series takes
+            // exactly: the PIT read against it says nothing, so the
+            // point serves its band and actual and withholds the PIT
+            // with the reason. An actual further off than a step is a
+            // real move whatever the corridor; a series that never
+            // repeats has no grid, and a tight corridor on it is earned.
+            let corridor = q[4] - q[0];
+            let withheld = match resolution_of(&train_y) {
+                Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
+                    Some(format!(
+                        "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
+                    ))
+                }
+                Some(res) if res == 0.0 && actual == train_y[0] => {
+                    Some("the training series is constant and the actual equals it".to_string())
+                }
+                _ => None,
+            };
             points.push(json!({
                 "period": &series[t].0[..7], "actual": actual,
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
-                "pit": pit,
+                "pit": withheld.is_none().then_some(pit),
+                "withheld": withheld,
             }));
         }
 
@@ -2266,6 +2288,27 @@ pub(crate) async fn metric_band_walk(
     rows_batch(out, band_shape())
 }
 
+/// The series' resolution, where it has one: a series that repeats a
+/// value moves on a grid, and the smallest gap between two of its
+/// values is the grid's step — 0.0 when it takes one value only. A
+/// series that never repeats is continuous as far as its history
+/// shows, and a tight corridor on it is earned, not noise: None.
+fn resolution_of(labels: &[f64]) -> Option<f64> {
+    let mut sorted = labels.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted.dedup();
+    if sorted.len() == labels.len() {
+        return None;
+    }
+    Some(
+        sorted
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .min_by(f64::total_cmp)
+            .unwrap_or(0.0),
+    )
+}
+
 fn band_shape() -> Vec<Field> {
     vec![
         Field::new("seq", DataType::Int64, true),
@@ -2288,5 +2331,7 @@ fn band_shape() -> Vec<Field> {
         Field::new("p90", DataType::Float64, true),
         Field::new("p95", DataType::Float64, true),
         Field::new("pit", DataType::Float64, true),
+        // Why a point carries no PIT, where it carries none.
+        Field::new("withheld", DataType::Utf8, true),
     ]
 }

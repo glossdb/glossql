@@ -47,6 +47,15 @@ protocol it was evaluated against before it shipped.
 
 - Bands inform; they never verdict. Whether a movement is surprising
   is the actor's judgment, informed by the evidence.
+- A series that repeats values — a ratio over a fixed field, a count
+  — moves on a grid, and the smallest gap between two of its values is
+  its resolution. A corridor narrower than that, with the actual
+  inside one step of the median, is the model's noise around a value
+  the series takes exactly; the point serves its band and actual and
+  withholds the PIT, `withheld` naming why, and the detector reads
+  nothing breached. An actual further off than a step keeps its PIT:
+  that move is real whatever the corridor's width. A series that never
+  repeats has no grid, and a tight corridor on it is earned.
 - The walk covers the six most recent months, and a walked point
   conditions on at least five preceding ones — a metric with too
   short a history is served inapplicable with the reason.

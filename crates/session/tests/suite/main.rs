@@ -4,6 +4,7 @@
 //! tests in a process of its own, one process after another; one
 //! binary links once and runs them all concurrently.
 
+mod bands;
 mod channels;
 mod flows;
 mod lake_flows;
