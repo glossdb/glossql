@@ -239,25 +239,31 @@ impl IcebergMetadata {
                 ))
             })
             .collect::<Vec<_>>();
+        // Every gloss in the workspace appends to one of these
+        // tables, so a burst of writers all contend for one metadata
+        // pointer. Iceberg retries a conflict itself — reload,
+        // re-base, exponential backoff — and its default budget of
+        // four is spent well before a burst clears: at twenty-four
+        // concurrent writers seventeen were refused. Raised here
+        // because this is the seam the format reads it from; a retry
+        // loop of our own around `commit` would only re-enter that
+        // backoff with no delay of its own.
+        let mut properties = COMMIT_PROPERTIES
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<HashMap<String, String>>();
+        // Over REST the builder field below never crosses the wire and
+        // the version rides the reserved property instead — the wire
+        // encoding servers interpret at create, so the table is born v3
+        // with no v2 window there either (see `Lake`'s field).
+        if self.lake.version_rides_properties {
+            properties.insert("format-version".to_string(), "3".to_string());
+        }
         let builder = TableCreation::builder()
             .name(spec.name.to_string())
             .schema(IcebergSchema::builder().with_fields(fields).build()?)
             .format_version(FormatVersion::V3)
-            // Every gloss in the workspace appends to one of these
-            // tables, so a burst of writers all contend for one metadata
-            // pointer. Iceberg retries a conflict itself — reload,
-            // re-base, exponential backoff — and its default budget of
-            // four is spent well before a burst clears: at twenty-four
-            // concurrent writers seventeen were refused. Raised here
-            // because this is the seam the format reads it from; a retry
-            // loop of our own around `commit` would only re-enter that
-            // backoff with no delay of its own.
-            .properties(
-                COMMIT_PROPERTIES
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect::<HashMap<String, String>>(),
-            );
+            .properties(properties);
         let creation = if spec.partition.is_empty() {
             builder.build()
         } else {

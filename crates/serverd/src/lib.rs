@@ -1,3 +1,8 @@
+// The MCP handler's futures reach through the session into the store
+// and from there into iceberg's own internals; proving them `Send`
+// descends further than the default limit allows.
+#![recursion_limit = "256"]
+
 //! serverd — the workspace's doors (M5): one axum listener carrying the
 //! MCP shim at `/mcp` (rmcp streamable HTTP, 2026-07-28 and nothing
 //! behind it) and the cockpit's Arrow IPC query door at

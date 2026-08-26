@@ -270,6 +270,10 @@ async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadat
 /// wants the same one.
 type Snapshots = Arc<Vec<(String, Option<i64>)>>;
 
+/// One relation's scanned history, shared rather than copied for the
+/// same reason.
+type History = Arc<Vec<glossql_catalog::Row>>;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
@@ -287,6 +291,17 @@ pub struct Store {
     /// writer's commit would leave it stale with nothing to say so.
     /// Two processes need shared state, which is a different design.
     head: Arc<std::sync::RwLock<Option<Snapshots>>>,
+    /// Each relation's history at the snapshot it was scanned at, valid
+    /// while the head still shows that snapshot. Every declare's checks
+    /// and every store-relation `SELECT` read from here, so a statement
+    /// costs a lake walk only for a relation a write has moved — on the
+    /// same single-writer ground as the head itself.
+    histories: Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>,
+    /// Writes held instead of committed, `None` outside a batch. One
+    /// sequence runs batched — bootstrap, whose rows are ruled tie-free
+    /// (each shipped name declared once) — and [`Store::batch_flush`]
+    /// is where its rows land, one append per relation.
+    batch: Arc<std::sync::Mutex<Option<std::collections::HashMap<String, Vec<Vec<Option<String>>>>>>>,
     /// The resolved store behind a read, one entry per dataset, each
     /// holding the version it was built at. A read whose version still
     /// matches takes it; a read whose version moved replaces it. There
@@ -322,6 +337,8 @@ impl Store {
             metadata: lake_metadata(lake.clone()).await?,
             lake,
             head: Arc::new(std::sync::RwLock::new(None)),
+            histories: Arc::new(std::sync::RwLock::new(Default::default())),
+            batch: Arc::new(std::sync::Mutex::new(None)),
             contexts: Arc::new(std::sync::RwLock::new(Default::default())),
         })
     }
@@ -1196,19 +1213,23 @@ impl Store {
         self.put(name, cells).await
     }
 
-    /// One appended row into a crossed relation — the only place a
-    /// store relation moves, and therefore the only place the head has
-    /// to be dropped.
+    /// One appended row into a crossed relation — this and
+    /// [`Store::batch_flush`] are the only places a store relation
+    /// moves, and therefore the only places the head has to be dropped.
     ///
     /// The drop follows the commit, never precedes it: dropped first, a
     /// concurrent reader would re-walk the old snapshots and cache them
     /// as current, and this write would land with nothing left to
     /// invalidate. That ordering is the whole correctness argument, and
     /// it holds because `append` returns only once the Iceberg commit
-    /// is in. **If appends are ever batched, the flush becomes this
-    /// place** — issuing a write is not what moves the head, landing it
-    /// is.
+    /// is in. Issuing a write is not what moves the head, landing it
+    /// is — which is why a batch in progress takes the row instead:
+    /// nothing lands, and the head moves at the flush.
     async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
+        if let Some(held) = self.batch.lock().expect("batch lock").as_mut() {
+            held.entry(relation.to_string()).or_default().push(cells);
+            return Ok(());
+        }
         let landed = self.metadata.append(relation, vec![cells]).await;
         // Dropped on the way out whichever way the append went. A
         // failed append is not a write that did not happen: `append`
@@ -1221,11 +1242,173 @@ impl Store {
         Ok(())
     }
 
+    /// Begin holding writes instead of committing them; every write
+    /// until the flush buffers. The caller owns the boundary — nothing
+    /// else may write through this store while a batch is open.
+    pub fn batch_begin(&self) {
+        *self.batch.lock().expect("batch lock") = Some(Default::default());
+    }
+
+    /// Land the held writes, one append per touched relation. Within
+    /// one landing only `_pos` orders rows and it is per file, so a
+    /// batch carrying two rows to one supersession key is refused whole
+    /// before anything lands.
+    ///
+    /// A landing that fails leaves the others landed — each append is
+    /// atomic, and an idempotent caller (bootstrap) completes the rest
+    /// on its next run.
+    pub async fn batch_flush(&self) -> Result<()> {
+        let Some(mut held) = self.batch.lock().expect("batch lock").take() else {
+            return Ok(());
+        };
+        for relation in RELATIONS {
+            let Some(rows) = held.get(relation.name) else {
+                continue;
+            };
+            if relation.key.is_empty() {
+                continue;
+            }
+            let key: Vec<usize> = relation
+                .key
+                .iter()
+                .map(|k| {
+                    relation
+                        .columns
+                        .iter()
+                        .position(|c| c == k)
+                        .expect("a key names one of its relation's columns")
+                })
+                .collect();
+            let mut seen = std::collections::HashSet::new();
+            for row in rows {
+                let k: Vec<Option<String>> =
+                    key.iter().map(|&i| row.get(i).cloned().flatten()).collect();
+                if !seen.insert(k.clone()) {
+                    return Err(Error::BatchTie {
+                        relation: relation.name.into(),
+                        key: k
+                            .into_iter()
+                            .map(|c| c.unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    });
+                }
+            }
+        }
+        let mut order = Vec::new();
+        for relation in RELATIONS {
+            if let Some(rows) = held.remove(relation.name) {
+                order.push((relation.name, rows));
+            }
+        }
+        // The first landing runs alone: its create also creates the
+        // store namespace, and racing creates would collide there. The
+        // rest are independent tables, landed concurrently — the flush
+        // costs the slowest commit instead of the sum, which is the
+        // whole bill on a catalog charging seconds per call. All run to
+        // completion either way; the first error is the one reported.
+        let mut rest = order.into_iter();
+        let mut landed = Ok(());
+        if let Some((name, rows)) = rest.next() {
+            landed = self.metadata.append(name, rows).await.map_err(Error::from);
+            if landed.is_ok() {
+                landed = futures::future::join_all(
+                    rest.map(|(name, rows)| self.metadata.append(name, rows)),
+                )
+                .await
+                .into_iter()
+                .collect::<std::result::Result<(), _>>()
+                .map_err(Error::from);
+            }
+        }
+        // Same rule as `put`: the head goes whichever way the landing
+        // went — a partial flush has landed relations it must not hide.
+        *self.head.write().expect("head lock") = None;
+        landed
+    }
+
+    /// Drop the held writes without landing them — the error path's
+    /// hygiene. Nothing crossed, so nothing is invalidated.
+    pub fn batch_discard(&self) {
+        *self.batch.lock().expect("batch lock") = None;
+    }
+
+    /// Walk every crossed relation into [`Store::histories`] at once —
+    /// a boot pays the slowest walk instead of one walk per
+    /// first-touching statement. The two composed relations have no
+    /// table to walk.
+    pub async fn warm(&self) -> Result<()> {
+        futures::future::try_join_all(
+            RELATIONS
+                .iter()
+                .filter(|r| !matches!(r.name, "datasets" | "imports"))
+                .map(|r| self.history(r.name)),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// One relation's history, served from [`Store::histories`] while
+    /// the head still shows the snapshot it was scanned at. A batch in
+    /// progress rides on top: its buffered rows join the answer with a
+    /// seq beyond anything standing — and are never cached, because the
+    /// cache holds only what the lake says.
+    async fn history(&self, name: &str) -> Result<History> {
+        let snapshot = self
+            .store_snapshots()
+            .await?
+            .iter()
+            .find(|(table, _)| table == name)
+            .map(|(_, snapshot)| *snapshot);
+        let standing = match snapshot {
+            // No table yet — an unwritten relation reads as empty.
+            None => Arc::new(Vec::new()),
+            Some(snapshot) => {
+                let held = self
+                    .histories
+                    .read()
+                    .expect("histories lock")
+                    .get(name)
+                    .filter(|(at, _)| *at == snapshot)
+                    .map(|(_, rows)| Arc::clone(rows));
+                match held {
+                    Some(rows) => rows,
+                    // Two readers racing a moved snapshot both scan and
+                    // both store the same answer — the head's own rule.
+                    None => {
+                        let rows = Arc::new(self.metadata.scan(name).await?);
+                        self.histories
+                            .write()
+                            .expect("histories lock")
+                            .insert(name.to_string(), (snapshot, Arc::clone(&rows)));
+                        rows
+                    }
+                }
+            }
+        };
+        let buffered = self
+            .batch
+            .lock()
+            .expect("batch lock")
+            .as_ref()
+            .and_then(|held| held.get(name).cloned());
+        Ok(match buffered {
+            None => standing,
+            Some(rows) => {
+                let mut all = (*standing).clone();
+                all.extend(rows.into_iter().enumerate().map(|(i, cells)| {
+                    glossql_catalog::Row::new(cells, (i64::MAX, i as i64))
+                }));
+                Arc::new(all)
+            }
+        })
+    }
+
     /// A crossed relation's current rows: latest per [`Relation`] key in
     /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
     /// and `ORDER BY` used to do.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
-        let history = self.metadata.scan(relation.name).await?;
+        let history = (*self.history(relation.name).await?).clone();
         let key: Vec<usize> = relation
             .key
             .iter()
@@ -1411,10 +1594,17 @@ impl Store {
         }
         let mut out = Vec::new();
         if self.lake.namespace_exists(STORE_NAMESPACE).await? {
-            for table in self.lake.table_names(STORE_NAMESPACE).await? {
-                let snap = self.lake.snapshot_id(STORE_NAMESPACE, &table).await?;
-                out.push((table, snap));
-            }
+            let tables = self.lake.table_names(STORE_NAMESPACE).await?;
+            // One load per table with nothing ordering the loads —
+            // walked concurrently, so a remote catalog answers the
+            // enumeration in one round-trip time, not one per relation.
+            let snaps = futures::future::try_join_all(
+                tables
+                    .iter()
+                    .map(|table| self.lake.snapshot_id(STORE_NAMESPACE, table)),
+            )
+            .await?;
+            out = tables.into_iter().zip(snaps).collect();
         }
         let head = Arc::new(out);
         *self.head.write().expect("head lock") = Some(Arc::clone(&head));
@@ -1554,10 +1744,9 @@ impl Store {
     /// The glossary, read whole: hundreds of rows, filtered by rules.
     async fn glossary_history(&self) -> Result<Vec<GlossRow>> {
         Ok(self
-            .metadata
-            .scan("glossary")
+            .history("glossary")
             .await?
-            .into_iter()
+            .iter()
             .map(|r| GlossRow {
                 dataset: text(&r.cells, 0),
                 subject: text(&r.cells, 1),
