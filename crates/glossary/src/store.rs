@@ -1249,14 +1249,14 @@ impl Store {
         *self.batch.lock().expect("batch lock") = Some(Default::default());
     }
 
-    /// Land the held writes, one append per touched relation, in
-    /// [`RELATIONS`] order. Within one landing only `_pos` orders rows
-    /// and it is per file, so a batch carrying two rows to one
-    /// supersession key is refused whole before anything lands.
+    /// Land the held writes, one append per touched relation. Within
+    /// one landing only `_pos` orders rows and it is per file, so a
+    /// batch carrying two rows to one supersession key is refused whole
+    /// before anything lands.
     ///
-    /// A landing that fails partway leaves the earlier relations
-    /// landed — each append is atomic, and an idempotent caller
-    /// (bootstrap) completes the rest on its next run.
+    /// A landing that fails leaves the others landed — each append is
+    /// atomic, and an idempotent caller (bootstrap) completes the rest
+    /// on its next run.
     pub async fn batch_flush(&self) -> Result<()> {
         let Some(mut held) = self.batch.lock().expect("batch lock").take() else {
             return Ok(());
@@ -1295,14 +1295,30 @@ impl Store {
                 }
             }
         }
-        let mut landed = Ok(());
+        let mut order = Vec::new();
         for relation in RELATIONS {
-            let Some(rows) = held.remove(relation.name) else {
-                continue;
-            };
-            if let Err(e) = self.metadata.append(relation.name, rows).await {
-                landed = Err(Error::from(e));
-                break;
+            if let Some(rows) = held.remove(relation.name) {
+                order.push((relation.name, rows));
+            }
+        }
+        // The first landing runs alone: its create also creates the
+        // store namespace, and racing creates would collide there. The
+        // rest are independent tables, landed concurrently — the flush
+        // costs the slowest commit instead of the sum, which is the
+        // whole bill on a catalog charging seconds per call. All run to
+        // completion either way; the first error is the one reported.
+        let mut rest = order.into_iter();
+        let mut landed = Ok(());
+        if let Some((name, rows)) = rest.next() {
+            landed = self.metadata.append(name, rows).await.map_err(Error::from);
+            if landed.is_ok() {
+                landed = futures::future::join_all(
+                    rest.map(|(name, rows)| self.metadata.append(name, rows)),
+                )
+                .await
+                .into_iter()
+                .collect::<std::result::Result<(), _>>()
+                .map_err(Error::from);
             }
         }
         // Same rule as `put`: the head goes whichever way the landing
@@ -1315,6 +1331,21 @@ impl Store {
     /// hygiene. Nothing crossed, so nothing is invalidated.
     pub fn batch_discard(&self) {
         *self.batch.lock().expect("batch lock") = None;
+    }
+
+    /// Walk every crossed relation into [`Store::histories`] at once —
+    /// a boot pays the slowest walk instead of one walk per
+    /// first-touching statement. The two composed relations have no
+    /// table to walk.
+    pub async fn warm(&self) -> Result<()> {
+        futures::future::try_join_all(
+            RELATIONS
+                .iter()
+                .filter(|r| !matches!(r.name, "datasets" | "imports"))
+                .map(|r| self.history(r.name)),
+        )
+        .await?;
+        Ok(())
     }
 
     /// One relation's history, served from [`Store::histories`] while

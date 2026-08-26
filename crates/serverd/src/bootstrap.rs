@@ -33,6 +33,10 @@ pub async fn bootstrap(
     // remote catalog charges a round trip per commit.
     plane.store().batch_begin();
     let shipped = async {
+        // The standing relations are walked concurrently up front, so
+        // the sequence's checks find them held instead of walking one
+        // relation per first-touching statement.
+        plane.store().warm().await?;
         session
             .execute(&glossql_scripts::library::declarations()?)
             .await?;
