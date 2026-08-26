@@ -133,7 +133,11 @@ One tool: `glossql`, taking `statements` (string) — declarations,
 `USE`, `GLOSS`, extraction, probes, and plain SQL. Live state
 (datasets, functions, aspects, witnesses, sources, glossary,
 measurements, imports) reads as plain tables through the tool; skills
-teach the grammar and the flows.
+teach the grammar and the flows, and the door serves them itself:
+each skill is a resource (`skill://<name>/SKILL.md`) and a prompt of
+the same name, and the language spec and grammar are `doc://SPEC.md`
+and `doc://grammar.ebnf`. All of it is embedded at compile time, so
+what a build serves is what its suite tested.
 
 - **The actor is the token's subject.** Without one the call writes as
   `agent`, with agent standing. The request's own `clientInfo` name is

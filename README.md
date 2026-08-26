@@ -99,8 +99,10 @@ the door's — `/mcp` is the agent door, the others are human — so an
 agent's connection never reaches the human's slot.
 
 The door tells, skills teach: everything an agent must *learn* ships
-as skills — the glossin plugin, in the vendor-neutral Agent
-Plugins shape; everything *live* is read through the language itself
+as skills (`skills/*/SKILL.md`), served on the MCP door itself — each
+skill an MCP resource (`skill://<name>/SKILL.md`) and a prompt of the
+same name, with `SPEC.md` and `grammar.ebnf` beside them as `doc://`
+resources; everything *live* is read through the language itself
 — the declared vocabulary, functions, witnesses, and glossary are
 plain tables.
 

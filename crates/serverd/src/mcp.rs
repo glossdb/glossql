@@ -1,6 +1,7 @@
 //! The MCP shim: one door, one tool. `glossql` takes statements and
 //! returns outcomes — the door tells, skills teach. Everything an agent
-//! must *learn* (grammar, function authoring, flows) ships as skills;
+//! must *learn* (grammar, function authoring, flows) ships as skills,
+//! served from this same door as resources and prompts ([`crate::skills`]);
 //! everything live (declared functions, the glossary, the tables) is
 //! read through the language itself, where it is always current.
 
@@ -8,9 +9,12 @@ use std::sync::Arc;
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
-    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, Implementation,
-    InputRequest, InputRequests, InputRequiredResult, ListToolsResult, PaginatedRequestParams,
-    ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, GetPromptRequestParams,
+    GetPromptResponse, GetPromptResult, Implementation, InputRequest, InputRequests,
+    InputRequiredResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, Prompt, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
+    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
+    ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler};
@@ -25,7 +29,10 @@ use crate::wire;
 const INSTRUCTIONS: &str = "glossql workspace server. One tool: `glossql` executes \
 statements — declarations, USE, GLOSS, extraction, probes, and plain SQL. Live state \
 (datasets, functions, aspects, witnesses, sources, glossary, measurements, imports) reads as \
-plain tables through the tool. The glossql skills teach the grammar and the flows. \
+plain tables through the tool. The skills teach the grammar and the flows, and this door \
+serves them as resources and as prompts of the same names: read `skill://glossql/SKILL.md` \
+before writing statements; `glossql-metrics`, `glossql-functions` and `glossql-apps` cover \
+their flows; `doc://SPEC.md` and `doc://grammar.ebnf` are the normative language artifacts. \
 This door is one endpoint over the whole workspace and holds no binding between calls: \
 start with SELECT * FROM datasets, then open every call that names a dataset's tables \
 or columns with `USE <dataset>;`. A call without one is workspace-scoped.";
@@ -720,7 +727,13 @@ impl Question {
 
 impl ServerHandler for GlossqlMcp {
     fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        let mut info = ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        );
         info.server_info = Implementation::new("glossql-serverd", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(format!("{INSTRUCTIONS}\n\n{}", self.brief.line()));
         info
@@ -749,6 +762,92 @@ impl ServerHandler for GlossqlMcp {
             cache_scope: Some(rmcp::model::CacheScope::Private),
             ..Default::default()
         })
+    }
+
+    /// The teaching resources: the skills and the two normative
+    /// artifacts they cite. Embedded at compile time, so static per
+    /// process and cacheable like the tool list.
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let mut resources: Vec<Resource> = crate::skills::SKILLS
+            .iter()
+            .map(|s| {
+                Resource::new(s.uri(), s.name)
+                    .with_description(s.description())
+                    .with_mime_type("text/markdown")
+                    .with_size(s.body.len() as u64)
+            })
+            .collect();
+        resources.extend(crate::skills::DOCS.iter().map(|d| {
+            Resource::new(d.uri(), d.name)
+                .with_description(d.description)
+                .with_mime_type(d.mime)
+                .with_size(d.body.len() as u64)
+        }));
+        Ok(ListResourcesResult {
+            resources,
+            ttl_ms: Some(3_600_000),
+            cache_scope: Some(rmcp::model::CacheScope::Private),
+            ..Default::default()
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let (mime, body) = crate::skills::read(&request.uri).ok_or_else(|| {
+            McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
+        })?;
+        Ok(
+            ReadResourceResult::new(vec![
+                ResourceContents::text(body, request.uri).with_mime_type(mime),
+            ])
+            .with_ttl_ms(3_600_000)
+            .with_cache_scope(rmcp::model::CacheScope::Private)
+            .into(),
+        )
+    }
+
+    /// Each skill is also a prompt of the same name — the slash-command
+    /// way in for a person, where resources wait on the client to offer
+    /// them.
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: crate::skills::SKILLS
+                .iter()
+                .map(|s| Prompt::new(s.name, Some(s.description()), None))
+                .collect(),
+            ttl_ms: Some(3_600_000),
+            cache_scope: Some(rmcp::model::CacheScope::Private),
+            ..Default::default()
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, McpError> {
+        let skill = crate::skills::SKILLS
+            .iter()
+            .find(|s| s.name == request.name)
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("unknown prompt `{}`", request.name), None)
+            })?;
+        Ok(
+            GetPromptResult::new(vec![PromptMessage::new_text(Role::User, skill.body)])
+                .with_description(skill.description())
+                .into(),
+        )
     }
 
     async fn call_tool(

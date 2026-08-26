@@ -1,0 +1,109 @@
+//! The teaching resources, embedded at compile time — the same
+//! lockstep as the shipped system ([`crate::bootstrap`]): what this
+//! build serves is what this build's suite tested. A skill is one
+//! `SKILL.md` under the repo's `skills/`, served on the MCP door as a
+//! resource and as a prompt; the two normative artifacts the skills
+//! cite ride along as `doc://` resources, because a connected agent
+//! has no checkout to read them from.
+
+/// One product skill: its directory name and its `SKILL.md`, verbatim
+/// — frontmatter included, as an Agent Plugins host would read it.
+pub struct Skill {
+    pub name: &'static str,
+    pub body: &'static str,
+}
+
+/// The product skills. The suite holds this table to the `skills/`
+/// directory (`tests/suite/skills.rs`), so a skill added on disk
+/// without a row here fails the build.
+pub const SKILLS: [Skill; 4] = [
+    Skill {
+        name: "glossql",
+        body: include_str!("../../../skills/glossql/SKILL.md"),
+    },
+    Skill {
+        name: "glossql-metrics",
+        body: include_str!("../../../skills/glossql-metrics/SKILL.md"),
+    },
+    Skill {
+        name: "glossql-functions",
+        body: include_str!("../../../skills/glossql-functions/SKILL.md"),
+    },
+    Skill {
+        name: "glossql-apps",
+        body: include_str!("../../../skills/glossql-apps/SKILL.md"),
+    },
+];
+
+impl Skill {
+    /// The resource URI — the `skill://<name>/SKILL.md` shape of
+    /// skills-over-MCP (SEP-2640), without that proposal's extension
+    /// machinery: a single-file skill needs a URI and a body, nothing
+    /// more.
+    pub fn uri(&self) -> String {
+        format!("skill://{}/SKILL.md", self.name)
+    }
+
+    /// The frontmatter's `description:` line — the same line an Agent
+    /// Plugins host lists a skill by.
+    pub fn description(&self) -> &'static str {
+        let mut in_frontmatter = false;
+        for line in self.body.lines() {
+            if line.trim() == "---" {
+                if in_frontmatter {
+                    break;
+                }
+                in_frontmatter = true;
+                continue;
+            }
+            if in_frontmatter && let Some(rest) = line.strip_prefix("description:") {
+                return rest.trim();
+            }
+        }
+        ""
+    }
+}
+
+/// A normative artifact the skills cite.
+pub struct Doc {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub mime: &'static str,
+    pub body: &'static str,
+}
+
+pub const DOCS: [Doc; 2] = [
+    Doc {
+        name: "SPEC.md",
+        description: "The glossql language specification — the normative prose the \
+                      skills cite by section.",
+        mime: "text/markdown",
+        body: include_str!("../../../SPEC.md"),
+    },
+    Doc {
+        name: "grammar.ebnf",
+        description: "The machine-readable glossql grammar.",
+        mime: "text/plain",
+        body: include_str!("../../../grammar.ebnf"),
+    },
+];
+
+impl Doc {
+    pub fn uri(&self) -> String {
+        format!("doc://{}", self.name)
+    }
+}
+
+/// The body behind a resource URI, with its MIME type. The URI is the
+/// key, exactly as listed.
+pub fn read(uri: &str) -> Option<(&'static str, &'static str)> {
+    SKILLS
+        .iter()
+        .find(|s| s.uri() == uri)
+        .map(|s| ("text/markdown", s.body))
+        .or_else(|| {
+            DOCS.iter()
+                .find(|d| d.uri() == uri)
+                .map(|d| (d.mime, d.body))
+        })
+}
