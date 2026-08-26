@@ -10,6 +10,7 @@ glossql-catalog = { path = "../catalog", default-features = false }
 serde_json.workspace = true
 jsonschema.workspace = true
 thiserror.workspace = true
+futures.workspace = true
 
 chrono.workspace = true
 

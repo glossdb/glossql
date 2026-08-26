@@ -1241,3 +1241,119 @@ async fn a_re_declare_that_writes_nothing_moves_nothing() {
     assert_eq!(before.version, after.version);
     assert!(std::sync::Arc::ptr_eq(&before.aspects, &after.aspects));
 }
+
+/// A batched sequence lands one append per touched relation, and its
+/// cross-references resolve against the batch's own view: the function
+/// RETURNS an aspect that is itself still buffered when the function is
+/// declared.
+#[tokio::test]
+async fn a_batch_lands_one_append_per_relation() {
+    let (_dir, store) = store().await; // one landed append on `aspects`
+    store.batch_begin();
+    let Declaration::Aspect(depth) = decl(
+        r#"DECLARE ASPECT depth WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "number"}},
+            "additionalProperties": false
+        }$$ AS MEASUREMENT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&depth).await.unwrap();
+    let Declaration::Aspect(width) = decl(
+        r#"DECLARE ASPECT width WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "number"}},
+            "additionalProperties": false
+        }$$ AS MEASUREMENT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&width).await.unwrap();
+    let Declaration::Function(probe) =
+        decl("DECLARE FUNCTION probe FOR GLOBAL AS $$#{}$$ RETURNS depth;")
+    else {
+        unreachable!()
+    };
+    store.declare_function(&probe).await.unwrap();
+    // An identical re-declare of what already stands buffers nothing.
+    let Declaration::Aspect(unit) = decl(
+        r#"DECLARE ASPECT unit WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}},
+            "additionalProperties": false
+        }$$ AS FACT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&unit).await.unwrap();
+    store.batch_flush().await.unwrap();
+
+    assert!(store.aspect("depth").await.unwrap().is_some());
+    assert!(store.aspect("width").await.unwrap().is_some());
+    assert!(
+        store
+            .function("probe", None)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let mut appends = std::collections::HashMap::new();
+    for landing in store.lake().landings("glossql").await.unwrap() {
+        *appends.entry(landing.table).or_insert(0) += 1;
+    }
+    assert_eq!(
+        appends.get("aspects"),
+        Some(&2),
+        "the fixture's landing plus one for the whole batch: {appends:?}"
+    );
+    assert_eq!(appends.get("functions"), Some(&1), "{appends:?}");
+}
+
+/// A batch carrying two rows to one supersession key is refused whole:
+/// within one landing only `_pos` orders rows and it is per file, so
+/// nothing may land.
+#[tokio::test]
+async fn a_batch_carrying_two_rows_to_one_key_is_refused() {
+    let (_dir, store) = store().await;
+    store.batch_begin();
+    let Declaration::Aspect(first) = decl(
+        r#"DECLARE ASPECT gap WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "number"}},
+            "additionalProperties": false
+        }$$ AS MEASUREMENT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&first).await.unwrap();
+    let Declaration::Aspect(second) = decl(
+        r#"DECLARE ASPECT gap WITH $${
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}},
+            "additionalProperties": false
+        }$$ AS MEASUREMENT;"#,
+    ) else {
+        unreachable!()
+    };
+    store.declare_aspect(&second).await.unwrap();
+    match store.batch_flush().await {
+        Err(Error::BatchTie { relation, key }) => {
+            assert_eq!(relation, "aspects");
+            assert_eq!(key, "gap");
+        }
+        other => panic!("a tied batch must refuse to land: {other:?}"),
+    }
+    assert!(
+        store.aspect("gap").await.unwrap().is_none(),
+        "nothing may land from a refused batch"
+    );
+    // The refused batch is gone: the store writes directly again.
+    store.declare_aspect(&first).await.unwrap();
+    assert!(store.aspect("gap").await.unwrap().is_some());
+}

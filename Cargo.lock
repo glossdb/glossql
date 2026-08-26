@@ -3194,6 +3194,7 @@ name = "glossql-glossary"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures",
  "glossql-catalog",
  "glossql-parser",
  "jsonschema",

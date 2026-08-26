@@ -27,13 +27,23 @@ pub async fn bootstrap(
     // The shipped system is the workspace's, not a dataset's: it
     // declares on the unbound channel.
     let session = plane.channel(actor, None).await?;
+    // The sequence lands batched — one append per relation at the
+    // flush. Safe because no two of its rows share a supersession key
+    // (each shipped name is declared once), and necessary because a
+    // remote catalog charges a round trip per commit.
+    plane.store().batch_begin();
     let shipped = async {
         session
             .execute(&glossql_scripts::library::declarations()?)
             .await?;
         session.execute(glossql_scripts::library::KIT).await?;
+        plane.store().batch_flush().await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     };
-    tracing::Instrument::instrument(Box::pin(shipped), tracing::info_span!("bootstrap")).await?;
-    Ok(())
+    let out =
+        tracing::Instrument::instrument(Box::pin(shipped), tracing::info_span!("bootstrap")).await;
+    if out.is_err() {
+        plane.store().batch_discard();
+    }
+    out
 }
