@@ -3,13 +3,43 @@ name = "glossql-catalog"
 version = "0.1.0"
 edition.workspace = true
 
+# The catalog backend is a build-time choice; everything downstream of
+# `Lake`'s constructors runs on `Arc<dyn Catalog>` either way.
+# `sql`: a SQLite catalog and a local-filesystem warehouse — the dev
+# shape. `rest`: an Iceberg REST catalog with the storage attached on
+# the catalog's side, S3 FileIO in the binary for the properties its
+# table loads deliver. Library dependents leave both off and the
+# binary picks; this crate's own default carries both so the workspace
+# suite always builds and tests both backends.
+[features]
+default = ["sql", "rest"]
+sql = ["dep:iceberg-catalog-sql", "dep:sqlx"]
+rest = [
+  "dep:iceberg-catalog-rest",
+  "dep:object_store",
+  "dep:typetag",
+  "dep:bytes",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:async-trait",
+  "dep:http",
+]
+
 [dependencies]
 datafusion = { workspace = true }
 iceberg = { workspace = true }
-iceberg-catalog-sql = { workspace = true }
+iceberg-catalog-sql = { workspace = true, optional = true }
 # Feature-unification only: enables sqlx's tokio runtime for
 # iceberg-catalog-sql (see the workspace Cargo.toml).
-sqlx = { workspace = true }
+sqlx = { workspace = true, optional = true }
+iceberg-catalog-rest = { workspace = true, optional = true }
+object_store = { workspace = true, optional = true }
+typetag = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
 iceberg-datafusion = { workspace = true }
 futures.workspace = true
 uuid.workspace = true
@@ -19,6 +49,8 @@ tracing = { workspace = true }
 [dev-dependencies]
 tokio.workspace = true
 tempfile.workspace = true
+# The suite's stand-in authorization server and REST catalog.
+axum = { workspace = true }
 
 [lints]
 workspace = true

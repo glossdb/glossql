@@ -54,6 +54,15 @@ iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", branch =
 # feature of its own and panics at pool creation without one.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+# The `rest` catalog backend (glossql-catalog's `rest` feature): the
+# Iceberg REST client. Its data plane is our own `Storage` over
+# object_store — the crate DataFusion already runs on — so the binary
+# carries one storage stack; `aws` adds the S3 family. typetag is
+# iceberg's registration mechanism for storage implementations.
+iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+object_store = { version = "0.13", features = ["aws"] }
+typetag = "0.2"
+bytes = "1"
 serde_json = "1"
 # The cube cache (crates/session/src/cube.rs): moka is already in the
 # tree through iceberg-rust, at this version; its ObjectCache is their
@@ -74,6 +83,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2"
 insta = "1"
 async-trait = "0.1"
+# The header/status types the REST catalog client speaks; already in
+# the tree under axum, reqwest and iceberg.
+http = "1"
 faer = "0.22"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }

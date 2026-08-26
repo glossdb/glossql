@@ -14,14 +14,23 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
 use glossql_serverd::{DoorConfig, Gate, Login, Plane, bootstrap, router};
 
-const USAGE: &str = "usage: serverd --workspace <dir> [--addr <ip:port>] \
+const USAGE: &str = "usage: serverd [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>]\n\
+--workspace holds apps/ and weights/, and — without a catalog \
+connection — the catalog and warehouse themselves, which is why it is \
+required then. With GLOSSQL_CATALOG_URI set (a REST catalog; data and \
+metadata live behind it) it may be left unnamed: the working directory \
+serves.\n\
 the authorization arrangement is read from .env or the environment: \
-GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
-(see .env.example)";
+GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE]; \
+so is the catalog connection, when there is one: GLOSSQL_CATALOG_URI, \
+GLOSSQL_CATALOG_WAREHOUSE and its authentication (see .env.example)";
 
 struct Args {
-    workspace: PathBuf,
+    /// Optional at parse: whether a run can do without one is known
+    /// only once the environment says where the catalog is —
+    /// [`open_lake`] resolves it.
+    workspace: Option<PathBuf>,
     addr: String,
     doors: DoorConfig,
     /// The process-wide byte budget for cubes, in megabytes.
@@ -97,7 +106,7 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
         }
     }
     Ok(Args {
-        workspace: workspace.ok_or("--workspace is required")?,
+        workspace,
         addr,
         doors,
         cube_cache_mb,
@@ -127,14 +136,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr)
         .map_err(|e| format!("{e}\n{USAGE}"))?;
-    let warehouse = args.workspace.join("warehouse");
-    std::fs::create_dir_all(&warehouse)?;
-
-    let lake = Lake::open(&args.workspace.join("catalog.sqlite"), &warehouse).await?;
+    let (lake, workspace) = open_lake(args.workspace.clone())
+        .await
+        .map_err(|e| format!("{e}\n{USAGE}"))?;
     let store = Store::open(lake).await?;
     // The runtime's root is the workspace — the band model's weights
     // live under it (bodies ride their declarations, fixture 24).
-    let runtime = Arc::new(KernelRuntime::new(args.workspace.clone()));
+    let runtime = Arc::new(KernelRuntime::new(workspace.clone()));
 
     let plane = Arc::new(
         Plane::new(store.clone(), runtime)
@@ -163,7 +171,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
     );
     let login = Arc::new(Login::new(gate, &auth.client_secret)?);
 
-    let app = router(plane, args.doors, args.workspace.clone(), login);
+    let app = router(plane, args.doors, workspace, login);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     tracing::info!(
         addr = %args.addr,
@@ -174,6 +182,102 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
         () = stop() => tracing::info!("stopping"),
     }
     Ok(())
+}
+
+/// The workspace data plane: the REST catalog when the environment
+/// names one, the workspace directory's own SQLite catalog otherwise.
+/// One backend serves a run; which one is on the record at open.
+///
+/// The directory comes back resolved with the lake, because what it
+/// must hold depends on the backend: everything locally, only `apps/`
+/// and `weights/` behind a REST catalog — where, unnamed, the working
+/// directory serves.
+async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String> {
+    #[cfg(feature = "rest")]
+    if let Some(connection) = catalog_from(|name| std::env::var(name).ok())? {
+        tracing::info!(
+            uri = %connection.uri,
+            warehouse = %connection.warehouse,
+            "connecting the catalog"
+        );
+        let lake = Lake::connect(connection)
+            .await
+            .map_err(|e| format!("catalog connection: {e}"))?;
+        let workspace = match workspace {
+            Some(dir) => dir,
+            None => std::env::current_dir().map_err(|e| format!("working directory: {e}"))?,
+        };
+        return Ok((lake, workspace));
+    }
+    let workspace = workspace.ok_or(
+        "--workspace is required without a catalog connection: \
+         the directory holds the catalog and the warehouse themselves",
+    )?;
+    let lake = open_local(&workspace).await?;
+    Ok((lake, workspace))
+}
+
+#[cfg(feature = "sql")]
+async fn open_local(workspace: &std::path::Path) -> Result<Lake, String> {
+    let warehouse = workspace.join("warehouse");
+    std::fs::create_dir_all(&warehouse)
+        .map_err(|e| format!("warehouse dir {}: {e}", warehouse.display()))?;
+    Lake::open(&workspace.join("catalog.sqlite"), &warehouse)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "sql"))]
+async fn open_local(_workspace: &std::path::Path) -> Result<Lake, String> {
+    Err("this build carries no local catalog — set GLOSSQL_CATALOG_URI (see .env.example)".into())
+}
+
+/// The catalog connection the environment describes, `None` without
+/// `GLOSSQL_CATALOG_URI`. Read through `get` for the reason
+/// [`Auth::from`] is: testable without touching the process
+/// environment — and like the authorization arrangement it is never
+/// flags, where a token would sit in a process list.
+#[cfg(feature = "rest")]
+fn catalog_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<Option<glossql_catalog::rest::Connection>, String> {
+    use glossql_catalog::rest::{Auth as CatalogAuth, Connection};
+    let var = |name: &str| get(name).filter(|v| !v.trim().is_empty());
+    let Some(uri) = var("GLOSSQL_CATALOG_URI") else {
+        return Ok(None);
+    };
+    let warehouse = var("GLOSSQL_CATALOG_WAREHOUSE").ok_or(
+        "GLOSSQL_CATALOG_WAREHOUSE is not set — a REST catalog connection names its warehouse",
+    )?;
+    let auth = match (
+        var("GLOSSQL_CATALOG_TOKEN"),
+        var("GLOSSQL_CATALOG_CREDENTIAL"),
+    ) {
+        (Some(token), None) => CatalogAuth::Token(token),
+        (None, Some(credential)) => CatalogAuth::ClientCredentials {
+            credential,
+            token_endpoint: var("GLOSSQL_CATALOG_TOKEN_ENDPOINT").ok_or(
+                "GLOSSQL_CATALOG_TOKEN_ENDPOINT is not set — a credential is exchanged at its \
+                 authorization server's token endpoint",
+            )?,
+            scope: var("GLOSSQL_CATALOG_SCOPE"),
+        },
+        (Some(_), Some(_)) => {
+            return Err("GLOSSQL_CATALOG_TOKEN and GLOSSQL_CATALOG_CREDENTIAL are both set — \
+                 one of them authenticates the catalog connection"
+                .into());
+        }
+        (None, None) => {
+            return Err("neither GLOSSQL_CATALOG_TOKEN nor GLOSSQL_CATALOG_CREDENTIAL is set — \
+                 the catalog connection has nothing to authenticate with"
+                .into());
+        }
+    };
+    Ok(Some(Connection {
+        uri,
+        warehouse,
+        auth,
+    }))
 }
 
 /// SIGINT or SIGTERM — the terminal's Ctrl-C or the platform's stop.
@@ -260,6 +364,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(named.audience, "https://glossql.example");
+    }
+
+    /// The catalog connection comes from the environment whole, or not
+    /// at all: no URI is the local catalog, a URI must name its
+    /// warehouse and exactly one way to authenticate, and a credential
+    /// must name where it is exchanged. Each refusal names the missing
+    /// variable.
+    #[cfg(feature = "rest")]
+    #[test]
+    fn the_catalog_connection_is_read_whole_or_not_at_all() {
+        use glossql_catalog::rest::{Auth as CatalogAuth, Connection};
+
+        let env = |vars: &'static [(&str, &str)]| {
+            move |name: &str| {
+                vars.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        // A connection holds auth material, so it carries no `Debug` to
+        // unwrap through; a refusal is read off the error alone.
+        let refusal =
+            |r: Result<Option<Connection>, String>| r.err().expect("a refusal, not a connection");
+        assert!(
+            super::catalog_from(env(&[]))
+                .ok()
+                .expect("readable")
+                .is_none(),
+            "no URI is the local catalog"
+        );
+
+        let bare = super::catalog_from(env(&[("GLOSSQL_CATALOG_URI", "https://c.test")]));
+        assert!(refusal(bare).contains("GLOSSQL_CATALOG_WAREHOUSE"));
+
+        let unauthenticated = super::catalog_from(env(&[
+            ("GLOSSQL_CATALOG_URI", "https://c.test"),
+            ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
+        ]));
+        assert!(refusal(unauthenticated).contains("GLOSSQL_CATALOG_TOKEN"));
+
+        let token = super::catalog_from(env(&[
+            ("GLOSSQL_CATALOG_URI", "https://c.test"),
+            ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
+            ("GLOSSQL_CATALOG_TOKEN", "tok"),
+        ]))
+        .ok()
+        .flatten()
+        .expect("a connection");
+        assert!(matches!(token.auth, CatalogAuth::Token(t) if t == "tok"));
+
+        let endpointless = super::catalog_from(env(&[
+            ("GLOSSQL_CATALOG_URI", "https://c.test"),
+            ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
+            ("GLOSSQL_CATALOG_CREDENTIAL", "id:secret"),
+        ]));
+        assert!(refusal(endpointless).contains("GLOSSQL_CATALOG_TOKEN_ENDPOINT"));
+
+        let both = super::catalog_from(env(&[
+            ("GLOSSQL_CATALOG_URI", "https://c.test"),
+            ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
+            ("GLOSSQL_CATALOG_TOKEN", "tok"),
+            ("GLOSSQL_CATALOG_CREDENTIAL", "id:secret"),
+        ]));
+        assert!(refusal(both).contains("both set"));
     }
 
     /// Two budgets, two flags, and neither borrows the other's default.

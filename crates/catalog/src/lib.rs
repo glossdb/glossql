@@ -1,8 +1,11 @@
 //! The workspace data plane: iceberg-rust behind the `Catalog` trait
 //! (SPEC.md §3).
 //!
-//! One `Lake` per workspace: a SQL catalog on a SQLite file plus a local
-//! warehouse directory. Datasets are namespaces. Tables are **created**
+//! One `Lake` per workspace, over one of two backends the features
+//! pick: a SQL catalog on a SQLite file plus a local warehouse
+//! directory (`sql`), or an Iceberg REST catalog with its own storage
+//! behind it (`rest`, [`rest::Connection`]). Datasets are namespaces.
+//! Tables are **created**
 //! through iceberg-datafusion's own front door — the session mounts
 //! [`IcebergCatalogProvider`] schemas and declares a recipe's table with
 //! `SchemaProvider::register_table`. They are **written** through
@@ -18,15 +21,19 @@
 #![warn(clippy::unwrap_used)]
 
 use std::collections::HashMap;
+#[cfg(feature = "sql")]
 use std::path::Path;
 use std::sync::Arc;
 
 pub mod metadata;
 pub use metadata::{IcebergMetadata, RelationSpec, Row};
+#[cfg(feature = "rest")]
+pub mod rest;
 
 use datafusion::arrow::array::RecordBatch;
 use iceberg::arrow::FieldMatchMode;
 use iceberg::arrow::RecordBatchPartitionSplitter;
+#[cfg(feature = "sql")]
 use iceberg::io::LocalFsStorageFactory;
 use iceberg::spec::{DataFile, DataFileFormat};
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
@@ -39,7 +46,10 @@ use iceberg::writer::file_writer::rolling_writer::RollingFileWriterBuilder;
 use iceberg::writer::partitioning::PartitioningWriter;
 use iceberg::writer::partitioning::fanout_writer::FanoutWriter;
 use iceberg::writer::partitioning::unpartitioned_writer::UnpartitionedWriter;
-use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
+#[cfg(feature = "sql")]
+use iceberg::CatalogBuilder as _;
+use iceberg::{Catalog, NamespaceIdent, TableIdent};
+#[cfg(feature = "sql")]
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
 pub use iceberg_datafusion::IcebergCatalogProvider;
 
@@ -118,7 +128,7 @@ async fn write_files(
         .with_match_mode(FieldMatchMode::Name);
     let rolling = RollingFileWriterBuilder::new(
         parquet,
-        table_props.write_target_file_size_bytes,
+        table_props.write_target_file_size_bytes(),
         table.file_io().clone(),
         DefaultLocationGenerator::new(table.metadata())?,
         DefaultFileNameGenerator::new(
@@ -206,12 +216,37 @@ pub struct Lake {
     /// the reason the others are: a counter copied per clone counts
     /// nothing.
     conflicts: Arc<std::sync::atomic::AtomicU64>,
+    /// How the backend is told a new table's format version. In
+    /// process, `TableCreation`'s own `format_version` field is
+    /// honoured. Over REST that field never crosses the wire (the
+    /// protocol's create request has no such field) and the version
+    /// rides the reserved `format-version` **property** instead,
+    /// interpreted by the server at create and not persisted — the
+    /// same property the in-process metadata builder refuses. One
+    /// fact, two encodings; the constructor that knows the backend
+    /// sets this.
+    version_rides_properties: bool,
 }
 
 impl Lake {
+    /// The lake over a built catalog — everything below the
+    /// constructors runs on the trait, whichever backend built it.
+    /// `version_rides_properties`: see the field.
+    fn over(catalog: Arc<dyn Catalog>, version_rides_properties: bool) -> Self {
+        Lake {
+            catalog,
+            provider: Arc::new(std::sync::RwLock::new(None)),
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            version_rides_properties,
+        }
+    }
+
     /// Open (creating on first use) the workspace data plane. Must be called
     /// inside a multi-thread tokio runtime — the catalog and the providers
     /// built on it block in place for their async work.
+    #[cfg(feature = "sql")]
     pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
         std::fs::create_dir_all(warehouse)
             .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
@@ -236,13 +271,7 @@ impl Lake {
             .with_storage_factory(Arc::new(LocalFsStorageFactory))
             .load("glossql", HashMap::new())
             .await?;
-        Ok(Lake {
-            catalog: Arc::new(catalog),
-            provider: Arc::new(std::sync::RwLock::new(None)),
-            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        })
+        Ok(Lake::over(Arc::new(catalog), false))
     }
 
     pub fn catalog(&self) -> Arc<dyn Catalog> {

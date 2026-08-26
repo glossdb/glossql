@@ -6,3 +6,4 @@
 
 mod lake;
 mod metadata;
+mod rest;

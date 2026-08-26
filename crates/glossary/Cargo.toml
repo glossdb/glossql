@@ -5,7 +5,8 @@ edition.workspace = true
 
 [dependencies]
 glossql-parser = { path = "../parser" }
-glossql-catalog = { path = "../catalog" }
+# No backend feature — see glossql-session's manifest.
+glossql-catalog = { path = "../catalog", default-features = false }
 serde_json.workspace = true
 jsonschema.workspace = true
 thiserror.workspace = true
@@ -13,6 +14,7 @@ thiserror.workspace = true
 chrono.workspace = true
 
 [dev-dependencies]
+glossql-catalog = { path = "../catalog" }
 tempfile.workspace = true
 tokio.workspace = true
 
