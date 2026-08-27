@@ -726,6 +726,58 @@ async fn the_mcp_door_initializes_and_lists_the_one_tool() {
     assert_eq!(body["result"]["cacheScope"], "private", "{body}");
 }
 
+/// The tolerant floor, proven the way real clients arrive (the
+/// 2026-08-27 ChatGPT run): an initialize declaring an older revision
+/// is negotiated down to the library's floor rather than refused, and
+/// a request that stamps no version marker at all — no header, no
+/// `_meta` — is served at the server's own revision, which is what
+/// the spec has a server assume for an absent header. Claude Code
+/// stamps everything and rides the strict path above.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mcp_door_serves_older_and_unstamped_clients() {
+    let (app, _dir) = app().await;
+
+    // An older client's initialize, stamped with its own revision the
+    // way ChatGPT stamps it: answered, at the library's floor. The
+    // exact floor moves with rmcp — when this assert breaks on an
+    // upgrade, the new value is the new floor, and that is the point
+    // of pinning it.
+    let older = Request::post("/mcp")
+        .header(header::HOST, "127.0.0.1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, common::bearer("dev-agent"))
+        .header("mcp-protocol-version", "2025-06-18")
+        .body(Body::from(
+            json!({
+                "jsonrpc": "2.0", "id": 0, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "older-client", "version": "0"}
+                }
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let body = expect_ok(app.clone().oneshot(older).await.unwrap()).await;
+    assert_eq!(body["result"]["protocolVersion"], "2025-11-25", "{body}");
+
+    // A request with no version marker anywhere: served, not refused.
+    let bare = Request::post("/mcp")
+        .header(header::HOST, "127.0.0.1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, common::bearer("dev-agent"))
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).to_string(),
+        ))
+        .unwrap();
+    let body = expect_ok(app.oneshot(bare).await.unwrap()).await;
+    let tools = body["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools[0]["name"], "glossql", "{body}");
+}
+
 /// The teaching surface: every skill is a resource and a prompt, the
 /// normative artifacts are resources, and what is read back is what
 /// the build embedded.

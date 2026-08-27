@@ -123,11 +123,15 @@ door's own script and styles, which hold no data.
 
 ## `/mcp` — the agent door
 
-MCP streamable HTTP, protocol revision `2026-07-28` and nothing behind
-it: no sessions, no `Mcp-Session-Id`, no GET stream, no resumability.
-An older client is refused with an `UnsupportedProtocolVersionError`
-naming what this door speaks, rather than served under semantics it no
-longer implements. JSON responses.
+MCP streamable HTTP. The door speaks protocol revision `2026-07-28`
+first and negotiates down to the library's floor (`2025-11-25` today)
+for older clients — served statelessly whatever the revision: no
+sessions, no `Mcp-Session-Id`, no GET stream, no resumability. A
+request that stamps no version marker at all is served at the server's
+own revision, which is what the spec has a server assume for an absent
+header — some real clients stamp only part of their traffic. A client
+below the floor is refused, naming what the door speaks. JSON
+responses.
 
 One tool: `glossql`, taking `statements` (string) — declarations,
 `USE`, `GLOSS`, extraction, probes, and plain SQL. Live state
