@@ -1056,8 +1056,9 @@ async fn the_metrics_faces_serve_the_cube() {
     assert_eq!(row_count(banner).await, 0, "nothing to re-measure");
 
     // A gloss moves the pin. The cube rebuilds at the next read with
-    // the same numbers — the verdicts judged before the gloss still
-    // admit the axes — and the banner says they are not current.
+    // the same numbers — and the verdicts measured the data's columns,
+    // which the gloss did not touch, so they still stand and the
+    // banner stays silent: glossing work does not churn the record.
     plane
         .channel(
             Actor {
@@ -1084,13 +1085,13 @@ async fn the_metrics_faces_serve_the_cube() {
     let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
     assert_eq!(
         row_count(banner).await,
-        1,
-        "the axes were judged before the gloss"
+        0,
+        "the verdicts read the data, not this gloss"
     );
 
-    // Re-measure — the docket's second write, a compute act: the
-    // profilers run over the served columns, the response is the write
-    // event, and the banner clears on the next read.
+    // Re-measure — the docket's second write, a compute act: with
+    // nothing stale it lands nothing, and the response is still the
+    // write event the browser's frame store hears.
     let response = app
         .clone()
         .oneshot(
@@ -1112,7 +1113,7 @@ async fn the_metrics_faces_serve_the_cube() {
     assert_eq!(
         row_count(banner).await,
         0,
-        "re-measured: the verdicts are current again"
+        "the verdicts still stand"
     );
     let trend = get(
         &app,

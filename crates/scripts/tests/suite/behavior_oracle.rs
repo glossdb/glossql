@@ -275,4 +275,24 @@ async fn document_keyed_events_reconcile_at_month_grain() {
             .contains("via ar_invoices.customer_id"),
         "{borrowed}"
     );
+
+    // The fat receipts own their entity edge (customer_id ->
+    // customers): nothing is borrowed, so no anchor rides a via
+    // alignment. A borrowed grain would group every customer's rows
+    // behind one document key — a series about the dimension, not the
+    // measure — and it must not be in the room to vote.
+    let fat = evidence(&session, "receipts.amount").await;
+    assert_eq!(fat["applicable"], true, "{fat}");
+    let vias: Vec<String> = fat["anchors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["align"].as_str())
+        .filter(|s| s.contains(" via "))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        vias.is_empty(),
+        "borrowed anchors on a table that owns its entity: {vias:?}"
+    );
 }

@@ -138,11 +138,16 @@ async fn extraction_computes_once_then_serves_the_pin() {
         r#"DECLARE ASPECT outlier_rows WITH $${"type": "object",
              "required": ["rows"], "properties": {"rows": {"type": "array"}}}$$ AS MEASUREMENT;
            DECLARE FUNCTION outliers FOR fin AS $$SELECT [1] AS rows, 1 AS n$$
-           RETURNS outlier_rows;"#,
+           RETURNS outlier_rows;
+           DECLARE ASPECT counted_rows WITH $${"type": "object",
+             "required": ["rows"], "properties": {"rows": {"type": "array"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION counted FOR fin
+           AS $$SELECT [1] AS rows, count(*) AS n FROM glossary$$
+           RETURNS counted_rows;"#,
     )
     .await;
 
-    // Each compute lands one `measurements` row; a pin hit serves the
+    // Each compute lands one `measurements` row; a repeat serves the
     // landed row and lands nothing.
     let computes = || async { table(&session, "SELECT count(*) AS n FROM measurements;").await };
     run(&session, "SELECT outliers() FROM fin;").await;
@@ -150,14 +155,23 @@ async fn extraction_computes_once_then_serves_the_pin() {
     run(&session, "SELECT outliers() FROM fin;").await;
     assert!(
         computes().await.contains("| 1"),
-        "the second run serves the measurement at the same pin"
+        "the second run serves the standing measurement"
     );
+    run(&session, "SELECT counted() FROM fin;").await;
+    assert!(computes().await.contains("| 2"), "a second function lands");
 
-    // Any input moving makes a new pin — a gloss moves the glossary head,
-    // so the next extraction recomputes. No sweep, only a miss.
+    // Currency is what a measurement READ. A gloss moves the glossary
+    // leg: `counted` read it and recomputes; `outliers` read nothing
+    // and its answer cannot have changed, so it still serves. No
+    // sweep, only a miss — and only where an input actually moved.
     run(&session, r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#).await;
     run(&session, "SELECT outliers() FROM fin;").await;
-    assert!(computes().await.contains("| 2"), "the moved pin recomputes");
+    assert!(
+        computes().await.contains("| 2"),
+        "a body that read nothing always stands"
+    );
+    run(&session, "SELECT counted() FROM fin;").await;
+    assert!(computes().await.contains("| 3"), "the leg it read moved");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

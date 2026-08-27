@@ -20,8 +20,8 @@ extraction, and `GLOSSARY()` serves it as-is.
   producer — exactly one function returns it.
 - Filling a **FACT** aspect makes the function a **voice**: a
   data-grounded speaker whose landed output — its newest measurement,
-  served and marked `current` only at the read's pin — joins the
-  human's and agent's slots. The check half of
+  served and marked `current` while what it read is unchanged — joins
+  the human's and agent's slots. The check half of
   a validation is a voice ([validation](validation.md)).
 
 ```glossql
@@ -53,11 +53,14 @@ SELECT outliers() FROM work_orders.duration_min;
 
 Extraction computes at the read's **pin** — the exact set of inputs,
 data and declarations, the statement resolved — and lands one row in
-the `measurements` relation. The same pin serves the row back; any
-input moving makes a new pin, so there is no invalidation, only a
-miss, and old rows stand as the drift record. A body that carries a
-`summary` object serves the summary at extraction; the full value
-reads back through `GLOSSARY(subject::aspect)`.
+the `measurements` relation, recording which of those inputs the body
+actually read. The row serves back, and stays `current`, while what it
+read is unchanged: a write to anything else — another table's landing,
+a gloss the body never consults — is not its staleness. When an input
+it read moves, the next extraction recomputes; there is no
+invalidation, only a miss, and old rows stand as the drift record. A
+body that carries a `summary` object serves the summary at extraction;
+the full value reads back through `GLOSSARY(subject::aspect)`.
 
 Functions never write the glossary, and no measurement writes a
 verdict into data — judgment lives in detectors and read policy.

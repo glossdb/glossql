@@ -59,6 +59,25 @@ pub(crate) struct Resolved {
     /// frame can change under a glossary write
     /// (a ruling), a `data` frame provably cannot.
     record: bool,
+    /// What resolution read beyond the plans' own scans — compute
+    /// doors and store relations, accumulated for the measurement
+    /// record's `reads` legs (the currency rule). Derived here for the
+    /// same reason as `record`; the data tables a body scans directly
+    /// come from the executed plan instead.
+    pub(crate) reads: ReadSet,
+}
+
+/// What a statement's resolution read, named against the pin's legs:
+/// data tables, store relations, or the whole dataset when a door
+/// sweeps it. `everything` is the conservative floor — a door whose
+/// reads cannot be enumerated records nothing, and the measurement
+/// stands only at its exact pin.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ReadSet {
+    pub(crate) tables: HashSet<String>,
+    pub(crate) relations: HashSet<String>,
+    pub(crate) all_tables: bool,
+    pub(crate) everything: bool,
 }
 
 impl Resolved {
@@ -368,6 +387,7 @@ async fn compute_batches(
             if crate::reads::reads_the_record(&idents, factor) {
                 resolved.record = true;
             }
+            crate::reads::door_reads(&idents, factor, &mut resolved.reads);
             resolved.batches.insert(key, batch);
         }
     }
@@ -396,9 +416,13 @@ async fn resolve_door(
     }
     // A served grounding and a replayed body both come from the
     // glossary — the statement's answer can change under a glossary
-    // write, whatever the body then reads.
+    // write, whatever the body then reads. The body's own scans reach
+    // the measurement record through the executed plan; the grounding
+    // itself is a glossary read.
     if matches!(door, Door::Serve(_) | Door::Replay(..)) {
         resolved.record = true;
+        resolved.reads.relations.insert("glossary".into());
+        resolved.reads.relations.insert("aspects".into());
     }
     // The column door has no SQL behind it: one projection of a pinned
     // table, aliased `v`, built right here.

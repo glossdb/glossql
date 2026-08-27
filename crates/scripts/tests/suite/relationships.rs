@@ -180,17 +180,18 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         .unwrap());
     assert_eq!(right, "customers.id");
 
-    // The declaration moved the pin — a declared edge is an input, so
-    // the measurement is owed again — and the recompute still carries
-    // the reject: not declared, and not erased.
-    let gone = one(&session
+    // The declaration moved the pin, but a declared edge is not an
+    // input of this door — candidates come from the data alone — so
+    // the measurement still stands (the currency rule: what it READ),
+    // and it still carries the reject: not declared, and not erased.
+    let standing = one(&session
         .execute(
             "SELECT count(*) FROM GLOSSARY(fin::relationship_candidates) \
              WHERE state = 'current';",
         )
         .await
         .unwrap());
-    assert_eq!(gone, "0", "the old pin's row is unreachable");
+    assert_eq!(standing, "1", "declaring an edge is not this door's staleness");
     session
         .execute("SELECT detect_relationships() FROM fin;")
         .await

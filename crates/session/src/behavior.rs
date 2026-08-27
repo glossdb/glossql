@@ -39,7 +39,12 @@
 //!   day-native alignment also serves a month variant, and a table
 //!   whose only edges are document-keyed borrows its entity one hop
 //!   through the document — measure side and event side alike; without
-//!   the hop, every anchor on such a table starves.
+//!   the hop, every anchor on such a table starves. A table with an
+//!   edge onto a leaf owns an entity key and never borrows one: a
+//!   borrowed grain groups the rows that share a dimension member, not
+//!   one entity's rows, and what such a series does says nothing about
+//!   the measure (summed over the drivers at a circuit, a win count
+//!   equals the round number — a perfect flow that means nothing).
 //! - A cumulative that RESETS is a stock only inside its scope: the raw
 //!   alignment AND a year-scoped variant both serve, and the gates kill
 //!   the wrong one.
@@ -50,9 +55,14 @@
 //!   convention `monotone`, voting stock. It is what a cumulative with
 //!   no event column to reconcile against (season wins beside a table
 //!   of finishing positions) has to say for itself, and a reset shows
-//!   as the year scope deciding where the raw one abstains. On equal
-//!   support a reconciliation outranks it: the movement explains the
-//!   level, monotonicity only describes it.
+//!   as the year scope deciding where the raw one abstains. Only the
+//!   entities that MOVE vote: a flat series says nothing about what
+//!   movement would do to it, and a sparse cumulative — most standings
+//!   never win — must not be outvoted by its own zeros; zero movers
+//!   abstains, which is what keeps a constant column unreadable as a
+//!   stock. On equal support a reconciliation outranks the monotone
+//!   anchor: the movement explains the level, monotonicity only
+//!   describes it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -307,6 +317,16 @@ pub(crate) async fn behavior_anchors(
         }
     }
 
+    // Whether the measure table owns an entity key: an edge onto a leaf
+    // — a table with no outgoing edges of its own. A table that does
+    // never borrows an entity through a document (the gate on the
+    // borrowed alignments below); one whose every edge lands on another
+    // document may.
+    let documents: HashSet<&str> = pointers.iter().map(|p| p.src_t.as_str()).collect();
+    let owns_entity = pointers
+        .iter()
+        .any(|p| p.src_t == table && p.dst_t != table && !documents.contains(p.dst_t.as_str()));
+
     // Time axes of a table: its OWN date columns; only a table with
     // none borrows one declared hop away.
     let mut all_axes: HashMap<&str, Vec<Axis>> = HashMap::new();
@@ -363,8 +383,9 @@ pub(crate) async fn behavior_anchors(
     let mut viable_cache: HashMap<String, i64> = HashMap::new();
     let mut y_cache: HashMap<String, Vec<RecordBatch>> = HashMap::new();
     // The monotone read per (axis, entity, scope): entities with 4+
-    // periods, how many never decrease, the steps walked.
-    let mut mono_cache: HashMap<String, (i64, i64, i64)> = HashMap::new();
+    // periods, how many never decrease, how many move at all, the
+    // steps walked.
+    let mut mono_cache: HashMap<String, (i64, i64, i64, i64)> = HashMap::new();
     let mut mono_pushed: HashSet<String> = HashSet::new();
 
     let from_of = |t: &str, axis: &Axis| -> (String, String) {
@@ -443,30 +464,34 @@ pub(crate) async fn behavior_anchors(
                     }
                 }
             }
-            // Borrowed entity: the measure side joins the
-            // document table and keys on ITS dimension column; the
-            // event side must carry the key on a direct edge of its
-            // own. The via table may BE the event table.
-            for p1 in &pointers {
-                if p1.src_t != table || p1.dst_t == table {
-                    continue;
-                }
-                for p2 in &pointers {
-                    if p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == *ev {
+            // Borrowed entity — only for a measure table whose every
+            // edge lands on a document (`owns_entity` above): the
+            // measure side joins the document table and keys on ITS
+            // dimension column; the event side must carry the key on a
+            // direct edge of its own. The via table may BE the event
+            // table.
+            if !owns_entity {
+                for p1 in &pointers {
+                    if p1.src_t != table || p1.dst_t == table {
                         continue;
                     }
-                    for q in &pointers {
-                        if q.src_t == *ev && q.dst_t == p2.dst_t && q.dst_cols == p2.dst_cols {
-                            aligns.push(Align {
-                                m_cols: p2.src_cols.clone(),
-                                e_cols: q.src_cols.clone(),
-                                via: Some((
-                                    p1.dst_t.clone(),
-                                    p1.src_cols.clone(),
-                                    p1.dst_cols.clone(),
-                                )),
-                                e_via: None,
-                            });
+                    for p2 in &pointers {
+                        if p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == *ev {
+                            continue;
+                        }
+                        for q in &pointers {
+                            if q.src_t == *ev && q.dst_t == p2.dst_t && q.dst_cols == p2.dst_cols {
+                                aligns.push(Align {
+                                    m_cols: p2.src_cols.clone(),
+                                    e_cols: q.src_cols.clone(),
+                                    via: Some((
+                                        p1.dst_t.clone(),
+                                        p1.src_cols.clone(),
+                                        p1.dst_cols.clone(),
+                                    )),
+                                    e_via: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -766,6 +791,8 @@ pub(crate) async fn behavior_anchors(
                                     "SELECT count(*) AS considered, \
                                      coalesce(sum(CASE WHEN decreases = 0 AND increases > 0 \
                                                         THEN 1 ELSE 0 END), 0) AS monotone, \
+                                     coalesce(sum(CASE WHEN increases > 0 OR decreases > 0 \
+                                                        THEN 1 ELSE 0 END), 0) AS movers, \
                                      coalesce(sum(steps), 0) AS steps \
                                      FROM (SELECT e, count(*) AS steps, \
                                              sum(CASE WHEN yv < prev THEN 1 ELSE 0 END) AS decreases, \
@@ -791,41 +818,56 @@ pub(crate) async fn behavior_anchors(
                                 };
                                 mono_cache.insert(
                                     mkey.clone(),
-                                    (read("considered"), read("monotone"), read("steps")),
+                                    (
+                                        read("considered"),
+                                        read("monotone"),
+                                        read("movers"),
+                                        read("steps"),
+                                    ),
                                 );
                             }
-                            let (considered, monotone, steps) = mono_cache[&mkey];
+                            let (considered, monotone, movers, steps) = mono_cache[&mkey];
                             let mut a = mono_base.as_object().expect("object").clone();
                             a.insert("grain".into(), json!(m_native));
                             a.insert("convention".into(), json!("monotone"));
                             a.insert("entities".into(), json!(considered));
                             a.insert("viable_entities".into(), json!(considered));
                             a.insert("alternatives".into(), json!([]));
+                            // Movers only (the module doc's rule): a flat
+                            // entity abstains rather than votes.
                             if considered < 2 {
                                 a.insert("verdict".into(), json!("abstain"));
                                 a.insert(
                                     "reason".into(),
                                     json!("fewer than two entities carry 4+ periods at the native grain"),
                                 );
+                            } else if movers < 2 {
+                                a.insert("verdict".into(), json!("abstain"));
+                                a.insert(
+                                    "reason".into(),
+                                    json!(format!(
+                                        "{movers} of {considered} entities move within the scope — no monotone evidence"
+                                    )),
+                                );
                             } else {
-                                a.insert("voted".into(), json!(considered));
+                                a.insert("voted".into(), json!(movers));
                                 a.insert(
                                     "agreement".into(),
-                                    json!(monotone as f64 / considered as f64),
+                                    json!(monotone as f64 / movers as f64),
                                 );
                                 a.insert(
                                     "support".into(),
-                                    json!(wilson_lcb(monotone as f64, considered)),
+                                    json!(wilson_lcb(monotone as f64, movers)),
                                 );
-                                if monotone * 2 >= considered && monotone > 0 {
+                                if monotone * 2 >= movers {
                                     a.insert("verdict".into(), json!("stock"));
                                 } else {
                                     a.insert("verdict".into(), json!("abstain"));
                                     a.insert(
                                         "reason".into(),
                                         json!(format!(
-                                            "{} of {considered} entities decrease within the scope over {steps} steps — not a cumulative here",
-                                            considered - monotone
+                                            "{} of {movers} moving entities decrease within the scope over {steps} steps — not a cumulative here",
+                                            movers - monotone
                                         )),
                                     );
                                 }

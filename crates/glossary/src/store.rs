@@ -91,6 +91,51 @@ impl Pin {
     }
 }
 
+/// Whether a measurement row still stands: what it read looks the same
+/// now as when it was computed. `reads` NAMES the legs — `*` for every
+/// data table of the dataset, `<dataset>.<table>` and
+/// `glossql.<relation>` individually, `**` when the computation's
+/// reads could not be enumerated (the whole pin, the conservative
+/// floor), empty for a body that read nothing and always stands — and
+/// the rule is one comparison: the named legs, filtered out of the
+/// recorded pin and out of the statement's, must match. Naming, not
+/// snapshotting, is what lets absence carry: a relation unborn at
+/// compute time has no leg on either side until its first write moves
+/// one side, and a dataset gaining a table changes what `*` selects.
+pub fn measurement_stands(
+    pin_text: &str,
+    dataset: &str,
+    row_pin: Option<&str>,
+    row_reads: Option<&str>,
+) -> bool {
+    let (Some(row_pin), Some(reads)) = (row_pin, row_reads) else {
+        return row_pin == Some(pin_text);
+    };
+    if reads == "**" {
+        return row_pin == pin_text;
+    }
+    read_view(row_pin, dataset, reads) == read_view(pin_text, dataset, reads)
+}
+
+/// One side of the currency comparison: the pin's parts whose names
+/// the reads list selects, in the pin's own (sorted) order. A name
+/// matching no part contributes nothing — on both sides alike, so a
+/// stray name can never decide.
+fn read_view(pin_text: &str, dataset: &str, reads: &str) -> String {
+    let names: std::collections::HashSet<&str> = reads.split(',').collect();
+    let all = names.contains("*");
+    let prefix = format!("{dataset}.");
+    pin_text
+        .split(',')
+        .filter(|part| {
+            part.rsplit_once(':').is_some_and(|(name, _)| {
+                names.contains(name) || (all && name.starts_with(&prefix))
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 impl Scope {
     /// Does the scope admit this subject — the same five shapes every
     /// read applies.
@@ -215,6 +260,7 @@ pub const RELATIONS: &[Relation] = &[
             "pin",
             "value",
             "computed_at",
+            "reads",
         ],
         partition: &["dataset"],
         key: &[],
@@ -927,8 +973,8 @@ impl Store {
 
         // The measurement slot: each returning function's newest landing
         // per subject, whatever its pin — served, and marked `current`
-        // only at its own. Older rows are the drift record, never
-        // served.
+        // while what it read is unchanged. Older rows are the drift
+        // record, never served.
         let returning = ctx.functions.iter().filter_map(|f| {
             f.returns
                 .as_deref()
@@ -950,7 +996,7 @@ impl Store {
                     body: text(&r.cells, 5),
                     written_at: text(&r.cells, 6),
                     snapshot_id: None,
-                    current: r.get(4) == Some(ctx.pin.text.as_str()),
+                    current: measurement_stands(&ctx.pin.text, dataset, r.get(4), r.get(7)),
                 });
             }
         }
@@ -1657,9 +1703,10 @@ impl Store {
         ))
     }
 
-    /// The measurement at the context's pin, newest write winning — two
-    /// computations at one pin produced the same value. Pure over the
-    /// context: the statement already read the relation.
+    /// The measurement that still stands, newest write winning — its
+    /// recorded reads are unchanged, so a recomputation would produce
+    /// the same value. Pure over the context: the statement already
+    /// read the relation.
     pub fn measurement_in(
         ctx: &ReadContext,
         dataset: &str,
@@ -1672,7 +1719,7 @@ impl Store {
                 r.get(0) == Some(dataset)
                     && r.get(1) == Some(function)
                     && r.get(2) == Some(subject)
-                    && r.get(4) == Some(ctx.pin.text.as_str())
+                    && measurement_stands(&ctx.pin.text, dataset, r.get(4), r.get(7))
             })
             .max_by_key(|r| r.seq)
             .map(|r| MeasurementRow {
@@ -1684,7 +1731,7 @@ impl Store {
     }
 
     /// Every subject's newest measurement by `function` — the context's
-    /// rows, each marked `current` when it stands at the context's pin.
+    /// rows, each marked `current` while what it read is unchanged.
     /// Pure over the context: the statement already read the relation.
     pub fn measurements_in(
         ctx: &ReadContext,
@@ -1702,14 +1749,17 @@ impl Store {
                         body: text(&r.cells, 5),
                         computed_at: text(&r.cells, 6),
                     },
-                    r.get(4) == Some(ctx.pin.text.as_str()),
+                    measurement_stands(&ctx.pin.text, dataset, r.get(4), r.get(7)),
                 )
             })
             .collect()
     }
 
     /// Land one measurement; the served row comes back so the caller
-    /// need not re-read what it just wrote.
+    /// need not re-read what it just wrote. `reads` names the legs the
+    /// computation read, in [`measurement_stands`]'s vocabulary.
+    // The parameters are the relation's own cells, in column order.
+    #[expect(clippy::too_many_arguments)]
     pub async fn measurement_put(
         &self,
         dataset: &str,
@@ -1718,6 +1768,7 @@ impl Store {
         aspect: &str,
         pin: &Pin,
         value: &str,
+        reads: &str,
     ) -> Result<MeasurementRow> {
         let computed_at = now_utc();
         self.put(
@@ -1730,6 +1781,7 @@ impl Store {
                 Some(pin.text.clone()),
                 Some(value.to_string()),
                 Some(computed_at.clone()),
+                Some(reads.to_string()),
             ],
         )
         .await?;
