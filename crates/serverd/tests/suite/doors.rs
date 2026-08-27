@@ -655,7 +655,12 @@ async fn mcp(app: Router, payload: Value) -> Response<Body> {
         .header(header::AUTHORIZATION, common::bearer("dev-agent"))
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", method);
-    if let Some(name) = payload["params"]["name"].as_str() {
+    // SEP-2243: a call names its subject in the header too — from
+    // `name` for tools and prompts, from `uri` for resources.
+    if let Some(name) = payload["params"]["name"]
+        .as_str()
+        .or_else(|| payload["params"]["uri"].as_str())
+    {
         request = request.header("mcp-name", name.to_string());
     }
     app.oneshot(request.body(Body::from(payload.to_string())).unwrap())
@@ -719,6 +724,120 @@ async fn the_mcp_door_initializes_and_lists_the_one_tool() {
     assert_eq!(body["result"]["resultType"], "complete", "{body}");
     assert!(body["result"]["ttlMs"].is_number(), "{body}");
     assert_eq!(body["result"]["cacheScope"], "private", "{body}");
+}
+
+/// The teaching surface: every skill is a resource and a prompt, the
+/// normative artifacts are resources, and what is read back is what
+/// the build embedded.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mcp_door_serves_the_skills_as_resources_and_prompts() {
+    let (app, _dir) = app().await;
+    let body = expect_ok(mcp(app.clone(), initialize()).await).await;
+    assert!(
+        body["result"]["capabilities"]["resources"].is_object(),
+        "{body}"
+    );
+    assert!(
+        body["result"]["capabilities"]["prompts"].is_object(),
+        "{body}"
+    );
+
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list", "params": {"_meta": meta()}}),
+        )
+        .await,
+    )
+    .await;
+    let uris: Vec<&str> = body["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    for uri in [
+        "skill://glossql/SKILL.md",
+        "skill://glossql-metrics/SKILL.md",
+        "skill://glossql-functions/SKILL.md",
+        "skill://glossql-apps/SKILL.md",
+        "doc://SPEC.md",
+        "doc://grammar.ebnf",
+    ] {
+        assert!(uris.contains(&uri), "{uri} missing from {uris:?}");
+    }
+
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            json!({"jsonrpc": "2.0", "id": 4, "method": "resources/read",
+                   "params": {"_meta": meta(), "uri": "skill://glossql/SKILL.md"}}),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["contents"][0]["text"].as_str().unwrap();
+    assert_eq!(text, glossql_serverd::skills::SKILLS[0].body, "{body}");
+    assert_eq!(
+        body["result"]["contents"][0]["mimeType"],
+        "text/markdown",
+        "{body}"
+    );
+
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            json!({"jsonrpc": "2.0", "id": 5, "method": "prompts/list", "params": {"_meta": meta()}}),
+        )
+        .await,
+    )
+    .await;
+    let prompts = body["result"]["prompts"].as_array().unwrap();
+    assert_eq!(prompts.len(), 4, "{body}");
+    assert!(
+        prompts.iter().all(|p| !p["description"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()),
+        "{body}"
+    );
+
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            json!({"jsonrpc": "2.0", "id": 6, "method": "prompts/get",
+                   "params": {"_meta": meta(), "name": "glossql"}}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        body["result"]["messages"][0]["content"]["text"],
+        glossql_serverd::skills::SKILLS[0].body,
+        "{body}"
+    );
+
+    // A URI this door does not hold is refused, never served as an
+    // empty page. The 2026-07-28 revision spells resource-not-found
+    // as invalid params (rmcp rewrites the older -32002), which the
+    // transport maps to HTTP 400.
+    let response = mcp(
+        app,
+        json!({"jsonrpc": "2.0", "id": 7, "method": "resources/read",
+               "params": {"_meta": meta(), "uri": "doc://README.md"}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], -32602, "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("doc://README.md"),
+        "{body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

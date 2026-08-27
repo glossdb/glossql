@@ -24,10 +24,10 @@ follow the corpus-first process below.
   `methods/`, `architecture/`, and the concern pages). For agents and
   humans alike; enterprise-customer quality, constantly current.
   Never normative language prose.
-- `../glossin` — the product skills (vendor-neutral Agent Plugins
-  shape), where a door-connected agent learns the language; a
-  required sibling checkout, gated by this repo's test suite.
-  `.claude/skills/` keeps the substrate skill for building the
+- `skills/` — the product skills, one `SKILL.md` each, where a
+  door-connected agent learns the language; embedded in serverd and
+  served on the MCP door as resources and prompts, gated by the test
+  suite. `.claude/skills/` keeps the substrate skill for building the
   server.
 - `.claude/notes/` (gitignored) — working notes tied to an open
   issue; deleted when it closes.
@@ -60,10 +60,10 @@ the next one or bundles a few in a session. No standing sequence.
   satellite design docs, no assumption files, no per-topic notes.
 - **Standing invariant.** Workspace `cargo test` passes: every
   ```sql block in SPEC.md parses, every corpus fixture behaves as
-  tagged, every fenced example under `docs/`, `.claude/skills/`, and
-  the `../glossin` sibling parses and plans, and the store and
-  session suites hold the execution semantics. A change that breaks
-  it doesn't land.
+  tagged, every fenced example under `docs/`, `skills/`, and
+  `.claude/skills/` parses and plans, and the store and session
+  suites hold the execution semantics. A change that breaks it
+  doesn't land.
 - **Ideation before prose.** No idea enters SPEC.md until it survives
   a corpus test: competing statement forms for the same real
   artifact, checked against grammar and real table shapes, the forks

@@ -38,6 +38,7 @@ mod bootstrap;
 mod login;
 mod mcp;
 mod query;
+pub mod skills;
 pub mod telemetry;
 mod wire;
 

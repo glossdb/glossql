@@ -32,10 +32,12 @@ The server: one binary, one workspace, three doors. How it is built is
   against the issuer's published keys; the actor kind is the door's
   (`/mcp` agent, the rest human); what a kind may *do* beyond that is
   governance, still held open.
-- **Skills** — the glossin plugin (Agent Plugins shape, one skill
-  per `skills/*/SKILL.md`), where a door-connected agent learns the
-  language; every skill is gated by the server's test suite like
-  these pages.
+- **Skills** — one skill per `skills/*/SKILL.md`, where a
+  door-connected agent learns the language. The MCP door serves each
+  as a resource (`skill://<name>/SKILL.md`) and as a prompt of the
+  same name, with the language spec and grammar beside them as
+  `doc://` resources; every skill is gated by the server's test suite
+  like these pages.
 - **Bootstrap** — a fresh workspace receives the shipped system at
   boot; declaration relations read as plain tables.
 

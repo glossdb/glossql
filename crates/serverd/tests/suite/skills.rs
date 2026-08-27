@@ -6,8 +6,8 @@
 //! examples are checked here instead of proofread.
 //!
 //! Two rules, over every fenced ` ```glossql ` and ` ```sql ` block in
-//! the product skills (`../glossin/skills/*/SKILL.md`, a required
-//! sibling checkout) and `.claude/skills/*/SKILL.md`:
+//! the product skills (`skills/*/SKILL.md`, embedded in the binary and
+//! served on the MCP door) and `.claude/skills/*/SKILL.md`:
 //!
 //!   1. it parses;
 //!   2. if it is a single read, it PLANS against a bootstrapped
@@ -39,21 +39,19 @@ struct Block {
 }
 
 /// Every fenced glossql/sql block in the shipped skills: the product
-/// skills in the `../glossin` sibling (the same path contract as
-/// `../tabicl-candle` — a clone that builds can gate the skills), and
-/// what remains under `.claude/skills` (the substrate skill).
+/// skills under the repo's `skills/`, and what lives under
+/// `.claude/skills` (the substrate skill).
 fn blocks() -> Vec<Block> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut skills = Vec::new();
     for (dir, why) in [
         (
             manifest.join("../../.claude/skills"),
-            "the skills directory ships with the repo",
+            "the substrate skill ships with the repo",
         ),
         (
-            manifest.join("../../../glossin/skills"),
-            "the glossin sibling checkout (../glossin) gates the \
-             product skills — clone it beside this repo",
+            manifest.join("../../skills"),
+            "the product skills ship with the repo",
         ),
     ] {
         let dir = dir.canonicalize().expect(why);
@@ -259,6 +257,37 @@ async fn every_skill_read_names_columns_that_exist() {
         planned >= 5,
         "only {planned} skill reads were planned — the test is skipping its own subject"
     );
+}
+
+/// The served table is the directory. `include_str!` keeps each
+/// embedded body current, but only for the files the table names — a
+/// skill added under `skills/` without a row in
+/// [`glossql_serverd::skills::SKILLS`] would sit on disk unserved,
+/// and this is what refuses that.
+#[test]
+fn the_served_skills_are_the_skills_directory() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = manifest.join("../../skills").canonicalize().unwrap();
+    let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("SKILL.md").is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    on_disk.sort();
+    let mut served: Vec<String> = glossql_serverd::skills::SKILLS
+        .iter()
+        .map(|s| s.name.to_string())
+        .collect();
+    served.sort();
+    assert_eq!(served, on_disk);
+    for skill in &glossql_serverd::skills::SKILLS {
+        assert!(
+            !skill.description().is_empty(),
+            "{} carries no frontmatter description — the listings serve it",
+            skill.name
+        );
+    }
 }
 
 /// A store over its own throwaway lake; hold the dir for the test's life.
