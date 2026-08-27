@@ -586,17 +586,21 @@ async fn an_exact_pair_difference_beats_a_loose_single_on_delta_bic() {
     assert_eq!(anchor["sign"]["primary"], 3, "{anchor}");
 }
 
-/// Two drivers over three seasons of eight rounds: `season_wins` is
+/// Five drivers over three seasons of eight rounds: `season_wins` is
 /// the running count of wins within a season, reset every year, and
 /// nothing in `results` reconciles against it — positions and lap
 /// counts, no wins column. The shape is the only evidence there is.
+/// Wins are sparse: only `a` and `b` ever win — `c`, `d` and `e` sit
+/// flat at zero all three seasons (and never finish, so they are
+/// absent from `results`). The flat majority must not outvote the
+/// movers.
 async fn standings_fixture(root: &std::path::Path) {
     write_table(
         root,
         "drivers",
         RecordBatch::try_new(
             Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, true)])),
-            vec![Arc::new(StringArray::from(vec!["a", "b"]))],
+            vec![Arc::new(StringArray::from(vec!["a", "b", "c", "d", "e"]))],
         )
         .unwrap(),
     )
@@ -618,6 +622,11 @@ async fn standings_fixture(root: &std::path::Path) {
                 r_date.push(date.clone());
                 r_position.push(if i == winner { 1.0 } else { 2.0 });
                 r_laps.push(50.0 + round as f64);
+            }
+            for d in ["c", "d", "e"] {
+                s_driver.push(d);
+                s_date.push(date.clone());
+                s_wins.push(0.0);
             }
         }
     }
@@ -715,10 +724,13 @@ async fn a_cumulative_that_resets_yearly_is_a_stock_by_its_shape_inside_the_year
         "{raw}"
     );
 
-    // Inside a season it only ever rises: six driver-seasons, every one
-    // monotone, and the anchor votes stock on that alone.
+    // Inside a season it only ever rises. Fifteen driver-seasons carry
+    // 4+ periods, but nine of them are flat at zero — only the six
+    // that move vote, every one monotone, and the anchor votes stock
+    // on the movers alone: the flat majority is not counter-evidence.
     let yearly = monotone("year");
     assert_eq!(yearly["verdict"], "stock", "{yearly}");
+    assert_eq!(yearly["entities"], 15, "{yearly}");
     assert_eq!(yearly["voted"], 6, "{yearly}");
     assert_eq!(yearly["agreement"], 1.0, "{yearly}");
 
