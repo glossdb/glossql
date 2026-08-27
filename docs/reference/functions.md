@@ -8,9 +8,9 @@ SELECT name, script FROM functions;
 ```
 
 A **measurement** RETURNS an aspect: run it with `SELECT <name>() FROM
-<subject>` and the result lands as a measurement row keyed by the
-workspace pin; the full value reads back via
-`GLOSSARY(<subject>::<aspect>)`. When a measurement cannot speak it
+<subject>` and the result lands as a measurement row recording what it
+read — it serves, and stays current, while those inputs are unchanged;
+the full value reads back via `GLOSSARY(<subject>::<aspect>)`. When a measurement cannot speak it
 returns `applicable: false` with a `reason` — an abstention is a
 complete answer, never an error. A **detector** has no RETURNS: it is
 named by a witness's `DETECTOR` clause, sees only the slots written

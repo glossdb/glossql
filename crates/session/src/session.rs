@@ -367,17 +367,17 @@ impl Session {
         self
     }
 
-    /// Re-measure: re-run every measurement whose newest landing stands
-    /// at an earlier pin — each as the extraction an agent would run,
-    /// `SELECT f() FROM subject`, built from the measurement row (the
-    /// AST directly, never statement text). A voice served and marked
-    /// (SPEC.md §7) is current again; each landing moves the version,
-    /// and the next read — the witnesses, the cube — rebuilds on the
-    /// new rows. A function no longer declared, or a subject the path
-    /// grammar cannot name (a relationship), cannot re-run and stays
-    /// marked. Every runnable extraction runs; the ones the engine
-    /// refused are reported together afterwards. Returns how many
-    /// landed.
+    /// Re-measure: re-run every measurement whose newest landing no
+    /// longer stands — a leg it read has moved — each as the
+    /// extraction an agent would run, `SELECT f() FROM subject`, built
+    /// from the measurement row (the AST directly, never statement
+    /// text). A voice served and marked (SPEC.md §7) is current again;
+    /// each landing moves the version, and the next read — the
+    /// witnesses, the cube — rebuilds on the new rows. A function no
+    /// longer declared, or a subject the path grammar cannot name (a
+    /// relationship), cannot re-run and stays marked. Every runnable
+    /// extraction runs; the ones the engine refused are reported
+    /// together afterwards. Returns how many landed.
     pub async fn remeasure(&self) -> Result<usize, SessionError> {
         use datafusion::sql::sqlparser::ast::Ident;
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
@@ -386,7 +386,13 @@ impl Session {
             .measurements
             .iter()
             .filter(|r| {
-                r.get(0) == Some(dataset.as_str()) && r.get(4) != Some(ctx.pin.text.as_str())
+                r.get(0) == Some(dataset.as_str())
+                    && !glossql_glossary::measurement_stands(
+                        &ctx.pin.text,
+                        &dataset,
+                        r.get(4),
+                        r.get(7),
+                    )
             })
             .filter_map(|r| {
                 let (function, subject) = (r.get(1)?, r.get(2)?);
@@ -846,7 +852,8 @@ impl Session {
                             "`{name}`: a measurement's body is one SQL query"
                         ))
                     })?;
-                    let output = self.compute_sql(body, &resolved.subject).await?;
+                    let (output, reads) =
+                        self.compute_sql(body, &resolved.subject, &resolved.dataset).await?;
                     // The aspect's schema is the one contract: nothing lands
                     // under an aspect without validating against it.
                     let (schema, _, grains) = store.aspect(&returns).await?.ok_or_else(|| {
@@ -898,6 +905,7 @@ impl Session {
                                 &returns,
                                 &ctx.pin,
                                 &output.to_string(),
+                                &read_names(&reads, &resolved.dataset),
                             )
                             .await?
                     }
@@ -911,16 +919,30 @@ impl Session {
     /// A SQL measurement body: the subject bound into the AST, planned
     /// through the statement pre-pass — same pin, same doors, same
     /// read-only guard as any read — executed, and shaped by the result
-    /// rule (`measure::body_value`).
+    /// rule (`measure::body_value`). Beside the value, what the body
+    /// READ: the plan's own table scans plus what resolution
+    /// accumulated (compute doors, relations) — the measurement
+    /// record's legs.
     async fn compute_sql(
         &self,
         mut statement: DFStatement,
         subject: &str,
-    ) -> Result<Value, SessionError> {
+        dataset: &str,
+    ) -> Result<(Value, crate::prepass::ReadSet), SessionError> {
         crate::measure::bind_subject(&mut statement, subject);
-        let plan = self.plan_statement(statement).await?;
+        let (plan, _, mut reads) = self.plan_statement_measured(statement).await?;
+        // A scanned name is a data table unless it is a store
+        // relation's; a door batch's scan (its factor string) matches
+        // no pin leg and falls out at the filter.
+        for name in crate::provenance::scanned_tables(&plan, dataset) {
+            if glossql_glossary::relation_columns(&name).is_some() {
+                reads.relations.insert(name);
+            } else {
+                reads.tables.insert(name);
+            }
+        }
         let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;
-        crate::measure::body_value(&batches)
+        Ok((crate::measure::body_value(&batches)?, reads))
     }
 
     /// One query, streaming: batches flow as
@@ -949,6 +971,23 @@ impl Session {
         &self,
         statement: datafusion::sql::parser::Statement,
     ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
+        let (plan, record, _) = self.plan_statement_measured(statement).await?;
+        Ok((plan, record))
+    }
+
+    /// [`Session::plan_statement_classed`] plus the resolution's read
+    /// set — what extraction records as the measurement's legs.
+    pub(crate) async fn plan_statement_measured(
+        &self,
+        statement: datafusion::sql::parser::Statement,
+    ) -> Result<
+        (
+            datafusion::logical_expr::LogicalPlan,
+            bool,
+            crate::prepass::ReadSet,
+        ),
+        SessionError,
+    > {
         // Boxed for the reason `query_stream_with_params` is.
         tracing::Instrument::instrument(
             Box::pin(self.plan_classed(statement)),
@@ -961,9 +1000,17 @@ impl Session {
     async fn plan_classed(
         &self,
         statement: datafusion::sql::parser::Statement,
-    ) -> Result<(datafusion::logical_expr::LogicalPlan, bool), SessionError> {
+    ) -> Result<
+        (
+            datafusion::logical_expr::LogicalPlan,
+            bool,
+            crate::prepass::ReadSet,
+        ),
+        SessionError,
+    > {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
         let record = resolved.touches_record();
+        let reads = resolved.reads.clone();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
         let plan = state.statement_to_plan(statement).await?;
         // The substrate's own read-only verification, at the one place a
@@ -981,7 +1028,7 @@ impl Session {
         read_only()
             .verify_plan(&plan)
             .map_err(|_| SessionError::SubstrateClosed("SELECT INTO".into()))?;
-        Ok((plan, record))
+        Ok((plan, record, reads))
     }
 
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
@@ -1391,6 +1438,36 @@ fn verb_of(statement: &SQLStatement) -> String {
 /// a clean bill, or the disclosed reason there is no account. Judging
 /// the tokens is the reader's job — this line only makes them visible
 /// at the decision moment.
+/// The measurement record's `reads`: the NAMES of the legs the
+/// computation read — `*` for the dataset's every table,
+/// `<dataset>.<table>` and `glossql.<relation>` individually, `**`
+/// when the reads could not be enumerated (exact-pin currency, the
+/// conservative floor), empty for a body that read nothing and always
+/// stands. Names, not snapshots: the currency rule
+/// ([`glossql_glossary::measurement_stands`]) filters both the
+/// recorded pin and the statement's by these names and compares, so a
+/// leg that appears or disappears is a change like any other. A
+/// scanned name that is no pin leg (a door batch's factor string)
+/// selects nothing on either side and can never decide.
+fn read_names(reads: &crate::prepass::ReadSet, dataset: &str) -> String {
+    if reads.everything {
+        return "**".into();
+    }
+    let mut names: Vec<String> = reads
+        .relations
+        .iter()
+        .map(|r| format!("glossql.{r}"))
+        .collect();
+    if reads.all_tables {
+        names.push("*".into());
+    } else {
+        names.extend(reads.tables.iter().map(|t| format!("{dataset}.{t}")));
+    }
+    names.sort();
+    names.dedup();
+    names.join(",")
+}
+
 fn cast_summary(casts: &glossql_import::CastAccounting) -> String {
     use glossql_import::CastAccounting;
     match casts {

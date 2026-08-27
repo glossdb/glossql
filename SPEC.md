@@ -303,8 +303,8 @@ the read never hides one:
   score say how badly.
 - `current` — served, basis unchanged.
 - `stale` — served **and marked**: the table's snapshot moved on since the
-  write, or the serving function voice was landed at an earlier pin (§7).
-  Staleness never suppresses judgment; it shows beside it.
+  write, or an input the serving function voice read has moved since it
+  landed (§7). Staleness never suppresses judgment; it shows beside it.
 
 ```sql
 SELECT * FROM GLOSSARY(orders.amount, all => true);
@@ -314,8 +314,8 @@ The raw read: one row per (subject, aspect, kind, witness) —
 `(subject, aspect, kind, witness, actor, body, written_at, current)` —
 every slot side by side; precedence between them is the reader's
 business. `kind` is the aspect's kind; who spoke is `actor`, under
-`witness`; `current` is false for a function voice landed at an earlier
-pin (§7).
+`witness`; `current` is false for a function voice an input of which
+has moved since it landed (§7).
 
 With no subject, `GLOSSARY()` sweeps the `USE`'d dataset. A subject serves
 itself and what lies under it: a table serves its columns and every
@@ -399,10 +399,12 @@ SELECT outliers() FROM orders.amount;
 Extraction computes at the read's pin — the set of inputs, data and
 declarations, the statement resolved — and lands one row in the
 `measurements` relation:
-`(dataset, function, subject, aspect, pin, value, computed_at)`.
-A later extraction at the same pin serves that row; any input moving
-makes a new pin, so there is no invalidation, only a miss, and old rows
-stand as the drift record. A body that carries a top-level `summary`
+`(dataset, function, subject, aspect, pin, value, computed_at, reads)`,
+`reads` naming the inputs the body actually read. A later extraction
+serves that row while those inputs are unchanged; one of them moving
+makes the next extraction compute — the effect scoped to its cause, so
+there is no invalidation, only a miss, a write the body never reads is
+not its staleness, and old rows stand as the drift record. A body that carries a top-level `summary`
 object serves the summary at extraction — the full value reads back
 through `GLOSSARY(subject::aspect)` (a large measurement's extraction
 result would otherwise be write-only at the door; the summary is the
@@ -421,9 +423,9 @@ land in `measurements`.
 
 A witness is declared per aspect, dataset-wide. Per (subject, aspect) it
 holds one slot per speaker: each function voice (the newest measurement
-of a function whose `RETURNS` names the aspect, §6 — whatever its pin,
-served and marked `current` only at the read's own), the agent's gloss,
-the human's gloss — one value each.
+of a function whose `RETURNS` names the aspect, §6 — served whatever
+its pin, marked `current` while what it read is unchanged), the agent's
+gloss, the human's gloss — one value each.
 
 ### 7.1 Declaration
 

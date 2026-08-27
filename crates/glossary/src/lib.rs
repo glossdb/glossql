@@ -23,7 +23,7 @@ pub use glossql_catalog::{Lake, Row};
 pub use rules::admit_grain;
 pub use store::{
     BriefCounts, LANDING_CASTS_PROP, LANDING_DROPPED_PROP, LANDING_SCANS_PROP, Pin, ReadContext,
-    Relation, Scope, Store, relation_columns,
+    Relation, Scope, Store, measurement_stands, relation_columns,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, GlossRow, MeasurementRow,

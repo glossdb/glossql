@@ -26,10 +26,13 @@ A statement's reads are pinned to a snapshot, so two scans inside one
 query cannot straddle a landing. A pin stays addressable after later
 commits, which makes it a durable key.
 
-**Measurements are not a cache.** Measurement rows are keyed by the pin
-of the data they measured. Old rows are the drift record, not
-garbage; reads never write; a duplicate measurement row is harmless.
-Re-measuring the same pin answers the same fact.
+**Measurements are not a cache.** Measurement rows carry the pin of
+the data they measured and the names of the inputs the computation
+read; a row stands, and serves, while those inputs are unchanged —
+scope the effect to its cause, so ordinary glossing work never churns
+the record. Old rows are the drift record, not garbage; reads never
+write; a duplicate measurement row is harmless. Re-measuring over
+unchanged inputs answers the same fact.
 
 ## One head
 

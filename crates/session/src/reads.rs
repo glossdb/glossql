@@ -644,6 +644,66 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
     })
 }
 
+/// What a compute door READS — the legs of the measurement record
+/// ([`crate::prepass::ReadSet`], the currency rule). Beside
+/// [`reads_the_record`] on purpose: a new arm in [`compute_batch`]
+/// decides its class here, in the same file. Only called for factors
+/// that resolved as compute doors; anything unlisted falls to
+/// `everything`, the conservative floor — a record never narrower
+/// than what was read.
+pub(crate) fn door_reads(
+    idents: &IdentNormalizer,
+    f: &TableFactor,
+    reads: &mut crate::prepass::ReadSet,
+) {
+    let TableFactor::Table { name, args, .. } = f else {
+        return;
+    };
+    let [part] = name.0.as_slice() else {
+        // `whatif.` and `misfit.` doors: a scenario replays a
+        // grounding with overrides — not enumerable from here.
+        reads.everything = true;
+        return;
+    };
+    let Some(door) = part.as_ident().map(|i| idents.normalize(i.clone())) else {
+        return;
+    };
+    let arg = args.as_ref().and_then(single_string_arg);
+    match (door.as_str(), args.is_some()) {
+        // One table, the argument's own: candidate enumeration over
+        // its columns.
+        ("derivation_candidates" | "hierarchy_candidates", _) => {
+            reads.tables.extend(arg);
+        }
+        // The whole dataset's tables; the anchor and check doors read
+        // the declared edges beside them.
+        ("relationship_candidates", _) => reads.all_tables = true,
+        ("behavior_anchors" | "relationship_checks", _) => {
+            reads.all_tables = true;
+            reads.relations.insert("relationships".into());
+        }
+        // The slot walkers: collapsed groundings (glossary, aspects,
+        // witnesses for the collapse) run over the landed data.
+        ("grounding_collisions" | "metric_band_walk", _) => {
+            reads.all_tables = true;
+            reads
+                .relations
+                .extend(["glossary".into(), "aspects".into(), "witnesses".into()]);
+        }
+        // The binding, not state: no pin leg moves it.
+        ("current_dataset", _) => {}
+        // A store relation read as a plain table — bare names only:
+        // `glossary` the relation is one leg, `GLOSSARY(subject)` the
+        // door is a collapse over half the store and falls through.
+        (name, false) if glossql_glossary::relation_columns(name).is_some() => {
+            reads.relations.insert(name.to_string());
+        }
+        // GLOSSARY(), ATTEST(), the cube's reads, and anything a later
+        // arm adds without a row here.
+        _ => reads.everything = true,
+    }
+}
+
 /// The one quoted string argument of a door, if that is what the args
 /// hold.
 fn single_string_arg(a: &datafusion::sql::sqlparser::ast::TableFunctionArgs) -> Option<String> {

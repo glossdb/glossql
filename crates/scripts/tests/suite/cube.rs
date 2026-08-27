@@ -1296,9 +1296,10 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
     // A gloss on the dataset overrides the floor and one rung: the
     // minute metric now stands at the hour under the hour rung (one
     // day back from its edge: 24 cells of 60), the month metric holds
-    // 12, and the day metric is untouched. The gloss moves the pin;
-    // the verdicts judged before it still admit (serve and mark), and
-    // the fact row says they are no longer current.
+    // 12, and the day metric is untouched. The gloss moves the pin and
+    // the cube rebuilds under the new settings — but the verdicts read
+    // the data, not this gloss, so they still stand and the fact rows
+    // stay current (the currency rule: what a measurement READ).
     session
         .execute(r#"GLOSS cube ON fin AS $${"resolution": "hour", "windows": {"hour": "1 day", "month": "12 months"}}$$;"#)
         .await
@@ -1309,11 +1310,11 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
     )
     .await;
     assert!(
-        axes.contains("by_minute | hour       | 1 day     | false"),
+        axes.contains("by_minute | hour       | 1 day     | true"),
         "{axes}"
     );
     assert!(
-        axes.contains("by_month  | month      | 12 months | false"),
+        axes.contains("by_month  | month      | 12 months | true"),
         "{axes}"
     );
     near(
@@ -1410,9 +1411,10 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     );
 
     // A gloss moves the pin: the next read misses and rebuilds. No
-    // dump, no invalidation — a complete key. The verdicts were judged
-    // at the old pin and are served and marked, so the rebuild admits
-    // on them — the numbers are current, the axes say they may not be.
+    // dump, no invalidation — a complete key. The verdicts read
+    // nothing this gloss touched, so they still stand: the rebuild
+    // admits on them and the axes stay current — glossing work does
+    // not churn the record.
     session
         .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
@@ -1429,26 +1431,16 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
             "SELECT bool_and(judged_current) FROM metric_axes();"
         )
         .await,
-        "false"
+        "true"
     );
 
-    // Re-measure: the session re-runs every measurement that stands
-    // from before the write. A landing moves the version, the key's
-    // other half — the next read misses, rebuilds, and the verdicts
-    // are current again.
-    let ran = session.remeasure().await.unwrap();
-    assert_eq!(
-        ran, 1,
-        "one measurement stood stale: the judge over the date column"
-    );
-    // Nothing stands stale twice. `measurements` is excluded from the pin
-    // (an output, not an input), so the landing above moved the version and
-    // not the pin — a re-measure that still finds work is comparing the
-    // wrong cell against it.
+    // Re-measure finds nothing: staleness is a moved leg of what a
+    // measurement read, and the gloss moved none of them. Nothing
+    // lands, the version holds, and the next read is a hit.
     assert_eq!(
         session.remeasure().await.unwrap(),
         0,
-        "the re-measure landed at the current pin"
+        "no measurement's own inputs moved"
     );
     near(
         number(&session, "SELECT count(*) FROM metric_series();").await,
@@ -1457,8 +1449,8 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     );
     assert_eq!(
         cache.builds(),
-        6,
-        "a moved version is a miss for every metric"
+        4,
+        "nothing landed: the same pin and version serve"
     );
     assert_eq!(
         cell(

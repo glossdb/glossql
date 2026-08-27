@@ -422,10 +422,12 @@ async fn function_scope_gates_visibility() {
 async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
     let (_dir, s) = store().await;
     let pin = s.pin("fin", &Default::default()).await.unwrap();
-    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 1}"#)
+    // `**`: the reads were not enumerable, so the row stands only at
+    // its exact pin.
+    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 1}"#, "**")
         .await
         .unwrap();
-    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 2}"#)
+    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 2}"#, "**")
         .await
         .unwrap();
     let ctx = rctx(&s).await;
@@ -442,6 +444,60 @@ async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
         .await
         .unwrap();
     assert!(Store::measurement_in(&moved, "fin", "orders", "profile").is_none());
+}
+
+/// The currency rule (SPEC.md §7): a measurement that recorded what it
+/// read stands while those legs are unchanged — a write to anything
+/// else, data or store, is not its staleness.
+#[tokio::test]
+async fn a_measurement_stands_while_what_it_read_is_unchanged() {
+    let (_dir, s) = store().await;
+    let at = |orders: i64, payments: i64| {
+        std::collections::HashMap::from([
+            ("orders".to_string(), orders),
+            ("payments".to_string(), payments),
+        ])
+    };
+    let pin = s.pin("fin", &at(7, 3)).await.unwrap();
+    // The recorded reads: the orders leg alone, by name — extraction
+    // records a body that scanned one table.
+    s.measurement_put(
+        "fin",
+        "profile",
+        "orders",
+        "stats",
+        &pin,
+        r#"{"n": 1}"#,
+        "fin.orders",
+    )
+    .await
+    .unwrap();
+
+    // payments moves: not a leg it read, the row stands.
+    let ctx = s.read_context("fin", vec![], at(7, 4)).await.unwrap();
+    assert!(
+        Store::measurement_in(&ctx, "fin", "orders", "profile").is_some(),
+        "a write it cannot see is not its staleness"
+    );
+
+    // A store write — a new function — moves a store leg; the
+    // measurement read data alone and still stands.
+    let Declaration::Function(f) = decl(r#"DECLARE FUNCTION noise FOR fin AS $$#{}$$;"#) else {
+        unreachable!()
+    };
+    s.declare_function(&f).await.unwrap();
+    let ctx = s.read_context("fin", vec![], at(7, 4)).await.unwrap();
+    assert!(
+        Store::measurement_in(&ctx, "fin", "orders", "profile").is_some(),
+        "a store write it cannot see is not its staleness"
+    );
+
+    // orders moves: the one leg it read, and the row no longer stands.
+    let ctx = s.read_context("fin", vec![], at(8, 4)).await.unwrap();
+    assert!(
+        Store::measurement_in(&ctx, "fin", "orders", "profile").is_none(),
+        "its own input moved"
+    );
 }
 
 #[tokio::test]
