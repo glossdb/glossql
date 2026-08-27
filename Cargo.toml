@@ -35,6 +35,12 @@ debug = "line-tables-only"
 debug = false
 
 [workspace.dependencies]
+# adbc rides the engine's arrow. Its own requirement spans two arrow
+# majors (>=58, <60), so a bare `cargo update` can split the tree by
+# resolving it to the newer one — and the import seam shares
+# RecordBatch types with datafusion, so a split does not compile.
+# After an update, converge the duplicate back onto the engine's copy:
+# `cargo update arrow-array@<added> --precise <the engine's>`.
 adbc_core = "0.24"
 adbc_driver_manager = "0.24"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
