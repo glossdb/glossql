@@ -27,12 +27,19 @@ query cannot straddle a landing. A pin stays addressable after later
 commits, which makes it a durable key.
 
 **Measurements are not a cache.** Measurement rows carry the pin of
-the data they measured and the names of the inputs the computation
-read; a row stands, and serves, while those inputs are unchanged —
-scope the effect to its cause, so ordinary glossing work never churns
-the record. Old rows are the drift record, not garbage; reads never
-write; a duplicate measurement row is harmless. Re-measuring over
-unchanged inputs answers the same fact.
+the data they measured and, in `reads`, the names of the inputs the
+computation read; a row stands, and serves, while those inputs are
+unchanged — scope the effect to its cause, so ordinary glossing work
+never churns the record. Old rows are the drift record, not garbage;
+reads never write; a duplicate measurement row is harmless.
+Re-measuring over unchanged inputs answers the same fact.
+
+The `reads` vocabulary, visible wherever the `measurements` relation
+is read as a table: `<dataset>.<table>` and `glossql.<relation>` name
+individual inputs, `*` is every table of the row's dataset, `**` means
+the reads could not be enumerated (the row then stands only at its
+exact pin — the conservative floor), and empty means the body read
+nothing at all, so its answer cannot change and always stands.
 
 ## One head
 

@@ -400,7 +400,10 @@ Extraction computes at the read's pin — the set of inputs, data and
 declarations, the statement resolved — and lands one row in the
 `measurements` relation:
 `(dataset, function, subject, aspect, pin, value, computed_at, reads)`,
-`reads` naming the inputs the body actually read. A later extraction
+`reads` naming the inputs the body actually read — tables and store
+relations by name, `*` for the dataset's every table, `**` when the
+reads could not be enumerated (the row then stands only at its exact
+pin), empty for a body that read nothing. A later extraction
 serves that row while those inputs are unchanged; one of them moving
 makes the next extraction compute — the effect scoped to its cause, so
 there is no invalidation, only a miss, a write the body never reads is
