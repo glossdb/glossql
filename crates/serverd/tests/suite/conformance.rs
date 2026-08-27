@@ -24,13 +24,15 @@ use std::path::{Path, PathBuf};
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
 /// partition; what remains is fire-and-forget serving work in the doors
-/// crate (the brief refresh, the response stream driver) and the apps
+/// crate (the brief refresh, the response stream driver, the TLS door's
+/// task per connection — the shape of axum's own low-level-rustls
+/// example, keeping the handshake off the accept path) and the apps
 /// frame stream — not engine-work scheduling.
 const CEILING: [(&str, usize); 4] = [
     ("block_in_place", 3),
     ("block_on", 1),
     ("thread_local!", 0),
-    ("tokio::spawn", 3),
+    ("tokio::spawn", 4),
 ];
 
 fn crates_dir() -> PathBuf {
