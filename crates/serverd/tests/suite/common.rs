@@ -90,8 +90,9 @@ pub fn token_for(sub: &str, iss: &str, aud: &str, exp: u64) -> String {
     )
 }
 
-/// What an issuer that ignores RFC 8707 mints: `aud` empty, `azp` the
-/// application the token was issued to.
+/// What an issuer that ignores RFC 8707 mints: `aud` empty, naming
+/// only the application the token was issued to. Bound to no resource,
+/// so bound to nothing here.
 pub fn token_from_app(sub: &str, azp: &str) -> String {
     sign(
         KID,

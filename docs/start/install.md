@@ -37,7 +37,7 @@ over the file, which is how a container is configured without one):
 |---|---|
 | `GLOSSQL_ISSUER` | the authorization server's issuer URL; its OpenID configuration names the keys tokens are verified against |
 | `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
-| `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
+| `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server, which the browser login on `/app` signs in and exchanges its code as |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
@@ -98,13 +98,10 @@ needs. Tokens must be RS256, ES256/384 or EdDSA, name their key
 (`kid`), and carry `iss`, `sub`, `exp`.
 
 A token is bound to this server by its `aud` naming the audience. MCP
-clients ask for that with the RFC 8707 `resource` parameter; an issuer
-that fills `aud` only from a parameter of its own mints `aud: []` for
-them, and such a token is bound instead by the application it was
-minted for —
-`azp`, or `client_id` as RFC 9068 spells it — which must be
-`GLOSSQL_CLIENT_ID`. A token for another application, or naming another
-resource, is refused either way.
+clients ask for that with the RFC 8707 `resource` parameter, so the
+issuer must be one that honours it — registering the audience as a
+resource the issuer can mint for is the whole of the setup. A token
+naming another resource, or naming none, is refused.
 
 How a client obtains a token is the client's flow with the issuer —
 [`connect.md`](connect.md) shows Claude Code's.
