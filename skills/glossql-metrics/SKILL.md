@@ -9,20 +9,97 @@ The deliverable is metrics the business trusts and the validations
 that say why. The `glossql` skill teaches the language and the reads;
 this one is judgment — what to decide, what to measure, what to ask.
 
-**There is no fixed order.** This is not a pipeline and the work is
-not a batch job: a person is talking to you while it happens. Ask the
-workspace what it affords and where it stands, then do the next thing
-that matters:
+## The contract
+
+Everything after this section is craft. This part is the contract:
+break one of these and the workspace accepts it, then something reads
+wrong later — a headline an order of magnitude off, a metric nobody
+can slice, a total that sums levels.
+
+**A join is grain-preserving or it is wrong.** `COUNT(*)` before and
+after must be equal, exactly. Check each join alone in a one-hop star:
+a join that multiplies rows multiplies every aggregate downstream of
+it, and nothing later says so.
+
+**Groundings serve rows.** The extract is the metric at its finest
+grain, with its dimension columns beside the value. A grounding that
+groups its dimensions away can never be sliced — the cube slices on
+the columns the extract serves, so `(date, value)` is a headline and
+nothing else. Aggregate at read, not in the grounding.
+
+**A ratio serves `num` and `den` beside `value`.** `sum(num)/sum(den)`
+is how the cube and the bands walk total it at every grain. Without
+them a ratio takes the flow verb and is summed — member ratios added
+into one absurd headline. Nothing infers this from the SQL.
+
+**A stock says so.** `"behavior": "stock"` as a top-level key in the
+body. Without it the cube takes the `behavior_evidence` verdict on the
+column the value sums; with neither, the metric reads as a flow, which
+sums levels and lies. `metric_axes().behavior_basis` says which
+happened — read it rather than assume.
+
+**Reads follow the behavior verb.** Flows sum over any partition.
+Stocks take the last period per window, `ORDER BY` mandatory — a
+running sum of a stock is arithmetic nonsense and ROLLUP across time
+is illegal. Ratios recompose from their operands at the window asked,
+never an average of finer ratios. A flow gap-fills a missing period to
+0; a stock never does, because a missing level is unknown.
+
+**`behavior`, `sign` and `grain` carry confidence 1.0.** The round
+never serves them to a human: statistics are your work, so a
+measurable assumption below 1.0 is a question nobody will ever be
+asked. Below-1.0 belongs to judgment dimensions — definition, scope,
+convention.
+
+**A served column is not an axis.** It enters when a verdict admits
+it: its own `dimension_relevance`, or the verdict on a key that
+reaches it through a declared relationship from a table the grounding
+scans. The `dimension` gloss is the read policy over that, human over
+agent. A column nobody judged and nobody glossed stays out, and a
+metric with no admitted axis is a number nobody can cut.
+
+**Collisions are checked after grounding**, with
+`detect_grounding_collisions`. Two concepts grounding to the same
+extract make every ratio between them compute 1.0, silently.
+
+**The registries are single glosses.** `formulas` and `definitions`
+each replace the whole map on write — read what stands before adding,
+or the second concept drops the first.
+
+### What must precede what
+
+The work is not a batch job: a person is talking to you while it
+happens, and the next thing that matters is a question for the
+workspace, not for a plan.
 
 ```sql
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
 ```
 
 Every surface the system affords, what each is extended through, what
-stands and what is open on it. It reports state, never an order — the
-judgment is yours.
+stands and what is open on it. It reports state, never an order. But
+these dependencies are real, and skipping one surfaces later as a
+number rather than an error:
+
+profile the source fields → judge roles and behavior → measure or
+admit the dimensions → ground at row grain → check behavior and axes
+with `metric_axes()` → aggregate through `metric_series()` → check
+collisions → close with the round.
+
+Before calling a metric done: `metric_axes()` names its behavior basis
+and its admitted axes, `owed` says what is unanswered, and
+`open_questions` carries the forms a human still has to rule.
+
+### The rest of the surface
+
 The sections below are the craft for each surface, not stages to march
-through. Read the one you need.
+through — but they are also where the work you have not thought to ask
+for lives. Landing that is not ETL, the join and hierarchy judgments,
+validations that say why a number is trustworthy, the bands walk, the
+scenario door (`whatif`) for what a change would do, the sample door
+(`misfit`) for which rows disagree, and authoring surfaces and apps
+for the people who read the result. Read the one you need, and know
+the others are there.
 
 ## Agree the topic before anything lands
 
