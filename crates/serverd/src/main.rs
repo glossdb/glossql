@@ -15,7 +15,11 @@ use glossql_scripts::KernelRuntime;
 use glossql_serverd::{DoorConfig, Gate, Login, Plane, bootstrap, router};
 
 const USAGE: &str = "usage: serverd [--workspace <dir>] [--addr <ip:port>] \
-[--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>]\n\
+[--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
+[--tls-cert <pem> --tls-key <pem>]\n\
+with --tls-cert and --tls-key the doors serve https — what a desktop \
+MCP client requires; certs/ in the repo holds a self-signed localhost \
+pair.\n\
 --workspace holds apps/ and weights/, and — without a catalog \
 connection — the catalog and warehouse themselves, which is why it is \
 required then. With GLOSSQL_CATALOG_URI set (a REST catalog; data and \
@@ -39,6 +43,9 @@ struct Args {
     /// A separate budget from the cubes: the cube cache holds its bytes
     /// outside the engine, so a deployment is sized for the sum.
     memory_limit_mb: u64,
+    /// The certificate and its key, both or neither: with them the
+    /// doors serve https ([`glossql_serverd::tls`]).
+    tls: Option<(PathBuf, PathBuf)>,
 }
 
 /// The authorization arrangement: one issuer, one registered
@@ -51,7 +58,8 @@ struct Auth {
     /// discovered.
     issuer: String,
     /// This server's canonical URI — the audience every token must name
-    /// (RFC 8707 §2). Defaults to the address the server listens on.
+    /// (RFC 8707 §2). Defaults to the address the server listens on,
+    /// under the scheme it serves.
     audience: String,
     /// The application registered at the issuer for this server, and
     /// its secret, which only the browser login uses.
@@ -62,7 +70,11 @@ struct Auth {
 impl Auth {
     /// Read through `get`, so the reading is testable without touching
     /// the process environment.
-    fn from(get: impl Fn(&str) -> Option<String>, addr: &str) -> Result<Auth, String> {
+    fn from(
+        get: impl Fn(&str) -> Option<String>,
+        addr: &str,
+        scheme: &str,
+    ) -> Result<Auth, String> {
         let required = |name: &str| {
             get(name).filter(|v| !v.trim().is_empty()).ok_or_else(|| {
                 format!("{name} is not set — the authorization arrangement lives in .env (see .env.example)")
@@ -74,7 +86,7 @@ impl Auth {
             client_secret: required("GLOSSQL_CLIENT_SECRET")?,
             audience: get("GLOSSQL_AUDIENCE")
                 .filter(|v| !v.trim().is_empty())
-                .unwrap_or_else(|| format!("http://{addr}")),
+                .unwrap_or_else(|| format!("{scheme}://{addr}")),
         })
     }
 }
@@ -86,11 +98,14 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut doors = DoorConfig::default();
     let mut cube_cache_mb = glossql_session::DEFAULT_CUBE_CACHE_MB;
     let mut memory_limit_mb = glossql_session::DEFAULT_MEMORY_LIMIT_MB;
+    let (mut tls_cert, mut tls_key) = (None, None);
     while let Some(flag) = argv.next() {
         let mut value = || argv.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
             "--workspace" => workspace = Some(PathBuf::from(value()?)),
             "--addr" => addr = value()?,
+            "--tls-cert" => tls_cert = Some(PathBuf::from(value()?)),
+            "--tls-key" => tls_key = Some(PathBuf::from(value()?)),
             "--row-cap" => {
                 doors.row_cap = value()?.parse().map_err(|e| format!("--row-cap: {e}"))?;
             }
@@ -105,12 +120,22 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
             other => return Err(format!("unknown flag {other}")),
         }
     }
+    let tls = match (tls_cert, tls_key) {
+        (Some(cert), Some(key)) => Some((cert, key)),
+        (None, None) => None,
+        _ => {
+            return Err("--tls-cert and --tls-key come together — \
+                 one names the certificate, the other its key"
+                .into());
+        }
+    };
     Ok(Args {
         workspace,
         addr,
         doors,
         cube_cache_mb,
         memory_limit_mb,
+        tls,
     })
 }
 
@@ -134,7 +159,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// thread.
 #[tokio::main]
 async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr)
+    let scheme = if args.tls.is_some() { "https" } else { "http" };
+    let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr, scheme)
         .map_err(|e| format!("{e}\n{USAGE}"))?;
     let (lake, workspace) = open_lake(args.workspace.clone())
         .await
@@ -175,11 +201,23 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     tracing::info!(
         addr = %args.addr,
+        scheme,
         "serverd listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
     );
-    tokio::select! {
-        served = axum::serve(listener, app).into_future() => served?,
-        () = stop() => tracing::info!("stopping"),
+    match &args.tls {
+        Some((cert, key)) => {
+            let config = glossql_serverd::tls::config(cert, key)?;
+            tokio::select! {
+                served = glossql_serverd::tls::serve(listener, app, config) => served?,
+                () = stop() => tracing::info!("stopping"),
+            }
+        }
+        None => {
+            tokio::select! {
+                served = axum::serve(listener, app).into_future() => served?,
+                () = stop() => tracing::info!("stopping"),
+            }
+        }
     }
     Ok(())
 }
@@ -316,7 +354,7 @@ mod tests {
                     .map(|(_, v)| v.to_string())
             }
         };
-        let none = Auth::from(env(&[]), "127.0.0.1:8080").unwrap_err();
+        let none = Auth::from(env(&[]), "127.0.0.1:8080", "http").unwrap_err();
         assert!(
             none.contains("GLOSSQL_ISSUER") && none.contains(".env"),
             "{none}"
@@ -325,6 +363,7 @@ mod tests {
         let issuer_only = Auth::from(
             env(&[("GLOSSQL_ISSUER", "https://issuer.test")]),
             "127.0.0.1:8080",
+            "http",
         )
         .unwrap_err();
         assert!(issuer_only.contains("GLOSSQL_CLIENT_ID"), "{issuer_only}");
@@ -335,6 +374,7 @@ mod tests {
                 ("GLOSSQL_CLIENT_ID", "app-1"),
             ]),
             "127.0.0.1:8080",
+            "http",
         )
         .unwrap_err();
         assert!(no_secret.contains("GLOSSQL_CLIENT_SECRET"), "{no_secret}");
@@ -346,6 +386,7 @@ mod tests {
                 ("GLOSSQL_CLIENT_SECRET", "s3cret"),
             ]),
             "127.0.0.1:8080",
+            "http",
         )
         .unwrap();
         assert_eq!(
@@ -361,6 +402,7 @@ mod tests {
                 ("GLOSSQL_AUDIENCE", "https://glossql.example"),
             ]),
             "127.0.0.1:8080",
+            "http",
         )
         .unwrap();
         assert_eq!(named.audience, "https://glossql.example");
@@ -428,6 +470,40 @@ mod tests {
             ("GLOSSQL_CATALOG_CREDENTIAL", "id:secret"),
         ]));
         assert!(refusal(both).contains("both set"));
+    }
+
+    /// TLS is two flags or none: a certificate without its key (or the
+    /// reverse) is refused at parse, and under the pair the audience
+    /// default carries the scheme actually served.
+    #[test]
+    fn the_tls_flags_come_together() {
+        let lone = parse(argv(&["--tls-cert", "certs/localhost.pem"]).into_iter())
+            .err()
+            .expect("a lone certificate is refused");
+        assert!(lone.contains("--tls-key"), "{lone}");
+        let pair = parse(
+            argv(&["--tls-cert", "certs/localhost.pem", "--tls-key", "certs/localhost-key.pem"])
+                .into_iter(),
+        )
+        .unwrap();
+        assert!(pair.tls.is_some());
+
+        let https = Auth::from(
+            |name: &str| {
+                [
+                    ("GLOSSQL_ISSUER", "https://issuer.test"),
+                    ("GLOSSQL_CLIENT_ID", "app-1"),
+                    ("GLOSSQL_CLIENT_SECRET", "s3cret"),
+                ]
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+            },
+            "127.0.0.1:8443",
+            "https",
+        )
+        .unwrap();
+        assert_eq!(https.audience, "https://127.0.0.1:8443");
     }
 
     /// Two budgets, two flags, and neither borrows the other's default.
