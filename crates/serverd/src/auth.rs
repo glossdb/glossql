@@ -21,13 +21,10 @@
 //!
 //! **What binds a token to this server.** RFC 8707, which the MCP
 //! authorization spec makes a MUST: the token's `aud` names this
-//! server's canonical URI. MCP clients ask for that with the `resource`
-//! parameter; an issuer that fills `aud` only from a parameter of its
-//! own, which no MCP client sends, mints `aud: []`. For those the gate
-//! binds on the other claim such an issuer does stamp: the application
-//! the token was minted for (`azp`, or `client_id` per RFC 9068), which
-//! must be this server's registered client. A token for another
-//! application, or for another resource, is refused either way.
+//! server's canonical URI, and MCP clients ask for exactly that with
+//! the `resource` parameter. A token that names another resource, or
+//! names none at all, is refused: an audience is what tells a token
+//! minted for this server apart from one minted for any other.
 //!
 //! Standing the server *witnesses* is a separate matter and is not
 //! governed here: an answer elicited mid-call lands with human standing
@@ -71,8 +68,9 @@ pub struct Gate {
     issuer: String,
     /// This server's canonical URI, the token's audience (RFC 8707 §2).
     resource: String,
-    /// The application registered at the issuer for this server — what
-    /// a token minted for it carries as `azp`.
+    /// The application registered at the issuer for this server: the
+    /// browser login signs in and exchanges its code as this client
+    /// ([`crate::login`]). What binds a token is `aud`, not this.
     client_id: String,
     endpoints: Endpoints,
     keys: RwLock<JwkSet>,
@@ -111,13 +109,6 @@ impl Audience {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        match self {
-            Audience::One(_) => false,
-            Audience::Many(all) => all.is_empty(),
-            Audience::None => true,
-        }
-    }
 }
 
 impl std::fmt::Display for Audience {
@@ -135,18 +126,6 @@ struct Claims {
     sub: String,
     #[serde(default)]
     aud: Audience,
-    /// The application the token was minted for, under either name it
-    /// goes by: `azp` (the OpenID Connect convention many issuers carry
-    /// onto access tokens) or `client_id` (RFC 9068 §2.2, the JWT
-    /// access-token profile).
-    azp: Option<String>,
-    client_id: Option<String>,
-}
-
-impl Claims {
-    fn application(&self) -> Option<&str> {
-        self.azp.as_deref().or(self.client_id.as_deref())
-    }
 }
 
 impl Gate {
@@ -224,22 +203,18 @@ impl Gate {
         let (decoding, algorithm) = key;
         let mut validation = Validation::new(algorithm);
         validation.set_issuer(&[&self.issuer]);
-        // The audience is checked below, where an empty one has a
-        // second reading; the library's own check knows only the first.
+        // The audience is checked below, against this server's own
+        // canonical URI, so a refusal can name both sides of the
+        // mismatch rather than only that there was one.
         validation.validate_aud = false;
         validation.set_required_spec_claims(&["exp", "iss", "sub"]);
         let claims = jsonwebtoken::decode::<Claims>(token, &decoding, &validation)
             .map_err(|e| e.to_string())?
             .claims;
-        let bound = claims.aud.names(&self.resource)
-            || (claims.aud.is_empty() && claims.application() == Some(&self.client_id));
-        if !bound {
+        if !claims.aud.names(&self.resource) {
             return Err(format!(
-                "the token is for {} (application {}), this server is {} (application {})",
-                claims.aud,
-                claims.application().unwrap_or("unnamed"),
-                self.resource,
-                self.client_id
+                "the token is for {}, this server is {}",
+                claims.aud, self.resource
             ));
         }
         if claims.sub.trim().is_empty() {

@@ -340,15 +340,14 @@ async fn a_missing_or_foreign_token_is_refused_with_the_discovery_pointer() {
     }
 }
 
-/// An issuer that ignores RFC 8707 mints `aud: []` for an MCP client,
-/// which asks with `resource=` and has no way to say `audience=`. Such a
-/// token is bound to this server by the other claim the issuer does
-/// stamp — `azp`, the application it was minted for — and by nothing
-/// looser: another application's token is refused, and so is one that
-/// names some other resource outright, whichever application it came
-/// from.
+/// The audience is the whole binding. RFC 8707, which the MCP
+/// authorization spec makes a MUST, has the client ask for this
+/// server's canonical URI with `resource=` and the issuer stamp it as
+/// `aud`. A token that names some other resource is refused, and so is
+/// one that names none — whatever application it was minted for, under
+/// either name that claim goes by.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_token_with_no_audience_is_bound_by_the_application() {
+async fn only_a_token_that_names_this_server_opens_it() {
     let (app, _dir) = app_on_fin().await;
     let query = |token: String| {
         let app = app.clone();
@@ -364,20 +363,20 @@ async fn a_token_with_no_audience_is_bound_by_the_application() {
         }
     };
 
-    let ours = query(common::token_from_app("ada", common::CLIENT_ID)).await;
+    let ours = query(common::token("ada")).await;
     assert_eq!(ours.status(), StatusCode::OK);
 
-    // RFC 9068 spells the same claim `client_id`; the binding reads
-    // either name.
+    let no_audience = query(common::token_from_app("ada", common::CLIENT_ID)).await;
+    assert_eq!(no_audience.status(), StatusCode::UNAUTHORIZED);
+
+    // RFC 9068 spells that same application claim `client_id`; neither
+    // spelling stands in for an audience.
     let rfc_9068 = query(common::token_with(json!({
         "iss": common::ISSUER, "aud": [], "client_id": common::CLIENT_ID,
         "sub": "ada", "exp": common::far_future(), "iat": 1
     })))
     .await;
-    assert_eq!(rfc_9068.status(), StatusCode::OK);
-
-    let other_app = query(common::token_from_app("ada", "some-other-app")).await;
-    assert_eq!(other_app.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(rfc_9068.status(), StatusCode::UNAUTHORIZED);
 
     let elsewhere = query(common::token_with(json!({
         "iss": common::ISSUER, "aud": "https://elsewhere.example", "azp": common::CLIENT_ID,

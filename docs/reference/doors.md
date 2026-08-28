@@ -103,12 +103,11 @@ boot and names the key set (`jwks_uri`), which is fetched then and
 again only when a token names a key not in it. `GLOSSQL_AUDIENCE` is
 this server's canonical URI, which a token's `aud` names (RFC 8707 §2)
 — a token minted for another resource does not open this one.
-`GLOSSQL_CLIENT_ID` is the application registered at the issuer for
-this server: when an issuer that does not implement RFC 8707 mints
-`aud: []` for an MCP client (which asks with `resource=`, never with
-the issuer's own `audience=`), the token is bound by the application
-it was minted for instead — `azp`, or `client_id` as RFC 9068 spells
-it — which must be that application. Signature (by the key
+An issuer that does not honour `resource=` cannot mint a token this
+server accepts, because nothing else in a token says which resource it
+was meant for. `GLOSSQL_CLIENT_ID` is the application registered at the
+issuer for this server, which the browser login signs in and exchanges
+its code as; it binds nothing. Signature (by the key
 the token's `kid` names, with the algorithm that key admits), `iss`,
 `exp` and the binding are checked on every request; a refusal is
 logged with its reason, never with the token. A server that cannot
