@@ -167,8 +167,26 @@ and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
 or `human` / `agent` where a `dimension` gloss did), `bucketed` (the
 dimensions wider than 24 members, served as their top 23 by weight
-plus `'other'`), `alternative`, `alternative_error`.
+plus `'other'`), `unadmitted` and `unadmitted_why` (every served
+column that is neither the value, a ratio's half nor time-typed and
+is not an axis, and at the same index what kept it out with the road
+back in: no verdict on its subject — run `dimension_relevance()` over
+it or gloss `dimension`; a verdict that abstained with no declared
+relationship reaching a judged key; a `dimension` gloss of `none`; an
+expression no verdict can reach; one member across the frame; a rank
+below the cap of four), `alternative`, `alternative_error`.
 Record-class: it says what the judged verdicts admitted.
+
+The same row is what a grounding's write answers with: `GLOSS` on a
+QUERY aspect returns the metric's fact at the pin the write moved to,
+in this shape, in place of `{"done"}` — the plan stage alone, so
+`bucketed` is empty, the member floor is not yet applied and no rival
+is run; everything else is what this read will say. A grounding whose
+SQL does not plan abstains there with the engine's refusal; the gloss
+has landed either way. The row judges the grounding that serves, so
+after a human's own grounding on the aspect it is theirs the row
+describes, and a call bound to another dataset, or to none, abstains
+naming the `USE` that judges it.
 
 A served column is an axis when a verdict admits it: its own
 `dimension_relevance`, or — for a label in a dimension table, a

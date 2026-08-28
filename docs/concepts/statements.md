@@ -24,7 +24,8 @@ normative definition; this page is the working map.
 - `DECLARE ASPECT` — a vocabulary entry: a name, a JSON Schema, a kind
   ([aspects](aspects.md)).
 - `GLOSS` — the one write verb for knowledge: applies an aspect to a
-  subject with a JSON body.
+  subject with a JSON body. On a QUERY aspect — a metric's grounding —
+  the outcome is the metric's fact row ([reads](../reference/reads.md)).
 - `DECLARE FUNCTION` — a measurement, voice, or detector; the body
   rides the declaration ([functions](functions.md)).
 - `DECLARE WITNESS` — who may speak an aspect and what adjudicates the

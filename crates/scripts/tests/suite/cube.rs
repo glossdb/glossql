@@ -233,11 +233,26 @@ async fn a_label_reached_through_a_declared_edge_is_an_axis_on_the_keys_verdict(
     )
     .await;
 
-    // No edge yet: the key admits itself, the label stays out.
+    // No edge yet: the key admits itself, the label stays out — and
+    // the fact row names it, with its abstention and the act that
+    // admits it, beside the venue nobody judged.
     let before = grid(&session, AXES).await;
     assert!(
         before.contains("[cid] | [results.constructor_id] | [measurement]"),
         "{before}"
+    );
+    let gaps = grid(
+        &session,
+        "SELECT unadmitted, unadmitted_why FROM metric_axes();",
+    )
+    .await;
+    assert!(gaps.contains("[team, venue]"), "{gaps}");
+    assert!(
+        gaps.contains(
+            "dimension_relevance abstained on constructors.label (near-key axis \
+             (distinct/filled >= 0.9)), and no declared relationship reaches it"
+        ) && gaps.contains("no verdict on results.venue — run dimension_relevance()"),
+        "{gaps}"
     );
 
     session
@@ -250,6 +265,11 @@ async fn a_label_reached_through_a_declared_edge_is_an_axis_on_the_keys_verdict(
             "[cid, team] | [results.constructor_id, results.constructor_id] | [measurement, measurement]"
         ),
         "the label rides the key's verdict, named as its basis: {after}"
+    );
+    let gaps = grid(&session, "SELECT unadmitted FROM metric_axes();").await;
+    assert!(
+        gaps.contains("[venue]"),
+        "only the unjudged venue stays out: {gaps}"
     );
     let members = grid(
         &session,
@@ -311,6 +331,11 @@ async fn a_dimension_gloss_is_the_read_policy_over_the_measured_admission() {
         axes.contains("[cid] | [results.constructor_id] | [measurement]"),
         "none closes the axis whatever was measured: {axes}"
     );
+    let gaps = grid(&session, "SELECT unadmitted_why FROM metric_axes();").await;
+    assert!(
+        gaps.contains("closed by a dimension gloss on constructors.label (human: none)"),
+        "{gaps}"
+    );
 
     human
         .execute(r#"GLOSS dimension ON results.venue AS $${"value": "primary"}$$;"#)
@@ -322,6 +347,110 @@ async fn a_dimension_gloss_is_the_read_policy_over_the_measured_admission() {
             "[venue, cid] | [results.venue, results.constructor_id] | [human, measurement]"
         ),
         "a column no verdict admits enters on the gloss alone, first: {axes}"
+    );
+}
+
+/// The write is where a grounding's shape is decided, so the write
+/// answers with the fact row the cube will stand on — at the pin it
+/// moved to, before any read. Nothing is refused: a grounding whose
+/// SQL does not plan lands and abstains in its row with the engine's
+/// refusal; one whose date column nobody judged names the profiler;
+/// one whose slice columns nobody judged lists each with the act that
+/// admits it, and the verb it will be summed by says it was a
+/// default. The row is the plan stage — the member floor and the
+/// bucketing are the scan's — and `metric_axes()` says the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grounding_write_answers_with_the_metrics_fact() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#],
+    )
+    .await;
+    let ground = |sql: &str| format!(r#"GLOSS points ON fin AS $${{"sql": "{sql}"}}$$;"#);
+    const FRAME: &str = "SELECT r.date, r.constructor_id AS cid, r.venue AS venue, \
+                         r.points AS value FROM results r";
+
+    // Nobody judged the date column: the row abstains and names the
+    // profiler — and the gloss has landed.
+    let row = grid(&session, &ground(FRAME)).await;
+    assert!(row.contains("| points "), "{row}");
+    assert!(
+        row.contains("| false ") && row.contains("no judged time column"),
+        "{row}"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT count(*) FROM glossary WHERE aspect = 'points';"
+        )
+        .await,
+        "1"
+    );
+
+    // The date judged, the slice columns not: the row admits nothing
+    // and names each column with the act that admits it; the verb is
+    // a flow because nothing said otherwise, and the row says so.
+    session
+        .execute("SELECT judge_time() FROM results.date;")
+        .await
+        .unwrap();
+    let row = grid(&session, &ground(FRAME)).await;
+    assert!(row.contains("| true "), "{row}");
+    assert!(
+        row.contains("| flow ") && row.contains("| default "),
+        "{row}"
+    );
+    assert!(row.contains("| [] "), "no axis admitted: {row}");
+    assert!(row.contains("[cid, venue]"), "{row}");
+    assert!(
+        row.contains("no verdict on results.constructor_id — run dimension_relevance() over it")
+            && row.contains("no verdict on results.venue — run dimension_relevance()"),
+        "{row}"
+    );
+
+    // One column judged: it is an axis in the write's row and in the
+    // read's, and the other is still named.
+    session
+        .execute("SELECT judge_axis() FROM results.constructor_id;")
+        .await
+        .unwrap();
+    let row = grid(&session, &ground(FRAME)).await;
+    assert!(
+        row.contains("[cid]")
+            && row.contains("[results.constructor_id]")
+            && row.contains("[measurement]")
+            && row.contains("[venue]"),
+        "{row}"
+    );
+    let read = grid(
+        &session,
+        "SELECT dims, basis, admitted_by, unadmitted FROM metric_axes();",
+    )
+    .await;
+    assert!(
+        read.contains("[cid]")
+            && read.contains("[results.constructor_id]")
+            && read.contains("[measurement]")
+            && read.contains("[venue]"),
+        "the read says the same: {read}"
+    );
+
+    // A grounding the engine refuses lands too, and its row carries
+    // the refusal rather than a read discovering it later.
+    let row = grid(&session, &ground("SELECT nope AS value FROM results")).await;
+    assert!(
+        row.contains("| false ") && row.contains("not served") && row.contains("nope"),
+        "{row}"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT count(*) FROM glossary WHERE aspect = 'points';"
+        )
+        .await,
+        "4"
     );
 }
 
@@ -1054,6 +1183,18 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         )
         .await,
         "region"
+    );
+    // — named as the gap it is, with the act that closes it; the
+    // date columns are the time axis's candidates, never listed here
+    let gap = grid(
+        &session,
+        "SELECT unadmitted, unadmitted_why FROM metric_axes() WHERE metric = 'revenue';",
+    )
+    .await;
+    assert!(gap.contains("[channel]"), "{gap}");
+    assert!(
+        gap.contains("no verdict on lines.channel — run dimension_relevance() over it"),
+        "{gap}"
     );
 
     // the irregular column alone anchors at the floor: day cells over

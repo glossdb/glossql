@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
-    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema, GetPromptRequestParams,
-    GetPromptResponse, GetPromptResult, Implementation, InputRequest, InputRequests,
-    InputRequiredResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
+    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema,
+    GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation, InputRequest,
+    InputRequests, InputRequiredResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, Prompt, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
     ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
     ServerInfo, Tool,
@@ -26,16 +26,20 @@ use glossql_session::{Plane, Session, SessionError};
 
 use crate::wire;
 
-const INSTRUCTIONS: &str = "glossql workspace server. One tool: `glossql` executes \
-statements — declarations, USE, GLOSS, extraction, probes, and plain SQL. Live state \
-(datasets, functions, aspects, witnesses, sources, glossary, measurements, imports) reads as \
-plain tables through the tool. The skills teach the grammar and the flows, and this door \
-serves them as resources and as prompts of the same names: read `skill://glossql/SKILL.md` \
-before writing statements; `glossql-metrics`, `glossql-functions` and `glossql-apps` cover \
-their flows; `doc://SPEC.md` and `doc://grammar.ebnf` are the normative language artifacts. \
-This door is one endpoint over the whole workspace and holds no binding between calls: \
-start with SELECT * FROM datasets, then open every call that names a dataset's tables \
-or columns with `USE <dataset>;`. A call without one is workspace-scoped.";
+const INSTRUCTIONS: &str = "glossql workspace server — one SQL-shaped surface over a \
+workspace's data and its context. The objects: a dataset holds tables, landed by recipes \
+from sources; an aspect is a named JSON contract; a gloss speaks an aspect's value on a \
+subject (a table, a column, the dataset itself), and a QUERY aspect's gloss is SQL, served \
+back as `read.<name>()` — a metric, a current fact, or a derived relation, which the \
+metrics skill tells apart; functions measure, and their measurements are the evidence; \
+witnesses adjudicate the voices on a slot; a human's ruling outranks every agent gloss. \
+One tool, `glossql`, runs statements and plain SQL — its description is the contract for \
+every call — and live state is read through it, never assumed. Read \
+`skill://glossql/SKILL.md` before the first statement and \
+`skill://glossql-metrics/SKILL.md` before landing a source or grounding anything; each is \
+one page and names its references (`skill://<name>/references/…`) for the moment they \
+matter. The docs pages are served as `doc://docs/…`, the language as `doc://SPEC.md` and \
+`doc://grammar.ebnf`. Start with SELECT * FROM datasets.";
 
 /// What the brief is decided on: the store's counts plus the open
 /// question count. Movement is a comparison of these FACTS — never of
@@ -106,38 +110,40 @@ impl GlossqlMcp {
         let questions = open_question_count(plane).await.unwrap_or(0);
         match plane.store().brief_counts().await {
             Ok(counts) => {
-                let mut line = format!(
-                    "Live now: {} human writing{} stand{}",
-                    counts.human_writings,
-                    if counts.human_writings == 1 { "" } else { "s" },
-                    match &counts.latest_human_at {
-                        Some(at) => format!(" (latest {at})"),
-                        None => String::new(),
-                    },
-                );
+                // Debt first, presence last: what owes an act is what
+                // the reader acts on, and a count of human writings is
+                // the record's size, not a task. The owed acts are
+                // exactly `owed`'s kinds that the whole workspace can
+                // count; the questions are `open_questions`'s rows.
+                let mut owed = Vec::new();
+                if counts.rulings_owed > 0 {
+                    owed.push(format!(
+                        "{} ruling{} await{} the fold-in — re-record each ruled grounding \
+                         citing its ruling",
+                        counts.rulings_owed,
+                        if counts.rulings_owed == 1 { "" } else { "s" },
+                        if counts.rulings_owed == 1 { "s" } else { "" },
+                    ));
+                }
                 if counts.approvals_pending > 0 {
-                    line.push_str(&format!(
-                        "; {} approved recipe change{} await the re-declare",
+                    owed.push(format!(
+                        "{} approved recipe change{} await{} the re-declare",
                         counts.approvals_pending,
                         if counts.approvals_pending == 1 {
                             ""
                         } else {
                             "s"
                         },
-                    ));
-                }
-                if counts.rulings_owed > 0 {
-                    line.push_str(&format!(
-                        "; {} ruling{} await{} the fold-in — re-record each ruled \
-                         grounding citing its ruling",
-                        counts.rulings_owed,
-                        if counts.rulings_owed == 1 { "" } else { "s" },
-                        if counts.rulings_owed == 1 { "s" } else { "" },
+                        if counts.approvals_pending == 1 {
+                            "s"
+                        } else {
+                            ""
+                        },
                     ));
                 }
                 if questions > 0 {
-                    line.push_str(&format!(
-                        "; {} judgment question{} stand{} open for the human (assumptions \
+                    owed.push(format!(
+                        "{} judgment question{} stand{} open for the human (assumptions \
                          below full confidence — conventions and definitions, never \
                          statistics) — sweep the round (forms ride record reads: call \
                          with a glossary/GLOSSARY()/ATTEST() read until it stays \
@@ -147,8 +153,22 @@ impl GlossqlMcp {
                         if questions == 1 { "s" } else { "" },
                     ));
                 }
+                let mut line = if owed.is_empty() {
+                    "Live now: nothing owed, the round is quiet".to_string()
+                } else {
+                    format!("Live now: {}", owed.join("; "))
+                };
+                line.push_str(&format!(
+                    ". Record: {} human writing{}{}.",
+                    counts.human_writings,
+                    if counts.human_writings == 1 { "" } else { "s" },
+                    match &counts.latest_human_at {
+                        Some(at) => format!(", latest {at}"),
+                        None => String::new(),
+                    },
+                ));
                 line.push_str(
-                    ". Start with the brief the glossql skill teaches — human slots, \
+                    " Start with the brief the glossql skill teaches — human slots, \
                      contested, red bands, the open queue — before acting.",
                 );
                 (Some(BriefFacts { counts, questions }), line)
@@ -475,10 +495,20 @@ impl GlossqlMcp {
         Tool::new(
             "glossql",
             format!(
-                "Execute glossql statements against the workspace and return their outcomes. \
-                 Row output is capped at {} rows; `truncated` says when a result held more. \
-                 Metadata reads — GLOSSARY(), ATTEST(), and the store relations — sent as \
-                 their own single statement are uncapped.",
+                "Execute glossql statements against the workspace; one outcome per statement. \
+                 Every call opens unbound: begin any call that names a dataset's tables or \
+                 columns with `USE <dataset>;` — a call without one is workspace-scoped. \
+                 Outcomes: a read is `{{columns, rows, row_count, truncated}}`, rows capped at \
+                 {} (GLOSSARY(), ATTEST() and the store relations sent as their own single \
+                 statement are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
+                 QUERY aspect — a metric's grounding — answers with the metric's fact row in \
+                 the `metric_axes()` shape: whether the SQL plans, its behavior verb and where \
+                 that came from, the axes admitted, and every served column not admitted with \
+                 the road back in — read it before the next write. A refused statement is an \
+                 error naming its place; what landed before it stayed landed (`{{landed}}`). \
+                 While the workspace holds open questions, a call that only reads the record \
+                 (glossary, GLOSSARY(), ATTEST(), the store relations) carries the human's \
+                 question forms; landings and data reads never do.",
                 self.doors.row_cap
             ),
             schema,
@@ -787,6 +817,20 @@ impl ServerHandler for GlossqlMcp {
                 .with_mime_type(d.mime)
                 .with_size(d.body.len() as u64)
         }));
+        // The trees: a skill's references after its SKILL.md, then the
+        // docs pages — each listed by its first heading, which is what
+        // tells a reader when the page is worth its tokens.
+        resources.extend(
+            crate::skills::REFERENCES
+                .iter()
+                .chain(crate::skills::PAGES.iter())
+                .map(|p| {
+                    Resource::new(p.uri(), p.path)
+                        .with_description(p.title())
+                        .with_mime_type("text/markdown")
+                        .with_size(p.body.len() as u64)
+                }),
+        );
         Ok(ListResourcesResult {
             resources,
             ttl_ms: Some(3_600_000),
@@ -803,14 +847,12 @@ impl ServerHandler for GlossqlMcp {
         let (mime, body) = crate::skills::read(&request.uri).ok_or_else(|| {
             McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
         })?;
-        Ok(
-            ReadResourceResult::new(vec![
-                ResourceContents::text(body, request.uri).with_mime_type(mime),
-            ])
-            .with_ttl_ms(3_600_000)
-            .with_cache_scope(rmcp::model::CacheScope::Private)
-            .into(),
-        )
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(body, request.uri).with_mime_type(mime),
+        ])
+        .with_ttl_ms(3_600_000)
+        .with_cache_scope(rmcp::model::CacheScope::Private)
+        .into())
     }
 
     /// Each skill is also a prompt of the same name — the slash-command

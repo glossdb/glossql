@@ -943,6 +943,38 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
     assert!(e.to_string().contains("no arguments"), "{e}");
 }
 
+/// A grounding's write answers with its fact from the channel that can
+/// judge it. Bound to nothing — a dataset-grain gloss resolves its
+/// subject without a `USE` — the grounding's table names would not
+/// resolve here, so the row abstains and names the `USE` that judges
+/// it; the gloss lands either way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grounding_written_unbound_lands_and_names_where_it_is_judged() {
+    let (_dir, session) = agent_session().await;
+    run(
+        &session,
+        r#"DECLARE DATASET fin SET (purpose: 'metrics');
+           DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
+    )
+    .await;
+    let row = table(
+        &session,
+        r#"GLOSS dso ON fin AS $${"sql": "SELECT d AS date, 1.0 AS value FROM t"}$$;"#,
+    )
+    .await;
+    assert!(row.contains("| dso "), "{row}");
+    assert!(
+        row.contains("| false ") && row.contains("bound to no dataset") && row.contains("USE fin;"),
+        "{row}"
+    );
+    let landed = table(
+        &session,
+        "SELECT count(*) AS n FROM glossary WHERE aspect = 'dso';",
+    )
+    .await;
+    assert!(landed.contains("| 1 "), "{landed}");
+}
+
 /// A measurement is a query (stage 5, §7e): the skill's own
 /// quick-validation flow, end to end — declare the aspect and a
 /// SQL-bodied function, extract, read the landed value back.

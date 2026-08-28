@@ -24,11 +24,11 @@ follow the corpus-first process below.
   `methods/`, `architecture/`, and the concern pages). For agents and
   humans alike; enterprise-customer quality, constantly current.
   Never normative language prose.
-- `skills/` — the product skills, one `SKILL.md` each, where a
-  door-connected agent learns the language; embedded in serverd and
-  served on the MCP door as resources and prompts, gated by the test
-  suite. `.claude/skills/` keeps the substrate skill for building the
-  server.
+- `skills/` — the product skills, a `SKILL.md` and its `references/`
+  each, where a door-connected agent learns the language; embedded in
+  serverd and served on the MCP door as resources and prompts, gated
+  by the test suite. `.claude/skills/` keeps the substrate skill for
+  building the server.
 - `.claude/notes/` (gitignored) — working notes tied to an open
   issue; deleted when it closes.
 

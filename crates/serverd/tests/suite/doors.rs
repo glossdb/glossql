@@ -813,11 +813,30 @@ async fn the_mcp_door_serves_the_skills_as_resources_and_prompts() {
         "skill://glossql-metrics/SKILL.md",
         "skill://glossql-functions/SKILL.md",
         "skill://glossql-apps/SKILL.md",
+        "skill://glossql-metrics/references/ground.md",
         "doc://SPEC.md",
         "doc://grammar.ebnf",
+        "doc://docs/reference/reads.md",
     ] {
         assert!(uris.contains(&uri), "{uri} missing from {uris:?}");
     }
+    // A tree page reads back as the file, under the skill's own root.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            json!({"jsonrpc": "2.0", "id": 8, "method": "resources/read",
+                   "params": {"_meta": meta(), "uri": "doc://docs/reference/reads.md"}}),
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        body["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("metric_axes()"),
+        "{body}"
+    );
 
     let body = expect_ok(
         mcp(
@@ -831,8 +850,7 @@ async fn the_mcp_door_serves_the_skills_as_resources_and_prompts() {
     let text = body["result"]["contents"][0]["text"].as_str().unwrap();
     assert_eq!(text, glossql_serverd::skills::SKILLS[0].body, "{body}");
     assert_eq!(
-        body["result"]["contents"][0]["mimeType"],
-        "text/markdown",
+        body["result"]["contents"][0]["mimeType"], "text/markdown",
         "{body}"
     );
 
@@ -847,10 +865,9 @@ async fn the_mcp_door_serves_the_skills_as_resources_and_prompts() {
     let prompts = body["result"]["prompts"].as_array().unwrap();
     assert_eq!(prompts.len(), 4, "{body}");
     assert!(
-        prompts.iter().all(|p| !p["description"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty()),
+        prompts
+            .iter()
+            .all(|p| !p["description"].as_str().unwrap_or_default().is_empty()),
         "{body}"
     );
 
@@ -1879,16 +1896,26 @@ async fn the_brief_rides_the_call_that_moved_it() {
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 120, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let blocks = body["result"]["content"].as_array().unwrap();
+    // The grounding's write answers with its fact row through the
+    // door — the `metric_axes()` shape, abstaining here with its
+    // reason (this app declares no `cube` aspect) and landed all the
+    // same.
+    let outcomes = blocks[0]["text"].as_str().unwrap();
+    assert!(
+        outcomes.contains("\"unadmitted\"") && outcomes.contains("\"applicable\":false"),
+        "{outcomes}"
+    );
     let brief = blocks
         .iter()
         .find(|b| b["text"].as_str().is_some_and(|t| t.starts_with("brief: ")));
     let brief = brief.unwrap_or_else(|| panic!("the landing moved the brief: {body}"));
+    let brief = brief["text"].as_str().unwrap();
+    assert!(brief.contains("judgment question"), "{body}");
+    // Debt before presence: what owes an act leads, the record's size
+    // closes — a count of human writings is never read as work.
     assert!(
-        brief["text"]
-            .as_str()
-            .unwrap()
-            .contains("judgment question"),
-        "{body}"
+        brief.find("judgment question") < brief.find("Record: 0 human writings"),
+        "{brief}"
     );
 
     // A quiet read moves nothing and carries nothing.
