@@ -105,18 +105,25 @@ pub fn router(
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
     let mcp_doors = doors.clone();
-    // One revision, 2026-07-28, and nothing behind it. Sessions were
-    // removed there (SEP-2567), so `legacy_session_mode: false` is the
-    // whole of it: no `Mcp-Session-Id` minted or echoed, no GET stream,
-    // no DELETE, no resumability. It is also what puts `json_response`
-    // in play — the library honours it only off the session path.
-    // `stateless_protocol_metadata_required` then holds a caller to the
-    // per-request metadata this revision requires, so a request that
-    // omits it is refused rather than read as an older one's.
+    // The door speaks 2026-07-28 first and serves every revision the
+    // library carries beneath it (2025-11-25 today) by negotiation —
+    // statelessly for all of them: `legacy_session_mode: false` means
+    // no `Mcp-Session-Id` minted or echoed, no GET stream, no DELETE,
+    // no resumability, whatever revision a caller negotiated. It is
+    // also what puts `json_response` in play — the library honours it
+    // only off the session path.
+    //
+    // A request without the per-request version marker is served at
+    // the server's own revision rather than refused
+    // (`stateless_protocol_metadata_required: false`): the spec has
+    // the server assume a default when the header is absent, and the
+    // clients that omit it are real — ChatGPT's stamps some startup
+    // requests and not others, stdio bridges stamp none. A client
+    // that stamps every request (Claude Code) is unaffected.
     let mut config = StreamableHttpServerConfig::default();
     config.json_response = true;
     config.legacy_session_mode = false;
-    config.stateless_protocol_metadata_required = true;
+    config.stateless_protocol_metadata_required = false;
     // The connect-time brief: shared across handler instances, boot-
     // filled, refreshed after every writing call (see
     // mcp::refresh_brief). One shared baseline, no per-actor state.
