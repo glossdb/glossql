@@ -638,6 +638,7 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "attest"
                 | "grounding_collisions"
                 | "metric_band_walk"
+                | "band_points"
                 | "metric_axes"
                 | "behavior_anchors"
         )
@@ -820,6 +821,45 @@ pub(crate) async fn compute_batch(
                 (crate::search::metric_band_walk(shared, &dataset).await?).into(),
             ))
         }
+        // The files under a source's location, through the engine's
+        // object store — what a recipe can name, so discovering them
+        // needs no door but this one.
+        ("source_files", Some(a)) => {
+            let source = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "source_files takes one quoted source: source_files('erp')".into(),
+                )
+            })?;
+            let settings = shared.store.source_settings(&source).await?.ok_or(
+                SessionError::Store(glossql_glossary::Error::Unknown {
+                    what: "source",
+                    name: source.clone(),
+                }),
+            )?;
+            let spec = glossql_import::SourceSpec::from_settings(&source, &settings)?;
+            let files = glossql_import::list_source(&spec).await?;
+            Ok(Some(source_files_batch(files).into()))
+        }
+        // The groundings the cube does not chart — facts and relations
+        // — served whole, the value where the frame is one row.
+        ("fact_values", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "fact_values() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::search::fact_values(shared).await?).into()))
+        }
+        // The recorded walk, flattened: what `metric_bands` landed for
+        // the bound dataset, one row per metric per point.
+        ("band_points", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "band_points() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::search::band_points(shared).await?).into()))
+        }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(
@@ -979,11 +1019,35 @@ pub(crate) async fn served_grounding(
 
 // -- argument decoding ---------------------------------------------------
 
+/// The context a record read runs in: the dataset's pins — or, when
+/// the subject resolved to a declared source with no `USE` bound
+/// ([`crate::subject::resolve_path`]), the store alone. Source-grain
+/// slots are workspace rows and no table pin belongs to them; walked
+/// as a dataset, the source's name is a namespace the catalog does not
+/// hold, and the one read meant to run datasetless would refuse.
+async fn read_context_at(shared: &Shared, dataset: &str) -> Result<ReadContext, SessionError> {
+    let unbound = shared.dataset.read().expect("state lock").is_none();
+    if unbound
+        && !shared.store.dataset_exists(dataset).await?
+        && shared.store.source_settings(dataset).await?.is_some()
+    {
+        return Ok(shared
+            .store
+            .read_context(
+                dataset,
+                vec![dataset.to_string()],
+                std::collections::HashMap::new(),
+            )
+            .await?);
+    }
+    shared.read_context_for(dataset).await
+}
+
 async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
     let (subject, all) = split_args(&shared.idents(), args, true)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let aspect = aspect.as_deref();
-    let ctx = shared.read_context_for(&dataset).await?;
+    let ctx = read_context_at(shared, &dataset).await?;
     if all {
         Ok(raw_batch(glossql_glossary::Store::raw_read(
             &dataset, &scope, aspect, &ctx,
@@ -999,7 +1063,7 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
 async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatch, SessionError> {
     let (subject, _) = split_args(&shared.idents(), args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
-    let ctx = shared.read_context_for(&dataset).await?;
+    let ctx = read_context_at(shared, &dataset).await?;
     let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect.as_deref()).await?;
     let mut rows: Vec<AttestRow> = verdicts
         .into_iter()
@@ -1324,28 +1388,62 @@ fn served_body(body: &str) -> String {
         .unwrap_or_else(|| body.to_string())
 }
 
-pub(crate) fn extraction_batch(rows: Vec<glossql_glossary::MeasurementRow>) -> RecordBatch {
+/// `source_files('source')` — one row per file under the source's
+/// location: `path` (relative, what a `read_*` call names), `size`,
+/// `modified`.
+fn source_files_batch(files: Vec<glossql_import::SourceFile>) -> RecordBatch {
+    let schema = Arc::new(Schema::new(vec![
+        utf8("path"),
+        Field::new("size", DataType::Int64, false),
+        utf8("modified"),
+    ]));
+    batch(
+        schema,
+        vec![
+            Arc::new(StringArray::from_iter_values(
+                files.iter().map(|f| f.path.as_str()),
+            )),
+            Arc::new(datafusion::arrow::array::Int64Array::from(
+                files.iter().map(|f| f.size as i64).collect::<Vec<i64>>(),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                files.iter().map(|f| f.modified.as_str()),
+            )),
+        ],
+    )
+}
+
+/// The extraction outcome, one row per call: the measurement served,
+/// and `computed` — true when this call computed it, false when the
+/// recorded row was served at an unchanged pin, its `computed_at` the
+/// earlier run's. A repeat with nothing moved is a serve, not a rerun,
+/// and the row says which.
+pub(crate) fn extraction_batch(rows: Vec<(glossql_glossary::MeasurementRow, bool)>) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         utf8("function"),
         utf8("subject"),
         utf8("body"),
         utf8("computed_at"),
+        Field::new("computed", DataType::Boolean, false),
     ]));
-    let bodies: Vec<String> = rows.iter().map(|r| served_body(&r.body)).collect();
+    let bodies: Vec<String> = rows.iter().map(|(r, _)| served_body(&r.body)).collect();
     batch(
         schema,
         vec![
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.function.as_str()),
+                rows.iter().map(|(r, _)| r.function.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.subject.as_str()),
+                rows.iter().map(|(r, _)| r.subject.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
                 bodies.iter().map(|b| b.as_str()),
             )),
             Arc::new(StringArray::from_iter_values(
-                rows.iter().map(|r| r.computed_at.as_str()),
+                rows.iter().map(|(r, _)| r.computed_at.as_str()),
+            )),
+            Arc::new(datafusion::arrow::array::BooleanArray::from(
+                rows.iter().map(|(_, computed)| *computed).collect::<Vec<bool>>(),
             )),
         ],
     )
@@ -1423,10 +1521,15 @@ mod detector_tests {
         run_detector("t", statement, slots_batch(rows), threshold).await
     }
 
+    /// One metric per PIT, each walked to one complete point — the
+    /// shape the walk lands, `period` and `partial` included, since
+    /// the detector reads both as struct fields.
     fn pits(values: &[f64]) -> Value {
         json!({"applicable": true, "metrics": values
             .iter()
-            .map(|p| json!({"metric": "m", "points": [{"pit": p}]}))
+            .map(|p| json!({"metric": "m", "points": [
+                {"period": "2025-06", "pit": p, "partial": false}
+            ]}))
             .collect::<Vec<_>>()})
     }
 
@@ -1449,6 +1552,21 @@ mod detector_tests {
         let (_, band, score) = read(&[0.996, 0.5]).await;
         assert_eq!(band, "red");
         assert!(score > 0.98);
+    }
+
+    #[tokio::test]
+    async fn band_breach_scores_the_newest_complete_point() {
+        // The newest point is partial and would read red; the detector
+        // skips it for the month before, which is at the median.
+        let body = json!({"applicable": true, "metrics": [{"metric": "m", "points": [
+            {"period": "2025-05", "pit": 0.5, "partial": false},
+            {"period": "2025-06", "pit": null, "partial": true,
+             "withheld": "partial: the extract ends 2025-06-11, before the period's last day 2025-06-30"}
+        ]}]});
+        let rows = detect(BAND_BREACH, vec![slot("fin", body)], None)
+            .await
+            .unwrap();
+        assert_eq!(rows, vec![("fin".into(), "green".into(), 0.0)]);
     }
 
     #[tokio::test]

@@ -1340,6 +1340,7 @@ pub(crate) async fn grounding_collisions(
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
+    let glossed_behavior = current_fact_values(shared, &rctx, dataset, "behavior").await?;
     let slots = current_query_slots(shared, &rctx, dataset).await?;
 
     // Bucket by canonical SQL.
@@ -1406,7 +1407,7 @@ pub(crate) async fn grounding_collisions(
             shared,
             &ctx,
             dataset,
-            (&judged_temporal, &judged_behavior),
+            (&judged_temporal, &judged_behavior, &glossed_behavior),
             sql,
             body,
         )
@@ -1523,9 +1524,10 @@ async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
-    (judged_temporal, judged_behavior): (
+    (judged_temporal, judged_behavior, glossed_behavior): (
         &std::collections::HashMap<String, crate::cube::Verdict>,
         &std::collections::HashMap<String, crate::cube::Verdict>,
+        &std::collections::HashMap<String, (Value, u8)>,
     ),
     sql: &str,
     body: &Value,
@@ -1556,7 +1558,15 @@ async fn series_fingerprint(
     let tcol = crate::cube::judged_time_column(fields, &subjects, judged_temporal)
         .map(|(column, ..)| column)
         .or_else(|| crate::whatif::date_column(fields.fields()))?;
-    let verb = crate::cube::verb_of(body, is_ratio, &probe, dataset, judged_behavior).verb;
+    let verb = crate::cube::verb_of(
+        body,
+        is_ratio,
+        &probe,
+        dataset,
+        judged_behavior,
+        glossed_behavior,
+    )
+    .verb;
     let q = monthly_sql(sql, &tcol, verb);
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q))
         .await
@@ -1654,11 +1664,16 @@ fn collision_shape() -> Vec<Field> {
 /// declared graph. Endpoints whose sides disagree in width cannot join
 /// and are skipped, like the malformed paths the script skipped.
 ///
-/// A relationship within one table is a nest (recorded finer →
-/// coarser), not a join: what it asserts is that every finer value
-/// determines one coarser value. Its orphans are the rows whose finer
-/// value maps to more than one, and it carries no temporal evidence —
-/// a date pair across a table and itself says nothing.
+/// A relationship within one table is one of two things, and the
+/// to-side tells them apart. When the to-side is unique over the table
+/// — a key — the edge is a self-reference (`parent_id -> account_id`)
+/// and checks as a join: the table against itself, orphans the rows
+/// whose reference resolves to no row. Otherwise it is a nest
+/// (recorded finer → coarser, `city -> country`): what it asserts is
+/// that every finer value determines one coarser value, and its
+/// orphans are the rows whose finer value maps to more than one.
+/// Neither carries temporal evidence — a date pair across a table and
+/// itself says nothing.
 pub(crate) async fn relationship_checks(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,
@@ -1775,7 +1790,29 @@ pub(crate) async fn relationship_checks(
             .map_err(|e| bad(e.to_string()))?;
         let filled = int_column(&run(plan).await?, "filled").map_err(|e| bad(e.to_string()))?[0];
 
-        let nest = e.ct == e.pt;
+        let same_table = e.ct == e.pt;
+        // Within one table, a unique to-side is a key and the edge a
+        // self-reference; a repeating to-side is the coarser level of
+        // a nest. One pass over the to-side decides.
+        let nest = same_table && {
+            use datafusion::functions_aggregate::expr_fn::sum;
+            let coarser: Vec<Expr> = e.pc.iter().map(ident).collect();
+            let plan = scan(&e.pt, &parent)
+                .and_then(|b| b.filter(all_present(&e.pc)))
+                .and_then(|b| b.aggregate(coarser, vec![count(lit(1)).alias("n")]))
+                .and_then(|b| {
+                    b.aggregate(
+                        Vec::<Expr>::new(),
+                        vec![count(lit(1)).alias("groups"), sum(ident("n")).alias("rows")],
+                    )
+                })
+                .and_then(|b| b.build())
+                .map_err(|e| bad(e.to_string()))?;
+            let counted = run(plan).await?;
+            let groups = int_column(&counted, "groups").map_err(|e| bad(e.to_string()))?[0];
+            let rows = int_column(&counted, "rows").map_err(|e| bad(e.to_string()))?[0];
+            groups != rows
+        };
         let orphans = if nest {
             // The dependency, in one pass: rows per (finer, coarser),
             // then coarser values per finer; a finer value with more
@@ -1806,10 +1843,15 @@ pub(crate) async fn relationship_checks(
         } else {
             // Orphans: complete from-side keys that resolve to no to-side
             // row — the NOT IN with its null guards, as an anti join.
+            // A self-reference joins the table to itself, so the to-side
+            // scan takes an alias and each key normalizes on its own
+            // side.
             let plan = scan(&e.ct, &child)
                 .and_then(|b| b.filter(all_present(&e.cc)))
                 .and_then(|b| {
-                    let p = scan(&e.pt, &parent)?.filter(all_present(&e.pc))?.build()?;
+                    let p = scan(&e.pt, &parent)?.filter(all_present(&e.pc))?;
+                    let p = if same_table { p.alias("to_side")? } else { p };
+                    let p = p.build()?;
                     b.join(
                         p,
                         JoinType::LeftAnti,
@@ -1845,7 +1887,7 @@ pub(crate) async fn relationship_checks(
             })
             .collect();
         let mut temporal: Vec<(usize, &(String, String), i64, i64)> = Vec::new();
-        if !nest && !pairs.is_empty() {
+        if !same_table && !pairs.is_empty() {
             // Exact-name qualified columns — `col()` would normalize a
             // mixed-case name to lowercase and miss it.
             let cq = |name: &str| Expr::Column(datafusion::common::Column::new(Some("c"), name));
@@ -2076,6 +2118,53 @@ async fn run_monthly(
         .collect())
 }
 
+/// The extract's horizon on its time column — the last day it holds,
+/// `YYYY-MM-DD` in the column's display form — or None where the
+/// extract is empty. The walk reads it to tell a partial trailing
+/// month from a complete one: a period the horizon falls inside has
+/// not finished landing.
+async fn extract_horizon(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    sql: &str,
+    tcol: &str,
+) -> Result<Option<String>, SessionError> {
+    let q = format!("SELECT max(\"{tcol}\") AS horizon FROM ({sql})");
+    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
+    let batches = ctx
+        .execute_logical_plan(plan)
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .collect()
+        .await
+        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+    let Some(b) = batches.iter().find(|b| b.num_rows() > 0) else {
+        return Ok(None);
+    };
+    let col = b.column(
+        b.schema()
+            .index_of("horizon")
+            .map_err(|e| SessionError::Runtime(e.to_string()))?,
+    );
+    if col.is_null(0) {
+        return Ok(None);
+    }
+    let shown = array_value_to_string(col, 0).map_err(|e| SessionError::Runtime(e.to_string()))?;
+    Ok(Some(shown.chars().take(10).collect()))
+}
+
+/// The last day of a `YYYY-MM` period, `YYYY-MM-DD`.
+fn month_end(period: &str) -> Option<String> {
+    let (y, m) = period.split_once('-')?;
+    let (y, m): (i32, u32) = (y.parse().ok()?, m.parse().ok()?);
+    let next = if m == 12 {
+        chrono::NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(y, m + 1, 1)
+    }?;
+    Some((next - chrono::Duration::days(1)).to_string())
+}
+
 /// `metric_band_walk('dataset')` — for every grounded metric, walk the
 /// recent months and ask the TabICL forward what range each month
 /// should have landed in, given everything before it. The protocol —
@@ -2106,6 +2195,7 @@ pub(crate) async fn metric_band_walk(
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
+    let glossed_behavior = current_fact_values(shared, &rctx, dataset, "behavior").await?;
     let runtime = shared.runtime();
 
     // Median over the present values of one feature column. Even counts
@@ -2152,8 +2242,8 @@ pub(crate) async fn metric_band_walk(
         // measurement names the axis it took, so a walk anchored on an
         // unjudged column says so rather than reading like the cube's.
         let subjects = crate::provenance::served_subjects(&probe, dataset);
-        let judged_axis = crate::cube::judged_time_column(fields, &subjects, &judged_temporal)
-            .map(|(column, ..)| column);
+        let judged = crate::cube::judged_time_column(fields, &subjects, &judged_temporal);
+        let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
         let Some(tcol) = judged_axis
             .clone()
             .or_else(|| crate::whatif::date_column(fields.fields()))
@@ -2161,10 +2251,39 @@ pub(crate) async fn metric_band_walk(
             continue;
         };
         let axis_judged = judged_axis.is_some();
+        // Only a cadence judged finer than a month can leave a month
+        // partial: rows landing daily stop mid-month when the extract
+        // does, while a monthly-dated series is whole at its one row.
+        // An unjudged axis says nothing about its cadence, so nothing
+        // is withheld on it.
+        let sub_monthly = judged
+            .as_ref()
+            .and_then(|(_, cadence, _)| *cadence)
+            .is_some_and(|c| c < crate::cube::Resolution::Month);
         let is_ratio = has("num") && has("den");
-        let verb = crate::cube::verb_of(&body, is_ratio, &probe, dataset, &judged_behavior).verb;
-        let is_stock = verb == "stock";
+        let verb = crate::cube::verb_of(
+            &body,
+            is_ratio,
+            &probe,
+            dataset,
+            &judged_behavior,
+            &glossed_behavior,
+        )
+        .verb;
+        // What one period's value is, named as the arithmetic: a flow
+        // sums, a marked stock sums the rows at its latest date, a
+        // ratio divides its summed halves — `grain_sql`'s three arms.
+        let aggregation = match verb {
+            "stock" => "latest-sum",
+            "ratio" => "ratio-of-sums",
+            _ => "sum",
+        };
         let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
+        let horizon = if sub_monthly {
+            extract_horizon(shared, &ctx, sql, &tcol).await?
+        } else {
+            None
+        };
         let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
         let n = v.len();
         // Feature rows start at month 1 — month 0 has no lag of its own
@@ -2257,7 +2376,21 @@ pub(crate) async fn metric_band_walk(
             // real move whatever the corridor; a series that never
             // repeats has no grid, and a tight corridor on it is earned.
             let corridor = q[4] - q[0];
+            // The newest month is partial while the extract's horizon
+            // falls inside it: a short sum against a corridor fitted
+            // on whole months reads as a breach that is only the
+            // calendar. The point serves its bands and its actual so
+            // far, withholds the PIT, and says so — the detector
+            // scores the newest complete month instead.
+            let partial = (t == n - 1)
+                .then(|| horizon.as_deref().zip(month_end(&series[t].0[..7])))
+                .flatten()
+                .filter(|(h, end)| *h < end.as_str())
+                .map(|(h, end)| {
+                    format!("partial: the extract ends {h}, before the period's last day {end}")
+                });
             let withheld = match resolution_of(&train_y) {
+                _ if partial.is_some() => partial.clone(),
                 Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
                     Some(format!(
                         "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
@@ -2273,6 +2406,10 @@ pub(crate) async fn metric_band_walk(
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
                 "pit": withheld.is_none().then_some(pit),
                 "withheld": withheld,
+                // Always present: the detector reads it as a struct
+                // field, and a field no point carries is not in the
+                // body's struct at all.
+                "partial": partial.is_some(),
             }));
         }
 
@@ -2282,10 +2419,7 @@ pub(crate) async fn metric_band_walk(
             row.insert("metric".into(), json!(slot.aspect));
             row.insert("applicable".into(), json!(true));
             row.insert("grain".into(), json!("month"));
-            row.insert(
-                "aggregation".into(),
-                json!(if is_stock { "latest-sum" } else { "sum" }),
-            );
+            row.insert("aggregation".into(), json!(aggregation));
             row.insert("trained_on".into(), json!(n as i64));
             row.insert("axis".into(), json!(tcol));
             row.insert("axis_judged".into(), json!(axis_judged));
@@ -2299,7 +2433,7 @@ pub(crate) async fn metric_band_walk(
             out.push(json!({
                 "seq": seq, "metric": slot.aspect, "applicable": true,
                 "grain": "month",
-                "aggregation": if is_stock { "latest-sum" } else { "sum" },
+                "aggregation": aggregation,
                 "trained_on": n as i64,
                 "axis": tcol, "axis_judged": axis_judged,
             }));
@@ -2310,6 +2444,204 @@ pub(crate) async fn metric_band_walk(
         out.push(json!({}));
     }
     rows_batch(out, band_shape())
+}
+
+/// `band_points()` — the recorded walk, one row per metric per walked
+/// point: what `metric_bands` last landed for the bound dataset,
+/// flattened back to the walk's own rows, each point with its
+/// displacement (|2·pit − 1|, what the detector scores — none where
+/// the PIT is withheld) and the measurement's `computed_at` and
+/// whether it stands at this pin. The record itself, never a re-run:
+/// `metric_band_walk()` walks again and calls the model, this reads
+/// what landed, so a red dataset verdict is diagnosable to its metric
+/// and month in one read. A metric the walk found inapplicable is one
+/// row with its reason and no point; a dataset never walked serves no
+/// rows.
+pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let rctx = shared.read_context().await?;
+    let landed = crate::cube::judged_bodies(&rctx, &dataset, "metric_bands");
+    let mut out = Vec::new();
+    if let Some(verdict) = landed.get(&dataset) {
+        let computed_at = crate::cube::judged_at(&rctx, &dataset, "metric_bands");
+        let metrics = verdict.body["metrics"].as_array();
+        for (seq, metric) in metrics.into_iter().flatten().enumerate() {
+            let head = || {
+                let mut row = serde_json::Map::new();
+                row.insert("seq".into(), json!(seq as i64));
+                for key in [
+                    "metric",
+                    "applicable",
+                    "reason",
+                    "grain",
+                    "aggregation",
+                    "trained_on",
+                    "axis",
+                    "axis_judged",
+                ] {
+                    row.insert(key.into(), metric[key].clone());
+                }
+                row.insert("computed_at".into(), json!(computed_at));
+                row.insert("current".into(), json!(verdict.current));
+                row
+            };
+            let points = metric["points"].as_array().filter(|p| !p.is_empty());
+            let Some(points) = points else {
+                out.push(Value::Object(head()));
+                continue;
+            };
+            for (point_seq, point) in points.iter().enumerate() {
+                let mut row = head();
+                row.insert("point_seq".into(), json!(point_seq as i64));
+                for (k, v) in point.as_object().into_iter().flatten() {
+                    row.insert(k.clone(), v.clone());
+                }
+                row.insert(
+                    "displacement".into(),
+                    json!(point["pit"].as_f64().map(|pit| (2.0 * pit - 1.0).abs())),
+                );
+                out.push(Value::Object(row));
+            }
+        }
+    }
+    let mut fields = band_shape();
+    fields.push(Field::new("displacement", DataType::Float64, true));
+    fields.push(Field::new("computed_at", DataType::Utf8, true));
+    fields.push(Field::new("current", DataType::Boolean, true));
+    rows_batch(out, fields)
+}
+
+/// `fact_values()` — the groundings the cube does not chart, served
+/// whole: one row per current QUERY grounding whose frame serves no
+/// time-typed column, with `kind` (the aspect blob's `x-kind`, where
+/// it names one), `value` where the frame is one row with a `value`
+/// column — a current fact — and `reason` where it is not: a derived
+/// relation (no `value`), a frame of many rows, an empty one, or SQL
+/// the engine refused. A grounding with a time axis is the cube's
+/// (`metric_series()`) and is not listed here. The data at read, like
+/// the cube's cells: nothing is recorded.
+pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    use datafusion::arrow::array::Float64Array;
+    use datafusion::arrow::compute::{CastOptions, cast_with_options};
+
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let ctx = shared.session_ctx();
+    let rctx = shared.read_context().await?;
+    let kinds: HashMap<&str, String> = rctx
+        .aspects
+        .iter()
+        .filter_map(|a| {
+            let schema: Value = serde_json::from_str(&a.schema).ok()?;
+            let kind = schema["x-kind"].as_str().unwrap_or("").to_string();
+            Some((a.name.as_str(), kind))
+        })
+        .collect();
+    let mut out = Vec::new();
+    for slot in current_query_slots(shared, &rctx, &dataset).await? {
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+            continue;
+        };
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut row = serde_json::Map::new();
+        row.insert("metric".into(), json!(slot.aspect));
+        row.insert(
+            "kind".into(),
+            json!(kinds.get(slot.aspect.as_str()).cloned().unwrap_or_default()),
+        );
+        let serve = |row: &mut serde_json::Map<String, Value>, reason: String| {
+            row.insert("reason".into(), json!(reason));
+        };
+        let plan = match Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await {
+            Ok(plan) => plan,
+            Err(e) => {
+                serve(&mut row, format!("not served: {e}"));
+                out.push(Value::Object(row));
+                continue;
+            }
+        };
+        let fields = plan.schema();
+        if crate::whatif::date_column(fields.fields()).is_some() {
+            continue;
+        }
+        if !fields.fields().iter().any(|f| f.name() == "value") {
+            serve(
+                &mut row,
+                "no value column — a derived relation, served whole as read.<name>()".into(),
+            );
+            out.push(Value::Object(row));
+            continue;
+        }
+        let q = format!("SELECT value FROM ({sql}) LIMIT 2");
+        let served = async {
+            let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
+            ctx.execute_logical_plan(plan)
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                .collect()
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+        }
+        .await;
+        let batches = match served {
+            Ok(batches) => batches,
+            Err(e) => {
+                serve(&mut row, e.to_string());
+                out.push(Value::Object(row));
+                continue;
+            }
+        };
+        let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        match rows {
+            0 => serve(&mut row, "no rows: the frame is empty".into()),
+            1 => {
+                let b = batches.iter().find(|b| b.num_rows() > 0).expect("one row");
+                let value = cast_with_options(
+                    b.column(0),
+                    &DataType::Float64,
+                    &CastOptions {
+                        safe: true,
+                        ..Default::default()
+                    },
+                )
+                .ok()
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>().cloned())
+                .filter(|c| !c.is_null(0))
+                .map(|c| c.value(0));
+                match value {
+                    Some(v) => {
+                        row.insert("value".into(), json!(v));
+                    }
+                    None => serve(&mut row, "value did not read as a number".into()),
+                }
+            }
+            _ => serve(
+                &mut row,
+                "more than one row: a relation, not a fact — served whole as read.<name>()".into(),
+            ),
+        }
+        out.push(Value::Object(row));
+    }
+    rows_batch(
+        out,
+        vec![
+            Field::new("metric", DataType::Utf8, true),
+            Field::new("kind", DataType::Utf8, true),
+            Field::new("value", DataType::Float64, true),
+            Field::new("reason", DataType::Utf8, true),
+        ],
+    )
 }
 
 /// The series' resolution, where it has one: a series that repeats a
@@ -2357,5 +2689,9 @@ fn band_shape() -> Vec<Field> {
         Field::new("pit", DataType::Float64, true),
         // Why a point carries no PIT, where it carries none.
         Field::new("withheld", DataType::Utf8, true),
+        // True on the newest point while the extract's horizon falls
+        // inside its month — the detector skips it for the newest
+        // complete one.
+        Field::new("partial", DataType::Boolean, true),
     ]
 }

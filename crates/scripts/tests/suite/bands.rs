@@ -59,11 +59,24 @@ const FIRSTS: [i32; 18] = [
 ];
 
 /// A session over a lake in `dir`, the walk declared from the shipped
-/// body, `lines` and `levels` landed from the given rows.
+/// body, `lines` and `levels` landed from the given rows; the temporal
+/// verdict `judge_time` serves names a month cadence.
 async fn walk_session(
     dir: &Path,
     tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
     glosses: &[&str],
+) -> glossql_session::Session {
+    walk_session_judged(dir, tables, glosses, "month").await
+}
+
+/// [`walk_session`] with the cadence `judge_time` names — one aspect
+/// has one producer, so the cadence is the fixture's, not a second
+/// function's.
+async fn walk_session_judged(
+    dir: &Path,
+    tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
+    glosses: &[&str],
+    cadence: &str,
 ) -> glossql_session::Session {
     use datafusion::datasource::MemTable;
     use glossql_catalog::Lake;
@@ -107,23 +120,23 @@ async fn walk_session(
             .await
             .unwrap();
     }
-    let declarations = glossql_scripts::library::splice(
-        r#"DECLARE ASPECT metric_bands WITH $${
+    let declarations = glossql_scripts::library::splice(&format!(
+        r#"DECLARE ASPECT metric_bands WITH $${{
              "type": "object", "required": ["applicable"],
-             "properties": {"applicable": {"type": "boolean"},
-                            "metrics": {"type": "array"}}}$$ AS MEASUREMENT ON DATASET;
-           DECLARE ASPECT temporal_profile WITH $${
+             "properties": {{"applicable": {{"type": "boolean"}},
+                            "metrics": {{"type": "array"}}}}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE ASPECT temporal_profile WITH $${{
              "type": "object", "required": ["applicable"],
-             "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+             "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
            DECLARE FUNCTION judge_time FOR GLOBAL AS
-             $$SELECT true AS applicable, 'month' AS granularity,
+             $$SELECT true AS applicable, '{cadence}' AS granularity,
                       named_struct('ratio', 1.0) AS completeness$$
              RETURNS temporal_profile;
            DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
              RETURNS metric_bands;
            DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
-           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;"#,
-    )
+           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;"#
+    ))
     .expect("shipped body splices");
     session.execute(&declarations).await.unwrap();
     for g in glosses {
@@ -181,8 +194,12 @@ async fn metric_bands_walks_and_reads_the_breach() {
         &[
             r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT share WITH $${"title": "Share"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
             r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            // A ratio serves both halves; the month reads as the
+            // division of their sums.
+            r#"GLOSS share ON fin AS $${"sql": "SELECT date, value AS num, 2.0 AS den, value / 2.0 AS value FROM lines"}$$;"#,
             // One side profiled, one not: the walk anchors on the judged
             // column where a verdict stands and on the first date column
             // where none does. Both name the same column here, so the
@@ -214,7 +231,11 @@ async fn metric_bands_walks_and_reads_the_breach() {
     assert_eq!(by_name("inventory")["axis"], json!("date"));
     assert_eq!(by_name("inventory")["axis_judged"], json!(false));
 
-    for (name, aggregation) in [("revenue", "sum"), ("inventory", "latest-sum")] {
+    for (name, aggregation) in [
+        ("revenue", "sum"),
+        ("inventory", "latest-sum"),
+        ("share", "ratio-of-sums"),
+    ] {
         let metric = by_name(name);
         assert_eq!(metric["grain"], json!("month"));
         assert_eq!(metric["aggregation"], json!(aggregation), "{name}");
@@ -246,6 +267,37 @@ async fn metric_bands_walks_and_reads_the_breach() {
     assert!(flow_last > 0.95, "flow breach month, pit {flow_last}");
     let stock_last = by_name("inventory")["points"][5]["pit"].as_f64().unwrap();
     assert!(stock_last < 0.05, "stock breach month, pit {stock_last}");
+
+    // The recorded walk as rows: one per metric per point, with the
+    // displacement the detector scores — the breach is the newest
+    // revenue point, and the read names it without re-running the
+    // model.
+    let points = session
+        .execute(
+            "SELECT metric, period, partial, displacement, current FROM band_points() \
+             WHERE metric = 'revenue' ORDER BY period;",
+        )
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = points.into_iter().next_back() else {
+        panic!("no rows");
+    };
+    let shown = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
+        .unwrap()
+        .to_string();
+    let rows: Vec<&str> = shown
+        .lines()
+        .filter(|l| l.starts_with("| revenue"))
+        .collect();
+    assert_eq!(rows.len(), 6, "{shown}");
+    assert!(rows[5].contains("2025-06") && rows[5].contains("| true"), "{shown}");
+    let newest: f64 = rows[5]
+        .split('|')
+        .map(str::trim)
+        .filter_map(|c| c.parse::<f64>().ok())
+        .next()
+        .expect("a displacement");
+    assert!(newest > 0.98, "{shown}");
 
     // The detector adjudicates the walk through its witness at the
     // ATTEST read: score is the worst displacement |2·pit − 1| across
@@ -447,4 +499,98 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
         .map(|(i, _)| i)
         .unwrap();
     assert_eq!(worst, 17, "the violator carries the lowest log density");
+}
+
+/// Rows land daily and the extract stops mid-month: the newest month
+/// is partial. Scored, its short sum would read as a breach that is
+/// only the calendar; the walk serves it marked, withholds its PIT,
+/// and the detector scores the month before it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
+    if !have_weights() {
+        eprintln!("skipping: no converted weights in the sibling checkout");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    workspace(dir.path());
+
+    // Eighteen months of daily rows on a slow drift — never a repeated
+    // monthly sum, so no month sits on the grid the walk withholds
+    // for; the last month holds eleven days only (2025-06-01 through
+    // 2025-06-11).
+    let month_starts: Vec<i32> = FIRSTS.iter().copied().chain([547]).collect();
+    let daily = |d: i32| 5.0 + 0.001 * d as f64;
+    let (mut dates, mut values) = (Vec::new(), Vec::new());
+    for i in 0..18 {
+        let end = if i == 17 {
+            month_starts[i] + 11
+        } else {
+            month_starts[i + 1]
+        };
+        for d in month_starts[i]..end {
+            dates.push(19723 + d);
+            values.push(daily(d));
+        }
+    }
+    let partial_sum: f64 = (month_starts[17]..month_starts[17] + 11).map(daily).sum();
+
+    let session = walk_session_judged(
+        dir.path(),
+        vec![("lines", dates, values)],
+        &[
+            r#"DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS spend ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
+            r#"SELECT judge_time() FROM lines.date;"#,
+        ],
+        "day",
+    )
+    .await;
+    let out = walked(&session).await;
+
+    let metric = out["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["metric"] == json!("spend"))
+        .expect("spend walked")
+        .clone();
+    let points = metric["points"].as_array().unwrap();
+    assert_eq!(points.len(), 6, "the walk covers the last six months");
+    let newest = &points[5];
+    assert_eq!(newest["period"], json!("2025-06"));
+    assert_eq!(newest["partial"], json!(true));
+    assert!(newest["pit"].is_null(), "{newest}");
+    assert_eq!(
+        newest["withheld"],
+        json!("partial: the extract ends 2025-06-11, before the period's last day 2025-06-30")
+    );
+    assert!((newest["actual"].as_f64().unwrap() - partial_sum).abs() < 1e-6);
+    let before = &points[4];
+    assert_eq!(before["period"], json!("2025-05"));
+    assert_eq!(before["partial"], json!(false), "{before}");
+    let pit = before["pit"].as_f64().expect("the complete month scores");
+
+    // The detector reads the newest complete month: its score is that
+    // month's displacement, not the partial one's.
+    let verdict = session
+        .execute("SELECT band, score FROM ATTEST(fin::metric_bands);")
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = verdict.into_iter().next_back() else {
+        panic!("no verdict");
+    };
+    let shown = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
+        .unwrap()
+        .to_string();
+    let displacement = (2.0 * pit - 1.0).abs();
+    let score: f64 = shown
+        .lines()
+        .filter(|l| l.starts_with("| ") && !l.contains("band"))
+        .flat_map(|l| l.split('|').map(str::trim).filter_map(|c| c.parse::<f64>().ok()))
+        .next()
+        .expect("a score");
+    assert!(
+        (score - displacement).abs() < 1e-6,
+        "score {score} against the complete month's displacement {displacement}: {shown}"
+    );
 }

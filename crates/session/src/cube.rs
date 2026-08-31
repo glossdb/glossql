@@ -73,7 +73,9 @@ const MEMBERS_CAP: i64 = 24;
 
 /// The one refusal every judged reader shares.
 const NO_JUDGED_TIME: &str = "no judged time column: no served date column carries an applicable \
-     temporal_profile — run temporal() over the metric's date column first";
+     temporal_profile. For a series, serve the table's own date column and run temporal() over \
+     it; for a current fact or a derived relation this is the right answer — read.<name>() \
+     serves it, and no series is owed";
 
 /// A calendar resolution — the rungs of the ladder, finest first, and
 /// the grains a read may ask for. Ordered, so the coarser of two is
@@ -205,11 +207,12 @@ pub(crate) struct Fact {
     pub behavior: Option<String>,
     /// Where the verb came from: `ratio` when the frame served both
     /// halves and nothing else was consulted, `marked` when the
-    /// grounding carried `behavior`, `evidence` when the
-    /// `behavior_evidence` verdict on the column the value is or sums
-    /// decided, `default` when nothing said anything and the metric is
-    /// summed as a flow. The default is usually right — the point is
-    /// that reading it as a flow stops being a silent assumption.
+    /// grounding carried `behavior`, `glossed` when the `behavior`
+    /// gloss on the column the value is or sums decided, `evidence`
+    /// when the `behavior_evidence` verdict on that column did,
+    /// `default` when nothing said anything and the metric is summed
+    /// as a flow. The default is usually right — the point is that
+    /// reading it as a flow stops being a silent assumption.
     pub behavior_basis: Option<&'static str>,
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
@@ -223,6 +226,17 @@ pub(crate) struct Fact {
     /// when a `dimension` gloss admitted it or put it first.
     pub admitted_by: Vec<String>,
     pub bucketed: Vec<String>,
+    /// The served columns the cube does not slice on — every one that
+    /// is neither the value, a ratio's half nor time-typed and was not
+    /// admitted — and, in `unadmitted_why` at the same index, what
+    /// kept each out with the road back in: no verdict (run
+    /// `dimension_relevance()` over the subject, or gloss `dimension`),
+    /// an abstained verdict with no declared edge reaching a judged
+    /// key, a `dimension` gloss of `none`, an expression no verdict
+    /// can reach, one member across the frame, or a rank below the
+    /// cap. The column names the gap; the reason names the act.
+    pub unadmitted: Vec<String>,
+    pub unadmitted_why: Vec<String>,
     pub alternative: Option<String>,
     pub alternative_error: Option<String>,
 }
@@ -242,6 +256,88 @@ impl Fact {
             basis: Vec::new(),
             admitted_by: Vec::new(),
             bucketed: Vec::new(),
+            unadmitted: Vec::new(),
+            unadmitted_why: Vec::new(),
+            alternative: None,
+            alternative_error: None,
+        }
+    }
+}
+
+/// The plan stage of a build: what a plan and the judged surface
+/// decide before any data is scanned — the time axis, the resolution
+/// and window, the verb and its basis, the candidate axes and the
+/// served columns that are not candidates, each with why. A
+/// grounding's write answers with this stage alone
+/// ([`fact_at_write`]); the cube's build goes on to count members and
+/// compute cells.
+struct Planned {
+    body: Value,
+    sql: String,
+    tcol: String,
+    resolution: Resolution,
+    window: Option<String>,
+    verb: &'static str,
+    behavior_basis: &'static str,
+    /// The time axis's and the verb's currency, folded; each admitted
+    /// dimension folds its own in later.
+    judged_current: bool,
+    candidates: Vec<Candidate>,
+    unadmitted: Vec<(String, String)>,
+}
+
+/// The candidate order the cube ranks by, less the member counts a
+/// scan would add: a `primary` gloss first, then relevance, then the
+/// column name so two readings of one pin agree.
+fn rank_candidates(cand: &mut [Candidate]) {
+    cand.sort_by(|a, b| {
+        b.primary
+            .cmp(&a.primary)
+            .then(b.relevance.total_cmp(&a.relevance))
+            .then(a.column.cmp(&b.column))
+    });
+}
+
+impl Planned {
+    /// The fact row as the plan stage knows it: the axes the verdicts
+    /// admit, in rank order up to the cap, and everything left out
+    /// with its reason. No member floor and no bucketing — those are
+    /// the scan's — and no rival, which runs only in a build.
+    fn fact(self, metric: &str) -> Fact {
+        let mut cand = self.candidates;
+        rank_candidates(&mut cand);
+        let mut unadmitted = self.unadmitted;
+        let mut judged_current = self.judged_current;
+        let (mut dims, mut basis, mut admitted_by) = (Vec::new(), Vec::new(), Vec::new());
+        for c in cand {
+            if dims.len() >= DIMS_CAP {
+                unadmitted.push((
+                    c.column,
+                    format!("ranked below the {DIMS_CAP} admitted axes"),
+                ));
+                continue;
+            }
+            dims.push(c.column);
+            basis.push(c.basis);
+            admitted_by.push(c.admitted_by.to_string());
+            judged_current &= c.current;
+        }
+        let (unadmitted, unadmitted_why) = unadmitted.into_iter().unzip();
+        Fact {
+            metric: metric.to_string(),
+            applicable: true,
+            judged_current,
+            reason: None,
+            behavior: Some(self.verb.to_string()),
+            behavior_basis: Some(self.behavior_basis),
+            resolution: Some(self.resolution),
+            window: self.window,
+            dims,
+            basis,
+            admitted_by,
+            bucketed: Vec::new(),
+            unadmitted,
+            unadmitted_why,
             alternative: None,
             alternative_error: None,
         }
@@ -360,8 +456,8 @@ impl CubeCache {
 
 /// One landed verdict: its body, and whether it stands at this pin.
 pub(crate) struct Verdict {
-    body: Value,
-    current: bool,
+    pub(crate) body: Value,
+    pub(crate) current: bool,
 }
 
 /// The judged surface the build reads: verdicts by column subject,
@@ -373,8 +469,11 @@ struct Judged {
     temporal: HashMap<String, Verdict>,
     relevance: HashMap<String, Verdict>,
     /// `behavior_evidence` per column — the verb's read where the
-    /// grounding carries no marker.
+    /// grounding carries no marker and no gloss speaks.
     behavior: HashMap<String, Verdict>,
+    /// The collapsed `behavior` gloss per column (human over agent) —
+    /// the verb's read where the grounding carries no marker.
+    behavior_gloss: HashMap<String, (Value, u8)>,
     dimension: HashMap<String, (Value, u8)>,
     pointers: Vec<crate::behavior::Pointer>,
 }
@@ -410,6 +509,25 @@ pub(crate) fn judged_bodies(
         }
     }
     out.into_iter().map(|(s, (_, v))| (s, v)).collect()
+}
+
+/// When the newest landing of a measurement aspect on one subject was
+/// computed — the row [`judged_bodies`] picks, by its `computed_at`;
+/// None where none landed.
+pub(crate) fn judged_at(
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Option<String> {
+    let returning = rctx.functions.iter().filter(|f| {
+        f.returns.as_deref() == Some(aspect)
+            && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+    });
+    returning
+        .flat_map(|f| glossql_glossary::Store::measurements_in(rctx, dataset, &f.name))
+        .filter(|(row, _)| row.subject == dataset)
+        .map(|(row, _)| row.computed_at)
+        .max()
 }
 
 /// The judged time axis over a served frame: the date column whose
@@ -463,7 +581,8 @@ pub(crate) fn judged_time_column(
 /// The verb a grounding folds by, and where it came from.
 pub(crate) struct Verb {
     pub verb: &'static str,
-    /// `ratio`, `marked`, `evidence` or `default` — `Fact::behavior_basis`.
+    /// `ratio`, `marked`, `glossed`, `evidence` or `default` —
+    /// `Fact::behavior_basis`.
     pub basis: &'static str,
     /// Whether the verdict read stands at this pin; true where none was.
     pub current: bool,
@@ -471,17 +590,20 @@ pub(crate) struct Verb {
 
 /// A grounding's verb: `ratio` when the frame serves both halves; else
 /// the grounding's top-level `behavior` marker — its own word, which
-/// outranks the measurement the way a gloss does (the metrics skill's
-/// convention); else the `behavior_evidence` verdict on the column the
-/// value is, or is one `sum` of (`provenance::summed_source`); else a
-/// flow, because nothing said otherwise. One function for the cube and
-/// the walk, so the two never fold one metric two ways.
+/// outranks everything below; else the collapsed `behavior` gloss
+/// (human over agent) on the column the value is, or is one `sum` of
+/// (`provenance::summed_source`) — the kit's vocabulary, read as policy
+/// the way a `dimension` gloss admits an axis; else the
+/// `behavior_evidence` verdict on that column; else a flow, because
+/// nothing said otherwise. One function for the cube and the walk, so
+/// the two never fold one metric two ways.
 pub(crate) fn verb_of(
     body: &Value,
     is_ratio: bool,
     probe: &datafusion::logical_expr::LogicalPlan,
     dataset: &str,
     behavior: &HashMap<String, Verdict>,
+    glossed: &HashMap<String, (Value, u8)>,
 ) -> Verb {
     let verb = |verb, basis, current| Verb {
         verb,
@@ -496,7 +618,17 @@ pub(crate) fn verb_of(
         Some("flow") => return verb("flow", "marked", true),
         _ => {}
     }
-    let judged = crate::provenance::summed_source(probe, "value", dataset)
+    let source = crate::provenance::summed_source(probe, "value", dataset);
+    match source
+        .as_ref()
+        .and_then(|subject| glossed.get(subject))
+        .and_then(|(gloss, _)| gloss["value"].as_str())
+    {
+        Some("stock") => return verb("stock", "glossed", true),
+        Some("flow") => return verb("flow", "glossed", true),
+        _ => {}
+    }
+    let judged = source
         .and_then(|subject| behavior.get(&subject))
         .filter(|v| v.body["applicable"].as_bool() == Some(true));
     match judged.map(|v| (v.body["summary"]["verdict"].as_str(), v.current)) {
@@ -535,23 +667,7 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
             continue;
         }
         if judged.is_none() {
-            let edges = shared.store.relation_rows("relationships").await?;
-            judged = Some((
-                Judged {
-                    temporal: judged_bodies(&rctx, &dataset, "temporal_profile"),
-                    relevance: judged_bodies(&rctx, &dataset, "dimension_relevance"),
-                    behavior: judged_bodies(&rctx, &dataset, "behavior_evidence"),
-                    dimension: crate::search::current_fact_values(
-                        shared,
-                        &rctx,
-                        &dataset,
-                        "dimension",
-                    )
-                    .await?,
-                    pointers: crate::behavior::declared_pointers(&edges, &dataset),
-                },
-                settings(shared, &rctx, &dataset).await?,
-            ));
+            judged = Some(judged_surface(shared, &rctx, &dataset).await?);
         }
         let (judged, settings) = judged.as_ref().expect("loaded above");
         let cube = cache
@@ -571,6 +687,83 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
         out.push(cube);
     }
     Ok(out)
+}
+
+/// The judged surface and the cube settings at a read context — what
+/// admission reads, loaded once per enumeration and once per write.
+async fn judged_surface(
+    shared: &Arc<Shared>,
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+) -> Result<(Judged, Settings), SessionError> {
+    let edges = shared.store.relation_rows("relationships").await?;
+    Ok((
+        Judged {
+            temporal: judged_bodies(rctx, dataset, "temporal_profile"),
+            relevance: judged_bodies(rctx, dataset, "dimension_relevance"),
+            behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
+            behavior_gloss: crate::search::current_fact_values(shared, rctx, dataset, "behavior")
+                .await?,
+            dimension: crate::search::current_fact_values(shared, rctx, dataset, "dimension")
+                .await?,
+            pointers: crate::behavior::declared_pointers(&edges, dataset),
+        },
+        settings(shared, rctx, dataset).await?,
+    ))
+}
+
+/// The fact row a grounding's write answers with, in the
+/// `metric_axes()` shape, at the pin the write moved to: whether the
+/// SQL plans, the judged time axis, the verb and where it came from,
+/// the axes the verdicts admit and every served column they do not,
+/// each with its road back in. The plan stage alone — no data is
+/// scanned, so the member floor, the bucketing and the rival are the
+/// build's to add; everything else is what `metric_axes()` will say.
+/// The row judges the grounding that serves: a human slot outranks
+/// the agent's, and then it is the human's the row describes.
+///
+/// Nothing here fails the write. The gloss landed; a grounding that
+/// cannot be judged abstains in the row and says why — the SQL does
+/// not plan, no `cube` aspect is declared, or the call is bound to
+/// another dataset or to none, so the grounding's table names do not
+/// resolve from this channel.
+pub(crate) async fn fact_at_write(
+    shared: &Arc<Shared>,
+    dataset: &str,
+    subject: &str,
+    aspect: &str,
+) -> Result<RecordBatch, SessionError> {
+    let fact = match write_fact(shared, dataset, subject, aspect).await {
+        Ok(fact) => fact,
+        Err(Abstain(reason)) => Fact::abstain(aspect, reason),
+    };
+    fact_batch(&[&fact])
+}
+
+async fn write_fact(
+    shared: &Arc<Shared>,
+    dataset: &str,
+    subject: &str,
+    aspect: &str,
+) -> Result<Fact, Abstain> {
+    let bound = shared.dataset.read().expect("state lock").clone();
+    if bound.as_deref() != Some(dataset) {
+        let here = bound.map_or("no dataset".to_string(), |b| format!("`{b}`"));
+        return Err(Abstain(format!(
+            "not judged from here: the call is bound to {here} — `USE {dataset};` and \
+             metric_axes() judges it"
+        )));
+    }
+    let rctx = shared.read_context().await?;
+    let (judged, settings) = judged_surface(shared, &rctx, dataset).await?;
+    let slot = current_query_slots(shared, &rctx, dataset)
+        .await?
+        .into_iter()
+        .find(|s| s.subject == subject && s.aspect == aspect)
+        .ok_or_else(|| Abstain("no serving grounding: the slot is withheld as contested".into()))?;
+    let ctx = shared.session_ctx();
+    let planned = Box::pin(plan(shared, &ctx, dataset, &slot, &judged, &settings)).await?;
+    Ok(planned.fact(aspect))
 }
 
 /// One metric's cube at this pin. A grounding that cannot serve — no
@@ -617,15 +810,17 @@ struct Cell {
 /// One row of a series query: `(period, member, value, num, den)`.
 type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
 
-async fn build(
+/// The plan stage — see [`Planned`]. Everything here is decided by
+/// the plan's schema, its provenance and the judged surface; nothing
+/// scans.
+async fn plan(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
     dataset: &str,
     slot: &QuerySlot,
     judged: &Judged,
     settings: &Settings,
-) -> Result<Cube, Abstain> {
-    let metric = slot.aspect.as_str();
+) -> Result<Planned, Abstain> {
     let body: Value = serde_json::from_str(&slot.body)
         .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
     let sql = body
@@ -644,7 +839,6 @@ async fn build(
     let (time_column, cadence, time_current) =
         judged_time_column(fields, &subjects, &judged.temporal)
             .ok_or_else(|| Abstain(NO_JUDGED_TIME.into()))?;
-    let tcol = time_column.as_str();
     // Whether every verdict admitted on stands at this pin — the time
     // axis now, each admitted dimension below.
     let mut judged_current = time_current;
@@ -662,7 +856,14 @@ async fn build(
         verb,
         basis: behavior_basis,
         current: verb_current,
-    } = verb_of(&body, is_ratio, &probe, dataset, &judged.behavior);
+    } = verb_of(
+        &body,
+        is_ratio,
+        &probe,
+        dataset,
+        &judged.behavior,
+        &judged.behavior_gloss,
+    );
     judged_current &= verb_current;
 
     // Judged dimensions: a served column (neither the value nor
@@ -678,6 +879,7 @@ async fn build(
     // floor and the bucketing split, one aggregate pass.
     let scanned = crate::provenance::scanned_tables(&probe, dataset);
     let mut cand: Vec<Candidate> = Vec::new();
+    let mut unadmitted: Vec<(String, String)> = Vec::new();
     for f in fields.fields() {
         let n = f.name().as_str();
         if n == "value"
@@ -687,18 +889,28 @@ async fn build(
             continue;
         }
         let Some(subject) = subjects.get(n) else {
+            unadmitted.push((
+                n.to_string(),
+                "an expression, not a table column: no verdict can reach it — serve the \
+                 column it derives from, or land it as a recipe column"
+                    .into(),
+            ));
             continue;
         };
         let gloss = judged.dimension.get(subject);
         let stance = gloss.and_then(|(v, _)| v["value"].as_str()).unwrap_or("");
-        if stance == "none" {
-            continue;
-        }
         let speaker: &'static str = match gloss {
             Some((_, 0)) => "human",
             Some(_) => "agent",
             None => "measurement",
         };
+        if stance == "none" {
+            unadmitted.push((
+                n.to_string(),
+                format!("closed by a dimension gloss on {subject} ({speaker}: none)"),
+            ));
+            continue;
+        }
         let measured = match judged
             .relevance
             .get(subject)
@@ -738,10 +950,63 @@ async fn build(
                 admitted_by: speaker,
                 primary: stance == "primary",
             },
-            (None, _) => continue,
+            (None, _) => {
+                let why = match judged.relevance.get(subject) {
+                    Some(v) => format!(
+                        "dimension_relevance abstained on {subject} ({}), and no declared \
+                         relationship reaches it from a judged key the grounding scans — \
+                         declare the edge, or gloss dimension on it",
+                        v.body["reason"].as_str().unwrap_or("no reason given")
+                    ),
+                    None => format!(
+                        "no verdict on {subject} — run dimension_relevance() over it, or \
+                         gloss dimension on it"
+                    ),
+                };
+                unadmitted.push((n.to_string(), why));
+                continue;
+            }
         };
         cand.push(candidate);
     }
+    let sql = sql.to_string();
+    Ok(Planned {
+        body,
+        sql,
+        tcol: time_column,
+        resolution,
+        window,
+        verb,
+        behavior_basis,
+        judged_current,
+        candidates: cand,
+        unadmitted,
+    })
+}
+
+async fn build(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    dataset: &str,
+    slot: &QuerySlot,
+    judged: &Judged,
+    settings: &Settings,
+) -> Result<Cube, Abstain> {
+    let metric = slot.aspect.as_str();
+    let Planned {
+        body,
+        sql,
+        tcol,
+        resolution,
+        window,
+        verb,
+        behavior_basis,
+        mut judged_current,
+        candidates: cand,
+        mut unadmitted,
+    } = plan(shared, ctx, dataset, slot, judged, settings).await?;
+    let sql = sql.as_str();
+    let tcol = tcol.as_str();
     let mut counts: Vec<(Candidate, i64)> = Vec::new();
     if !cand.is_empty() {
         let parts: Vec<String> = cand
@@ -773,9 +1038,17 @@ async fn build(
     let mut bucketed: Vec<String> = Vec::new();
     for (c, n) in &counts {
         if dims.len() >= DIMS_CAP {
-            break;
+            unadmitted.push((
+                c.column.clone(),
+                format!("ranked below the {DIMS_CAP} admitted axes"),
+            ));
+            continue;
         }
         if *n < 2 {
+            unadmitted.push((
+                c.column.clone(),
+                "one member across the frame: nothing to slice".into(),
+            ));
             continue;
         }
         dims.push(c.column.clone());
@@ -971,6 +1244,8 @@ async fn build(
             basis,
             admitted_by,
             bucketed,
+            unadmitted: unadmitted.iter().map(|(c, _)| c.clone()).collect(),
+            unadmitted_why: unadmitted.into_iter().map(|(_, w)| w).collect(),
             alternative,
             alternative_error,
         },
@@ -1432,17 +1707,24 @@ async fn aggregate(cells: Served, grain: Resolution) -> Result<Served, SessionEr
 }
 
 /// `metric_axes()` — one row per current grounding, the record read:
-/// `(metric, applicable, judged_current, reason, behavior, resolution,
-/// window, dims, bucketed, alternative, alternative_error)`. What the
-/// cube admitted and why not, and whether the verdicts it admitted on
-/// stand at this pin; served from the entry's fact row, so it builds
-/// what is not built.
+/// `(metric, applicable, judged_current, reason, behavior,
+/// behavior_basis, resolution, window, dims, basis, admitted_by,
+/// bucketed, unadmitted, unadmitted_why, alternative,
+/// alternative_error)`. What the cube admitted and why not, and
+/// whether the verdicts it admitted on stand at this pin; served from
+/// the entry's fact row, so it builds what is not built.
 pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
     let cubes = cubes(shared).await?;
     let facts: Vec<&Fact> = cubes.iter().map(|c| &c.fact).collect();
+    fact_batch(&facts)
+}
+
+/// Fact rows as the `metric_axes()` relation — one schema for the
+/// read and for a grounding write's answer.
+fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
     let list = |pick: fn(&Fact) -> &Vec<String>| -> ArrayRef {
         let mut b = ListBuilder::new(StringBuilder::new());
-        for f in &facts {
+        for f in facts {
             for v in pick(f) {
                 b.values().append_value(v);
             }
@@ -1482,6 +1764,16 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),
+        Field::new(
+            "unadmitted",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
+            "unadmitted_why",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
         Field::new("alternative", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
     ]));
@@ -1506,6 +1798,8 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
             list(|f| &f.basis),
             list(|f| &f.admitted_by),
             list(|f| &f.bucketed),
+            list(|f| &f.unadmitted),
+            list(|f| &f.unadmitted_why),
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_error.as_deref()),
         ],

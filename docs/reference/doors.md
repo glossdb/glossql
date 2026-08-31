@@ -154,13 +154,22 @@ below the floor is refused, naming what the door speaks. JSON
 responses.
 
 One tool: `glossql`, taking `statements` (string) — declarations,
-`USE`, `GLOSS`, extraction, probes, and plain SQL. Live state
-(datasets, functions, aspects, witnesses, sources, glossary,
+`USE`, `GLOSS`, extraction, probes, and plain SQL. Its description is
+the contract for every call — the `USE` rule, the outcome shapes, the
+refusal shape and the round's cadence — because a client carries the
+tool list on every turn and fetches a resource once, if at all. Live
+state (datasets, functions, aspects, witnesses, sources, glossary,
 measurements, imports) reads as plain tables through the tool; skills
 teach the grammar and the flows, and the door serves them itself:
 each skill is a resource (`skill://<name>/SKILL.md`) and a prompt of
-the same name, and the language spec and grammar are `doc://SPEC.md`
-and `doc://grammar.ebnf`. All of it is embedded at compile time, so
+the same name, its references are sibling resources
+(`skill://<name>/references/<page>.md`, listed by their title line,
+which says when to read each), the `docs/` pages are
+`doc://docs/<section>/<page>.md`, and the language spec and grammar
+are `doc://SPEC.md` and `doc://grammar.ebnf` — what an agent working
+in the repository reads is what a connected one is served. The
+initialize instructions are the map of the objects and say which page
+to read at which moment. All of it is embedded at compile time, so
 what a build serves is what its suite tested.
 
 - **The actor is the token's subject.** Without one the call writes as
@@ -173,17 +182,35 @@ what a build serves is what its suite tested.
   early, so what the agent won't see is never computed. Metadata reads
   — `GLOSSARY()`, `ATTEST()`, the store relations — are exempt: the
   map must be whole, and the store bounds it.
+- **A grounding's write answers with its fact.** `GLOSS` on a QUERY
+  aspect returns the metric's row in the `metric_axes()` shape at the
+  pin the write moved to — whether the SQL plans, the verb and its
+  basis, the admitted axes, and each served column not admitted with
+  the road back in — in place of `{"done"}` (the reads reference has
+  the columns). Every other gloss answers `{"done"}`.
 - **A refusal keeps what landed.** A refused statement is a tool error
   whose text is the refusal; in a sequence it names its place, and a
   second block carries the outcomes of the statements that stood
   (`{"landed": […]}`, the usual shape) — they landed, and the
   statements after the refusal were never attempted.
+- **The brief.** The initialize instructions close with one composed
+  line over live counts, and the same line rides any tool result whose
+  call moved them: what is owed first — rulings awaiting their fold-in,
+  approved recipe changes awaiting their re-declare, judgment questions
+  open for the human — then the record's size, how many human writings
+  stand and when the latest landed. A count of writings is presence,
+  never work; `owed` and `open_questions` are the reads behind the
+  first part. The instructions then name where to begin — a workspace
+  before its first dataset has no brief to sweep, and reads
+  `workspace_next`; one with a dataset opens with the brief, once,
+  as a read and never a gate. That opening rides initialize only.
 - **The question round.** While `open_questions` derives rows, calls
   that read the record carry a round of forms — landings and judging
-  queries run uninterrupted. The answers arrive on the client's retry
-  of the same call and land as human glosses, witnessed here. Anything
-  that is not an answer is a defer: the question stays open and is
-  asked again.
+  queries run uninterrupted, and a question served once waits for the
+  human while the work goes on. The answers arrive on the client's
+  retry of the same call and land as human glosses, witnessed here.
+  Anything that is not an answer is a defer: the question stays open
+  and is asked again on the next record read.
 
 ## `/<dataset>/query` — the Arrow door
 

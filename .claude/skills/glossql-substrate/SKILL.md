@@ -186,8 +186,10 @@ answers — and iceberg-datafusion's `IcebergCatalogProvider` *is* a
   gives `_last_updated_sequence_number` (the commit that last touched
   the row) and `_pos` (position in file); together they are a total
   order over writes. Nothing to mint, no coordination between writers.
-  Verified: spike 7. `_row_id` is not implemented yet
-  (apache/iceberg-rust#2879); `_last_updated_sequence_number` landed in
+  Verified: spike 7. `_row_id` read synthesis merged 2026-08-29
+  (apache/iceberg-rust#3058, refs #2879) — after our `ffaf049` pin, so
+  it arrives with the next pin move; metadata-only projection pruning
+  is still open (#3117). `_last_updated_sequence_number` landed in
   PR #2966, merged 2026-08-10, after the 0.10.1 release.
 - `format-version` is a **reserved** property — rejected at create. Get
   to v3 with `Transaction::upgrade_table_version().set_format_version(V3)`.
@@ -197,7 +199,8 @@ answers — and iceberg-datafusion's `IcebergCatalogProvider` *is* a
   40 rows in one commit costs ~0.47 ms/row. **Ordering inside one commit
   is only settled by `_pos`, which is per-file** — so a batch is safe
   when no two of its rows share a supersession key (bootstrap, pre-warm),
-  and unsafe otherwise until `_row_id` lands. Ruled 2026-08-17: one
+  and unsafe otherwise until the pin carries `_row_id` (read synthesis
+  merged upstream, #3058). Ruled 2026-08-17: one
   statement, one commit; batch only the two paths that cannot tie.
 - Facts about a write ride the write (snapshot properties/summary);
   claims about a subject are rows.

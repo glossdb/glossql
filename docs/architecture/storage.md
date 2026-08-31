@@ -37,12 +37,25 @@ the same catalog.
 
 ## The catalog
 
-The catalog sits behind the `Catalog` trait — iceberg-rust's
-SqlCatalog on a SQLite file, in process, built at one site; a
-different catalog is a different builder there, and nothing above the
-trait changes. The catalog tier is relied on, never copied: table
-names, schemas, and snapshot ids are answered by the provider chain,
-not mirrored into a structure of the server's own.
+The catalog sits behind the `Catalog` trait, built at one site, and
+nothing above the trait changes with the builder. Two builders stand
+there: iceberg-rust's SqlCatalog on the workspace's own SQLite file,
+in process; and an Iceberg REST catalog, named by
+`GLOSSQL_CATALOG_URI` ([install](../start/install.md)). A REST
+backend attaches storage on its own side — every table load answers
+with the storage properties, and where the backend vends them the
+credentials, that table's FileIO needs, so the connection configures
+nothing about storage: where the catalog is, which warehouse, and
+how to authenticate. Authentication is one of two modes: a bearer
+token used as given, or OAuth2 client credentials exchanged at the
+authorization server's token endpoint and exchanged again as the
+token nears its stated expiry. Planned: delegated mode — the calling
+actor's own identity exchanged for a catalog token per request,
+cached by issuer and subject for the token's lifetime — built against
+the first backend that takes the exchange. The catalog tier is relied
+on, never copied: table names, schemas, and snapshot ids are answered
+by the provider chain, not mirrored into a structure of the server's
+own.
 
 Landings read back from the format's own record: one entry per append
 snapshot, its facts taken from the snapshot summary it rode.

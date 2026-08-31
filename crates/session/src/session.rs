@@ -792,20 +792,48 @@ impl Session {
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
         let resolved = self.subject(&gloss.subject).await?;
         let snapshot = self.stamp(&resolved).await?;
+        let aspect = gloss.aspect.value.as_str();
         self.shared
             .store
             .gloss(
                 &resolved.dataset,
                 &self.actor,
-                &gloss.aspect.value,
+                aspect,
                 &resolved.subject,
                 &gloss.body,
                 snapshot,
             )
             .await?;
+        // A grounding's write answers with the metric's fact row — the
+        // `metric_axes()` shape at the pin the write moved to: whether
+        // the SQL plans, the verb and where it came from, the axes the
+        // verdicts admit and the served columns they do not, each with
+        // its road back in. The recipe's outcome carries the cast
+        // account at the decision moment (SPEC.md §3); this is the
+        // same rule for the other authored SQL, so what the cube will
+        // do with a grounding is read before the next write, not
+        // discovered at the first read. Nothing is refused on it: the
+        // language rules no shape for a grounding, and the row tells.
+        // Every other gloss answers as it did.
+        let is_grounding = self
+            .shared
+            .store
+            .aspect(aspect)
+            .await?
+            .is_some_and(|(_, kind, _)| kind == "query");
+        if is_grounding {
+            let fact = crate::cube::fact_at_write(
+                &self.shared,
+                &resolved.dataset,
+                &resolved.subject,
+                aspect,
+            )
+            .await?;
+            return Ok(Outcome::Rows(vec![fact]));
+        }
         Ok(Outcome::Done(format!(
-            "GLOSS {} ON {}",
-            gloss.aspect.value, resolved.subject
+            "GLOSS {aspect} ON {}",
+            resolved.subject
         )))
     }
 
@@ -835,8 +863,11 @@ impl Session {
                 &resolved.subject,
                 &name,
             );
-            let row = match measured {
-                Some(row) => row,
+            // The outcome says which happened: a hit serves the
+            // recorded row at an unchanged pin, `computed_at` and all;
+            // a miss computes now.
+            let (row, computed) = match measured {
+                Some(row) => (row, false),
                 None => {
                     tracing::info!(
                         function = %name,
@@ -852,8 +883,9 @@ impl Session {
                             "`{name}`: a measurement's body is one SQL query"
                         ))
                     })?;
-                    let (output, reads) =
-                        self.compute_sql(body, &resolved.subject, &resolved.dataset).await?;
+                    let (output, reads) = self
+                        .compute_sql(body, &resolved.subject, &resolved.dataset)
+                        .await?;
                     // The aspect's schema is the one contract: nothing lands
                     // under an aspect without validating against it.
                     let (schema, _, grains) = store.aspect(&returns).await?.ok_or_else(|| {
@@ -884,7 +916,7 @@ impl Session {
                     // subject — it serves without
                     // landing, so the retry recomputes once the
                     // producer has run.
-                    if output.get("missing_aspects").is_some() {
+                    let row = if output.get("missing_aspects").is_some() {
                         glossql_glossary::MeasurementRow {
                             subject: resolved.subject.clone(),
                             function: name.clone(),
@@ -908,10 +940,11 @@ impl Session {
                                 &read_names(&reads, &resolved.dataset),
                             )
                             .await?
-                    }
+                    };
+                    (row, true)
                 }
             };
-            results.push(row);
+            results.push((row, computed));
         }
         Ok(Outcome::Rows(vec![crate::reads::extraction_batch(results)]))
     }

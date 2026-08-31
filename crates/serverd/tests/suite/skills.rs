@@ -6,8 +6,9 @@
 //! examples are checked here instead of proofread.
 //!
 //! Two rules, over every fenced ` ```glossql ` and ` ```sql ` block in
-//! the product skills (`skills/*/SKILL.md`, embedded in the binary and
-//! served on the MCP door) and `.claude/skills/*/SKILL.md`:
+//! the product skills (every `.md` under `skills/<name>/` — the
+//! SKILL.md and its references, embedded in the binary and served on
+//! the MCP door) and `.claude/skills/*/SKILL.md`:
 //!
 //!   1. it parses;
 //!   2. if it is a single read, it PLANS against a bootstrapped
@@ -64,16 +65,44 @@ fn blocks() -> Vec<Block> {
     }
     let mut out = Vec::new();
     skills.sort();
+    // Every `.md` in the skill's directory, its references included —
+    // a fence in a reference is held to the same rules as one on the
+    // first page, because the door serves both.
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
     for skill in skills {
-        let path = skill.join("SKILL.md");
+        if !skill.join("SKILL.md").is_file() {
+            continue;
+        }
+        let mut stack = vec![skill];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "md") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files.sort();
+    for path in files {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let name = skill
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("?")
-            .to_string();
+        let name = path
+            .iter()
+            .rev()
+            .take_while(|s| *s != "skills")
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let mut open: Option<(usize, String)> = None;
         for (i, line) in text.lines().enumerate() {
             match &mut open {
@@ -197,13 +226,14 @@ async fn every_skill_function_body_compiles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
-    let (_dir, store) = scratch_store().await;
+    let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&plane, human()).await.unwrap();
 
     // One session for the run, with a dataset in use — the names the
     // examples actually spell, so a read reaches its columns instead of
-    // stopping at the binding.
+    // stopping at the binding. The source the examples name stands
+    // too, over the scratch directory, so a listing example lists.
     let session = plane.channel(human(), None).await.unwrap();
     for name in ["ops", "orders", "erp_export"] {
         session
@@ -213,6 +243,13 @@ async fn every_skill_read_names_columns_that_exist() {
             .await
             .unwrap();
     }
+    session
+        .execute(&format!(
+            "DECLARE SOURCE erp_export SET (type: parquet, location: '{}');",
+            dir.path().display()
+        ))
+        .await
+        .unwrap();
     session.execute("USE ops;").await.unwrap();
 
     let mut broken = Vec::new();
@@ -286,6 +323,48 @@ fn the_served_skills_are_the_skills_directory() {
             !skill.description().is_empty(),
             "{} carries no frontmatter description — the listings serve it",
             skill.name
+        );
+    }
+    // And every reference on disk is served, current, under the
+    // skill's own root — the build embeds the directory, and this is
+    // what proves the embedding is the directory as it stands.
+    let mut on_disk: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "md")
+                && path.file_name().is_some_and(|n| n != "SKILL.md")
+            {
+                let rel = path.strip_prefix(&dir).unwrap().to_string_lossy().into_owned();
+                on_disk.push((rel, std::fs::read_to_string(&path).unwrap()));
+            }
+        }
+    }
+    on_disk.sort();
+    let mut served: Vec<(String, String)> = glossql_serverd::skills::REFERENCES
+        .iter()
+        .map(|p| {
+            (
+                p.path.strip_prefix("skills/").unwrap().to_string(),
+                p.body.to_string(),
+            )
+        })
+        .collect();
+    served.sort();
+    assert_eq!(
+        served.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        on_disk.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        "the served references are the files under skills/"
+    );
+    assert_eq!(served, on_disk, "a served reference is the file as it stands");
+    for p in glossql_serverd::skills::REFERENCES {
+        assert!(
+            p.uri().starts_with("skill://") && p.title() != p.path,
+            "{} needs a `# ` title line — the listing serves it as the description",
+            p.path
         );
     }
 }

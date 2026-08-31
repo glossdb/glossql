@@ -41,6 +41,20 @@
      only the frames whose URL changed refetch. #}
   <gl-window frame="frames/axes"></gl-window>
 
+  {# A current fact: one number, no series. `frames/fact` serves a row
+     only when this metric is a fact, so the tile renders only then —
+     `empty=""` states nothing for a series or a relation. #}
+  <gl-rows frame="frames/fact" empty="">
+    <template>
+      <section class="tile kpi">
+        <header><span class="eyebrow">Current fact · {{ metric }}</span>
+          <code class="chip" title="The grounding served whole: one row, one value, no date. No historical series is defined and none is owed — the story and the slices below stay empty by design; a level with an as-of definition is a stock metric instead, and charts.">fact_values()</code></header>
+        <span class="kpi-num">{shown}</span>
+        <p class="hint">a current fact — no historical series is defined</p>
+      </section>
+    </template>
+  </gl-rows>
+
   {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
        empty="no cells at this grain — the cube's reasons below say what it admitted; a grain finer than the metric's resolution serves nothing",
@@ -174,7 +188,7 @@
     <gl-rows frame="frames/pulse" join="frames/latest" on="name" empty="no metric surfaces declared yet">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 8rem">
-          <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+          <span class="r-subj">{title}<br><span class="r-meta">{name} <em>{mkind}</em></span></span>
           <span class="r-num">{latest}<br><span class="r-meta">{unit} {period}</span></span>
           <span class="r-num">{delta}</span>
           <span class="r-meta">{axes}</span>

@@ -24,7 +24,8 @@ normative definition; this page is the working map.
 - `DECLARE ASPECT` — a vocabulary entry: a name, a JSON Schema, a kind
   ([aspects](aspects.md)).
 - `GLOSS` — the one write verb for knowledge: applies an aspect to a
-  subject with a JSON body.
+  subject with a JSON body. On a QUERY aspect — a metric's grounding —
+  the outcome is the metric's fact row ([reads](../reference/reads.md)).
 - `DECLARE FUNCTION` — a measurement, voice, or detector; the body
   rides the declaration ([functions](functions.md)).
 - `DECLARE WITNESS` — who may speak an aspect and what adjudicates the
@@ -45,7 +46,10 @@ actor rides the connection and the engine stamps every statement
   side, marked `current`; precedence is the reader's business.
 - `ATTEST(subject)` — the verdict surface: band and score per witness.
 - `SELECT f() FROM subject` — extraction: runs a measurement at the
-  read's pin ([functions](functions.md)).
+  read's pin ([functions](functions.md)). The outcome is one row per
+  call — `function`, `subject`, `body`, `computed_at`, `computed` —
+  and `computed` is false when the recorded row was served at an
+  unchanged pin, its `computed_at` the earlier run's.
 - `read.<aspect>()` — a grounded metric as a relation: the current
   grounding expands at plan time, composable in any FROM position.
 - Plain SQL — tables, and the declaration relations (`functions`,

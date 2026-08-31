@@ -943,6 +943,38 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
     assert!(e.to_string().contains("no arguments"), "{e}");
 }
 
+/// A grounding's write answers with its fact from the channel that can
+/// judge it. Bound to nothing — a dataset-grain gloss resolves its
+/// subject without a `USE` — the grounding's table names would not
+/// resolve here, so the row abstains and names the `USE` that judges
+/// it; the gloss lands either way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grounding_written_unbound_lands_and_names_where_it_is_judged() {
+    let (_dir, session) = agent_session().await;
+    run(
+        &session,
+        r#"DECLARE DATASET fin SET (purpose: 'metrics');
+           DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#,
+    )
+    .await;
+    let row = table(
+        &session,
+        r#"GLOSS dso ON fin AS $${"sql": "SELECT d AS date, 1.0 AS value FROM t"}$$;"#,
+    )
+    .await;
+    assert!(row.contains("| dso "), "{row}");
+    assert!(
+        row.contains("| false ") && row.contains("bound to no dataset") && row.contains("USE fin;"),
+        "{row}"
+    );
+    let landed = table(
+        &session,
+        "SELECT count(*) AS n FROM glossary WHERE aspect = 'dso';",
+    )
+    .await;
+    assert!(landed.contains("| 1 "), "{landed}");
+}
+
 /// A measurement is a query (stage 5, §7e): the skill's own
 /// quick-validation flow, end to end — declare the aspect and a
 /// SQL-bodied function, extract, read the landed value back.
@@ -983,10 +1015,16 @@ async fn a_measurement_body_is_sql() {
                     ELSE CAST(count(*) FILTER (WHERE settled < billed) AS DOUBLE) / count(*)
                END AS breach_rate
              FROM settlements
-           $$ RETURNS ar_check;
-           SELECT ar_settles_in_full() FROM settlements;"#,
+           $$ RETURNS ar_check;"#,
     )
     .await;
+    // The outcome says whether the call computed or served: the first
+    // run computes; a repeat at the same pin serves the recorded row,
+    // its `computed_at` the first run's.
+    let first = table(&session, "SELECT ar_settles_in_full() FROM settlements;").await;
+    assert!(first.contains("| true ") && first.contains("computed"), "{first}");
+    let again = table(&session, "SELECT ar_settles_in_full() FROM settlements;").await;
+    assert!(again.contains("| false "), "{again}");
 
     let read = table(
         &session,
@@ -1360,4 +1398,74 @@ async fn one_statement_walks_the_catalog_once_however_many_plans_it_builds() {
     )
     .await;
     assert_eq!(lake.walk_count() - before, 1, "one statement, one walk");
+}
+
+/// A source's slots are workspace rows: the conventions read runs
+/// with nothing bound — the state a fresh channel, and every call on
+/// the MCP door, is in — and serves what an earlier onboarding banked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_conventions_gloss_reads_with_no_dataset_bound() {
+    let (_dir, store) = scratch_store().await;
+    let bound = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&bound, SETUP).await;
+    run(
+        &bound,
+        r#"DECLARE SOURCE glos_erp SET (type: parquet, location: 'lake/erp');
+           DECLARE ASPECT conventions WITH $${"type": "object"}$$ AS FACT ON SOURCE;
+           GLOSS conventions ON glos_erp AS $${"placeholder_date": "1900-01-01"}$$;"#,
+    )
+    .await;
+
+    let unbound = session_with(ActorKind::Agent, "agent-1", &store).await;
+    let served = table(
+        &unbound,
+        "SELECT subject, state, value FROM GLOSSARY(glos_erp) WHERE aspect = 'conventions';",
+    )
+    .await;
+    assert!(served.contains("current"), "{served}");
+    assert!(served.contains("1900-01-01"), "{served}");
+    // The verdict read over the same subject runs too — nothing to
+    // adjudicate, nothing refused.
+    run(&unbound, "SELECT subject, band FROM ATTEST(glos_erp);").await;
+}
+
+/// A source's files are readable from inside the language: the
+/// listing runs through the engine's object store under the source's
+/// location, subdirectories included, so a recipe author learns the
+/// names through the same door that lands them. A relational source
+/// has none and says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sources_files_list_from_inside_the_language() {
+    let (dir, session) = agent_session().await;
+    let root = dir.path().join("exports");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("a.csv"), "x\n1\n").unwrap();
+    std::fs::write(root.join("sub/b.csv"), "y\n22\n").unwrap();
+    run(
+        &session,
+        &format!(
+            "DECLARE SOURCE files SET (type: csv, location: '{}');",
+            root.display()
+        ),
+    )
+    .await;
+    let listed = table(
+        &session,
+        "SELECT path, size FROM source_files('files') ORDER BY path;",
+    )
+    .await;
+    assert!(listed.contains("| a.csv ") && listed.contains("| sub/b.csv "), "{listed}");
+    assert!(listed.contains("| 4 ") && listed.contains("| 5 "), "{listed}");
+
+    run(
+        &session,
+        "DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm/prod', \
+         driver: 'adbc_driver_postgresql');",
+    )
+    .await;
+    let e = session
+        .execute("SELECT path FROM source_files('crm');")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("relational"), "{e}");
 }
