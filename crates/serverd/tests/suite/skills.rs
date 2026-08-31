@@ -338,7 +338,11 @@ fn the_served_skills_are_the_skills_directory() {
             } else if path.extension().is_some_and(|e| e == "md")
                 && path.file_name().is_some_and(|n| n != "SKILL.md")
             {
-                let rel = path.strip_prefix(&dir).unwrap().to_string_lossy().into_owned();
+                let rel = path
+                    .strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
                 on_disk.push((rel, std::fs::read_to_string(&path).unwrap()));
             }
         }
@@ -359,7 +363,10 @@ fn the_served_skills_are_the_skills_directory() {
         on_disk.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
         "the served references are the files under skills/"
     );
-    assert_eq!(served, on_disk, "a served reference is the file as it stands");
+    assert_eq!(
+        served, on_disk,
+        "a served reference is the file as it stands"
+    );
     for p in glossql_serverd::skills::REFERENCES {
         assert!(
             p.uri().starts_with("skill://") && p.title() != p.path,

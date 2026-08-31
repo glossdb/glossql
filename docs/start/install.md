@@ -39,6 +39,7 @@ over the file, which is how a container is configured without one):
 | `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server — what a token minted for it carries as `azp` |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
+| `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
 | `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
 | `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
@@ -83,8 +84,11 @@ door's: `/mcp` writes as an agent, the other doors as a human. glossql
 is an OAuth 2.1 resource server and never an authorization server — it
 verifies against the keys the issuer publishes, it does not issue, and
 there is no login flow, client registration or user table inside a
-workspace. There is no open mode: a request without a valid token is
-answered 401, and a server without an issuer does not start.
+workspace. A request without a valid token is answered 401, and a
+server without an issuer does not start. The one exception is
+explicit: `GLOSSQL_INSECURE_OPEN=true` serves the doors open, every
+caller recorded as `insecure_dev_mode` — a laptop trying the server
+out, never a deployment.
 
 The issuer is any OpenID Connect provider. Register this server there
 as an API whose identifier is `GLOSSQL_AUDIENCE`, and one confidential

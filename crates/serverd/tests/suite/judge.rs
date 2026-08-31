@@ -11,7 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{BOOTSTRAP, DoorConfig, Plane, bootstrap, router};
+use glossql_serverd::{Access, BOOTSTRAP, DoorConfig, Plane, bootstrap, router};
 
 use crate::common;
 use serde_json::{Value, json};
@@ -41,7 +41,12 @@ async fn app() -> (Router, tempfile::TempDir) {
     .unwrap();
     let workspace = dir.path().to_path_buf();
     (
-        router(plane, DoorConfig::default(), workspace, common::login()),
+        router(
+            plane,
+            DoorConfig::default(),
+            workspace,
+            Access::Gated(common::login()),
+        ),
         dir,
     )
 }

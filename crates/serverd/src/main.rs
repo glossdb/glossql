@@ -12,7 +12,9 @@ use std::sync::Arc;
 use glossql_catalog::Lake;
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_scripts::KernelRuntime;
-use glossql_serverd::{DoorConfig, Gate, Login, Plane, bootstrap, router};
+use glossql_serverd::{
+    Access, DoorConfig, Gate, INSECURE_DEV_MODE, Login, Plane, bootstrap, router,
+};
 
 const USAGE: &str = "usage: serverd [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
@@ -26,7 +28,9 @@ required then. With GLOSSQL_CATALOG_URI set (a REST catalog; data and \
 metadata live behind it) it may be left unnamed: the working directory \
 serves.\n\
 the authorization arrangement is read from .env or the environment: \
-GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE]; \
+GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
+— or GLOSSQL_INSECURE_OPEN=true serves the doors without authentication, \
+every caller recorded as insecure_dev_mode (the name is the warning); \
 so is the catalog connection, when there is one: GLOSSQL_CATALOG_URI, \
 GLOSSQL_CATALOG_WAREHOUSE and its authentication (see .env.example)";
 
@@ -77,7 +81,11 @@ impl Auth {
     ) -> Result<Auth, String> {
         let required = |name: &str| {
             get(name).filter(|v| !v.trim().is_empty()).ok_or_else(|| {
-                format!("{name} is not set — the authorization arrangement lives in .env (see .env.example)")
+                format!(
+                    "{name} is not set — the authorization arrangement lives in .env \
+                     (see .env.example); GLOSSQL_INSECURE_OPEN=true serves open instead, \
+                     every caller insecure_dev_mode"
+                )
             })
         };
         Ok(Auth {
@@ -89,6 +97,15 @@ impl Auth {
                 .unwrap_or_else(|| format!("{scheme}://{addr}")),
         })
     }
+}
+
+/// The explicit way to serve without the arrangement:
+/// `GLOSSQL_INSECURE_OPEN=true` opens every door, every caller
+/// recorded as [`INSECURE_DEV_MODE`]. Only the literal `true` counts —
+/// the switch is a statement, never a fallback: anything else leaves
+/// the gate required, and the refusal names the switch.
+fn open(get: impl Fn(&str) -> Option<String>) -> bool {
+    get("GLOSSQL_INSECURE_OPEN").is_some_and(|v| v.trim() == "true")
 }
 
 fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -160,8 +177,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[tokio::main]
 async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let scheme = if args.tls.is_some() { "https" } else { "http" };
-    let auth = Auth::from(|name| std::env::var(name).ok(), &args.addr, scheme)
-        .map_err(|e| format!("{e}\n{USAGE}"))?;
+    // The open switch is read where the arrangement would be, before
+    // anything opens: a run is one or the other, and a misconfigured
+    // arrangement still refuses rather than falling open.
+    let auth = if open(|name| std::env::var(name).ok()) {
+        None
+    } else {
+        Some(
+            Auth::from(|name| std::env::var(name).ok(), &args.addr, scheme)
+                .map_err(|e| format!("{e}\n{USAGE}"))?,
+        )
+    };
     let (lake, workspace) = open_lake(args.workspace.clone())
         .await
         .map_err(|e| format!("{e}\n{USAGE}"))?;
@@ -187,17 +213,31 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
     .await?;
 
     // Who may speak: whoever the issuer says. Its keys are discovered
-    // here, and a server that cannot reach them does not open.
-    let gate = Arc::new(Gate::discover(&auth.issuer, &auth.audience, &auth.client_id).await?);
-    tracing::info!(
-        issuer = %gate.issuer(),
-        audience = %auth.audience,
-        application = %auth.client_id,
-        "verifying tokens"
-    );
-    let login = Arc::new(Login::new(gate, &auth.client_secret)?);
+    // here, and a server that cannot reach them does not open. Under
+    // the open switch there is nobody to ask, and the record says so
+    // out loud.
+    let access = match auth {
+        Some(auth) => {
+            let gate =
+                Arc::new(Gate::discover(&auth.issuer, &auth.audience, &auth.client_id).await?);
+            tracing::info!(
+                issuer = %gate.issuer(),
+                audience = %auth.audience,
+                application = %auth.client_id,
+                "verifying tokens"
+            );
+            Access::Gated(Arc::new(Login::new(gate, &auth.client_secret)?))
+        }
+        None => {
+            tracing::warn!(
+                actor = INSECURE_DEV_MODE,
+                "GLOSSQL_INSECURE_OPEN — the doors are open, nobody is verified"
+            );
+            Access::Open
+        }
+    };
 
-    let app = router(plane, args.doors, workspace, login);
+    let app = router(plane, args.doors, workspace, access);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     tracing::info!(
         addr = %args.addr,
@@ -301,14 +341,18 @@ fn catalog_from(
             scope: var("GLOSSQL_CATALOG_SCOPE"),
         },
         (Some(_), Some(_)) => {
-            return Err("GLOSSQL_CATALOG_TOKEN and GLOSSQL_CATALOG_CREDENTIAL are both set — \
+            return Err(
+                "GLOSSQL_CATALOG_TOKEN and GLOSSQL_CATALOG_CREDENTIAL are both set — \
                  one of them authenticates the catalog connection"
-                .into());
+                    .into(),
+            );
         }
         (None, None) => {
-            return Err("neither GLOSSQL_CATALOG_TOKEN nor GLOSSQL_CATALOG_CREDENTIAL is set — \
+            return Err(
+                "neither GLOSSQL_CATALOG_TOKEN nor GLOSSQL_CATALOG_CREDENTIAL is set — \
                  the catalog connection has nothing to authenticate with"
-                .into());
+                    .into(),
+            );
         }
     };
     Ok(Some(Connection {
@@ -408,6 +452,19 @@ mod tests {
         assert_eq!(named.audience, "https://glossql.example");
     }
 
+    /// The open switch is a statement, not a fallback: only the
+    /// literal `true` opens, anything else keeps the gate required.
+    #[test]
+    fn only_the_literal_true_opens_the_doors() {
+        let env = |v: Option<&'static str>| move |_: &str| v.map(str::to_string);
+        assert!(super::open(env(Some("true"))));
+        assert!(super::open(env(Some(" true "))), "whitespace is trimmed");
+        assert!(!super::open(env(None)));
+        assert!(!super::open(env(Some("1"))));
+        assert!(!super::open(env(Some("TRUE"))));
+        assert!(!super::open(env(Some("false"))));
+    }
+
     /// The catalog connection comes from the environment whole, or not
     /// at all: no URI is the local catalog, a URI must name its
     /// warehouse and exactly one way to authenticate, and a credential
@@ -482,8 +539,13 @@ mod tests {
             .expect("a lone certificate is refused");
         assert!(lone.contains("--tls-key"), "{lone}");
         let pair = parse(
-            argv(&["--tls-cert", "certs/localhost.pem", "--tls-key", "certs/localhost-key.pem"])
-                .into_iter(),
+            argv(&[
+                "--tls-cert",
+                "certs/localhost.pem",
+                "--tls-key",
+                "certs/localhost-key.pem",
+            ])
+            .into_iter(),
         )
         .unwrap();
         assert!(pair.tls.is_some());
