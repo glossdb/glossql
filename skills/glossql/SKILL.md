@@ -140,7 +140,8 @@ the door, the app and these examples:
 A shipped name is reserved: it shadows a table *and* a CTE of the same
 name, so don't name a CTE after one. Every column of every read, and
 the two cube reads, are `doc://docs/reference/reads.md`, served on
-this door.
+this door — open it before naming columns in a query instead of
+guessing them; a guess costs a refusal round trip.
 
 `open_questions`, `ruling_entries` and `agent_assumptions` answer for
 the whole workspace and carry a `dataset` column, so narrow them

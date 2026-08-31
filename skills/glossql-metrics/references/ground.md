@@ -128,7 +128,12 @@ the day factor rides the denominator, so `sum(num)/sum(den)` is days.
 round never serves them to a human — statistics are your work — so a
 measurable assumption below 1.0 is a question nobody will ever be
 asked. Settle it before recording. Below-1.0 confidence is for
-judgment dimensions only: definition, scope, convention.
+judgment dimensions only: definition, scope, convention. The inverse
+holds: a defensible default does not raise a judgment dimension to
+1.0. What "on time" means, which accounts count, whether partly paid
+rows belong — record the default you chose at the confidence it
+deserves, and the round serves it for confirmation. Judgment recorded
+at 1.0 silences the round on exactly what it exists to ask.
 
 Mark a stock with `"behavior": "stock"` as a top-level key in the
 body. The marker is your word and wins. Without it the cube and the
