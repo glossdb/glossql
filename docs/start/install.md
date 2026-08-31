@@ -23,10 +23,11 @@ sudo apt install ./glossql_<version>_amd64.deb
 ```
 
 Machines with an NVIDIA GPU take `glossql-cuda_…` instead: the band
-model then runs on GPU 0, falling back to CPU when no device answers.
-That flavor loads only where the NVIDIA driver and the CUDA 12
-runtime libraries (cudart, cublas, nvrtc, curand) are installed — on
-machines without them, `glossql` is the right package.
+model then runs on GPU 0 (compute capability 8.0 — Ampere — or
+newer), falling back to CPU when no device answers. That flavor loads
+only where the NVIDIA driver and the CUDA 12 runtime libraries
+(cudart, cublas, nvrtc, curand) are installed — on machines without
+them, `glossql` is the right package.
 
 ## Build and start
 

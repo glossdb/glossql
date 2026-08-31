@@ -73,8 +73,11 @@ jobs:
           path: tabicl-candle/weights
       - uses: dtolnay/rust-toolchain@stable
       # nvcc compiles the kernels to PTX; there is no GPU here, so the
-      # compute floor is named outright — 7.5 (Turing), which the
-      # driver JIT-compiles upward on everything newer.
+      # compute floor is named outright — 8.0 (Ampere), which the
+      # driver JIT-compiles upward on everything newer. Not lower:
+      # candle's compatibility.cuh defines __hmax_nan below arch 800,
+      # and CUDA >= 12.2's cuda_fp16.hpp defines it too — a 7.5 build
+      # collides.
       - name: CUDA toolchain
         if: matrix.flavor == 'cuda'
         run: |
@@ -86,7 +89,7 @@ jobs:
             libcublas-dev-${CUDA} libcurand-dev-${CUDA} cuda-nvrtc-dev-${CUDA}
           echo "/usr/local/cuda-${CUDA/-/.}/bin" >> "$GITHUB_PATH"
           {
-            echo "CUDA_COMPUTE_CAP=75"
+            echo "CUDA_COMPUTE_CAP=80"
             echo "LIBRARY_PATH=/usr/local/cuda-${CUDA/-/.}/lib64/stubs"
           } >> "$GITHUB_ENV"
       - name: build

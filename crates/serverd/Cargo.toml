@@ -117,7 +117,8 @@ replaces = "glossql"
 depends = "libc6, libgcc-s1, libstdc++6"
 extended-description = """serverd is one binary serving one glossql workspace: the SQL-shaped
 surface over a workspace's data and its context. This flavor runs the
-TabICL band model on an NVIDIA GPU (device 0, CPU fallback) and loads
-only where the NVIDIA driver and the CUDA 12 runtime libraries
-(cudart, cublas, nvrtc, curand) are installed; on machines without
-them, install glossql instead."""
+TabICL band model on an NVIDIA GPU (device 0, compute capability 8.0
+— Ampere — or newer; CPU fallback) and loads only where the NVIDIA
+driver and the CUDA 12 runtime libraries (cudart, cublas, nvrtc,
+curand) are installed; on machines without them, install glossql
+instead."""
