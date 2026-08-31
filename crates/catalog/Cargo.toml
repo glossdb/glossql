@@ -1,7 +1,9 @@
 [package]
 name = "glossql-catalog"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # The catalog backend is a build-time choice; everything downstream of
 # `Lake`'s constructors runs on `Arc<dyn Catalog>` either way.
