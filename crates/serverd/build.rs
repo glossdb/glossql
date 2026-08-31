@@ -38,8 +38,7 @@ fn main() {
         .expect("the crate sits two levels under the repo root");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     let mut src = String::new();
-    for (root, table, references_only) in
-        [("skills", "REFERENCES", true), ("docs", "PAGES", false)]
+    for (root, table, references_only) in [("skills", "REFERENCES", true), ("docs", "PAGES", false)]
     {
         let dir = repo.join(root);
         println!("cargo:rerun-if-changed={}", dir.display());

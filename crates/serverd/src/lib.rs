@@ -27,7 +27,10 @@
 //!
 //! Every door is behind one gate ([`auth`]): a bearer token, verified
 //! against the issuer's published keys, says who is speaking; the door
-//! it came through says with which standing.
+//! it came through says with which standing. The one way around the
+//! gate is explicit ([`Access::Open`], the `GLOSSQL_INSECURE_OPEN`
+//! switch): every caller becomes [`INSECURE_DEV_MODE`], the door still
+//! saying with which standing.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -56,7 +59,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{get, post};
-use glossql_glossary::ActorKind;
+use glossql_glossary::{Actor, ActorKind};
+use glossql_session::Caller;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use tower_http::trace::TraceLayer;
@@ -70,6 +74,12 @@ use tower_http::trace::TraceLayer;
 /// from anyone at this workspace. Never a request's actor — every
 /// request carries its own subject, the token's.
 pub const BOOTSTRAP: &str = "bootstrap";
+
+/// The other well-known actor id, [`BOOTSTRAP`]'s counterpart: what
+/// every caller becomes when the doors are served open
+/// ([`Access::Open`]). The name is the warning — a gloss carrying it
+/// says on the record that nobody was verified.
+pub const INSECURE_DEV_MODE: &str = "insecure_dev_mode";
 
 /// How much an agent sees at once.
 #[derive(Clone)]
@@ -92,16 +102,20 @@ pub struct AppState {
     pub row_cap: usize,
 }
 
+/// Who may speak at the doors: verified by the gate the login carries,
+/// or — by the explicit `GLOSSQL_INSECURE_OPEN=true` switch — anyone,
+/// every caller stamped [`INSECURE_DEV_MODE`] with the door's
+/// standing.
+pub enum Access {
+    /// Every door verifies with the gate the login carries.
+    Gated(Arc<Login>),
+    /// No gate — the dev arrangement the switch's name warns about.
+    Open,
+}
+
 /// The doors. `/` is the workspace — which datasets there are;
-/// everything else hangs off one of them. The login carries the gate
-/// every door verifies with.
-pub fn router(
-    plane: Arc<Plane>,
-    doors: DoorConfig,
-    workspace: PathBuf,
-    login: Arc<Login>,
-) -> Router {
-    let gate = Arc::clone(login.gate());
+/// everything else hangs off one of them.
+pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, access: Access) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
@@ -145,10 +159,10 @@ pub fn router(
         Arc::new(NeverSessionManager::default()),
         config,
     );
-    // One gate, instantiated per door with that door's standing: the
-    // agent door stamps agent, the human doors stamp human. Identity is
-    // read the same way at every door; only the kind differs, and it is
-    // the door's to say (SPEC.md §1, the actor rides the transport).
+    // The doors, standing by kind: the agent door stamps agent, the
+    // human doors stamp human. Identity is read the same way at every
+    // door; only the kind differs, and it is the door's to say
+    // (SPEC.md §1, the actor rides the transport).
     let human = Router::new()
         .merge(glossql_apps::root_router(root_plane, workspace.clone()))
         .route(
@@ -158,44 +172,65 @@ pub fn router(
                 row_cap: doors.row_cap,
             }),
         )
-        .nest("/{dataset}/app", glossql_apps::router(app_plane, workspace))
-        .layer(axum::middleware::from_fn_with_state(
-            (Arc::clone(&gate), ActorKind::Human),
-            auth::gate,
-        ));
-    let agent =
-        Router::new()
-            .nest_service("/mcp", mcp)
-            .layer(axum::middleware::from_fn_with_state(
+        .nest("/{dataset}/app", glossql_apps::router(app_plane, workspace));
+    let agent = Router::new().nest_service("/mcp", mcp);
+    let routes = match access {
+        Access::Gated(login) => {
+            // One gate, instantiated per door with that door's standing.
+            let gate = Arc::clone(login.gate());
+            let human = human.layer(axum::middleware::from_fn_with_state(
+                (Arc::clone(&gate), ActorKind::Human),
+                auth::gate,
+            ));
+            let agent = agent.layer(axum::middleware::from_fn_with_state(
                 (Arc::clone(&gate), ActorKind::Agent),
                 auth::gate,
             ));
-    let metadata = move || {
-        let gate = Arc::clone(&gate);
-        async move { axum::Json(gate.metadata()) }
+            let metadata = move || {
+                let gate = Arc::clone(&gate);
+                async move { axum::Json(gate.metadata()) }
+            };
+            Router::new()
+                .merge(human)
+                .merge(agent)
+                // Outside the gate, both: the login is where a browser
+                // goes to get a token, and the discovery document is
+                // where a client learns how to authenticate — a
+                // document that answered 401 would point the client at
+                // itself. The document answers at the root and under
+                // any path (RFC 9728 §3.1 forms the well-known URI
+                // from the resource's path, and a client given `…/mcp`
+                // asks for `…/oauth-protected-resource/mcp` first);
+                // there is one resource here, so one document.
+                .merge(login::router(login))
+                .route(
+                    "/.well-known/oauth-protected-resource",
+                    get(metadata.clone()),
+                )
+                .route(
+                    "/.well-known/oauth-protected-resource/{*path}",
+                    get(metadata),
+                )
+        }
+        // Open: the same doors, a fixed stamp in place of the gate. No
+        // login and no discovery document — with no 401 to answer, a
+        // client is never sent to authenticate.
+        Access::Open => {
+            let stamp = |kind| {
+                axum::Extension(Caller(Actor {
+                    kind,
+                    id: INSECURE_DEV_MODE.into(),
+                }))
+            };
+            Router::new()
+                .merge(human.layer(stamp(ActorKind::Human)))
+                .merge(agent.layer(stamp(ActorKind::Agent)))
+        }
     };
-    Router::new()
-        .merge(human)
-        .merge(agent)
-        // Outside the gate, all three: the login is where a browser
-        // goes to get a token; the assets are the app's own script and
-        // styles and hold no data; and the discovery document is where
-        // a client learns how to authenticate — a document that
-        // answered 401 would point the client at itself. The document
-        // answers at the root and under any path (RFC 9728 §3.1 forms
-        // the well-known URI from the resource's path, and a client
-        // given `…/mcp` asks for `…/oauth-protected-resource/mcp`
-        // first); there is one resource here, so one document.
-        .merge(login::router(login))
+    routes
+        // The assets are the app's own script and styles and hold no
+        // data — outside the gate in either arrangement.
         .nest("/assets", glossql_apps::assets_router())
-        .route(
-            "/.well-known/oauth-protected-resource",
-            get(metadata.clone()),
-        )
-        .route(
-            "/.well-known/oauth-protected-resource/{*path}",
-            get(metadata),
-        )
         // The request span, outermost: every door, the gate included,
         // works inside it. tower-http's own layer; what the span holds
         // is telemetry's to say.

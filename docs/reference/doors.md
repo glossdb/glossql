@@ -113,6 +113,14 @@ the token's `kid` names, with the algorithm that key admits), `iss`,
 logged with its reason, never with the token. A server that cannot
 reach its issuer does not start.
 
+The one way around the gate is explicit. `GLOSSQL_INSECURE_OPEN=true`
+serves every door without authentication: no login and no discovery
+document — with no 401 to answer, a client is never sent to
+authenticate — and every caller is recorded as `insecure_dev_mode`,
+still with the door's standing. The name is the warning, and the
+server says it out loud at start. A laptop trying the server out,
+never a deployment.
+
 Standing the server *witnesses* is separate and is not governed by the
 token: an answer elicited mid-call lands with human standing under the
 same subject over the agent's connection, because the server saw the

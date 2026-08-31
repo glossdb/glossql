@@ -13,7 +13,9 @@ use datafusion::arrow::array::Int64Array;
 use glossql_glossary::{Actor, ActorKind, Store};
 use std::collections::HashMap;
 
-use glossql_serverd::{ARROW_STREAM, BOOTSTRAP, DoorConfig, Login, Plane, bootstrap, router};
+use glossql_serverd::{
+    ARROW_STREAM, Access, BOOTSTRAP, DoorConfig, INSECURE_DEV_MODE, Login, Plane, bootstrap, router,
+};
 
 use crate::common;
 use glossql_session::NoRuntime;
@@ -25,7 +27,7 @@ async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::Te
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     // No apps live here — the app door serves an empty home.
     let workspace = dir.path().to_path_buf();
-    (router(plane, doors, workspace, login), dir)
+    (router(plane, doors, workspace, Access::Gated(login)), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
@@ -249,6 +251,92 @@ async fn the_token_names_the_subject_and_the_door_names_the_standing() {
     assert_eq!(rows[0]["actor_kind"], json!("agent"), "{body}");
     assert_eq!(rows[1]["actor_kind"], json!("human"), "{body}");
     assert!(rows.iter().all(|r| r["actor_id"] == json!("ada")), "{body}");
+}
+
+/// The explicit open arrangement (`Access::Open`, the
+/// GLOSSQL_INSECURE_OPEN switch): no door asks for a token, and the
+/// record still names who spoke — the well-known dev actor, with the
+/// door's standing. No login and no discovery document are served;
+/// with no 401 to answer, a client is never sent to authenticate.
+#[tokio::test(flavor = "multi_thread")]
+async fn open_doors_ask_no_token_and_stamp_the_dev_actor() {
+    let (dir, store) = scratch_store().await;
+    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let app = router(
+        plane,
+        DoorConfig::default(),
+        dir.path().to_path_buf(),
+        Access::Open,
+    );
+
+    // The agent door, bare: agent standing, the dev actor as the id.
+    let request = Request::post("/mcp")
+        .header(header::HOST, "127.0.0.1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/call")
+        .header("mcp-name", "glossql")
+        .body(Body::from(
+            call_with(
+                meta(),
+                1,
+                "DECLARE DATASET fin SET (purpose: 'open door test');\n\
+                 USE fin;\n\
+                 DECLARE ASPECT note WITH $${\"type\": \"object\"}$$ AS FACT ON DATASET;\n\
+                 GLOSS note ON fin AS $${\"value\": \"through the open agent door\"}$$;\n\
+                 SELECT actor_id, actor_kind FROM glossary WHERE aspect = 'note';",
+                None,
+            )
+            .to_string(),
+        ))
+        .unwrap();
+    let body = expect_ok(app.clone().oneshot(request).await.unwrap()).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).expect(text);
+    let last = outcomes.as_array().unwrap().last().unwrap();
+    assert_eq!(last["rows"][0]["actor_id"], json!(INSECURE_DEV_MODE));
+    assert_eq!(last["rows"][0]["actor_kind"], json!("agent"));
+
+    // A human door, bare: the same id, human standing — the
+    // supersession key's third leg still works, the door still sets it.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/fin/query")
+                .body(Body::from(
+                    "GLOSS note ON fin AS $${\"value\": \"through the open human door\"}$$;\n\
+                     SELECT actor_id, actor_kind FROM glossary WHERE aspect = 'note' \
+                     ORDER BY actor_kind;",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let rows = body[1]["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{body}"));
+    assert_eq!(rows.len(), 2, "{body}");
+    assert_eq!(rows[0]["actor_kind"], json!("agent"), "{body}");
+    assert_eq!(rows[1]["actor_kind"], json!("human"), "{body}");
+    assert!(
+        rows.iter()
+            .all(|r| r["actor_id"] == json!(INSECURE_DEV_MODE)),
+        "{body}"
+    );
+
+    // Nothing to authenticate with is served: no login, no discovery.
+    for path in ["/auth/login", "/.well-known/oauth-protected-resource"] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 }
 
 /// A request that brings no token, or one this issuer did not mint for
@@ -1051,7 +1139,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
         plane,
         DoorConfig::default(),
         dir.path().to_path_buf(),
-        common::login(),
+        Access::Gated(common::login()),
     );
 
     let setup = format!(
@@ -2359,7 +2447,10 @@ async fn the_opening_names_where_to_begin() {
     .await;
     let body = expect_ok(mcp(app.clone(), initialize()).await).await;
     let instructions = body["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.contains("No dataset stands yet"), "{instructions}");
+    assert!(
+        instructions.contains("No dataset stands yet"),
+        "{instructions}"
+    );
     assert!(instructions.contains("workspace_next"), "{instructions}");
 
     expect_ok(
@@ -2377,7 +2468,13 @@ async fn the_opening_names_where_to_begin() {
     .await;
     let body = expect_ok(mcp(app, initialize()).await).await;
     let instructions = body["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.contains("Open with the brief"), "{instructions}");
+    assert!(
+        instructions.contains("Open with the brief"),
+        "{instructions}"
+    );
     assert!(instructions.contains("not a gate"), "{instructions}");
-    assert!(!instructions.contains("No dataset stands yet"), "{instructions}");
+    assert!(
+        !instructions.contains("No dataset stands yet"),
+        "{instructions}"
+    );
 }
