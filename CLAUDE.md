@@ -24,6 +24,10 @@ follow the corpus-first process below.
   `methods/`, `architecture/`, and the concern pages). For agents and
   humans alike; enterprise-customer quality, constantly current.
   Never normative language prose.
+- `.github/` — the release machinery: `workflows/release.yml` builds
+  the debs on a `v*` tag, `release-macos.sh` is the laptop half, the
+  rendered tap formula sits beside them. The order and its sharp
+  edges: the glossql-release skill.
 - `skills/` — the product skills, a `SKILL.md` and its `references/`
   each, where a door-connected agent learns the language; embedded in
   serverd and served on the MCP door as resources and prompts, gated
