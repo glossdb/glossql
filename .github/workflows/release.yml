@@ -1,4 +1,5 @@
-# The release build: three Debian packages assembled when a v* tag is
+# The release build: two Debian packages (x86_64; ARM is not a target)
+# assembled when a v* tag is
 # pushed (or on manual dispatch). The macOS artifact is built on a
 # laptop — .github/release-macos.sh — and the tap formula points at it.
 # This is not CI: nothing here runs on push, the test suite gates
@@ -55,7 +56,6 @@ jobs:
       matrix:
         include:
           - { runner: ubuntu-24.04, flavor: cpu }
-          - { runner: ubuntu-24.04-arm, flavor: cpu }
           - { runner: ubuntu-24.04, flavor: cuda }
     runs-on: ${{ matrix.runner }}
     steps:

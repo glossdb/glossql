@@ -14,12 +14,12 @@ macOS (Apple Silicon):
 brew install glossdb/glossql/glossql
 ```
 
-Debian-based Linux, x86_64 or arm64 (Debian 13 / Ubuntu 24.04 or
-newer): download the `.deb` from the [releases
+Debian-based Linux, x86_64 (Debian 13 / Ubuntu 24.04 or newer):
+download the `.deb` from the [releases
 page](https://github.com/glossdb/glossql/releases) and
 
 ```bash
-sudo apt install ./glossql_<version>_<arch>.deb
+sudo apt install ./glossql_<version>_amd64.deb
 ```
 
 Machines with an NVIDIA GPU take `glossql-cuda_…` instead: the band
