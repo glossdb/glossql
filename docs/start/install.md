@@ -1,7 +1,32 @@
 # Install and run
 
 `serverd` is one binary serving one workspace — the directory that
-holds your data lake and everything declared over it.
+holds your data lake and everything declared over it. The binary
+carries the band model's regressor; there is nothing else to install.
+The compute device is chosen at start: Metal on Apple Silicon, CUDA
+where the cuda flavor finds a device, CPU otherwise.
+
+## Install
+
+macOS (Apple Silicon):
+
+```bash
+brew install glossdb/glossql/glossql
+```
+
+Debian-based Linux, x86_64 or arm64 (Debian 13 / Ubuntu 24.04 or
+newer): download the `.deb` from the [releases
+page](https://github.com/glossdb/glossql/releases) and
+
+```bash
+sudo apt install ./glossql_<version>_<arch>.deb
+```
+
+Machines with an NVIDIA GPU take `glossql-cuda_…` instead: the band
+model then runs on GPU 0, falling back to CPU when no device answers.
+That flavor loads only where the NVIDIA driver and the CUDA 12
+runtime libraries (cudart, cublas, nvrtc, curand) are installed — on
+machines without them, `glossql` is the right package.
 
 ## Build and start
 
@@ -10,6 +35,12 @@ cargo build --release -p glossql-serverd
 cp .env.example .env            # then fill it in — see Tokens below
 ./target/release/serverd --workspace ~/acme
 ```
+
+A source build expects the [tabicl-candle
+checkout](https://github.com/glossdb/tabicl-candle) as a sibling
+directory and stages its converted weights beside the binary;
+`--features embed-weights` bakes the regressor in instead, which is
+how the released artifacts are built.
 
 The server reads `.env`, reads the issuer's keys, prints its doors and
 listens:
@@ -132,9 +163,10 @@ acme/
   apps/              optional: workspace apps, one directory per app;
                      a workspace app named like a built-in shadows it
                      whole
-  weights/           optional: the band model's weights, verified by
-                     digest at load (a sibling ../weights directory
-                     is also searched)
+  weights/           optional: a band-model weights override,
+                     verified by digest at load (a sibling ../weights
+                     directory is also searched); the released binary
+                     carries the regressor itself
 ```
 
 The lake is the whole store. There is no separate database for the

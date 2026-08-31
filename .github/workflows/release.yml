@@ -1,0 +1,122 @@
+# The release build: three Debian packages assembled when a v* tag is
+# pushed (or on manual dispatch). The macOS artifact is built on a
+# laptop — .github/release-macos.sh — and the tap formula points at it.
+# This is not CI: nothing here runs on push, the test suite gates
+# changes locally.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CUDA: "12-6"
+
+jobs:
+  # Weights are never in git and never redistributed on their own: this
+  # job reconstructs them the way a container build does — fetch the
+  # public checkpoints, convert, verify against the digests pinned in
+  # tabicl-candle — and hands the regressor to the package builds.
+  weights:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: glossdb/tabicl-candle
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run python scripts/convert_weights.py
+      - name: verify against the pinned digests
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          pinned = json.load(open("fixtures/DIGESTS"))["regressor"]["sha256"]
+          actual = hashlib.sha256(
+              open("weights/tabicl-regressor.safetensors", "rb").read()
+          ).hexdigest()
+          assert actual == pinned, f"regressor digest mismatch: {actual} != {pinned}"
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weights
+          path: |
+            weights/tabicl-regressor.safetensors
+            weights/tabicl-regressor.config.json
+          if-no-files-found: error
+
+  deb:
+    needs: weights
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, flavor: cpu }
+          - { runner: ubuntu-24.04-arm, flavor: cpu }
+          - { runner: ubuntu-24.04, flavor: cuda }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Side by side, the sibling layout the workspace manifest names.
+      - uses: actions/checkout@v4
+        with:
+          path: glossql
+      - uses: actions/checkout@v4
+        with:
+          repository: glossdb/tabicl-candle
+          path: tabicl-candle
+      - uses: actions/download-artifact@v4
+        with:
+          name: weights
+          path: tabicl-candle/weights
+      - uses: dtolnay/rust-toolchain@stable
+      # nvcc compiles the kernels to PTX; there is no GPU here, so the
+      # compute floor is named outright — 7.5 (Turing), which the
+      # driver JIT-compiles upward on everything newer.
+      - name: CUDA toolchain
+        if: matrix.flavor == 'cuda'
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -yq \
+            cuda-nvcc-${CUDA} cuda-cudart-dev-${CUDA} cuda-driver-dev-${CUDA} \
+            libcublas-dev-${CUDA} libcurand-dev-${CUDA} cuda-nvrtc-dev-${CUDA}
+          echo "/usr/local/cuda-${CUDA/-/.}/bin" >> "$GITHUB_PATH"
+          {
+            echo "CUDA_COMPUTE_CAP=75"
+            echo "LIBRARY_PATH=/usr/local/cuda-${CUDA/-/.}/lib64/stubs"
+          } >> "$GITHUB_ENV"
+      - name: build
+        working-directory: glossql
+        run: |
+          cargo build --release -p glossql-serverd \
+            --features "embed-weights${{ matrix.flavor == 'cuda' && ',cuda' || '' }}"
+      # The cuda binary only loads where libcuda is; smoke the cpu one.
+      - name: smoke
+        if: matrix.flavor == 'cpu'
+        run: glossql/target/release/serverd --version
+      - name: package
+        working-directory: glossql
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb -p glossql-serverd --no-build \
+            ${{ matrix.flavor == 'cuda' && '--variant cuda' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.flavor }}-${{ runner.arch }}
+          path: glossql/target/debian/*.deb
+          if-no-files-found: error
+      - name: upload to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: glossql
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --draft --verify-tag --title "$tag" --notes "" \
+            || true
+          gh release upload "$tag" target/debian/*.deb --clobber

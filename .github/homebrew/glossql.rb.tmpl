@@ -1,0 +1,21 @@
+# The tap formula, rewritten by .github/release-macos.sh at each
+# release; lives at glossdb/homebrew-glossql/Formula/glossql.rb.
+class Glossql < Formula
+  desc "Context language server: SQL-shaped surface over a workspace's data and context"
+  homepage "https://github.com/glossdb/glossql"
+  url "https://github.com/glossdb/glossql/releases/download/v{{version}}/glossql-{{version}}-aarch64-apple-darwin.tar.gz"
+  sha256 "{{sha256}}"
+  version "{{version}}"
+  license "Apache-2.0"
+
+  depends_on :macos
+  depends_on arch: :arm64
+
+  def install
+    bin.install "serverd"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/serverd --version")
+  end
+end
