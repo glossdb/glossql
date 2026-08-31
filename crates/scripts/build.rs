@@ -5,8 +5,14 @@
 //! container bakes exactly what the build staged. A checkout without
 //! converted weights still builds, with a warning: the runtime then
 //! requires the workspace to carry its own `weights/`.
+//!
+//! With the `embed-weights` feature the regressor is baked into the
+//! binary instead: the safetensors bytes are verified here against the
+//! pinned digest — the one moment the bytes are fixed — and an include
+//! is generated for lib.rs. A release artifact is then one file; that
+//! build refuses to proceed without the weights.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -16,7 +22,21 @@ fn main() {
     println!("cargo:rerun-if-changed={}", src.display());
     println!("cargo:rerun-if-changed={}", digests.display());
 
-    if !src.join("tabicl-regressor.safetensors").exists() || !digests.exists() {
+    let embed = std::env::var_os("CARGO_FEATURE_EMBED_WEIGHTS").is_some();
+    let complete = src.join("tabicl-regressor.safetensors").exists() && digests.exists();
+    if embed {
+        if !complete {
+            panic!(
+                "embed-weights: no converted weights at {} — the release \
+                 artifact carries the regressor, so this build cannot \
+                 proceed without it (run tabicl-candle's \
+                 scripts/convert_weights.py)",
+                src.display()
+            );
+        }
+        embed_regressor(&src, &digests);
+    }
+    if !complete {
         println!(
             "cargo:warning=no converted weights at {} — building without staged weights; \
              the workspace must carry its own weights/",
@@ -45,4 +65,42 @@ fn main() {
         }
     }
     let _ = std::fs::copy(&digests, dst.join("DIGESTS"));
+}
+
+/// Verify the regressor against the pinned digest and generate the
+/// include lib.rs compiles under `embed-weights`. Verification lives
+/// here because the embedded bytes can never change after this build —
+/// the runtime check that guards a workspace's copyable weights/ has
+/// nothing left to catch.
+fn embed_regressor(src: &Path, digests: &Path) {
+    use sha2::{Digest, Sha256};
+
+    let st = src.join("tabicl-regressor.safetensors");
+    let config = src.join("tabicl-regressor.config.json");
+    let pinned: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(digests).expect("read DIGESTS"))
+            .expect("parse DIGESTS");
+    let expected = pinned["regressor"]["sha256"]
+        .as_str()
+        .expect("DIGESTS pins a regressor sha256");
+    let bytes = std::fs::read(&st).expect("read regressor safetensors");
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        actual,
+        expected,
+        "embed-weights: regressor digest mismatch at {} — re-run \
+         scripts/convert_weights.py or restore the pinned weights",
+        st.display()
+    );
+
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let generated = format!(
+        "pub static REGRESSOR_SAFETENSORS: &[u8] = include_bytes!({:?});\n\
+         pub static REGRESSOR_CONFIG: &str = include_str!({:?});\n",
+        st.canonicalize().expect("canonicalize safetensors path"),
+        config.canonicalize().expect("canonicalize config path"),
+    );
+    std::fs::write(out.join("embedded_weights.rs"), generated).expect("write embed include");
 }

@@ -1,7 +1,9 @@
 [package]
 name = "glossql-serverd"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "serverd"
@@ -17,6 +19,12 @@ path = "src/main.rs"
 default = ["sql", "rest"]
 sql = ["glossql-catalog/sql"]
 rest = ["glossql-catalog/rest"]
+# The release-artifact switches, forwarded to glossql-scripts: cuda is
+# the Linux GPU flavor (needs the NVIDIA driver and CUDA 12 runtime
+# libraries at load), embed-weights bakes the regressor into the binary
+# so the artifact is one self-contained file.
+cuda = ["glossql-scripts/cuda"]
+embed-weights = ["glossql-scripts/embed-weights"]
 
 [dependencies]
 glossql-glossary = { path = "../glossary" }
@@ -81,3 +89,35 @@ ed25519-dalek = { version = "2", features = ["pkcs8"] }
 
 [lints]
 workspace = true
+
+# How the Linux artifacts are assembled: `cargo deb -p glossql-serverd
+# --no-build` over a binary built with `--release --features
+# embed-weights` (plus `cuda` and `--variant cuda` for the GPU flavor).
+# The binary is the whole package — weights ride inside it.
+[package.metadata.deb]
+name = "glossql"
+maintainer = "glossdb <phas02@users.noreply.github.com>"
+copyright = "glossql contributors, Apache-2.0"
+extended-description = """serverd is one binary serving one glossql workspace: the SQL-shaped
+surface over a workspace's data and its context. Runs the TabICL band
+model on CPU."""
+section = "database"
+priority = "optional"
+assets = [["target/release/serverd", "usr/bin/serverd", "755"]]
+
+[package.metadata.deb.variants.cuda]
+name = "glossql-cuda"
+provides = "glossql"
+conflicts = "glossql"
+replaces = "glossql"
+# Not $auto: dpkg-shlibdeps would pin the NVIDIA runtime to the exact
+# minor packages of the build machine. The CUDA requirement is stated,
+# not resolved: driver (libcuda), cudart, cublas, nvrtc, curand from a
+# CUDA 12 installation.
+depends = "libc6, libgcc-s1, libstdc++6"
+extended-description = """serverd is one binary serving one glossql workspace: the SQL-shaped
+surface over a workspace's data and its context. This flavor runs the
+TabICL band model on an NVIDIA GPU (device 0, CPU fallback) and loads
+only where the NVIDIA driver and the CUDA 12 runtime libraries
+(cudart, cublas, nvrtc, curand) are installed; on machines without
+them, install glossql instead."""

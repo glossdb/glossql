@@ -1,7 +1,9 @@
 [package]
 name = "glossql-scripts"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 glossql-session = { path = "../session" }
@@ -11,10 +13,35 @@ serde_json.workspace = true
 # The statistical kernels' algebra (reconcile's convention product).
 faer.workspace = true
 # The TabICL forward for the band kernel (sibling link, see the workspace
-# manifest); the model loads lazily from the workspace's weights/.
-tabicl-candle = { workspace = true, features = ["metal"] }
+# manifest); the model loads lazily from the workspace's weights/, or
+# from the bytes an embed-weights build carries. Metal rides only the
+# macOS build — the objc2 stack under candle's metal feature refuses
+# every other target — so the feature lives on the target table below.
+tabicl-candle.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tabicl-candle = { workspace = true, features = ["metal"] }
+
+[features]
+# The Linux GPU build. candle's cuda rides cudarc's dynamic-linking:
+# the binary then loads only where the NVIDIA driver and CUDA 12
+# runtime libraries are installed — which is why it is a separate
+# artifact, not the default. pick_device still falls back to CPU when
+# the driver answers without a usable device.
+cuda = ["tabicl-candle/cuda"]
+# Bake the regressor into the binary — the release artifact is one
+# self-contained file. build.rs verifies the safetensors against the
+# pinned digests and generates the include; the workspace's weights/
+# still overrides at runtime. Off in dev and test builds, which use
+# the files build.rs stages beside the binaries.
+embed-weights = []
+
+[build-dependencies]
+# Digest verification of the bytes embed-weights bakes in.
+sha2 = "0.10"
+serde_json.workspace = true
 
 [dev-dependencies]
 glossql-glossary = { path = "../glossary" }

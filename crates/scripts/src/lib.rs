@@ -14,6 +14,13 @@ use std::path::PathBuf;
 
 pub mod library;
 mod statistics;
+
+/// The regressor an embed-weights build carries, generated and
+/// digest-verified by build.rs.
+#[cfg(feature = "embed-weights")]
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/embedded_weights.rs"));
+}
 use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
@@ -53,8 +60,9 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
 struct BandModel {
     dir: PathBuf,
     model: RwLock<Option<Arc<tabicl_candle::tabicl::TabIcl>>>,
-    /// Chosen once: Metal when the machine has it (only the candle
-    /// compute rides the GPU), CPU otherwise.
+    /// Chosen once: Metal when the machine has it, else CUDA device 0
+    /// when the build carries the cuda feature and the driver answers
+    /// (only the candle compute rides the GPU), CPU otherwise.
     device: tabicl_candle::Device,
 }
 
@@ -80,7 +88,14 @@ fn compute_pool() -> &'static rayon::ThreadPool {
 }
 
 fn pick_device() -> tabicl_candle::Device {
-    tabicl_candle::Device::new_metal(0).unwrap_or(tabicl_candle::Device::Cpu)
+    // Both constructors exist under every feature set — a backend that
+    // was not compiled in answers with an error, and a compiled-in one
+    // answers with an error when the machine has no usable device
+    // (a cuda build on a driverless machine never gets this far: the
+    // loader refuses the binary — the cpu artifact serves there).
+    tabicl_candle::Device::new_metal(0)
+        .or_else(|_| tabicl_candle::Device::new_cuda(0))
+        .unwrap_or(tabicl_candle::Device::Cpu)
 }
 
 impl BandModel {
@@ -124,13 +139,31 @@ impl BandModel {
         &self.device
     }
 
+    /// A directory's weights when one is complete — the workspace's
+    /// own, or the files the build staged beside the binary — else the
+    /// regressor an embed-weights binary carries (verified against the
+    /// pinned digest when it was baked in; see build.rs).
+    fn checkpoint(&self) -> Result<tabicl_candle::weights::Checkpoint, String> {
+        match self.resolve_dir() {
+            Ok(dir) => tabicl_candle::weights::load_dir(&dir, "regressor", &self.device)
+                .map_err(|e| format!("tabicl weights at {}: {e}", dir.display())),
+            #[cfg(feature = "embed-weights")]
+            Err(_) => tabicl_candle::weights::load_bytes(
+                embedded::REGRESSOR_SAFETENSORS,
+                embedded::REGRESSOR_CONFIG,
+                &self.device,
+            )
+            .map_err(|e| format!("embedded tabicl weights: {e}")),
+            #[cfg(not(feature = "embed-weights"))]
+            Err(e) => Err(e),
+        }
+    }
+
     fn get(&self) -> Result<Arc<tabicl_candle::tabicl::TabIcl>, String> {
         if let Some(model) = self.model.read().expect("band model lock").as_ref() {
             return Ok(Arc::clone(model));
         }
-        let dir = self.resolve_dir()?;
-        let ckpt = tabicl_candle::weights::load_dir(&dir, "regressor", &self.device)
-            .map_err(|e| format!("tabicl weights at {}: {e}", dir.display()))?;
+        let ckpt = self.checkpoint()?;
         let loaded = Arc::new(
             tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
         );
@@ -1156,5 +1189,24 @@ mod band_grid_filter {
             .unwrap();
         assert_eq!(q.len(), alphas.len());
         assert!(q[0] <= q[1] && q[1] <= q[2], "monotone quantiles: {q:?}");
+    }
+}
+
+#[cfg(all(test, feature = "embed-weights"))]
+mod embedded_weights_tests {
+    /// The whole embed path in one assertion: build.rs verified and
+    /// generated the include, the bytes deserialize, the checkpoint
+    /// builds the model. Runs only under
+    /// `cargo test -p glossql-scripts --features embed-weights --lib`.
+    #[test]
+    fn embedded_regressor_builds_the_model() {
+        let ckpt = tabicl_candle::weights::load_bytes(
+            super::embedded::REGRESSOR_SAFETENSORS,
+            super::embedded::REGRESSOR_CONFIG,
+            &tabicl_candle::Device::Cpu,
+        )
+        .unwrap();
+        assert!(ckpt.tensors.len() > 100, "got {}", ckpt.tensors.len());
+        tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).unwrap();
     }
 }

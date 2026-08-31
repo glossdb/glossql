@@ -18,7 +18,7 @@ use glossql_serverd::{
 
 const USAGE: &str = "usage: serverd [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
-[--tls-cert <pem> --tls-key <pem>]\n\
+[--tls-cert <pem> --tls-key <pem>] | serverd --version\n\
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
 pair.\n\
@@ -157,6 +157,12 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Before parse: --version answers and exits — a packaging smoke
+    // test runs it where no workspace or environment stands.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("serverd {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let args = parse(std::env::args()).map_err(|e| format!("{e}\n{USAGE}"))?;
     // `.env` in the working directory, when there is one; a variable
     // already set in the environment wins over it, which is how a
