@@ -174,11 +174,12 @@ vocabulary. Four macros and a prose block:
 them thin: encodings and marks. A spec that filters or aggregates is
 doing the frame's job in a place nobody can test.
 
-Pin `$schema` to the vega-lite major the door serves (the rendered
-shell's vendor script names it) — a spec claiming an older major
-renders but logs a version warning on every load, which
-teaches readers to ignore the console. `{"data": {"name": "frame"}}` is
-how the spec names the frame the tile bound.
+Pin `$schema` to the vega-lite major the door serves — today that is
+`https://vega.github.io/schema/vega-lite/v6.json`. The v5 reflex is
+outdated here: an older major renders but logs a version warning on
+every load, which teaches readers to ignore the console.
+`{"data": {"name": "frame"}}` is how the spec names the frame the
+tile bound.
 
 A corridor is a `layer`: an `area` with `y`/`y2` under the lines, and
 `"color": {"datum": "as it happened"}` on each line to earn a legend

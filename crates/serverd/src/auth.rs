@@ -108,7 +108,6 @@ impl Audience {
             Audience::None => false,
         }
     }
-
 }
 
 impl std::fmt::Display for Audience {

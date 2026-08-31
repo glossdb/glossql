@@ -388,3 +388,70 @@ async fn scratch_store() -> (tempfile::TempDir, Store) {
     let store = Store::open(lake).await.unwrap();
     (dir, store)
 }
+
+/// The first quoted `x.y.z` literal in `s` — how a minified bundle
+/// states its own version near the top — read as its major.
+fn first_quoted_semver_major(s: &str) -> Option<u32> {
+    let mut i = 0;
+    while let Some(q) = s[i..].find('"') {
+        let start = i + q + 1;
+        let end = start + s[start..].find('"')?;
+        let lit = &s[start..end];
+        let parts: Vec<&str> = lit.split('.').collect();
+        if parts.len() == 3
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return parts[0].parse().ok();
+        }
+        i = end + 1;
+    }
+    None
+}
+
+/// Every `vega-lite/v<N>` major named in `text`.
+fn schema_majors(text: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("vega-lite/v") {
+        rest = &rest[at + "vega-lite/v".len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(v) = digits.parse() {
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// The apps skill names the vega-lite major outright, and this pin
+/// holds the number to what the door actually serves — the vendored
+/// bundle — alongside the built-in docket's own spec. Foreign agents
+/// keep writing the `v5` habit into `app_spec` bodies; the skill's
+/// hint is the counter, and a bundle bump that forgets the prose
+/// fails here instead of teaching an outdated `$schema`.
+#[test]
+fn the_apps_skill_names_the_vega_lite_major_the_door_serves() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let bundle = std::fs::read_to_string(manifest.join("../apps/assets/vendor/vega-lite.min.js"))
+        .expect("the vendored vega-lite bundle");
+    let served = first_quoted_semver_major(&bundle).expect("a version literal in the bundle");
+
+    let skill = glossql_serverd::skills::SKILLS
+        .iter()
+        .find(|s| s.name == "glossql-apps")
+        .expect("the apps skill ships");
+    let mut claimed = schema_majors(skill.body);
+    assert!(
+        !claimed.is_empty(),
+        "the apps skill no longer names a vega-lite `$schema` major — the hint is gone"
+    );
+    let spec =
+        std::fs::read_to_string(manifest.join("../apps/builtin/docket/specs/series.vl.json"))
+            .expect("the docket's series spec");
+    claimed.extend(schema_majors(&spec));
+    assert!(
+        claimed.iter().all(|&v| v == served),
+        "vega-lite majors out of step: the bundle serves v{served}, prose and specs claim {claimed:?}"
+    );
+}
