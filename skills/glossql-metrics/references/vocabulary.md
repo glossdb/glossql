@@ -22,7 +22,9 @@ the rest of the backlog derives from it.
   edges. Each anchor is served raw and year-scoped: a cumulative that
   resets abstains at raw grain and reconciles as a stock on the year
   anchor; read the pair together. Names lie either way — a column
-  called "total" can carry a per-period movement.
+  called "total" can carry a per-period movement. The gloss is read:
+  a grounding without its own `behavior` marker folds by the
+  `behavior` gloss on the column its value sums, before any evidence.
 - **unit** — where a magnitude has one; `source_column` names the
   column carrying it when it rides beside the value.
 

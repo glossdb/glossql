@@ -37,16 +37,32 @@ same `GLOSS` statement and reads each differently afterwards:
   machine can trace to a table column that `temporal()` has profiled:
   the cadence and the window come from that verdict, and a date
   computed inside the SQL has no verdict behind it. Serve the table's
-  own date column; the cube buckets it at every grain.
-- **A current fact** — a value with no history: outstanding payables
-  at the latest extract, headcount today. Ground it as a QUERY aspect
-  that serves `value` and no date, with `"x-kind": "fact"` in the
-  aspect's blob so `metric_surfaces` says what it is. `read.<name>()`
-  serves it; an app you author places it as a value tile; the docket
-  lists it without a series. The cube abstains on it — "no judged
-  time column" — and that is the right answer, not a defect to work
-  around. A fact given a date becomes a one-point series: a fact in
-  costume, and a chart of nothing.
+  own date column; the cube buckets it at every grain. **A level with
+  an as-of definition is a stock metric, not a fact**: payables
+  outstanding, inventory on hand, headcount — anything you could state
+  as of any date. Serve the as-of dates from the table's own date
+  column, the running level as `value`, and mark `"behavior":
+  "stock"` (a window sum gives the verb no descent, and an unmarked
+  stock sums as a flow):
+
+  ```glossql
+  GLOSS payables_outstanding ON fin AS $${
+    "sql": "SELECT entry_date AS date, sum(amount) OVER (ORDER BY entry_date) AS value FROM journal_lines",
+    "behavior": "stock"
+  }$$;
+  ```
+
+  A date spine you generate has no verdict behind it and abstains.
+- **A current fact** — a value with no as-of definition: a balance the
+  source hands over already summed, a count from a snapshot table.
+  Ground it as a QUERY aspect that serves `value` and no date, with
+  `"x-kind": "fact"` in the aspect's blob so `metric_surfaces` says
+  what it is. `read.<name>()` serves it, `fact_values()` serves every
+  fact's number in one read, and the docket shows it as a value tile
+  and in the list beside its name. The cube abstains on it — "no
+  judged time column" — and that is the right answer, not a defect to
+  work around. A fact given a date becomes a one-point series: a fact
+  in costume, and a chart of nothing.
 - **A derived relation** — governed SQL other groundings build on: a
   snapshot boundary, a cleaned join, a scoped subset. Ground it as a
   QUERY aspect with `"x-kind": "relation"`; every other grounding
@@ -65,8 +81,8 @@ follows.
 the metric's fact row, the `metric_axes()` shape at the pin the write
 moved to: `applicable` and `reason` (does the SQL plan; is a served
 date column judged), `behavior` and `behavior_basis` (`ratio`,
-`marked`, `evidence`, or `default` — summed as a flow because nothing
-said otherwise), `dims` (the axes admitted), and `unadmitted` with
+`marked`, `glossed`, `evidence`, or `default` — summed as a flow
+because nothing said otherwise), `dims` (the axes admitted), and `unadmitted` with
 `unadmitted_why` (every served column the cube will not slice on, and
 the act that admits it). For a metric, what the workspace accepts and
 reads wrong later — a ratio summed, a stock summed, a series nobody

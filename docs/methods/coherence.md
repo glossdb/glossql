@@ -28,6 +28,16 @@ Both are invisible to any column-shaped check:
 A composite endpoint joins on every leg of its tuple (the corpus's
 composite ruling) instead of being dropped as unspellable.
 
+A relationship within one table is one of two things, and the to-side
+tells them apart. When the to-side is unique over the table — a key —
+the edge is a self-reference (`accounts.parent_id ->
+accounts.account_id`) and checks as a join of the table against
+itself. Otherwise it is a nest, recorded finer → coarser (`city ->
+country`): what it asserts is that every finer value determines one
+coarser value, and its orphans are the rows whose finer value maps to
+more than one. Neither carries temporal evidence — a date pair across
+a table and itself says nothing.
+
 ## Mechanism
 
 The `relationship_checks` door computes fill, orphans, and precedence

@@ -142,8 +142,13 @@ definitions.
 walks the recent months and asks the TabICL forward what range each
 month should have landed in given everything before it. Each walked
 point records the band quantiles (p05–p95) and its PIT — the quantile
-at which the actual landed. This measurement only reports; the
-`band_breach` detector adjudicates.
+at which the actual landed. Per metric, `aggregation` names what one
+month's value is — `sum` for a flow, `latest-sum` for a stock,
+`ratio-of-sums` for a ratio. On an axis judged at a cadence finer
+than a month, the newest month is `partial` while the extract's
+horizon falls inside it: the point serves its bands and its actual so
+far, withholds the PIT, and `withheld` says so. This measurement only
+reports; the `band_breach` detector adjudicates.
 
 ## Detectors
 
@@ -157,11 +162,13 @@ the threshold, red above it.
 ### band_breach
 
 Bound by the kit to `bands_w` on `metric_bands` (threshold 0.98).
-Reads each monitored metric's latest walked point; displacement is
+Reads each monitored metric's newest complete walked point — a
+`partial` point is skipped for the one before it; displacement is
 |2·PIT − 1| — 0 at the median, 0.8 at a nominal-80 edge. Score is the
 worst displacement; band: green ≤ 0.8, yellow ≤ 0.9, orange ≤
 threshold, red past it. Which metric and which month live in the
-measurement's own output.
+measurement's own output — `band_points()` serves them as rows
+([reads](reads.md)).
 
 ### rate_tolerance
 

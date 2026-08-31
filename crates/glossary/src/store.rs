@@ -1043,10 +1043,11 @@ impl Store {
     }
 
     /// The collapsed read (SPEC.md §5.3): value by precedence (human over
-    /// agent over function), withheld only when the detector's score exceeds
-    /// the witness threshold; `state` makes every gap visible — see
-    /// [`CollapsedRow`]. The `ReadContext` universe adds `unassessed` rows
-    /// for witnessed aspects nobody spoke to.
+    /// agent over function), withheld only when a detector's own band
+    /// says so ([`rules::withholds`] — the band, never a second reading
+    /// of the score against the witness threshold); `state` makes every
+    /// gap visible — see [`CollapsedRow`]. The `ReadContext` universe
+    /// adds `unassessed` rows for witnessed aspects nobody spoke to.
     pub fn collapsed_read(
         dataset: &str,
         scope: &Scope,

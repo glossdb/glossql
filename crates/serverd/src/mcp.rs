@@ -49,23 +49,32 @@ matter. The docs pages are served as `doc://docs/…`, the language as `doc://SP
 pub struct BriefFacts {
     counts: glossql_glossary::BriefCounts,
     questions: usize,
+    datasets: usize,
 }
 
 /// The brief's shared state, one per door process: the composed line
-/// (served in the initialize instructions) and the facts it renders.
-/// One shared baseline — the call that moved the facts carries the new
+/// (served in the initialize instructions and on the tool result that
+/// moved it), the opening (how to begin here — served at initialize
+/// only, since it is the same on every call and a tool result that
+/// repeats it reads as an order), and the facts they render. One
+/// shared baseline — the call that moved the facts carries the new
 /// line back. A second agent on the same workspace hears nothing until
 /// its own call moves something; that is a known gap, kept open rather
 /// than paid for with per-actor state no run has needed.
 #[derive(Default)]
 pub struct Brief {
     line: std::sync::RwLock<String>,
+    opening: std::sync::RwLock<String>,
     facts: std::sync::RwLock<Option<BriefFacts>>,
 }
 
 impl Brief {
     pub fn line(&self) -> String {
         self.line.read().map(|l| l.clone()).unwrap_or_default()
+    }
+
+    fn opening(&self) -> String {
+        self.opening.read().map(|l| l.clone()).unwrap_or_default()
     }
 }
 
@@ -96,18 +105,36 @@ impl GlossqlMcp {
     /// Cheap (four bounded reads), awaited at the end of every tool
     /// call and once at boot.
     pub async fn refresh_brief(plane: &Plane, brief: &Brief) {
-        let (facts, line) = Self::compose_brief(plane).await;
+        let (facts, line, opening) = Self::compose_brief(plane).await;
         if let Ok(mut slot) = brief.facts.write() {
             *slot = facts;
         }
         if let Ok(mut slot) = brief.line.write() {
             *slot = line;
         }
+        if let Ok(mut slot) = brief.opening.write() {
+            *slot = opening;
+        }
     }
 
-    /// The facts and their rendering, in one read pass.
-    async fn compose_brief(plane: &Plane) -> (Option<BriefFacts>, String) {
+    /// The facts, their rendering, and the opening, in one read pass.
+    async fn compose_brief(plane: &Plane) -> (Option<BriefFacts>, String, String) {
         let questions = open_question_count(plane).await.unwrap_or(0);
+        let datasets = plane.datasets().await.map(|d| d.len()).unwrap_or(0);
+        // How to begin, decided by whether anything stands to read: a
+        // workspace before its first dataset has no brief to sweep —
+        // `owed`, `GLOSSARY(d)` and `ATTEST(d)` all need one — and
+        // the metrics skill's landing page is where it starts.
+        let opening = if datasets == 0 {
+            "No dataset stands yet, so there is no brief to sweep: `SELECT * FROM \
+             workspace_next` is the whole of the live state, and \
+             `skill://glossql-metrics/SKILL.md` with its landing page is where to begin."
+        } else {
+            "Open with the brief the glossql skill teaches — `USE` a dataset, then human \
+             slots, contested, red bands, `owed` — once, before the first write. It is a \
+             read, not a gate: what it counts waits for the human while the work goes on."
+        }
+        .to_string();
         match plane.store().brief_counts().await {
             Ok(counts) => {
                 // Debt first, presence last: what owes an act is what
@@ -143,11 +170,12 @@ impl GlossqlMcp {
                 }
                 if questions > 0 {
                     owed.push(format!(
-                        "{} judgment question{} stand{} open for the human (assumptions \
-                         below full confidence — conventions and definitions, never \
-                         statistics) — sweep the round (forms ride record reads: call \
-                         with a glossary/GLOSSARY()/ATTEST() read until it stays \
-                         quiet) or relay them in chat",
+                        "{} judgment question{} wait{} for the human (assumptions below \
+                         full confidence — conventions and definitions, never \
+                         statistics): each is served once as a form on a record read \
+                         (glossary, GLOSSARY(), ATTEST()), or relayed in chat where \
+                         forms are absent, and stays open until the human rules — the \
+                         work goes on meanwhile",
                         questions,
                         if questions == 1 { "" } else { "s" },
                         if questions == 1 { "s" } else { "" },
@@ -167,11 +195,15 @@ impl GlossqlMcp {
                         None => String::new(),
                     },
                 ));
-                line.push_str(
-                    " Start with the brief the glossql skill teaches — human slots, \
-                     contested, red bands, the open queue — before acting.",
-                );
-                (Some(BriefFacts { counts, questions }), line)
+                (
+                    Some(BriefFacts {
+                        counts,
+                        questions,
+                        datasets,
+                    }),
+                    line,
+                    opening,
+                )
             }
             // No facts on a failed read: the door says so in the line
             // and tells the next caller again rather than recording a
@@ -179,6 +211,7 @@ impl GlossqlMcp {
             Err(e) => (
                 None,
                 format!("Live now: the brief could not be read ({e})."),
+                opening,
             ),
         }
     }
@@ -765,7 +798,11 @@ impl ServerHandler for GlossqlMcp {
                 .build(),
         );
         info.server_info = Implementation::new("glossql-serverd", env!("CARGO_PKG_VERSION"));
-        info.instructions = Some(format!("{INSTRUCTIONS}\n\n{}", self.brief.line()));
+        info.instructions = Some(format!(
+            "{INSTRUCTIONS}\n\n{} {}",
+            self.brief.line(),
+            self.brief.opening()
+        ));
         info
     }
 

@@ -207,11 +207,12 @@ pub(crate) struct Fact {
     pub behavior: Option<String>,
     /// Where the verb came from: `ratio` when the frame served both
     /// halves and nothing else was consulted, `marked` when the
-    /// grounding carried `behavior`, `evidence` when the
-    /// `behavior_evidence` verdict on the column the value is or sums
-    /// decided, `default` when nothing said anything and the metric is
-    /// summed as a flow. The default is usually right — the point is
-    /// that reading it as a flow stops being a silent assumption.
+    /// grounding carried `behavior`, `glossed` when the `behavior`
+    /// gloss on the column the value is or sums decided, `evidence`
+    /// when the `behavior_evidence` verdict on that column did,
+    /// `default` when nothing said anything and the metric is summed
+    /// as a flow. The default is usually right — the point is that
+    /// reading it as a flow stops being a silent assumption.
     pub behavior_basis: Option<&'static str>,
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
@@ -455,8 +456,8 @@ impl CubeCache {
 
 /// One landed verdict: its body, and whether it stands at this pin.
 pub(crate) struct Verdict {
-    body: Value,
-    current: bool,
+    pub(crate) body: Value,
+    pub(crate) current: bool,
 }
 
 /// The judged surface the build reads: verdicts by column subject,
@@ -468,8 +469,11 @@ struct Judged {
     temporal: HashMap<String, Verdict>,
     relevance: HashMap<String, Verdict>,
     /// `behavior_evidence` per column — the verb's read where the
-    /// grounding carries no marker.
+    /// grounding carries no marker and no gloss speaks.
     behavior: HashMap<String, Verdict>,
+    /// The collapsed `behavior` gloss per column (human over agent) —
+    /// the verb's read where the grounding carries no marker.
+    behavior_gloss: HashMap<String, (Value, u8)>,
     dimension: HashMap<String, (Value, u8)>,
     pointers: Vec<crate::behavior::Pointer>,
 }
@@ -505,6 +509,25 @@ pub(crate) fn judged_bodies(
         }
     }
     out.into_iter().map(|(s, (_, v))| (s, v)).collect()
+}
+
+/// When the newest landing of a measurement aspect on one subject was
+/// computed — the row [`judged_bodies`] picks, by its `computed_at`;
+/// None where none landed.
+pub(crate) fn judged_at(
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Option<String> {
+    let returning = rctx.functions.iter().filter(|f| {
+        f.returns.as_deref() == Some(aspect)
+            && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+    });
+    returning
+        .flat_map(|f| glossql_glossary::Store::measurements_in(rctx, dataset, &f.name))
+        .filter(|(row, _)| row.subject == dataset)
+        .map(|(row, _)| row.computed_at)
+        .max()
 }
 
 /// The judged time axis over a served frame: the date column whose
@@ -558,7 +581,8 @@ pub(crate) fn judged_time_column(
 /// The verb a grounding folds by, and where it came from.
 pub(crate) struct Verb {
     pub verb: &'static str,
-    /// `ratio`, `marked`, `evidence` or `default` — `Fact::behavior_basis`.
+    /// `ratio`, `marked`, `glossed`, `evidence` or `default` —
+    /// `Fact::behavior_basis`.
     pub basis: &'static str,
     /// Whether the verdict read stands at this pin; true where none was.
     pub current: bool,
@@ -566,17 +590,20 @@ pub(crate) struct Verb {
 
 /// A grounding's verb: `ratio` when the frame serves both halves; else
 /// the grounding's top-level `behavior` marker — its own word, which
-/// outranks the measurement the way a gloss does (the metrics skill's
-/// convention); else the `behavior_evidence` verdict on the column the
-/// value is, or is one `sum` of (`provenance::summed_source`); else a
-/// flow, because nothing said otherwise. One function for the cube and
-/// the walk, so the two never fold one metric two ways.
+/// outranks everything below; else the collapsed `behavior` gloss
+/// (human over agent) on the column the value is, or is one `sum` of
+/// (`provenance::summed_source`) — the kit's vocabulary, read as policy
+/// the way a `dimension` gloss admits an axis; else the
+/// `behavior_evidence` verdict on that column; else a flow, because
+/// nothing said otherwise. One function for the cube and the walk, so
+/// the two never fold one metric two ways.
 pub(crate) fn verb_of(
     body: &Value,
     is_ratio: bool,
     probe: &datafusion::logical_expr::LogicalPlan,
     dataset: &str,
     behavior: &HashMap<String, Verdict>,
+    glossed: &HashMap<String, (Value, u8)>,
 ) -> Verb {
     let verb = |verb, basis, current| Verb {
         verb,
@@ -591,7 +618,17 @@ pub(crate) fn verb_of(
         Some("flow") => return verb("flow", "marked", true),
         _ => {}
     }
-    let judged = crate::provenance::summed_source(probe, "value", dataset)
+    let source = crate::provenance::summed_source(probe, "value", dataset);
+    match source
+        .as_ref()
+        .and_then(|subject| glossed.get(subject))
+        .and_then(|(gloss, _)| gloss["value"].as_str())
+    {
+        Some("stock") => return verb("stock", "glossed", true),
+        Some("flow") => return verb("flow", "glossed", true),
+        _ => {}
+    }
+    let judged = source
         .and_then(|subject| behavior.get(&subject))
         .filter(|v| v.body["applicable"].as_bool() == Some(true));
     match judged.map(|v| (v.body["summary"]["verdict"].as_str(), v.current)) {
@@ -665,6 +702,8 @@ async fn judged_surface(
             temporal: judged_bodies(rctx, dataset, "temporal_profile"),
             relevance: judged_bodies(rctx, dataset, "dimension_relevance"),
             behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
+            behavior_gloss: crate::search::current_fact_values(shared, rctx, dataset, "behavior")
+                .await?,
             dimension: crate::search::current_fact_values(shared, rctx, dataset, "dimension")
                 .await?,
             pointers: crate::behavior::declared_pointers(&edges, dataset),
@@ -817,7 +856,14 @@ async fn plan(
         verb,
         basis: behavior_basis,
         current: verb_current,
-    } = verb_of(&body, is_ratio, &probe, dataset, &judged.behavior);
+    } = verb_of(
+        &body,
+        is_ratio,
+        &probe,
+        dataset,
+        &judged.behavior,
+        &judged.behavior_gloss,
+    );
     judged_current &= verb_current;
 
     // Judged dimensions: a served column (neither the value nor

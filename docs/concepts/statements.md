@@ -46,7 +46,10 @@ actor rides the connection and the engine stamps every statement
   side, marked `current`; precedence is the reader's business.
 - `ATTEST(subject)` — the verdict surface: band and score per witness.
 - `SELECT f() FROM subject` — extraction: runs a measurement at the
-  read's pin ([functions](functions.md)).
+  read's pin ([functions](functions.md)). The outcome is one row per
+  call — `function`, `subject`, `body`, `computed_at`, `computed` —
+  and `computed` is false when the recorded row was served at an
+  unchanged pin, its `computed_at` the earlier run's.
 - `read.<aspect>()` — a grounded metric as a relation: the current
   grounding expands at plan time, composable in any FROM position.
 - Plain SQL — tables, and the declaration relations (`functions`,

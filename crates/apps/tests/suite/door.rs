@@ -363,6 +363,7 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
         .execute(&format!(
             r#"USE perf;
                DECLARE ASPECT dso WITH $${{"title": "DSO", "x-kind": "metric"}}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT payables WITH $${{"title": "Outstanding payables", "x-kind": "fact"}}$$ AS QUERY ON DATASET;
                DECLARE ASPECT definitions WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
                DECLARE ASPECT formulas WITH $${{"type": "object"}}$$ AS FACT ON DATASET;
                DECLARE ASPECT temporal_profile WITH $${{"type": "object",
@@ -385,6 +386,7 @@ async fn seed_model_shapes(plane: &Arc<Plane>) {
                     "alternative": "doubled", "alternative_sql": "SELECT month, value * 2 AS value FROM ledger"}},
                    {{"dimension": "grain", "key": "grain-preserving", "assumption": "grain-preserving", "basis": "measured", "confidence": 1.0}}
                  ]}}$$;
+               GLOSS payables ON perf AS $${{"sql": "SELECT sum(value) AS value FROM ledger"}}$$;
                GLOSS formulas ON perf AS $${{"formulas": {{"dso": "ar[end of w] / revenue[w] * days[w]"}}}}$$;
                GLOSS definitions ON perf AS $${{"definitions": {{"dso": {{
                  "meaning": "receivables outstanding expressed in days of revenue",
@@ -981,15 +983,28 @@ async fn the_metrics_faces_serve_the_cube() {
 
     let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
     assert_eq!(pulse.status(), StatusCode::OK);
-    assert_eq!(row_count(pulse).await, 1, "one declared surface, one row");
+    assert_eq!(
+        row_count(pulse).await,
+        2,
+        "two declared surfaces — the series and the fact — two rows"
+    );
 
     let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
     assert_eq!(
         row_count(latest).await,
-        1,
-        "the newest period of the one metric"
+        2,
+        "the newest period of the one series, and the fact's one value"
     );
+
+    // The fact's tile frame: a row for the fact, none for the series,
+    // so the tile renders only where there is a number.
+    let fact = get(&app, "/perf/app/docket/frames/fact?metric=payables").await;
+    assert_eq!(fact.status(), StatusCode::OK);
+    assert_eq!(row_count(fact).await, 1, "the fact's one value");
+    let none = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
+    assert_eq!(none.status(), StatusCode::OK);
+    assert_eq!(row_count(none).await, 0, "a series is not a fact");
 
     let axes = get(&app, "/perf/app/docket/frames/axes?metric=dso").await;
     assert_eq!(axes.status(), StatusCode::OK);

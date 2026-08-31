@@ -59,3 +59,11 @@ protocol it was evaluated against before it shipped.
 - The walk covers the six most recent months, and a walked point
   conditions on at least five preceding ones — a metric with too
   short a history is served inapplicable with the reason.
+- A month the extract stops inside is partial, and its short sum
+  against a corridor fitted on whole months is the calendar, not a
+  move. On an axis judged at a cadence finer than a month, the newest
+  point is served `partial` while the extract's horizon falls before
+  the month's last day: it keeps its bands and its actual so far,
+  withholds the PIT, and the detector scores the month before it. An
+  unjudged axis says nothing about its cadence, and nothing is
+  withheld on it.

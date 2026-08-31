@@ -201,13 +201,17 @@ what a build serves is what its suite tested.
   open for the human — then the record's size, how many human writings
   stand and when the latest landed. A count of writings is presence,
   never work; `owed` and `open_questions` are the reads behind the
-  first part.
+  first part. The instructions then name where to begin — a workspace
+  before its first dataset has no brief to sweep, and reads
+  `workspace_next`; one with a dataset opens with the brief, once,
+  as a read and never a gate. That opening rides initialize only.
 - **The question round.** While `open_questions` derives rows, calls
   that read the record carry a round of forms — landings and judging
-  queries run uninterrupted. The answers arrive on the client's retry
-  of the same call and land as human glosses, witnessed here. Anything
-  that is not an answer is a defer: the question stays open and is
-  asked again.
+  queries run uninterrupted, and a question served once waits for the
+  human while the work goes on. The answers arrive on the client's
+  retry of the same call and land as human glosses, witnessed here.
+  Anything that is not an answer is a defer: the question stays open
+  and is asked again on the next record read.
 
 ## `/<dataset>/query` — the Arrow door
 

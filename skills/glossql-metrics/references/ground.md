@@ -132,9 +132,14 @@ judgment dimensions only: definition, scope, convention.
 
 Mark a stock with `"behavior": "stock"` as a top-level key in the
 body. The marker is your word and wins. Without it the cube and the
-walk take the `behavior_evidence` verdict on the column the value is
-or sums; with neither, the metric reads as a flow, which sums levels
-and lies. `metric_axes().behavior_basis` says which happened.
+walk take the `behavior` gloss on the column the value is or sums
+(the kit's vocabulary, human over agent), and where none speaks the
+`behavior_evidence` verdict on that column; with none of the three,
+the metric reads as a flow, which sums levels and lies.
+`metric_axes().behavior_basis` says which happened — `marked`,
+`glossed`, `evidence`, or `default`. An assumption in the body saying
+"this is a flow" decides nothing: assumptions are disclosure, the
+verb reads the marker, the gloss and the evidence.
 
 **After grounding, run `detect_grounding_collisions`.** Two concepts
 grounding to the same extract make every ratio between them compute

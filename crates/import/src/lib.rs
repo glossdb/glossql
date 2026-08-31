@@ -55,6 +55,8 @@ pub enum Error {
     /// author looking at a recipe they have not written yet (run 4).
     #[error("probe failed: {0}")]
     Probe(DataFusionError),
+    #[error("listing failed: {0}")]
+    List(DataFusionError),
     #[error("recipe result: {0}")]
     Batches(String),
 }
@@ -437,6 +439,68 @@ fn read_only() -> datafusion::prelude::SQLOptions {
         .with_allow_ddl(false)
         .with_allow_dml(false)
         .with_allow_statements(false)
+}
+
+/// One file under a source's location, as the listing serves it.
+#[derive(Debug, Clone)]
+pub struct SourceFile {
+    /// Relative to the source's location, `/`-separated — the path a
+    /// `read_*` call names.
+    pub path: String,
+    pub size: u64,
+    /// RFC 3339, as the store reports it.
+    pub modified: String,
+}
+
+/// The files under a file source's location, subdirectories included
+/// — what a recipe can name. Listed through the engine's own object
+/// store, the walk a `read_*` glob resolves through, so what this
+/// serves is what a recipe path reaches. A relational source has no
+/// files and is refused by name.
+pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
+    if spec.kind == SourceKind::RelationalDb {
+        return Err(Error::BadSource {
+            name: spec.name.clone(),
+            detail: "a relational source has no files to list — PROBE it".into(),
+        });
+    }
+    let root = canonical_root(spec)?;
+    // The session default ignores subdirectories; a source root holds
+    // its exports in folders as often as not, and a recipe reaches
+    // them, so the listing does too.
+    let config = datafusion::prelude::SessionConfig::new().set_bool(
+        "datafusion.execution.listing_table_ignore_subdirectory",
+        false,
+    );
+    let ctx = SessionContext::new_with_config(config);
+    let state = ctx.state();
+    let url = ListingTableUrl::parse(format!("{}/", root.display())).map_err(Error::List)?;
+    let store = state
+        .runtime_env()
+        .object_store(url.object_store())
+        .map_err(Error::List)?;
+    let prefix = url.prefix().as_ref().to_string();
+    let mut listed = url
+        .list_all_files(&state, store.as_ref(), "")
+        .await
+        .map_err(Error::List)?;
+    let mut files = Vec::new();
+    while let Some(meta) = listed.next().await {
+        let meta = meta.map_err(Error::List)?;
+        let location = meta.location.as_ref();
+        let path = location
+            .strip_prefix(&prefix)
+            .unwrap_or(location)
+            .trim_start_matches('/')
+            .to_string();
+        files.push(SourceFile {
+            path,
+            size: meta.size,
+            modified: meta.last_modified.to_rfc3339(),
+        });
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 fn canonical_root(spec: &SourceSpec) -> Result<PathBuf> {

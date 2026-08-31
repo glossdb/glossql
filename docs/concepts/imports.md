@@ -16,10 +16,20 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 `type` is `relational_db | parquet | csv | json`. For file sources,
 `location` is the root directory recipe paths resolve under; for a
 relational source it is the connection URI the recipe executes over.
+A file type describes the export, it does not constrain the recipe:
+the recipe names its own reader — `read_parquet`, `read_csv`,
+`read_json` — and all three resolve under the location whatever the
+source was declared as. What the type decides is where the SQL runs: a
+relational source executes it, a file source has the server run it.
 Every other `SET` pair — `via` above — rides the source's stored
 settings.
 
 ## Probes rehearse, recipes land
+
+What a recipe can name is a read: `SELECT path, size, modified FROM
+source_files('erp_export')` lists every file under the source's
+location, subdirectories included, through the same object store a
+`read_*` glob resolves through ([reads](../reference/reads.md)).
 
 `PROBE source AS $$sql$$` runs recipe-shaped SQL at the source and
 lands nothing. It is the recipe rehearsal: the same SQL surface, the

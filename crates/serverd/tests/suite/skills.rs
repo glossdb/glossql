@@ -226,13 +226,14 @@ async fn every_skill_function_body_compiles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
-    let (_dir, store) = scratch_store().await;
+    let (dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&plane, human()).await.unwrap();
 
     // One session for the run, with a dataset in use — the names the
     // examples actually spell, so a read reaches its columns instead of
-    // stopping at the binding.
+    // stopping at the binding. The source the examples name stands
+    // too, over the scratch directory, so a listing example lists.
     let session = plane.channel(human(), None).await.unwrap();
     for name in ["ops", "orders", "erp_export"] {
         session
@@ -242,6 +243,13 @@ async fn every_skill_read_names_columns_that_exist() {
             .await
             .unwrap();
     }
+    session
+        .execute(&format!(
+            "DECLARE SOURCE erp_export SET (type: parquet, location: '{}');",
+            dir.path().display()
+        ))
+        .await
+        .unwrap();
     session.execute("USE ops;").await.unwrap();
 
     let mut broken = Vec::new();

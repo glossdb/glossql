@@ -414,3 +414,75 @@ async fn coherence_joins_composite_endpoints() {
         "the txn before its party existed: {pair}"
     );
 }
+
+/// A relationship within one table whose to-side is the table's key is
+/// a self-reference, checked as a join against itself — never as a
+/// nest, which would read every parent with two children as broken.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_self_reference_checks_as_a_join_against_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // Six accounts: 1 is the root, 2 and 3 hang under 1, 4 and 5 under
+    // 2, and 6 claims a parent that does not exist.
+    let accounts = Arc::new(Schema::new(vec![
+        Field::new("account_id", DataType::Int64, true),
+        Field::new("parent_id", DataType::Int64, true),
+    ]));
+    write_table(
+        &root,
+        "accounts",
+        RecordBatch::try_new(
+            accounts,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5, 6])),
+                Arc::new(Int64Array::from(vec![None, Some(1), Some(1), Some(2), Some(2), Some(99)])),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+
+    let session = session_over(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'self-reference check');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp SET (type: parquet, location: '{}');\n\
+             DECLARE ASPECT relationship_coherence WITH $${{\n\
+               \"type\": \"object\", \"required\": [\"applicable\"],\n\
+               \"properties\": {{\"applicable\": {{\"type\": \"boolean\"}},\n\
+                               \"relationships\": {{\"type\": \"array\"}}}}\n\
+             }}$$ AS MEASUREMENT ON DATASET;\n\
+             DECLARE FUNCTION relationship_coherence FOR GLOBAL \
+             AS $${COHERENCE}$$ RETURNS relationship_coherence;\n\
+             DECLARE RECIPE accounts ON fin FROM erp AS \
+             $$SELECT * FROM read_parquet('accounts/*.parquet')$$;\n\
+             DECLARE RELATIONSHIP accounts.parent_id -> accounts.account_id;",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    session
+        .execute("SELECT relationship_coherence() FROM fin;")
+        .await
+        .unwrap();
+    let value = one(&session
+        .execute("SELECT value FROM GLOSSARY(fin::relationship_coherence) WHERE state = 'current';")
+        .await
+        .unwrap());
+    let doc: serde_json::Value = serde_json::from_str(&value).unwrap();
+    let rels = doc["relationships"].as_array().unwrap();
+    let edge = rels
+        .iter()
+        .find(|r| r["relationship"] == "accounts.parent_id -> accounts.account_id")
+        .expect("the self-reference is measured");
+    // Five populated references, one of them to nobody. Parent 1 and
+    // parent 2 each carry two children, which a nest would have
+    // counted as four orphans.
+    assert_eq!(edge["filled"], 5);
+    assert_eq!(edge["orphans"], 1);
+    assert_eq!(edge["temporal"].as_array().unwrap().len(), 0);
+}

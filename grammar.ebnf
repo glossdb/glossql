@@ -68,8 +68,10 @@ recipe_decl       = "RECIPE", name, "ON", name, "FROM", name, "AS", dollar ;
                        the result lands as table r, the typed table —
                        no derived view, no raw twin. Identity is content
                        (SQL + produced schema): unchanged re-declaration
-                       is a no-op, changed is refused outright; DROP TABLE
-                       removes whole and refuses on data or glosses *)
+                       is a no-op, changed supersedes and re-lands — the
+                       old landing drops, the table lands fresh, glosses
+                       stay; DROP TABLE removes whole and refuses on data
+                       or glosses *)
 
 (* -- datasets ----------------------------------------------------------- *)
 

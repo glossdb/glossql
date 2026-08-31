@@ -45,7 +45,14 @@ a wide table landed whole is the one thing that makes them slow.
 **Read the source's conventions before probing.** Source-grain slots
 serve in every dataset, so what an earlier onboarding learned about
 this system — placeholder dates, format warts, key spellings — is
-already readable, and what you learn goes back the same way:
+already readable. The source is the subject, bound to a dataset or
+not:
+
+```glossql
+SELECT value FROM GLOSSARY(erp_export) WHERE aspect = 'conventions';
+```
+
+What you learn goes back the same way:
 
 ```glossql
 GLOSS conventions ON erp_export AS $${
@@ -56,6 +63,14 @@ GLOSS conventions ON erp_export AS $${
 
 Only what the *next* export from that system will also carry belongs
 at source grain; dataset-local evidence stays in dataset glosses.
+
+**List the files before naming one.** A recipe names its files, and
+the listing is a read under the source's location, subdirectories
+included — no other door is needed:
+
+```glossql
+SELECT path, size, modified FROM source_files('erp_export') ORDER BY path;
+```
 
 **Rehearse the schema with `LIMIT 0`, per file, before authoring any
 recipe.** A zero-row probe still carries every `(name, type)`, which

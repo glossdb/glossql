@@ -863,8 +863,11 @@ impl Session {
                 &resolved.subject,
                 &name,
             );
-            let row = match measured {
-                Some(row) => row,
+            // The outcome says which happened: a hit serves the
+            // recorded row at an unchanged pin, `computed_at` and all;
+            // a miss computes now.
+            let (row, computed) = match measured {
+                Some(row) => (row, false),
                 None => {
                     tracing::info!(
                         function = %name,
@@ -913,7 +916,7 @@ impl Session {
                     // subject — it serves without
                     // landing, so the retry recomputes once the
                     // producer has run.
-                    if output.get("missing_aspects").is_some() {
+                    let row = if output.get("missing_aspects").is_some() {
                         glossql_glossary::MeasurementRow {
                             subject: resolved.subject.clone(),
                             function: name.clone(),
@@ -937,10 +940,11 @@ impl Session {
                                 &read_names(&reads, &resolved.dataset),
                             )
                             .await?
-                    }
+                    };
+                    (row, true)
                 }
             };
-            results.push(row);
+            results.push((row, computed));
         }
         Ok(Outcome::Rows(vec![crate::reads::extraction_batch(results)]))
     }

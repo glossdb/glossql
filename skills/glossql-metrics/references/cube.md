@@ -13,7 +13,14 @@ top. Every point is honest: its fit saw only the months before it.
   data defect breach identically.
 - The corridor knows only the history it is shown; under about five
   months the walk says nothing.
-- It follows the grounding's authored behavior — mark your stocks.
+- A month the extract stops inside is served `partial`, its PIT
+  withheld; the detector scores the month before it.
+- A red `metric_bands` verdict names its metric and month through
+  `band_points()` — the recorded walk as rows, no re-run.
+- What the cube does not chart — current facts, derived relations —
+  `fact_values()` serves whole, the fact's number where there is one.
+- It follows the grounding's authored behavior — mark your stocks —
+  then the `behavior` gloss on the column summed, then the evidence.
 
 The cube is its sibling and the app's fuel: every grounded metric's
 cells — the total, the slices along its judged dimensions, the

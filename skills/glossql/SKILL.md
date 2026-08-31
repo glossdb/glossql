@@ -67,7 +67,7 @@ across datasets from anywhere.
 |---|---|
 | `USE ops;` | bind the statements after it in this call to a dataset — every call needs its own |
 | `DECLARE DATASET ops SET (…);` | create a dataset |
-| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root directory, globs belong in recipe SQL |
+| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root directory, globs belong in recipe SQL; a file `type` describes the export — the recipe's `read_parquet`/`read_csv`/`read_json` picks the reader |
 | `PROBE erp AS $$sql$$;` | run recipe-shaped SQL at the source, landing nothing |
 | `DECLARE RECIPE work_orders ON ops FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table |
 | `DROP TABLE work_orders;` | remove a table — refused while it holds data |
@@ -76,7 +76,7 @@ across datasets from anywhere.
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; on a QUERY aspect the outcome is the metric's fact row (the `metric_axes()` shape, above) |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot |
 | `DECLARE FUNCTION f FOR ops\|GLOBAL AS $$body$$ [RETURNS aspect];` | register a function — with `RETURNS` the body is one SQL query the engine plans, without it a detector script; the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) |
-| `SELECT f() FROM work_orders.duration_min;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; a body carrying a `summary` object serves the summary alone (the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped |
+| `SELECT f() FROM work_orders.duration_min;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; the outcome's `computed` column says which happened (false: the recorded row served, its `computed_at` the earlier run's); a body carrying a `summary` object serves the summary alone (the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
 | `SELECT … FROM ATTEST(subject \| ops::aspect);` | bands and scores; sweeps are WHERE clauses |
 
@@ -132,6 +132,8 @@ the door, the app and these examples:
 | `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every declared metric with its unit, meaning, formula and whether it is grounded — the record; the cube's numbers are `metric_series()` and `metric_axes()` |
+| `band_points()` | the recorded `metric_bands` walk as rows, one per metric per month, with each point's displacement — which metric and which month a red band verdict rests on, without re-running the walk |
+| `source_files('erp')` | every file under a declared source's location — `path`, `size`, `modified` — what a recipe can name; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps` teaches writing one) |
 | `current_dataset` | the dataset your `USE` bound, as a one-row relation — join it to narrow a read that answers for the whole workspace |
 
@@ -158,18 +160,23 @@ SELECT r.aspect, r.key, r.stance, r.folded_in FROM ruling_entries r
 JOIN current_dataset d ON d.dataset = r.dataset ORDER BY r.written_at DESC
 ```
 
-## The brief — start every session with it
+## The brief — the session's first read
 
 Human answers land while you are away — through the door's question
 forms or another session. Some govern immediately (the human slot
-outranks at every read), some owe you an act. Before acting on
-anything else, sweep what changed:
+outranks at every read), some owe you an act. Read what changed once,
+before the first write. `SELECT * FROM datasets` first: a workspace
+with none has no brief to sweep — `owed`, `GLOSSARY(d)` and
+`ATTEST(d)` all need a dataset — and `SELECT * FROM workspace_next`
+is the whole of its live state; the metrics skill's landing page is
+where it begins. With a dataset, `USE` it and read:
 
 ```glossql
 SELECT subject, aspect, actor_id, written_at FROM glossary
 WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 20;
 SELECT subject, aspect FROM GLOSSARY(ops) WHERE state = 'contested';
 SELECT subject, band, score FROM ATTEST(ops) WHERE band = 'red';
+SELECT what, why, since FROM owed ORDER BY since DESC;
 ```
 
 The brief the door serves at connect leads with what is owed —
@@ -183,15 +190,19 @@ away. It also rides any tool result whose call moved it, as a
 `brief: Live now: …` block — so mid-session changes reach you
 without reconnecting; a call that carries no brief block changed
 nothing.
-While the question count is above zero, sweep the round. Forms ride record
-reads: a call that reads the
-glossary — `GLOSSARY()`, `ATTEST()`, the store relations — and
-writes nothing carries one question form; landing calls and plain
-data reads run uninterrupted. So the sweep is exactly the brief's
-own reads, repeated until the round stays quiet. A client without
-question forms gets none — read what stands open yourself and relay
-it in chat, multiple choice with your grounds, then run the statement
-the answer names:
+
+A question is served once and then waits. Forms ride record reads: a
+call that reads the glossary — `GLOSSARY()`, `ATTEST()`, the store
+relations — and writes nothing carries one question form; landing
+calls and plain data reads run uninterrupted, and nothing re-asks
+until your next record read while the question stands. Waiting is not
+a gate: the work goes on, the grounding stays yours, and the answer
+lands as a ruling whether you are there or not — every grounding you
+write with an assumption below 1.0 adds to the count, which is the
+brief counting your disclosures, not an order to stop. A client
+without question forms gets none — read what stands open yourself and
+relay it in chat, multiple choice with your grounds, then run the
+statement the answer names:
 
 ```sql
 SELECT o.aspect, o.dimension, o.key, o.assumption, o.conf

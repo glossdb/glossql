@@ -1,7 +1,8 @@
 # The shipped reads
 
-Eight relations every workspace serves, and the cube's two table
-functions beside them (the last section). Seven are one `.sql` file
+Eight relations every workspace serves, and beside them the cube's
+two table functions, the bands' one and the sources' one (the last
+sections). Seven are one `.sql` file
 each, shipped in the binary; the same file answers the doors, the
 built-in app's frames, and the skills' examples. Those seven names are
 reserved — a read shadows both a table and a CTE of the same name,
@@ -99,7 +100,9 @@ metric's recorded materialization) · `contest` (a slot withheld at
 read — voices differ or a detector crossed) · `fold-in` (a ruling
 whose key still stands below full confidence). All four answer for the
 session's dataset: this is the read that narrows itself, because what
-is owed is owed by someone working in one dataset.
+is owed is owed by someone working in one dataset — and it refuses an
+unbound call rather than answering empty, so a workspace before its
+first dataset reads `workspace_next` instead.
 
 ### metric_surfaces
 
@@ -159,10 +162,10 @@ One row per current grounding — what the cube admitted and why not:
 it abstains — no judged time column, no value column, a grounding the
 engine refused), `behavior` and `behavior_basis` (the verb and where
 it came from: `ratio` when the frame serves `num` and `den`, `marked`
-when the grounding carries `behavior`, `evidence` when the
-`behavior_evidence` verdict on the column the value is or sums
-decided, `default` when nothing said anything and it reads as a
-flow), `resolution`, `window`, `dims`, `basis`
+when the grounding carries `behavior`, `glossed` when the `behavior`
+gloss on the column the value is or sums decided, `evidence` when the
+`behavior_evidence` verdict on that column did, `default` when nothing
+said anything and it reads as a flow), `resolution`, `window`, `dims`, `basis`
 and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
 or `human` / `agent` where a `dimension` gloss did), `bucketed` (the
@@ -207,3 +210,44 @@ false until the profilers run again: `temporal()` over the served
 date columns, `dimension_relevance()` over the rest, or the docket's
 re-measure, which re-runs every measurement standing from before the
 last change.
+
+### fact_values()
+
+The groundings the cube does not chart, served whole: one row per
+current QUERY grounding whose frame serves no time-typed column —
+`metric`, `kind` (the aspect blob's `x-kind`, where it names one),
+`value` where the frame is one row with a `value` column (a current
+fact), and `reason` where it is not: a derived relation (no `value`),
+a frame of many rows, an empty one, or SQL the engine refused. A
+grounding with a time axis is `metric_series()`'s and is not listed.
+The data at read, like the cells: nothing is recorded. The docket's
+value tile and its list read the fact's number from here. Requires a
+bound dataset.
+
+### band_points()
+
+The recorded walk, flattened: what `metric_bands` last landed for the
+bound dataset, one row per metric per walked point — `metric`,
+`applicable`, `reason`, `grain`, `aggregation`, `trained_on`, `axis`,
+`axis_judged`, `point_seq`, `period`, `actual`, `p05`…`p95`, `pit`,
+`withheld`, `partial`, `displacement` (|2·pit − 1|, what the detector
+scores; none where the PIT is withheld), `computed_at` and `current`
+(whether the measurement stands at this pin). A metric the walk found
+inapplicable is one row with its reason and no point; a dataset never
+walked serves no rows. The record itself, never a re-run —
+`metric_band_walk()` walks again and calls the model — so a red
+`metric_bands` verdict is diagnosable to its metric and month in one
+read: `SELECT metric, period, displacement FROM band_points() WHERE
+partial = false ORDER BY displacement DESC`. Requires a bound dataset.
+
+## The sources' read
+
+### source_files('source')
+
+One row per file under a declared file source's location,
+subdirectories included: `path` (relative to the location — what a
+`read_*` call names), `size`, `modified`. Listed through the engine's
+object store, the same walk a `read_*` glob resolves through, so what
+it serves is what a recipe path reaches. Workspace-scoped: sources are
+workspace rows, and the read needs no `USE`. A relational source has
+no files and refuses the read by name.

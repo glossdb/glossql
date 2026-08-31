@@ -1641,14 +1641,29 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
         vec![jan(15), jan(31)],
         vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
     );
+    // A column nobody measured, glossed a stock: the kit's vocabulary
+    // read as the verb's policy.
+    let stocks = dated(
+        vec![Field::new("qty", DataType::Float64, false)],
+        vec![jan(15), jan(31)],
+        vec![Arc::new(Float64Array::from(vec![10.0, 100.0]))],
+    );
     let session = cube_session(
         dir.path(),
-        vec![("levels", levels), ("lines", lines)],
+        vec![("levels", levels), ("lines", lines), ("stocks", stocks)],
         &[
+            r#"DECLARE ASPECT behavior WITH $${"type": "object", "required": ["value"],
+                 "properties": {"value": {"enum": ["stock", "flow", "none"]},
+                                "grounds": {"type": "string"}}}$$ AS FACT ON COLUMN;"#,
+            r#"GLOSS behavior ON stocks.qty AS $${"value": "stock", "grounds": "a carried level"}$$;"#,
             r#"DECLARE ASPECT stocked WITH $${"title": "Stocked"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT overruled WITH $${"title": "Overruled"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT flowed WITH $${"title": "Flowed"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT counted WITH $${"title": "Counted"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT glossed WITH $${"title": "Glossed"}$$ AS QUERY ON DATASET;"#,
+            // Unmarked, one sum of a column glossed a stock and never
+            // measured.
+            r#"GLOSS glossed ON fin AS $${"sql": "SELECT date, sum(qty) AS value FROM stocks GROUP BY date"}$$;"#,
             // Unmarked, one sum of a column judged a stock.
             r#"GLOSS stocked ON fin AS $${"sql": "SELECT date, sum(level) AS value FROM levels GROUP BY date"}$$;"#,
             // The same frame, marked: the grounding's own word wins.
@@ -1659,6 +1674,7 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
             r#"GLOSS counted ON fin AS $${"sql": "SELECT date, count(*) * 1.0 AS value FROM lines GROUP BY date"}$$;"#,
             "SELECT judge_time() FROM levels.date;",
             "SELECT judge_time() FROM lines.date;",
+            "SELECT judge_time() FROM stocks.date;",
             "SELECT judge_behavior() FROM levels.level;",
             "SELECT judge_behavior() FROM lines.amount;",
         ],
@@ -1681,6 +1697,7 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
     assert_eq!(verb("overruled").await, "flow:marked");
     assert_eq!(verb("flowed").await, "flow:evidence");
     assert_eq!(verb("counted").await, "flow:default");
+    assert_eq!(verb("glossed").await, "stock:glossed");
     let total = |metric: &'static str| {
         let session = &session;
         async move {
@@ -1699,4 +1716,46 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
         "the evidence's stock, at its last standing",
     );
     near(total("overruled").await, 330.0, "the marker's flow, summed");
+    near(
+        total("glossed").await,
+        100.0,
+        "the gloss's stock, at its last standing",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fact_values_serves_what_the_cube_does_not_chart() {
+    // Four groundings without a time axis and one with. The fact is a
+    // frame of one row with a value; the others say why they are not.
+    let dir = tempfile::tempdir().unwrap();
+    let jan = |d: i32| 19723 + d - 1;
+    let stocks = dated(
+        vec![Field::new("qty", DataType::Float64, false)],
+        vec![jan(15), jan(31)],
+        vec![Arc::new(Float64Array::from(vec![10.0, 100.0]))],
+    );
+    let session = cube_session(
+        dir.path(),
+        vec![("stocks", stocks)],
+        &[
+            r#"DECLARE ASPECT on_hand WITH $${"title": "On hand", "x-kind": "fact"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT each WITH $${"title": "Each"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT bare WITH $${"title": "Bare", "x-kind": "relation"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT series WITH $${"title": "Series"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS on_hand ON fin AS $${"sql": "SELECT sum(qty) AS value FROM stocks"}$$;"#,
+            r#"GLOSS each ON fin AS $${"sql": "SELECT qty AS value FROM stocks"}$$;"#,
+            r#"GLOSS bare ON fin AS $${"sql": "SELECT qty FROM stocks"}$$;"#,
+            r#"GLOSS series ON fin AS $${"sql": "SELECT date, qty AS value FROM stocks"}$$;"#,
+        ],
+    )
+    .await;
+    let shown = grid(
+        &session,
+        "SELECT metric, kind, value, reason FROM fact_values() ORDER BY metric;",
+    )
+    .await;
+    assert!(shown.contains("| on_hand ") && shown.contains("| fact ") && shown.contains("| 110.0 "), "{shown}");
+    assert!(shown.contains("| each ") && shown.contains("more than one row"), "{shown}");
+    assert!(shown.contains("| bare ") && shown.contains("no value column"), "{shown}");
+    assert!(!shown.contains("| series "), "a grounding with a time axis is the cube's: {shown}");
 }

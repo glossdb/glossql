@@ -40,6 +40,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/coverage.sql"),
         docket!("frames/dims.sql"),
         docket!("frames/drivers.sql"),
+        docket!("frames/fact.sql"),
         docket!("frames/front.sql"),
         docket!("frames/latest.sql"),
         docket!("frames/metric.sql"),

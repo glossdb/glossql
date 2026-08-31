@@ -66,9 +66,11 @@ judged by the actor):
   voice.
 - **The band plane** — `tabicl_bands`, a native kernel over the
   sibling candle port (weights digest-verified; Metal by default, CPU
-  fallback), with `metric_bands` and `band_breach` in the library and
-  `whatif.<scenario>()` replaying rewritten plans across bracketed
-  band grids.
+  fallback), with `metric_bands` and `band_breach` in the library —
+  the walk withholding a partial trailing month on a judged
+  sub-monthly axis, the detector scoring the newest complete one —
+  and `whatif.<scenario>()` replaying rewritten plans across
+  bracketed band grids.
 
 Practices established by measurement, taught in skills rather than
 shipped as code:
@@ -81,8 +83,10 @@ shipped as code:
   fabricates false novelty on a long-tail dimension. On living
   dimensions, novelty is a rate question: some members are genuinely
   new every month.
-- **Completeness guards.** Partial periods abstain instead of scoring
-  (relative to the batch's own history, not an absolute floor).
+- **Completeness guards.** A period short against the batch's own
+  history — not the trailing month the walk withholds, an earlier one
+  a late-landing source left thin — is the reader's call, not a
+  score.
 
 ## What watches what
 

@@ -2340,3 +2340,45 @@ async fn scratch_store() -> (tempfile::TempDir, Store) {
     let store = Store::open(lake).await.unwrap();
     (dir, store)
 }
+
+/// The opening names where to begin, from what stands: a workspace
+/// before its first dataset has no brief to sweep — the brief's
+/// reads all need one — and the door says so instead of sending the
+/// agent to them. Once a dataset stands, the brief is the opening,
+/// and it is a read, never a gate.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_opening_names_where_to_begin() {
+    let (app, _dir) = app().await;
+    // A call refreshes the brief; the opening rides initialize.
+    expect_ok(
+        mcp(
+            app.clone(),
+            call_with(meta(), 1, "SELECT * FROM datasets;", None),
+        )
+        .await,
+    )
+    .await;
+    let body = expect_ok(mcp(app.clone(), initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("No dataset stands yet"), "{instructions}");
+    assert!(instructions.contains("workspace_next"), "{instructions}");
+
+    expect_ok(
+        mcp(
+            app.clone(),
+            call_with(
+                meta(),
+                2,
+                "DECLARE DATASET fin SET (purpose: 'door test');",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let body = expect_ok(mcp(app, initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("Open with the brief"), "{instructions}");
+    assert!(instructions.contains("not a gate"), "{instructions}");
+    assert!(!instructions.contains("No dataset stands yet"), "{instructions}");
+}
