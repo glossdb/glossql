@@ -138,7 +138,11 @@ Two table functions over the cube — every grounded metric's cells at
 its resolution, a query result computed at the read's pin from the
 grounding and the judged verdicts, cached in memory, never recorded.
 Both build what is not built; a cache entry is never stale, it is a
-hit or a miss (a moved pin or version misses). The resolution is the
+hit or a miss — keyed by the dataset's own data and everything a
+build reads (the groundings, the judged verdicts, the cube settings),
+so a write that reaches no build (a ruling, a note, a check's
+landing) keeps every entry hot, and a moved input misses. The
+resolution is the
 metric's judged cadence (`temporal_profile`), never finer than the
 `cube` aspect's floor; the window is that aspect's rung for the
 resolution, measured back from the data's own edge (see the KPI kit).

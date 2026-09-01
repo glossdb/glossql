@@ -117,6 +117,14 @@ pub fn measurement_stands(
     read_view(row_pin, dataset, reads) == read_view(pin_text, dataset, reads)
 }
 
+/// The pin's parts for one dataset's own tables — the data legs
+/// alone, without the workspace relations' legs, which every write
+/// moves. What a cube key carries beside the metric surface's digest:
+/// an import moves it, a gloss does not.
+pub fn data_legs(pin_text: &str, dataset: &str) -> String {
+    read_view(pin_text, dataset, "*")
+}
+
 /// One side of the currency comparison: the pin's parts whose names
 /// the reads list selects, in the pin's own (sorted) order. A name
 /// matching no part contributes nothing — on both sides alike, so a

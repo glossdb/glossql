@@ -1632,7 +1632,7 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
+async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     let batch = || {
         dated(
             vec![Field::new("value", DataType::Float64, false)],
@@ -1687,11 +1687,10 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
         "true"
     );
 
-    // A gloss moves the pin: the next read misses and rebuilds. No
-    // dump, no invalidation — a complete key. The verdicts read
-    // nothing this gloss touched, so they still stand: the rebuild
-    // admits on them and the axes stay current — glossing work does
-    // not churn the record.
+    // A note gloss moves the store's version — and nothing a build
+    // reads: the metric surface digests alike, the data legs stand,
+    // and the next read is a hit. A ruling, a question's answer, a
+    // check's landing cost the cube nothing.
     session
         .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
@@ -1699,9 +1698,39 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     near(
         number(&session, "SELECT count(*) FROM metric_series();").await,
         60.0,
-        "cells at the new pin",
+        "cells across an unrelated gloss",
     );
-    assert_eq!(cache.builds(), 4, "a moved pin is a miss for every metric");
+    assert_eq!(
+        cache.builds(),
+        2,
+        "a write that reaches no build keeps every entry a hit"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT bool_and(judged_current) FROM metric_axes();"
+        )
+        .await,
+        "true"
+    );
+
+    // A grounding write IS the surface: the digest moves and every
+    // metric misses at the next read. No dump, no invalidation — a
+    // complete key.
+    session
+        .execute(r#"GLOSS a ON fin AS $${"sql": "SELECT date, value * 3 AS value FROM t"}$$;"#)
+        .await
+        .unwrap();
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "cells at the new surface",
+    );
+    assert_eq!(
+        cache.builds(),
+        4,
+        "a moved surface is a miss for every metric"
+    );
     assert_eq!(
         cell(
             &session,
@@ -1727,7 +1756,7 @@ async fn the_cache_builds_once_per_key_and_misses_when_the_pin_moves() {
     assert_eq!(
         cache.builds(),
         4,
-        "nothing landed: the same pin and version serve"
+        "nothing landed: the same surface and data serve"
     );
     assert_eq!(
         cell(
@@ -1949,4 +1978,48 @@ async fn a_union_of_reads_carries_the_time_axis_its_arms_share() {
     )
     .await;
     assert!(jan.contains("54.0"), "{jan}");
+}
+
+/// A frame that scans a workspace relation binds its entry to the
+/// version: the surface digest cannot see what such a frame reads, so
+/// the entry serves only at the version it was built at, and any
+/// write is a miss for it — and for it alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_frame_over_a_workspace_relation_rebuilds_with_the_version() {
+    let batch = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        MONTH_STARTS.iter().map(|s| 19723 + s).collect(),
+        vec![Arc::new(Float64Array::from(vec![1.0; 30]))],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let cache = CubeCache::new(64);
+    let session = cube_session_with(
+        dir.path(),
+        vec![("t", batch)],
+        &[
+            r#"DECLARE ASPECT meta WITH $${"title": "Meta"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS meta ON fin AS $${"sql": "SELECT date, value * (SELECT count(*) FROM glossary) AS value FROM t"}$$;"#,
+            "SELECT judge_time() FROM t.date;",
+        ],
+        Some(cache.clone()),
+    )
+    .await;
+
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    assert_eq!(cache.builds(), 1);
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    assert_eq!(cache.builds(), 1, "a repeat at the same version is a hit");
+
+    // An unrelated gloss moves the version. The digest holds — but
+    // this frame reads the glossary, and the glossary moved.
+    session
+        .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
+        .await
+        .unwrap();
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    assert_eq!(
+        cache.builds(),
+        2,
+        "a version-bound entry misses after any write"
+    );
 }
