@@ -100,6 +100,18 @@ GLOSS throughput ON ops AS $${
 array carries judgment. A comment inside the query cannot drift from
 the query the way a separate description can.
 
+**A basis that names a computation is a claim to verify, and prose is
+not the tie.** "Ties to GL 4* net" names a route you can run. An
+assumption that carries it while the SQL computes something else
+drifts silently: every review confirms the words, and no ruling on
+the words repairs the numbers. Run the named route against the served
+frame before recording the basis, and keep the claim machine-checked
+after the session — disclose the route as `alternative_sql` so
+divergence measures it on every read, or promote it to a standing
+check (`references/validate.md`). A route that exists only in your
+head is judgment: write that as the basis and hold the confidence
+below 1.0.
+
 **A composed ratio serves only the axes its composition carries.** The
 cube slices on the dimension columns an extract *serves*, so a ratio
 that groups to `(date, value)` can never be sliced — a cohort grounded
