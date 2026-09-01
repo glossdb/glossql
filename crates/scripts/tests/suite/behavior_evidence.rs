@@ -300,7 +300,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
 }
 
 /// A session over its own root with the behavior declarations landed —
-/// the shared spelling of the two sign/tiebreak tests below.
+/// the shared spelling of the tests below.
 async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
     let root = dir.join("lake/erp");
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
@@ -740,4 +740,94 @@ async fn a_cumulative_that_resets_yearly_is_a_stock_by_its_shape_inside_the_year
     assert_eq!(summary["verdict"], "stock", "{summary}");
     assert_eq!(summary["convention"], "monotone", "{summary}");
     assert_eq!(summary["scope"], "year", "{summary}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_equal_support_anchors_elect_by_name_and_the_summary_says_so() {
+    // Two event tables carry the same movements, so both anchors
+    // reconcile the balance identically — equal support, equal vote,
+    // the same convention. The election used to fall through exact
+    // float equality to iteration order; now the name decides,
+    // and the summary says which anchor won and by which rule.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    fixture(&root).await;
+
+    let mut c_entity = Vec::new();
+    let mut c_date = Vec::new();
+    let mut c_amount = Vec::new();
+    for (e, moves) in ENTITIES.iter().zip(MOVEMENTS) {
+        for (month, mv) in MONTHS.iter().zip(moves) {
+            let mid = format!("{}15", &month[..8]);
+            c_entity.push(*e);
+            c_date.push(month.to_string());
+            c_amount.push(mv - 1.0);
+            c_entity.push(*e);
+            c_date.push(mid);
+            c_amount.push(1.0);
+        }
+    }
+    let credits = Arc::new(Schema::new(vec![
+        Field::new("entity", DataType::Utf8, true),
+        Field::new("d", DataType::Utf8, true),
+        Field::new("amount", DataType::Float64, true),
+    ]));
+    write_table(
+        &root,
+        "credits",
+        RecordBatch::try_new(
+            credits,
+            vec![
+                Arc::new(StringArray::from(c_entity)),
+                Arc::new(StringArray::from(c_date)),
+                Arc::new(Float64Array::from(c_amount)),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+
+    // `moves` is declared first: an election left to iteration order
+    // would keep it. The name rule elects `credits`.
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE ledgers ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
+         DECLARE RECIPE positions ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(period AS DATE) AS period, balance, turnover, noise \
+         FROM read_parquet('positions/*.parquet')$$;\n\
+         DECLARE RECIPE moves ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(d AS DATE) AS d, amount \
+         FROM read_parquet('moves/*.parquet')$$;\n\
+         DECLARE RECIPE credits ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(d AS DATE) AS d, amount \
+         FROM read_parquet('credits/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\
+         DECLARE RELATIONSHIP moves.entity -> ledgers.id;\n\
+         DECLARE RELATIONSHIP credits.entity -> ledgers.id;",
+    )
+    .await;
+
+    let balance = evidence(&session, "balance").await;
+    assert_eq!(balance["applicable"], true, "{balance}");
+    let anchor = |event: &str| {
+        balance["anchors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["event"] == event)
+            .cloned()
+            .unwrap_or_else(|| panic!("no {event} anchor in {balance}"))
+    };
+    let (m, c) = (anchor("moves"), anchor("credits"));
+    assert_eq!(m["verdict"], "stock", "{m}");
+    assert_eq!(c["verdict"], "stock", "{c}");
+    assert_eq!(m["support"], c["support"], "the tie is by construction");
+    assert_eq!(m["voted"], c["voted"], "the tie is by construction");
+
+    let summary = &balance["summary"];
+    assert_eq!(summary["verdict"], "stock", "{summary}");
+    assert_eq!(summary["event"], "credits", "{summary}");
+    assert_eq!(summary["tiebreak"], "event-name", "{summary}");
 }

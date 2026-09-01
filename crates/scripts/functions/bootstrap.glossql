@@ -60,6 +60,7 @@ DECLARE ASPECT behavior_evidence WITH $${
       "support": {"type": "number"}, "voted": {"type": "integer"},
       "convention": {"type": "string"}, "align": {"type": "string"},
       "anchors": {"type": "integer"}, "decided": {"type": "integer"},
+      "event": {"type": "string"}, "tiebreak": {"type": "string"},
       "reason": {"type": "string"}}}
   }
 }$$ AS MEASUREMENT ON COLUMN;

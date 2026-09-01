@@ -35,12 +35,13 @@ SELECT
   f.reason AS reason,
   CASE WHEN f.applicable THEN a.anchors END AS anchors,
   CASE WHEN f.applicable THEN named_struct(
-    'anchors', f.anchors_n, 'decided', f.decided,
+    'anchors', f.anchors_n, 'decided', f.decided, 'event', f.s_event,
     'verdict', f.s_verdict, 'support', f.s_support, 'voted', f.s_voted,
     'convention', f.s_convention, 'align', f.s_align, 'scope', f.s_scope,
     'r_flow', f.s_r_flow, 'r_stock', f.s_r_stock,
     'sign', CASE WHEN f.s_sign_primary IS NOT NULL THEN named_struct(
       'primary', f.s_sign_primary, 'mirror', f.s_sign_mirror, 'both', f.s_sign_both) END,
+    'tiebreak', f.s_tiebreak,
     'reason', f.s_reason,
     'note', 'cached — every anchor reads back via GLOSSARY(table.column::behavior_evidence)'
   ) END AS summary

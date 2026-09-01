@@ -893,28 +893,56 @@ pub(crate) async fn behavior_anchors(
     // serves the summary alone (run 4 spent 60KB of an agent's context
     // — 102 anchors — to learn the word "flow"); every anchor still
     // reads back via GLOSSARY when the judge wants the losers.
+    // One tie rule, layered: support first inside SUPPORT_EPS — the
+    // per-anchor rule's own epsilon — then a reconciliation over the
+    // monotone shape (the movement explains the level), the wider
+    // vote, the anchor's name. On a support tie `s_tiebreak` names
+    // the layer that decided, so the record can explain the winner.
     let sup = |v: &Value| v["support"].as_f64().unwrap_or(0.0);
     let monotone = |v: &Value| v["convention"] == json!("monotone");
-    let mut best: Option<&Value> = None;
-    let mut decided = 0i64;
-    for a in &anchors {
-        if a["verdict"] != json!("abstain") {
-            decided += 1;
-            // Support first; on equal support a reconciliation outranks
-            // the monotone shape — the movement explains the level.
-            if best.is_none_or(|b| {
-                sup(a) > sup(b) || (sup(a) == sup(b) && monotone(b) && !monotone(a))
-            }) {
-                best = Some(a);
-            }
+    let voted = |v: &Value| v["voted"].as_i64().unwrap_or(0);
+    let name = |v: &Value| {
+        (
+            v["event"].as_str().unwrap_or("").to_string(),
+            v["align"].as_str().unwrap_or("").to_string(),
+        )
+    };
+    let mut ranked: Vec<&Value> = anchors
+        .iter()
+        .filter(|a| a["verdict"] != json!("abstain"))
+        .collect();
+    let decided = ranked.len() as i64;
+    ranked.sort_by(|a, b| {
+        let (sa, sb) = (sup(a), sup(b));
+        if (sa - sb).abs() > SUPPORT_EPS {
+            return sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal);
         }
-    }
+        (monotone(a), std::cmp::Reverse(voted(a)), name(a)).cmp(&(
+            monotone(b),
+            std::cmp::Reverse(voted(b)),
+            name(b),
+        ))
+    });
+    let best: Option<&Value> = ranked.first().copied();
+    let tiebreak = match &ranked[..] {
+        [w, r, ..] if (sup(w) - sup(r)).abs() <= SUPPORT_EPS => {
+            Some(if monotone(w) != monotone(r) {
+                "reconciliation-over-monotone"
+            } else if voted(w) != voted(r) {
+                "voted"
+            } else {
+                "event-name"
+            })
+        }
+        _ => None,
+    };
     let mut fact = serde_json::Map::new();
     fact.insert("applicable".into(), json!(true));
     fact.insert("anchors_n".into(), json!(anchors.len() as i64));
     fact.insert("decided".into(), json!(decided));
     if let Some(b) = best {
         for (from, to) in [
+            ("event", "s_event"),
             ("verdict", "s_verdict"),
             ("support", "s_support"),
             ("voted", "s_voted"),
@@ -932,6 +960,9 @@ pub(crate) async fn behavior_anchors(
             fact.insert("s_sign_primary".into(), sign["primary"].clone());
             fact.insert("s_sign_mirror".into(), sign["mirror"].clone());
             fact.insert("s_sign_both".into(), sign["both"].clone());
+        }
+        if let Some(t) = tiebreak {
+            fact.insert("s_tiebreak".into(), json!(t));
         }
     } else {
         // Every anchor abstained, and WHY is the whole finding.
@@ -956,6 +987,10 @@ pub(crate) async fn behavior_anchors(
     rows_batch(out, behavior_shape())
 }
 
+/// Two supports within this are a tie — the one epsilon both election
+/// layers use, per anchor and across them.
+const SUPPORT_EPS: f64 = 1.0e-9;
+
 /// The winner, the runner-up field, and the anchor's own record — the
 /// policy half the script held, verbatim: support-first; on a support
 /// tie the fewer-term convention wins unless the higher-arity fit is
@@ -971,11 +1006,11 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
             winner = Some(s);
             continue;
         };
-        if sup(s) > sup(w) + 1.0e-9 {
+        if sup(s) > sup(w) + SUPPORT_EPS {
             winner = Some(s);
             continue;
         }
-        if (sup(s) - sup(w)).abs() <= 1.0e-9 && s["terms"] != w["terms"] {
+        if (sup(s) - sup(w)).abs() <= SUPPORT_EPS && s["terms"] != w["terms"] {
             let (simple, complex) = if s["terms"].as_i64() < w["terms"].as_i64() {
                 (s, w)
             } else {
@@ -1158,6 +1193,8 @@ fn behavior_shape() -> Vec<Field> {
         Field::new("s_sign_primary", DataType::Int64, true),
         Field::new("s_sign_mirror", DataType::Int64, true),
         Field::new("s_sign_both", DataType::Int64, true),
+        Field::new("s_event", DataType::Utf8, true),
+        Field::new("s_tiebreak", DataType::Utf8, true),
         Field::new("s_reason", DataType::Utf8, true),
     ]
 }

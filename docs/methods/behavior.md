@@ -53,6 +53,13 @@ column that resets shows as the year scope deciding where the raw one
 abstains. On equal support a reconciliation outranks it: the movement
 explains the level, monotonicity only describes it.
 
+The summary's winner is elected by one layered rule at both levels —
+support first within a fixed epsilon, then the domain tiebreak
+(reconciliation over monotone across anchors; fewer terms unless
+ΔBIC > 10 within one), then the wider vote, then the anchor's name —
+and where supports tied, the summary carries `event` and `tiebreak`
+naming the winner and the layer that decided.
+
 This is deliberately an evidence measurement and not a voice in the
 `behavior` slots: a measured voice ranked against human claims would
 smuggle calibration back into the record. The judge reads, then
