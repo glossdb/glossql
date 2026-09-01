@@ -175,6 +175,44 @@ async fn extraction_computes_once_then_serves_the_pin() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_voice_is_owed_a_re_measure_until_it_runs_again() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT tie WITH $${"type": "object",
+             "required": ["n"], "properties": {"n": {"type": "number"}}}$$ AS MEASUREMENT;
+           DECLARE FUNCTION tie_check FOR fin
+           AS $$SELECT count(*) AS n, 'measured' AS note FROM glossary$$
+           RETURNS tie;
+           SELECT tie_check() FROM fin;"#,
+    )
+    .await;
+
+    // The voice landed at this pin: nothing stands stale, nothing owed.
+    let owed = || async { table(&session, "SELECT kind, subject FROM owed;").await };
+    assert!(
+        !owed().await.contains("re-measure"),
+        "a voice at the current pin owes nothing"
+    );
+
+    // Any write moves the leg the check read; the voice serves marked,
+    // and the debt derives — nobody declares it.
+    run(&session, r#"GLOSS unit ON fin AS $${"value": "x"}$$;"#).await;
+    let waiting = owed().await;
+    assert!(waiting.contains("re-measure"), "{waiting}");
+    assert!(waiting.contains("tie_check"), "{waiting}");
+
+    // The act resolves it: the re-run lands the voice at this pin and
+    // the row derives away.
+    session.remeasure().await.unwrap();
+    assert!(
+        !owed().await.contains("re-measure"),
+        "the re-run voice stands at the pin"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attest_serves_detector_outputs_in_the_fixed_shape() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;

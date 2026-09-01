@@ -93,12 +93,14 @@ re-record lands; nothing is marked done by hand.
 
 What stands waiting on an act, derived from the data alone — each row
 is a mismatch the act itself resolves, so nothing is marked done.
-Columns: `kind`, `subject`, `what`, `why`, `since`. Four kinds:
+Columns: `kind`, `subject`, `what`, `why`, `since`. Five kinds:
 `recipe` (an approved recipe change with no import of that table since
 the approval) · `formula` (a human formula answer newer than the
 metric's recorded materialization) · `contest` (a slot withheld at
-read — voices differ or a detector crossed) · `fold-in` (a ruling
-whose key still stands below full confidence). All four answer for the
+read — voices differ or a detector crossed) · `re-measure` (a function
+voice standing from before the last change — served and marked until
+the function runs again; one row per function) · `fold-in` (a ruling
+whose key still stands below full confidence). All five answer for the
 session's dataset: this is the read that narrows itself, because what
 is owed is owed by someone working in one dataset — and it refuses an
 unbound call rather than answering empty, so a workspace before its

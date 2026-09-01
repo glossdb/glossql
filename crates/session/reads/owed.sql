@@ -2,7 +2,7 @@
 --
 -- Never a status flag anyone maintains: each row derives from a
 -- mismatch that the act itself resolves, so nothing has to be marked
--- done. Four sources:
+-- done. Five sources:
 --
 --   recipe   an approved recipe change with no import of that table
 --            since the approval — the re-declare has not run;
@@ -11,20 +11,23 @@
 --            recorded SQL until an agent recomposes it;
 --   contest  a slot withheld at read because voices differ or a
 --            detector crossed;
+--   re-measure  a function voice standing from before the last change
+--            — served and marked; it lands current when the function
+--            runs again;
 --   fold-in  a ruling whose key still stands below full confidence in
 --            the agent's body.
 --
 -- `subject` names what the act is about, so a caller can link to it;
 -- glyphs, links and ordering stay the caller's business.
 --
--- All four scope to the session's dataset. `contest` comes through
--- GLOSSARY(), which serves it already; the other three read the
--- workspace-wide glossary relation and narrow themselves by joining
--- `current_dataset` — the bound dataset as a relation, which is what a
--- read written in SQL cannot otherwise name.
+-- All five scope to the session's dataset. `contest` and `re-measure`
+-- come through GLOSSARY(), which serves it already; the other three
+-- read the workspace-wide glossary relation and narrow themselves by
+-- joining `current_dataset` — the bound dataset as a relation, which
+-- is what a read written in SQL cannot otherwise name.
 -- An unbound session is refused rather than answered empty, and the
 -- joins are not what does it: `GLOSSARY()` with no subject refuses
--- one outright, so the contest leg decides that for the whole read.
+-- one outright, so the GLOSSARY() legs decide that for the whole read.
 --
 -- `dataset` rides through the CTEs that need it downstream rather than
 -- being joined away, because the correlated subqueries below are
@@ -83,6 +86,20 @@ contests AS (
   FROM GLOSSARY() c
   WHERE c.state = 'contested'
 ),
+-- A voice is owed a re-run while a leg it read has moved since it
+-- landed (`measurement_stands`): the verdict serves, marked, and the
+-- judged axes and check verdicts stand on it until the function
+-- speaks again. One row per function, not per voice — the act is a
+-- re-run of the function, and the raw read names its subjects. Only
+-- function voices can be stale, so filtering on `current` needs no
+-- actor-kind guard.
+remeasures AS (
+  SELECT 're-measure' AS kind, v.actor AS subject,
+         'stale voices from ' || v.actor AS what,
+         'landed before the last change — run the function again, or the docket''s re-measure' AS why,
+         '' AS since
+  FROM (SELECT DISTINCT actor FROM GLOSSARY(all => true) WHERE NOT current) v
+),
 foldins AS (
   SELECT 'fold-in' AS kind, r.aspect AS subject,
          'ruling on ' || r.aspect AS what,
@@ -95,4 +112,5 @@ foldins AS (
 SELECT * FROM recipes
 UNION ALL SELECT * FROM formulas
 UNION ALL SELECT * FROM contests
+UNION ALL SELECT * FROM remeasures
 UNION ALL SELECT * FROM foldins

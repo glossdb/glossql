@@ -72,7 +72,17 @@ Then close what owes an act, in the same session:
   cube rebuilds at its next read on the newest verdicts and marks
   them (`metric_axes().judged_current`) until the profilers run again,
   and the walk lands at the pin it runs at — so one batch of
-  fold-ins, the profilers once, the walk once. Read the ruling notes as
+  fold-ins, the profilers once, the walk once. **That closing
+  re-measure is the audit of the batch, not hygiene**: a ruling
+  outranks your judgment, never the measurements — and the batch moved
+  the pin, so every check voice stands stale until it runs again
+  (`owed` counts them as `re-measure` rows). Re-run them, then read
+  the verdicts back on the metrics the batch touched: `ATTEST()` on
+  their check aspects, `metric_axes().alternative_divergence` where a
+  rival is disclosed. A witness the fold-in turned red is a contest
+  for the docket — leave it standing so the human re-rules with the
+  measurement in front of them, and never re-ground to quiet it. A
+  fold-in whose checks have not run is not finished. Read the ruling notes as
   you fold: a note naming a sibling aspect ("differs from … by
   design", or a slip re-ruled) is the human's cross-aspect judgment —
   carry it into the grounding's assumption text. A ruling whose stance
