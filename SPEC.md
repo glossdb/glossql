@@ -516,6 +516,19 @@ respecting bands — now that the collapsed shape discloses every gap
 (§5.3: serving wrong information is not an experiment). Closes by
 running the agent experiment, not by argument.
 
+Second: the polymorphic reference — a column whose target table
+switches by a sibling type column has no declarable edge, and the
+skill says declare none. The candidate form is the conditioned edge,
+one declaration per arm: `DECLARE RELATIONSHIP
+stock_movements.source_document -> purchase_orders.id WHEN
+source_type = 'purchase_order'`. It buys per-arm coherence and cube
+admission through an arm; it costs the predicate riding every
+relationship consumer — a declared join stops being a plain equijoin.
+And the word shifts: the aspect `WHEN` (§5.1) names a sibling
+aspect's judged value, this one names a data column's row value.
+Closes by transcription against a real polymorphic artifact, never by
+argument.
+
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
 the same guarantee · the actor rides the transport — the connection,
