@@ -2277,13 +2277,15 @@ async fn the_workspace_says_what_it_affords() {
           "assumptions": [{"dimension": "definition", "key": "per-line", "assumption": "per line", "basis": "judgment", "confidence": 0.5}]}$$;
         DECLARE ASPECT price_hike WITH $${"title": "Price +15%", "x-kind": "scenario"}$$ AS FACT ON DATASET;
         DECLARE ASPECT late_pairs WITH $${"title": "Late pairs", "x-kind": "sample"}$$ AS QUERY ON DATASET;
+        DECLARE ASPECT ar_tie WITH $${"type": "object"}$$ AS FACT ON DATASET;
+        DECLARE WITNESS ar_tie_w ON ar_tie BY (AGENT, HUMAN);
     "#;
     let body = expect_ok(mcp(app.clone(), call_with(meta(), 160, setup, None)).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
 
     let body = expect_ok(
         mcp(
-            app,
+            app.clone(),
             call_with(
                 meta(),
                 161,
@@ -2310,6 +2312,7 @@ async fn the_workspace_says_what_it_affords() {
         "scenarios",
         "sources",
         "tables",
+        "validations",
     ] {
         assert!(surfaces.contains(&expected), "{expected} missing: {rows:?}");
     }
@@ -2335,6 +2338,33 @@ async fn the_workspace_says_what_it_affords() {
     // Nothing ruled yet, so nothing owes a fold-in.
     assert_eq!(row("rulings")["stands"], json!(0), "{rows:?}");
     assert_eq!(row("rulings")["open"], json!(0), "{rows:?}");
+    // A validation stands with its witness and is open while nobody
+    // has spoken on the witnessed aspect.
+    assert_eq!(row("validations")["stands"], json!(1), "{rows:?}");
+    assert_eq!(row("validations")["open"], json!(1), "{rows:?}");
+
+    // The authored expectation is speech on the aspect: the validation
+    // stops being owed the moment somebody speaks.
+    let speak = r#"USE fin;
+        GLOSS ar_tie ON fin AS $${"outcome": "the subledger ties to its control account", "tolerance": 0.01}$$;"#;
+    let body = expect_ok(mcp(app.clone(), call_with(meta(), 162, speak, None)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let body = expect_ok(
+        mcp(
+            app,
+            call_with(
+                meta(),
+                163,
+                "SELECT open FROM workspace_next WHERE surface = 'validations';",
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["rows"][0]["open"], json!(0), "{outcomes}");
 }
 
 /// Run 4 read `workspace_next` twice in one session and got two

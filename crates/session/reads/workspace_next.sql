@@ -110,6 +110,15 @@ counts AS (
           WHERE kind = 'query'
             AND coalesce(json_get_str(schema, 'x-kind'), '') <> 'sample') AS n_metrics,
          (SELECT metrics FROM asked) AS open_metrics,
+         -- A validation stands when its witness is declared; it is
+         -- open while nobody has spoken on the witnessed aspect — no
+         -- authored expectation in the glossary and no function voice
+         -- in the measurements. Light scalar subqueries, kept in this
+         -- single row like the rest (see SHAPE above).
+         (SELECT count(*) FROM witnesses) AS n_validations,
+         (SELECT count(*) FROM witnesses w
+          WHERE NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = w.aspect)
+            AND NOT EXISTS (SELECT 1 FROM measurements m WHERE m.aspect = w.aspect)) AS open_validations,
          -- The two model doors. Both are planner doors rather than rows
          -- in `functions`, so nothing else on this map or in the
          -- relations would ever mention them: an agent could not find
@@ -144,6 +153,7 @@ SELECT s.surface AS surface,
          WHEN 'claims' THEN c.n_claims
          WHEN 'functions' THEN c.n_functions
          WHEN 'metrics' THEN c.n_metrics
+         WHEN 'validations' THEN c.n_validations
          WHEN 'scenarios' THEN c.n_scenarios
          WHEN 'samples' THEN c.n_samples
          WHEN 'rulings' THEN c.n_rulings
@@ -154,6 +164,7 @@ SELECT s.surface AS surface,
          WHEN 'claims' THEN c.open_claims
          WHEN 'functions' THEN 0
          WHEN 'metrics' THEN c.open_metrics
+         WHEN 'validations' THEN c.open_validations
          WHEN 'scenarios' THEN c.open_scenarios
          WHEN 'samples' THEN c.open_samples
          WHEN 'rulings' THEN c.open_rulings
@@ -168,6 +179,7 @@ CROSS JOIN (VALUES
   ('claims', 'GLOSS a subject with an aspect — the write verb; a human writing outranks the agent slot at every read'),
   ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
   ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — read.<name>() then serves it'),
+  ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
   ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its column overrides and their basis — whatif.<name>() then replays the recipes and bands the result'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
