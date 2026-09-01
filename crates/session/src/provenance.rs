@@ -118,6 +118,28 @@ fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> O
                 _ => Some(format!("{table}.{}", col.name)),
             }
         }
+        // A union serves each column by position: the walk descends it
+        // through every input and answers only where all of them land
+        // on the same subject — the composed shape `read.a() UNION ALL
+        // read.b()` expands to scans under the union, so the shared
+        // axis survives it. Arms landing on different columns stay
+        // None, and the grounding abstains as before.
+        LogicalPlan::Union(u) => {
+            let i = index(plan)?;
+            let mut sources = u.inputs.iter().map(|input| {
+                let (qualifier, field) = input.schema().qualified_field(i);
+                source_of(
+                    input,
+                    &Column::new(qualifier.cloned(), field.name()),
+                    dataset,
+                    summed,
+                )
+            });
+            let first = sources.next()??;
+            sources
+                .all(|s| s.as_deref() == Some(first.as_str()))
+                .then_some(first)
+        }
         _ => None,
     }
 }

@@ -1895,3 +1895,58 @@ async fn fact_values_serves_what_the_cube_does_not_chart() {
     assert!(shown.contains("| bare ") && shown.contains("no value column"), "{shown}");
     assert!(!shown.contains("| series "), "a grounding with a time axis is the cube's: {shown}");
 }
+
+/// A metric composed as one flow against another — two `read.` arms
+/// under UNION ALL — carries the time axis its arms share: the
+/// pre-pass expands the reads inline, and the provenance walk crosses
+/// the union where every input lands on the same subject. Arms
+/// landing on different judged date columns still abstain with the
+/// standing message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_union_of_reads_carries_the_time_axis_its_arms_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let daily = dated(
+        vec![Field::new("amount", DataType::Float64, false)],
+        vec![19723, 19724],
+        vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+    );
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("daily", daily)],
+        &[
+            r#"DECLARE ASPECT gross WITH $${"title": "Gross"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT rebates WITH $${"title": "Rebates"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT net WITH $${"title": "Net"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT mixed WITH $${"title": "Mixed"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS gross ON fin AS $${"sql": "SELECT date, points AS value FROM results"}$$;"#,
+            r#"GLOSS rebates ON fin AS $${"sql": "SELECT date, points / 10.0 AS value FROM results"}$$;"#,
+            r#"GLOSS net ON fin AS $${"sql": "SELECT date, value FROM read.gross() UNION ALL SELECT date, -value AS value FROM read.rebates()"}$$;"#,
+            r#"GLOSS mixed ON fin AS $${"sql": "SELECT date, value FROM read.gross() UNION ALL SELECT date, amount AS value FROM daily"}$$;"#,
+            "SELECT judge_time() FROM results.date;",
+            "SELECT judge_time() FROM daily.date;",
+        ],
+    )
+    .await;
+
+    let axes = grid(
+        &session,
+        "SELECT metric, applicable, resolution, reason FROM metric_axes() \
+         WHERE metric IN ('net', 'mixed') ORDER BY metric;",
+    )
+    .await;
+    assert!(axes.contains("net") && axes.contains("month"), "{axes}");
+    assert!(
+        axes.contains("mixed") && axes.contains("no judged time column"),
+        "{axes}"
+    );
+
+    // The union's cells fold as one flow: each month's gross minus a
+    // tenth of it.
+    let jan = grid(
+        &session,
+        "SELECT value FROM metric_series() WHERE metric = 'net' AND dimension = '' \
+         ORDER BY period LIMIT 1;",
+    )
+    .await;
+    assert!(jan.contains("54.0"), "{jan}");
+}
