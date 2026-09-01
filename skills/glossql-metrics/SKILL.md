@@ -40,14 +40,15 @@ same `GLOSS` statement and reads each differently afterwards:
   own date column; the cube buckets it at every grain. **A level with
   an as-of definition is a stock metric, not a fact**: payables
   outstanding, inventory on hand, headcount — anything you could state
-  as of any date. Serve the as-of dates from the table's own date
-  column, the running level as `value`, and mark `"behavior":
-  "stock"` (a window sum gives the verb no descent, and an unmarked
-  stock sums as a flow):
+  as of any date. Collapse the events to the frame's grain first — a
+  stock frame serves **one row per entity per period** — then run the
+  level over the collapse; a GROUP BY keeps the date column's verdict,
+  because group keys trace. Mark `"behavior": "stock"` (a window sum
+  gives the verb no descent, and an unmarked stock sums as a flow):
 
   ```glossql
   GLOSS payables_outstanding ON fin AS $${
-    "sql": "SELECT entry_date AS date, sum(amount) OVER (ORDER BY entry_date) AS value FROM journal_lines",
+    "sql": "WITH daily AS (SELECT entry_date, sum(amount) AS delta FROM journal_lines GROUP BY entry_date) SELECT entry_date AS date, sum(delta) OVER (ORDER BY entry_date) AS value FROM daily",
     "behavior": "stock"
   }$$;
   ```

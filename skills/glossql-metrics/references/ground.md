@@ -68,10 +68,19 @@ The join is not optional here. `glossary` serves the whole workspace,
 and reading another dataset's registry before rewriting this one drops
 every entry this dataset holds.
 
-**A grounding carries no grain** — no GROUP BY, no window. It is the
-semantic core: scoping, signs, grain-preserving joins composed inline,
-served as a row-grain relation with the time axis and the judged
-dimensions as columns.
+**A flow grounding carries no grain** — no GROUP BY, no window. It is
+the semantic core: scoping, signs, grain-preserving joins composed
+inline, served as a row-grain relation with the time axis and the
+judged dimensions as columns.
+
+**A stock is the exception.** The running level already aggregates the
+events, so the frame must collapse to its own grain — one row per
+period, or one per entity and period with the entity served as a
+column (partition the window by it). Served at event grain, every row
+on a date carries the same correct level, and the cube — which must
+sum same-period rows, because that is how a multi-account balance
+totals — multiplies the level by the day's event count. The number is
+exact on every row and wrong in every sum.
 
 ```glossql
 GLOSS throughput ON ops AS $${

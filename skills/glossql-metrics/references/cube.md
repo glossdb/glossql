@@ -65,9 +65,11 @@ GLOSS cube ON ops AS $${"resolution": "hour", "windows": {"hour": "7 days"}}$$;
 ```
 
 Every coarser grain derives from the cells by the verb on the server
-— a flow sums, a stock takes the bucket's last period, a ratio
-divides its summed halves — so mark your stocks and serve a ratio's
-halves; both hold at every grain and for the rival too.
+— a flow sums, a stock sums the rows standing at the bucket's latest
+date (one per entity — which is why a stock frame serves one row per
+entity per period), a ratio divides its summed halves — so mark your
+stocks and serve a ratio's halves; both hold at every grain and for
+the rival too.
 
 Wide axes bucket instead of dropping out: up to 24 members every one
 is named; above that the axis serves its top 23 by weight — summed

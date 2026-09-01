@@ -25,6 +25,12 @@ The close carries three lists, kept apart:
    ask and say which numbers shift when it arrives. The ask is a
    document, not a decision — keep it out of the questions.
 
+Before the lists, read back what you served: every grounded metric's
+headline from `metric_series`, set against a figure already trusted —
+a tie-out total, the source's own statement. Validating inputs never
+covers this; a served-shape defect shows in this read in one line and
+nowhere else.
+
 And the read-back covers the whole agreed cohort, not just what
 grounded: every metric that did not ground gets named with what would
 close it. Size the review honestly — the load-bearing verdicts
