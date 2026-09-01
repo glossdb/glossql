@@ -3,10 +3,10 @@
 ## Agree the topic before anything lands
 
 A dataset has a topic — on-time delivery, capacity, cost control —
-and the topic is what makes every later choice decidable:
-which tables to land, which metrics to propose, which questions
-matter. Propose one in prose from what you can see, let the user shape
-it, then declare it:
+and the topic makes every later choice decidable: which tables to
+land, which metrics to propose, which questions matter. Propose one
+in prose from what you can see, let the user shape it, then declare
+it:
 
 ```glossql
 DECLARE DATASET ops SET (purpose: 'service delivery — what gets done, how fast, and where it stalls');
@@ -26,8 +26,8 @@ This is conversation, not a form. **Prose shapes the work; forms rule
 the record.** Anything deciding what the work *is* — the topic, the
 cohort, whether to widen the import — is chat: present the facts,
 propose, interpret the answer. The question round carries only
-standing assumptions to confirm or correct, and it fails as a
-substitute for conversation because there is nothing standing yet.
+standing assumptions to confirm or correct; it cannot replace
+conversation because nothing is standing yet.
 
 ## Land what the topic needs — this is not ETL
 
@@ -36,11 +36,10 @@ for its topic, never a mirror of the export: land the tables the
 cohort needs, take only the columns the recipe's SELECT list earns,
 filter wide tables in the recipe's WHERE. Leaving something out costs
 one later `DECLARE RECIPE`; landing everything costs attention on
-every read after — more slots to gloss, more owed claims, more noise
-between you and the questions that matter, until the deep scope
-questions drown in a hundred-column long tail. Width also costs
-compute: the structure searches scale with a table's column pairs, so
-a wide table landed whole is the one thing that makes them slow.
+every read after — more slots to gloss, more owed claims, more noise,
+until the deep scope questions drown in a hundred-column long tail.
+Width also costs compute: the structure searches scale with a table's
+column pairs, so a wide table landed whole is what makes them slow.
 
 **Read the source's conventions before probing.** Source-grain slots
 serve in every dataset, so what an earlier onboarding learned about
@@ -73,10 +72,10 @@ SELECT path, size, modified FROM source_files('erp_export') ORDER BY path;
 ```
 
 **Rehearse the schema with `LIMIT 0`, per file, before authoring any
-recipe.** A zero-row probe still carries every `(name, type)`, which
-is its whole point. Row probes cannot replace it — probe rows omit
-null fields, so a column that is null in your sample is invisible
-there, and a missed join key carries a missed relationship with it.
+recipe.** A zero-row probe still carries every `(name, type)`. Row
+probes cannot replace it — probe rows omit null fields, so a column
+that is null in your sample is invisible there, and a missed join key
+carries a missed relationship with it.
 
 ```glossql
 PROBE erp_export AS $$SELECT order_id,
@@ -86,9 +85,9 @@ FROM read_parquet('orders/*.parquet') LIMIT 0$$;
 ```
 
 **Name the columns — never `SELECT *`.** A star recipe survives a
-schema change in the source and fails later, somewhere downstream where
+schema change in the source and fails later, downstream, where
 nothing points back at the source; a named SELECT list fails at the
-re-import, which is where the drift is and where you can fix it.
+re-import, where the drift is and where you can fix it.
 
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
@@ -103,9 +102,9 @@ DECLARE RECIPE orders ON ops FROM erp_export AS $$
 ```
 
 **One date column may carry several conventions.** `try_to_date` and
-`try_to_timestamp` take as many formats as you name and take the first
-that parses, so a mixed column is one call rather than a coalesce
-ladder over three copies of the value:
+`try_to_timestamp` take as many formats as you name and use the first
+that parses, so a mixed column is one call, not a coalesce ladder
+over three copies of the value:
 
 ```glossql
 PROBE erp_export AS $$SELECT

@@ -7,7 +7,7 @@ came before, what would this month have had to be for nobody to be
 surprised? PIT says where the actual landed in that corridor — 0.5 is
 on the trajectory, past 0.95 or under 0.05 is outside what the
 metric's own history can explain. `band_breach` is the detector on
-top. Every point is honest: its fit saw only the months before it.
+top. Each point's fit saw only the months before it.
 
 - **The read is recall, you are the judge.** A business shift and a
   data defect breach identically.
@@ -22,14 +22,14 @@ top. Every point is honest: its fit saw only the months before it.
 - It follows the grounding's authored behavior — mark your stocks —
   then the `behavior` gloss on the column summed, then the evidence.
 
-The cube is its sibling and the app's fuel: every grounded metric's
-cells — the total, the slices along its judged dimensions, the
-disclosed rival — at the metric's resolution, computed at read and
-cached, never recorded. Nothing to run and nothing to land:
+The cube is the sibling read and feeds the app: every grounded
+metric's cells — the total, the slices along its judged dimensions,
+the disclosed rival — at the metric's resolution, computed at read
+and cached, never recorded. Nothing to run and nothing to land:
 `metric_series()` builds what is not built. A dimension the cube
 should slice must be a served column of the extract.
 
-The axes come from judged verdicts, not from the data's shape: a
+The axes come from judged verdicts, not from the data's shape. A
 served column enters as a dimension when a verdict admits it: its own
 `dimension_relevance`, or — for a label in a dimension table, a
 near-key there by construction — the verdict on the key column that
@@ -43,7 +43,7 @@ date column whose `temporal_profile` is applicable — a named cadence
 before none, highest completeness first; an `irregular` verdict
 anchors at the declared floor. A column nobody judged and nobody
 glossed stays out, and a frame with no judged date column abstains;
-`metric_axes()` says so per metric, with the road out. The verdicts
+`metric_axes()` says so per metric and names the fix. The verdicts
 the cube admits on are the newest landed, whatever pin they were
 judged at — served and marked, as every function voice is, and every
 write moves the pin — so after a gloss or an import the cube still

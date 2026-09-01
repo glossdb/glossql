@@ -7,34 +7,33 @@ description: Take a glossql workspace from raw exports to metrics someone can tr
 
 The deliverable is metrics the business trusts and the validations
 that say why. The `glossql` skill teaches the language and the reads;
-this one is judgment — what to decide, what to measure, what to ask.
-It is one page and nine references; each reference is named below
-with the moment to open it, and none is needed before that moment.
+this one teaches judgment — what to decide, what to measure, what to
+ask. One page, nine references; each is named below with the moment
+to open it, and none is needed before that moment.
 
-**There is no fixed order.** This is not a pipeline and the work is
-not a batch job: a person is talking to you while it happens. Ask the
-workspace what it affords and where it stands, then do the next thing
-that matters:
+**There is no fixed order.** This is not a pipeline: a person is
+talking to you while the work happens. Ask the workspace what it
+affords and where it stands, then do the next thing that matters:
 
 ```sql
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
 ```
 
-Every surface the system affords, what each is extended through, what
-stands and what is open on it. It reports state, never an order — the
+One row per surface the system affords: what it is extended through,
+what stands, what is open. It reports state, never an order — the
 judgment is yours.
 
 ## What you are making
 
 Four things look alike here and are not. Decide which one you mean
-before you write it, because the workspace accepts all four under the
-same `GLOSS` statement and reads each differently afterwards:
+before you write it: the workspace accepts all four under the same
+`GLOSS` statement and reads each differently afterwards:
 
 - **A metric** — a QUERY aspect whose grounding serves a row-grain
   relation with a `value` column and a date column. The cube turns it
   into a series at its judged cadence, the docket charts it, the bands
-  walk watches it. It is a series only when the date column is one the
-  machine can trace to a table column that `temporal()` has profiled:
+  walk watches it. It is a series only when the machine can trace the
+  date column to a table column that `temporal()` has profiled:
   the cadence and the window come from that verdict, and a date
   computed inside the SQL has no verdict behind it. Serve the table's
   own date column; the cube buckets it at every grain. **A level with
@@ -44,7 +43,7 @@ same `GLOSS` statement and reads each differently afterwards:
   stock frame serves **one row per entity per period** — then run the
   level over the collapse; a GROUP BY keeps the date column's verdict,
   because group keys trace. Mark `"behavior": "stock"` (a window sum
-  gives the verb no descent, and an unmarked stock sums as a flow) and
+  blocks the verb's trace, and an unmarked stock sums as a flow) and
   declare the grain — the served columns that identify a row; the cube
   validates the frame against it and refuses one that breaks it:
 
@@ -65,14 +64,14 @@ same `GLOSS` statement and reads each differently afterwards:
   fact's number in one read, and the docket shows it as a value tile
   and in the list beside its name. The cube abstains on it — "no
   judged time column" — and that is the right answer, not a defect to
-  work around. A fact given a date becomes a one-point series: a fact
-  in costume, and a chart of nothing.
+  work around. A fact given a date becomes a one-point series — a
+  chart of nothing.
 - **A derived relation** — governed SQL other groundings build on: a
   snapshot boundary, a cleaned join, a scoped subset. Ground it as a
   QUERY aspect with `"x-kind": "relation"`; every other grounding
   composes `FROM read.<name>()`, so a ruled change propagates through
-  everything built on it. It serves whatever columns it serves, needs
-  no `value`, and the cube abstains on it by design. There is no
+  everything built on it. It serves any columns, needs no `value`,
+  and the cube abstains on it by design. There is no
   `CREATE VIEW` here; this is the view.
 - **A validation** — an authored expectation (a FACT gloss) with a
   function voice that measures it and a detector that bands the two;

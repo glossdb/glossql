@@ -92,9 +92,9 @@ frame is `UNBOUNDED PRECEDING AND CURRENT ROW` **with peers**, so tied
 ORDER BY values share a running total — order by the grain-unique
 column. And window `last_value` under that default returns the current
 row, not the partition's last; use the aggregate form from the stock
-rule above and skip the trap. For year-over-year on a sparse axis the
-self-join earns its place: `ON prev.period = cur.period - INTERVAL '1
-year'` cannot be fooled by a hole.
+rule above. For year-over-year on a sparse axis the self-join earns
+its place: `ON prev.period = cur.period - INTERVAL '1 year'` cannot
+be fooled by a hole.
 
 **Never guess a GROUP BY — the judged reads hand you the axes.**
 Partition on `dimension` glosses, primary first, ranked by

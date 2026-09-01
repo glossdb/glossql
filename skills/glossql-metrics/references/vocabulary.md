@@ -36,9 +36,9 @@ legitimate recipe); then your own data test, cited as the basis; and last, on an
 installation where a whole family of columns needs it, author a
 workspace-scoped function that decides behavior the way *this* dataset
 demands. That function is the installation's recorded thinking —
-versioned, re-runnable, honest about its method in a way a one-off
-judgment never is. Unwilling to climb? Don't gloss: absence shows as
-an honest `unassessed` row, a guess does not.
+versioned, re-runnable, honest about its method. Unwilling to climb?
+Don't gloss: absence shows as an honest `unassessed` row, a guess
+does not.
 
 "Does not apply" *within* relevance is still a judgment: a ratio is a
 measure with no stock/flow nature, and that lands as

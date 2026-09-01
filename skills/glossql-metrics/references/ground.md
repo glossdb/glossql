@@ -4,9 +4,9 @@
 
 One QUERY aspect per concept, on the dataset. The aspect blob is thin
 — declarations have no supersession, so anything the company might
-revise (meaning, unit, owner, source) belongs in the `definitions`
-gloss where a correction supersedes with actor and timestamp. A field
-lives in exactly one place, never both.
+revise belongs in the `definitions` gloss, where a correction
+supersedes with actor and timestamp. A field lives in exactly one
+place, never both.
 
 ```glossql
 DECLARE ASPECT throughput WITH $${"title": "Throughput", "x-kind": "measure"}$$ AS QUERY ON DATASET;
@@ -37,12 +37,11 @@ WHERE kind = 'query'`. A base concept that grounds as an extract has no
 formula and needs no entry.
 
 `definitions` is the **handbook content** — what the company revises:
-meaning, unit, owner, source. It lives here and not in the aspect blob
-because declarations have no supersession: whatever sits in a `WITH`
-blob cannot be corrected, contested or outranked once anything is
-glossed on the aspect. The blob keeps only the `title` display label
-and the `x-kind` tooling flag. A field lives in exactly one place,
-never both — a unit written in both copies goes stale in one.
+meaning, unit, owner, source. Whatever sits in a `WITH` blob cannot
+be corrected, contested or outranked once anything is glossed on the
+aspect. The blob keeps only the `title` display label and the
+`x-kind` tooling flag. A unit written in both copies goes stale in
+one.
 
 ```glossql
 GLOSS definitions ON ops AS $${"definitions": {
@@ -64,8 +63,8 @@ WHERE g.aspect IN ('formulas', 'definitions') AND g.actor_kind = 'agent'
 ORDER BY g.written_at DESC
 ```
 
-The join is not optional here. `glossary` serves the whole workspace,
-and reading another dataset's registry before rewriting this one drops
+The join is required: `glossary` serves the whole workspace, and
+reading another dataset's registry before rewriting this one drops
 every entry this dataset holds.
 
 **A flow grounding carries no grain** — no GROUP BY, no window. It is
@@ -81,10 +80,10 @@ on a date carries the same correct level, and the cube — which must
 sum same-period rows, because that is how a multi-account balance
 totals — multiplies the level by the day's event count. The number is
 exact on every row and wrong in every sum. Declare that grain in the
-body — `"grain": ["date"]`, or `["date", "account_id"]` with the
-entity served as a column — and the cube validates the frame against
-it instead of trusting it: a frame that breaks its declared grain
-abstains, with the counts in the reason.
+body — `"grain": ["date"]`, or `["date", "account_id"]` — and the
+cube validates the frame against it instead of trusting it: a frame
+that breaks its declared grain abstains, with the counts in the
+reason.
 
 ```glossql
 GLOSS throughput ON ops AS $${
@@ -114,9 +113,9 @@ below 1.0.
 
 **A composed ratio serves only the axes its composition carries.** The
 cube slices on the dimension columns an extract *serves*, so a ratio
-that groups to `(date, value)` can never be sliced — a cohort grounded
-entirely that way reports "no axes admitted" on every metric,
-which is the headline numbers being the only ones nobody can cut.
+that groups to `(date, value)` can never be sliced — a cohort
+grounded entirely that way reports "no axes admitted" on every
+metric: headline numbers nobody can cut.
 
 A ratio is never drilled from its output rows. Drilling backlog days
 by region means **re-scoping its components per the `formulas` gloss**
@@ -137,7 +136,7 @@ the axes the question actually needs rather than every one available.
 cube and the bands walk total it — `sum(num)/sum(den)` at every grain,
 which is right for the headline and for every member. Without them a
 ratio takes the flow verb and is **summed** — a dozen member ratios
-added into one absurd headline, an order of magnitude off its true
+added into one wrong headline, an order of magnitude off its true
 value. Nothing infers this from the SQL — serve the columns.
 
 ```glossql

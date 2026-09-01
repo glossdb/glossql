@@ -1,8 +1,6 @@
 # What will bite — read on the first refusal, or before a complex read
 
-## What will bite
-
-Postgres reflexes that fail at this pin, collected from real refusals:
+Postgres reflexes that fail at this pin:
 `percentile_disc` and `mode()` (absent) · `to_char` PG patterns
 (Chrono only) · 3-arg `date_trunc` with timezone · `date_add` /
 `date_sub` / `age` · `SELECT * EXCLUDE` · `generate_series` in the

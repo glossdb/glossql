@@ -1,10 +1,10 @@
 # Rulings and what they owe you — read when the brief counts a ruling, a question, or a contest
 
-An answer lands as a **ruling**: the judgment
-alone — confirmed or corrected, naming the claim by its `key` — in
-the human's `ruling` slot on the subject, never a copy of your body.
-A ruling holds its question closed and the round moves on; your
-grounding stays yours. Questions derive from *your current body*, so
+An answer lands as a **ruling**: the judgment alone — confirmed or
+corrected, naming the claim by its `key` — in the human's `ruling`
+slot on the subject, never a copy of your body. A ruling holds its
+question closed; your grounding stays yours. Questions derive from
+*your current body*, so
 raising a confidence with a measurement basis closes its question on
 its own. A human's decline rests only while the workspace holds
 still — your next write re-opens it for the next review. A client
@@ -42,9 +42,8 @@ write at disclosure (`business-days-only`, `completed-only`). The key
 is the claim's identity and the only thing the record joins on:
 rulings, question closure, and the fold-in debt all match
 `(aspect, key)`. Assumption prose is what the human reads, never what
-the system compares — no wording is ever matched against wording
-anywhere in this system, and none ever will be. What that costs you,
-stated plainly:
+the system compares — wording is never matched against wording
+anywhere in this system. What that costs you:
 
 - **An assumption without a key is never asked.** It cannot be held
   closed, so the round would re-ask it forever; it is skipped

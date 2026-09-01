@@ -6,36 +6,34 @@ description: Author a data app on the glossql app door — a standalone page at 
 # Authoring apps
 
 A data app is **its own page, and its URL is the whole state**. It
-serves at `/<dataset>/app/<name>`; the dataset is the first segment and
-every filter a reader picks lands in the query string, so any view they
-are looking at is a link they can paste to somebody else. That is the
-point of the surface — not a dashboard you log into, a page you send.
+serves at `/<dataset>/app/<name>`; the dataset is the first segment
+and every filter a reader picks lands in the query string, so any
+view is a link they can paste to somebody else. That is the point:
+not a dashboard you log into, a page you send.
 
 Write one when someone needs to *look* at what the workspace knows. It
 is the last thing you build, not the first: an app over numbers nobody
 has grounded is a picture of nothing.
 
-**Add an app; don't fork the built-in.** The docket ships in the binary
-and is covered by tests that run against it. A workspace that wants a
+**Add an app; don't fork the built-in.** The docket ships in the
+binary, with tests that run against it. A workspace that wants a
 different view of the same rows authors its own app beside it — the
 door serves as many as you write, and yours does not inherit anyone
-else's assumptions. (Forking is a later question, once the docket has
-been used enough to be worth forking.)
+else's assumptions.
 
-The door holds this: a part glossed under a built-in's name — `docket`
-— is refused, because a single part resolves the whole app and every
-other page the built-in ships would stop serving. Give yours its own
-name.
+A part glossed under a built-in's name — `docket` — is refused: a
+single part resolves the whole app, and every other page the built-in
+ships would stop serving. Give yours its own name.
 
 ## Shape it with the user first, in prose
 
 No forms anywhere in this flow — this is the conversation register.
 
 1. **The job, in one sentence.** Who opens this page, and what single
-   question does it answer? An app has a topic exactly as a dataset
-   does, and every tile earns its place against that job or gets cut.
-   This is where "a monitoring dashboard" becomes "the Monday
-   operations review page".
+   question does it answer? An app has a topic as a dataset does, and
+   every tile earns its place against that job or gets cut. This is
+   where "a monitoring dashboard" becomes "the Monday operations
+   review page".
 2. **The tile list, as a proposal.** Each tile named with its read, its
    slice and its chip — "cycle-time trend with the rival line ·
    throughput by region, top 8 · the open-questions count". Propose from what the
@@ -96,8 +94,8 @@ frame once per state and every tile bound to it shares that one table.
   `Unrecognized type`. Anything built by `json_get_str`, `concat_ws`
   or `coalesce` needs `arrow_cast(x, 'Utf8')` on the way out.
 - **State the cap.** A frame that shows a top-N says so in the tile's
-  chip or note. A truncated list that looks complete is the one lie a
-  surface can tell without anyone noticing.
+  chip or note. A truncated list that looks complete misleads without
+  anyone noticing.
 
 A frame is planned through the same path every other read takes, so
 every door is available inside one — `read.<metric>()` for a grounding,
@@ -177,9 +175,8 @@ doing the frame's job in a place nobody can test.
 Pin `$schema` to the vega-lite major the door serves — today that is
 `https://vega.github.io/schema/vega-lite/v6.json`. The v5 reflex is
 outdated here: an older major renders but logs a version warning on
-every load, which teaches readers to ignore the console.
-`{"data": {"name": "frame"}}` is how the spec names the frame the
-tile bound.
+every load. `{"data": {"name": "frame"}}` is how the spec names the
+frame the tile bound.
 
 A corridor is a `layer`: an `area` with `y`/`y2` under the lines, and
 `"color": {"datum": "as it happened"}` on each line to earn a legend

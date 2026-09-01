@@ -87,7 +87,7 @@ coherence checks it as a dependency (one coarser value per finer
 value), never as a join. A same-table edge whose to-side is the
 table's key — `accounts.parent_id -> accounts.account_id` — is a
 self-reference, not a nest, and coherence checks it as a join against
-itself; the to-side's uniqueness is what tells the two apart.
+itself; the to-side's uniqueness tells the two apart.
 Then the judged join: **run the grain check before trusting any
 join** — `COUNT(*)` before and after must be equal, exactly, or the
 join is not grain-preserving and multiplies every downstream

@@ -27,13 +27,13 @@ per statement:
 
 - a read — `{"columns": [{"name", "type"}, …], "rows": [...],
   "row_count": n, "truncated": bool}`. `columns` is the result's
-  shape with engine types, present even when zero rows come back — a
-  `LIMIT 0` rehearsal returns the schema, which is its whole point.
-  Data rows are capped at the server's `--row-cap`; `truncated: true`
-  means the result held more than shown — refine (aggregate, WHERE,
-  LIMIT) instead of reading a capped result as complete. Metadata
-  reads — `GLOSSARY()`, `ATTEST()`, and the store relations — sent as
-  their own single statement are uncapped: the map arrives whole.
+  shape with engine types, present even with zero rows — a `LIMIT 0`
+  rehearsal returns the schema. Data rows are capped at the server's
+  `--row-cap`; `truncated: true` means the result held more than
+  shown — refine (aggregate, WHERE, LIMIT) instead of reading a
+  capped result as complete. Metadata reads — `GLOSSARY()`,
+  `ATTEST()`, and the store relations — sent as their own single
+  statement are uncapped.
 - a write — `{"affected": n}` or `{"done": "…"}`. One write answers
   with rows instead: a `GLOSS` on a QUERY aspect — a metric's
   grounding — returns the metric's fact row in the `metric_axes()`
@@ -46,20 +46,20 @@ per statement:
 - a refused statement — a tool error whose text is the refusal. Read
   it; it names what was wrong, and in a sequence it names its place:
   `statement 2 of 7 refused: … — statement 1 landed; 3–7 not run`,
-  with a second block `{"landed": [...]}` carrying the outcomes of the
-  statements that stood, in the usual shape. What landed stayed
-  landed; the rest was never attempted.
+  with a second block `{"landed": [...]}` carrying the outcomes of
+  the statements that stood, in the usual shape. What landed stays
+  landed; the rest never ran.
 
-Who you are (agent or human) rides the connection — there is no BY
-clause; the door's token says which, and there is nothing to declare.
+Who you are (agent or human) rides the connection — the door's token
+says which. There is no BY clause and nothing to declare.
 
-The dataset does not ride the connection — nothing does. **Open every
-call that touches a dataset's names with `USE <dataset>;`.** It moves
-the statements after it and expires when the call does, so it belongs
-in each call, not just the first. A call that names none is
+The dataset does not ride the connection. **Open every call that
+touches a dataset's names with `USE <dataset>;`.** It moves the
+statements after it and expires when the call does, so it belongs in
+each call, not just the first. A call that names none is
 workspace-scoped, which is what `SELECT * FROM datasets` and a
-source-grain gloss both want. A qualified `dataset.table.column` reads
-across datasets from anywhere.
+source-grain gloss both want. A qualified `dataset.table.column`
+reads across datasets from anywhere.
 
 ## The statement set
 
@@ -84,13 +84,13 @@ There is no ordering surface: send statements in the order you need
 them, one call or several.
 
 Schema-altering substrate DDL — `CREATE VIEW` included — is closed:
-tables come from recipes, and a composite edge is declared as a tuple,
-never cured through a view.
+tables come from recipes, and a composite edge is declared as a
+tuple, not through a view.
 
 ## Reading live state
 
-Never guess at workspace state — read it through the language, where it
-is always current. A fresh workspace is not empty: the measurement
+Never guess at workspace state — read it through the language. A
+fresh workspace is not empty: the measurement
 library and the KPI kit (the semantic vocabulary — `meaning`, `role`,
 `behavior`, `unit`, `dimension`, `entity`, and the rest — with their
 witnesses) are declared at boot; read them back before declaring
@@ -124,8 +124,7 @@ anything.
 - ordinary SELECT over tables for the data itself.
 
 **Shipped reads** — derived relations the binary carries, selectable
-like any table, filters riding WHERE. One file behind each, shared by
-the door, the app and these examples:
+like any table, filters riding WHERE:
 
 | read | serves |
 |---|---|
@@ -143,13 +142,13 @@ the door, the app and these examples:
 A shipped name is reserved: it shadows a table *and* a CTE of the same
 name, so don't name a CTE after one. Every column of every read, and
 the two cube reads, are `doc://docs/reference/reads.md`, served on
-this door — open it before naming columns in a query instead of
-guessing them; a guess costs a refusal round trip.
+this door — open it before naming columns in a query; a guess costs
+a refusal round trip.
 
 `open_questions`, `ruling_entries` and `agent_assumptions` answer for
 the whole workspace and carry a `dataset` column, so narrow them
 yourself. `owed` narrows itself; `metric_surfaces` reads vocabulary,
-which is workspace-wide by nature.
+which is workspace-wide.
 
 ```sql
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC
@@ -188,9 +187,9 @@ rulings awaiting your fold-in, approvals awaiting your re-declare,
 and **judgment questions** (assumptions below full confidence —
 conventions and definitions the data cannot arbitrate) — and closes
 with the record's size: how many human writings stand and when the
-latest landed. The first part is work; the second is presence, and
-its timestamp is what tells you something landed while you were
-away. It also rides any tool result whose call moved it, as a
+latest landed. The first part is work; the second's timestamp tells
+you something landed while you were away. The brief also rides any
+tool result whose call moved it, as a
 `brief: Live now: …` block — so mid-session changes reach you
 without reconnecting; a call that carries no brief block changed
 nothing.
@@ -259,26 +258,24 @@ question leaves the workspace, walk this map and run what answers it:
 | which rows look wrong, on a signal | `misfit.<frame>()` |
 | whether an authored expectation holds | a check function's voice + `rate_tolerance`, read via `ATTEST()` |
 
-What remains askable after the map is walked is exactly what the
-round serves: an assumption whose basis is your judgment, held below
-full confidence. The round enforces the boundary: it
-never serves an assumption whose `dimension` is `behavior`, `sign`,
-or `grain` — those are the functions' work, so record them at 1.0
-citing the measurement. When a measurement *abstains*, the
-abstention names why — close the claim on your strongest remaining
-ground (a mirror table, a reference system, the data's own shape) and cite it;
-relay it as a judgment question only if it stays load-bearing, never
-as a raw "which is it?".
+What remains askable after the map is walked is what the round
+serves: an assumption whose basis is your judgment, held below full
+confidence. The round enforces the boundary: it never serves an
+assumption whose `dimension` is `behavior`, `sign`, or `grain` —
+those are the functions' work, so record them at 1.0 citing the
+measurement. When a measurement *abstains*, the abstention names why
+— close the claim on your strongest remaining ground (a mirror
+table, a reference system, the data's own shape) and cite it; relay
+it as a judgment question only if it stays load-bearing, never as a
+raw "which is it?".
 
-And the round is one of two registers, for one kind of interaction
-only. **Prose shapes the work; forms rule the record.** Anything
-that decides what the work *is* — the dataset's topic, which metrics
-to build, whether to widen the import — is conversation: stop,
-present the facts, propose in prose, interpret the human's prose.
-The round's forms carry only standing assumptions to confirm or
-correct — they work because confirming a stated judgment with the
-facts on the table is easy, and they fail as a substitute for
-conversation because there is nothing standing to confirm yet.
+The round is one of two registers. **Prose shapes the work; forms
+rule the record.** Anything that decides what the work *is* — the
+dataset's topic, which metrics to build, whether to widen the import
+— is conversation: stop, present the facts, propose in prose,
+interpret the human's prose. Forms carry only standing assumptions
+to confirm or correct; they cannot replace conversation — there is
+nothing standing to confirm yet.
 
 The engine's refusals are exact and name what was wrong; the
 postgres reflexes that fail at this pin are collected in
