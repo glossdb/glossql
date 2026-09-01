@@ -175,3 +175,13 @@ An assumption may carry one:
 The cube runs the rival monthly and the docket draws both lines, so
 the gap is a chart the human reads before ruling instead of an
 argument from prose. Start where the families diverge hardest.
+
+**Hunt the corpus for a second path.** The strongest rival is often
+not a rival definition but a second route to the same number the data
+already carries — a published statement beside the journals, a control
+account beside its subledger, any declared relationship that offers
+another aggregation path. Look for one per served metric; a found
+path lands as an assumption with `alternative_sql` at the confidence
+your judgment gives the discrepancy, and "no second path exists" is
+itself a finding worth recording. A contradiction the corpus carries
+and nobody measured is a question nobody will ever be asked.

@@ -99,7 +99,7 @@ re-record. For a fact or a relation the row abstains, and you move on.
 | `references/vocabulary.md` | before glossing a column: role first, behavior by evidence, unit |
 | `references/ground.md` | before writing a grounding: the two registries, the row-grain shape, ratios and stocks, keys on assumptions, the rival |
 | `references/read-sql.md` | before any read over a metric: flows, stocks and ratios, and what this engine has that postgres lacks |
-| `references/validate.md` | when a number needs a check that says why it holds |
+| `references/validate.md` | when a number needs a check that says why it holds, and at the close — a reconciliation run by hand becomes a standing check |
 | `references/cube.md` | when a metric's axes, resolution or window are not what you expected, and after every ruling |
 | `references/doors.md` | for a what-if, a which-rows question, a bespoke function or an app |
 | `references/close.md` | before the read-back: the three lists and the question round |
