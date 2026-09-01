@@ -12,6 +12,7 @@ pub const GROUNDING_SCHEMA: &str = r#"{
   "properties": {
     "sql": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
+    "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "assumptions": {
       "type": "array",
       "items": {

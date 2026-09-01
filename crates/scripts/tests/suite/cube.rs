@@ -822,6 +822,116 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
     );
 }
 
+/// The declared grain (SPEC §5.2, corpus fixture 21) is validated
+/// where the frame is built: one row per key or the metric abstains,
+/// because a frame that breaks its declared identity multiplies every
+/// aggregating reader and nothing downstream can tell duplication from
+/// multi-entity. A grain column the frame does not serve is caught at
+/// the plan stage — the write's answer — and an undeclared grain is
+/// served as the empty list, never refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_declared_grain_gates_the_frame_one_row_per_key() {
+    // Two accounts, two dates: distinct per (date, account), duplicated
+    // per (date) — the shape that separates the declarations.
+    let events = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("account", DataType::Utf8, false),
+        ],
+        vec![19723 + 14, 19723 + 14, 19723 + 30, 19723 + 30],
+        vec![
+            Arc::new(Float64Array::from(vec![10.0, 20.0, 100.0, 200.0])),
+            Arc::new(StringArray::from(vec!["a1", "a2", "a1", "a2"])),
+        ],
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("events", events)],
+        &[
+            r#"DECLARE ASPECT held WITH $${"title": "Held"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS held ON fin AS $${"sql": "SELECT date, value, account FROM events", "behavior": "stock", "grain": ["date", "account"]}$$;"#,
+            r#"DECLARE ASPECT broken WITH $${"title": "Broken"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS broken ON fin AS $${"sql": "SELECT date, value FROM events", "behavior": "stock", "grain": ["date"]}$$;"#,
+            r#"DECLARE ASPECT unserved WITH $${"title": "Unserved"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS unserved ON fin AS $${"sql": "SELECT date, value FROM events", "grain": ["account"]}$$;"#,
+            r#"DECLARE ASPECT undeclared WITH $${"title": "Undeclared"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS undeclared ON fin AS $${"sql": "SELECT date, value FROM events"}$$;"#,
+            "SELECT judge_time() FROM events.date;",
+        ],
+    )
+    .await;
+
+    // Declared and held: the metric serves, the declaration rides the
+    // fact row, and the stock total stands at the latest date's rows.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(grain, ',') FROM metric_axes() WHERE metric = 'held';"
+        )
+        .await,
+        "date,account"
+    );
+    let total = grid(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'held' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    assert!(total.contains("2024-01-01T00:00:00 | 300.0"), "{total}");
+
+    // Declared and broken: the metric abstains, the reason naming the
+    // columns and the counts.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'broken';"
+        )
+        .await,
+        "false"
+    );
+    let reason = cell(
+        &session,
+        "SELECT reason FROM metric_axes() WHERE metric = 'broken';",
+    )
+    .await;
+    assert!(
+        reason.contains("breaks its declared grain (date): 4 rows over 2 distinct keys"),
+        "{reason}"
+    );
+
+    // A grain column the frame does not serve: caught at the plan
+    // stage, so the write's answer carries it too.
+    let reason = cell(
+        &session,
+        "SELECT reason FROM metric_axes() WHERE metric = 'unserved';",
+    )
+    .await;
+    assert!(
+        reason.contains("the declared grain names `account`, which the frame does not serve"),
+        "{reason}"
+    );
+
+    // Undeclared: served, and the fact row says so with the empty list.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'undeclared';"
+        )
+        .await,
+        "true"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(grain, ',') FROM metric_axes() WHERE metric = 'undeclared';"
+        )
+        .await,
+        ""
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ratio_totals_by_dividing_the_summed_halves_never_by_adding_ratios() {
     // The defect this exists for: a ratio is neither stock nor flow,

@@ -162,6 +162,23 @@ async fn query_gloss_validates_against_the_grounding_schema() {
     .await
     .unwrap_err();
     assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
+    // The declared grain: an array of served column names — admitted;
+    // an empty array declares nothing and is refused.
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "grain": ["date", "account_id"]}$$;"#,
+    )
+    .await
+    .unwrap();
+    let e = write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "grain": []}$$;"#,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
 }
 
 #[tokio::test]

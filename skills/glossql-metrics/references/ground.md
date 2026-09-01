@@ -80,7 +80,11 @@ column (partition the window by it). Served at event grain, every row
 on a date carries the same correct level, and the cube — which must
 sum same-period rows, because that is how a multi-account balance
 totals — multiplies the level by the day's event count. The number is
-exact on every row and wrong in every sum.
+exact on every row and wrong in every sum. Declare that grain in the
+body — `"grain": ["date"]`, or `["date", "account_id"]` with the
+entity served as a column — and the cube validates the frame against
+it instead of trusting it: a frame that breaks its declared grain
+abstains, with the counts in the reason.
 
 ```glossql
 GLOSS throughput ON ops AS $${

@@ -214,6 +214,10 @@ pub(crate) struct Fact {
     /// as a flow. The default is usually right — the point is that
     /// reading it as a flow stops being a silent assumption.
     pub behavior_basis: Option<&'static str>,
+    /// The declared row identity — the grounding's `grain` columns as
+    /// served. Empty when the grounding declares none: the shape is
+    /// undeclared and the build takes the frame as served.
+    pub grain: Vec<String>,
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
     pub dims: Vec<String>,
@@ -250,6 +254,7 @@ impl Fact {
             reason: Some(reason),
             behavior: None,
             behavior_basis: None,
+            grain: Vec::new(),
             resolution: None,
             window: None,
             dims: Vec::new(),
@@ -275,6 +280,9 @@ struct Planned {
     body: Value,
     sql: String,
     tcol: String,
+    /// The declared grain, every column verified served; empty when
+    /// the grounding declares none.
+    grain: Vec<String>,
     resolution: Resolution,
     window: Option<String>,
     verb: &'static str,
@@ -330,6 +338,7 @@ impl Planned {
             reason: None,
             behavior: Some(self.verb.to_string()),
             behavior_basis: Some(self.behavior_basis),
+            grain: self.grain,
             resolution: Some(self.resolution),
             window: self.window,
             dims,
@@ -833,6 +842,25 @@ async fn plan(
     if !has("value") {
         return Err(Abstain("no value column".into()));
     }
+    // The declared row identity: every grain column must be served —
+    // a declaration over a column the frame does not carry judges
+    // nothing.
+    let grain: Vec<String> = body
+        .get("grain")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(missing) = grain.iter().find(|c| !has(c)) {
+        return Err(Abstain(format!(
+            "the declared grain names `{missing}`, which the frame does not serve — \
+             serve the column, or fix the declaration"
+        )));
+    }
     // Which table column each served field descends from — the judged
     // verdicts key by subject, the frame names aliases.
     let subjects = crate::provenance::served_subjects(&probe, dataset);
@@ -974,6 +1002,7 @@ async fn plan(
         body,
         sql,
         tcol: time_column,
+        grain,
         resolution,
         window,
         verb,
@@ -997,6 +1026,7 @@ async fn build(
         body,
         sql,
         tcol,
+        grain,
         resolution,
         window,
         verb,
@@ -1007,6 +1037,33 @@ async fn build(
     } = plan(shared, ctx, dataset, slot, judged, settings).await?;
     let sql = sql.as_str();
     let tcol = tcol.as_str();
+
+    // The declared grain, validated where the frame is built: one row
+    // per key, or the metric abstains — a frame that breaks its
+    // declared identity multiplies every aggregating reader, and
+    // nothing downstream can tell duplication from multi-entity.
+    if !grain.is_empty() {
+        let keys = grain
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let q = format!(
+            "SELECT count(*) AS keys, coalesce(sum(c), 0) AS total FROM \
+             (SELECT count(*) AS c FROM ({sql}) GROUP BY {keys})"
+        );
+        let batches = run(shared, ctx, &q).await?;
+        let key_count = int_column(&batches, "keys").map_err(|e| Abstain(e.to_string()))?[0];
+        let total = int_column(&batches, "total").map_err(|e| Abstain(e.to_string()))?[0];
+        if total > key_count {
+            let cols = grain.join(", ");
+            return Err(Abstain(format!(
+                "the frame breaks its declared grain ({cols}): {total} rows over \
+                 {key_count} distinct keys — serve one row per ({cols}), or fix the \
+                 declaration"
+            )));
+        }
+    }
     let mut counts: Vec<(Candidate, i64)> = Vec::new();
     if !cand.is_empty() {
         let parts: Vec<String> = cand
@@ -1238,6 +1295,7 @@ async fn build(
             reason: None,
             behavior: Some(verb.to_string()),
             behavior_basis: Some(behavior_basis),
+            grain,
             resolution: Some(resolution),
             window,
             dims,
@@ -1708,8 +1766,8 @@ async fn aggregate(cells: Served, grain: Resolution) -> Result<Served, SessionEr
 
 /// `metric_axes()` — one row per current grounding, the record read:
 /// `(metric, applicable, judged_current, reason, behavior,
-/// behavior_basis, resolution, window, dims, basis, admitted_by,
-/// bucketed, unadmitted, unadmitted_why, alternative,
+/// behavior_basis, grain, resolution, window, dims, basis,
+/// admitted_by, bucketed, unadmitted, unadmitted_why, alternative,
 /// alternative_error)`. What the cube admitted and why not, and
 /// whether the verdicts it admitted on stand at this pin; served from
 /// the entry's fact row, so it builds what is not built.
@@ -1742,6 +1800,11 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
         Field::new("reason", DataType::Utf8, true),
         Field::new("behavior", DataType::Utf8, true),
         Field::new("behavior_basis", DataType::Utf8, true),
+        Field::new(
+            "grain",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
         Field::new("resolution", DataType::Utf8, true),
         Field::new("window", DataType::Utf8, true),
         Field::new(
@@ -1792,6 +1855,7 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             text(|f| f.reason.as_deref()),
             text(|f| f.behavior.as_deref()),
             text(|f| f.behavior_basis),
+            list(|f| &f.grain),
             text(|f| f.resolution.map(Resolution::as_str)),
             text(|f| f.window.as_deref()),
             list(|f| &f.dims),

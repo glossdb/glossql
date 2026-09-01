@@ -91,7 +91,7 @@ FROM metric_surfaces ORDER BY metric
 What the cube admitted, per metric, and why not:
 
 ```sql
-SELECT metric, applicable, reason, behavior, resolution, dims, bucketed, alternative
+SELECT metric, applicable, reason, behavior, grain, resolution, dims, bucketed, alternative
 FROM metric_axes() ORDER BY metric
 ```
 

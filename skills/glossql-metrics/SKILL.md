@@ -44,12 +44,15 @@ same `GLOSS` statement and reads each differently afterwards:
   stock frame serves **one row per entity per period** — then run the
   level over the collapse; a GROUP BY keeps the date column's verdict,
   because group keys trace. Mark `"behavior": "stock"` (a window sum
-  gives the verb no descent, and an unmarked stock sums as a flow):
+  gives the verb no descent, and an unmarked stock sums as a flow) and
+  declare the grain — the served columns that identify a row; the cube
+  validates the frame against it and refuses one that breaks it:
 
   ```glossql
   GLOSS payables_outstanding ON fin AS $${
     "sql": "WITH daily AS (SELECT entry_date, sum(amount) AS delta FROM journal_lines GROUP BY entry_date) SELECT entry_date AS date, sum(delta) OVER (ORDER BY entry_date) AS value FROM daily",
-    "behavior": "stock"
+    "behavior": "stock",
+    "grain": ["date"]
   }$$;
   ```
 
@@ -83,7 +86,8 @@ the metric's fact row, the `metric_axes()` shape at the pin the write
 moved to: `applicable` and `reason` (does the SQL plan; is a served
 date column judged), `behavior` and `behavior_basis` (`ratio`,
 `marked`, `glossed`, `evidence`, or `default` — summed as a flow
-because nothing said otherwise), `dims` (the axes admitted), and `unadmitted` with
+because nothing said otherwise), `grain` (the declared row identity
+as served; empty is undeclared), `dims` (the axes admitted), and `unadmitted` with
 `unadmitted_why` (every served column the cube will not slice on, and
 the act that admits it). For a metric, what the workspace accepts and
 reads wrong later — a ratio summed, a stock summed, a series nobody
