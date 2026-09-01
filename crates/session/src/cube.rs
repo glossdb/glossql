@@ -147,7 +147,6 @@ struct Settings {
 }
 
 async fn settings(
-    shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
 ) -> Result<Settings, SessionError> {
@@ -178,7 +177,7 @@ async fn settings(
     // The dataset's own gloss, collapsed like any read: human over
     // agent, a witness honoured if one is ever declared on it.
     let scope = glossql_glossary::Scope::Subject(dataset.to_string());
-    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some("cube")).await?;
+    let verdicts = crate::reads::verdicts(rctx, dataset, &scope, Some("cube")).await?;
     let row =
         glossql_glossary::Store::collapsed_read(dataset, &scope, Some("cube"), rctx, &verdicts)
             .into_iter()
@@ -776,7 +775,7 @@ async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let rctx = shared.read_context().await?;
-    let slots = current_query_slots(shared, &rctx, &dataset).await?;
+    let slots = current_query_slots(&rctx, &dataset).await?;
     // Honest absence stays honest: with nothing grounded there is
     // nothing to key, and a workspace without the `cube` aspect is
     // not asked for it.
@@ -854,13 +853,13 @@ async fn judged_surface(
             temporal: judged_bodies(rctx, dataset, "temporal_profile"),
             relevance: judged_bodies(rctx, dataset, "dimension_relevance"),
             behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
-            behavior_gloss: crate::search::current_fact_values(shared, rctx, dataset, "behavior")
+            behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior")
                 .await?,
-            dimension: crate::search::current_fact_values(shared, rctx, dataset, "dimension")
+            dimension: crate::search::current_fact_values(rctx, dataset, "dimension")
                 .await?,
             pointers: crate::behavior::declared_pointers(&edges, dataset),
         },
-        settings(shared, rctx, dataset).await?,
+        settings(rctx, dataset).await?,
     ))
 }
 
@@ -908,7 +907,7 @@ async fn write_fact(
     }
     let rctx = shared.read_context().await?;
     let (judged, settings) = judged_surface(shared, &rctx, dataset).await?;
-    let slot = current_query_slots(shared, &rctx, dataset)
+    let slot = current_query_slots(&rctx, dataset)
         .await?
         .into_iter()
         .find(|s| s.subject == subject && s.aspect == aspect)

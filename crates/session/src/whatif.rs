@@ -86,7 +86,7 @@ pub(crate) async fn whatif_batch(
     // like any read.
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
-    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(scenario)).await?;
+    let verdicts = verdicts(&ctx, &dataset, &scope, Some(scenario)).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(scenario), &ctx, &verdicts);
     let current = collapsed
@@ -223,7 +223,7 @@ async fn compute(
     // what-if is charted beside the cube's own series, so it anchors
     // where the cube anchors wherever a verdict stands.
     let judged_temporal = crate::cube::judged_bodies(&read_ctx, dataset, "temporal_profile");
-    let all_verdicts = verdicts(shared, &read_ctx, dataset, &scope, None).await?;
+    let all_verdicts = verdicts(&read_ctx, dataset, &scope, None).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
 

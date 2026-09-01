@@ -1340,8 +1340,8 @@ pub(crate) async fn grounding_collisions(
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
-    let glossed_behavior = current_fact_values(shared, &rctx, dataset, "behavior").await?;
-    let slots = current_query_slots(shared, &rctx, dataset).await?;
+    let glossed_behavior = current_fact_values(&rctx, dataset, "behavior").await?;
+    let slots = current_query_slots(&rctx, dataset).await?;
 
     // Bucket by canonical SQL.
     let mut buckets: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
@@ -1470,13 +1470,12 @@ pub(crate) struct QuerySlot {
 /// read policy's view of what was said, human over agent, contested
 /// withheld.
 pub(crate) async fn current_fact_values(
-    shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
     aspect: &str,
 ) -> Result<HashMap<String, (Value, u8)>, SessionError> {
     let scope = glossql_glossary::Scope::Dataset;
-    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, Some(aspect)).await?;
+    let verdicts = crate::reads::verdicts(rctx, dataset, &scope, Some(aspect)).await?;
     Ok(
         glossql_glossary::Store::collapsed_read(dataset, &scope, Some(aspect), rctx, &verdicts)
             .into_iter()
@@ -1489,7 +1488,6 @@ pub(crate) async fn current_fact_values(
 }
 
 pub(crate) async fn current_query_slots(
-    shared: &Arc<Shared>,
     rctx: &glossql_glossary::ReadContext,
     dataset: &str,
 ) -> Result<Vec<QuerySlot>, SessionError> {
@@ -1500,7 +1498,7 @@ pub(crate) async fn current_query_slots(
         .map(|a| a.name.as_str())
         .collect();
     let scope = glossql_glossary::Scope::Dataset;
-    let verdicts = crate::reads::verdicts(shared, rctx, dataset, &scope, None).await?;
+    let verdicts = crate::reads::verdicts(rctx, dataset, &scope, None).await?;
     let mut slots: Vec<QuerySlot> =
         glossql_glossary::Store::collapsed_read(dataset, &scope, None, rctx, &verdicts)
             .into_iter()
@@ -2195,7 +2193,7 @@ pub(crate) async fn metric_band_walk(
     let rctx = shared.read_context().await?;
     let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
     let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
-    let glossed_behavior = current_fact_values(shared, &rctx, dataset, "behavior").await?;
+    let glossed_behavior = current_fact_values(&rctx, dataset, "behavior").await?;
     let runtime = shared.runtime();
 
     // Median over the present values of one feature column. Even counts
@@ -2216,7 +2214,7 @@ pub(crate) async fn metric_band_walk(
 
     let mut out = Vec::new();
     let mut seq = 0i64;
-    for slot in current_query_slots(shared, &rctx, dataset).await? {
+    for slot in current_query_slots(&rctx, dataset).await? {
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
@@ -2547,7 +2545,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         })
         .collect();
     let mut out = Vec::new();
-    for slot in current_query_slots(shared, &rctx, &dataset).await? {
+    for slot in current_query_slots(&rctx, &dataset).await? {
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };

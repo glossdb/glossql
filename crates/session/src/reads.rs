@@ -219,14 +219,17 @@ impl Shared {
 /// against its own threshold. A detector's body is one SQL query over
 /// the `slots` relation (§6), answering every subject in one plan.
 pub(crate) async fn verdicts(
-    shared: &Shared,
     ctx: &ReadContext,
     dataset: &str,
     scope: &Scope,
     aspect: Option<&str>,
 ) -> Result<glossql_glossary::Verdicts, SessionError> {
     let mut out = glossql_glossary::Verdicts::default();
-    for w in shared.store.witnesses_all().await? {
+    // One slots pass serves every witness — each takes its aspect's
+    // rows from it — and the witnesses are the context's own rows:
+    // this read derives from the `ReadContext` alone.
+    let all = glossql_glossary::Store::raw_read(dataset, scope, aspect, ctx);
+    for w in ctx.witnesses.iter() {
         if let Some(a) = aspect
             && w.aspect != a
         {
@@ -235,7 +238,11 @@ pub(crate) async fn verdicts(
         let Some(detector) = w.detector.clone() else {
             continue;
         };
-        let slots = glossql_glossary::Store::raw_read(dataset, scope, Some(&w.aspect), ctx);
+        let slots: Vec<glossql_glossary::RawRow> = all
+            .iter()
+            .filter(|s| s.aspect == w.aspect)
+            .cloned()
+            .collect();
         // No slots, no question to adjudicate — and no rows to shape the
         // relation the body would plan over.
         if slots.is_empty() {
@@ -1019,7 +1026,7 @@ pub(crate) async fn served_grounding(
     }
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
-    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(aspect)).await?;
+    let verdicts = verdicts(&ctx, &dataset, &scope, Some(aspect)).await?;
     let rows =
         glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(aspect), &ctx, &verdicts);
     let row = rows
@@ -1086,7 +1093,7 @@ async fn glossary_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBa
             &dataset, &scope, aspect, &ctx,
         )))
     } else {
-        let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect).await?;
+        let verdicts = verdicts(&ctx, &dataset, &scope, aspect).await?;
         Ok(collapsed_batch(glossql_glossary::Store::collapsed_read(
             &dataset, &scope, aspect, &ctx, &verdicts,
         )))
@@ -1097,7 +1104,7 @@ async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatc
     let (subject, _) = split_args(&shared.idents(), args, false)?;
     let ((dataset, scope), aspect) = decode_scope(shared, subject).await?;
     let ctx = read_context_at(shared, &dataset).await?;
-    let verdicts = verdicts(shared, &ctx, &dataset, &scope, aspect.as_deref()).await?;
+    let verdicts = verdicts(&ctx, &dataset, &scope, aspect.as_deref()).await?;
     let mut rows: Vec<AttestRow> = verdicts
         .into_iter()
         .flat_map(|((subject, aspect), vs)| {

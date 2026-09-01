@@ -63,7 +63,7 @@ pub(crate) async fn misfit_batch(
     // like any read.
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
-    let verdicts = verdicts(shared, &ctx, &dataset, &scope, Some(frame)).await?;
+    let verdicts = verdicts(&ctx, &dataset, &scope, Some(frame)).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(&dataset, &scope, Some(frame), &ctx, &verdicts);
     let current = collapsed
