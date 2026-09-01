@@ -2,9 +2,13 @@
 //! tabicl-candle checkout into the target directory beside the binaries
 //! (with the pinned DIGESTS from that repo's fixtures), so the built
 //! artifact carries them — never git, never a runtime copy, and a
-//! container bakes exactly what the build staged. A checkout without
-//! converted weights still builds, with a warning: the runtime then
-//! requires the workspace to carry its own `weights/`.
+//! container bakes exactly what the build staged. What lands in the
+//! staged directory is hashed against the pinned digests right after
+//! the copy — the copy event is the boundary where verification
+//! belongs (the runtime loader does not hash), and a failed or stale
+//! copy fails the build instead of serving old weights. A checkout
+//! without converted weights still builds, with a warning: the runtime
+//! then requires the workspace to carry its own `weights/`.
 //!
 //! With the `embed-weights` feature the regressor is baked into the
 //! binary instead: the safetensors bytes are verified here against the
@@ -30,7 +34,7 @@ fn main() {
                 "embed-weights: no converted weights at {} — the release \
                  artifact carries the regressor, so this build cannot \
                  proceed without it (run tabicl-candle's \
-                 scripts/convert_weights.py)",
+                 verify/python/convert_weights.py)",
                 src.display()
             );
         }
@@ -65,6 +69,45 @@ fn main() {
         }
     }
     let _ = std::fs::copy(&digests, dst.join("DIGESTS"));
+    verify_staged(&dst, &digests);
+}
+
+/// Hash every safetensors present in the staged directory against the
+/// checkout's pinned DIGESTS (the source of truth, not the staged
+/// copy). Catches what the silent `fs::copy` loop can leave behind: a
+/// failed or partial copy, or a stale file from an earlier build whose
+/// source is gone — the runtime loader does not hash, so the copy
+/// event is where a mismatch must fail.
+fn verify_staged(dst: &Path, digests: &Path) {
+    let pinned: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(digests).expect("read DIGESTS"))
+            .expect("parse DIGESTS");
+    for name in ["regressor", "classifier"] {
+        let staged = dst.join(format!("tabicl-{name}.safetensors"));
+        if !staged.exists() {
+            continue; // never staged (e.g. classifier not converted); resolve_dir decides
+        }
+        let expected = pinned[name]["sha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("DIGESTS pins a {name} sha256"));
+        let actual = sha256_hex(&staged);
+        assert_eq!(
+            actual,
+            expected,
+            "staged {name} digest mismatch at {} — stale or partial copy; \
+             re-run tabicl-candle's verify/python/convert_weights.py or \
+             delete the staged weights and rebuild",
+            staged.display()
+        );
+    }
+}
+
+fn sha256_hex(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Verify the regressor against the pinned digest and generate the
@@ -73,8 +116,6 @@ fn main() {
 /// the runtime check that guards a workspace's copyable weights/ has
 /// nothing left to catch.
 fn embed_regressor(src: &Path, digests: &Path) {
-    use sha2::{Digest, Sha256};
-
     let st = src.join("tabicl-regressor.safetensors");
     let config = src.join("tabicl-regressor.config.json");
     let pinned: serde_json::Value =
@@ -83,15 +124,13 @@ fn embed_regressor(src: &Path, digests: &Path) {
     let expected = pinned["regressor"]["sha256"]
         .as_str()
         .expect("DIGESTS pins a regressor sha256");
-    let bytes = std::fs::read(&st).expect("read regressor safetensors");
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let actual = sha256_hex(&st);
     assert_eq!(
         actual,
         expected,
         "embed-weights: regressor digest mismatch at {} — re-run \
-         scripts/convert_weights.py or restore the pinned weights",
+         tabicl-candle's verify/python/convert_weights.py or restore \
+         the pinned weights",
         st.display()
     );
 
