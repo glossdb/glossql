@@ -262,6 +262,91 @@ async fn attest_serves_detector_outputs_in_the_fixed_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broken_detector_serves_its_failure_and_spares_the_read() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    // Two witnesses: a healthy one, and one whose detector indexes
+    // `body` as a struct while an empty-object body keeps the column
+    // text (nothing shreds) — the shape trigger that needs no
+    // detector bug.
+    run(
+        &session,
+        r#"
+        DECLARE ASPECT reconciliation WITH $${"type": "object"}$$ AS MEASUREMENT;
+        DECLARE FUNCTION tb_check FOR fin AS $$SELECT 0.4 AS delta, 'measured' AS note$$
+          RETURNS reconciliation;
+        DECLARE FUNCTION tb_bands FOR fin AS
+          $$SELECT DISTINCT subject, 'red' AS band, 0.9 AS score FROM slots$$;
+        DECLARE WITNESS tb_w ON reconciliation DETECTOR tb_bands THRESHOLD 0.7;
+        DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT;
+        DECLARE FUNCTION note_bands FOR fin AS
+          $$SELECT subject, body['x'] AS band, 1.0 AS score FROM slots$$;
+        DECLARE WITNESS note_w ON note BY (AGENT, HUMAN) DETECTOR note_bands THRESHOLD 0.7;
+        SELECT tb_check() FROM fin.trial_balance;
+        GLOSS note ON trial_balance AS $${}$$;
+        "#,
+    )
+    .await;
+
+    // The read serves: the healthy witness answers, the broken one's
+    // failure is its verdict — band `error`, the text in `error`.
+    let attest = table(
+        &session,
+        "SELECT witness, band, error FROM ATTEST(fin.trial_balance) ORDER BY witness;",
+    )
+    .await;
+    assert!(attest.contains("note_w") && attest.contains("| error"), "{attest}");
+    assert!(attest.contains("note_bands"), "{attest}");
+    assert!(attest.contains("tb_w") && attest.contains("| red"), "{attest}");
+
+    // An error is never a judgment: nothing is withheld — the note
+    // serves, the band beside it.
+    let collapsed = table(
+        &session,
+        "SELECT value, band, state FROM GLOSSARY(trial_balance) WHERE aspect = 'note';",
+    )
+    .await;
+    assert!(collapsed.contains("{}"), "{collapsed}");
+    assert!(collapsed.contains("error"), "{collapsed}");
+    assert!(!collapsed.contains("contested"), "{collapsed}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dataset_scoped_detector_fails_as_a_verdict_on_other_datasets() {
+    let (_dir, store) = scratch_store().await;
+    let fin = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&fin, SETUP).await;
+    run(
+        &fin,
+        r#"
+        DECLARE ASPECT sanity WITH $${"type": "object"}$$ AS FACT;
+        DECLARE FUNCTION sane FOR fin AS
+          $$SELECT DISTINCT subject, 'green' AS band, 0.1 AS score FROM slots$$;
+        DECLARE WITNESS sanity_w ON sanity BY (AGENT, HUMAN) DETECTOR sane THRESHOLD 0.7;
+        GLOSS sanity ON orders AS $${"ok": true}$$;
+        "#,
+    )
+    .await;
+    let home = table(&fin, "SELECT band, error FROM ATTEST(fin.orders);").await;
+    assert!(home.contains("green"), "{home}");
+
+    // The witness is workspace-global; its detector carries `FOR fin`.
+    // Read from another dataset holding slots on the aspect, the
+    // unresolved detector is the verdict there — never a refusal.
+    let ops = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(
+        &ops,
+        r#"DECLARE DATASET ops SET (purpose: 'the other side');
+           USE ops;
+           GLOSS sanity ON payments AS $${"ok": true}$$;"#,
+    )
+    .await;
+    let away = table(&ops, "SELECT witness, band, error FROM ATTEST(ops.payments);").await;
+    assert!(away.contains("sanity_w") && away.contains("| error"), "{away}");
+    assert!(away.contains("sane"), "{away}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_glossary_is_a_plain_readable_relation_and_the_strike_is_parked() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;

@@ -116,8 +116,11 @@ anything.
   last write (served and marked; re-run it to refresh). Don't mix the two column sets: `value` belongs to the
   collapse, `body` to the slots.
 - `ATTEST(…)` — `(subject, aspect, witness, band, score, computed_at,
-  current)`, band in green/yellow/orange/red; `current` false when a
-  voice the verdict read was landed before the last write.
+  current, error)`, band in green/yellow/orange/red, or `error` when
+  the detector itself could not answer — the failure text rides
+  `error`, nothing is withheld, and the fix is the detector's SQL;
+  `current` false when a voice the verdict read was landed before the
+  last write.
 - ordinary SELECT over tables for the data itself.
 
 **Shipped reads** — derived relations the binary carries, selectable

@@ -159,6 +159,9 @@ pub struct AttestRow {
     /// Whether every function voice the verdict read stands at the
     /// read's pin — false when a voice was landed at an earlier one.
     pub current: bool,
+    /// The failure text where `band` is `error` — the detector could
+    /// not answer — and None on every judged row.
+    pub error: Option<String>,
 }
 
 /// A measurement served from the `measurements` relation: one function's
@@ -217,6 +220,10 @@ pub struct Verdict {
     /// Whether every function voice in the subject's slots stands at
     /// the read's pin.
     pub current: bool,
+    /// The failure text where the detector could not answer and the
+    /// verdict is the failure itself (`band` `error`, never a
+    /// judgment — [`rules::withholds`] never fires on it).
+    pub error: Option<String>,
 }
 
 /// Verdicts keyed (subject, aspect) — the session computes them (it

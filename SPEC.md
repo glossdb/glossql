@@ -469,13 +469,20 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 ```
 
 The **standard attest schema** is fixed:
-`(subject, aspect, witness, band, score, computed_at, current)` — `band`
-in `green | yellow | orange | red`, `score` the disagreement/entropy in
-0..1, `current` whether every function voice the verdict read stands at
-the read's pin.
+`(subject, aspect, witness, band, score, computed_at, current, error)` —
+`band` in `green | yellow | orange | red | error`, `score` the
+disagreement/entropy in 0..1, `current` whether every function voice
+the verdict read stands at the read's pin, `error` null except where
+`band` is `error`.
 A detector's query returns the authored third of it — one
 `(subject, band, score)` row per subject — and the engine completes
 each row with the witness, its aspect, and its own clock.
+A detector that cannot answer — unresolved from the reading dataset,
+a body that is not one SQL query, a plan or run the engine refuses —
+refuses nothing: the failure is served as that witness's verdict, one
+row per subject holding slots, `band` `error` with `score` 0 and the
+failure text in `error`. An error is not a judgment: the §5.3
+collapse never withholds on it, and every other witness still speaks.
 Detectors run **at read**. A verdict belongs to its **witness**, not to
 its detector: one detector serving three witnesses holds three verdicts,
 computed from each witness's own slots against its own threshold.

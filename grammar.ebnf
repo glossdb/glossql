@@ -208,7 +208,10 @@ attest_read       = "ATTEST", "(", [ subject, [ "::", name ] ], ")" ;
                        host's cast spelling) narrows to one declared aspect —
                        fin.trial_balance names a table, fin::reconciliation an
                        aspect. standard attest schema:
-                       (subject, aspect, witness, band, score, computed_at);
-                       band: green|yellow|orange|red, score: 0..1.
+                       (subject, aspect, witness, band, score, computed_at,
+                       current, error);
+                       band: green|yellow|orange|red|error, score: 0..1;
+                       error carries the failure text where the detector
+                       itself could not answer, null otherwise.
                        sweeps are WHERE clauses over this relation, never a
                        special form *)

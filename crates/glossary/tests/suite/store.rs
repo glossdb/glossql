@@ -802,6 +802,7 @@ async fn each_verdict_is_judged_against_its_own_witness_threshold() {
         threshold: Some(threshold),
         computed_at: "t".into(),
         current: true,
+        error: None,
     };
     write(
         &s,
@@ -902,6 +903,7 @@ async fn the_band_withholds_a_value_and_the_raw_score_never_does() {
         threshold: Some(threshold),
         computed_at: "t".into(),
         current: true,
+        error: None,
     };
     for (actor, value) in [(agent(), "EUR"), (human(), "CHF")] {
         write(

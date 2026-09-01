@@ -249,33 +249,66 @@ pub(crate) async fn verdicts(
             let entry = current.entry(s.subject.clone()).or_insert(true);
             *entry &= s.current;
         }
-        let function = ctx
-            .functions
-            .iter()
-            .find(|f| f.name == detector && f.scope_dataset.as_deref().is_none_or(|s| s == dataset))
-            .cloned()
-            .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
-        let statement = crate::measure::sql_body(&function.script).ok_or_else(|| {
-            SessionError::Runtime(format!(
-                "`{detector}`: a detector's body is one SQL query over `slots`"
-            ))
-        })?;
-        let rows = run_detector(&detector, statement, slots_batch(slots), w.threshold).await?;
+        // A detector that cannot answer refuses nothing: the failure
+        // becomes this witness's verdict — band `error`, never a
+        // judgment, so the §5.3 collapse never withholds on it — one
+        // row per subject holding slots, and every other witness still
+        // speaks. The triggers need no detector bug: `slots.body`
+        // falls back to text when the bodies do not shred as one
+        // schema, and a witness is workspace-global while its detector
+        // may carry a `FOR` scope.
+        let run = async {
+            let function = ctx
+                .functions
+                .iter()
+                .find(|f| {
+                    f.name == detector && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+                })
+                .cloned()
+                .ok_or_else(|| SessionError::UnknownFunction(detector.clone()))?;
+            let statement = crate::measure::sql_body(&function.script).ok_or_else(|| {
+                SessionError::Runtime(format!(
+                    "`{detector}`: a detector's body is one SQL query over `slots`"
+                ))
+            })?;
+            run_detector(&detector, statement, slots_batch(slots), w.threshold).await
+        };
         let computed_at = chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
-        for (subject, band, score) in rows {
-            let verdict = glossql_glossary::Verdict {
-                witness: w.name.clone(),
-                band,
-                score,
-                threshold: w.threshold,
-                computed_at: computed_at.clone(),
-                current: current.get(&subject).copied().unwrap_or(true),
-            };
-            out.entry((subject, w.aspect.clone()))
-                .or_default()
-                .push(verdict);
+        match run.await {
+            Ok(rows) => {
+                for (subject, band, score) in rows {
+                    let verdict = glossql_glossary::Verdict {
+                        witness: w.name.clone(),
+                        band,
+                        score,
+                        threshold: w.threshold,
+                        computed_at: computed_at.clone(),
+                        current: current.get(&subject).copied().unwrap_or(true),
+                        error: None,
+                    };
+                    out.entry((subject, w.aspect.clone()))
+                        .or_default()
+                        .push(verdict);
+                }
+            }
+            Err(e) => {
+                for (subject, cur) in &current {
+                    let verdict = glossql_glossary::Verdict {
+                        witness: w.name.clone(),
+                        band: "error".into(),
+                        score: 0.0,
+                        threshold: w.threshold,
+                        computed_at: computed_at.clone(),
+                        current: *cur,
+                        error: Some(e.to_string()),
+                    };
+                    out.entry((subject.clone(), w.aspect.clone()))
+                        .or_default()
+                        .push(verdict);
+                }
+            }
         }
     }
     Ok(out)
@@ -1076,6 +1109,7 @@ async fn attest_read(shared: &Shared, args: &[FunctionArg]) -> Result<RecordBatc
                 score: v.score,
                 computed_at: v.computed_at,
                 current: v.current,
+                error: v.error,
             })
         })
         .collect();
@@ -1333,8 +1367,8 @@ fn raw_batch(rows: Vec<RawRow>) -> RecordBatch {
     )
 }
 
-/// `(subject, aspect, witness, band, score, computed_at, current)` —
-/// §7.2.
+/// `(subject, aspect, witness, band, score, computed_at, current,
+/// error)` — §7.2; `error` null except where `band` is `error`.
 fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         utf8("subject"),
@@ -1344,6 +1378,7 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
         Field::new("score", DataType::Float64, false),
         utf8("computed_at"),
         Field::new("current", DataType::Boolean, false),
+        Field::new("error", DataType::Utf8, true),
     ]));
     batch(
         schema,
@@ -1366,6 +1401,9 @@ fn attest_batch(rows: Vec<AttestRow>) -> RecordBatch {
             )),
             Arc::new(BooleanArray::from_iter(
                 rows.iter().map(|r| Some(r.current)),
+            )),
+            Arc::new(StringArray::from_iter(
+                rows.iter().map(|r| r.error.as_deref()),
             )),
         ],
     )
