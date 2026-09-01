@@ -242,6 +242,12 @@ pub(crate) struct Fact {
     pub unadmitted: Vec<String>,
     pub unadmitted_why: Vec<String>,
     pub alternative: Option<String>,
+    /// The measured disagreement between the metric's total series and
+    /// the rival's, over their shared periods — with an authored
+    /// `tolerance` on the disclosing assumption, the count of periods
+    /// breaching it; without one, the maximum relative gap. None when
+    /// no rival is served.
+    pub alternative_divergence: Option<String>,
     pub alternative_error: Option<String>,
 }
 
@@ -264,6 +270,7 @@ impl Fact {
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
             alternative: None,
+            alternative_divergence: None,
             alternative_error: None,
         }
     }
@@ -348,6 +355,7 @@ impl Planned {
             unadmitted,
             unadmitted_why,
             alternative: None,
+            alternative_divergence: None,
             alternative_error: None,
         }
     }
@@ -1243,6 +1251,7 @@ async fn build(
     // it carries several unjudged, the rival is not served and the fact
     // row says why.
     let mut alternative = None;
+    let mut alternative_divergence = None;
     let mut alternative_error = None;
     if let Some(assumptions) = body.get("assumptions").and_then(Value::as_array) {
         for a in assumptions {
@@ -1266,6 +1275,11 @@ async fn build(
             .await
             {
                 Ok((rows, rival_verb)) => {
+                    alternative_divergence = Some(divergence(
+                        &cells,
+                        &rows,
+                        a.get("tolerance").and_then(Value::as_f64),
+                    ));
                     for (period, _, value, num, den) in rows {
                         cells.push(Cell {
                             dimension: "alternative".into(),
@@ -1305,10 +1319,63 @@ async fn build(
             unadmitted: unadmitted.iter().map(|(c, _)| c.clone()).collect(),
             unadmitted_why: unadmitted.into_iter().map(|(_, w)| w).collect(),
             alternative,
+            alternative_divergence,
             alternative_error,
         },
         cells: cells_batch(&slot.aspect, &cells),
     })
+}
+
+/// The disagreement between the metric's total cells and the rival's
+/// series, over their shared periods — the coordinates the docket's
+/// question needs instead of two lines to eyeball. The gap is
+/// relative, scaled by the larger magnitude, so it reads as a share of
+/// the number itself. Agreement is a zero divergence, never silence;
+/// no shared periods is its own answer.
+fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> String {
+    let total: std::collections::HashMap<i64, f64> = cells
+        .iter()
+        .filter(|c| c.dimension.is_empty())
+        .map(|c| (c.period, c.value))
+        .collect();
+    let day = |p: i64| {
+        chrono::DateTime::from_timestamp_nanos(p)
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let mut shared = 0usize;
+    let mut breaches = 0usize;
+    let mut max: Option<(f64, i64)> = None;
+    for (p, _, v, _, _) in rival {
+        let Some(t) = total.get(p) else { continue };
+        shared += 1;
+        let scale = t.abs().max(v.abs());
+        let gap = if scale == 0.0 {
+            0.0
+        } else {
+            (t - v).abs() / scale
+        };
+        if max.is_none_or(|(g, _)| gap > g) {
+            max = Some((gap, *p));
+        }
+        if tolerance.is_some_and(|tol| gap > tol) {
+            breaches += 1;
+        }
+    }
+    let Some((gap, at)) = max else {
+        return "no shared periods".into();
+    };
+    match tolerance {
+        Some(tol) => format!(
+            "{breaches} of {shared} shared periods differ beyond {tol}; \
+             max relative gap {gap:.4} at {}",
+            day(at)
+        ),
+        None => format!(
+            "max relative gap {gap:.4} at {} over {shared} shared periods",
+            day(at)
+        ),
+    }
 }
 
 /// The rival's series at the metric's resolution and window, at its
@@ -1768,7 +1835,8 @@ async fn aggregate(cells: Served, grain: Resolution) -> Result<Served, SessionEr
 /// `(metric, applicable, judged_current, reason, behavior,
 /// behavior_basis, grain, resolution, window, dims, basis,
 /// admitted_by, bucketed, unadmitted, unadmitted_why, alternative,
-/// alternative_error)`. What the cube admitted and why not, and
+/// alternative_divergence, alternative_error)`. What the cube
+/// admitted and why not, and
 /// whether the verdicts it admitted on stand at this pin; served from
 /// the entry's fact row, so it builds what is not built.
 pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
@@ -1838,6 +1906,7 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             true,
         ),
         Field::new("alternative", DataType::Utf8, true),
+        Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
     ]));
     RecordBatch::try_new(
@@ -1865,6 +1934,7 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),
             text(|f| f.alternative.as_deref()),
+            text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),
         ],
     )

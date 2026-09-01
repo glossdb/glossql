@@ -176,9 +176,12 @@ An assumption may carry one:
  "basis": "operations convention", "confidence": 0.7}
 ```
 
-The cube runs the rival monthly and the docket draws both lines, so
-the gap is a chart the human reads before ruling instead of an
-argument from prose. Start where the families diverge hardest.
+The cube runs the rival monthly and the docket draws both lines, and
+`metric_axes().alternative_divergence` serves the measured gap — the
+breaching periods against an authored `tolerance` on the assumption,
+or the maximum relative gap and its period — so the question carries
+coordinates instead of two lines to eyeball. Start where the families
+diverge hardest.
 
 **Hunt the corpus for a second path.** The strongest rival is often
 not a rival definition but a second route to the same number the data

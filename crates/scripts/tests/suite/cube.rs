@@ -568,7 +568,15 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
                       "alternative_sql": "SELECT date, value FROM alt",
                       "confidence": 0.7}
                  ]}$$;"#,
-            r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            r#"GLOSS inventory ON fin AS $${
+                 "sql": "SELECT date, value FROM levels", "behavior": "stock",
+                 "assumptions": [
+                     {"dimension": "definition",
+                      "assumption": "book levels are the record",
+                      "alternative": "the same levels",
+                      "alternative_sql": "SELECT date, value FROM levels",
+                      "tolerance": 0.01, "confidence": 0.8}
+                 ]}$$;"#,
             // The judged axes land LAST: a measurement is keyed at the
             // statement pin, and every declaration moves it — a judge
             // run before the metric glosses would read as drift. The
@@ -616,6 +624,13 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     );
     assert_eq!(fact("array_to_string(bucketed, ',')").await, "note");
     assert_eq!(fact("alternative").await, "all invoiced");
+    // The measured disagreement: no authored tolerance, so the maximum
+    // relative gap and its period — the coordinates, not two lines to
+    // eyeball. Every month is 15.0 against the rival's 90.0.
+    assert_eq!(
+        fact("alternative_divergence").await,
+        "max relative gap 0.8333 at 2024-01-01 over 30 shared periods"
+    );
 
     // The cells: all 30 generated months fit under the 48-month rung;
     // the period is a typed timestamp, the bucket's start.
@@ -650,7 +665,8 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(
         cell(
             &session,
-            "SELECT DISTINCT member FROM metric_series() WHERE dimension = 'alternative';",
+            "SELECT DISTINCT member FROM metric_series() \
+             WHERE metric = 'revenue' AND dimension = 'alternative';",
         )
         .await,
         "all invoiced"
@@ -713,6 +729,16 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
         .await,
         18.0,
         "stock periods",
+    );
+    // An agreeing rival with an authored tolerance: zero breaches is a
+    // served answer, never silence.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT alternative_divergence FROM metric_axes() WHERE metric = 'inventory';",
+        )
+        .await,
+        "0 of 18 shared periods differ beyond 0.01; max relative gap 0.0000 at 2024-01-01"
     );
 }
 

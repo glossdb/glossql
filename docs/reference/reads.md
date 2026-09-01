@@ -181,7 +181,12 @@ back in: no verdict on its subject — run `dimension_relevance()` over
 it or gloss `dimension`; a verdict that abstained with no declared
 relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
-below the cap of four), `alternative`, `alternative_error`.
+below the cap of four), `alternative`, `alternative_divergence` (the
+measured disagreement between the metric's total and the rival's over
+their shared periods — with an authored `tolerance` on the disclosing
+assumption the count of breaching periods, otherwise the maximum
+relative gap and its period; null when no rival is served),
+`alternative_error`.
 Record-class: it says what the judged verdicts admitted.
 
 The same row is what a grounding's write answers with: `GLOSS` on a
