@@ -75,8 +75,13 @@ pub const SCRIPTS: &[(&str, &str)] = &[
 /// The library's declarations, bodies not yet spliced in.
 const CONTRACTS: &str = include_str!("../functions/bootstrap.glossql");
 
-/// The KPI kit — the semantic vocabulary and its witnesses.
+/// The KPI kit — the semantic vocabulary. Declared first at boot: the
+/// library's column evidence conditions on the kit's `role`.
 pub const KIT: &str = include_str!("../functions/kpi_kit.glossql");
+
+/// The shipped witness plane. Declared last at boot: a witness names
+/// an aspect and a detector that must already stand.
+pub const WITNESSES: &str = include_str!("../functions/witnesses.glossql");
 
 /// The library's declarations with each body spliced in.
 ///

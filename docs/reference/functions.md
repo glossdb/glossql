@@ -19,6 +19,14 @@ under that aspect, and answers a band and a score.
 Measurements propose; they never verdict. The judge — the agent
 reading them — removes false positives.
 
+The column evidence beyond `profile` is owed by role — `outliers` and
+`behavior_evidence` where `role = 'measure'`, `temporal` where
+`role = 'timestamp'`, `dimension_relevance` where
+`role = 'dimension'` — so a role-less column owes only its profile
+and the `role` judgment, and the backlog counts what is real instead
+of columns × vocabulary. Owed is not gated: any measurement still
+runs on any column on ask, and lands.
+
 ## Column grain
 
 ### profile → `column_profile`

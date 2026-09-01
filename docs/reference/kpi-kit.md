@@ -1,7 +1,9 @@
 # The KPI kit
 
 The semantic vocabulary a workspace starts with, declared at boot
-beside the measurement library (`kpi_kit.glossql`). The kit ships the
+before the measurement library (`kpi_kit.glossql` — vocabulary first,
+so the library's column evidence can condition on `role`), with the
+shipped witnesses (`witnesses.glossql`) last. The kit ships the
 questions — what a column means, how a number behaves, its unit, which
 axes slice, what a table is, where definitions and formulas live, how
 a correction travels. The answers — the company's own metrics,
@@ -12,7 +14,11 @@ An unwritten witnessed claim is owed: `unassessed` disclosure, the
 backlog, and the question round all derive from what stands unwritten.
 `WHEN` narrows what a column owes to what its role makes meaningful —
 a role-less column owes only `role`, and the backlog counts what is
-real instead of columns × vocabulary. Statistics (`behavior`, `unit`)
+real instead of columns × vocabulary. The measurement library's
+column evidence carries the same conditions (`outlier_profile` and
+`behavior_evidence` where `role = 'measure'`, `temporal_profile`
+where `role = 'timestamp'`, `dimension_relevance` where
+`role = 'dimension'`). Statistics (`behavior`, `unit`)
 are the agent's measurement backlog, never a human question; the round
 asks judgment only.
 
@@ -57,4 +63,6 @@ backlog walk to zero.
 
 A witness gates who may speak and makes the unwritten claim owed;
 detectors adjudicate the written slots — band and score, never a
-verdict of their own.
+verdict of their own. The witness plane declares last at boot
+(`witnesses.glossql`): a witness names an aspect and a detector that
+must already stand.

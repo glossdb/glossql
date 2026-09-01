@@ -1,5 +1,7 @@
 -- The KPI kit: the semantic vocabulary a workspace starts with,
--- declared at boot beside the measurement library. The line it draws:
+-- declared at boot before the measurement library — vocabulary first,
+-- so the library's column evidence can condition on `role` — with the
+-- shipped witnesses (witnesses.glossql) last. The line it draws:
 -- this file ships the questions — what a column means, how a number
 -- behaves, its unit, which axes slice, what a table is, where
 -- definitions and formulas live, how a recipe correction travels.
@@ -198,17 +200,3 @@ DECLARE ASPECT app_spec WITH $${
   "properties": {"spec": {"type": "string"}}
 }$$ AS FACT;
 
--- Witnesses: who may speak, and which claims the door owes a question
--- for while they stand unwritten. slot_entropy adjudicates the
--- low-entropy enums; bands adjudicate through band_breach.
-
-DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
-DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
-DECLARE WITNESS role_w ON role BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS behavior_w ON behavior BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN)
-  DETECTOR slot_entropy THRESHOLD 0.7;
-DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
-DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;

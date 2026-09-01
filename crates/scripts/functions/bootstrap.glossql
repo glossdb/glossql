@@ -1,8 +1,12 @@
 -- The shipped system: the global measurement library, declared into a
 -- fresh workspace by serverd at boot (the reference scripts land beside
--- it under functions/). The semantic vocabulary — aspects, witnesses —
--- ships too, as the KPI kit (kpi_kit.glossql), run right after this
--- file; what stays the agent's work is the company's own vocabulary:
+-- it under functions/). Boot order is vocabulary first: the KPI kit
+-- (kpi_kit.glossql) runs before this file so the column evidence here
+-- can condition on the kit's `role` — WHEN narrows what a column owes
+-- to what its role makes meaningful, so the backlog counts what is
+-- real instead of columns × vocabulary — and the shipped witnesses
+-- (witnesses.glossql) run last, naming aspects and detectors from
+-- both. What stays the agent's work is the company's own vocabulary:
 -- metrics, validations, scenarios.
 
 DECLARE ASPECT column_profile WITH $${
@@ -26,7 +30,7 @@ DECLARE ASPECT outlier_profile WITH $${
   "type": "object", "required": ["applicable"],
   "properties": {"applicable": {"type": "boolean"},
                  "iqr": {"type": "object"}, "zscore": {"type": "object"}}
-}$$ AS MEASUREMENT ON COLUMN;
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT relationship_candidates WITH $${
   "type": "object",
@@ -44,7 +48,7 @@ DECLARE ASPECT temporal_profile WITH $${
                  "granularity": {"type": "string"},
                  "confidence": {"type": "number"},
                  "completeness": {"type": "object"}, "gaps": {"type": "object"}}
-}$$ AS MEASUREMENT ON COLUMN;
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'timestamp';
 
 DECLARE ASPECT behavior_evidence WITH $${
   "type": "object", "required": ["applicable"],
@@ -63,7 +67,7 @@ DECLARE ASPECT behavior_evidence WITH $${
       "event": {"type": "string"}, "tiebreak": {"type": "string"},
       "reason": {"type": "string"}}}
   }
-}$$ AS MEASUREMENT ON COLUMN;
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'measure';
 
 DECLARE ASPECT dimension_relevance WITH $${
   "type": "object", "required": ["applicable"],
@@ -72,7 +76,7 @@ DECLARE ASPECT dimension_relevance WITH $${
     "relevance": {"type": "number"}, "coverage": {"type": "number"},
     "evenness": {"type": "number"}, "groups": {"type": "integer"}
   }
-}$$ AS MEASUREMENT ON COLUMN;
+}$$ AS MEASUREMENT ON COLUMN WHEN role = 'dimension';
 
 DECLARE ASPECT hierarchy_candidates WITH $${
   "type": "object", "required": ["applicable"],

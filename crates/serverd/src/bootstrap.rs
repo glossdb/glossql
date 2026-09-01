@@ -1,9 +1,11 @@
 //! The shipped system, embedded at compile time — the same lockstep as
 //! the teaching resources: what this build ships is what this build
-//! declares. A fresh workspace receives the global measurement library
-//! and the KPI kit (the semantic vocabulary and its witnesses) before
-//! any agent connects; what stays the agent's work is the company's
-//! own vocabulary — metrics, validations, scenarios.
+//! declares. A fresh workspace receives the KPI kit (the semantic
+//! vocabulary), the global measurement library, and the shipped
+//! witness plane — in that order: the library's column evidence
+//! conditions on the kit's `role`, and a witness names an aspect and
+//! a detector that must already stand. What stays the agent's work is
+//! the company's own vocabulary — metrics, validations, scenarios.
 
 use glossql_glossary::Actor;
 
@@ -37,10 +39,11 @@ pub async fn bootstrap(
         // the sequence's checks find them held instead of walking one
         // relation per first-touching statement.
         plane.store().warm().await?;
+        session.execute(glossql_scripts::library::KIT).await?;
         session
             .execute(&glossql_scripts::library::declarations()?)
             .await?;
-        session.execute(glossql_scripts::library::KIT).await?;
+        session.execute(glossql_scripts::library::WITNESSES).await?;
         plane.store().batch_flush().await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     };
