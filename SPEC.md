@@ -245,6 +245,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   "properties": {
     "sql": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
+    "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "assumptions": {
       "type": "array",
       "items": {
@@ -265,13 +266,18 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 - `behavior` is the authored stock marker: readers that window a
   grounding take last-per-window for `"stock"`, sum for `"flow"`;
   absent reads as flow.
+- `grain` is the declared row identity: the served columns whose
+  combination identifies a row — one row per what. A reader that
+  aggregates validates the frame against it and refuses a frame that
+  breaks it (the cube abstains, the reason naming the columns);
+  absent, the shape is undeclared and the frame is taken as served.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
   stay separate; a witness adjudicates across them (§7).
 - Two QUERY glosses of the same aspect on different tables may coexist — two
   ways to calculate revenue arriving at the same number is a correct state.
-  Whether they reconcile is a witness's job (a detector runs both and returns
-  band + score).
+  Whether they reconcile is a witness's job (a function voice runs both and
+  reports the residual; a detector bands it).
 - The glossary is an ordinary queryable relation; removal is SQL:
 
 ```sql

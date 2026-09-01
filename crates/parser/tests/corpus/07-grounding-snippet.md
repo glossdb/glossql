@@ -46,7 +46,8 @@ GLOSS accounts_receivable ON fin.journal_lines AS $${
 - **Coexistence, decided:** two QUERY glosses of the same aspect on different
   tables may coexist — two ways to calculate revenue arriving at the same
   number is the correct answer, not a conflict. Whether they reconcile is a
-  witness's job (a detector runs both and returns band + score).
+  witness's job (a function voice runs both and reports the residual; a
+  detector bands it — a detector's own query plans over `slots` alone).
 - The old track's weakest-assumption confidence gate is a detector's business:
   assumptions are in the body, readable by any function.
 - **DROPPED BY DESIGN — retained failures.** `disjoint_collision` and friends
