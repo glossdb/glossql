@@ -163,6 +163,18 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     assert!(value.contains(r#""from":"orders.order_id""#), "{value}");
     assert!(value.contains(r#""cardinality":"one-to-one""#), "{value}");
 
+    // The ranking is the read order — orphan evidence first, so the
+    // true edge leads and the too-clean decoy follows — and the
+    // summary rides the body for extraction to serve, the full list
+    // reading back whole.
+    let body: serde_json::Value = serde_json::from_str(&value).unwrap();
+    assert_eq!(body["candidates"][0]["from"], "orders.customer_id", "{value}");
+    assert_eq!(body["summary"]["candidates"], 4, "{value}");
+    assert_eq!(
+        body["summary"]["top"][0]["from"], "orders.customer_id",
+        "{value}"
+    );
+
     // The judge declares the survivor; the declaration reads back from
     // the relationships relation.
     session

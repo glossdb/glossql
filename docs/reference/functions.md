@@ -112,8 +112,10 @@ statistic confuses it with a real business move.
 pair across the landed tables — generous by design; the judge removes
 false positives against the data. Per candidate: endpoints,
 cardinality, overlap, matched/orphan counts, distinct counts; a
-composite endpoint rides `key_columns` (the tuple is the key).
-Ordered by overlap.
+composite endpoint rides `key_columns` (the tuple is the key). Ranked
+orphan evidence first, then overlap; extraction serves the summary —
+count and top of the ranking — and the full list reads back via
+`GLOSSARY(<dataset>::relationship_candidates)`.
 
 ### relationship_coherence → `relationship_coherence`
 

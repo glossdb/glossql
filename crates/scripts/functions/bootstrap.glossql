@@ -34,7 +34,8 @@ DECLARE ASPECT relationship_candidates WITH $${
     "items": {"type": "object",
       "properties": {"from": {"type": "string"}, "to": {"type": "string"},
                      "cardinality": {"type": "string"},
-                     "overlap": {"type": "number"}}}}}
+                     "overlap": {"type": "number"}}}},
+                 "summary": {"type": "object"}}
 }$$ AS MEASUREMENT ON DATASET;
 
 DECLARE ASPECT temporal_profile WITH $${

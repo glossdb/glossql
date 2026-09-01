@@ -26,9 +26,12 @@ served — the one floor in the door, placed to bound output, not to
 judge. Composite keys are tried where the multi-tenant shape suggests
 them — for each overlapping pair, the same two tables are tried with a
 scoping leg in overlap order, and a surviving composite rides
-`key_columns` (the tuple is the key). Candidates order by overlap; the
-body (`crates/scripts/functions/relationships.sql`) shapes, and never
-filters beyond the door's floor.
+`key_columns` (the tuple is the key). Candidates rank orphan evidence
+first, then overlap — a pair with orphans carries a judgment call,
+while a perfectly clean 1.0 overlap is as often two parallel surrogate
+sequences as an edge; the body
+(`crates/scripts/functions/relationships.sql`) shapes and summarizes,
+and never filters beyond the door's floor.
 
 The judged read is half the method by construction: value containment
 cannot see a spelling-mismatched key, and it cannot refuse a
