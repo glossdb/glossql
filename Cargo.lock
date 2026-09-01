@@ -3351,7 +3351,8 @@ dependencies = [
  "rayon",
  "serde_json",
  "sha2 0.10.9",
- "tabicl-candle",
+ "tabicl-inference",
+ "tabicl-model",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -7056,17 +7057,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabicl-candle"
+name = "tabicl-inference"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "candle-core",
+ "tabicl-model",
+]
+
+[[package]]
+name = "tabicl-model"
+version = "0.1.0"
+dependencies = [
  "candle-core",
  "candle-nn",
- "hex",
- "rayon",
  "serde",
  "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]

@@ -59,11 +59,11 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
 /// hold the error for the process lifetime).
 struct BandModel {
     dir: PathBuf,
-    model: RwLock<Option<Arc<tabicl_candle::tabicl::TabIcl>>>,
+    model: RwLock<Option<Arc<tabicl_model::tabicl::TabIcl>>>,
     /// Chosen once: Metal when the machine has it, else CUDA device 0
     /// when the build carries the cuda feature and the driver answers
     /// (only the candle compute rides the GPU), CPU otherwise.
-    device: tabicl_candle::Device,
+    device: tabicl_model::Device,
 }
 
 /// The pool the candle CPU work runs on — capped so the model never
@@ -87,15 +87,15 @@ fn compute_pool() -> &'static rayon::ThreadPool {
     })
 }
 
-fn pick_device() -> tabicl_candle::Device {
+fn pick_device() -> tabicl_model::Device {
     // Both constructors exist under every feature set — a backend that
     // was not compiled in answers with an error, and a compiled-in one
     // answers with an error when the machine has no usable device
     // (a cuda build on a driverless machine never gets this far: the
     // loader refuses the binary — the cpu artifact serves there).
-    tabicl_candle::Device::new_metal(0)
-        .or_else(|_| tabicl_candle::Device::new_cuda(0))
-        .unwrap_or(tabicl_candle::Device::Cpu)
+    tabicl_model::Device::new_metal(0)
+        .or_else(|_| tabicl_model::Device::new_cuda(0))
+        .unwrap_or(tabicl_model::Device::Cpu)
 }
 
 impl BandModel {
@@ -135,7 +135,7 @@ impl BandModel {
             })
     }
 
-    fn device(&self) -> &tabicl_candle::Device {
+    fn device(&self) -> &tabicl_model::Device {
         &self.device
     }
 
@@ -143,12 +143,12 @@ impl BandModel {
     /// own, or the files the build staged beside the binary — else the
     /// regressor an embed-weights binary carries (verified against the
     /// pinned digest when it was baked in; see build.rs).
-    fn checkpoint(&self) -> Result<tabicl_candle::weights::Checkpoint, String> {
+    fn checkpoint(&self) -> Result<tabicl_model::weights::Checkpoint, String> {
         match self.resolve_dir() {
-            Ok(dir) => tabicl_candle::weights::load_dir(&dir, "regressor", &self.device)
+            Ok(dir) => tabicl_model::weights::load_dir(&dir, "regressor", &self.device)
                 .map_err(|e| format!("tabicl weights at {}: {e}", dir.display())),
             #[cfg(feature = "embed-weights")]
-            Err(_) => tabicl_candle::weights::load_bytes(
+            Err(_) => tabicl_model::weights::load_bytes(
                 embedded::REGRESSOR_SAFETENSORS,
                 embedded::REGRESSOR_CONFIG,
                 &self.device,
@@ -159,13 +159,13 @@ impl BandModel {
         }
     }
 
-    fn get(&self) -> Result<Arc<tabicl_candle::tabicl::TabIcl>, String> {
+    fn get(&self) -> Result<Arc<tabicl_model::tabicl::TabIcl>, String> {
         if let Some(model) = self.model.read().expect("band model lock").as_ref() {
             return Ok(Arc::clone(model));
         }
         let ckpt = self.checkpoint()?;
         let loaded = Arc::new(
-            tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
+            tabicl_model::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
         );
         let mut slot = self.model.write().expect("band model lock");
         // Two readers racing both load; the first write wins, the loads
@@ -202,7 +202,7 @@ impl BandModel {
         let pred =
             compute_pool()
                 .install(|| {
-                    tabicl_candle::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
+                    tabicl_inference::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
                         .predict(test, 1, &self.device)
                 })
                 .map_err(|e| e.to_string())?;
@@ -311,10 +311,10 @@ impl FunctionRuntime for KernelRuntime {
             );
         }
         let model = self.band_model.get()?;
-        let members = tabicl_candle::ensemble::EnsembleMember::generate(kept, 8, 0);
+        let members = tabicl_inference::ensemble::EnsembleMember::generate(kept, 8, 0);
         compute_pool()
             .install(|| {
-                let est = tabicl_candle::ensemble::TabIclEnsemble::fit(
+                let est = tabicl_inference::ensemble::TabIclEnsemble::fit(
                     &model, train_x, rows, cols, train_y, members,
                 );
                 est.predict_quantiles(test_x, test_rows, alphas, self.band_model.device())
@@ -368,7 +368,7 @@ impl FunctionRuntime for KernelRuntime {
         }
         let model = self.band_model.get()?;
         let xf: Vec<f32> = x.iter().map(|v| *v as f32).collect();
-        let unsup = tabicl_candle::unsupervised::Unsupervised::fit(
+        let unsup = tabicl_inference::unsupervised::Unsupervised::fit(
             &model,
             None,
             xf.clone(),
@@ -1200,13 +1200,13 @@ mod embedded_weights_tests {
     /// `cargo test -p glossql-scripts --features embed-weights --lib`.
     #[test]
     fn embedded_regressor_builds_the_model() {
-        let ckpt = tabicl_candle::weights::load_bytes(
+        let ckpt = tabicl_model::weights::load_bytes(
             super::embedded::REGRESSOR_SAFETENSORS,
             super::embedded::REGRESSOR_CONFIG,
-            &tabicl_candle::Device::Cpu,
+            &tabicl_model::Device::Cpu,
         )
         .unwrap();
         assert!(ckpt.tensors.len() > 100, "got {}", ckpt.tensors.len());
-        tabicl_candle::tabicl::TabIcl::from_checkpoint(ckpt).unwrap();
+        tabicl_model::tabicl::TabIcl::from_checkpoint(ckpt).unwrap();
     }
 }

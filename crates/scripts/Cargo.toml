@@ -17,12 +17,14 @@ faer.workspace = true
 # from the bytes an embed-weights build carries. Metal rides only the
 # macOS build — the objc2 stack under candle's metal feature refuses
 # every other target — so the feature lives on the target table below.
-tabicl-candle.workspace = true
+tabicl-model.workspace = true
+tabicl-inference.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tabicl-candle = { workspace = true, features = ["metal"] }
+tabicl-model.workspace = true
+tabicl-inference = { workspace = true, features = ["metal"] }
 
 [features]
 # The Linux GPU build. candle's cuda rides cudarc's dynamic-linking:
@@ -30,7 +32,7 @@ tabicl-candle = { workspace = true, features = ["metal"] }
 # runtime libraries are installed — which is why it is a separate
 # artifact, not the default. pick_device still falls back to CPU when
 # the driver answers without a usable device.
-cuda = ["tabicl-candle/cuda"]
+cuda = ["tabicl-inference/cuda"]
 # Bake the regressor into the binary — the release artifact is one
 # self-contained file. build.rs verifies the safetensors against the
 # pinned digests and generates the include; the workspace's weights/
