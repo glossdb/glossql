@@ -202,4 +202,7 @@ another aggregation path. Look for one per served metric; a found
 path lands as an assumption with `alternative_sql` at the confidence
 your judgment gives the discrepancy, and "no second path exists" is
 itself a finding worth recording. A contradiction the corpus carries
-and nobody measured is a question nobody will ever be asked.
+and nobody measured is a question nobody will ever be asked. A
+derived metric inherits no rival from its components: when the corpus
+carries a statement line for the subtotal itself, that line is the
+rival — component ties do not stand in for it.

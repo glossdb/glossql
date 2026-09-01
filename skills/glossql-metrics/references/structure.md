@@ -37,6 +37,10 @@ included, you are the precision. Per candidate, before declaring:
   perfectly without meaning it — parallel row-number sequences are the
   classic false positive. Names, values and business objects must all
   agree.
+- **A reference that switches targets by type is not an edge.** A
+  column paired with a type column matches several tables partially
+  and none fully. Declare no relationship on it. Gloss the meaning
+  with the type map; a frame joins the typed subset it needs.
 - **Judge a composite on all its legs.** Anti-join anchor *and* scope
   together; the anchor alone fans out and over-counts, which is what
   the composite exists to collapse. Declare it as a tuple, never the
