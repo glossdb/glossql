@@ -28,7 +28,7 @@ The server: one binary, one workspace, three doors. How it is built is
   (directory apps, the built-in docket, the ruling form)
   ([doors](../reference/doors.md)). The dataset is the resource and the
   doors are protocols over it: a call arrives already bound, no door
-  keeps a cursor. Who is speaking is a bearer token's subject, verified
+  keeps a cursor. The actor is the bearer token's subject, verified
   against the issuer's published keys; the actor kind is the door's
   (`/mcp` agent, the rest human); what a kind may *do* beyond that is
   governance, still held open.

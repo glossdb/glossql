@@ -21,7 +21,8 @@ The kind fixes the aspect's role:
   The value materializes by running the grounding SQL (`read.<aspect>()`),
   never through a function. Anything the company revises — meaning,
   unit, owner — belongs in a gloss, not in the declaration, because a
-  gloss supersedes and a declaration cannot once spoken under.
+  gloss supersedes and a declaration cannot change once glosses exist
+  under it.
 - **MEASUREMENT** — a statistical evaluation: min_max, outliers,
   relationship candidates. Never glossed: its value is the returning
   function's landed output — extracted at a pin
@@ -47,7 +48,7 @@ declared relationship addressed by its pair path
 (`orders.customer_id -> customers.id`; a composite key is a tuple
 endpoint). The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP |
 SOURCE` list is the aspect's **grain** — the subject classes glosses
-may attach to. Absent, the aspect speaks to all grains. Disclosure
+may attach to. Absent, the aspect applies at all grains. Disclosure
 stays within grain: absence shows only on subjects the aspect is
 declared for.
 

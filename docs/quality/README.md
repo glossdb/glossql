@@ -1,9 +1,9 @@
 # Quality
 
-The quality layer guards the soundness of the numbers; the performance
+The quality layer checks the soundness of the numbers; the performance
 layer reads them. Ordinary growth, seasonality, and business change
-belong to performance monitoring — the quality layer's job is to stay
-silent about them and to speak when the pipeline, not the business,
+belong to performance monitoring — the quality layer's job is to
+ignore them and to report when the pipeline, not the business,
 moved. The instruments ship with ground-truthed oracle tests
 (`crates/scripts/tests/`); not yet validated on a design partner's
 data.
@@ -18,13 +18,13 @@ data.
 - **No statistic ports without its oracle.** Every shipped statistic
   has a ground-truthed acceptance test
   (`behavior_oracle.rs`, `dimensions_oracle.rs`);
-  outputs earn existence by consumers — no aspect is declared that
+  every output has a consumer — no aspect is declared that
   nothing reads.
 - **Red exists only where a detector computes it.** Humans do not
   volunteer disagreement, so the detector library is the human-side
   bottleneck: triage quality is bounded by what gets measured.
 - **No function voice on FACT slots.** A measured voice ranked against
-  claims smuggles calibration back in; the shape is an evidence
+  claims puts calibration back in; the shape is an evidence
   measurement the agent judges.
 - **Identity is an explicit key the author writes.** There is no text
   matching — equality or similarity — anywhere in the system: agents
@@ -32,7 +32,7 @@ data.
   differently again, so identity never rides prose. Rulings join on
   the assumption's `key`; where no key exists, the feature does less
   and says so, and the gaps this leaves stay visible instead of being
-  papered over by a matcher.
+  hidden by a matcher.
 - **Bands inform; the actor judges.** Whether a movement is surprising
   is the actor's judgment, informed by the evidence — no instrument
   turns a band into a verdict.
@@ -94,6 +94,6 @@ Cross-chain reconciliation — confirmed derivations re-checked on each
 landing — catches the value faults no marginal statistic sees;
 `relationship_coherence` watches what every declared join asserts;
 `misfit.<frame>()` ranks new rows against a declared frame of
-known-good history; the band walk asks, for each recent month, what
+known-good history; the band walk computes, for each recent month, the
 range it should have landed in. A clean corpus stays green at the
 judge.

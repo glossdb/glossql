@@ -3,51 +3,84 @@
 A declarative context language over a SQL host, and a server that speaks
 it. The language describes a dataset — sources, tables, relationships,
 meanings, checks — so that agents and humans work on the same data with
-the same context. Context is JSON validated by JSON Schemas; analytical
-logic is scripts with JSON contracts; adjudication is witnesses and
-detector functions, read back as bands, never written into data.
+the same context. The server is one Rust binary with the query engine
+(DataFusion) and the table format (Iceberg) in-process. An agent
+connects over MCP, lands data, and builds the dataset's glossary;
+questions the data cannot answer go to a human, and the answer is
+stored as part of the record.
 
 The full definition is **[SPEC.md](./SPEC.md)** — the single normative
 document of this repository. `grammar.ebnf` is the machine source of
-truth for syntax; the corpus (`crates/parser/tests/corpus/`) proves
-every construct against real artifacts and runs as the parser's
-acceptance suite.
+truth for syntax. The corpus (`crates/parser/tests/corpus/`) is the
+parser's acceptance suite; each construct is checked against a real
+artifact.
 
 The name: a *gloss* is a marginal annotation explaining a text's meaning;
 a glossary is a collection of them. `GLOSS` is the write verb — you gloss
 an aspect onto a subject; `GLOSSARY()` is the read.
 
+## What it is for
+
+- **Agents define the glossary, not just its entries.** An aspect is
+  a declared JSON Schema. An agent that needs vocabulary the workspace
+  lacks declares it with statements: the aspect, the functions that
+  measure it, the detector that scores agreement on it. The shipped
+  measurement library and the KPI kit are declared the same way, so
+  extending the workspace's analytics means writing statements, not
+  building a plugin.
+- **Ambiguity is resolved with a human, and the answer is stored.**
+  Measurements answer what the rows can: stock or flow, grain, sign
+  conventions. Definitions, conventions, and choices between readings
+  become open questions, shown as cards on the docket app or as forms
+  in the agent's MCP calls. The human's answer is written as a gloss
+  in the human's slot, takes precedence over the agent's at every
+  read, and persists — it is a stored row, not a chat message.
+- **One process uses the whole machine.** Engine, lake, glossary, and
+  apps run in one process; there is no network hop between an agent's
+  query and the data. Work arrives as statements and SQL, the engine
+  plans all of it, and it uses all available cores and memory.
+  Isolation is deployment's job: one workspace per VM.
+- **Iceberg snapshots version everything.** Every declared relation —
+  data, glosses, rulings, the parts of an authored app — is an Iceberg
+  table, and one statement is one commit. There is no separate
+  version-control system to operate: history and audit are reads over
+  snapshots, and each gloss stores the subject table's snapshot id, so
+  it is always clear which data a claim was measured against.
+
+The integration points are standard: sources land by recipe from files
+or over ADBC (the SQL runs at the source), reads are served as Arrow
+IPC over plain HTTP, and the lake is ordinary Iceberg — a local
+catalog for development, a REST catalog in production.
+
 ## Why a grammar and JSON Schemas
 
-Data work mixes two kinds of information that are usually tangled in
-code: what you hold to be true *before* looking at the rows, and what
-the rows themselves show. glossql keeps them apart and joins them at
-read time.
+Data work mixes two kinds of information: what you hold true before
+looking at the rows, and what the rows show. Code usually tangles
+them. glossql keeps them apart and joins them at read time.
 
 - **A priori — the declared world model.** Aspects (each with a JSON
-  Schema as its one validated contract), witnesses (who may speak to an
-  aspect, and which detector adjudicates), relationships, sources, and
-  recipes are all declarative statements. Because a world model is
-  statements rather than code, an agent can author one as text, carry
-  it, and apply it to whatever data lands — the vocabulary exists
-  before the dataset does. A fresh workspace boots with one: the
-  shipped measurement library and a semantic KPI kit.
+  Schema as its contract), witnesses (who may speak on an aspect, and
+  which detector scores the voices), relationships, sources, and
+  recipes are declarative statements. A world model made of statements
+  is text: an agent can write one, carry it, and apply it to new data.
+  The vocabulary exists before the dataset does. A fresh workspace
+  starts with one: the shipped measurement library and the KPI kit.
 - **A posteriori — the measured evidence.** Functions compute what the
-  landed rows actually show: profiles, join evidence, stock/flow
-  behavior, hierarchies, metric corridors. Measurements are tuned
-  toward recall — they emit candidates with evidence, never
-  conclusions — and the reading agent judges them against the data.
+  landed rows show: profiles, join evidence, stock/flow behavior,
+  hierarchies, metric bands. Measurements are tuned for recall. They
+  emit candidates with evidence, not conclusions. The reading agent
+  judges them against the data.
 - **Glosses join the two.** A gloss writes a JSON value into a slot
-  keyed (subject, aspect, actor kind) — function, agent, and human
+  keyed (subject, aspect, actor kind). Function, agent, and human
   voices sit in separate slots and never overwrite each other. Reads
-  collapse the slots with human > agent > function precedence;
-  disagreement past a witness threshold surfaces as a contested state
-  or a red band, never a silent resolution.
+  collapse the slots with human > agent > function precedence.
+  Disagreement past a witness threshold shows as a contested state or
+  a red band, never as a silent resolution.
 
-The write path is admission-checked, not trusted: the aspect's schema
-validates the body, the witness gates the speaker, the aspect's grain
-(and, where declared, its relevance condition) bounds which subjects
-owe a value at all.
+The write path is checked, not trusted. The aspect's schema validates
+the body. The witness gates the speaker. The aspect's grain — and its
+relevance condition, where declared — bounds which subjects owe a
+value.
 
 ## The statement set
 
@@ -76,10 +109,10 @@ routing, a channel per call), `catalog` + `import`
 kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
-One listener, three doors, and no door keeps a cursor. A browser is
-pointed at a dataset and stays there, so `/query` and `/app` carry it
-in the path; an agent moves between them, so `/mcp` is one endpoint and
-the dataset arrives in the statements:
+One listener, three doors, no server-side cursors. A browser stays on
+one dataset, so `/query` and `/app` carry the dataset in the path. An
+agent moves between datasets, so `/mcp` is one endpoint and the
+dataset is named in the statements:
 
 - **`/mcp`** — the MCP door: one `glossql` tool that takes
   statements and returns outcomes. Agents connect here and open each
@@ -87,30 +120,29 @@ the dataset arrives in the statements:
   same call.
 - **`/<dataset>/query`** — Arrow IPC streaming for programmatic reads.
 - **`/<dataset>/app`** — server-rendered data apps (htmx + vega-lite,
-  URL as the only state). A built-in docket app ships in the binary:
-  what stands open for a human to judge, what has been settled, and
-  the metric surfaces and record behind it. A workspace can author its
-  own — as a directory, or as glosses, which is the shape an agent can
-  write.
+  URL as the only state). The binary ships a docket app: open
+  questions for the human, settled rulings, and the metrics and record
+  behind them. A workspace can add its own apps — as a directory, or
+  as glosses, which an agent can write.
 
-Who is speaking is a bearer token from the workspace's issuer, verified
-against the keys it publishes: `sub` is the actor id. The actor kind is
-the door's — `/mcp` is the agent door, the others are human — so an
-agent's connection never reaches the human's slot.
+A bearer token from the workspace's issuer says who is speaking; the
+server verifies it against the issuer's published keys, and `sub` is
+the actor id. The door sets the actor kind — `/mcp` is the agent door,
+the other two are human — so an agent's connection never reaches the
+human's slot.
 
-The door tells, skills teach: everything an agent must *learn* ships
-as skills (`skills/*/SKILL.md`), served on the MCP door itself — each
-skill an MCP resource (`skill://<name>/SKILL.md`, its references beside
-it as `skill://<name>/references/<page>.md`) and a prompt of the
-same name, with `SPEC.md` and `grammar.ebnf` beside them as `doc://`
-resources; everything *live* is read through the language itself
-— the declared vocabulary, functions, witnesses, and glossary are
-plain tables.
+Everything an agent must learn ships as skills (`skills/*/SKILL.md`),
+served on the MCP door: each skill is an MCP resource
+(`skill://<name>/SKILL.md`, its references beside it as
+`skill://<name>/references/<page>.md`) and a prompt of the same name,
+with `SPEC.md` and `grammar.ebnf` beside them as `doc://` resources.
+Everything live is read through the language: the declared vocabulary,
+functions, witnesses, and glossary are plain tables.
 
 ## The shipped library
 
-A fresh workspace is not empty. The bootstrap declares the reference
-measurement library:
+The bootstrap declares the reference measurement library in every
+fresh workspace:
 
 | family | functions |
 |---|---|
@@ -120,22 +152,21 @@ measurement library:
 | metrics | `metric_bands`, `band_breach`, `rate_tolerance` |
 
 plus the KPI kit: the semantic vocabulary (`meaning`, `role`,
-`behavior`, `unit`, `dimension`, `entity`, …) with its witnesses, so
-onboarding starts with a declared world model instead of hand-declared
-scaffolding. Detection functions over-produce by design; the agent
-reading them is the judge, and the false positives stay visible in the
-measurement rather than being deleted.
+`behavior`, `unit`, `dimension`, `entity`, …) with its witnesses.
+Onboarding starts with a declared world model, not hand-built
+scaffolding. Detection functions over-produce by design. The reading
+agent judges; the false positives stay visible in the measurement.
 
 ## Building
 
-A Rust workspace; `cargo build -p glossql-serverd` builds the server
-(`--release` to run it in earnest). The dependency tree is heavy —
-DataFusion, Iceberg, candle — and the parallel build is memory-hungry:
+A Rust workspace. `cargo build -p glossql-serverd` builds the server;
+use `--release` to run it for real. The dependency tree is heavy —
+DataFusion, Iceberg, candle — and the parallel build needs memory:
 measured cold on a 15-core machine, compiler memory peaks at ~6 GB for
 a dev build and ~9 GB for release, with single compile units up to
-~2.6 GB. If the build dies without a compiler error — the OOM killer,
-common in memory-capped containers — bound the parallelism to about
-one job per 2 GB of available memory:
+~2.6 GB. If the build dies without a compiler error, the OOM killer
+hit — common in memory-capped containers. Bound the parallelism to
+about one job per 2 GB of available memory:
 
 ```
 cargo build --release -j4    # or CARGO_BUILD_JOBS=4
@@ -147,13 +178,11 @@ largest units.
 
 ## Status
 
-A working proof-of-concept: the server runs, the corpus and the store,
-session, and app suites are the standing invariant (`cargo test` at the
-workspace root), and onboarding runs against real and generated data
-are recorded in `reports/`. The language is a working draft — the
-2026-08-03 simplification pivot is recorded in
-`reports/2026-08-03-simplification.md`, and grammar changes still go
-corpus-first: no construct lands without a fixture that survived
+A working proof-of-concept. `cargo test` at the workspace root is the
+standing invariant: the parser corpus, every fenced example under
+`docs/` and `skills/`, and the store, session, and app suites. The
+language is a working draft. Grammar changes are corpus-first: a
+construct is only added together with a fixture that was checked
 against a real artifact.
 
 ## Prior art
@@ -169,7 +198,7 @@ against a real artifact.
 - [DuckLake](https://ducklake.select/) — lakehouse design: parquet data files, all
   metadata in a transactional SQL database; a persistence reference point.
 
-What none of these carry — and this language treats as first-class — is
-adjudicated context: measurements, agent assertions, and human assertions
-held in separate slots per subject and aspect, with disagreement surfaced as
-a band instead of silently resolved.
+None of these carry adjudicated context: measurements, agent
+assertions, and human assertions in separate slots per subject and
+aspect, with disagreement shown as a band instead of silently
+resolved. This language treats that as first-class.

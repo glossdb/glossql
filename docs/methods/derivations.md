@@ -27,21 +27,21 @@ changed" answer differently to it.
 
 The search door (`derivation_candidates`,
 `crates/session/src/search.rs`) is generous by design: it counts every
-triple that survives a structural prune, and the prune is cost, not
+triple that passes a structural prune, and the prune is cost, not
 judgment — a product or sum whose operand magnitudes cannot land
 within 30× of the target is skipped, with no recall lost at the body's
 bar. One aggregate scan sizes the prune; one aggregate scan counts
-every surviving triple. The measurement body
+every remaining triple. The measurement body
 (`crates/scripts/functions/derivations.sql`) applies the only two
 arguable constants, in the open: an identity holds at
 `match_rate >= 0.95` over `>= 20` supporting rows. The judge confirms
-which survivors are real derivations rather than coincidence.
+which candidates are real derivations rather than coincidence.
 
 ## Limits
 
 - Numeric columns are capped at 12 per table; the result says
-  `truncated` when the cap bit.
+  `truncated` when the cap applied.
 - Two forms only (`b * c`, `b + c`); deeper compositions are read
   through the metric layer, not this instrument.
 - A coincidental identity can pass the bar on small tables — the judge
-  is part of the method, not an afterthought.
+  is part of the method.

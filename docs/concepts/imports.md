@@ -3,8 +3,8 @@
 A **source** names where data comes from. A **recipe** materializes a
 table from a source. The landed table is the typed table — there is no
 raw twin, no derived cleaning layer, no typing machinery. **Typing is
-authored**: the recipe carries the casts, and the author earns them by
-probing first.
+authored**: the recipe carries the casts, and the author probes first
+to write them.
 
 ## Sources
 
@@ -19,8 +19,8 @@ relational source it is the connection URI the recipe executes over.
 A file type describes the export, it does not constrain the recipe:
 the recipe names its own reader — `read_parquet`, `read_csv`,
 `read_json` — and all three resolve under the location whatever the
-source was declared as. What the type decides is where the SQL runs: a
-relational source executes it, a file source has the server run it.
+source was declared as. The type decides where the SQL runs: a relational source executes it,
+a file source has the server run it.
 Every other `SET` pair — `via` above — rides the source's stored
 settings.
 
@@ -71,7 +71,7 @@ produces. An unchanged re-declaration is a no-op. A changed one
 supersedes and re-lands: the table lands fresh and its record starts
 over with it. Glosses stay — no machinery deletes knowledge; their
 snapshot ids disclose their age against the fresh landing. This
-supersede-and-reland is the cure surface: a source wart is fixed by
+supersede-and-reland is the correction path: fix a source wart by
 re-declaring the recipe, never by editing data.
 
 `DROP TABLE` removes a table and refuses while it holds data or
@@ -97,7 +97,8 @@ GLOSS conventions ON erp_export AS $${
 ```
 
 The next dataset from the same system reads the deposit before its
-first probe; what it learns joins the deposit by an ordinary re-speak.
+first probe; what it learns lands in the deposit by an ordinary
+re-speak.
 Dataset-local evidence (orphan populations, grain verdicts) stays in
 dataset glosses — only what the next export will also carry belongs at
 source grain.

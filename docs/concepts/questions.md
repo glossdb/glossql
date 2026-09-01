@@ -36,8 +36,8 @@ A question belongs to one dataset: a subject name is unique within a
 dataset and not across a workspace, so the same aspect on a same-named
 table in two datasets is two claims, ruled separately. `open_questions`
 answers for the whole workspace and carries `dataset` on every row —
-which dataset a reader means is the reader's to say, and
-`current_dataset` names the bound one. `owed` narrows itself, because
+the reader says which dataset they mean, and `current_dataset` names
+the bound one. `owed` narrows itself, because
 what waits on an act waits on someone working in one dataset.
 
 The rows are the whole of what is owed to a human:
@@ -78,7 +78,7 @@ Every disclosed assumption carries a **key** — a short slug authored
 at disclosure. The key is the claim's identity and the only thing the
 record joins on; prose is what the human reads, never what the system
 compares. No wording is matched against wording anywhere in the
-system. The costs are taken openly: an assumption without a key is
+system. The costs are explicit: an assumption without a key is
 never asked; the same claim under two keys reads as two claims; a key
 dropped from the body clears its debt.
 
@@ -88,6 +88,6 @@ A question the shipped measurements can settle is the agent's work —
 stock-or-flow, sign conventions, grain. The round never serves those
 dimensions; it carries judgment only: definitions, conventions,
 business meaning, choices between readings. And the round is one of
-two registers — forms confirm standing claims against the record;
+two registers — forms confirm existing claims against the record;
 anything that decides what the work *is* happens in prose,
 conversation first.

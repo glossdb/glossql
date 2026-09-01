@@ -3,8 +3,8 @@
 `serverd` is one binary serving one workspace — the directory that
 holds your data lake and everything declared over it. The binary
 carries the band model's regressor; there is nothing else to install.
-The compute device is chosen at start: Metal on Apple Silicon, CUDA
-where the cuda flavor finds a device, CPU otherwise.
+The server picks the compute device at start: Metal on Apple
+Silicon, CUDA where the cuda flavor finds a device, CPU otherwise.
 
 ## Install
 
@@ -61,9 +61,9 @@ serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/a
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
 | `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A plan that would exceed it is refused by name; nothing spills, because a container is the wrong place to be writing overflow. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum |
 
-The authorization arrangement is not a flag. It is read from `.env` in
-the working directory, or from the environment (a set variable wins
-over the file, which is how a container is configured without one):
+Authorization is not a flag. The server reads it from `.env` in the
+working directory, or from the environment (a set variable wins over
+the file, which is how a container is configured without one):
 
 | variable | meaning |
 |---|---|
@@ -84,11 +84,12 @@ over the file, which is how a container is configured without one):
 committed.
 
 The record goes to stdout: lines for a person when that is a
-terminal, JSON otherwise. At `info` a request at any door is its
-method, path and status, and a call is its actor, the dataset
-it arrived on, the digest and length of its text, and the spans of the
-work it caused — each statement, each read's planning, each
-measurement run, each commit — closing with their busy and idle time.
+terminal, JSON otherwise. At `info` the server logs a request at any
+door as its method, path and status, and a call as its actor, the
+dataset it arrived on, the digest and length of its text, and the
+spans of the work it caused — each statement, each read's planning,
+each measurement run, each commit — each closing with its busy and
+idle time.
 A read closes when its client has taken the last row or dropped the
 stream, with the engine's own counts: rows served, whether it
 completed, the operators, their compute time and spills; at `debug`
@@ -105,22 +106,21 @@ and span id it happened under, so a log line leads to its trace. A
 `traceparent` header a client sends makes its request a child of the
 client's trace. The export runs on the OpenTelemetry SDK's own
 threads, never on the engine's runtime, and is flushed when the server
-stops on SIGINT or SIGTERM. Metrics are not exported: what a
-deployment counts — request rates, latencies — a backend derives from
-the spans.
+stops on SIGINT or SIGTERM. Metrics are not exported: a backend derives request rates and
+latencies from the spans.
 
 ## Tokens
 
-Who is speaking is the token's subject; with which standing is the
-door's: `/mcp` writes as an agent, the other doors as a human. glossql
+The token's subject says who is speaking. The door sets the standing:
+`/mcp` writes as an agent, the other doors as a human. glossql
 is an OAuth 2.1 resource server and never an authorization server — it
 verifies against the keys the issuer publishes, it does not issue, and
 there is no login flow, client registration or user table inside a
-workspace. A request without a valid token is answered 401, and a
+workspace. A request without a valid token gets a 401, and a
 server without an issuer does not start. The one exception is
 explicit: `GLOSSQL_INSECURE_OPEN=true` serves the doors open, every
-caller recorded as `insecure_dev_mode` — a laptop trying the server
-out, never a deployment.
+caller recorded as `insecure_dev_mode` — for a laptop trying the
+server out, never for a deployment.
 
 The issuer is any OpenID Connect provider. Register this server there
 as an API whose identifier is `GLOSSQL_AUDIENCE`, and one confidential
@@ -133,11 +133,11 @@ provider's discovery document
 needs. Tokens must be RS256, ES256/384 or EdDSA, name their key
 (`kid`), and carry `iss`, `sub`, `exp`.
 
-A token is bound to this server by its `aud` naming the audience. MCP
+A token binds to this server by its `aud` naming the audience. MCP
 clients ask for that with the RFC 8707 `resource` parameter, so the
-issuer must be one that honours it — registering the audience as a
-resource the issuer can mint for is the whole of the setup. A token
-naming another resource, or naming none, is refused.
+issuer must honour it — register the audience as a resource the
+issuer can mint for; that is the whole setup. The server refuses a
+token that names another resource, or none.
 
 How a client obtains a token is the client's flow with the issuer —
 [`connect.md`](connect.md) shows Claude Code's.
@@ -145,14 +145,13 @@ How a client obtains a token is the client's flow with the issuer —
 ## What boot does
 
 Opening a workspace creates `warehouse/` if absent and opens the
-catalog. A fresh workspace then receives the shipped system before any
-door opens: the measurement library and the KPI kit (the semantic
-vocabulary and its witnesses) are declared into the store — as
-ordinary declarations, readable back through the `functions` and
-`aspects` relations like anything an agent writes. The bootstrap is
-idempotent; every boot calls it and it declares only into a workspace
-where none of it stands. Nothing is written outside the workspace
-directory.
+catalog. Before any door opens, boot declares the shipped system into
+a fresh workspace: the measurement library and the KPI kit (the
+semantic vocabulary and its witnesses) — ordinary declarations,
+readable back through the `functions` and `aspects` relations like
+anything an agent writes. The bootstrap is idempotent; every boot
+calls it, and it declares only into a workspace that holds none of
+it. The server writes nothing outside the workspace directory.
 
 ## Workspace anatomy
 

@@ -33,13 +33,13 @@ candidates, never conclusions.
   carry ground-truthed acceptance tests
   (`crates/scripts/tests/behavior_oracle.rs`, `dimensions_oracle.rs`);
   an instrument whose accuracy cannot be measured does not ship.
-- **Outputs earn existence by consumers.** No aspect is declared that
+- **Every output has a consumer.** No aspect is declared that
   nothing reads.
 - **Red exists only where a detector computes it.** Humans do not
   volunteer disagreement; triage quality is bounded by the detector
   library, not by anyone's diligence.
 - **No function voice on FACT slots.** A measured voice ranked against
-  claims smuggles calibration back in; the shape is an evidence
+  claims puts calibration back in; the shape is an evidence
   measurement the agent judges (see [behavior](behavior.md)).
 
 ## Limits

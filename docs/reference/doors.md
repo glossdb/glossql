@@ -32,7 +32,7 @@ the environment, never from flags ([install](../start/install.md)).
 With `--tls-cert` and `--tls-key` (both or neither) the doors serve
 https — what a desktop MCP client requires of a remote server. The
 repo's `certs/` holds a self-signed pair for `localhost` and the
-loopback addresses, and the suite proves it against the server;
+loopback addresses, and the test suite checks it against the server;
 regenerate it with
 
 ```
@@ -53,8 +53,8 @@ Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB, memory
 limit 4096 MB. The cube cache and the memory limit are two budgets, not
 one: the cache holds its bytes outside the engine, so a deployment is
 sized for their sum. The workspace directory holds `catalog.sqlite`, the
-`warehouse/` (created at boot), `apps/`, the band model's `weights/`,
-A fresh workspace receives
+`warehouse/` (created at boot), `apps/`, and the band model's
+`weights/`. A fresh workspace receives
 the shipped system, the measurement library and the KPI kit, before any
 door opens.
 
@@ -77,7 +77,7 @@ source-grain gloss both want.
 
 A name the workspace does not hold is a 404 on `/query` and `/app`,
 naming what it does hold. Over `/mcp` it is not an error: `DECLARE
-DATASET` is what brings the name into being.
+DATASET` is what creates the name.
 
 ## Who is speaking
 
@@ -118,7 +118,7 @@ serves every door without authentication: no login and no discovery
 document — with no 401 to answer, a client is never sent to
 authenticate — and every caller is recorded as `insecure_dev_mode`,
 still with the door's standing. The name is the warning, and the
-server says it out loud at start. A laptop trying the server out,
+server says so at start. A laptop trying the server out,
 never a deployment.
 
 Standing the server *witnesses* is separate and is not governed by the
@@ -145,7 +145,7 @@ ten-minute cookie scoped to `/auth`; the server holds no session.
 `/auth/logout` clears the cookie.
 
 Three things sit outside the gate: `/auth`, where a browser goes
-precisely because it holds no token; the discovery document, which is
+because it holds no token; the discovery document, which is
 where a client learns how to authenticate; and `/assets`, the app
 door's own script and styles, which hold no data.
 
@@ -226,7 +226,7 @@ what a build serves is what its suite tested.
 streams Arrow IPC (`application/vnd.apache.arrow.stream`) straight from
 the engine — batches encode as they arrive, memory rides one batch, no
 cap, and a client that hangs up cancels the work upstream. An error
-after bytes flowed breaks the stream, which is the truth. Everything
+after bytes flowed breaks the stream; the break reports the failure. Everything
 else — statement sequences, declarations, writes — answers in the wire
 JSON shape; a refused statement is 422 with the reason, and a refused
 sequence carries the outcomes of the statements that stood under

@@ -82,16 +82,16 @@ on="key"` a second frame's row with the same key merges into each row
 list without becoming one fetch. Substitution is literal and
 the template stays dumb — a frame that feeds an `href` emits a
 URL-ready value, with one guard: a substituted `href`/`src` carrying a
-script-capable scheme becomes `#`. An empty frame states itself
-through `empty`; a capped one gets an honest footer.
+script-capable scheme becomes `#`. An empty frame shows its `empty`
+text; a capped one notes the cap in its footer.
 
 The other tiles:
 
 - `<gl-chart frame="frames/x" spec="specs/x.vl.json" empty="…">` — a
   vega-lite view over the frame; the spec binds the named data source
   `frame` and the store supplies the rows; width defaults to the
-  container. An empty frame states itself through `empty`, as
-  `gl-rows` does, instead of drawing a blank view.
+  container. An empty frame shows the `empty` text, as `gl-rows`
+  does, instead of drawing a blank view.
 - `<gl-table frame="frames/x" rows="50">` — the frame as a plain HTML
   table, first N rows (default 50), total row count in the footer.
 - `<gl-value frame="frames/kpis" field="billings"
@@ -111,7 +111,7 @@ navigation: a ruling with `HX-Trigger: glossql:written`, on which the
 frame store drops its record-class caches; re-measure (every
 measurement standing from before the last change, re-run) with
 `glossql:remeasured, glossql:written`, on which the data-class caches
-go too — a re-measure can change the cube, a ruling cannot. Every
+drop too — a re-measure can change the cube, a ruling cannot. Every
 connected tile refetches in place; instruments keep their DOM.
 
 ## The built-in docket

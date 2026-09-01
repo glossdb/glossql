@@ -20,7 +20,7 @@ normative definition; this page is the working map.
   dataset.
 - `DECLARE RELATIONSHIP` — a declared join: `->` many-to-one, `<->`
   one-to-one, tuple endpoints for composite keys. Only declared
-  relationships exist; a rejected candidate is simply not declared.
+  relationships exist; a rejected candidate is not declared.
 - `DECLARE ASPECT` — a vocabulary entry: a name, a JSON Schema, a kind
   ([aspects](aspects.md)).
 - `GLOSS` — the one write verb for knowledge: applies an aspect to a

@@ -30,7 +30,7 @@ aspect): the precedence pick — **human over agent over function** —
 withheld only when the witness's detector scores the disagreement
 above its threshold (`contested`: value withheld, band and score say
 how badly). A human ruling therefore outranks without deleting
-anything: the agent's slot stands, superseded in precedence, visible
+anything: the agent's slot remains, superseded in precedence, visible
 in the raw read.
 
 ```glossql
@@ -51,5 +51,5 @@ for a function voice landed at an earlier pin, served and marked.
   every row carries it. There is no separate audit surface because
   none is needed.
 - **An agent can never speak for a human.** The kinds are distinct
-  slots with distinct rank; a human slot is written only over a
-  human-standing transport.
+  slots with distinct rank; only a human-standing transport writes a
+  human slot.

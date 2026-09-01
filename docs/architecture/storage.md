@@ -42,11 +42,11 @@ nothing above the trait changes with the builder. Two builders stand
 there: iceberg-rust's SqlCatalog on the workspace's own SQLite file,
 in process; and an Iceberg REST catalog, named by
 `GLOSSQL_CATALOG_URI` ([install](../start/install.md)). A REST
-backend attaches storage on its own side — every table load answers
-with the storage properties, and where the backend vends them the
-credentials, that table's FileIO needs, so the connection configures
-nothing about storage: where the catalog is, which warehouse, and
-how to authenticate. Authentication is one of two modes: a bearer
+backend attaches storage on its own side: every table load answers
+with the storage properties that table's FileIO needs — and, where
+the backend vends them, the credentials. The connection therefore
+configures nothing about storage; it says only where the catalog is,
+which warehouse, and how to authenticate. Authentication is one of two modes: a bearer
 token used as given, or OAuth2 client credentials exchanged at the
 authorization server's token endpoint and exchanged again as the
 token nears its stated expiry. Planned: delegated mode — the calling

@@ -35,7 +35,7 @@ runs on any column on ask, and lands.
 counts, null ratio, distinct and cardinality ratio, min/max, top
 values, string lengths, and for numeric columns mean, stddev, MAD and
 percentiles. Measures the landed table — the recipe carried the casts,
-so `null_ratio` counts what the author's `try_cast`s surrendered.
+so `null_ratio` counts the cells the author's `try_cast`s nulled.
 Extraction serves the summary; the full profile reads back via
 `GLOSSARY(<table>.<column>::column_profile)`.
 
@@ -98,7 +98,7 @@ business judgment.
 dependency screens over one table's dimension-like columns, high
 recall. Candidates ship at g3 ≤ 0.05; a near-copy both ways at
 g3 ≤ 0.01 is served as kind `alias` — whether that is a code↔label
-relabeling or a coincidence is exactly what no statistic settles. λ is
+relabeling or a coincidence is what no statistic settles. λ is
 served beside every candidate, never gated: λ < 0.5 is the recorded
 vacuous-skew signature the judge reads.
 

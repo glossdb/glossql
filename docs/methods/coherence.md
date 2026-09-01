@@ -44,8 +44,8 @@ The `relationship_checks` door computes fill, orphans, and precedence
 per declared relationship; the body
 (`crates/scripts/functions/coherence.sql`) shapes them per
 relationship with the temporal evidence nested per column pair. No
-thresholds anywhere in the path: rates are served, the witness layer
-and the judge own the lines.
+thresholds anywhere in the path: rates are served; thresholds belong
+to the witness layer and the judge.
 
 ## Limits
 

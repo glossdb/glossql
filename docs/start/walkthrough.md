@@ -8,8 +8,8 @@ glossql; plain SQL runs on the same surface.
 
 ## Enter the workspace
 
-A fresh workspace is not empty — the measurement library and the
-semantic vocabulary (the KPI kit) are declared at boot. Read before
+A fresh workspace is not empty — boot declares the measurement
+library and the semantic vocabulary (the KPI kit). Read before
 declaring:
 
 ```glossql
@@ -19,9 +19,9 @@ SELECT name, kind FROM aspects;
 
 ## Agree the topic, declare the dataset
 
-A dataset has a topic, and the topic is what makes later choices
-decidable — which tables to land, which metrics to propose. That
-agreement is conversation; the declaration records it:
+A dataset has a topic, and the topic makes later choices decidable —
+which tables to land, which metrics to propose. That agreement is
+conversation; the declaration records it:
 
 ```glossql
 DECLARE DATASET ops SET (purpose: 'service delivery — what gets done, how fast, and where it stalls');
@@ -30,9 +30,9 @@ USE ops;
 
 ## Register the source, bank its conventions
 
-A source names a root directory; globs belong to recipe SQL. What is
-learned about a source system — placeholder dates, format warts —
-lands at source grain, where every dataset in the workspace reads it:
+A source names a root directory; globs belong to recipe SQL. What you
+learn about a source system — placeholder dates, format warts — lands
+at source grain, where every dataset in the workspace reads it:
 
 ```glossql
 DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
@@ -72,8 +72,8 @@ DESCRIBE work_orders;
 ```
 
 A dataset is a curated working set for its topic, never a mirror of
-the export — land the tables the metrics need, take the columns the
-SELECT list earns.
+the export — land the tables the metrics need, and only the columns
+they use.
 
 ## Say what each table is
 
@@ -104,7 +104,7 @@ never conclusions. Reading a measurement is a judging job.
 
 `detect_relationships` proposes; anti-joins in both directions decide.
 Orphans that are exactly a business population confirm an edge; random
-misses argue against it. The verdict is recorded on the edge:
+misses argue against it. Record the verdict on the edge:
 
 ```glossql
 DECLARE RELATIONSHIP work_orders.site_id -> sites.id;
@@ -123,8 +123,8 @@ SELECT count(*) FROM work_orders w JOIN sites s ON w.site_id = s.id;
 
 ## Gloss the vocabulary
 
-Role first — the rest of a column's obligations derive from it. A
-stock/flow verdict is never asserted from a name: `behavior_evidence`
+Role first — the rest of a column's obligations derive from it. Never
+assert a stock/flow verdict from a name: `behavior_evidence`
 reconciles the column against period movements over the declared
 edges, and the gloss cites it.
 
@@ -161,8 +161,8 @@ GLOSS throughput ON ops AS $${
 }$$;
 ```
 
-The grounding serves at any reader's grain through `read.<aspect>()`,
-human slot outranking agent — a human answer is what runs:
+The grounding serves at any reader's grain through `read.<aspect>()`.
+The human slot outranks the agent's, so a human answer is what runs:
 
 ```sql
 SELECT date_trunc('month', date) AS month, sum(value) AS hours
@@ -238,7 +238,7 @@ On the MCP door they arrive as forms on the calls that read the
 record; on the docket they are the open page. An answer lands as a **ruling** — the judgment
 alone, in the human's slot — and the question retires by derivation.
 The agent folds each ruling back into its grounding at full
-confidence, and the standing record reads back:
+confidence, and the rulings read back:
 
 ```sql
 SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DESC
@@ -246,8 +246,8 @@ SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DE
 
 ## The docket
 
-Open `http://127.0.0.1:8080/fin/app/docket`: what stands open to judge,
-what has been settled, what waits on an act — with the metric surfaces
+Open `http://127.0.0.1:8080/fin/app/docket`: what is open to judge,
+what is settled, what waits on an act — with the metric surfaces
 and the record behind them. The ruling form there is the same write
 the question round lands; a person who stepped away has a way back
 into the record.

@@ -7,6 +7,16 @@ language prose; the skills teach a door-connected agent the language.
 Every fenced example in these pages is parsed and planned by the test
 suite.
 
+In short: an agent declares the glossary it needs — aspects as JSON
+contracts, measurement functions, detectors
+([aspects](concepts/aspects.md), [functions](concepts/functions.md)) —
+and fills it against landed data; questions the data cannot answer go
+to a human, and the answer becomes part of the record
+([questions](concepts/questions.md)); everything — data, glosses,
+rulings, app parts — is stored as Iceberg tables, one statement per
+commit ([workspace](concepts/workspace.md)); reads are served as Arrow
+over plain HTTP ([connect](start/connect.md)).
+
 - [`start/`](start/README.md) — install, connect, and the walkthrough:
   a company's exports to served metrics in one session.
 - [`concepts/`](concepts/README.md) — the mental model, one page per

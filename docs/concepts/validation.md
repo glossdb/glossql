@@ -28,7 +28,7 @@ human's gloss.
 A verdict belongs to its witness, not its detector: one detector
 serving three witnesses holds three verdicts, each computed from its
 own witness's slots against its own threshold. More than one witness
-may stand on an aspect; any witness's crossing withholds.
+may be declared on an aspect; any witness's crossing withholds.
 
 ## The pattern
 
@@ -72,7 +72,7 @@ SELECT subject, band FROM ATTEST(fin.trial_balance) WHERE band = 'red';
 The attest shape is fixed: `(subject, aspect, witness, band, score,
 computed_at, current, error)` — `band` in green | yellow | orange |
 red | error, `score` the disagreement in 0..1, `current` whether
-every function voice the verdict read stands at the read's pin,
+every function voice the verdict read is at the read's pin,
 `error` the failure text where the detector itself could not answer
 (band `error` — never a judgment, so it never withholds a value, and
 every other witness still speaks). Sweeps are WHERE clauses, never a special form;
@@ -83,3 +83,16 @@ The collapsed `GLOSSARY()` read carries the same judgment as `state`:
 absence is visible, never omitted), `contested` (withheld, with band
 and score), `current`, and `stale` (served **and marked** — staleness
 never suppresses judgment; it shows beside it).
+
+## Lineage
+
+The witness model comes from the observer-reliability literature:
+several imperfect observers of one claim, plus an estimate of each
+observer's accuracy — Dawid & Skene (1979) is the classic estimator.
+glossql keeps the multiple observers but does not estimate
+reliabilities. Precedence is fixed — human > agent > function — and
+the detector's band reports disagreement instead of resolving it. An
+estimated reliability becomes an optimization target once it decides
+verdicts (Goodhart's law); a fixed precedence and a visible band keep
+the judgment in two inspectable places: the detector's declared rule
+and the human's slot.

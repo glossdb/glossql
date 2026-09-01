@@ -4,7 +4,7 @@ A **function** is declared analytical machinery: profiling, quality
 checks, detection. Every body is one SQL query the engine plans and
 runs. It is either a **measurement** — it `RETURNS` an aspect and its
 query runs over data — or a **detector** — no `RETURNS`, its query
-runs over a witness's `slots` relation. Role is told by shape.
+runs over a witness's `slots` relation. The shape tells the role.
 Metrics are neither: a metric is a QUERY aspect, run as its grounding
 SQL. Normative definition: [SPEC.md §6](../../SPEC.md).
 
@@ -20,8 +20,8 @@ extraction, and `GLOSSARY()` serves it as-is.
   producer — exactly one function returns it.
 - Filling a **FACT** aspect makes the function a **voice**: a
   data-grounded speaker whose landed output — its newest measurement,
-  served and marked `current` while what it read is unchanged — joins
-  the human's and agent's slots. The check half of
+  served and marked `current` while what it read is unchanged — sits
+  beside the human's and agent's slots. The check half of
   a validation is a voice ([validation](validation.md)).
 
 ```glossql
@@ -58,7 +58,7 @@ actually read. The row serves back, and stays `current`, while what it
 read is unchanged: a write to anything else — another table's landing,
 a gloss the body never consults — is not its staleness. When an input
 it read moves, the next extraction recomputes; there is no
-invalidation, only a miss, and old rows stand as the drift record. A
+invalidation, only a miss, and old rows remain as the drift record. A
 body that carries a `summary` object serves the summary at extraction;
 the full value reads back through `GLOSSARY(subject::aspect)`.
 

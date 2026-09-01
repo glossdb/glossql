@@ -6,15 +6,15 @@ pointed at one and stays there. `/mcp` is a single endpoint, because an
 agent is pointed at a workspace and moves between its datasets. `/` is
 the workspace itself: which datasets there are, and the way into each.
 
-Who is speaking rides a bearer token from the workspace's issuer: its
-subject is the actor id. With which standing is the door's — `/mcp`
+The actor rides a bearer token from the workspace's issuer: the
+token's subject is the actor id. The door sets the standing — `/mcp`
 is the agent door, the others are human doors — see
 [`install.md`](install.md#tokens).
 
 ## `/mcp` — the agent door
 
-Streamable-HTTP MCP at revision `2026-07-28` — genuinely stateless, no
-sessions of any kind. One tool: `glossql`. Its `statements` argument
+Streamable-HTTP MCP at revision `2026-07-28` — stateless, no sessions
+of any kind. One tool: `glossql`. Its `statements` argument
 takes a statement or a semicolon-separated sequence; the result is a
 JSON array, one outcome per statement:
 
@@ -32,7 +32,7 @@ JSON array, one outcome per statement:
 
 The agent actor's id is the token's subject, never the name the client
 gives itself in the handshake — a name a caller picks for itself proves
-nothing. A call without a token is answered 401 with the discovery
+nothing. A call without a token gets a 401 with the discovery
 pointer an OAuth-capable client follows.
 
 **`USE <dataset>;` opens every call that touches dataset-scoped
@@ -41,10 +41,10 @@ it: `USE` moves the statements after it and expires with the call.
 Nothing on the server remembers where you were. A call that names no
 dataset is workspace-scoped — which is what `SELECT * FROM datasets`
 and a source-grain gloss both want — and a dataset the workspace does
-not hold yet is not an error here: `DECLARE DATASET` is what brings the
-name into being.
+not hold yet is not an error here: `DECLARE DATASET` creates the
+name.
 
-The door also asks. While human-judgment questions stand open, a call
+The door also asks. While human-judgment questions are open, a call
 that reads the record carries a round of forms (MCP elicitation); the
 answers arrive on the client's retry of the same call and land as
 human glosses, witnessed by the server. Anything that is not an answer
@@ -70,7 +70,7 @@ One entry serves the whole workspace; the agent picks its dataset with
 
 Agent knowledge — the grammar, the flows, the judgment — ships as the
 agent skills in this repository (`glossql`, `glossql-metrics`,
-`glossql-functions`, `glossql-apps`); the door itself only tells
+`glossql-functions`, `glossql-apps`); the door itself only reports
 outcomes.
 
 ## `/<dataset>/query` — the Arrow door
@@ -98,15 +98,13 @@ with urllib.request.urlopen(req) as resp:
 ```
 
 A dataset the workspace does not hold answers `404`, naming the ones
-it does. This door reads and writes; it does not bring datasets into
-being.
+it does. This door reads and writes; it does not create datasets.
 
 ## `/<dataset>/app` — the door for people
 
 Server-rendered data apps. `http://127.0.0.1:8080/fin/app/docket` is
-the built-in: what stands open for a human to judge, what has been
-settled, what waits on an act, with the metric surfaces and the record
-behind them. The URL is the whole state — a filtered view is a link
+the built-in: what is open for a human to judge, what is settled, what
+waits on an act, with the metric surfaces and the record behind them. The URL is the whole state — a filtered view is a link
 someone can send. A workspace's own apps serve beside it at
 `/<dataset>/app/<name>`, one directory per app under `apps/`.
 
@@ -116,8 +114,9 @@ segment. The writes are human acts, signed with the token's subject:
 this is a human door, so every caller that reaches it has human
 standing.
 
-A browser needs no setup: open `http://127.0.0.1:8080/` and it is sent
-to the issuer to sign in and brought back with the token in a cookie
+A browser needs no setup: open `http://127.0.0.1:8080/` and the
+server sends it to the issuer to sign in, then brings it back with
+the token in a cookie
 (`/auth/login`, `/auth/callback`; `/auth/logout` clears it). The person
 signing in is the token's subject — the same name an agent's connection
 carries when that person is behind it.

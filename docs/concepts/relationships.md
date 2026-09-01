@@ -18,17 +18,17 @@ standing in for it.
 
 ## Detected, verified, declared
 
-Relationships are proposed by measurement and declared by judgment.
+Measurement proposes relationships; judgment declares them.
 `detect_relationships()` emits candidates with evidence — containment
 of one column's values inside another's is the statistic — and
 candidates over-produce by design. The declaring actor verifies each against the data (anti-joins,
 count-before/after are the cheap decisive checks) and declares only
-the survivors.
+the ones that pass.
 
 Only declared relationships exist. There is no rejected or negative
-form: a rejected candidate is simply not declared, and detection is
-deterministic, so it does not resurface as new knowledge. What a
-verification found is worth recording — as a gloss on the edge:
+form: a rejected candidate is not declared, and detection is
+deterministic, so it does not resurface as new knowledge. Record what
+a verification found as a gloss on the edge:
 
 ```glossql
 GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned rows"}$$;
@@ -36,7 +36,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 
 ## What a declared edge asserts, measured
 
-Declaration is a claim, and the claim has standing health:
+Declaration is a claim, and the claim has measurable health:
 `relationship_coherence()` measures what each declared join asserts —
 the orphan rate (exact; it catches invented-key shapes including the
 single repeated orphan that defeats rare-category counting) and
@@ -44,9 +44,9 @@ child-before-parent date incoherence, the trace a wrong pairing
 leaves. No column-shaped statistic sees either on a high-cardinality
 key.
 
-A declared edge is also what downstream evidence stands on:
-behavior evidence reconciles across declared edges, and the quality
-layer's lineage identities read through them. An undeclared true edge
+Downstream evidence also depends on declared edges: behavior evidence
+reconciles across them, and the quality layer's lineage identities
+read through them. An undeclared true edge
 costs exactly the analyses that would have used it; a declared false
 one corrupts them — which is why the verify step is judgment, not
 ceremony.

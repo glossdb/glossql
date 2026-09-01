@@ -25,11 +25,11 @@ containment counts are the typed-key counts
 served — the one floor in the door, placed to bound output, not to
 judge. Composite keys are tried where the multi-tenant shape suggests
 them — for each overlapping pair, the same two tables are tried with a
-scoping leg in overlap order, and a surviving composite rides
-`key_columns` (the tuple is the key). Candidates rank orphan evidence
-first, then overlap — a pair with orphans carries a judgment call,
-while a perfectly clean 1.0 overlap is as often two parallel surrogate
-sequences as an edge; the body
+scoping leg in overlap order, and a composite that passes the floor
+rides `key_columns` (the tuple is the key). Candidates rank orphan
+evidence first, then overlap — a pair with orphans carries a judgment
+call, while a perfectly clean 1.0 overlap is as often two parallel
+surrogate sequences as an edge; the body
 (`crates/scripts/functions/relationships.sql`) shapes and summarizes,
 and never filters beyond the door's floor.
 
@@ -55,6 +55,6 @@ bottom-k sketches.
   coincidences pass the floor, and the judge removes them.
 - The composite rescue tries width 2 only — a scoping leg beside the
   overlapping pair; wider composites are not searched.
-- Within-table quadratic pair enumeration is the width scale stop on
-  very wide tables; recipes that land only relevant columns are the
-  author-side lever.
+- Within-table quadratic pair enumeration is the scale limit on very
+  wide tables; recipes that land only relevant columns are the
+  author-side fix.

@@ -31,8 +31,8 @@ its own cycle stack, one stack for the whole nesting.
 - **The shipped reads ride the same resolution.** Each read is one
   `.sql` file embedded in the binary and planned like any served
   grounding — one file serves the door, an app frame, and a skill
-  example alike. `current_dataset` is the exception, and for the reason
-  that makes the rule: it serves session state, which no `.sql` file can
+  example alike. `current_dataset` is the exception: it serves session
+  state, which no `.sql` file can
   reach, so it is a compute door the pre-pass evaluates into a batch.
 - **The catalog hierarchy as-is** — `CatalogProviderList` →
   `CatalogProvider` → `SchemaProvider` → `TableProvider`. Table names,
@@ -46,7 +46,7 @@ its own cycle stack, one stack for the whole nesting.
   manager and the file caches every plan answers to. DataFusion builds
   one per session state when it is handed none, and a channel is built
   per call, so the runtime is created at boot and handed to every
-  channel instead: a pool each call carries its own of bounds one call.
+  channel instead — a pool built per call would bound only that call.
   The pool is bounded (`--memory-limit`), nothing spills, and the three
   file caches are off — the list-files cache defaults to an infinite
   TTL over exactly the source globs a re-import is re-reading because

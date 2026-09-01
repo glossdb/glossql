@@ -1,8 +1,8 @@
 # Bands — expectation ranges from an in-context model
 
-`metric_bands` walks each grounded metric's recent months and asks,
-for every walked point, what range that month should have landed in
-given everything before it. It runs at dataset grain
+`metric_bands` walks each grounded metric's recent months and
+computes, for every walked point, the range that month should have
+landed in given everything before it. It runs at dataset grain
 (`SELECT metric_bands() FROM fin`) and reports per point the band
 quantiles (p05–p95) and the PIT — the quantile at which the actual
 landed, 0..1 and ordinal by construction. The `band_breach` detector
@@ -14,9 +14,9 @@ With 1–2 years of monthly history, a curve fitted to the series
 cannot produce bands that mean what their nominal coverage claims.
 TabICL — the in-context tabular model behind the kernel — conditions
 on the walk's own feature recipe per point instead, and the PIT
-construction keeps the read honest: if the
+construction is its own check: if the
 bands are calibrated, PITs are uniform; systematic drift shows up as
-mass at the edges, which is exactly what the detector scores.
+mass at the edges, which is what the detector scores.
 
 ## Mechanism
 
@@ -55,13 +55,13 @@ protocol it was evaluated against before it shipped.
   withholds the PIT, `withheld` naming why, and the detector reads
   nothing breached. An actual further off than a step keeps its PIT:
   that move is real whatever the corridor's width. A series that never
-  repeats has no grid, and a tight corridor on it is earned.
+  repeats has no grid, and a tight corridor on it is valid.
 - The walk covers the six most recent months, and a walked point
   conditions on at least five preceding ones — a metric with too
   short a history is served inapplicable with the reason.
 - A month the extract stops inside is partial, and its short sum
-  against a corridor fitted on whole months is the calendar, not a
-  move. On an axis judged at a cadence finer than a month, the newest
+  against a corridor fitted on whole months reflects the calendar, not
+  a move. On an axis judged at a cadence finer than a month, the newest
   point is served `partial` while the extract's horizon falls before
   the month's last day: it keeps its bands and its actual so far,
   withholds the PIT, and the detector scores the month before it. An

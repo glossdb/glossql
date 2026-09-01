@@ -3,7 +3,7 @@
 The instruments, one page each: what the method computes, why that
 statistic, the measured verdict, the stated limits.
 
-- [`judge.md`](judge.md) — the pattern every instrument serves.
+- [`judge.md`](judge.md) — the pattern every instrument follows.
 - [`derivations.md`](derivations.md) — lineage identities as the corruption instrument.
 - [`coherence.md`](coherence.md) — what a declared join asserts, checked.
 - [`discovery.md`](discovery.md) — containment-based relationship discovery.

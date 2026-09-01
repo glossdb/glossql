@@ -13,7 +13,7 @@ Summing a stock or point-reading a flow corrupts a metric silently;
 `behavior` is the gloss that prevents it, and this measurement is the
 evidence the judge reads before glossing it. The cube reads both: a
 grounding with no `behavior` marker folds by the `behavior` gloss on
-the column its value is, or is one `sum` of, and where no gloss speaks
+the column its value is, or is one `sum` of, and where no gloss exists,
 by the verdict on that column — `metric_axes()` says which as
 `behavior_basis = 'glossed'` or `'evidence'`.
 
@@ -47,8 +47,8 @@ reconciliation: within each entity, at the axis's native grain and
 inside the scope, does the value ever decrease? A column that never
 does over 4+ periods votes stock under the convention `monotone`, with
 the same Wilson support over the entities that carried enough periods.
-It is what a cumulative with nothing to reconcile against — season wins
-beside a table of finishing positions — has to say for itself, and a
+It is the only evidence a cumulative with nothing to reconcile against
+— season wins beside a table of finishing positions — can offer, and a
 column that resets shows as the year scope deciding where the raw one
 abstains. On equal support a reconciliation outranks it: the movement
 explains the level, monotonicity only describes it.
@@ -62,16 +62,16 @@ naming the winner and the layer that decided.
 
 This is deliberately an evidence measurement and not a voice in the
 `behavior` slots: a measured voice ranked against human claims would
-smuggle calibration back into the record. The judge reads, then
+put calibration back into the record. The judge reads, then
 glosses.
 
 ## Limits
 
 - Reconciliation needs a viable (entity, period) alignment; where
   none exists the anchors abstain (`viable_entities: 0`) and the
-  column gets honesty, not a verdict. A calendar gap between kept
-  cells makes the difference span it and read as noise — abstention
-  absorbs the miss.
+  column gets an abstention, not a verdict. A calendar gap between kept
+  cells makes the difference span it and read as noise — the abstention
+  covers that miss.
 - Extraction serves the summary alone by design: the full anchor list
   is cached and read back on demand, because serving every anchor
   spends the judge's attention on what the summary already says.

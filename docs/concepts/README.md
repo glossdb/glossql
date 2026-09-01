@@ -1,7 +1,7 @@
 # Concepts
 
 The mental model, one page per concept. Definitions live here; syntax
-is SPEC.md's and `grammar.ebnf`'s business.
+belongs to SPEC.md and `grammar.ebnf`.
 
 - [`workspace.md`](workspace.md) — the workspace, datasets, the lake, sessions
 - [`statements.md`](statements.md) — the statement set and the two reads

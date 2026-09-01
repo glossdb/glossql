@@ -16,7 +16,7 @@ statement is one commit. Nothing updates in place.
 
 **Supersession is a read, never an update.** The current slot for a
 subject is the latest row per (subject, aspect, actor kind), computed
-at read time. History is therefore never destroyed by a correction: the
+at read time. A correction therefore never destroys history: the
 superseded row remains, carrying its actor and timestamp, and the read
 rule decides what "current" means.
 

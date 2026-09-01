@@ -31,7 +31,7 @@ arc.
   composed read with no further act (`read.<aspect>()` in FROM
   position); only assumption prose needs a re-record.
 - **The validation pattern.** Expectation gloss + check voice +
-  detector + `ATTEST`; carries expected dirt honestly — the authored
+  detector + `ATTEST`; carries expected dirt — the authored
   tolerance bands green at a known non-zero defect rate. The shipped
   detector is one-sided; catching overcleaning takes an authored
   two-sided detector.
@@ -79,7 +79,7 @@ arc.
   and a judged-absent slot are different facts.
 - **Mechanics in the query, judgment in the assumptions.** Metric
   mechanics ride as SQL comments inside the recorded grounding (a
-  comment in the query cannot drift from it); judgment stays the
+  comment in the query cannot drift from it); judgment stays in the
   assumptions array. The closure ladder: a question data can decide is
   closed by measurement and watched by a standing check; only what
   data cannot arbitrate goes to the human.
