@@ -291,6 +291,12 @@ impl Session {
     ) -> Result<Self, SessionError> {
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "postgres")
+            // The engine's own schema surface: `information_schema.tables`
+            // and `.columns` over what this channel mounted — the bound
+            // dataset, so one read serves every landed table's columns.
+            // Off in the engine's defaults (datafusion-common
+            // config.rs:239), on here.
+            .set_bool("datafusion.catalog.information_schema", true)
             // Iceberg's arrow fields carry `PARQUET:field_id` metadata; any
             // expression derived from them (a cast, a common subexpression)
             // drops it logically but not physically, and the aggregate

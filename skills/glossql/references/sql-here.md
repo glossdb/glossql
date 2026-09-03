@@ -19,9 +19,13 @@ so generic-dialect syntax from the guide does not parse — `SELECT *
 EXCLUDE (…)`, `SELECT * EXCEPT (…)` · window *inheritance* (`OVER (w
 ORDER BY …)` extending a named window; a named window itself is fine)
 · `=>` outside the door's table functions — the engine's own functions
-are positional · `information_schema` (off — the glossary is the
-discovery surface, and richer; `SHOW TABLES` lists the bound dataset's
-tables and `DESCRIBE <name>` describes any readable name).
+are positional.
+
+The schema in one read: `information_schema.tables` and
+`information_schema.columns` serve what the call mounted — the bound
+dataset's tables and every column of them. `SHOW TABLES` lists the
+tables; `DESCRIBE <name>` describes any readable name, the shipped
+reads included.
 
 Names are case-folded: an unquoted `AdsInfo` reaches `adsinfo`, and a
 table landed with capitals is found only quoted — `"AdsInfo"` — or

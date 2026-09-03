@@ -138,6 +138,9 @@ anything.
   `error`, nothing is withheld, and the fix is the detector's SQL;
   `current` false when a voice the verdict read was landed before the
   last write.
+- the landed schema in one read: `SELECT table_name, column_name,
+  data_type FROM information_schema.columns` serves every column of
+  every table the `USE` mounted; `DESCRIBE <name>` serves one name.
 - ordinary SELECT over tables for the data itself.
 
 **Shipped reads** — derived relations the binary carries, selectable

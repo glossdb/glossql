@@ -90,6 +90,36 @@ DECLARE ASPECT unit WITH $${
 }$$ AS FACT;
 "#;
 
+/// The engine's `information_schema` is on: one read serves the bound
+/// dataset's tables and every column of them — what an agent reaches
+/// for before its first DESCRIBE.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn information_schema_serves_the_mounted_schema_in_one_read() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    let tables = table(
+        &session,
+        "SELECT table_schema, table_name FROM information_schema.tables \
+         WHERE table_name IN ('orders', 'customers') ORDER BY table_name;",
+    )
+    .await;
+    assert!(
+        tables.contains("customers") && tables.contains("orders"),
+        "{tables}"
+    );
+    let columns = table(
+        &session,
+        "SELECT table_name, column_name, data_type FROM information_schema.columns \
+         WHERE table_name = 'orders' ORDER BY ordinal_position;",
+    )
+    .await;
+    assert!(
+        columns.contains("customer_id") && columns.contains("amount"),
+        "{columns}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gloss_then_read_collapsed_and_raw() {
     let (_dir, session) = agent_session().await;
