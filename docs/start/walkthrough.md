@@ -209,8 +209,8 @@ and cached, never recorded; the docket and any app chart it through
 `metric_series()`, and `metric_axes()` says what it admitted:
 
 ```sql
-SELECT metric, title, unit, meaning, formula
-FROM metric_surfaces ORDER BY metric
+SELECT name, title, unit, meaning, formula
+FROM metric_surfaces ORDER BY name
 ```
 
 ```sql

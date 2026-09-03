@@ -113,7 +113,7 @@ only; the pulse list and the dossier header both render this. The
 vocabulary is workspace-wide, so what makes a metric this dataset's is
 the record: a grounding stands here, or the `definitions` or
 `formulas` registry names it. A metric declared and neither glossed
-nor defined shows in no dataset's list; `workspace_next` counts it. Columns: `metric`,
+nor defined shows in no dataset's list; `workspace_next` counts it. Columns: `name`,
 `title`, `kind` (the `x-kind` tooling flag), `unit` and `meaning`
 (from the `definitions` registry — the aspect blob keeps only display
 label and flag), `formula` (from the `formulas` registry, or the
@@ -121,7 +121,7 @@ stated base-concept default), `grounded` (a grounding with `sql` is
 recorded), `stopped` (the current grounding's `stopped` text, empty
 otherwise — a human `sql` over an agent `stopped` serves). The numbers — a metric's
 latest period, its move, the axes the cube admitted — are the cube's
-reads below, joined by `metric`; keeping them apart is what lets a
+reads below, joined on `name` against their `metric`; keeping them apart is what lets a
 ruling refresh this read without touching the cube. Open counts and
 ruled-at live in workspace-wide relations — callers join
 `open_questions` and `ruling_entries` narrowed to a dataset, which

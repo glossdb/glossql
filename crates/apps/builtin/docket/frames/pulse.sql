@@ -18,7 +18,7 @@ ruled AS (
   JOIN current_dataset d ON d.dataset = r.dataset GROUP BY r.aspect
 )
 SELECT s.title,
-       s.metric AS name,
+       s.name,
        s.kind AS mkind,
        s.unit,
        arrow_cast('', 'Utf8') AS period,
@@ -37,8 +37,8 @@ SELECT s.title,
          WHEN r.at IS NOT NULL THEN 'ok'
          WHEN NOT s.grounded THEN 'warn'
          ELSE 'ok' END AS scls,
-       arrow_cast('?metric=' || s.metric, 'Utf8') AS link
+       arrow_cast('?metric=' || s.name, 'Utf8') AS link
 FROM metric_surfaces s
-LEFT JOIN asked q ON q.aspect = s.metric
-LEFT JOIN ruled r ON r.aspect = s.metric
+LEFT JOIN asked q ON q.aspect = s.name
+LEFT JOIN ruled r ON r.aspect = s.name
 ORDER BY CASE WHEN s.kind = 'metric' THEN 0 ELSE 1 END, name

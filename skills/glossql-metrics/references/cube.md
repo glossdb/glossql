@@ -85,8 +85,8 @@ SQL.
 Where every metric stands, in one read — the record:
 
 ```sql
-SELECT metric, title, unit, meaning, formula
-FROM metric_surfaces ORDER BY metric
+SELECT name, title, unit, meaning, formula
+FROM metric_surfaces ORDER BY name
 ```
 
 What the cube admitted, per metric, and why not:

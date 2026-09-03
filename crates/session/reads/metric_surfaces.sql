@@ -10,7 +10,7 @@
 -- The record only. The numbers — a metric's latest period, its move,
 -- the axes the cube admitted — are the data at a grain, served by
 -- `metric_series()` and `metric_axes()`; a caller that wants them
--- beside these rows joins on `metric`, the key. Keeping them apart is
+-- beside these rows joins on `name`, the key. Keeping them apart is
 -- what lets a ruling refresh this read without touching the cube.
 --
 -- No open count and no ruled-at here: both live in workspace-wide
@@ -32,7 +32,7 @@ stopped AS (
   WHERE json_get_str(value, 'stopped') IS NOT NULL
   GROUP BY aspect
 )
-SELECT a.name AS metric,
+SELECT a.name AS name,
        coalesce(json_get_str(a.schema, 'title'), a.name) AS title,
        coalesce(json_get_str(a.schema, 'x-kind'), '') AS kind,
        arrow_cast(coalesce(

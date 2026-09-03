@@ -1968,7 +1968,7 @@ async fn a_stopped_grounding_serves_its_reason_and_no_number() {
     assert!(facts.contains("stopped: capacity never landed"), "{facts}");
     let surfaces = table(
         &agent,
-        "SELECT metric, grounded, stopped FROM metric_surfaces;",
+        "SELECT name, grounded, stopped FROM metric_surfaces;",
     )
     .await;
     assert!(
@@ -1989,7 +1989,7 @@ async fn a_stopped_grounding_serves_its_reason_and_no_number() {
     .await;
     let surfaces = table(
         &agent,
-        "SELECT metric, grounded, stopped FROM metric_surfaces;",
+        "SELECT name, grounded, stopped FROM metric_surfaces;",
     )
     .await;
     assert!(
