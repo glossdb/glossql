@@ -873,12 +873,15 @@ pub(crate) async fn compute_batch(
                     "source_files takes one quoted source: source_files('erp')".into(),
                 )
             })?;
-            let settings = shared.store.source_settings(&source).await?.ok_or(
-                SessionError::Store(glossql_glossary::Error::Unknown {
-                    what: "source",
-                    name: source.clone(),
-                }),
-            )?;
+            let settings =
+                shared
+                    .store
+                    .source_settings(&source)
+                    .await?
+                    .ok_or(SessionError::Store(glossql_glossary::Error::Unknown {
+                        what: "source",
+                        name: source.clone(),
+                    }))?;
             let spec = glossql_import::SourceSpec::from_settings(&source, &settings)?;
             let files = glossql_import::list_source(&spec).await?;
             Ok(Some(source_files_batch(files).into()))
@@ -1496,7 +1499,9 @@ pub(crate) fn extraction_batch(rows: Vec<(glossql_glossary::MeasurementRow, bool
                 rows.iter().map(|(r, _)| r.computed_at.as_str()),
             )),
             Arc::new(datafusion::arrow::array::BooleanArray::from(
-                rows.iter().map(|(_, computed)| *computed).collect::<Vec<bool>>(),
+                rows.iter()
+                    .map(|(_, computed)| *computed)
+                    .collect::<Vec<bool>>(),
             )),
         ],
     )

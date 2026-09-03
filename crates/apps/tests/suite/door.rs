@@ -1125,11 +1125,7 @@ async fn the_metrics_faces_serve_the_cube() {
         "glossql:remeasured, glossql:written"
     );
     let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
-    assert_eq!(
-        row_count(banner).await,
-        0,
-        "the verdicts still stand"
-    );
+    assert_eq!(row_count(banner).await, 0, "the verdicts still stand");
     let trend = get(
         &app,
         "/perf/app/docket/frames/trend?metric=dso&grain=month&span=24",

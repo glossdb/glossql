@@ -136,9 +136,8 @@ fn read_view(pin_text: &str, dataset: &str, reads: &str) -> String {
     pin_text
         .split(',')
         .filter(|part| {
-            part.rsplit_once(':').is_some_and(|(name, _)| {
-                names.contains(name) || (all && name.starts_with(&prefix))
-            })
+            part.rsplit_once(':')
+                .is_some_and(|(name, _)| names.contains(name) || (all && name.starts_with(&prefix)))
         })
         .collect::<Vec<_>>()
         .join(",")
@@ -330,8 +329,7 @@ type History = Arc<Vec<glossql_catalog::Row>>;
 
 /// Per relation, the history read at a snapshot: the snapshot id it
 /// was scanned at (`None` before the first commit) and the rows.
-type Histories =
-    Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>;
+type Histories = Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>;
 
 /// Rows held back per relation while a batch runs, `None` outside one.
 type Batch =
@@ -1460,9 +1458,11 @@ impl Store {
             None => standing,
             Some(rows) => {
                 let mut all = (*standing).clone();
-                all.extend(rows.into_iter().enumerate().map(|(i, cells)| {
-                    glossql_catalog::Row::new(cells, (i64::MAX, i as i64))
-                }));
+                all.extend(
+                    rows.into_iter()
+                        .enumerate()
+                        .map(|(i, cells)| glossql_catalog::Row::new(cells, (i64::MAX, i as i64))),
+                );
                 Arc::new(all)
             }
         })

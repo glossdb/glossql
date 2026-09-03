@@ -890,10 +890,8 @@ async fn judged_surface(
             temporal: judged_bodies(rctx, dataset, "temporal_profile"),
             relevance: judged_bodies(rctx, dataset, "dimension_relevance"),
             behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
-            behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior")
-                .await?,
-            dimension: crate::search::current_fact_values(rctx, dataset, "dimension")
-                .await?,
+            behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior").await?,
+            dimension: crate::search::current_fact_values(rctx, dataset, "dimension").await?,
             pointers: crate::behavior::declared_pointers(&edges, dataset),
         },
         settings(rctx, dataset).await?,

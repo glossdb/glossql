@@ -331,9 +331,15 @@ async fn a_broken_detector_serves_its_failure_and_spares_the_read() {
         "SELECT witness, band, error FROM ATTEST(fin.trial_balance) ORDER BY witness;",
     )
     .await;
-    assert!(attest.contains("note_w") && attest.contains("| error"), "{attest}");
+    assert!(
+        attest.contains("note_w") && attest.contains("| error"),
+        "{attest}"
+    );
     assert!(attest.contains("note_bands"), "{attest}");
-    assert!(attest.contains("tb_w") && attest.contains("| red"), "{attest}");
+    assert!(
+        attest.contains("tb_w") && attest.contains("| red"),
+        "{attest}"
+    );
 
     // An error is never a judgment: nothing is withheld — the note
     // serves, the band beside it.
@@ -377,8 +383,15 @@ async fn a_dataset_scoped_detector_fails_as_a_verdict_on_other_datasets() {
            GLOSS sanity ON payments AS $${"ok": true}$$;"#,
     )
     .await;
-    let away = table(&ops, "SELECT witness, band, error FROM ATTEST(ops.payments);").await;
-    assert!(away.contains("sanity_w") && away.contains("| error"), "{away}");
+    let away = table(
+        &ops,
+        "SELECT witness, band, error FROM ATTEST(ops.payments);",
+    )
+    .await;
+    assert!(
+        away.contains("sanity_w") && away.contains("| error"),
+        "{away}"
+    );
     assert!(away.contains("sane"), "{away}");
 }
 
@@ -657,7 +670,11 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
     run(&session, SETUP).await;
     // The aspect is ON TABLE, so its subject must be landed.
     let trial_balance = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![Field::new("account", DataType::Int32, false)])),
+        Arc::new(Schema::new(vec![Field::new(
+            "account",
+            DataType::Int32,
+            false,
+        )])),
         vec![Arc::new(Int32Array::from(vec![1000]))],
     )
     .unwrap();
@@ -1196,7 +1213,10 @@ async fn a_measurement_body_is_sql() {
     // run computes; a repeat at the same pin serves the recorded row,
     // its `computed_at` the first run's.
     let first = table(&session, "SELECT ar_settles_in_full() FROM settlements;").await;
-    assert!(first.contains("| true ") && first.contains("computed"), "{first}");
+    assert!(
+        first.contains("| true ") && first.contains("computed"),
+        "{first}"
+    );
     let again = table(&session, "SELECT ar_settles_in_full() FROM settlements;").await;
     assert!(again.contains("| false "), "{again}");
 
@@ -1628,8 +1648,14 @@ async fn a_sources_files_list_from_inside_the_language() {
         "SELECT path, size FROM source_files('files') ORDER BY path;",
     )
     .await;
-    assert!(listed.contains("| a.csv ") && listed.contains("| sub/b.csv "), "{listed}");
-    assert!(listed.contains("| 4 ") && listed.contains("| 5 "), "{listed}");
+    assert!(
+        listed.contains("| a.csv ") && listed.contains("| sub/b.csv "),
+        "{listed}"
+    );
+    assert!(
+        listed.contains("| 4 ") && listed.contains("| 5 "),
+        "{listed}"
+    );
 
     run(
         &session,
@@ -1664,7 +1690,10 @@ async fn a_relationship_endpoint_must_be_a_landed_column() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains("`parties` is not a landed table in `fin`"), "{e}");
+    assert!(
+        e.contains("`parties` is not a landed table in `fin`"),
+        "{e}"
+    );
     assert!(e.contains("tables: customers, orders"), "{e}");
     // A tuple endpoint checks every column of the tuple.
     let e = session
@@ -1704,7 +1733,10 @@ async fn a_table_or_column_grain_gloss_must_find_its_subject() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains("`invoices` is not a landed table in `fin`"), "{e}");
+    assert!(
+        e.contains("`invoices` is not a landed table in `fin`"),
+        "{e}"
+    );
     run(
         &session,
         r#"GLOSS role ON orders.amount AS $${"value": "measure"}$$;
@@ -1799,7 +1831,10 @@ async fn a_probe_naming_a_table_at_a_file_source_lists_the_files() {
     assert!(e.starts_with("probe failed: "), "{e}");
     assert!(e.contains("not found"), "{e}");
     assert!(e.contains("read_csv("), "{e}");
-    assert!(e.contains("files present: sites.csv, work_orders.csv"), "{e}");
+    assert!(
+        e.contains("files present: sites.csv, work_orders.csv"),
+        "{e}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1847,7 +1882,10 @@ async fn a_filter_on_a_list_column_stays_with_the_engine() {
             Field::new("id", DataType::Int32, false),
             Field::new("category", category.data_type().clone(), true),
         ])),
-        vec![Arc::new(Int32Array::from(vec![1, 2, 3])), Arc::new(category)],
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(category),
+        ],
     )
     .unwrap();
     session
@@ -1918,10 +1956,21 @@ async fn a_stopped_grounding_serves_its_reason_and_no_number() {
         .execute("SELECT * FROM read.utilization();")
         .await
         .unwrap_err();
-    assert!(e.to_string().contains("stopped — capacity never landed"), "{e}");
-    let facts = table(&agent, "SELECT metric, applicable, reason FROM metric_axes();").await;
+    assert!(
+        e.to_string().contains("stopped — capacity never landed"),
+        "{e}"
+    );
+    let facts = table(
+        &agent,
+        "SELECT metric, applicable, reason FROM metric_axes();",
+    )
+    .await;
     assert!(facts.contains("stopped: capacity never landed"), "{facts}");
-    let surfaces = table(&agent, "SELECT metric, grounded, stopped FROM metric_surfaces;").await;
+    let surfaces = table(
+        &agent,
+        "SELECT metric, grounded, stopped FROM metric_surfaces;",
+    )
+    .await;
     assert!(
         surfaces.contains("utilization")
             && surfaces.contains("false")
@@ -1938,7 +1987,11 @@ async fn a_stopped_grounding_serves_its_reason_and_no_number() {
         r#"USE fin; GLOSS utilization ON fin AS $${"sql": "SELECT 1 AS value"}$$;"#,
     )
     .await;
-    let surfaces = table(&agent, "SELECT metric, grounded, stopped FROM metric_surfaces;").await;
+    let surfaces = table(
+        &agent,
+        "SELECT metric, grounded, stopped FROM metric_surfaces;",
+    )
+    .await;
     assert!(
         surfaces.contains("true") && !surfaces.contains("capacity never landed"),
         "{surfaces}"
@@ -1958,15 +2011,22 @@ async fn describe_reaches_every_readable_name() {
     )
     .await;
     let aspects = table(&session, "DESCRIBE aspects;").await;
-    for column in ["column_name", "data_type", "is_nullable", "name", "kind", "grains", "condition", "schema", "Utf8"] {
+    for column in [
+        "column_name",
+        "data_type",
+        "is_nullable",
+        "name",
+        "kind",
+        "grains",
+        "condition",
+        "schema",
+        "Utf8",
+    ] {
         assert!(aspects.contains(column), "{aspects}");
     }
     let next = table(&session, "DESCRIBE workspace_next;").await;
     assert!(next.contains("surface") && next.contains("open"), "{next}");
-    let e = session
-        .execute("DESCRIBE nothing_here;")
-        .await
-        .unwrap_err();
+    let e = session.execute("DESCRIBE nothing_here;").await.unwrap_err();
     assert!(e.to_string().contains("nothing_here"), "{e}");
 }
 

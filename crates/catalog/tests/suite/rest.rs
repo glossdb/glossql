@@ -137,10 +137,13 @@ async fn live_catalog_round_trip() {
             Arc::new(MemTable::try_new(Arc::clone(&orders), vec![vec![empty]]).expect("a shape")),
         )
         .expect("a create");
-    let batch = RecordBatch::try_new(Arc::clone(&orders), vec![
-        Arc::new(Int64Array::from(vec![1, 2, 3])),
-        Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
-    ])
+    let batch = RecordBatch::try_new(
+        Arc::clone(&orders),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
+        ],
+    )
     .expect("a batch");
     lake.append_batches(
         &dataset,

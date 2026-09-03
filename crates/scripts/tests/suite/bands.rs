@@ -290,7 +290,10 @@ async fn metric_bands_walks_and_reads_the_breach() {
         .filter(|l| l.starts_with("| revenue"))
         .collect();
     assert_eq!(rows.len(), 6, "{shown}");
-    assert!(rows[5].contains("2025-06") && rows[5].contains("| true"), "{shown}");
+    assert!(
+        rows[5].contains("2025-06") && rows[5].contains("| true"),
+        "{shown}"
+    );
     let newest: f64 = rows[5]
         .split('|')
         .map(str::trim)
@@ -586,7 +589,11 @@ async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
     let score: f64 = shown
         .lines()
         .filter(|l| l.starts_with("| ") && !l.contains("band"))
-        .flat_map(|l| l.split('|').map(str::trim).filter_map(|c| c.parse::<f64>().ok()))
+        .flat_map(|l| {
+            l.split('|')
+                .map(str::trim)
+                .filter_map(|c| c.parse::<f64>().ok())
+        })
         .next()
         .expect("a score");
     assert!(

@@ -33,6 +33,8 @@ pub use pushdown::PrimitivePushdown;
 pub mod rest;
 
 use datafusion::arrow::array::RecordBatch;
+#[cfg(feature = "sql")]
+use iceberg::CatalogBuilder as _;
 use iceberg::arrow::FieldMatchMode;
 use iceberg::arrow::RecordBatchPartitionSplitter;
 #[cfg(feature = "sql")]
@@ -48,8 +50,6 @@ use iceberg::writer::file_writer::rolling_writer::RollingFileWriterBuilder;
 use iceberg::writer::partitioning::PartitioningWriter;
 use iceberg::writer::partitioning::fanout_writer::FanoutWriter;
 use iceberg::writer::partitioning::unpartitioned_writer::UnpartitionedWriter;
-#[cfg(feature = "sql")]
-use iceberg::CatalogBuilder as _;
 use iceberg::{Catalog, NamespaceIdent, TableIdent};
 #[cfg(feature = "sql")]
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};

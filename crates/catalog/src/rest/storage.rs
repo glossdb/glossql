@@ -161,9 +161,12 @@ impl S3Storage {
             builder = builder.with_config(key, value);
         }
         let store = Arc::new(builder.build().map_err(|e| {
-            Error::new(ErrorKind::DataInvalid, "the S3 configuration does not build")
-                .with_context("bucket", bucket.to_string())
-                .with_source(e)
+            Error::new(
+                ErrorKind::DataInvalid,
+                "the S3 configuration does not build",
+            )
+            .with_context("bucket", bucket.to_string())
+            .with_source(e)
         })?);
         self.stores
             .lock()

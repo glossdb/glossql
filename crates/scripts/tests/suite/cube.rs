@@ -1851,7 +1851,11 @@ async fn a_coarser_grain_is_its_own_entry_built_once() {
     };
     near(year("a", "2024-01-01T00:00:00").await, 12.0, "a whole year");
     near(year("a", "2026-01-01T00:00:00").await, 6.0, "the half year");
-    near(year("b", "2025-01-01T00:00:00").await, 24.0, "the doubled metric");
+    near(
+        year("b", "2025-01-01T00:00:00").await,
+        24.0,
+        "the doubled metric",
+    );
     number(
         &session,
         "SELECT count(*) FROM metric_series(grain => 'year');",
@@ -2022,10 +2026,22 @@ async fn fact_values_serves_what_the_cube_does_not_chart() {
         "SELECT metric, kind, value, reason FROM fact_values() ORDER BY metric;",
     )
     .await;
-    assert!(shown.contains("| on_hand ") && shown.contains("| fact ") && shown.contains("| 110.0 "), "{shown}");
-    assert!(shown.contains("| each ") && shown.contains("more than one row"), "{shown}");
-    assert!(shown.contains("| bare ") && shown.contains("no value column"), "{shown}");
-    assert!(!shown.contains("| series "), "a grounding with a time axis is the cube's: {shown}");
+    assert!(
+        shown.contains("| on_hand ") && shown.contains("| fact ") && shown.contains("| 110.0 "),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("| each ") && shown.contains("more than one row"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("| bare ") && shown.contains("no value column"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("| series "),
+        "a grounding with a time axis is the cube's: {shown}"
+    );
 }
 
 /// A metric composed as one flow against another — two `read.` arms

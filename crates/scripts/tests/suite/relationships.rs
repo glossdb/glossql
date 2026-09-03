@@ -168,7 +168,10 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     // summary rides the body for extraction to serve, the full list
     // reading back whole.
     let body: serde_json::Value = serde_json::from_str(&value).unwrap();
-    assert_eq!(body["candidates"][0]["from"], "orders.customer_id", "{value}");
+    assert_eq!(
+        body["candidates"][0]["from"], "orders.customer_id",
+        "{value}"
+    );
     assert_eq!(body["summary"]["candidates"], 4, "{value}");
     assert_eq!(
         body["summary"]["top"][0]["from"], "orders.customer_id",
@@ -203,7 +206,10 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         )
         .await
         .unwrap());
-    assert_eq!(standing, "1", "declaring an edge is not this door's staleness");
+    assert_eq!(
+        standing, "1",
+        "declaring an edge is not this door's staleness"
+    );
     session
         .execute("SELECT detect_relationships() FROM fin;")
         .await

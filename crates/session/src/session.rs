@@ -549,14 +549,14 @@ impl Session {
                 // SPEC.md §3 rules the `type` vocabulary; a spelling
                 // outside it is refused here, where the typo is, rather
                 // than at the first recipe against the source.
-                let spelled = d
-                    .settings
-                    .iter()
-                    .find(|s| s.key.value == "type")
-                    .map(|s| match &s.value {
-                        SettingValue::Name(n) => n.value.clone(),
-                        SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
-                    });
+                let spelled =
+                    d.settings
+                        .iter()
+                        .find(|s| s.key.value == "type")
+                        .map(|s| match &s.value {
+                            SettingValue::Name(n) => n.value.clone(),
+                            SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
+                        });
                 if spelled
                     .as_deref()
                     .and_then(glossql_import::SourceKind::parse)
@@ -1429,12 +1429,7 @@ impl Session {
     /// them, `DESCRIBE` describes them).
     async fn show_tables(&self) -> Result<Outcome, SessionError> {
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
-        let mut names: Vec<String> = self
-            .shared
-            .statement_pins()
-            .await?
-            .into_keys()
-            .collect();
+        let mut names: Vec<String> = self.shared.statement_pins().await?.into_keys().collect();
         names.sort();
         let schema = Arc::new(Schema::new(vec![
             Field::new("dataset", DataType::Utf8, false),
@@ -1446,7 +1441,9 @@ impl Session {
                 Arc::new(StringArray::from_iter_values(
                     names.iter().map(|_| dataset.as_str()),
                 )) as ArrayRef,
-                Arc::new(StringArray::from_iter_values(names.iter().map(String::as_str))),
+                Arc::new(StringArray::from_iter_values(
+                    names.iter().map(String::as_str),
+                )),
             ],
         )
         .map_err(DataFusionError::from)?;
@@ -1572,7 +1569,12 @@ impl Session {
 fn json_unions_as_text(plan: LogicalPlan) -> Result<LogicalPlan, DataFusionError> {
     use datafusion_functions_json::JSON_UNION_DATA_TYPE;
     let is_union = |dt: &DataType| dt == &*JSON_UNION_DATA_TYPE;
-    if !plan.schema().fields().iter().any(|f| is_union(f.data_type())) {
+    if !plan
+        .schema()
+        .fields()
+        .iter()
+        .any(|f| is_union(f.data_type()))
+    {
         return Ok(plan);
     }
     let to_text = datafusion_functions_json::udfs::json_union_to_text_udf();

@@ -437,7 +437,14 @@ async fn a_self_reference_checks_as_a_join_against_itself() {
             accounts,
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5, 6])),
-                Arc::new(Int64Array::from(vec![None, Some(1), Some(1), Some(2), Some(2), Some(99)])),
+                Arc::new(Int64Array::from(vec![
+                    None,
+                    Some(1),
+                    Some(1),
+                    Some(2),
+                    Some(2),
+                    Some(99),
+                ])),
             ],
         )
         .unwrap(),

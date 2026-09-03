@@ -458,12 +458,28 @@ async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
     let pin = s.pin("fin", &Default::default()).await.unwrap();
     // `**`: the reads were not enumerable, so the row stands only at
     // its exact pin.
-    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 1}"#, "**")
-        .await
-        .unwrap();
-    s.measurement_put("fin", "profile", "orders", "stats", &pin, r#"{"n": 2}"#, "**")
-        .await
-        .unwrap();
+    s.measurement_put(
+        "fin",
+        "profile",
+        "orders",
+        "stats",
+        &pin,
+        r#"{"n": 1}"#,
+        "**",
+    )
+    .await
+    .unwrap();
+    s.measurement_put(
+        "fin",
+        "profile",
+        "orders",
+        "stats",
+        &pin,
+        r#"{"n": 2}"#,
+        "**",
+    )
+    .await
+    .unwrap();
     let ctx = rctx(&s).await;
     let row = Store::measurement_in(&ctx, "fin", "orders", "profile").unwrap();
     assert!(row.body.contains('2'), "latest write at the pin wins");
@@ -1386,13 +1402,7 @@ async fn a_batch_lands_one_append_per_relation() {
 
     assert!(store.aspect("depth").await.unwrap().is_some());
     assert!(store.aspect("width").await.unwrap().is_some());
-    assert!(
-        store
-            .function("probe", None)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(store.function("probe", None).await.unwrap().is_some());
     let mut appends = std::collections::HashMap::new();
     for landing in store.lake().landings("glossql").await.unwrap() {
         *appends.entry(landing.table).or_insert(0) += 1;
