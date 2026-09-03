@@ -34,10 +34,10 @@ The server: one binary, one workspace, three doors. How it is built is
   governance, still held open.
 - **Skills** — one skill per `skills/*/SKILL.md`, where a
   door-connected agent learns the language. The MCP door serves each
-  as a resource (`skill://<name>/SKILL.md`) and as a prompt of the
-  same name, with the language spec and grammar beside them as
-  `doc://` resources; every skill is gated by the server's test suite
-  like these pages.
+  as a resource (`skill://<name>/SKILL.md`), as a prompt of the same
+  name, and as a row of the `pages()` read, with the language spec and
+  grammar beside them as `doc://` resources; every skill is gated by
+  the server's test suite like these pages.
 - **Bootstrap** — a fresh workspace receives the shipped system at
   boot; declaration relations read as plain tables.
 

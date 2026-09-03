@@ -319,6 +319,7 @@ impl Session {
             )),
             pins: RwLock::new(Default::default()),
             normalize_idents: config.options().sql_parser.enable_ident_normalization,
+            pages: RwLock::new(Arc::from(Vec::new())),
         });
         let state = SessionStateBuilder::new()
             .with_default_features()
@@ -377,6 +378,13 @@ impl Session {
     /// without a Plane carries its own from construction.
     pub fn with_cube_cache(self, cache: crate::cube::CubeCache) -> Self {
         *self.shared.cube.write().expect("cube lock") = cache;
+        self
+    }
+
+    /// The pages the door serves, for `pages()` — the Plane's, embedded
+    /// in the binary that built it.
+    pub fn with_pages(self, pages: Arc<[crate::reads::DoorPage]>) -> Self {
+        *self.shared.pages.write().expect("pages lock") = pages;
         self
     }
 

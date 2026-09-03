@@ -66,6 +66,20 @@ pub(crate) struct Shared {
     /// `datafusion.sql_parser.enable_ident_normalization`, read off the
     /// config the session was built with. See [`Shared::idents`].
     pub normalize_idents: bool,
+    /// The pages the door serves — the skills and their references,
+    /// the docs, the language, the engine's SQL guide — as the rows of
+    /// `pages()`. The Plane hands them in (the binary embeds them); a
+    /// session built without one serves none.
+    pub pages: RwLock<Arc<[DoorPage]>>,
+}
+
+/// One page the door serves, as `pages()` serves it: the resource URI,
+/// the page's first heading, and the body verbatim.
+#[derive(Debug, Clone)]
+pub struct DoorPage {
+    pub uri: String,
+    pub title: String,
+    pub body: String,
 }
 
 impl std::fmt::Debug for Shared {
@@ -734,8 +748,9 @@ pub(crate) fn door_reads(
                 .relations
                 .extend(["glossary".into(), "aspects".into(), "witnesses".into()]);
         }
-        // The binding, not state: no pin leg moves it.
-        ("current_dataset", _) => {}
+        // The binding, not state: no pin leg moves it. The door's
+        // pages are the binary's: nothing in the workspace moves them.
+        ("current_dataset" | "pages", _) => {}
         // A store relation read as a plain table — bare names only:
         // `glossary` the relation is one leg, `GLOSSARY(subject)` the
         // door is a collapse over half the store and falls through.
@@ -975,6 +990,17 @@ pub(crate) async fn compute_batch(
         // reads over the workspace-wide relations had no way to narrow
         // to the session they answer for.
         ("current_dataset", None) => Ok(Some((current_dataset_batch(shared)).into())),
+        // The pages the door serves, as rows — the same pages that are
+        // its MCP resources, for a client that has the statement tool
+        // and nothing else.
+        ("pages", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "pages() takes no arguments — `WHERE uri = '…'` reads one".into(),
+                ));
+            }
+            Ok(Some(pages_batch(shared).into()))
+        }
         // The store's relations, readable as plain tables. Which names
         // qualify lives in one place: the store's RELATIONS table.
         (name, None) if glossql_glossary::relation_columns(name).is_some() => {
@@ -1527,6 +1553,25 @@ fn current_dataset_batch(shared: &Shared) -> RecordBatch {
     batch(
         Arc::new(Schema::new(vec![utf8("dataset")])),
         vec![Arc::new(StringArray::from_iter(bound.iter().map(Some))) as ArrayRef],
+    )
+}
+
+/// `pages()` — every page the door serves: `uri`, `title`, `body`.
+fn pages_batch(shared: &Shared) -> RecordBatch {
+    let pages = Arc::clone(&shared.pages.read().expect("pages lock"));
+    batch(
+        Arc::new(Schema::new(vec![utf8("uri"), utf8("title"), utf8("body")])),
+        vec![
+            Arc::new(StringArray::from_iter_values(
+                pages.iter().map(|p| p.uri.as_str()),
+            )) as ArrayRef,
+            Arc::new(StringArray::from_iter_values(
+                pages.iter().map(|p| p.title.as_str()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                pages.iter().map(|p| p.body.as_str()),
+            )),
+        ],
     )
 }
 

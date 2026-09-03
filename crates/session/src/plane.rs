@@ -108,6 +108,9 @@ pub struct Plane {
     /// per call: a pool each call carries its own of bounds one call.
     env: Arc<RuntimeEnv>,
     row_cap: usize,
+    /// The pages the door serves, for `pages()` — what the binary
+    /// embeds, handed to every channel.
+    pages: Arc<[crate::reads::DoorPage]>,
 }
 
 impl Plane {
@@ -124,7 +127,16 @@ impl Plane {
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
             env: runtime_env(DEFAULT_MEMORY_LIMIT_MB),
             row_cap: usize::MAX,
+            pages: Arc::from(Vec::new()),
         }
+    }
+
+    /// The pages `pages()` serves on every channel — the skills, the
+    /// docs, the language, the engine's SQL guide, as the binary
+    /// embeds them.
+    pub fn with_pages(mut self, pages: Arc<[crate::reads::DoorPage]>) -> Self {
+        self.pages = pages;
+        self
     }
 
     /// The cap the doors render at, pushed down so the engine is not asked
@@ -187,7 +199,8 @@ impl Plane {
         let session = Session::on_runtime(self.store.clone(), actor, Arc::clone(&self.env))?
             .with_row_cap(self.row_cap)
             .with_runtime(Arc::clone(&self.runtime))
-            .with_cube_cache(self.cube.clone());
+            .with_cube_cache(self.cube.clone())
+            .with_pages(Arc::clone(&self.pages));
         if let Some(dataset) = dataset {
             session.bind(dataset).await?;
         }

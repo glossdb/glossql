@@ -16,9 +16,11 @@ normative — read them, don't reconstruct them:
   library; §7 witnesses and attestation.
 - `doc://grammar.ebnf` — the machine-readable syntax, likewise.
 
-Skills and docs are resources: read every `skill://` and `doc://`
-name with your client's resource reader. The statement door accepts
-statements only.
+Every `skill://` and `doc://` name is a page the door serves two
+ways: as a row of `pages()` — `SELECT body FROM pages() WHERE uri =
+'doc://SPEC.md'` — and as an MCP resource for a client with a resource
+reader. `SELECT uri, title FROM pages()` lists them all. The statement
+door reads a page through `pages()` and no other way.
 
 Everything *live* — the declared vocabulary, the tables, the record —
 is read through the language itself, never assumed.
@@ -139,8 +141,10 @@ anything.
   `current` false when a voice the verdict read was landed before the
   last write.
 - the landed schema in one read: `SELECT table_name, column_name,
-  data_type FROM information_schema.columns` serves every column of
-  every table the `USE` mounted; `DESCRIBE <name>` serves one name.
+  data_type FROM information_schema.columns WHERE table_name NOT LIKE
+  '%$%'` serves every column of every table the `USE` mounted (the
+  `$` names are Iceberg's metadata tables beside each one);
+  `DESCRIBE <name>` serves one name.
 - ordinary SELECT over tables for the data itself.
 
 **Shipped reads** — derived relations the binary carries, selectable
@@ -158,6 +162,7 @@ like any table, filters riding WHERE:
 | `source_files('erp')` | every file under a declared source's location — `path`, `size`, `modified` — what a recipe can name; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps` teaches writing one) |
 | `current_dataset` | the dataset your `USE` bound, as a one-row relation — join it to narrow a read that answers for the whole workspace |
+| `pages()` | every page the door serves — the skills and their references, the docs, the language, the engine's SQL guide — as `uri`, `title`, `body`; `WHERE uri = '…'` reads one; needs no `USE` |
 
 A shipped name is reserved: it shadows a table *and* a CTE of the same
 name, so don't name a CTE after one. Every column of every read, and

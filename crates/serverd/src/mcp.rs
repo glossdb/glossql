@@ -27,19 +27,22 @@ use glossql_session::{Plane, Session, SessionError};
 use crate::wire;
 
 const INSTRUCTIONS: &str = "glossql workspace server — one SQL-shaped surface over a \
-workspace's data and its context. The objects: a dataset holds tables, landed by recipes \
-from sources; an aspect is a named JSON contract; a gloss speaks an aspect's value on a \
-subject (a table, a column, the dataset itself), and a QUERY aspect's gloss is SQL, served \
-back as `read.<name>()` — a metric, a current fact, or a derived relation, which the \
-metrics skill tells apart; functions measure, and their measurements are the evidence; \
-witnesses adjudicate the voices on a slot; a human's ruling outranks every agent gloss. \
-One tool, `glossql`, runs statements and plain SQL — its description is the contract for \
-every call — and live state is read through it, never assumed. Read \
-`skill://glossql/SKILL.md` before the first statement and \
-`skill://glossql-metrics/SKILL.md` before landing a source or grounding anything; each is \
-one page and names its references (`skill://<name>/references/…`) for the moment they \
-matter. The docs pages are served as `doc://docs/…`, the language as `doc://SPEC.md` and \
-`doc://grammar.ebnf`. Start with SELECT * FROM datasets.";
+workspace's data and its context, behind one tool, `glossql`, which runs statements and \
+plain SQL; its description is the contract for every call. Start here, in this order. \
+1. Read the two skill pages through the tool: `SELECT body FROM pages() WHERE uri IN \
+('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')`. Every page the door \
+serves is a row of `pages()` — `SELECT uri, title FROM pages()` lists them — and a client \
+with an MCP resource reader can read the same URIs as resources. Each skill page names its \
+references (`skill://<name>/references/…`) for the moment they matter. \
+2. `SELECT * FROM datasets`, then what the brief below names. \
+The objects: a dataset holds tables, landed by recipes from sources; an aspect is a named \
+JSON contract; a gloss speaks an aspect's value on a subject (a table, a column, the \
+dataset itself), and a QUERY aspect's gloss is SQL, served back as `read.<name>()` — a \
+metric, a current fact, or a derived relation, which the metrics skill tells apart; \
+functions measure, and their measurements are the evidence; witnesses adjudicate the \
+voices on a slot; a human's ruling outranks every agent gloss. Live state is read through \
+the tool, never assumed. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
+and `doc://grammar.ebnf` — rows of `pages()` too.";
 
 /// What the brief is decided on: the store's counts plus the open
 /// question count. Movement is a comparison of these FACTS — never of
@@ -529,6 +532,9 @@ impl GlossqlMcp {
             "glossql",
             format!(
                 "Execute glossql statements against the workspace; one outcome per statement. \
+                 Statements only: the skill and doc pages are rows of `pages()` — `SELECT \
+                 body FROM pages() WHERE uri = 'skill://glossql/SKILL.md'` — and resources \
+                 for a client that reads those. \
                  Every call opens unbound: begin any call that names a dataset's tables or \
                  columns with `USE <dataset>;` — a call without one is workspace-scoped. \
                  Outcomes: a read is `{{columns, rows, row_count, truncated}}`, rows capped at \

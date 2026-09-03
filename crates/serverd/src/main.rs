@@ -227,6 +227,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
 
     let plane = Arc::new(
         Plane::new(store.clone(), runtime)
+            .with_pages(glossql_serverd::skills::door_pages())
             .with_row_cap(args.doors.row_cap)
             .with_cube_cache(args.cube_cache_mb)
             .with_memory_limit(args.memory_limit_mb),

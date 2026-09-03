@@ -9,7 +9,9 @@
 //! the engine's SQL guide under `vendor/` ride along as `doc://`
 //! resources, because a connected agent has no checkout to read them
 //! from — what an agent in this repository reads is what the door
-//! serves.
+//! serves. The same pages are the rows of the `pages()` read
+//! ([`door_pages`]), for a client that has the statement tool and no
+//! resource reader.
 
 /// One product skill: its directory name and its `SKILL.md`, verbatim
 /// — frontmatter included, as an Agent Plugins host would read it.
@@ -127,12 +129,48 @@ impl Page {
     /// The page's first heading — what a listing shows beside the URI,
     /// so a reference's title says when to read it.
     pub fn title(&self) -> &'static str {
-        self.body
-            .lines()
-            .find_map(|l| l.strip_prefix("# "))
-            .map(str::trim)
-            .unwrap_or(self.path)
+        first_heading(self.body).unwrap_or(self.path)
     }
+}
+
+/// A page's first `# ` heading.
+fn first_heading(body: &str) -> Option<&str> {
+    body.lines()
+        .find_map(|l| l.strip_prefix("# "))
+        .map(str::trim)
+}
+
+/// Every page the door serves, as the rows of `pages()` — the same
+/// list `resources/list` serves, in the same order, under the same
+/// URIs: a client with the statement tool and no resource reader
+/// reads them through the tool.
+pub fn door_pages() -> std::sync::Arc<[glossql_session::DoorPage]> {
+    use glossql_session::DoorPage;
+    let mut out: Vec<DoorPage> = SKILLS
+        .iter()
+        .map(|s| DoorPage {
+            uri: s.uri(),
+            title: first_heading(s.body).unwrap_or(s.name).to_string(),
+            body: s.body.to_string(),
+        })
+        .collect();
+    out.extend(DOCS.iter().map(|d| DoorPage {
+        uri: d.uri(),
+        title: d.description.to_string(),
+        body: d.body.to_string(),
+    }));
+    out.extend(
+        REFERENCES
+            .iter()
+            .chain(PAGES.iter())
+            .chain(VENDORED.iter())
+            .map(|p| DoorPage {
+                uri: p.uri(),
+                title: p.title().to_string(),
+                body: p.body.to_string(),
+            }),
+    );
+    out.into()
 }
 
 /// The body behind a resource URI, with its MIME type. The URI is the

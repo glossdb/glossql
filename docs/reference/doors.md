@@ -175,9 +175,11 @@ the same name, its references are sibling resources
 which says when to read each), the `docs/` pages are
 `doc://docs/<section>/<page>.md`, and the language spec and grammar
 are `doc://SPEC.md` and `doc://grammar.ebnf` — what an agent working
-in the repository reads is what a connected one is served. The
-initialize instructions are the map of the objects and say which page
-to read at which moment. All of it is embedded at compile time, so
+in the repository reads is what a connected one is served. The same
+pages are the rows of `pages()`, so a client with the tool and no
+resource reader reads them through the tool. The initialize
+instructions open with how to start — the two skill pages through
+`pages()`, then `datasets` — and map the objects. All of it is embedded at compile time, so
 what a build serves is what its suite tested.
 
 - **The actor is the token's subject.** Without one the call writes as

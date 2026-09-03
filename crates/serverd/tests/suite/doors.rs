@@ -24,7 +24,9 @@ use tower::ServiceExt;
 
 async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
     let (dir, store) = scratch_store().await;
-    let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
+    let plane = Arc::new(
+        Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages()),
+    );
     // No apps live here — the app door serves an empty home.
     let workspace = dir.path().to_path_buf();
     (router(plane, doors, workspace, Access::Gated(login)), dir)
@@ -186,6 +188,37 @@ async fn the_query_door_answers_a_statement_sequence_in_json() {
     assert_eq!(outcomes.len(), 2);
     assert_eq!(outcomes[0]["rows"][0]["a"], json!(1));
     assert_eq!(outcomes[1]["rows"][0]["b"], json!(2));
+}
+
+/// The pages the door serves as resources are rows of `pages()` too —
+/// the read for a client that has the statement tool and nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_door_pages_are_rows_of_pages() {
+    let (app, _dir) = app_on_fin().await;
+    let response = app
+        .oneshot(
+            Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                .body(Body::from(
+                    "SELECT body FROM pages() WHERE uri = 'skill://glossql/SKILL.md'; \
+                     SELECT count(*) AS n FROM pages()",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let outcomes = body.as_array().unwrap();
+    assert_eq!(
+        outcomes[0]["rows"][0]["body"],
+        json!(glossql_serverd::skills::SKILLS[0].body)
+    );
+    let served = {
+        use glossql_serverd::skills::{DOCS, PAGES, REFERENCES, SKILLS, VENDORED};
+        SKILLS.len() + DOCS.len() + REFERENCES.len() + PAGES.len() + VENDORED.len()
+    };
+    assert_eq!(outcomes[1]["rows"][0]["n"], json!(served));
 }
 
 #[tokio::test(flavor = "multi_thread")]

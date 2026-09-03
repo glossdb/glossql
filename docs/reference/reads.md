@@ -276,3 +276,16 @@ object store, the same walk a `read_*` glob resolves through, so what
 it serves is what a recipe path reaches. Workspace-scoped: sources are
 workspace rows, and the read needs no `USE`. A relational source has
 no files and refuses the read by name.
+
+## The door's read
+
+### pages()
+
+Every page the door serves, as rows: `uri` (`skill://<skill>/SKILL.md`,
+`skill://<skill>/references/<page>.md`, `doc://SPEC.md`,
+`doc://grammar.ebnf`, `doc://docs/…`, `doc://vendor/datafusion/sql/…`),
+`title` (the page's first heading), `body` (the page, verbatim). The
+same pages are the door's MCP resources under the same URIs; `pages()`
+is the read for a client that has the statement tool and nothing
+else. `SELECT uri, title FROM pages()` lists them, `WHERE uri = '…'`
+reads one. Needs no `USE`.

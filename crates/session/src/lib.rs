@@ -35,6 +35,7 @@ mod whatif;
 
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
+pub use reads::DoorPage;
 pub use session::{
     CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, Session, SessionError, call_shape,
 };
