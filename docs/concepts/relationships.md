@@ -16,6 +16,10 @@ many-to-many decomposes through a junction table. A composite endpoint
 is a tuple — the tuple is the key, and there is no view or surrogate
 standing in for it.
 
+An endpoint names a column of a landed table. A declaration whose
+table or column is not in the dataset is refused, and the refusal
+lists the tables, or the table's columns.
+
 ## Detected, verified, declared
 
 Measurement proposes relationships; judgment declares them.

@@ -1532,12 +1532,14 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         "month cells under the month rung",
     );
 
-    // Coarser grains derive from the cells by the verb: the day
-    // metric's months are its days summed, month by month, and a grain
+    // A coarser grain is its own build over that grain's rung: the day
+    // metric's 730 days are 24 months, all inside the month rung (48),
+    // where its own day cells span the day rung's 18. Where both stand
+    // the months equal the day cells summed month by month. A grain
     // finer than a metric's resolution serves nothing — honest absence.
     near(
         cells("by_day", "month").await,
-        18.0,
+        24.0,
         "the day metric at month grain",
     );
     assert_eq!(
@@ -1556,9 +1558,11 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         0.0,
         "a month metric at day grain",
     );
+    // The month metric's 60 months are five years under the year rung
+    // (20), where its own cells hold the month rung's 48.
     near(
         cells("by_month", "year").await,
-        4.0,
+        5.0,
         "a month metric at year grain",
     );
     assert_eq!(
@@ -1780,6 +1784,105 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     number(&session, "SELECT count(*) FROM metric_series();").await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
     assert_eq!(tiny.builds(), 4, "nothing stays under a zero cap");
+}
+
+/// A read at a grain coarser than a metric's resolution is its own
+/// entry: built once from the grounding over that grain's rung, a hit
+/// after. The metric's own cells serve a read at its own resolution,
+/// and a finer grain serves nothing; neither builds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_coarser_grain_is_its_own_entry_built_once() {
+    let months = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        MONTH_STARTS.iter().map(|s| 19723 + s).collect(),
+        vec![Arc::new(Float64Array::from(vec![1.0; 30]))],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let cache = CubeCache::new(64);
+    let session = cube_session_with(
+        dir.path(),
+        vec![("t", months)],
+        &[
+            r#"DECLARE ASPECT a WITH $${"title": "A"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT b WITH $${"title": "B"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS a ON fin AS $${"sql": "SELECT date, value FROM t"}$$;"#,
+            r#"GLOSS b ON fin AS $${"sql": "SELECT date, value * 2 AS value FROM t"}$$;"#,
+            "SELECT judge_time() FROM t.date;",
+        ],
+        Some(cache.clone()),
+    )
+    .await;
+
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "own cells",
+    );
+    assert_eq!(cache.builds(), 2, "one build per metric");
+
+    // Thirty months are three years under the year rung, each year the
+    // months it holds summed: 2024 and 2025 whole, 2026 half.
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'year');",
+        )
+        .await,
+        6.0,
+        "year cells",
+    );
+    assert_eq!(
+        cache.builds(),
+        4,
+        "one more build per metric, at the asked grain"
+    );
+    let year = |metric: &'static str, period: &'static str| {
+        let session = &session;
+        async move {
+            number(
+                session,
+                &format!(
+                    "SELECT value FROM metric_series(grain => 'year') \
+                     WHERE metric = '{metric}' AND dimension = '' AND period = '{period}';"
+                ),
+            )
+            .await
+        }
+    };
+    near(year("a", "2024-01-01T00:00:00").await, 12.0, "a whole year");
+    near(year("a", "2026-01-01T00:00:00").await, 6.0, "the half year");
+    near(year("b", "2025-01-01T00:00:00").await, 24.0, "the doubled metric");
+    number(
+        &session,
+        "SELECT count(*) FROM metric_series(grain => 'year');",
+    )
+    .await;
+    assert_eq!(cache.builds(), 4, "a repeat at the grain is a hit");
+
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'month');",
+        )
+        .await,
+        60.0,
+        "the own resolution asked by name is the own cells",
+    );
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'day');",
+        )
+        .await,
+        0.0,
+        "a finer grain is honest absence",
+    );
+    assert_eq!(
+        cache.builds(),
+        4,
+        "neither the own grain nor a finer one builds"
+    );
+    assert_eq!(cache.entries().await, 4, "two entries per metric");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -23,7 +23,6 @@ rest = [
   "dep:bytes",
   "dep:serde",
   "dep:serde_json",
-  "dep:async-trait",
   "dep:http",
 ]
 
@@ -40,7 +39,7 @@ typetag = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-async-trait = { workspace = true, optional = true }
+async-trait = { workspace = true }
 http = { workspace = true, optional = true }
 iceberg-datafusion = { workspace = true }
 futures.workspace = true

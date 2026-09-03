@@ -154,12 +154,14 @@ disclosed rival, anything else a judged dimension column), `member`,
 `period` (a typed timestamp, the bucket's start), `value`, `num` /
 `den` (a ratio's summed halves, NULL elsewhere), `behavior` (the verb
 that made the row — `flow`, `stock` or `ratio`; a rival's may differ
-from the metric's). Without a grain each metric serves at its own
-resolution; with one (`minute` … `year`) every metric at or finer than
-it is re-bucketed on the server by the row's verb — a flow sums, a
-stock takes the bucket's last period, a ratio divides its summed
-halves — and a metric coarser than the asked grain serves no rows.
-The one argument is the grain; filters ride `WHERE`.
+from the metric's). Without a grain each metric serves its own cells,
+at its own resolution over its own rung. With one (`minute` … `year`)
+a metric at that resolution serves its own cells; a finer metric
+serves cells built at the asked grain over that grain's rung — the
+same grounding, verb and axes, cached beside its own cells — so a day
+metric's months span the month rung; a metric coarser than the asked
+grain serves no rows. The one argument is the grain; filters ride
+`WHERE`.
 
 ### metric_axes()
 

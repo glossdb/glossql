@@ -56,7 +56,8 @@ DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
 DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/prod', via: crm_prod);
 ```
 
-- `type`: `relational_db | parquet | csv | json`.
+- `type`: `relational_db | parquet | csv | json`; any other spelling is
+  refused at the declaration.
 - `location`: a url; for file sources, the root directory recipe paths
   resolve under — never credentials.
 - `via`: a reference to engine-held secrets. Secrets never appear in
@@ -128,6 +129,8 @@ DECLARE RELATIONSHIP txn.(business_id, account) -> coa.(business_id, code);
 - `->` is many-to-one (the FK direction); one-to-many is `->` written from
   the other side. `<->` is one-to-one. Many-to-many decomposes via a junction
   table.
+- An endpoint is a column of a landed table. A declaration naming a table
+  or column the dataset does not have is refused.
 - Relationships are **detected → verified → declared**: a function proposes
   candidates (a MEASUREMENT aspect, §5.1), an agent or human declares. Only
   declared relationships exist; there is no rejected or negative form — a
@@ -235,6 +238,9 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 - You cannot gloss an aspect that was not declared. Admission validates the
   body by the aspect's kind: FACT → the aspect's `WITH` schema, QUERY → the
   standard grounding schema, MEASUREMENT → rejected.
+- An aspect whose grain names `TABLE` or `COLUMN` takes only landed
+  subjects: the table, and the column, must exist in the dataset. An
+  aspect without a grain clause takes the subject as spelled.
 - The **standard grounding schema** is fixed, like the attest schema (§7.2):
 
 ```json

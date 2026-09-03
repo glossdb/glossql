@@ -225,8 +225,11 @@ what a build serves is what its suite tested.
 `POST /<dataset>/query` with statements as the body. A single read
 streams Arrow IPC (`application/vnd.apache.arrow.stream`) straight from
 the engine — batches encode as they arrive, memory rides one batch, no
-cap, and a client that hangs up cancels the work upstream. An error
-after bytes flowed breaks the stream; the break reports the failure. Everything
+cap, and a client that hangs up cancels the work upstream. The status
+is set on the first batch, not on the plan: a read the engine cannot
+start is 422 with the reason. An error after bytes flowed ends the
+body without its terminating chunk; the client's reader sees a
+truncated stream, and the server logs the reason. Everything
 else — statement sequences, declarations, writes — answers in the wire
 JSON shape; a refused statement is 422 with the reason, and a refused
 sequence carries the outcomes of the statements that stood under

@@ -13,7 +13,13 @@ before a `CAST` in the same WHERE (conjuncts reorder — only
 `try_cast` is safe on dirty text) · aliasing a projection to its own
 qualified source name (`round(j.x, 2) AS x`) · **two unaliased scalar
 subqueries in one projection** ("Projections require unique expression
-names" — alias both, or compute in a CTE).
+names" — alias both, or compute in a CTE) · `try_to_timestamp` with a
+date-only format (NULL — `try_to_date` parses it; a timestamp format
+must cover the whole value, seconds included) · `max`/`min` over a text
+column that should be numeric (lexicographic: `'99' > '100'`) ·
+`Function 'sum' requires Decimal, but received String` on a landed
+column (the column landed as text — the cast belongs in the recipe,
+`try_cast` at the read is the stopgap).
 
 Two more, specific to reads: an inner `ORDER BY` does not survive a
 derived relation, so order where you consume; and a correlated

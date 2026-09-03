@@ -55,6 +55,19 @@ pub enum Error {
     /// author looking at a recipe they have not written yet (run 4).
     #[error("probe failed: {0}")]
     Probe(DataFusionError),
+    /// The engine's `table '…' not found` from a recipe or probe at a
+    /// file source, with the road out: there, a table is a file.
+    #[error(
+        "{statement} failed: {engine} — at a {kind} source a table is a file, \
+         read through read_{kind}('<path under `{source_name}`>'); files present: {files}"
+    )]
+    NoTable {
+        statement: &'static str,
+        engine: String,
+        kind: &'static str,
+        source_name: String,
+        files: String,
+    },
     #[error("listing failed: {0}")]
     List(DataFusionError),
     #[error("recipe result: {0}")]
@@ -67,6 +80,35 @@ pub enum SourceKind {
     Csv,
     Json,
     RelationalDb,
+}
+
+/// The `type` vocabulary as SPEC.md §3 spells it, for the refusal that
+/// names it.
+pub const SOURCE_TYPES: &str = "relational_db, parquet, csv, json";
+
+impl SourceKind {
+    /// The `type` setting's spelling, exactly (SPEC.md §3) — `None` for
+    /// anything else, so a declaration can be refused where the typo is.
+    pub fn parse(spelled: &str) -> Option<Self> {
+        Some(match spelled {
+            "parquet" => SourceKind::Parquet,
+            "csv" => SourceKind::Csv,
+            "json" => SourceKind::Json,
+            "relational_db" => SourceKind::RelationalDb,
+            _ => return None,
+        })
+    }
+
+    /// The spelling back, which is also the `read_*` suffix for a file
+    /// source.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceKind::Parquet => "parquet",
+            SourceKind::Csv => "csv",
+            SourceKind::Json => "json",
+            SourceKind::RelationalDb => "relational_db",
+        }
+    }
 }
 
 /// A declared source, decoded from its stored `SET (…)` settings.
@@ -93,18 +135,11 @@ impl SourceSpec {
                     detail: format!("missing `{key}` in settings"),
                 })
         };
-        let kind = match get("type")? {
-            "parquet" => SourceKind::Parquet,
-            "csv" => SourceKind::Csv,
-            "json" => SourceKind::Json,
-            "relational_db" => SourceKind::RelationalDb,
-            other => {
-                return Err(Error::BadSource {
-                    name: name.into(),
-                    detail: format!("unknown type `{other}`"),
-                });
-            }
-        };
+        let spelled = get("type")?;
+        let kind = SourceKind::parse(spelled).ok_or_else(|| Error::BadSource {
+            name: name.into(),
+            detail: format!("unknown type `{spelled}` — one of {SOURCE_TYPES}"),
+        })?;
         let driver = settings
             .get("driver")
             .and_then(|v| v.as_str())
@@ -232,7 +267,10 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
     let seen: Scanned = Arc::default();
     let ctx = reader_ctx(spec, Some(Arc::clone(&seen)))?;
 
-    let df = ctx.sql_with_options(sql, read_only()).await?;
+    let df = match ctx.sql_with_options(sql, read_only()).await {
+        Ok(df) => df,
+        Err(e) => return Err(planning_error(spec, "recipe", Error::Recipe, e).await),
+    };
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
     let batches = df.collect().await?;
 
@@ -403,10 +441,10 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
         return Ok(batches);
     }
     let ctx = reader_ctx(spec, None)?;
-    let df = ctx
-        .sql_with_options(sql, read_only())
-        .await
-        .map_err(Error::Probe)?;
+    let df = match ctx.sql_with_options(sql, read_only()).await {
+        Ok(df) => df,
+        Err(e) => return Err(planning_error(spec, "probe", Error::Probe, e).await),
+    };
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
     // A rehearsal is read at the door like any other answer, so it stops at
     // the door's cap — a probe without a LIMIT used to pull the whole
@@ -434,6 +472,46 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
 /// `read_*` table functions and nothing else. Without this, DataFusion's
 /// default options let a body `COPY` to any path the process can write
 /// — the statement allowlist never sees this SQL.
+/// A planning error at a file source. The engine's `table '…' not found`
+/// (datafusion-53.1.0 session_state.rs:1824) leaves the author facing a
+/// name the recipe surface never had: here a table is a file, named
+/// through `read_*`. That one error carries the road out — the files
+/// under the source — and every other error passes as it came, under
+/// the statement's own name.
+async fn planning_error(
+    spec: &SourceSpec,
+    statement: &'static str,
+    wrap: fn(DataFusionError) -> Error,
+    e: DataFusionError,
+) -> Error {
+    let missing_table = matches!(
+        e.find_root(),
+        DataFusionError::Plan(m) if m.starts_with("table '") && m.ends_with("' not found")
+    );
+    if !missing_table || spec.kind == SourceKind::RelationalDb {
+        return wrap(e);
+    }
+    const SHOWN: usize = 12;
+    let files = match list_source(spec).await {
+        Ok(files) if files.is_empty() => "none".to_string(),
+        Ok(files) => {
+            let mut names: Vec<String> = files.iter().take(SHOWN).map(|f| f.path.clone()).collect();
+            if files.len() > SHOWN {
+                names.push(format!("… {} more", files.len() - SHOWN));
+            }
+            names.join(", ")
+        }
+        Err(list) => format!("(listing failed: {list})"),
+    };
+    Error::NoTable {
+        statement,
+        engine: e.to_string(),
+        kind: spec.kind.as_str(),
+        source_name: spec.name.clone(),
+        files,
+    }
+}
+
 fn read_only() -> datafusion::prelude::SQLOptions {
     datafusion::prelude::SQLOptions::new()
         .with_allow_ddl(false)

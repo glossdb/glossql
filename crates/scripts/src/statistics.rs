@@ -311,7 +311,7 @@ fn profile_value(a: &ArrayRef) -> ScriptResult<Value> {
             "total": n,
             "null_ratio": null_ratio,
             "distinct": distinct,
-            "note": "cached — the full profile reads back via GLOSSARY(table.column::profile)",
+            "note": "cached — the full profile reads back via GLOSSARY(table.column::column_profile)",
         }),
     );
     Ok(Value::Object(profile))

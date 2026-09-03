@@ -144,6 +144,29 @@ async fn the_query_door_streams_arrow_ipc() {
     assert_eq!(column.value(0), 2);
 }
 
+/// A read that plans but fails on its first poll — here a cast the
+/// engine only evaluates at execution — is refused with its text. The
+/// alternative is a 200, the schema, and a body that breaks: the
+/// status is set before any byte flows, so it is set on the first
+/// batch, not on the plan.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_query_door_refuses_a_read_the_engine_cannot_start() {
+    let (app, _dir) = app_on_fin().await;
+    let response = app
+        .oneshot(
+            Request::post("/fin/query")
+                .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                .body(Body::from("SELECT CAST('x' AS INT) AS n"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(response).await;
+    let error = body["error"].as_str().unwrap();
+    assert!(error.contains("'x'"), "{error}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_answers_a_statement_sequence_in_json() {
     let (app, _dir) = app_on_fin().await;

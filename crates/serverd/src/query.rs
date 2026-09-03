@@ -16,6 +16,8 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 
 use arrow_ipc::writer::StreamWriter;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::DataFusionError;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use glossql_session::{Caller, SessionError};
@@ -52,7 +54,15 @@ pub async fn query(
     match session.query_stream(&body).await {
         // The Arrow door never caps — metadata or data, the client
         // drains a stream; `metadata_only` is the MCP door's concern.
-        Ok(query) => stream(query.stream),
+        // The first poll runs the plan: a read the engine cannot start
+        // — a scan it refuses, an expression that fails on the first
+        // row — is a refusal with its text, not a 200 and a truncated
+        // stream. Nothing is on the wire yet, so the status is still
+        // ours to set.
+        Ok(mut query) => match query.stream.next().await {
+            Some(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+            first => stream(query.stream, first),
+        },
         // Not one query: statement sequences, declarations, and writes
         // run at the plane (`USE` selects the actor's channel there)
         // and answer in JSON.
@@ -83,11 +93,17 @@ pub async fn query(
     }
 }
 
-/// Encode into a chunked body as batches arrive. The channel's capacity
-/// is the backpressure: the encoder waits for the client to drain. An
-/// error after bytes flowed can only break the stream — the IPC reader
-/// on the other end sees a truncated stream, which is the truth.
-fn stream(mut batches: SendableRecordBatchStream) -> Response {
+/// Encode into a chunked body as batches arrive, `first` being the
+/// batch the caller already polled. The channel's capacity is the
+/// backpressure: the encoder waits for the client to drain. An error
+/// after bytes flowed can only break the stream — the body ends
+/// without its terminating chunk, so the IPC reader on the other end
+/// sees a truncated stream, which is the truth; the reason is logged
+/// here, the one place it can still be read.
+fn stream(
+    mut batches: SendableRecordBatchStream,
+    first: Option<Result<RecordBatch, DataFusionError>>,
+) -> Response {
     let schema = batches.schema();
     let (mut tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(2);
     tokio::spawn(async move {
@@ -102,17 +118,20 @@ fn stream(mut batches: SendableRecordBatchStream) -> Response {
         if ship(&mut writer, &mut tx).await.is_err() {
             return;
         }
-        while let Some(batch) = batches.next().await {
+        let mut next = first;
+        while let Some(batch) = next {
             let written = batch
                 .map_err(std::io::Error::other)
                 .and_then(|b| writer.write(&b).map_err(std::io::Error::other));
             if let Err(e) = written {
+                tracing::warn!(error = %e, "query stream broke after bytes flowed");
                 let _ = tx.send(Err(e)).await;
                 return;
             }
             if ship(&mut writer, &mut tx).await.is_err() {
                 return;
             }
+            next = batches.next().await;
         }
         if let Err(e) = writer.finish() {
             let _ = tx.send(Err(std::io::Error::other(e))).await;

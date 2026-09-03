@@ -105,7 +105,10 @@ impl Shared {
     /// is the arrangement [`glossql_glossary::Store`] already makes for
     /// the store's own head: a duplicate round trip is cheaper than an
     /// async-aware lock, and within one statement the two answers agree.
-    async fn pinned(&self, dataset: &str) -> Result<Arc<Vec<PinnedTable>>, SessionError> {
+    pub(crate) async fn pinned(
+        &self,
+        dataset: &str,
+    ) -> Result<Arc<Vec<PinnedTable>>, SessionError> {
         if let Some(held) = self.pins.read().expect("pins lock").get(dataset) {
             return Ok(Arc::clone(held));
         }

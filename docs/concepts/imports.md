@@ -13,7 +13,8 @@ DECLARE SOURCE erp_export SET (type: parquet, location: 'lake/erp');
 DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/prod', via: crm_prod);
 ```
 
-`type` is `relational_db | parquet | csv | json`. For file sources,
+`type` is `relational_db | parquet | csv | json`; any other spelling
+is refused at the declaration. For file sources,
 `location` is the root directory recipe paths resolve under; for a
 relational source it is the connection URI the recipe executes over.
 A file type describes the export, it does not constrain the recipe:
@@ -35,7 +36,9 @@ location, subdirectories included, through the same object store a
 lands nothing. It is the recipe rehearsal: the same SQL surface, the
 same path resolution, and the result always carries its schema — a
 `LIMIT 0` probe of the final SQL rehearses exactly the identity the
-recipe will stamp.
+recipe will stamp. At a file source a table is a file: a probe or
+recipe that names a plain table is refused with the source's files
+and the `read_*` call that reads one.
 
 ```glossql
 PROBE erp_export AS $$SELECT count(*) AS n, count(p_rec) AS reconciled_parsed

@@ -50,7 +50,10 @@ endpoint). The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP |
 SOURCE` list is the aspect's **grain** — the subject classes glosses
 may attach to. Absent, the aspect applies at all grains. Disclosure
 stays within grain: absence shows only on subjects the aspect is
-declared for.
+declared for. A `TABLE` or `COLUMN` grain also says the subject is
+landed: a gloss on a table or column that is not in the dataset is
+refused, and the refusal names what is. An aspect without a grain
+clause takes the subject as spelled.
 
 A grain may carry a **condition**: `ON COLUMN WHEN role = 'measure'`
 names a sibling aspect and a value, and the aspect is owed on a

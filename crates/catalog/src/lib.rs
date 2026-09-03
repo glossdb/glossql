@@ -26,7 +26,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub mod metadata;
+mod pushdown;
 pub use metadata::{IcebergMetadata, RelationSpec, Row};
+pub use pushdown::PrimitivePushdown;
 #[cfg(feature = "rest")]
 pub mod rest;
 
@@ -455,9 +457,11 @@ impl Lake {
             // `snapshot_id` above records (iceberg-rust table/mod.rs:245-261,
             // scan/mod.rs:216-231). A table with no snapshot yet scans empty
             // through the same call (scan/mod.rs:218-229).
-            let provider: Arc<dyn datafusion::catalog::TableProvider> = Arc::new(
+            // Behind [`PrimitivePushdown`]: a filter over a nested column
+            // stays with the engine instead of failing the scan.
+            let provider = PrimitivePushdown::wrap(Arc::new(
                 iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table).await?,
-            );
+            ));
             out.push(PinnedTable {
                 name: ident.name,
                 snapshot_id,

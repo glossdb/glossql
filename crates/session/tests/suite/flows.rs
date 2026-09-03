@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Float64Array, Int32Array, RecordBatch};
+use datafusion::arrow::array::{
+    Array, Float64Array, Int32Array, ListBuilder, RecordBatch, StringBuilder,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
@@ -34,6 +36,40 @@ async fn run(session: &Session, sql: &str) -> Vec<Outcome> {
         .execute(sql)
         .await
         .unwrap_or_else(|e| panic!("`{sql}` failed: {e}"))
+}
+
+/// Land `orders(id, customer_id, amount)` and `customers(id)` as
+/// fixture tables — what a relationship endpoint or a column-grain
+/// gloss must find.
+async fn land_orders_and_customers(session: &Session) {
+    let orders = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("customer_id", DataType::Int32, false),
+            Field::new("amount", DataType::Float64, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(Int32Array::from(vec![7, 7])),
+            Arc::new(Float64Array::from(vec![10.0, 32.5])),
+        ],
+    )
+    .unwrap();
+    let customers = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)])),
+        vec![Arc::new(Int32Array::from(vec![7]))],
+    )
+    .unwrap();
+    for (name, batch) in [("orders", orders), ("customers", customers)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
 }
 
 async fn table(session: &Session, sql: &str) -> String {
@@ -503,6 +539,7 @@ async fn reads_without_a_dataset_in_use_fail_loudly() {
 async fn gloss_on_a_pair_path_lands_under_the_relationship_subject() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
     run(
         &session,
         r#"
@@ -618,6 +655,19 @@ async fn a_validation_adjudicates_the_expectation_beside_the_check_voice() {
     // measured imbalance.
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
+    // The aspect is ON TABLE, so its subject must be landed.
+    let trial_balance = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new("account", DataType::Int32, false)])),
+        vec![Arc::new(Int32Array::from(vec![1000]))],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "trial_balance",
+            Arc::new(MemTable::try_new(trial_balance.schema(), vec![vec![trial_balance]]).unwrap()),
+        )
+        .await
+        .unwrap();
     run(
         &session,
         r##"
@@ -806,6 +856,7 @@ async fn witnesses_sharing_a_detector_hold_their_own_verdicts() {
     let (_dir, store) = scratch_store().await;
     let agent = session_with(ActorKind::Agent, "agent-1", &store).await;
     run(&agent, SETUP).await;
+    land_orders_and_customers(&agent).await;
     // A detector that actually reads its slots: one slot agrees with
     // itself, two disagree. What it answers therefore depends on the
     // witness it was called for — which is the point of this test.
@@ -1591,4 +1642,242 @@ async fn a_sources_files_list_from_inside_the_language() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("relational"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relationship_endpoint_must_be_a_landed_column() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+
+    // The refusal names the road out: the table's columns, or the
+    // dataset's tables.
+    let e = session
+        .execute("DECLARE RELATIONSHIP orders.nope -> customers.id;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`orders` has no column `nope`"), "{e}");
+    assert!(e.contains("columns: id, customer_id, amount"), "{e}");
+    let e = session
+        .execute("DECLARE RELATIONSHIP orders.customer_id -> parties.id;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`parties` is not a landed table in `fin`"), "{e}");
+    assert!(e.contains("tables: customers, orders"), "{e}");
+    // A tuple endpoint checks every column of the tuple.
+    let e = session
+        .execute("DECLARE RELATIONSHIP orders.(customer_id, region) -> customers.(id, region);")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`orders` has no column `region`"), "{e}");
+
+    run(
+        &session,
+        "DECLARE RELATIONSHIP orders.customer_id -> customers.id;",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_table_or_column_grain_gloss_must_find_its_subject() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT role WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+           DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE, COLUMN;"#,
+    )
+    .await;
+
+    let e = session
+        .execute(r#"GLOSS role ON orders.amt AS $${"value": "measure"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`orders` has no column `amt`"), "{e}");
+    let e = session
+        .execute(r#"GLOSS entity ON invoices AS $${"value": "x"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`invoices` is not a landed table in `fin`"), "{e}");
+    run(
+        &session,
+        r#"GLOSS role ON orders.amount AS $${"value": "measure"}$$;
+           GLOSS entity ON orders AS $${"value": "order"}$$;"#,
+    )
+    .await;
+
+    // No grain clause claims nothing about the schema: the subject is
+    // an address (an app's `app.page` rides the column shape), and
+    // stands unchecked.
+    run(
+        &session,
+        r#"GLOSS unit ON nowhere.at_all AS $${"value": "x"}$$;"#,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_missing_table_at_the_door_names_the_roads_out() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+
+    let e = session
+        .execute("SELECT * FROM tables;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not found"), "{e}");
+    assert!(e.contains("tables in `fin`: customers, orders"), "{e}");
+    assert!(
+        e.contains("the store's relations: glossary, imports"),
+        "{e}"
+    );
+
+    // Without a dataset in use the road out is USE.
+    let (_dir, bare) = agent_session().await;
+    let e = bare
+        .execute("SELECT * FROM orders;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("USE one first"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_type_outside_the_vocabulary_is_refused_at_declare() {
+    let (_dir, session) = agent_session().await;
+    let e = session
+        .execute("DECLARE SOURCE files SET (type: CSV, location: '/nowhere');")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("unknown type `CSV`"), "{e}");
+    assert!(e.contains("relational_db, parquet, csv, json"), "{e}");
+    let e = session
+        .execute("DECLARE SOURCE files SET (location: '/nowhere');")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("missing `type`"), "{e}");
+    run(
+        &session,
+        "DECLARE SOURCE files SET (type: csv, location: '/nowhere');",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_probe_naming_a_table_at_a_file_source_lists_the_files() {
+    let (dir, session) = agent_session().await;
+    let root = dir.path().join("field");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("work_orders.csv"), "id\n1\n").unwrap();
+    std::fs::write(root.join("sites.csv"), "id\n1\n").unwrap();
+    run(
+        &session,
+        &format!(
+            "DECLARE SOURCE field SET (type: csv, location: '{}');",
+            root.display()
+        ),
+    )
+    .await;
+
+    // A table name at a file source: the engine's text stays, the
+    // files and the read call that names one follow.
+    let e = session
+        .execute("PROBE field AS $$SELECT * FROM work_orders$$;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.starts_with("probe failed: "), "{e}");
+    assert!(e.contains("not found"), "{e}");
+    assert!(e.contains("read_csv("), "{e}");
+    assert!(e.contains("files present: sites.csv, work_orders.csv"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_json_arrow_read_leaves_the_engine_as_text() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let outcomes = run(
+        &session,
+        r#"SELECT '{"a": 1, "b": "x"}' -> 'a' AS a, '{"a": 1, "b": "x"}' -> 'b' AS b;"#,
+    )
+    .await;
+    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+        panic!("no rows");
+    };
+    // The union the JSON functions return never reaches a consumer:
+    // arrow's JSON writer refuses it at the doors.
+    for field in batches[0].schema().fields() {
+        assert!(
+            !matches!(field.data_type(), DataType::Union(..)),
+            "{field:?}"
+        );
+    }
+    let shown = pretty_format_batches(&batches).unwrap().to_string();
+    assert!(shown.contains("| 1 ") && shown.contains("\"x\""), "{shown}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_filter_on_a_list_column_stays_with_the_engine() {
+    // iceberg evaluates a pushed predicate through field accessors,
+    // which primitive fields alone have: `IS NULL` on a list column
+    // pushed to the scan fails at its first poll. The pin declines the
+    // pushdown, so the filter runs in the engine over the scanned rows.
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let mut category = ListBuilder::new(StringBuilder::new());
+    category.values().append_value("tools");
+    category.append(true);
+    category.append(false);
+    category.values().append_value("a");
+    category.values().append_value("b");
+    category.append(true);
+    let category = category.finish();
+    let product = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("category", category.data_type().clone(), true),
+        ])),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3])), Arc::new(category)],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "product",
+            Arc::new(MemTable::try_new(product.schema(), vec![vec![product]]).unwrap()),
+        )
+        .await
+        .unwrap();
+
+    let none = table(
+        &session,
+        "SELECT count(*) AS n FROM product WHERE category IS NULL;",
+    )
+    .await;
+    assert!(none.contains("| 1 "), "{none}");
+    let some = table(
+        &session,
+        "SELECT id FROM product WHERE category IS NOT NULL ORDER BY id;",
+    )
+    .await;
+    assert!(
+        some.contains("| 1 ") && some.contains("| 3 ") && !some.contains("| 2 "),
+        "{some}"
+    );
+    // A primitive filter beside it is unaffected.
+    let both = table(
+        &session,
+        "SELECT count(*) AS n FROM product WHERE category IS NOT NULL AND id > 1;",
+    )
+    .await;
+    assert!(both.contains("| 1 "), "{both}");
 }

@@ -2,13 +2,15 @@
 
 use std::sync::{Arc, RwLock};
 
+use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider, TableProvider};
-use datafusion::common::{DataFusionError, ParamValues};
+use datafusion::common::{Column, DataFusionError, ParamValues};
 use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::{
@@ -22,7 +24,7 @@ use glossql_catalog::{IcebergCatalogProvider, Lake};
 use glossql_glossary::{Actor, RecipeAdmission, Store, schemas};
 use glossql_import::SourceSpec;
 use glossql_parser::{
-    Declaration, Extract, Gloss, GlossqlParser, Probe, RelOp, Statement, Subject,
+    Declaration, Extract, Gloss, GlossqlParser, Probe, RelOp, SettingValue, Statement, Subject,
 };
 
 use crate::reads::{GlossqlReads, Shared};
@@ -40,6 +42,10 @@ pub enum SessionError {
     NoDataset,
     #[error("not a subject: {0}")]
     BadSubject(String),
+    /// The planner's `table '…' not found`, carrying what the name could
+    /// have been. The engine's text is kept whole in front.
+    #[error("{0}")]
+    UnknownTable(String),
     #[error("unknown function `{0}` — DECLARE it (or check its FOR scope)")]
     UnknownFunction(String),
     #[error("output of `{function}` violates the schema of the aspect it RETURNS: {detail}")]
@@ -539,6 +545,32 @@ impl Session {
         let store = &self.shared.store;
         let done = match &declaration {
             Declaration::Source(d) => {
+                // SPEC.md §3 rules the `type` vocabulary; a spelling
+                // outside it is refused here, where the typo is, rather
+                // than at the first recipe against the source.
+                let spelled = d
+                    .settings
+                    .iter()
+                    .find(|s| s.key.value == "type")
+                    .map(|s| match &s.value {
+                        SettingValue::Name(n) => n.value.clone(),
+                        SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
+                    });
+                if spelled
+                    .as_deref()
+                    .and_then(glossql_import::SourceKind::parse)
+                    .is_none()
+                {
+                    let types = glossql_import::SOURCE_TYPES;
+                    return Err(glossql_import::Error::BadSource {
+                        name: d.name.value.clone(),
+                        detail: match spelled {
+                            Some(t) => format!("unknown type `{t}` — one of {types}"),
+                            None => format!("missing `type` — one of {types}"),
+                        },
+                    }
+                    .into());
+                }
                 store.declare_source(d).await?;
                 format!("DECLARE SOURCE {}", d.name.value)
             }
@@ -595,6 +627,16 @@ impl Session {
             }
             Declaration::Relationship(d) => {
                 let (left, op, right) = self.pair(&d.left, d.op, &d.right).await?;
+                // An endpoint is a key column of a landed table (SPEC.md
+                // §4). A column that is not there is refused here, where
+                // the typo is, instead of reading later as an orphan rate
+                // in `relationship_coherence`.
+                for side in [&d.left, &d.right] {
+                    let (table, columns) = endpoint_parts(side);
+                    let table = table.last().expect("an endpoint names its table");
+                    let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
+                    self.check_landed(&left.dataset, table, &columns).await?;
+                }
                 store
                     .declare_relationship(&left.dataset, &left.subject, op, &right.subject)
                     .await?;
@@ -789,10 +831,86 @@ impl Session {
         Ok(lake.snapshot_id(&resolved.dataset, table).await?)
     }
 
+    /// The gloss half of the landed-subject rule: when the subject's
+    /// shape is a table or a column and the aspect admits that grain,
+    /// the table (and the column) must be landed. A source name is
+    /// SOURCE grain and the grain gate's business; a pair path is the
+    /// relationship's, checked at its declaration.
+    async fn check_glossed_subject(
+        &self,
+        resolved: &Resolved,
+        grains: &str,
+    ) -> Result<(), SessionError> {
+        let grain = glossql_glossary::rules::grain_of(&resolved.dataset, &resolved.subject);
+        if !matches!(grain, "table" | "column") || !grains.split(',').any(|g| g == grain) {
+            return Ok(());
+        }
+        if self
+            .shared
+            .store
+            .source_settings(&resolved.subject)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let (table, column) = match resolved.subject.split_once('.') {
+            Some((table, column)) => (table, Some(column)),
+            None => (resolved.subject.as_str(), None),
+        };
+        let columns: Vec<&str> = column.into_iter().collect();
+        self.check_landed(&resolved.dataset, table, &columns).await
+    }
+
+    /// A subject that claims a landed table or column must find it.
+    /// Refused with the road out — the dataset's tables, or the table's
+    /// columns — the way the planner's own `No field named` names the
+    /// valid fields. Reads the statement's catalog walk, so a check
+    /// costs no extra round trip.
+    async fn check_landed(
+        &self,
+        dataset: &str,
+        table: &str,
+        columns: &[&str],
+    ) -> Result<(), SessionError> {
+        let pins = self.shared.pinned(dataset).await?;
+        let Some(pin) = pins.iter().find(|p| p.name == table) else {
+            let mut names: Vec<&str> = pins.iter().map(|p| p.name.as_str()).collect();
+            names.sort_unstable();
+            let tables = if names.is_empty() {
+                "none landed yet".to_string()
+            } else {
+                names.join(", ")
+            };
+            return Err(SessionError::BadSubject(format!(
+                "`{table}` is not a landed table in `{dataset}` — tables: {tables}"
+            )));
+        };
+        if let Some(missing) = columns
+            .iter()
+            .find(|c| !pin.columns.iter().any(|have| have == *c))
+        {
+            return Err(SessionError::BadSubject(format!(
+                "`{table}.{missing}`: `{table}` has no column `{missing}` — columns: {}",
+                pin.columns.join(", ")
+            )));
+        }
+        Ok(())
+    }
+
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
         let resolved = self.subject(&gloss.subject).await?;
-        let snapshot = self.stamp(&resolved).await?;
         let aspect = gloss.aspect.value.as_str();
+        // An aspect declared ON TABLE or ON COLUMN says its subject is
+        // one, so the subject must be landed — checked here, where the
+        // typo is. An aspect with no grain clause claims nothing about
+        // the schema: its subject is an address (an app's `app.page`
+        // rides the column shape), and stands unchecked. An unknown
+        // aspect is the store's refusal, below.
+        if let Some((_, _, Some(grains))) = self.shared.store.aspect(aspect).await? {
+            self.check_glossed_subject(&resolved, &grains).await?;
+        }
+        let snapshot = self.stamp(&resolved).await?;
         self.shared
             .store
             .gloss(
@@ -1044,8 +1162,12 @@ impl Session {
         let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
         let record = resolved.touches_record();
         let reads = resolved.reads.clone();
+        let tables = resolved.tables();
         let state = crate::reads::state_with(&self.ctx, &self.shared, resolved);
-        let plan = state.statement_to_plan(statement).await?;
+        let plan = match state.statement_to_plan(statement).await {
+            Ok(plan) => plan,
+            Err(e) => return Err(self.table_road_out(e, tables)),
+        };
         // The substrate's own read-only verification, at the one place a
         // plan is made. Planning mints nothing — `execute_logical_plan`
         // does (datafusion context/mod.rs:699) — so the plan is what to
@@ -1061,7 +1183,33 @@ impl Session {
         read_only()
             .verify_plan(&plan)
             .map_err(|_| SessionError::SubstrateClosed("SELECT INTO".into()))?;
-        Ok((plan, record, reads))
+        Ok((json_unions_as_text(plan)?, record, reads))
+    }
+
+    /// The planner's `table '…' not found` (datafusion-53.1.0
+    /// session_state.rs:1824) with the road out: what the name could
+    /// have been — the bound dataset's tables and the store's relations.
+    /// The engine's text stays in front; every other planning error
+    /// passes as it came.
+    fn table_road_out(&self, e: DataFusionError, mut tables: Vec<String>) -> SessionError {
+        let missing_table = matches!(
+            e.find_root(),
+            DataFusionError::Plan(m) if m.starts_with("table '") && m.ends_with("' not found")
+        );
+        if !missing_table {
+            return e.into();
+        }
+        tables.sort_unstable();
+        let tables = match (self.dataset(), tables.is_empty()) {
+            (None, _) => "no dataset in use — USE one first".to_string(),
+            (Some(d), true) => format!("no table landed in `{d}` yet"),
+            (Some(d), false) => format!("tables in `{d}`: {}", tables.join(", ")),
+        };
+        let relations: Vec<&str> = glossql_glossary::RELATIONS.iter().map(|r| r.name).collect();
+        SessionError::UnknownTable(format!(
+            "{e} — {tables}; the store's relations: {}",
+            relations.join(", ")
+        ))
     }
 
     pub async fn query_stream(&self, sql: &str) -> Result<QueryStream, SessionError> {
@@ -1339,6 +1487,35 @@ impl Session {
         };
         Ok((l, op, r))
     }
+}
+
+/// The JSON functions' union — what `->` and `json_get` return — cannot
+/// leave the engine: arrow's JSON writer refuses an Arrow Union at the
+/// doors, and the parquet writer refuses it at a staging. A plan whose
+/// output carries one is projected through the functions' own
+/// `json_union_to_text`, so every consumer — a door, a measurement's
+/// value, a materialization — reads canonical JSON text. Plans without
+/// one pass untouched.
+fn json_unions_as_text(plan: LogicalPlan) -> Result<LogicalPlan, DataFusionError> {
+    use datafusion_functions_json::JSON_UNION_DATA_TYPE;
+    let is_union = |dt: &DataType| dt == &*JSON_UNION_DATA_TYPE;
+    if !plan.schema().fields().iter().any(|f| is_union(f.data_type())) {
+        return Ok(plan);
+    }
+    let to_text = datafusion_functions_json::udfs::json_union_to_text_udf();
+    let exprs: Vec<Expr> = plan
+        .schema()
+        .iter()
+        .map(|(qualifier, field)| {
+            let column = Expr::Column(Column::from((qualifier, field)));
+            if is_union(field.data_type()) {
+                to_text.call(vec![column]).alias(field.name())
+            } else {
+                column
+            }
+        })
+        .collect();
+    LogicalPlanBuilder::from(plan).project(exprs)?.build()
 }
 
 /// An endpoint's `[dataset.]table` segments beside its key columns.
