@@ -96,6 +96,22 @@ For a grounding you stopped (`stopped` in place of `sql`,
 `references/ground.md`) the row abstains with your own text as the
 reason.
 
+## SQL here
+
+The engine is DataFusion behind a postgres parser. Three refusals cost
+most of the lost calls:
+
+- Unquoted names fold to lowercase. A table or column landed with
+  capitals is reached only quoted: `"SearchStream"."ObjectType"`. Land
+  tables lowercase and the quotes are never needed.
+- `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
+  SELECT list, a `FILTER (WHERE …)` or a CASE they are refused:
+  `Physical plan does not support logical expression`. Write the join:
+  JOIN, LEFT JOIN … IS NULL, or a window function.
+- `count(DISTINCT (a, b))` over millions of rows exhausts the memory
+  pool. Use `approx_distinct`, or GROUP BY the keys in a CTE and count
+  the rows.
+
 ## The pages
 
 | reference | open it |

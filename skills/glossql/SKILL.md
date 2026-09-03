@@ -16,6 +16,10 @@ normative — read them, don't reconstruct them:
   library; §7 witnesses and attestation.
 - `doc://grammar.ebnf` — the machine-readable syntax, likewise.
 
+Skills and docs are resources: read every `skill://` and `doc://`
+name with your client's resource reader. The statement door accepts
+statements only.
+
 Everything *live* — the declared vocabulary, the tables, the record —
 is read through the language itself, never assumed.
 
@@ -74,7 +78,8 @@ reads across datasets from anywhere.
 | `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple: `a.(x, y) -> b.(x, y)`; both endpoints must be landed columns — the refusal lists what is |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; an aspect ON TABLE or ON COLUMN takes only a landed table or column; on a QUERY aspect the outcome is the metric's fact row (the `metric_axes()` shape, above) |
-| `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot |
+| `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per aspect |
+| `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw; `all => true` is the call's second argument, never a WHERE condition |
 | `DECLARE FUNCTION f FOR ops\|GLOBAL AS $$body$$ [RETURNS aspect];` | register a function — with `RETURNS` the body is one SQL query the engine plans, without it a detector script; the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) |
 | `SELECT f() FROM work_orders.duration_min;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; the outcome's `computed` column says which happened (false: the recorded row served, its `computed_at` the earlier run's); a body carrying a `summary` object serves the summary alone (the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
@@ -120,8 +125,8 @@ anything.
 - `GLOSSARY(subject)` — the collapsed read, columns
   `(subject, aspect, value, band, score, state)` with `state` in
   `current | stale | contested | unassessed`; a contested value is
-  withheld, and absence is a visible row. **`all => true` is a
-  different shape**: the raw slots,
+  withheld, and absence is a visible row. **`GLOSSARY(subject, all =>
+  true)` is a different shape**: the raw slots,
   `(subject, aspect, kind, witness, actor, body, written_at, current)`
   — no `value`, no `state`; the winning voice is yours to read off the
   slots, and `current` is false for a function voice landed before the
