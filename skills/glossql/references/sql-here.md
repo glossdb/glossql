@@ -11,8 +11,10 @@ Names that postgres reflexes get wrong here: `sign` is `signum` ·
 `len` is `length` · `regexp_extract` is `regexp_match` (a list —
 index it, `[1]`) · `strptime` / `try_strptime` is `to_timestamp(x,
 format)` and `try_to_timestamp` · `to_char` takes a Chrono pattern
-(`%Y-%m`), never `YYYY-MM`. The refusal suggests the near miss; these
-are the far ones.
+(`%Y-%m`), never `YYYY-MM` · `date_diff` / `datediff` do not exist —
+a difference is `to_unixtime(b) - to_unixtime(a)` in seconds, on
+dates as well as timestamps. The refusal suggests the near miss;
+these are the far ones.
 
 Shapes the parser refuses at this pin: the parser dialect is postgres,
 so generic-dialect syntax from the guide does not parse — `SELECT *
@@ -27,10 +29,13 @@ Names are case-folded: an unquoted `AdsInfo` reaches `adsinfo`, and a
 table landed with capitals is found only quoted — `"AdsInfo"` — or
 landed lowercase.
 
-Correlated subqueries are rewritten into joins, and the planner refuses
-the shapes it cannot rewrite (a `NOT EXISTS` over a read that extracts
-JSON is one); the refusal names it — write the LEFT JOIN and a count
-instead.
+`EXISTS` and `IN (SELECT …)` are rewritten into joins only as plain
+WHERE conjuncts whose subquery mentions the outer row in its own WHERE
+alone. Anywhere else — inside `FILTER (WHERE …)`, a SELECT list, a
+CASE, an OR — or with the outer column in the subquery's SELECT list,
+a window, an aggregate or a LIMIT, the subquery reaches the planner
+unrewritten: `Physical plan does not support logical expression
+Exists`. Write the LEFT JOIN and a count instead.
 
 What lands wrong without failing: a `LIKE` guard before a `CAST` in
 the same WHERE (conjuncts reorder — only `try_cast` is safe on dirty

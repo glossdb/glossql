@@ -16,6 +16,11 @@ normative — read them, don't reconstruct them:
   library; §7 witnesses and attestation.
 - `doc://grammar.ebnf` — the machine-readable syntax, likewise.
 
+Every `doc://` and `skill://` name is an MCP resource: read it with
+your client's resource read. The statement door serves statements
+only — `SELECT * FROM skill://…` is a parse error, and there is no
+`resource` table.
+
 Everything *live* — the declared vocabulary, the tables, the record —
 is read through the language itself, never assumed.
 
@@ -59,7 +64,9 @@ statements after it and expires when the call does, so it belongs in
 each call, not just the first. A call that names none is
 workspace-scoped, which is what `SELECT * FROM datasets` and a
 source-grain gloss both want. A qualified `dataset.table.column`
-reads across datasets from anywhere.
+names a subject across datasets from anywhere; a SQL read reaches
+only the tables of the dataset in use, so `DESCRIBE amazon.review`
+without `USE amazon` is refused.
 
 ## The statement set
 
@@ -74,7 +81,8 @@ reads across datasets from anywhere.
 | `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple: `a.(x, y) -> b.(x, y)`; both endpoints must be landed columns — the refusal lists what is |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the one validated contract; `ON` is the grain — the subject classes it speaks to (DATASET/TABLE/COLUMN/RELATIONSHIP/SOURCE, absent = all), and `unassessed` disclosure stays within it; `WHEN` narrows relevance to subjects whose sibling aspect carries the value (bounds disclosure, never writes); SOURCE-grain slots read and supersede across datasets |
 | `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; an aspect ON TABLE or ON COLUMN takes only a landed table or column; on a QUERY aspect the outcome is the metric's fact row (the `metric_axes()` shape, above) |
-| `SELECT … FROM GLOSSARY(subject);` | the collapsed context; `all => true` for every slot |
+| `SELECT … FROM GLOSSARY(subject);` | the collapsed context — one row per aspect, the winning value |
+| `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw; `all => true` is the call's second argument, never a WHERE condition |
 | `DECLARE FUNCTION f FOR ops\|GLOBAL AS $$body$$ [RETURNS aspect];` | register a function — with `RETURNS` the body is one SQL query the engine plans, without it a detector script; the body rides the statement, so `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) |
 | `SELECT f() FROM work_orders.duration_min;` | extract — computes at the read's pin and lands a `measurements` row; the same pin serves the row back, any input moving makes a new pin and recomputes; the outcome's `computed` column says which happened (false: the recorded row served, its `computed_at` the earlier run's); a body carrying a `summary` object serves the summary alone (the profile) — the full body reads back via `GLOSSARY(subject::aspect)`, uncapped |
 | `DECLARE WITNESS w ON aspect [BY (AGENT, HUMAN)] [DETECTOR f THRESHOLD x];` | admit speakers, wire adjudication |
@@ -120,8 +128,8 @@ anything.
 - `GLOSSARY(subject)` — the collapsed read, columns
   `(subject, aspect, value, band, score, state)` with `state` in
   `current | stale | contested | unassessed`; a contested value is
-  withheld, and absence is a visible row. **`all => true` is a
-  different shape**: the raw slots,
+  withheld, and absence is a visible row. **`GLOSSARY(subject, all =>
+  true)` is a different shape**: the raw slots,
   `(subject, aspect, kind, witness, actor, body, written_at, current)`
   — no `value`, no `state`; the winning voice is yours to read off the
   slots, and `current` is false for a function voice landed before the
@@ -294,8 +302,39 @@ interpret the human's prose. Forms carry only standing assumptions
 to confirm or correct; they cannot replace conversation — there is
 nothing standing to confirm yet.
 
-The engine's refusals are exact and name what was wrong. Its own SQL
+## What the engine refuses, and the shape that plans
+
+The engine is DataFusion at a pinned version behind a postgres parser
+dialect. Its refusals are exact and name what was wrong. Its own SQL
 guide at this pin is served as `doc://vendor/datafusion/sql/…` — a
 function's name or signature is a lookup there, never a guess — and
-what fails here that the guide cannot say is `references/sql-here.md`,
-served beside this page as `skill://glossql/<reference>`.
+the long list of what fails here that the guide cannot say is
+`references/sql-here.md`, served beside this page as
+`skill://glossql/<reference>`. Four refusals account for most lost
+calls:
+
+- **Names fold to lowercase unless quoted.** An unquoted `AdsInfo`
+  reaches `adsinfo`; a table landed with capitals is found only
+  quoted — `"AdsInfo"`, in `DESCRIBE` too. Land tables lowercase
+  (`DECLARE RECIPE ads_info …`) and the quotes are never needed.
+- **`EXISTS` and `IN (SELECT …)` plan only as a plain WHERE
+  conjunct.** That one shape is rewritten into a join. Inside
+  `FILTER (WHERE …)`, a SELECT list, a CASE or an OR, the subquery
+  reaches the planner unrewritten and is refused — `Physical plan
+  does not support logical expression Exists`. Write the join:
+
+  ```sql
+  SELECT count(*) AS total, count(i.search_id) AS matched
+  FROM search_stream s
+  LEFT JOIN (SELECT DISTINCT search_id FROM search_info) i ON i.search_id = s.search_id
+  ```
+
+- **A distinct count over a tuple does not fit the pool.** The pool
+  is bounded (4 GB unless the server was started with more) and
+  nothing spills, so `count(DISTINCT (a, b))` over a million rows is
+  refused with `Resources exhausted`: one aggregate builds a struct
+  per row. Count the grouped rows instead —
+  `SELECT count(*) FROM (SELECT DISTINCT a, b FROM t)` — or
+  `approx_distinct(a)` when an estimate serves.
+- **`read.<metric>()` is a relation, never a scalar** — `SELECT value
+  FROM read.share()`, not `SELECT read.share()`.

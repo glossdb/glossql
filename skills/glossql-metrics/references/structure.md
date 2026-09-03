@@ -10,9 +10,19 @@ verdict, and it is judged from the data, never from the name.
   `dimension` (descriptive, referenced by others), read from the
   evidence: measures, an event date, row counts, who references whom.
 - **grain** — the columns identifying one row. **Verify, never
-  assert**: `COUNT(*)` must equal `SELECT count(*) FROM (SELECT DISTINCT
-  col, …)`. Spell it as that subquery — `COUNT(DISTINCT (col, …))`
-  builds a struct per row and runs out of memory on a large table.
+  assert**: `count(*)` must equal the count of the distinct key
+  tuples. Spell it as the grouped subquery, never as
+  `count(DISTINCT (col, …))` — that builds a struct per row inside one
+  aggregate that cannot spill, and the pool refuses it on a large
+  table (`Resources exhausted`); the grouped form counts the same
+  thing within a few megabytes:
+
+  ```sql
+  SELECT count(*) AS rows_seen,
+         (SELECT count(*) FROM (SELECT DISTINCT order_id, visit_no FROM work_orders)) AS keys_seen
+  FROM work_orders
+  ```
+
   A composite grain gets the composite; a table with no key gets none,
   said plainly. Watch for document-header values repeated onto every
   line — summing them at row grain multiplies by line count.
@@ -34,8 +44,17 @@ measurement ON DATASET, so its subject is the dataset, never a table.
 `detect_relationships` proposes at high recall — false positives
 included, you are the precision. Per candidate, before declaring:
 
-- **Anti-join both directions and *read* what doesn't resolve.** An
-  orphan count is a question, not a verdict: orphans that are exactly
+- **Anti-join both directions and *read* what doesn't resolve.** The
+  anti-join is a LEFT JOIN with an `IS NULL` test; an `EXISTS` inside
+  a `FILTER` or a CASE is refused at this pin, the LEFT JOIN is the
+  shape that plans:
+
+  ```sql
+  SELECT count(*) AS orphans FROM work_orders w
+  LEFT JOIN sites s ON s.id = w.site_id WHERE s.id IS NULL
+  ```
+
+  An orphan count is a question, not a verdict: orphans that are exactly
   a business population (the cancelled orders, the pre-migration
   records) confirm the edge; random misses argue against it.
 - **Distrust coincidence.** Two unique integer columns overlap
