@@ -39,10 +39,8 @@ nobody reaches for them by reflex. The habit to break is the
 postgres shape: a self-join per comparison, a subquery per rank.
 The engine's own guide at this pin is on the door —
 `doc://vendor/datafusion/sql/…`, the scalar functions by family under
-`scalar/`; the four refusals every session meets are on the `glossql`
-skill's page, and `skill://glossql/references/sql-here.md` is the
-rest of what fails here that the guide cannot say. This is what
-pays.
+`scalar/` — and `skill://glossql/references/sql-here.md` is what fails
+here that the guide cannot say. This is what pays.
 
 **One scan, many answers.** Declare the window once and reuse it;
 `FILTER (WHERE …)` pivots a driver into a column without a self-join
