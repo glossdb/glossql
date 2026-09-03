@@ -20,7 +20,8 @@ EXCLUDE (…)`, `SELECT * EXCEPT (…)` · window *inheritance* (`OVER (w
 ORDER BY …)` extending a named window; a named window itself is fine)
 · `=>` outside the door's table functions — the engine's own functions
 are positional · `information_schema` (off — the glossary is the
-discovery surface, and richer; `DESCRIBE <table>` for a landed table).
+discovery surface, and richer; `SHOW TABLES` lists the bound dataset's
+tables and `DESCRIBE <name>` describes any readable name).
 
 Names are case-folded: an unquoted `AdsInfo` reaches `adsinfo`, and a
 table landed with capitals is found only quoted — `"AdsInfo"` — or

@@ -1291,7 +1291,8 @@ impl Session {
 
     /// Substrate SQL runs behind an allowlist:
     /// queries pass, `DESCRIBE`/`EXPLAIN` pass as reads (`DESCRIBE`
-    /// over any name a read can plan — [`Self::describe`]), the
+    /// over any name a read can plan — [`Self::describe`]), `SHOW
+    /// TABLES` lists the bound dataset ([`Self::show_tables`]), the
     /// store's forwarded deletes pass, `DROP TABLE` routes to engine
     /// semantics — everything else that would alter the schema or data
     /// directly is refused. Tables come from recipes.
@@ -1338,6 +1339,7 @@ impl Session {
                 SQLStatement::ExplainTable { table_name, .. } => {
                     return self.describe(&table_name.to_string()).await;
                 }
+                SQLStatement::ShowTables { .. } => return self.show_tables().await,
                 SQLStatement::Drop {
                     object_type, names, ..
                 } if *object_type == ObjectType::Table && names.len() == 1 => {
@@ -1414,6 +1416,37 @@ impl Session {
                 column(|f| f.name().to_string()),
                 column(|f| f.data_type().to_string()),
                 column(|f| if f.is_nullable() { "YES" } else { "NO" }.to_string()),
+            ],
+        )
+        .map_err(DataFusionError::from)?;
+        Ok(Outcome::Rows(vec![batch]))
+    }
+
+    /// `SHOW TABLES`: the bound dataset's landed tables as
+    /// `(dataset, table_name)` — the names a read can use unqualified.
+    /// Refused without a `USE`; the store's relations and the shipped
+    /// reads are not tables and are not listed (the glossql skill names
+    /// them, `DESCRIBE` describes them).
+    async fn show_tables(&self) -> Result<Outcome, SessionError> {
+        let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+        let mut names: Vec<String> = self
+            .shared
+            .statement_pins()
+            .await?
+            .into_keys()
+            .collect();
+        names.sort();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("dataset", DataType::Utf8, false),
+            Field::new("table_name", DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from_iter_values(
+                    names.iter().map(|_| dataset.as_str()),
+                )) as ArrayRef,
+                Arc::new(StringArray::from_iter_values(names.iter().map(String::as_str))),
             ],
         )
         .map_err(DataFusionError::from)?;

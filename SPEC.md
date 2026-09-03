@@ -93,7 +93,8 @@ table, and refuses while it holds data or glosses.
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
 name a read can plan — a landed table, a store relation, a shipped
-read; `EXPLAIN` only over a query), `DROP TABLE` routes to the rules
+read; `SHOW TABLES` lists the bound dataset's tables; `EXPLAIN` only
+over a query), `DROP TABLE` routes to the rules
 above, and everything else that would alter schema or data directly is
 refused. Tables come from recipes.
 

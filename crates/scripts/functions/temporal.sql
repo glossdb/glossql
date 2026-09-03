@@ -7,14 +7,20 @@
 -- to one CASE ladder. Completeness counts calendar buckets over the
 -- column's own window — a grain's nominal seconds serve inference only,
 -- never a period denominator (months vary); the bucket count computes
--- per grain and the ladder picks, because date_trunc wants its grain as
--- a literal. Gaps are the stretches beyond twice the median; the sample
+-- per grain and the ladder picks. Gaps are the stretches beyond twice the median; the sample
 -- keeps the 20 largest and the count stays true. Two v0.3 fields stayed
 -- behind: is_stale (a verdict about now is judgment, and judgment lives
 -- in detectors and read policy, never in results) and
 -- last_period_complete (low-signal by its own documentation).
 -- A point in time bounds a window; durations and times-of-day do not
 -- (v0.3's TIME_POINT_TYPES rule, by type never by name).
+-- The casts land on microseconds, never nanoseconds: an open-ended
+-- sentinel such as 9999-01-01 sits past the nanosecond range (which
+-- ends in 2262) and the engine refuses the cast even as TRY_CAST. The
+-- same range rules out date_trunc for the bucket keys — its calendar
+-- grains scale every unit to nanoseconds first (datafusion-functions
+-- 54.1.0 date_trunc.rs:707) — so buckets are epoch arithmetic for the
+-- fixed grains and calendar extraction for the rest.
 WITH bounds AS (
   SELECT count(v) AS present, min(v) AS min_v, max(v) AS max_v,
          arrow_typeof(min(v)) AS ty
@@ -25,12 +31,12 @@ w AS (
          (ty LIKE 'Date%' OR ty LIKE 'Timestamp%') AS temporal,
          CAST(min_v AS VARCHAR) AS min_s,
          CAST(max_v AS VARCHAR) AS max_s,
-         to_unixtime(TRY_CAST(max_v AS TIMESTAMP))
-           - to_unixtime(TRY_CAST(min_v AS TIMESTAMP)) AS span_seconds
+         to_unixtime(TRY_CAST(max_v AS TIMESTAMP(6)))
+           - to_unixtime(TRY_CAST(min_v AS TIMESTAMP(6))) AS span_seconds
   FROM bounds
 ),
 ordered_ts AS (
-  SELECT DISTINCT TRY_CAST(v AS TIMESTAMP) AS t
+  SELECT DISTINCT TRY_CAST(v AS TIMESTAMP(6)) AS t
   FROM subject_column($subject) WHERE v IS NOT NULL
 ),
 gap AS (
@@ -109,14 +115,15 @@ samp AS (
 comp AS (
   SELECT
     min(t) AS lo_t, max(t) AS hi_t,
-    count(DISTINCT date_trunc('second', t)) AS a_second,
-    count(DISTINCT date_trunc('minute', t)) AS a_minute,
-    count(DISTINCT date_trunc('hour', t)) AS a_hour,
-    count(DISTINCT date_trunc('day', t)) AS a_day,
-    count(DISTINCT date_trunc('week', t)) AS a_week,
-    count(DISTINCT date_trunc('month', t)) AS a_month,
-    count(DISTINCT date_trunc('quarter', t)) AS a_quarter,
-    count(DISTINCT date_trunc('year', t)) AS a_year
+    count(DISTINCT to_unixtime(t)) AS a_second,
+    count(DISTINCT floor(to_unixtime(t) / 60.0)) AS a_minute,
+    count(DISTINCT floor(to_unixtime(t) / 3600.0)) AS a_hour,
+    count(DISTINCT floor(to_unixtime(t) / 86400.0)) AS a_day,
+    -- ISO weeks start Monday; the epoch is a Thursday, three days in.
+    count(DISTINCT floor((to_unixtime(t) + 259200) / 604800.0)) AS a_week,
+    count(DISTINCT extract(year FROM t) * 12 + extract(month FROM t)) AS a_month,
+    count(DISTINCT extract(year FROM t) * 4 + extract(quarter FROM t)) AS a_quarter,
+    count(DISTINCT extract(year FROM t)) AS a_year
   FROM ordered_ts WHERE t IS NOT NULL
 ),
 -- Calendar grains count by calendar arithmetic; fixed grains by epoch
@@ -129,16 +136,15 @@ expect AS (
           + extract(quarter FROM hi_t) - extract(quarter FROM lo_t) + 1 AS BIGINT)
       WHEN 'month' THEN CAST((extract(year FROM hi_t) - extract(year FROM lo_t)) * 12
           + extract(month FROM hi_t) - extract(month FROM lo_t) + 1 AS BIGINT)
-      WHEN 'week' THEN CAST((to_unixtime(date_trunc('week', hi_t))
-          - to_unixtime(date_trunc('week', lo_t))) / 604800 + 1 AS BIGINT)
-      WHEN 'day' THEN CAST((to_unixtime(date_trunc('day', hi_t))
-          - to_unixtime(date_trunc('day', lo_t))) / 86400 + 1 AS BIGINT)
-      WHEN 'hour' THEN CAST((to_unixtime(date_trunc('hour', hi_t))
-          - to_unixtime(date_trunc('hour', lo_t))) / 3600 + 1 AS BIGINT)
-      WHEN 'minute' THEN CAST((to_unixtime(date_trunc('minute', hi_t))
-          - to_unixtime(date_trunc('minute', lo_t))) / 60 + 1 AS BIGINT)
-      WHEN 'second' THEN CAST((to_unixtime(date_trunc('second', hi_t))
-          - to_unixtime(date_trunc('second', lo_t))) / 1 + 1 AS BIGINT)
+      WHEN 'week' THEN CAST(floor((to_unixtime(hi_t) + 259200) / 604800.0)
+          - floor((to_unixtime(lo_t) + 259200) / 604800.0) + 1 AS BIGINT)
+      WHEN 'day' THEN CAST(floor(to_unixtime(hi_t) / 86400.0)
+          - floor(to_unixtime(lo_t) / 86400.0) + 1 AS BIGINT)
+      WHEN 'hour' THEN CAST(floor(to_unixtime(hi_t) / 3600.0)
+          - floor(to_unixtime(lo_t) / 3600.0) + 1 AS BIGINT)
+      WHEN 'minute' THEN CAST(floor(to_unixtime(hi_t) / 60.0)
+          - floor(to_unixtime(lo_t) / 60.0) + 1 AS BIGINT)
+      WHEN 'second' THEN CAST(to_unixtime(hi_t) - to_unixtime(lo_t) + 1 AS BIGINT)
     END AS expected,
     CASE granularity
       WHEN 'year' THEN a_year WHEN 'quarter' THEN a_quarter

@@ -1969,3 +1969,23 @@ async fn describe_reaches_every_readable_name() {
         .unwrap_err();
     assert!(e.to_string().contains("nothing_here"), "{e}");
 }
+
+/// `SHOW TABLES` is the bound dataset's landed tables, and nothing
+/// without a `USE`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn show_tables_lists_the_bound_dataset() {
+    let (_dir, session) = agent_session().await;
+    let e = session.execute("SHOW TABLES;").await.unwrap_err();
+    assert!(matches!(e, glossql_session::SessionError::NoDataset), "{e}");
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'metrics'); USE fin;",
+    )
+    .await;
+    land_orders_and_customers(&session).await;
+    let tables = table(&session, "SHOW TABLES;").await;
+    assert!(
+        tables.contains("orders") && tables.contains("customers") && tables.contains("fin"),
+        "{tables}"
+    );
+}

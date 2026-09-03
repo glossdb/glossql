@@ -228,3 +228,22 @@ async fn timestamps_at_hour_grain_ride_the_fixed_grain_path() {
     // A 2-hour step is exactly the 2× threshold, not beyond it — no gap.
     assert_eq!(out["gaps"]["count"], json!(0));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_open_ended_sentinel_date_profiles_with_the_rest() {
+    // 9999-01-01 stands for "open" in many exports. It sits past the
+    // nanosecond timestamp's range (which ends in 2262), so the profile
+    // must not cast through nanoseconds: the column is dated, its window
+    // ends at the sentinel, and the sentinel is the one gap.
+    let out = temporal(
+        "SELECT * FROM (VALUES \
+         (DATE '2024-01-01'), (DATE '2024-02-01'), (DATE '2024-03-01'), \
+         (DATE '9999-01-01')) AS t(d)",
+        "events.d",
+    )
+    .await;
+    assert_eq!(out["applicable"], json!(true), "{out}");
+    assert_eq!(out["min"], json!("2024-01-01"));
+    assert_eq!(out["max"], json!("9999-01-01"));
+    assert_eq!(out["gaps"]["count"], json!(1), "{out}");
+}
