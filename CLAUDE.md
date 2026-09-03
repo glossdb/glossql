@@ -33,6 +33,10 @@ follow the corpus-first process below.
   serverd and served on the MCP door as resources and prompts, gated
   by the test suite. `.claude/skills/` keeps the substrate skill for
   building the server.
+- `vendor/` — DataFusion's SQL user guide at the tag the lock
+  resolves, served on the door as `doc://vendor/datafusion/sql/…`.
+  `vendor/datafusion/refresh.sh <tag>` at every pin move; the serverd
+  suite holds its VERSION to Cargo.lock.
 - `.claude/notes/` (gitignored) — working notes tied to an open
   issue; deleted when it closes.
 

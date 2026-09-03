@@ -277,7 +277,8 @@ interpret the human's prose. Forms carry only standing assumptions
 to confirm or correct; they cannot replace conversation — there is
 nothing standing to confirm yet.
 
-The engine's refusals are exact and name what was wrong; the
-postgres reflexes that fail at this pin are collected in
-`references/sql-here.md`, served beside this page as
-`skill://glossql/<reference>`.
+The engine's refusals are exact and name what was wrong. Its own SQL
+guide at this pin is served as `doc://vendor/datafusion/sql/…` — a
+function's name or signature is a lookup there, never a guess — and
+what fails here that the guide cannot say is `references/sql-here.md`,
+served beside this page as `skill://glossql/<reference>`.

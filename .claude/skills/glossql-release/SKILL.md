@@ -22,7 +22,9 @@ order, which is written nowhere else.
 1. If tabicl-candle changed, push it first — the workflow checks out
    its GitHub main, not the sibling directory.
 2. Bump `version` in the workspace `Cargo.toml`. Workspace
-   `cargo test` green.
+   `cargo test` green — a datafusion pin move since the last release
+   fails the vendored-guide test until `vendor/datafusion/refresh.sh
+   <tag>` has run.
 3. Tag and push: `git tag v<version> && git push origin v<version>`.
    The workflow reconverts the weights from the public checkpoints
    (digest-checked), builds both debs, and uploads them to a draft

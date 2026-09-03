@@ -1,10 +1,12 @@
 //! Embeds the teaching trees beside the hand-written skill table in
 //! `skills.rs`: every `.md` under `skills/` other than a `SKILL.md`
-//! (a skill's references, read on demand), and every `.md` under
-//! `docs/` (the pages an agent working in this repository reads). The
+//! (a skill's references, read on demand), every `.md` under `docs/`
+//! (the pages an agent working in this repository reads), and every
+//! `.md` under `vendor/` (the engine's own SQL guide at the pin). The
 //! door serves them as resources, so a connected agent holds what a
-//! checkout holds — and what a build serves is what its suite tested,
-//! since both trees sit under the docs and skills harnesses.
+//! checkout holds — and what a build serves is what its suite tested:
+//! the first two trees sit under the docs and skills harnesses, the
+//! third is held to the lock's datafusion version.
 
 use std::path::{Path, PathBuf};
 
@@ -38,8 +40,11 @@ fn main() {
         .expect("the crate sits two levels under the repo root");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     let mut src = String::new();
-    for (root, table, references_only) in [("skills", "REFERENCES", true), ("docs", "PAGES", false)]
-    {
+    for (root, table, references_only) in [
+        ("skills", "REFERENCES", true),
+        ("docs", "PAGES", false),
+        ("vendor", "VENDORED", false),
+    ] {
         let dir = repo.join(root);
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut files = Vec::new();

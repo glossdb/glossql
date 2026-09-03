@@ -855,12 +855,14 @@ impl ServerHandler for GlossqlMcp {
                 .with_size(d.body.len() as u64)
         }));
         // The trees: a skill's references after its SKILL.md, then the
-        // docs pages — each listed by its first heading, which is what
-        // tells a reader when the page is worth its tokens.
+        // docs pages, then the engine's SQL guide — each listed by its
+        // first heading, which is what tells a reader when the page is
+        // worth its tokens.
         resources.extend(
             crate::skills::REFERENCES
                 .iter()
                 .chain(crate::skills::PAGES.iter())
+                .chain(crate::skills::VENDORED.iter())
                 .map(|p| {
                     Resource::new(p.uri(), p.path)
                         .with_description(p.title())

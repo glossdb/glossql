@@ -243,3 +243,74 @@ async fn scratch_store() -> (tempfile::TempDir, Store) {
     let store = Store::open(lake).await.unwrap();
     (dir, store)
 }
+
+/// The engine's SQL guide under `vendor/` is served as it stands on
+/// disk, at the version the lock resolves: `vendor/datafusion/VERSION`
+/// against Cargo.lock's `datafusion` package. A pin move that skips
+/// `vendor/datafusion/refresh.sh` fails here instead of teaching a
+/// dialect this build does not run.
+#[test]
+fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let dir = repo.join("vendor");
+    let mut on_disk: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                let rel = path
+                    .strip_prefix(&repo)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                on_disk.push((rel, std::fs::read_to_string(&path).unwrap()));
+            }
+        }
+    }
+    on_disk.sort();
+    let mut served: Vec<(String, String)> = glossql_serverd::skills::VENDORED
+        .iter()
+        .map(|p| (p.path.to_string(), p.body.to_string()))
+        .collect();
+    served.sort();
+    assert_eq!(
+        served.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        on_disk.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        "the served guide is the files under vendor/"
+    );
+    assert_eq!(served, on_disk, "a served page is the file as it stands");
+    for p in glossql_serverd::skills::VENDORED {
+        assert!(
+            p.uri().starts_with("doc://vendor/") && p.title() != p.path,
+            "{} needs a `# ` title line — the listing serves it as the description",
+            p.path
+        );
+        assert!(
+            glossql_serverd::skills::read(&p.uri()).is_some_and(|(_, body)| body == p.body),
+            "{} is not readable at its own URI",
+            p.path
+        );
+    }
+    let vendored = std::fs::read_to_string(repo.join("vendor/datafusion/VERSION"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let lock = std::fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+    let locked = lock
+        .lines()
+        .skip_while(|l| *l != "name = \"datafusion\"")
+        .nth(1)
+        .and_then(|l| l.strip_prefix("version = \""))
+        .and_then(|l| l.strip_suffix('"'))
+        .expect("Cargo.lock resolves datafusion");
+    assert_eq!(
+        vendored, locked,
+        "vendor/datafusion/VERSION is not the lock's datafusion — run vendor/datafusion/refresh.sh {locked}"
+    );
+}
