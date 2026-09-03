@@ -49,6 +49,9 @@ fn apps_json(workspace: &std::path::Path, glossed: &[crate::glossed::Part]) -> V
 }
 
 /// The workspace's datasets, and whether the URL named one of them.
+/// The `Err` is the 404 to send, built once on the miss — boxing it
+/// would buy nothing on this path.
+#[allow(clippy::result_large_err)]
 async fn admit(door: &AppDoor, dataset: &str) -> Result<Vec<String>, Response> {
     let names = crate::known(door).await;
     if names.iter().any(|n| n == dataset) {

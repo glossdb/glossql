@@ -255,9 +255,8 @@ fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
         .join("../..")
         .canonicalize()
         .unwrap();
-    let dir = repo.join("vendor");
     let mut on_disk: Vec<(String, String)> = Vec::new();
-    let mut stack = vec![dir.clone()];
+    let mut stack = vec![repo.join("vendor")];
     while let Some(d) = stack.pop() {
         for entry in std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()) {
             let path = entry.path();

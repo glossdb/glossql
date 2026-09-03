@@ -222,7 +222,7 @@ pub struct Verdict {
     pub current: bool,
     /// The failure text where the detector could not answer and the
     /// verdict is the failure itself (`band` `error`, never a
-    /// judgment — [`rules::withholds`] never fires on it).
+    /// judgment — [`crate::rules::withholds`] never fires on it).
     pub error: Option<String>,
 }
 

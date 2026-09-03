@@ -31,7 +31,7 @@ use iceberg::{Error, ErrorKind, Result};
 use object_store::aws::{AmazonS3, AmazonS3Builder, AmazonS3ConfigKey};
 use object_store::{ObjectStore, ObjectStoreExt, WriteMultipart};
 
-/// Builds [`S3Storage`] for the REST catalog's FileIO — handed to the
+/// Builds `S3Storage` for the REST catalog's FileIO — handed to the
 /// catalog builder once; `build` runs per table load, with that load's
 /// properties.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

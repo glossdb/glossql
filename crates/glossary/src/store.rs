@@ -328,6 +328,15 @@ type Snapshots = Arc<Vec<(String, Option<i64>)>>;
 /// same reason.
 type History = Arc<Vec<glossql_catalog::Row>>;
 
+/// Per relation, the history read at a snapshot: the snapshot id it
+/// was scanned at (`None` before the first commit) and the rows.
+type Histories =
+    Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>;
+
+/// Rows held back per relation while a batch runs, `None` outside one.
+type Batch =
+    Arc<std::sync::Mutex<Option<std::collections::HashMap<String, Vec<Vec<Option<String>>>>>>>;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
@@ -350,12 +359,12 @@ pub struct Store {
     /// and every store-relation `SELECT` read from here, so a statement
     /// costs a lake walk only for a relation a write has moved — on the
     /// same single-writer ground as the head itself.
-    histories: Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>,
+    histories: Histories,
     /// Writes held instead of committed, `None` outside a batch. One
     /// sequence runs batched — bootstrap, whose rows are ruled tie-free
     /// (each shipped name declared once) — and [`Store::batch_flush`]
     /// is where its rows land, one append per relation.
-    batch: Arc<std::sync::Mutex<Option<std::collections::HashMap<String, Vec<Vec<Option<String>>>>>>>,
+    batch: Batch,
     /// The resolved store behind a read, one entry per dataset, each
     /// holding the version it was built at. A read whose version still
     /// matches takes it; a read whose version moved replaces it. There
@@ -1388,7 +1397,7 @@ impl Store {
         *self.batch.lock().expect("batch lock") = None;
     }
 
-    /// Walk every crossed relation into [`Store::histories`] at once —
+    /// Walk every crossed relation into `Store::histories` at once —
     /// a boot pays the slowest walk instead of one walk per
     /// first-touching statement. The two composed relations have no
     /// table to walk.

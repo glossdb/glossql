@@ -1517,16 +1517,21 @@ pub(crate) async fn current_query_slots(
 
 /// One grounding's monthly fingerprint, `None` when it cannot serve a
 /// number: no `value` column, no time column, or any planning or
+/// The judged surface a fingerprint reads: temporal verdicts, behavior
+/// verdicts, and the `behavior` glosses with their speaker rank, each
+/// by column subject.
+type Judged<'a> = (
+    &'a std::collections::HashMap<String, crate::cube::Verdict>,
+    &'a std::collections::HashMap<String, crate::cube::Verdict>,
+    &'a std::collections::HashMap<String, (Value, u8)>,
+);
+
 /// execution failure — the script's try/catch, spelled out.
 async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
-    (judged_temporal, judged_behavior, glossed_behavior): (
-        &std::collections::HashMap<String, crate::cube::Verdict>,
-        &std::collections::HashMap<String, crate::cube::Verdict>,
-        &std::collections::HashMap<String, (Value, u8)>,
-    ),
+    (judged_temporal, judged_behavior, glossed_behavior): Judged<'_>,
     sql: &str,
     body: &Value,
 ) -> Option<String> {

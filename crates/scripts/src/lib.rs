@@ -208,11 +208,11 @@ impl BandModel {
                 .map_err(|e| e.to_string())?;
         let q: Vec<f32> = pred
             .quantiles(levels)
-            .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
+            .and_then(|t| t.flatten_all()?.to_vec1())
             .map_err(|e| e.to_string())?;
         let grid: Vec<f32> = pred
             .raw_quantiles()
-            .and_then(|t| Ok(t.flatten_all()?.to_vec1()?))
+            .and_then(|t| t.flatten_all()?.to_vec1())
             .map_err(|e| e.to_string())?;
         let below = grid.iter().filter(|v| f64::from(**v) <= actual).count();
         Ok((

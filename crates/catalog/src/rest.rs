@@ -5,7 +5,7 @@
 //! for delegation, the credentials) that table's FileIO needs, so a
 //! connection here configures nothing about storage — only where the
 //! catalog is, which warehouse, and how to authenticate. What executes
-//! those properties is [`storage`]: the engine's own `object_store`,
+//! those properties is `storage`: the engine's own `object_store`,
 //! behind iceberg's `Storage` seam.
 //!
 //! Authentication is the one piece on top. A static token rides the
@@ -37,7 +37,7 @@ pub use storage::S3StorageFactory;
 /// A REST catalog connection: where, which warehouse, how to
 /// authenticate — and nothing about storage, which is the catalog's.
 /// (A dev store that vends nothing gets its keys through
-/// `object_store`'s own environment conventions — see [`storage`].)
+/// `object_store`'s own environment conventions — see `storage`.)
 pub struct Connection {
     pub uri: String,
     pub warehouse: String,

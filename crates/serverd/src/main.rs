@@ -517,7 +517,6 @@ mod tests {
             |r: Result<Option<Connection>, String>| r.err().expect("a refusal, not a connection");
         assert!(
             super::catalog_from(env(&[]))
-                .ok()
                 .expect("readable")
                 .is_none(),
             "no URI is the local catalog"

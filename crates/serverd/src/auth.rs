@@ -56,7 +56,7 @@ const REFRESH_FLOOR: Duration = Duration::from_secs(10);
 
 /// The issuer's two user-facing endpoints, read from its discovery
 /// document: where a browser is sent to sign in, and where a code is
-/// exchanged for a token ([`crate::login`]).
+/// exchanged for a token (`crate::login`).
 #[derive(Clone, Debug)]
 pub struct Endpoints {
     pub authorization: String,

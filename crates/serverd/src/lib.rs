@@ -25,7 +25,7 @@
 //! 404s on `/query` and `/app`; over `/mcp` it is where an agent
 //! declares it.
 //!
-//! Every door is behind one gate ([`auth`]): a bearer token, verified
+//! Every door is behind one gate (`auth`): a bearer token, verified
 //! against the issuer's published keys, says who is speaking; the door
 //! it came through says with which standing. The one way around the
 //! gate is explicit ([`Access::Open`], the `GLOSSQL_INSECURE_OPEN`
