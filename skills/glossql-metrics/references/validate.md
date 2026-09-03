@@ -24,9 +24,11 @@ DECLARE WITNESS hours_w ON hours_reconcile BY (AGENT, HUMAN)
 - **`breach_rate` is the violation share.** 0.0 is fully passing, and
   it is compared against `tolerance` upward. Reporting a pass rate
   under that key bands red.
-- **The expectation is authored, never assumed zero.** A source with
-  known dirt expects its own breach rate; a check reporting 0.0 there
-  has overcleaned, itself a failure.
+- **The expectation is the rate you measured, never an assumed zero.**
+  Nobody knows a source's defects in advance. You measured them at
+  landing; author that rate as the tolerance, so the check is green
+  today and red when the source drifts. A check reporting 0.0 where
+  the profile showed dirt does not see the dirt — fix the check's SQL.
 - **Promote confirmed reconciliations.** A `behavior_evidence`
   convention that reconciled at ~0 residual is a standing invariant —
   make it a check.

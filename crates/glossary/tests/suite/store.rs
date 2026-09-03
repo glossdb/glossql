@@ -145,6 +145,23 @@ async fn query_gloss_validates_against_the_grounding_schema() {
     )
     .await
     .unwrap();
+    // A stop in place of the SQL (SPEC.md §5.2): admitted with its
+    // reason; both at once is neither.
+    write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"stopped": "amount never landed"}$$;"#,
+    )
+    .await
+    .unwrap();
+    let e = write(
+        &s,
+        &agent(),
+        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT 1", "stopped": "both"}$$;"#,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
     // The authored stock marker:
     // "stock"/"flow" admitted, anything else refused.
     write(

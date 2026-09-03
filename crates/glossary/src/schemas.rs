@@ -7,10 +7,11 @@ use serde_json::Value;
 /// The standard grounding schema, verbatim from SPEC.md §5.2.
 pub const GROUNDING_SCHEMA: &str = r#"{
   "type": "object",
-  "required": ["sql"],
+  "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],
   "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"},
+    "stopped": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
     "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "assumptions": {

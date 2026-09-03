@@ -1881,3 +1881,91 @@ async fn a_filter_on_a_list_column_stays_with_the_engine() {
     .await;
     assert!(both.contains("| 1 "), "{both}");
 }
+
+/// A grounding stopped by its author (SPEC.md §5.2): `stopped` in
+/// place of `sql`. The write answers with the author's own reason,
+/// the read door and the cube refuse with it, `metric_surfaces`
+/// serves it, the assumptions ride it into the round — and a human
+/// `sql` over it serves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stopped_grounding_serves_its_reason_and_no_number() {
+    let (_dir, store) = scratch_store().await;
+    let agent = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(
+        &agent,
+        r#"DECLARE DATASET fin SET (purpose: 'metrics'); USE fin;
+           DECLARE ASPECT cube WITH $${"type": "object", "properties": {
+             "resolution": {"default": "day"},
+             "windows": {"type": "object", "properties": {"month": {"default": "48 months"}}}}}$$
+           AS FACT ON DATASET;
+           DECLARE ASPECT utilization WITH $${"title": "Utilization"}$$ AS QUERY ON DATASET;"#,
+    )
+    .await;
+    let written = table(
+        &agent,
+        r#"GLOSS utilization ON fin AS $${
+             "stopped": "capacity never landed: the roster export carries no hours column",
+             "assumptions": [{"dimension": "definition", "key": "capacity-source",
+               "assumption": "capacity is the roster's planned hours", "basis": "convention",
+               "confidence": 0.6}]}$$;"#,
+    )
+    .await;
+    assert!(
+        written.contains("false") && written.contains("stopped: capacity never landed"),
+        "{written}"
+    );
+    let e = agent
+        .execute("SELECT * FROM read.utilization();")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("stopped — capacity never landed"), "{e}");
+    let facts = table(&agent, "SELECT metric, applicable, reason FROM metric_axes();").await;
+    assert!(facts.contains("stopped: capacity never landed"), "{facts}");
+    let surfaces = table(&agent, "SELECT metric, grounded, stopped FROM metric_surfaces;").await;
+    assert!(
+        surfaces.contains("utilization")
+            && surfaces.contains("false")
+            && surfaces.contains("capacity never landed"),
+        "{surfaces}"
+    );
+    let asked = table(&agent, "SELECT aspect, key, conf FROM open_questions;").await;
+    assert!(asked.contains("capacity-source"), "{asked}");
+
+    // The human's `sql` outranks the agent's stop: served, not stopped.
+    let human = session_with(ActorKind::Human, "philipp", &store).await;
+    run(
+        &human,
+        r#"USE fin; GLOSS utilization ON fin AS $${"sql": "SELECT 1 AS value"}$$;"#,
+    )
+    .await;
+    let surfaces = table(&agent, "SELECT metric, grounded, stopped FROM metric_surfaces;").await;
+    assert!(
+        surfaces.contains("true") && !surfaces.contains("capacity never landed"),
+        "{surfaces}"
+    );
+}
+
+/// `DESCRIBE` reaches every name a read can plan — a store relation
+/// and a shipped read here, which the engine's own DESCRIBE cannot
+/// see — in the engine's DESCRIBE shape; an unknown name is the
+/// planner's refusal, naming it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn describe_reaches_every_readable_name() {
+    let (_dir, session) = agent_session().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'metrics'); USE fin;",
+    )
+    .await;
+    let aspects = table(&session, "DESCRIBE aspects;").await;
+    for column in ["column_name", "data_type", "is_nullable", "name", "kind", "grains", "condition", "schema", "Utf8"] {
+        assert!(aspects.contains(column), "{aspects}");
+    }
+    let next = table(&session, "DESCRIBE workspace_next;").await;
+    assert!(next.contains("surface") && next.contains("open"), "{next}");
+    let e = session
+        .execute("DESCRIBE nothing_here;")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("nothing_here"), "{e}");
+}

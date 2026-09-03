@@ -1,4 +1,4 @@
-# Grounding — read before writing a metric's SQL: the registries, the row-grain shape, ratios and stocks, the rival
+# Grounding — read before writing a metric's SQL: the registries, the row-grain shape, ratios and stocks, the rival, serve or stop
 
 ## Ground the cohort
 
@@ -206,3 +206,44 @@ and nobody measured is a question nobody will ever be asked. A
 derived metric inherits no rival from its components: when the corpus
 carries a statement line for the subtotal itself, that line is the
 rival — component ties do not stand in for it.
+
+## Serve or stop
+
+The dirt you measured at landing reaches the metric here. Two cases,
+and the measure decides which.
+
+**Serve with disclosure** when the dirt is bounded: you can say how
+many rows it touches and which way it moves the number. Ground the
+metric and carry the finding as a keyed assumption below 1.0 —
+dimension `scope` for rows in or out, `convention` for a recode — with
+the count in the `basis`. The number is served, the flaw is visible in
+the docket's open count, and the round asks the human.
+
+**Stop** when the dirt is not bounded: the evidence rows are missing
+rather than wrong, a join key cannot be trusted, the column the metric
+needs never landed. Do not serve a number from a proxy. Record the stop
+as the grounding — `stopped` in place of `sql`, the finding as its
+text: what is missing, where, how much, and what closes it (an
+upstream fix, a ruling, a recipe change). The assumptions ride it as on
+any grounding, so the round still asks the judgment behind it. Say the
+same in chat, and write the `definitions` entry: a stopped metric is a
+finding, not a failure, and the user learns something about their data
+they did not know.
+
+```glossql
+GLOSS utilization ON ops AS $${
+  "stopped": "capacity never landed: the roster export carries no hours column, so hours worked / capacity cannot be served; closes when the roster export adds capacity_hours, or a ruling names contract hours as capacity",
+  "assumptions": [
+    {"dimension": "definition", "key": "capacity-source", "assumption": "capacity is the roster's planned hours, not contract hours", "basis": "operations convention", "confidence": 0.6}
+  ]
+}$$;
+```
+
+The write answers with the fact row, `applicable` false and your own
+text as the `reason` — that is the check that it landed. The read door
+refuses with the same text, `metric_surfaces` serves it as `stopped`,
+and the docket says so beside the name. A human grounding with `sql`
+outranks it, which is how a stop is lifted.
+
+A plan, a schedule, a calendar is never evidence that its events
+happened. Count the record; check the plan's coverage as a validation.

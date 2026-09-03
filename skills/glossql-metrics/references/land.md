@@ -137,3 +137,34 @@ theorized. Land it as text and cast at read time, and put that gap in
 the column's `meaning` so nobody rediscovers it. Read `DESCRIBE
 <table>` the moment a table lands: a numeric that landed as text shows
 up there instead of three reads later.
+
+## Dirt is measured, never assumed
+
+Nobody hands you a list of the data's defects. The user does not know
+them either. You find them, and every finding follows one rule:
+measure first, decide second, write the decision where the next
+reader looks.
+
+- **Measure.** Which subject, what share of rows, since when. The cast
+  account at landing; `profile()` for nulls, distincts and top values;
+  `temporal()` for gaps; `relationship_coherence()` for orphans and
+  child-before-parent dates; `detect_derivations()` for an identity
+  that breaks. A finding is a number, never an impression.
+- **Typing goes in the recipe; nothing else does.** A null marker, a
+  cast, a date format is typing. A row you exclude, a value you
+  recode, a sentinel you turn to NULL, a duplicate you drop is a
+  decision, and a decision inside a recipe hides from every read
+  after it. Put it in one derived relation the metrics compose from
+  (`x-kind: "relation"`), and disclose it on each metric as a keyed
+  `scope` or `convention` assumption below 1.0, so the round asks it.
+- **Write what you found where the next reader looks.** What the next
+  export will also carry goes to `conventions` on the source. What is
+  true of this landing goes to `meaning` on the column or table. What
+  must stay watched becomes a validation, the expectation authored at
+  the rate you measured today: `ATTEST` is green now and turns red
+  when the source drifts (`references/validate.md`). The validation is
+  what the user sees; a finding that never becomes one is known to
+  you alone.
+
+Whether a metric is served on that data, or stopped, is decided at
+the grounding: `references/ground.md`.

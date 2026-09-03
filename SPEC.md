@@ -246,12 +246,13 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 ```json
 {
   "type": "object",
-  "required": ["sql"],
+  "oneOf": [{"required": ["sql"]}, {"required": ["stopped"]}],
   "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
     "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "stopped": {"type": "string"},
     "assumptions": {
       "type": "array",
       "items": {
@@ -279,6 +280,13 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   absent, the shape is undeclared and the frame is taken as served.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
+- `stopped` in place of `sql` records that the author serves no number,
+  and why: what is missing, where, how much, what closes it. The read
+  door refuses with that text, the cube abstains with it (`stopped: …`
+  in the fact row's `reason`), `metric_surfaces` serves it, and the
+  assumptions ride the body as on any grounding. Supersession is the
+  usual: a human `sql` over an agent `stopped` serves, a human `stopped`
+  over an agent `sql` stops.
   stay separate; a witness adjudicates across them (§7).
 - Two QUERY glosses of the same aspect on different tables may coexist — two
   ways to calculate revenue arriving at the same number is a correct state.

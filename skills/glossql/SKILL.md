@@ -133,7 +133,7 @@ like any table, filters riding WHERE:
 | `ruling_entries` | the human's standing judgments, with `folded_in` |
 | `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
-| `metric_surfaces` | every declared metric with its unit, meaning, formula and whether it is grounded — the record; the cube's numbers are `metric_series()` and `metric_axes()` |
+| `metric_surfaces` | every metric of the bound dataset with its unit, meaning, formula, whether it is grounded and the `stopped` text where the author serves no number — the record; a metric is the dataset's when a grounding or a registry entry stands there; the cube's numbers are `metric_series()` and `metric_axes()` |
 | `band_points()` | the recorded `metric_bands` walk as rows, one per metric per month, with each point's displacement — which metric and which month a red band verdict rests on, without re-running the walk |
 | `source_files('erp')` | every file under a declared source's location — `path`, `size`, `modified` — what a recipe can name; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps` teaches writing one) |
@@ -147,8 +147,7 @@ a refusal round trip.
 
 `open_questions`, `ruling_entries` and `agent_assumptions` answer for
 the whole workspace and carry a `dataset` column, so narrow them
-yourself. `owed` narrows itself; `metric_surfaces` reads vocabulary,
-which is workspace-wide.
+yourself. `owed` and `metric_surfaces` narrow themselves.
 
 ```sql
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC

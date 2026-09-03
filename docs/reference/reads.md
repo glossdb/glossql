@@ -108,12 +108,18 @@ first dataset reads `workspace_next` instead.
 
 ### metric_surfaces
 
-Every declared metric with where it stands — the record only; the
-pulse list and the dossier header both render this. Columns: `metric`,
+Every metric of the bound dataset with where it stands — the record
+only; the pulse list and the dossier header both render this. The
+vocabulary is workspace-wide, so what makes a metric this dataset's is
+the record: a grounding stands here, or the `definitions` or
+`formulas` registry names it. A metric declared and neither glossed
+nor defined shows in no dataset's list; `workspace_next` counts it. Columns: `metric`,
 `title`, `kind` (the `x-kind` tooling flag), `unit` and `meaning`
 (from the `definitions` registry — the aspect blob keeps only display
 label and flag), `formula` (from the `formulas` registry, or the
-stated base-concept default), `grounded`. The numbers — a metric's
+stated base-concept default), `grounded` (a grounding with `sql` is
+recorded), `stopped` (the current grounding's `stopped` text, empty
+otherwise — a human `sql` over an agent `stopped` serves). The numbers — a metric's
 latest period, its move, the axes the cube admitted — are the cube's
 reads below, joined by `metric`; keeping them apart is what lets a
 ruling refresh this read without touching the cube. Open counts and
@@ -168,7 +174,9 @@ grain serves no rows. The one argument is the grain; filters ride
 One row per current grounding — what the cube admitted and why not:
 `metric`, `applicable`, `judged_current`, `reason` (the road out when
 it abstains — no judged time column, no value column, a grounding the
-engine refused, a frame that breaks its declared grain), `behavior`
+engine refused, a frame that breaks its declared grain — or, for a
+grounding its author stopped, `stopped: ` and the author's own text),
+`behavior`
 and `behavior_basis` (the verb and where
 it came from: `ratio` when the frame serves `num` and `den`, `marked`
 when the grounding carries `behavior`, `glossed` when the `behavior`

@@ -52,15 +52,18 @@ bands the two against each other.
 
 ## Expected dirt
 
-The expectation is authored, never assumed zero: a source with known
-defects expects its own breach rate. `breach_rate` is the violation
-share — 0.0 means fully passing — compared upward against `tolerance`;
-the key is named for its polarity because a pass rate reported under
-it bands a fully-passing check red. The shipped `rate_tolerance`
-detector is one-sided: green at or under the tolerance, red above it,
-yellow when no check voice has landed. A known-dirt source that must
-also catch overcleaning — a 0.0 report against expected defects —
-declares its own detector that goes red on both sides.
+The expectation is authored, never assumed zero. Nobody knows a
+source's defects in advance: the agent measures them at landing, and
+the measured rate is the expectation — green today, red when the
+source drifts. `breach_rate` is the violation share — 0.0 means fully
+passing — compared upward against `tolerance`; the key is named for
+its polarity because a pass rate reported under it bands a
+fully-passing check red. The shipped `rate_tolerance` detector is
+one-sided: green at or under the tolerance, red above it, yellow when
+no check voice has landed. A check that reports 0.0 where the profile
+showed dirt does not see the dirt; the fix is the check's SQL. A
+source that must also catch a recipe filtering the dirt away declares
+its own detector that goes red on both sides.
 
 ## Reading verdicts
 

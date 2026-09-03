@@ -956,7 +956,8 @@ async fn write_fact(
 /// One metric's cube at this pin. A grounding that cannot serve — no
 /// JSON, no `sql`, no value column, no judged time axis, a plan or run
 /// the engine refuses — abstains with the reason, and the abstention
-/// is the entry: the same pin gives the same answer.
+/// is the entry: the same pin gives the same answer. A grounding the
+/// author stopped abstains with the author's own reason.
 async fn build_metric(
     shared: &Arc<Shared>,
     surface: &Surface,
@@ -1020,6 +1021,11 @@ async fn plan(
     let dataset = dataset.as_str();
     let body: Value = serde_json::from_str(&slot.body)
         .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
+    // The author's stop (SPEC.md §5.2): no number is served, and the
+    // reason is theirs, carried as written.
+    if let Some(why) = body.get("stopped").and_then(Value::as_str) {
+        return Err(Abstain(format!("stopped: {why}")));
+    }
     let sql = body
         .get("sql")
         .and_then(Value::as_str)

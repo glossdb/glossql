@@ -92,15 +92,18 @@ the act that admits it). For a metric, what the workspace accepts and
 reads wrong later — a ratio summed, a stock summed, a series nobody
 can slice — shows there first: read the row, run what it names,
 re-record. For a fact or a relation the row abstains, and you move on.
+For a grounding you stopped (`stopped` in place of `sql`,
+`references/ground.md`) the row abstains with your own text as the
+reason.
 
 ## The pages
 
 | reference | open it |
 |---|---|
-| `references/land.md` | before the first `PROBE`: the topic, the cohort, landing what the topic needs and nothing more |
+| `references/land.md` | before the first `PROBE`: the topic, the cohort, landing what the topic needs and nothing more, and what to do with the dirt you find |
 | `references/structure.md` | once tables stand: what each table is, the join structure, the slice axes |
 | `references/vocabulary.md` | before glossing a column: role first, behavior by evidence, unit |
-| `references/ground.md` | before writing a grounding: the two registries, the row-grain shape, ratios and stocks, keys on assumptions, the rival, what a basis must be |
+| `references/ground.md` | before writing a grounding: the two registries, the row-grain shape, ratios and stocks, keys on assumptions, the rival, what a basis must be, serve or stop |
 | `references/read-sql.md` | before any read over a metric: flows, stocks and ratios, and what this engine has that postgres lacks |
 | `references/validate.md` | when a number needs a check that says why it holds, and at the close — a reconciliation run by hand becomes a standing check |
 | `references/cube.md` | when a metric's axes, resolution or window are not what you expected, and after every ruling |

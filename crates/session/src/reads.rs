@@ -1055,6 +1055,11 @@ pub(crate) async fn served_grounding(
     let body: Value = serde_json::from_str(&value).map_err(|e| {
         SessionError::BadSubject(format!("read.{aspect}(): the grounding is not JSON: {e}"))
     })?;
+    if let Some(why) = body["stopped"].as_str() {
+        return Err(SessionError::BadSubject(format!(
+            "read.{aspect}(): stopped — {why}"
+        )));
+    }
     body["sql"].as_str().map(str::to_string).ok_or_else(|| {
         SessionError::BadSubject(format!("read.{aspect}(): the grounding carries no `sql`"))
     })

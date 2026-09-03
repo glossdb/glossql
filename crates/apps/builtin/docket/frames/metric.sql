@@ -19,6 +19,8 @@ SELECT q.aspect,
     'Utf8') AS meaning,
   coalesce(json_get_str(a.schema, 'x-kind'), '') AS mkind,
   json_get_str(q.body, 'sql') AS sql,
+  -- the author's stop, as written; empty on a served grounding
+  arrow_cast(coalesce(json_get_str(q.body, 'stopped'), ''), 'Utf8') AS stopped,
   -- the meta line, separators only between present parts — an unset
   -- unit must not leave a dangling dot in the tile
   arrow_cast(concat_ws(' · ',

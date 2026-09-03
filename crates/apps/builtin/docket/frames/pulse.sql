@@ -26,11 +26,13 @@ SELECT s.title,
        arrow_cast('', 'Utf8') AS delta,
        arrow_cast('no axes admitted', 'Utf8') AS axes,
        arrow_cast(CASE
+         WHEN s.stopped <> '' THEN 'stopped'
          WHEN coalesce(q.n, 0) > 0 THEN CAST(q.n AS VARCHAR) || ' open'
          WHEN r.at IS NOT NULL THEN 'human-ruled ' || substr(r.at, 1, 10)
          WHEN NOT s.grounded THEN 'nothing recorded'
          ELSE 'grounded' END, 'Utf8') AS status,
        CASE
+         WHEN s.stopped <> '' THEN 'warn'
          WHEN coalesce(q.n, 0) > 0 THEN 'warn'
          WHEN r.at IS NOT NULL THEN 'ok'
          WHEN NOT s.grounded THEN 'warn'
