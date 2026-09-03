@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "serverd"
+name = "glossql"
 path = "src/main.rs"
 
 # Which catalog backend the binary carries — the default carries both
@@ -98,12 +98,12 @@ workspace = true
 name = "glossql"
 maintainer = "glossdb <phas02@users.noreply.github.com>"
 copyright = "glossql contributors, Apache-2.0"
-extended-description = """serverd is one binary serving one glossql workspace: the SQL-shaped
+extended-description = """glossql is one binary serving one workspace: the SQL-shaped
 surface over a workspace's data and its context. Runs the TabICL band
 model on CPU."""
 section = "database"
 priority = "optional"
-assets = [["target/release/serverd", "usr/bin/serverd", "755"]]
+assets = [["target/release/glossql", "usr/bin/glossql", "755"]]
 
 [package.metadata.deb.variants.cuda]
 name = "glossql-cuda"
@@ -115,7 +115,7 @@ replaces = "glossql"
 # not resolved: driver (libcuda), cudart, cublas, nvrtc, curand from a
 # CUDA 12 installation.
 depends = "libc6, libgcc-s1, libstdc++6"
-extended-description = """serverd is one binary serving one glossql workspace: the SQL-shaped
+extended-description = """glossql is one binary serving one workspace: the SQL-shaped
 surface over a workspace's data and its context. This flavor runs the
 TabICL band model on an NVIDIA GPU (device 0, compute capability 8.0
 — Ampere — or newer; CPU fallback) and loads only where the NVIDIA

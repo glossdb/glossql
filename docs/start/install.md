@@ -1,6 +1,6 @@
 # Install and run
 
-`serverd` is one binary serving one workspace — the directory that
+`glossql` is one binary serving one workspace — the directory that
 holds your data lake and everything declared over it. The binary
 carries the band model's regressor; there is nothing else to install.
 The server picks the compute device at start: Metal on Apple
@@ -29,12 +29,14 @@ only where the NVIDIA driver and the CUDA 12 runtime libraries
 (cudart, cublas, nvrtc, curand) are installed — on machines without
 them, `glossql` is the right package.
 
+Both packages install one command, `glossql`.
+
 ## Build and start
 
 ```bash
 cargo build --release -p glossql-serverd
 cp .env.example .env            # then fill it in — see Tokens below
-./target/release/serverd --workspace ~/acme
+./target/release/glossql --workspace ~/acme
 ```
 
 A source build expects the [tabicl-candle
@@ -47,8 +49,8 @@ The server reads `.env`, reads the issuer's keys, prints its doors and
 listens:
 
 ```
-glossql verifying https://issuer.example tokens for http://127.0.0.1:8080 (application a1b2c3…)
-serverd on 127.0.0.1:8080 — / (datasets), /mcp, /<dataset>/query, /<dataset>/app
+2026-09-03T08:04:42.103275Z  INFO verifying tokens issuer=https://issuer.example audience=http://127.0.0.1:8080 application=a1b2c3…
+2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
 ```
 
 ## Flags

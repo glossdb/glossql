@@ -7,7 +7,7 @@ description: How a glossql release is cut — the order of operations across bot
 
 One release is one version everywhere: `version` in the workspace
 `Cargo.toml` (`[workspace.package]`) is the single bump point, and
-`serverd --version` answers with it. The artifacts: a macOS arm64
+`glossql --version` answers with it. The artifacts: a macOS arm64
 tarball behind the brew tap, and two x86_64 debs (cpu and cuda).
 **Never built**: macOS x86_64, ARM Linux, Jetson — ruled, don't
 propose them back.

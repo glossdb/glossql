@@ -1,6 +1,6 @@
 # Vendored browser libraries
 
-Embedded into the serverd binary and served at `/app/assets/vendor/` —
+Embedded into the server binary and served at `/app/assets/vendor/` —
 the app door works offline, no CDN. UMD builds; the globals are
 `htmx`, `vega`, `vegaLite`, `vegaEmbed`, `Arrow`. htmx is transport;
 the app door carries no local UI state (alpine left with the pin

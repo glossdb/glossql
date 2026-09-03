@@ -1,5 +1,5 @@
-//! The serverd binary: open the workspace, verify who knocks, serve the
-//! doors.
+//! The server binary, `glossql`: open the workspace, verify who knocks,
+//! serve the doors.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -16,9 +16,9 @@ use glossql_serverd::{
     Access, DoorConfig, Gate, INSECURE_DEV_MODE, Login, Plane, bootstrap, router,
 };
 
-const USAGE: &str = "usage: serverd [--workspace <dir>] [--addr <ip:port>] \
+const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
-[--tls-cert <pem> --tls-key <pem>] | serverd --version\n\
+[--tls-cert <pem> --tls-key <pem>] | glossql --version | glossql --help\n\
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
 pair.\n\
@@ -156,14 +156,37 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     })
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Before parse: --version answers and exits — a packaging smoke
-    // test runs it where no workspace or environment stands.
-    if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("serverd {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+fn main() {
+    // Before parse: --version and --help answer and exit — a packaging
+    // smoke test runs the first where no workspace or environment
+    // stands.
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("glossql {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some("--help" | "-h") => {
+            println!("{USAGE}");
+            return;
+        }
+        _ => {}
     }
-    let args = parse(std::env::args()).map_err(|e| format!("{e}\n{USAGE}"))?;
+    let args = match parse(std::env::args()) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("{e}\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    // The process edge: an error is printed as its text, never in the
+    // Debug form the runtime would give a Result returned from main.
+    if let Err(e) = run(args) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+}
+
+fn run(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // `.env` in the working directory, when there is one; a variable
     // already set in the environment wins over it, which is how a
     // container configures the same server without a file.
@@ -248,7 +271,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
     tracing::info!(
         addr = %args.addr,
         scheme,
-        "serverd listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
+        "glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
     );
     match &args.tls {
         Some((cert, key)) => {
@@ -385,7 +408,7 @@ mod tests {
     use super::{Auth, parse};
 
     fn argv(flags: &[&str]) -> Vec<String> {
-        std::iter::once("serverd")
+        std::iter::once("glossql")
             .chain(flags.iter().copied())
             .map(str::to_string)
             .collect()

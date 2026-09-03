@@ -12,7 +12,7 @@ tag="v${version}"
 artifact="glossql-${version}-aarch64-apple-darwin.tar.gz"
 
 cargo build --release -j8 -p glossql-serverd --features embed-weights
-tar -C target/release -czf "target/${artifact}" serverd
+tar -C target/release -czf "target/${artifact}" glossql
 sha=$(shasum -a 256 "target/${artifact}" | cut -d' ' -f1)
 
 gh release view "$tag" >/dev/null 2>&1 \

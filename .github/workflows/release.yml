@@ -100,7 +100,7 @@ jobs:
       # The cuda binary only loads where libcuda is; smoke the cpu one.
       - name: smoke
         if: matrix.flavor == 'cpu'
-        run: glossql/target/release/serverd --version
+        run: glossql/target/release/glossql --version
       - name: package
         working-directory: glossql
         run: |

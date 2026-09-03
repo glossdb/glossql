@@ -20,7 +20,7 @@ workspace and moves between its datasets, so `/mcp` is one endpoint and
 the dataset arrives in the statements.
 
 ```
-serverd --workspace <dir> [--addr <ip:port>] [--row-cap <n>]
+glossql --workspace <dir> [--addr <ip:port>] [--row-cap <n>]
         [--cube-cache <megabytes>] [--memory-limit <megabytes>]
         [--tls-cert <pem> --tls-key <pem>]
 ```

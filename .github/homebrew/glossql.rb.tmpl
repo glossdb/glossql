@@ -12,10 +12,10 @@ class Glossql < Formula
   depends_on arch: :arm64
 
   def install
-    bin.install "serverd"
+    bin.install "glossql"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/serverd --version")
+    assert_match version.to_s, shell_output("#{bin}/glossql --version")
   end
 end
