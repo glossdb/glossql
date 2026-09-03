@@ -101,9 +101,11 @@ reason.
 The engine is DataFusion behind a postgres parser. Three refusals cost
 most of the lost calls:
 
-- Unquoted names fold to lowercase. A table or column landed with
-  capitals is reached only quoted: `"SearchStream"."ObjectType"`. Land
-  tables lowercase and the quotes are never needed.
+- Unquoted names fold to lowercase, in glossql statements and in SQL
+  alike: a table declared `AdsInfo` is read as `adsinfo` or `AdsInfo`.
+  A column landed with capitals from a source header is reached only
+  quoted: `"ObjectType"`. Alias it lowercase in the recipe and the
+  quotes are never needed.
 - `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
   SELECT list, a `FILTER (WHERE …)` or a CASE they are refused:
   `Physical plan does not support logical expression`. Write the join:

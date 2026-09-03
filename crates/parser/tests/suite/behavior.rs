@@ -2,7 +2,7 @@
 //! substrate (DataFusion's parser), what must fail, and the respelled
 //! forms' error messages.
 
-use glossql_parser::{GlossqlParser, Statement};
+use glossql_parser::{Declaration, GlossqlParser, Statement, Subject};
 
 fn single(src: &str) -> Statement {
     let mut statements = GlossqlParser::parse_sql(src).expect("must parse");
@@ -194,4 +194,46 @@ fn multi_statement_scripts_parse_in_order() {
     assert!(matches!(statements[2], Statement::Gloss(_)));
     assert!(matches!(statements[3], Statement::Extract(_)));
     assert!(matches!(statements[4], Statement::Substrate(_)));
+}
+
+// -- names ---------------------------------------------------------------
+
+/// An unquoted name folds to lowercase, a double-quoted one keeps its
+/// case — the planner's own rule, so what a declaration lands is what an
+/// unquoted read reaches (SPEC.md §1).
+#[test]
+fn unquoted_names_fold_and_quoted_names_keep_case() {
+    let Statement::Declare(decl) =
+        single("DECLARE RECIPE AdsInfo ON Avito FROM Export AS $$select 1$$;")
+    else {
+        panic!("a declaration");
+    };
+    let Declaration::Recipe(recipe) = *decl else {
+        panic!("a recipe");
+    };
+    assert_eq!(recipe.table.value, "adsinfo");
+    assert_eq!(recipe.dataset.value, "avito");
+    assert_eq!(recipe.source.value, "export");
+
+    let Statement::Declare(decl) =
+        single(r#"DECLARE RECIPE "AdsInfo" ON avito FROM export AS $$select 1$$;"#)
+    else {
+        panic!("a declaration");
+    };
+    let Declaration::Recipe(recipe) = *decl else {
+        panic!("a recipe");
+    };
+    assert_eq!(recipe.table.value, "AdsInfo");
+
+    let Statement::Gloss(gloss) =
+        single(r#"GLOSS Unit ON Orders."Amount" AS $${"value": "EUR"}$$;"#)
+    else {
+        panic!("a gloss");
+    };
+    assert_eq!(gloss.aspect.value, "unit");
+    let Subject::Path(path) = gloss.subject else {
+        panic!("a path subject");
+    };
+    let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
+    assert_eq!(segments, ["orders", "Amount"]);
 }

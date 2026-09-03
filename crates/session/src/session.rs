@@ -1349,7 +1349,15 @@ impl Session {
                 SQLStatement::Drop {
                     object_type, names, ..
                 } if *object_type == ObjectType::Table && names.len() == 1 => {
-                    let name = names[0].to_string();
+                    // The name as the planner reads it: quoted exact,
+                    // unquoted folded (SPEC.md §1).
+                    let idents = self.shared.idents();
+                    let name = names[0]
+                        .0
+                        .last()
+                        .and_then(|part| part.as_ident().cloned())
+                        .map(|ident| idents.normalize(ident))
+                        .unwrap_or_else(|| names[0].to_string());
                     return self.drop_table(&name).await;
                 }
                 other => return Err(SessionError::SubstrateClosed(verb_of(other))),

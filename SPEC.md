@@ -28,6 +28,10 @@ Ground rules:
 - **The grammar fixes keys, not mechanics.** History, replay, and supersession
   mechanics are implementation. The grammar fixes what supersedes what: the
   key is (subject, aspect, actor kind).
+- **Names fold as the host's do.** An unquoted identifier is lowercased
+  before it is created or matched; a double-quoted identifier keeps its
+  case. This is the SQL host's rule for its own names, and every glossql
+  statement follows it, so a name declared unquoted is reached unquoted.
 - **A function's body is one SQL query.** A function with `RETURNS` is
   a measurement — its query runs over data at the read's pin; a
   detector's query runs over its witness's `slots` relation. A

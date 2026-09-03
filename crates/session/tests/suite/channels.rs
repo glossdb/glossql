@@ -325,3 +325,77 @@ async fn the_memory_ceiling_is_the_planes_and_every_channel_answers_to_it() {
         "1000000"
     );
 }
+
+/// An unquoted name folds to lowercase at the declaration and at the
+/// read, as the engine folds its own; a double-quoted one keeps its
+/// case (SPEC.md §1). The engine's schema surface lists what landed
+/// under the dataset, and nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn unquoted_names_fold_and_quoted_names_keep_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let erp_root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&erp_root).unwrap();
+    parquet_fixture(&erp_root).await;
+    let plane = plane(dir.path()).await;
+    let actor = agent("agent-1");
+
+    plane
+        .execute(
+            actor.clone(),
+            None,
+            &format!(
+                "DECLARE DATASET Avito SET (purpose: 'p');\n\
+                 USE avito;\n\
+                 DECLARE SOURCE Export SET (type: parquet, location: '{}');\n\
+                 DECLARE RECIPE AdsInfo ON avito FROM export AS $$\
+                   SELECT order_id FROM read_parquet('orders/*.parquet')$$;\n\
+                 DECLARE RECIPE \"SearchStream\" ON avito FROM export AS $$\
+                   SELECT order_id FROM read_parquet('orders/*.parquet')$$;",
+                erp_root.display()
+            ),
+        )
+        .await
+        .unwrap();
+
+    for read in [
+        "SELECT count(*) FROM adsinfo",
+        "SELECT count(*) FROM AdsInfo",
+        "SELECT count(*) FROM \"SearchStream\"",
+    ] {
+        let out = plane
+            .execute(actor.clone(), Some("avito"), read)
+            .await
+            .unwrap();
+        assert_eq!(single_value(&out), "3", "{read}");
+    }
+    let refused = plane
+        .execute(actor.clone(), Some("avito"), "SELECT count(*) FROM SearchStream")
+        .await
+        .expect_err("an unquoted name folds and misses the quoted table");
+    assert!(refused.to_string().contains("searchstream"), "{refused}");
+
+    // The engine's schema surface lists the two landed tables under
+    // the dataset, each beside its Iceberg metadata tables
+    // (`t$snapshots`, `t$manifests`, `t$history`) — the provider's own
+    // listing, which a `$` filter narrows to what landed.
+    for (filter, expected) in [("NOT LIKE '%$%'", "2"), ("LIKE '%$%'", "6")] {
+        let listed = plane
+            .execute(
+                actor.clone(),
+                Some("avito"),
+                &format!(
+                    "SELECT count(*) FROM information_schema.tables \
+                     WHERE table_schema = 'avito' AND table_name {filter}"
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(single_value(&listed), expected, "{filter}");
+    }
+
+    let dropped = plane
+        .execute(actor.clone(), Some("avito"), "DROP TABLE AdsInfo")
+        .await
+        .expect_err("holds data, and is the folded table");
+    assert!(dropped.to_string().contains("adsinfo"), "{dropped}");
+}

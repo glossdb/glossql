@@ -1,5 +1,6 @@
 use datafusion_common::Result;
 use datafusion_sql::parser::{DFParser, DFParserBuilder};
+use datafusion_sql::planner::IdentNormalizer;
 use datafusion_sql::sqlparser::ast::Ident;
 use datafusion_sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion_sql::sqlparser::keywords::Keyword;
@@ -12,6 +13,17 @@ use crate::ast::*;
 // token and supports dollar-quoted bodies; the session uses the same
 // dialect for planning.
 static DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
+
+/// An identifier as the planner will read it: a double-quoted name
+/// stays exact, an unquoted one folds to lowercase (SPEC.md §1). The
+/// planner's own normalizer at its default, so a name declared here is
+/// the name a SQL read reaches — `DECLARE RECIPE AdsInfo` lands
+/// `adsinfo`, which `FROM AdsInfo` folds to as well.
+fn folded_ident(p: &mut Parser) -> Result<Ident, ParserError> {
+    let ident = p.parse_identifier()?;
+    let value = IdentNormalizer::default().normalize(ident.clone());
+    Ok(Ident { value, ..ident })
+}
 
 /// The glossql front parser: DataFusion's `DFParser` custom-statement
 /// pattern with glossql heads.
@@ -122,7 +134,7 @@ fn expect_word(p: &mut Parser, word: &str) -> Result<(), ParserError> {
 
 fn parse_probe(p: &mut Parser) -> Result<Probe, ParserError> {
     expect_word(p, "PROBE")?;
-    let source = p.parse_identifier()?;
+    let source = folded_ident(p)?;
     expect_word(p, "AS")?;
     let sql = parse_dollar(p, "dollar-quoted probe SQL — AS $$ SELECT … $$")?;
     Ok(Probe { source, sql })
@@ -138,18 +150,18 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
     match word.as_str() {
         "SOURCE" => {
             p.next_token();
-            let name = p.parse_identifier()?;
+            let name = folded_ident(p)?;
             expect_word(p, "SET")?;
             let settings = parse_settings(p)?;
             Ok(Declaration::Source(SourceDecl { name, settings }))
         }
         "RECIPE" => {
             p.next_token();
-            let table = p.parse_identifier()?;
+            let table = folded_ident(p)?;
             expect_word(p, "ON")?;
-            let dataset = p.parse_identifier()?;
+            let dataset = folded_ident(p)?;
             expect_word(p, "FROM")?;
-            let source = p.parse_identifier()?;
+            let source = folded_ident(p)?;
             expect_word(p, "AS")?;
             let sql = parse_dollar(p, "dollar-quoted recipe SQL — AS $$ SELECT … $$")?;
             Ok(Declaration::Recipe(RecipeDecl {
@@ -161,7 +173,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
         }
         "DATASET" => {
             p.next_token();
-            let name = p.parse_identifier()?;
+            let name = folded_ident(p)?;
             expect_word(p, "SET")?;
             let settings = parse_settings(p)?;
             Ok(Declaration::Dataset(DatasetDecl { name, settings }))
@@ -179,7 +191,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
         }
         "ASPECT" => {
             p.next_token();
-            let name = p.parse_identifier()?;
+            let name = folded_ident(p)?;
             expect_word(p, "WITH")?;
             let schema = parse_json_body(p)?;
             expect_word(p, "AS")?;
@@ -220,7 +232,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                     }
                 }
                 if consume_word(p, "WHEN") {
-                    let aspect = p.parse_identifier()?;
+                    let aspect = folded_ident(p)?;
                     let eq_token = p.peek_token();
                     if !p.consume_token(&Token::Eq) {
                         return expected("`=`", &eq_token);
@@ -239,12 +251,12 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
         }
         "FUNCTION" => {
             p.next_token();
-            let name = p.parse_identifier()?;
+            let name = folded_ident(p)?;
             expect_word(p, "FOR")?;
             let scope = if consume_word(p, "GLOBAL") {
                 FunctionScope::Global
             } else {
-                FunctionScope::Dataset(p.parse_identifier()?)
+                FunctionScope::Dataset(folded_ident(p)?)
             };
             // The body itself, not a path to it (fixture 24): an
             // agent over MCP has statements and no
@@ -255,7 +267,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
             // A function without `RETURNS aspect` is a detector (role by
             // shape).
             let returns = if consume_word(p, "RETURNS") {
-                Some(p.parse_identifier()?)
+                Some(folded_ident(p)?)
             } else {
                 None
             };
@@ -268,9 +280,9 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
         }
         "WITNESS" => {
             p.next_token();
-            let name = p.parse_identifier()?;
+            let name = folded_ident(p)?;
             expect_word(p, "ON")?;
-            let aspect = p.parse_identifier()?;
+            let aspect = folded_ident(p)?;
             // `BY` gates actor glosses and is optional: a witness on a
             // MEASUREMENT aspect carries only a detector. That it names
             // BY or DETECTOR (or both) is checked at admission.
@@ -286,7 +298,7 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
                 }
             }
             let detector = if consume_word(p, "DETECTOR") {
-                Some(p.parse_identifier()?)
+                Some(folded_ident(p)?)
             } else {
                 None
             };
@@ -314,7 +326,7 @@ fn parse_settings(p: &mut Parser) -> Result<Vec<Setting>, ParserError> {
     p.expect_token(&Token::LParen)?;
     let mut settings = Vec::new();
     loop {
-        let key = p.parse_identifier()?;
+        let key = folded_ident(p)?;
         p.expect_token(&Token::Colon)?;
         let value = match p.peek_token_ref().token {
             Token::SingleQuotedString(_) => match p.next_token().token {
@@ -325,7 +337,7 @@ fn parse_settings(p: &mut Parser) -> Result<Vec<Setting>, ParserError> {
                 Token::Number(n, _) => SettingValue::Number(n),
                 _ => unreachable!("peeked"),
             },
-            _ => SettingValue::Name(p.parse_identifier()?),
+            _ => SettingValue::Name(folded_ident(p)?),
         };
         settings.push(Setting { key, value });
         if p.consume_token(&Token::RParen) {
@@ -398,13 +410,13 @@ fn parse_number(p: &mut Parser) -> Result<String, ParserError> {
 
 fn parse_use(p: &mut Parser) -> Result<Use, ParserError> {
     p.expect_keyword(Keyword::USE)?;
-    let dataset = p.parse_identifier()?;
+    let dataset = folded_ident(p)?;
     Ok(Use { dataset })
 }
 
 fn parse_gloss(p: &mut Parser) -> Result<Gloss, ParserError> {
     expect_word(p, "GLOSS")?;
-    let aspect = p.parse_identifier()?;
+    let aspect = folded_ident(p)?;
     expect_word(p, "ON")?;
     let subject = parse_subject(p)?;
     expect_word(p, "AS")?;
@@ -443,7 +455,7 @@ fn parse_extract(p: &mut Parser) -> Result<Extract, ParserError> {
 /// a call with arguments fails here and falls through to substrate SQL,
 /// where planning rejects it loudly.
 fn parse_call(p: &mut Parser) -> Result<Ident, ParserError> {
-    let function = p.parse_identifier()?;
+    let function = folded_ident(p)?;
     p.expect_token(&Token::LParen)?;
     p.expect_token(&Token::RParen)?;
     Ok(function)
@@ -465,9 +477,9 @@ fn parse_rel_op(p: &mut Parser) -> Result<RelOp, ParserError> {
 /// canonical text.
 fn parse_key_tuple(p: &mut Parser) -> Result<Vec<Ident>, ParserError> {
     p.expect_token(&Token::LParen)?;
-    let mut columns = vec![p.parse_identifier()?];
+    let mut columns = vec![folded_ident(p)?];
     while p.consume_token(&Token::Comma) {
-        columns.push(p.parse_identifier()?);
+        columns.push(folded_ident(p)?);
     }
     p.expect_token(&Token::RParen)?;
     if columns.len() < 2 {
@@ -518,12 +530,12 @@ fn into_rel_side(
 fn parse_segments_or_tuple(
     p: &mut Parser,
 ) -> Result<(Vec<Ident>, Option<Vec<Ident>>), ParserError> {
-    let mut segments = vec![p.parse_identifier()?];
+    let mut segments = vec![folded_ident(p)?];
     while p.consume_token(&Token::Period) {
         if p.peek_token() == Token::LParen {
             return Ok((segments, Some(parse_key_tuple(p)?)));
         }
-        segments.push(p.parse_identifier()?);
+        segments.push(folded_ident(p)?);
         if segments.len() > 3 {
             let found = p.peek_token();
             return expected(

@@ -1816,12 +1816,17 @@ async fn a_missing_table_at_the_door_names_the_roads_out() {
 async fn a_source_type_outside_the_vocabulary_is_refused_at_declare() {
     let (_dir, session) = agent_session().await;
     let e = session
-        .execute("DECLARE SOURCE files SET (type: CSV, location: '/nowhere');")
+        .execute("DECLARE SOURCE files SET (type: excel, location: '/nowhere');")
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains("unknown type `CSV`"), "{e}");
+    assert!(e.contains("unknown type `excel`"), "{e}");
     assert!(e.contains("relational_db, parquet, csv, json"), "{e}");
+    // A bare name folds (SPEC.md §1): `CSV` is `csv`.
+    session
+        .execute("DECLARE SOURCE upper SET (type: CSV, location: '/nowhere');")
+        .await
+        .expect("an unquoted type name folds into the vocabulary");
     let e = session
         .execute("DECLARE SOURCE files SET (location: '/nowhere');")
         .await

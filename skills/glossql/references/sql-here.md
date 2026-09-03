@@ -23,13 +23,16 @@ are positional.
 
 The schema in one read: `information_schema.tables` and
 `information_schema.columns` serve what the call mounted — the bound
-dataset's tables and every column of them. `SHOW TABLES` lists the
-tables; `DESCRIBE <name>` describes any readable name, the shipped
-reads included.
+dataset's tables and every column of them, each beside its Iceberg
+metadata tables (`t$snapshots`, `t$manifests`, `t$history`; `WHERE
+table_name NOT LIKE '%$%'` keeps the landed ones). `SHOW TABLES` lists
+the landed tables; `DESCRIBE <name>` describes any readable name, the
+shipped reads included.
 
-Names are case-folded: an unquoted `AdsInfo` reaches `adsinfo`, and a
-table landed with capitals is found only quoted — `"AdsInfo"` — or
-landed lowercase.
+Names fold: an unquoted `AdsInfo` is `adsinfo` in a glossql statement
+and in SQL alike, and a double-quoted `"AdsInfo"` keeps its case
+everywhere. A source column landed with capitals is reached only
+quoted, or aliased lowercase in the recipe.
 
 Correlated subqueries are rewritten into joins, and the planner refuses
 the shapes it cannot rewrite (a `NOT EXISTS` over a read that extracts

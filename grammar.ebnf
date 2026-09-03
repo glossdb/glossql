@@ -2,7 +2,8 @@
    Machine-readable source of truth for syntax; SPEC.md carries the semantics.
 
    Lexical conventions (SQL host):
-   - name:    [A-Za-z_][A-Za-z0-9_]*  or double-quoted "name" (never a keyword)
+   - name:    [A-Za-z_][A-Za-z0-9_]*  or double-quoted "name" (never a keyword);
+              an unquoted name folds to lowercase, a quoted one keeps its case
    - string:  single-quoted, '' escapes a quote
    - number:  decimal literal
    - dollar:  a dollar-quoted verbatim region, postgres-style — $$ ... $$, or
