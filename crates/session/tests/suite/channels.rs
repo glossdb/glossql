@@ -369,7 +369,11 @@ async fn unquoted_names_fold_and_quoted_names_keep_case() {
         assert_eq!(single_value(&out), "3", "{read}");
     }
     let refused = plane
-        .execute(actor.clone(), Some("avito"), "SELECT count(*) FROM SearchStream")
+        .execute(
+            actor.clone(),
+            Some("avito"),
+            "SELECT count(*) FROM SearchStream",
+        )
         .await
         .expect_err("an unquoted name folds and misses the quoted table");
     assert!(refused.to_string().contains("searchstream"), "{refused}");
