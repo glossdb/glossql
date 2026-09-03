@@ -91,9 +91,11 @@ Glosses stay — no machinery deletes knowledge; their snapshot ids
 disclose their age against the fresh landing. `DROP TABLE` drops the
 table, and refuses while it holds data or glosses.
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
-`EXPLAIN` pass as reads about schema and plans (`EXPLAIN` only over a
-query), `DROP TABLE` routes to the rules above, and everything else that
-would alter schema or data directly is refused. Tables come from recipes.
+`EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
+name a read can plan — a landed table, a store relation, a shipped
+read; `EXPLAIN` only over a query), `DROP TABLE` routes to the rules
+above, and everything else that would alter schema or data directly is
+refused. Tables come from recipes.
 
 ```sql
 DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exports');
@@ -250,9 +252,9 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   "additionalProperties": false,
   "properties": {
     "sql": {"type": "string"},
+    "stopped": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
     "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-    "stopped": {"type": "string"},
     "assumptions": {
       "type": "array",
       "items": {
@@ -278,8 +280,6 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   aggregates validates the frame against it and refuses a frame that
   breaks it (the cube abstains, the reason naming the columns);
   absent, the shape is undeclared and the frame is taken as served.
-- **Supersession key: (subject, aspect, actor kind).** A human re-gloss
-  supersedes the human's value; an agent's supersedes the agent's. The slots
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   door refuses with that text, the cube abstains with it (`stopped: …`
@@ -287,6 +287,8 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   assumptions ride the body as on any grounding. Supersession is the
   usual: a human `sql` over an agent `stopped` serves, a human `stopped`
   over an agent `sql` stops.
+- **Supersession key: (subject, aspect, actor kind).** A human re-gloss
+  supersedes the human's value; an agent's supersedes the agent's. The slots
   stay separate; a witness adjudicates across them (§7).
 - Two QUERY glosses of the same aspect on different tables may coexist — two
   ways to calculate revenue arriving at the same number is a correct state.

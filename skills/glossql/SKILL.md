@@ -96,15 +96,27 @@ library and the KPI kit (the semantic vocabulary — `meaning`, `role`,
 witnesses) are declared at boot; read them back before declaring
 anything.
 
-- `SELECT * FROM glossary` / `aspects` / `witnesses` / `functions` /
-  `measurements` / `imports` / `relationships` — the store's relations
-  as plain tables (who said what; the declared vocabulary and its
-  speaker gates; what was measured at which pin; source rows vs landed
-  rows; the declared join edges). `glossary`, `imports`,
-  `relationships` and `measurements` carry a `dataset` column and serve
-  the whole workspace — `USE` does not narrow them, so say which
-  dataset you mean. The rest are workspace vocabulary and have no
-  dataset to narrow to.
+- The store's relations, as plain tables — these columns and no
+  others (a guessed column costs a refusal; `DESCRIBE <name>` serves
+  the columns of any readable name, the shipped reads included):
+  `glossary (dataset, subject, aspect, actor_kind, actor_id, body,
+  written_at, snapshot_id)` — who said what ·
+  `aspects (name, kind, grains, condition, schema)` — the declared
+  vocabulary ·
+  `witnesses (name, aspect, speakers, detector, threshold)` — its
+  speaker gates ·
+  `functions (name, scope, script, returns)` ·
+  `measurements (dataset, function, subject, aspect, pin, value,
+  computed_at, reads)` — what was measured at which pin ·
+  `imports (dataset, table_name, source_scans, landed_rows,
+  dropped_rows_count, cast_failures, imported_at)` — source rows vs
+  landed rows ·
+  `relationships (dataset, left_path, op, right_path)` — the declared
+  join edges · `sources (name, settings)` · `datasets (name, settings)`.
+  `glossary`, `imports`, `relationships` and `measurements` carry a
+  `dataset` column and serve the whole workspace — `USE` does not
+  narrow them, so say which dataset you mean. The rest are workspace
+  vocabulary and have no dataset to narrow to.
 - `GLOSSARY(subject)` — the collapsed read, columns
   `(subject, aspect, value, band, score, state)` with `state` in
   `current | stale | contested | unassessed`; a contested value is
@@ -256,6 +268,12 @@ question leaves the workspace, walk this map and run what answers it:
 | the app's series and slices | `metric_series(grain => …)` — the cube, computed at read and cached, never landed; `metric_axes()` says what it admitted and, per served column, what keeps the rest out |
 | which rows look wrong, on a signal | `misfit.<frame>()` |
 | whether an authored expectation holds | a check function's voice + `rate_tolerance`, read via `ATTEST()` |
+
+A measurement is called in the SELECT list with its subject in FROM,
+never as a table function: `SELECT detect_relationships() FROM ops`
+for a dataset-grain one, `SELECT profile() FROM orders.amount` for a
+column, `SELECT detect_hierarchies() FROM orders` for a table.
+`SELECT * FROM detect_relationships()` is refused.
 
 What remains askable after the map is walked is what the round
 serves: an assumption whose basis is your judgment, held below full

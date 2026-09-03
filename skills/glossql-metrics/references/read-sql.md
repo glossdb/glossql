@@ -16,6 +16,9 @@ agent, so a human answer is what runs.
 - **Ratios don't roll up**: compose per the formula at the window
   asked — numerator and denominator each at the new scope, never an
   average of finer ratios. Never regroup a ratio's output rows.
+- **Distinct counts don't roll up either**: distinct customers per
+  region do not sum to distinct customers. Recompute
+  `count(DISTINCT …)` at the scope asked; never add members.
 - **Gap-filling**: a flow coalesces a missing period to 0 — no
   transactions is zero flow. A stock never does — a missing level is
   unknown, not zero.

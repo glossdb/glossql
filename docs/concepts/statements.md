@@ -66,7 +66,9 @@ row.
 ## What the host refuses
 
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
-`EXPLAIN` pass, `DROP TABLE` refuses while the table holds data or
+`EXPLAIN` pass (`DESCRIBE` over any name a read can plan: a landed
+table, a store relation, a shipped read), `DROP TABLE` refuses while
+the table holds data or
 glosses, and everything else that would alter schema or data directly
 is refused. Tables come from recipes.
 

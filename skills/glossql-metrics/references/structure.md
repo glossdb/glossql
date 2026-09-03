@@ -24,6 +24,11 @@ GLOSS entity ON work_orders AS $${"value": "one site visit on a work order", "ro
   "grain": ["order_id", "visit_no"], "time_axis": "completed_at"}$$;
 ```
 
+The subject follows the aspect's grain: `entity` is ON TABLE, so the
+subject is a table, never the dataset; `relationship_candidates` is a
+measurement ON DATASET, so its subject is the dataset, never a table.
+`SELECT name, grains FROM aspects` says which for any aspect.
+
 ## Judge the join structure
 
 `detect_relationships` proposes at high recall — false positives

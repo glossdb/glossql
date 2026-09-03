@@ -41,6 +41,11 @@ format (NULL — `try_to_date` parses it; a timestamp format must cover
 the whole value, seconds included) · an inner `ORDER BY` does not
 survive a derived relation, so order where you consume.
 
+Memory: `count(DISTINCT (a, b, c))` over millions of rows builds a
+struct per row and exhausts the pool (`Resources exhausted`). Use
+`approx_distinct`, or count distinct over a CTE that groups the keys
+first.
+
 A column that landed as text: `max`/`min` are lexicographic (`'99' >
 '100'`) and `sum` refuses (`Function 'sum' requires Decimal, but
 received String`). The cast belongs in the recipe; `try_cast` at the

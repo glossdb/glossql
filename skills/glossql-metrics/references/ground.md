@@ -41,7 +41,8 @@ meaning, unit, owner, source. Whatever sits in a `WITH` blob cannot
 be corrected, contested or outranked once anything is glossed on the
 aspect. The blob keeps only the `title` display label and the
 `x-kind` tooling flag. A unit written in both copies goes stale in
-one.
+one. `x-kind` lives in the `DECLARE ASPECT` blob and nowhere else —
+the grounding body's schema refuses it.
 
 ```glossql
 GLOSS definitions ON ops AS $${"definitions": {
@@ -142,6 +143,15 @@ value. Nothing infers this from the SQL — serve the columns.
 ```glossql
 GLOSS backlog_days ON ops AS $${"sql": "WITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM read.backlog() GROUP BY 1, 2), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM read.throughput() GROUP BY 1, 2) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, bl.bal AS num, th.th * (1.0 / date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, bl.region FROM bl JOIN th ON th.m = bl.m AND th.region = bl.region"}$$;
 ```
+
+**A distinct count is the same class without halves.** The cube sums
+same-period rows, and distinct customers per (doc type, sales org) do
+not sum to distinct customers per month — a distinct count served with
+dimension columns reports a wrong total, and nothing infers this from
+the SQL. Serve it at the scope the metric is asked at, with no
+dimension columns, and say so in a keyed assumption; per-member
+distinct counts are separate metrics or a drill recomputed from the
+entity rows.
 
 `value` stays each row's own ratio — that is what `read.backlog_days()`
 serves and what a drill shows. `num` and `den` are the same division's

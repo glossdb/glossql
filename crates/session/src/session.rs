@@ -2,7 +2,8 @@
 
 use std::sync::{Arc, RwLock};
 
-use datafusion::arrow::datatypes::DataType;
+use datafusion::arrow::array::{ArrayRef, StringArray};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider, TableProvider};
 use datafusion::common::{Column, DataFusionError, ParamValues};
@@ -1289,7 +1290,8 @@ impl Session {
     }
 
     /// Substrate SQL runs behind an allowlist:
-    /// queries pass, `DESCRIBE`/`EXPLAIN` pass as reads, the
+    /// queries pass, `DESCRIBE`/`EXPLAIN` pass as reads (`DESCRIBE`
+    /// over any name a read can plan — [`Self::describe`]), the
     /// store's forwarded deletes pass, `DROP TABLE` routes to engine
     /// semantics — everything else that would alter the schema or data
     /// directly is refused. Tables come from recipes.
@@ -1333,7 +1335,9 @@ impl Session {
             };
             match inner.as_ref() {
                 SQLStatement::Query(_) => {}
-                SQLStatement::ExplainTable { .. } => {}
+                SQLStatement::ExplainTable { table_name, .. } => {
+                    return self.describe(&table_name.to_string()).await;
+                }
                 SQLStatement::Drop {
                     object_type, names, ..
                 } if *object_type == ObjectType::Table && names.len() == 1 => {
@@ -1378,6 +1382,42 @@ impl Session {
             batches.push(RecordBatch::new_empty(schema));
         }
         Ok(Outcome::Rows(batches))
+    }
+
+    /// `DESCRIBE <name>` for every name a read can plan — a landed
+    /// table, a store relation, a shipped read, a cube read. The name
+    /// is planned as `SELECT * FROM <name> LIMIT 0` through the same
+    /// pre-pass a read takes, and the plan's schema is served in the
+    /// engine's own DESCRIBE shape (`column_name`, `data_type`,
+    /// `is_nullable`; datafusion-54.1.0 physical_planner.rs:2893). The
+    /// engine's DESCRIBE sees only the mounted tables, which is why the
+    /// statement does not reach it: the store's relations and the
+    /// reads resolve in the pre-pass and are registered nowhere.
+    async fn describe(&self, name: &str) -> Result<Outcome, SessionError> {
+        let plan = self
+            .plan_statement(one_query(&format!("SELECT * FROM {name} LIMIT 0"))?)
+            .await?;
+        let fields = plan.schema().fields();
+        let column = |f: fn(&Field) -> String| -> ArrayRef {
+            Arc::new(StringArray::from_iter_values(
+                fields.iter().map(|x| f(x.as_ref())),
+            ))
+        };
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("column_name", DataType::Utf8, false),
+            Field::new("data_type", DataType::Utf8, false),
+            Field::new("is_nullable", DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                column(|f| f.name().to_string()),
+                column(|f| f.data_type().to_string()),
+                column(|f| if f.is_nullable() { "YES" } else { "NO" }.to_string()),
+            ],
+        )
+        .map_err(DataFusionError::from)?;
+        Ok(Outcome::Rows(vec![batch]))
     }
 
     /// `DROP TABLE` (PoC rules): refused while the
