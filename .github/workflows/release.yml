@@ -30,12 +30,16 @@ jobs:
           repository: glossdb/tabicl-candle
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
-      - run: uv run python scripts/convert_weights.py
+      - run: uv run python verify/python/convert_weights.py
+      # The conversion rewrites fixtures/DIGESTS from what it just
+      # produced; the pinned copy is the committed one.
       - name: verify against the pinned digests
         run: |
           python3 - <<'PY'
-          import hashlib, json
-          pinned = json.load(open("fixtures/DIGESTS"))["regressor"]["sha256"]
+          import hashlib, json, subprocess
+          pinned = json.loads(
+              subprocess.check_output(["git", "show", "HEAD:fixtures/DIGESTS"])
+          )["regressor"]["sha256"]
           actual = hashlib.sha256(
               open("weights/tabicl-regressor.safetensors", "rb").read()
           ).hexdigest()
