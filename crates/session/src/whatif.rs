@@ -318,9 +318,9 @@ async fn concept_rows(
     // abstain from — but it is never silent: `basis` names the axis and
     // says whether it was judged, because these rows are read beside
     // cube series that anchor on the judged one.
-    let subjects = crate::provenance::served_subjects(&probe, dataset);
+    let sources = crate::provenance::served_sources(&probe, dataset);
     let (tcol, axis_note) =
-        match crate::cube::judged_time_column(probe.schema(), &subjects, judged_temporal) {
+        match crate::cube::judged_time_column(probe.schema(), &sources, judged_temporal) {
             Some((column, ..)) => {
                 let note = format!("time axis `{column}`, judged");
                 (column, note)

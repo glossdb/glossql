@@ -84,7 +84,9 @@ exact on every row and wrong in every sum. Declare that grain in the
 body — `"grain": ["date"]`, or `["date", "account_id"]` — and the
 cube validates the frame against it instead of trusting it: a frame
 that breaks its declared grain abstains, with the counts in the
-reason.
+reason. An interval table is a stock with two event columns, `+1` at
+the start date and `-1` at the end date, unioned into one served
+date; both columns must be judged for the axis to trace.
 
 ```glossql
 GLOSS throughput ON ops AS $${

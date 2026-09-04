@@ -83,8 +83,9 @@ const MEMBERS_CAP: i64 = 24;
 /// The one refusal every judged reader shares.
 const NO_JUDGED_TIME: &str = "no judged time column: no served date column carries an applicable \
      temporal_profile. For a series, serve the table's own date column and run temporal() over \
-     it; for a current fact or a derived relation this is the right answer — read.<name>() \
-     serves it, and no series is owed";
+     it — a union of several date columns of one table serves when every one is judged; for a \
+     current fact or a derived relation this is the right answer — read.<name>() serves it, and \
+     no series is owed";
 
 /// A calendar resolution — the rungs of the ladder, finest first, and
 /// the grains a read may ask for. Ordered, so the coarser of two is
@@ -666,9 +667,17 @@ pub(crate) fn judged_at(
 /// cadence (none for `irregular` and `unknown`, which anchor at the
 /// floor) and whether the verdict is current. A column without a
 /// verdict is a gap, not a candidate.
+///
+/// A served date that descends from several columns of one table — an
+/// interval's `+1 at from_date, −1 at to_date` under a union — is the
+/// axis when every one of them is judged applicable: its cadence is
+/// the coarsest of theirs (the finer would fold the coarser branch at
+/// a cadence it never had), its completeness the least, its currency
+/// their fold. Columns of different tables are another shape and stay
+/// a gap.
 pub(crate) fn judged_time_column(
     fields: &datafusion::common::DFSchemaRef,
-    subjects: &HashMap<String, String>,
+    sources: &HashMap<String, Vec<String>>,
     temporal: &HashMap<String, Verdict>,
 ) -> Option<(String, Option<Resolution>, bool)> {
     /// A judged column and the rank that put it ahead.
@@ -683,24 +692,44 @@ pub(crate) fn judged_time_column(
         if !crate::whatif::is_temporal(f.data_type()) {
             continue;
         }
-        let Some(v) = subjects.get(f.name()).and_then(|s| temporal.get(s)) else {
+        let Some(columns) = sources.get(f.name()) else {
             continue;
         };
-        if v.body["applicable"].as_bool() != Some(true) {
+        if !crate::provenance::one_table(columns) {
             continue;
         }
-        let cadence = v.body["granularity"].as_str().and_then(Resolution::cadence);
+        let Some(verdicts) = columns
+            .iter()
+            .map(|s| temporal.get(s))
+            .collect::<Option<Vec<&Verdict>>>()
+        else {
+            continue;
+        };
+        if !verdicts
+            .iter()
+            .all(|v| v.body["applicable"].as_bool() == Some(true))
+        {
+            continue;
+        }
+        let cadences: Vec<Option<Resolution>> = verdicts
+            .iter()
+            .map(|v| v.body["granularity"].as_str().and_then(Resolution::cadence))
+            .collect();
+        let cadence = cadences.iter().flatten().max().copied();
         // A cadence-less verdict carries no completeness: it ranks
         // below every named cadence, and by nothing among its own.
         let rank = (
-            cadence.is_some(),
-            v.body["completeness"]["ratio"].as_f64().unwrap_or(0.0),
+            cadences.iter().all(Option::is_some),
+            verdicts
+                .iter()
+                .map(|v| v.body["completeness"]["ratio"].as_f64().unwrap_or(0.0))
+                .fold(f64::INFINITY, f64::min),
         );
         if best.as_ref().is_none_or(|b| rank > b.rank) {
             best = Some(Ranked {
                 column: f.name().clone(),
                 cadence,
-                current: v.current,
+                current: verdicts.iter().all(|v| v.current),
                 rank,
             });
         }
@@ -1064,11 +1093,13 @@ async fn plan(
              serve the column, or fix the declaration"
         )));
     }
-    // Which table column each served field descends from — the judged
-    // verdicts key by subject, the frame names aliases.
-    let subjects = crate::provenance::served_subjects(&probe, dataset);
+    // Which table columns each served field descends from — the judged
+    // verdicts key by subject, the frame names aliases. The time axis
+    // reads every source; admission reads the fields with one.
+    let sources = crate::provenance::served_sources(&probe, dataset);
+    let subjects = crate::provenance::single(&sources);
     let (time_column, cadence, time_current) =
-        judged_time_column(fields, &subjects, &judged.temporal)
+        judged_time_column(fields, &sources, &judged.temporal)
             .ok_or_else(|| Abstain(NO_JUDGED_TIME.into()))?;
     // Whether every verdict admitted on stands at this pin — the time
     // axis now, each admitted dimension below.
@@ -1622,8 +1653,8 @@ async fn rival_series(
     if !has("value") {
         return Err(Abstain("it serves no `value` column".into()));
     }
-    let subjects = crate::provenance::served_subjects(&probe, dataset);
-    let tcol = match judged_time_column(fields, &subjects, &judged.temporal) {
+    let sources = crate::provenance::served_sources(&probe, dataset);
+    let tcol = match judged_time_column(fields, &sources, &judged.temporal) {
         Some((column, ..)) => column,
         // No verdict on any served date column — common, because a
         // rival routinely reads a table the metric does not, and that

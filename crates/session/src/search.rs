@@ -1557,8 +1557,8 @@ async fn series_fingerprint(
     // spelled frames; but refusing an unprofiled grounding would drop
     // it out of the collision pass entirely, shrinking the check
     // instead of failing it.
-    let subjects = crate::provenance::served_subjects(&probe, dataset);
-    let tcol = crate::cube::judged_time_column(fields, &subjects, judged_temporal)
+    let sources = crate::provenance::served_sources(&probe, dataset);
+    let tcol = crate::cube::judged_time_column(fields, &sources, judged_temporal)
         .map(|(column, ..)| column)
         .or_else(|| crate::whatif::date_column(fields.fields()))?;
     let verb = crate::cube::verb_of(
@@ -2244,8 +2244,8 @@ pub(crate) async fn metric_band_walk(
         // re-cadencing it would change the graded protocol above. The
         // measurement names the axis it took, so a walk anchored on an
         // unjudged column says so rather than reading like the cube's.
-        let subjects = crate::provenance::served_subjects(&probe, dataset);
-        let judged = crate::cube::judged_time_column(fields, &subjects, &judged_temporal);
+        let sources = crate::provenance::served_sources(&probe, dataset);
+        let judged = crate::cube::judged_time_column(fields, &sources, &judged_temporal);
         let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
         let Some(tcol) = judged_axis
             .clone()

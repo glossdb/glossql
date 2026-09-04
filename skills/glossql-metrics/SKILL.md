@@ -56,6 +56,18 @@ before you write it: the workspace accepts all four under the same
   ```
 
   A date spine you generate has no verdict behind it and abstains.
+  An interval table — a row per stint with a start and an end date —
+  is the same stock with two event columns, `+1` at the start and
+  `-1` at the end, unioned into one served date; the axis traces when
+  both columns are judged, at the coarser of their cadences:
+
+  ```glossql
+  GLOSS headcount ON hr AS $${
+    "sql": "WITH events AS (SELECT from_date AS date, 1 AS delta FROM stints UNION ALL SELECT to_date AS date, -1 AS delta FROM stints WHERE to_date IS NOT NULL), daily AS (SELECT date, sum(delta) AS delta FROM events GROUP BY date) SELECT date, CAST(sum(delta) OVER (ORDER BY date) AS DOUBLE) AS value FROM daily",
+    "behavior": "stock",
+    "grain": ["date"]
+  }$$;
+  ```
 - **A current fact** — a value with no as-of definition: a balance the
   source hands over already summed, a count from a snapshot table.
   Ground it as a QUERY aspect that serves `value` and no date, with

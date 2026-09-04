@@ -113,6 +113,7 @@ async fn cube_session_on(
                       CASE WHEN $subject LIKE '%.signed' THEN 'irregular'
                            WHEN $subject LIKE 'ticks.%' THEN 'minute'
                            WHEN $subject LIKE 'daily.%' THEN 'day'
+                           WHEN $subject LIKE '%.to_date' THEN 'day'
                            ELSE 'month' END AS granularity,
                       CASE WHEN $subject LIKE '%.signed' THEN NULL
                            WHEN $subject LIKE '%.booked' THEN named_struct('ratio', 0.5)
@@ -2048,8 +2049,8 @@ async fn fact_values_serves_what_the_cube_does_not_chart() {
 /// under UNION ALL — carries the time axis its arms share: the
 /// pre-pass expands the reads inline, and the provenance walk crosses
 /// the union where every input lands on the same subject. Arms
-/// landing on different judged date columns still abstain with the
-/// standing message.
+/// landing on judged date columns of different tables still abstain
+/// with the standing message.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_union_of_reads_carries_the_time_axis_its_arms_share() {
     let dir = tempfile::tempdir().unwrap();
@@ -2097,6 +2098,102 @@ async fn a_union_of_reads_carries_the_time_axis_its_arms_share() {
     )
     .await;
     assert!(jan.contains("54.0"), "{jan}");
+}
+
+/// A stock over an interval table — `+1` at the start date, `-1` at
+/// the end date, unioned into one served date and summed over it —
+/// traces through the union to both columns of the one table: the
+/// axis stands when both are judged, at the coarser of their cadences
+/// (month here, the end date judged at day); with one of them
+/// unjudged it is a gap, as it is across tables.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_interval_stock_traces_through_the_union_of_its_judged_columns() {
+    // Three stints: two open on 2024-01-01, one closes 2024-02-01 as
+    // another opens, the rest close 2024-03-01 and 2024-04-01 — a
+    // headcount of 2, 2, 1, 0 at the month ends.
+    let stints = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("from_date", DataType::Date32, false),
+            Field::new("to_date", DataType::Date32, false),
+        ])),
+        vec![
+            Arc::new(Date32Array::from(vec![19723, 19723, 19754])),
+            Arc::new(Date32Array::from(vec![19783, 19754, 19814])),
+        ],
+    )
+    .unwrap();
+    let daily = dated(
+        vec![Field::new("amount", DataType::Float64, false)],
+        vec![19723, 19724],
+        vec![Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+    );
+    let body = |from: &str, to: &str| {
+        format!(
+            r#"GLOSS {from}_{to} ON fin AS $${{"sql": "WITH events AS (SELECT {from} AS date, 1 AS delta FROM stints UNION ALL SELECT {to} AS date, -1 AS delta FROM stints), daily AS (SELECT date, sum(delta) AS delta FROM events GROUP BY date) SELECT date, CAST(sum(delta) OVER (ORDER BY date) AS DOUBLE) AS value FROM daily", "behavior": "stock", "grain": ["date"]}}$$;"#
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("stints", stints), ("daily", daily)],
+        &[
+            r#"DECLARE ASPECT headcount WITH $${"title": "Headcount"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT half WITH $${"title": "Half"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT across WITH $${"title": "Across"}$$ AS QUERY ON DATASET;"#,
+            &body("from_date", "to_date").replace("from_date_to_date", "headcount"),
+            // The same shape with the end date unjudged, and one with
+            // an arm on another table's judged date.
+            &body("from_date", "to_date")
+                .replace("from_date_to_date", "half")
+                .replace("SELECT to_date AS date", "SELECT to_date + INTERVAL '0' DAY AS date"),
+            r#"GLOSS across ON fin AS $${"sql": "SELECT from_date AS date, 1.0 AS value FROM stints UNION ALL SELECT date, amount AS value FROM daily", "behavior": "stock", "grain": ["date"]}$$;"#,
+            "SELECT judge_time() FROM stints.from_date;",
+            "SELECT judge_time() FROM stints.to_date;",
+            "SELECT judge_time() FROM daily.date;",
+        ],
+    )
+    .await;
+
+    let axes = grid(
+        &session,
+        "SELECT metric, applicable, resolution, reason FROM metric_axes() \
+         WHERE metric IN ('headcount', 'half', 'across') ORDER BY metric;",
+    )
+    .await;
+    for (metric, applicable, resolution) in [
+        ("headcount", "true", "month"),
+        ("half", "false", ""),
+        ("across", "false", ""),
+    ] {
+        let sql =
+            |column: &str| format!("SELECT {column} FROM metric_axes() WHERE metric = '{metric}';");
+        assert_eq!(
+            cell(&session, &sql("applicable")).await,
+            applicable,
+            "{axes}"
+        );
+        assert_eq!(
+            cell(&session, &sql("resolution")).await,
+            resolution,
+            "{axes}"
+        );
+    }
+    assert!(axes.contains("no judged time column"), "{axes}");
+
+    // The stock's months: the latest level in each — 2, 2, 1, 0.
+    let months = grid(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'headcount' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    for expected in [
+        "2024-01-01T00:00:00 | 2.0",
+        "2024-03-01T00:00:00 | 1.0",
+        "2024-04-01T00:00:00 | 0.0",
+    ] {
+        assert!(months.contains(expected), "{months}");
+    }
 }
 
 /// A frame that scans a workspace relation binds its entry to the

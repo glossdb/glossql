@@ -152,6 +152,9 @@ resolution is the
 metric's judged cadence (`temporal_profile`), never finer than the
 `cube` aspect's floor; the window is that aspect's rung for the
 resolution, measured back from the data's own edge (see the KPI kit).
+A served date that unions several columns of one table — an interval
+table's start and end dates, `+1` and `−1` — is the axis when every
+one of them is judged, at the coarsest of their cadences.
 
 ### metric_series(grain => …)
 

@@ -1,11 +1,15 @@
-//! Served-column provenance: which dataset table column a metric's
+//! Served-column provenance: which dataset table columns a metric's
 //! served field descends from. The cube's judged reads key verdicts by
 //! subject (`table.column`), but a served frame names aliases — so the
 //! walk follows a plain column reference down the logical plan to the
 //! table scan that serves it. A computed field (an aggregate, an
-//! expression, a union arm) descends from no single column and stays
-//! unmapped; under judged admission an unmapped field is a gap, never
-//! a candidate. The one exception is the verb's: `summed_source` steps
+//! expression) descends from no column and stays unmapped; a union
+//! descends from every arm's column — one where the arms agree,
+//! several where they differ. Which of the two a reader takes is the
+//! reader's rule: admission takes a field with one source, the judged
+//! time axis takes several of one table (an interval's `+1 at
+//! from_date, −1 at to_date`); an unmapped field is a gap, never a
+//! candidate. The one exception is the verb's: `summed_source` steps
 //! through a single `sum` for the served value alone, so a metric's
 //! stock/flow can be read off the column it sums without an aggregate
 //! ever becoming a dimension candidate.
@@ -32,20 +36,46 @@ pub(crate) fn scanned_tables(plan: &LogicalPlan, dataset: &str) -> HashSet<Strin
     out
 }
 
-/// The source subject (`table.column`) of each served field, keyed by
-/// served name. `dataset` guards the terminal: a scan whose reference
+/// The source subjects (`table.column`) of each served field, keyed by
+/// served name: one for a field that descends from one column, several
+/// for a union whose arms descend from different ones, in arm order and
+/// once each. `dataset` guards the terminal: a scan whose reference
 /// carries a qualifier is only a dataset table when that qualifier is
 /// the bound dataset — the `read.<aspect>` door scans under a
 /// `read`-qualified name and must not mint a subject.
-pub(crate) fn served_subjects(plan: &LogicalPlan, dataset: &str) -> HashMap<String, String> {
+pub(crate) fn served_sources(plan: &LogicalPlan, dataset: &str) -> HashMap<String, Vec<String>> {
     let mut out = HashMap::new();
     for (qualifier, field) in plan.schema().iter() {
         let col = Column::new(qualifier.cloned(), field.name());
-        if let Some(subject) = source_of(plan, &col, dataset, false) {
-            out.insert(field.name().clone(), subject);
+        if let Some(sources) = source_of(plan, &col, dataset, false) {
+            out.insert(field.name().clone(), sources);
         }
     }
     out
+}
+
+/// The one source subject of each served field that has exactly one —
+/// what admission reads: a field descending from several columns is
+/// no single axis.
+pub(crate) fn single(sources: &HashMap<String, Vec<String>>) -> HashMap<String, String> {
+    sources
+        .iter()
+        .filter_map(|(field, s)| match s.as_slice() {
+            [one] => Some((field.clone(), one.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether every source names the same table — the shape the judged
+/// time axis admits several columns in.
+pub(crate) fn one_table(sources: &[String]) -> bool {
+    let table = |s: &String| s.split_once('.').map(|(t, _)| t.to_string());
+    let mut tables = sources.iter().map(table);
+    match tables.next() {
+        Some(first) => tables.all(|t| t == first),
+        None => false,
+    }
 }
 
 /// The column a served field is, or is one `sum` of — the verb's
@@ -57,17 +87,24 @@ pub(crate) fn served_subjects(plan: &LogicalPlan, dataset: &str) -> HashMap<Stri
 /// and the verb falls to its default.
 pub(crate) fn summed_source(plan: &LogicalPlan, field: &str, dataset: &str) -> Option<String> {
     let (qualifier, f) = plan.schema().iter().find(|(_, f)| f.name() == field)?;
-    source_of(
+    match source_of(
         plan,
         &Column::new(qualifier.cloned(), f.name()),
         dataset,
         true,
-    )
+    )?
+    .as_slice()
+    {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
 }
 
-/// `summed` is the verb's descent: past an aggregate's group keys the
-/// walk may step through one `sum`; admission never sets it.
-fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> Option<String> {
+/// The columns `col` descends from: one at every node but a union,
+/// where it is every arm's. `summed` is the verb's descent: past an
+/// aggregate's group keys the walk may step through one `sum`;
+/// admission never sets it.
+fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> Option<Vec<String>> {
     let index = |p: &LogicalPlan| p.schema().index_of_column(col).ok();
     match plan {
         LogicalPlan::Projection(p) => follow(&p.input, &p.expr[index(plan)?], dataset, summed),
@@ -115,30 +152,35 @@ fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> O
             let table = t.table_name.table();
             match t.table_name.schema() {
                 Some(q) if q != dataset => None,
-                _ => Some(format!("{table}.{}", col.name)),
+                _ => Some(vec![format!("{table}.{}", col.name)]),
             }
         }
         // A union serves each column by position: the walk descends it
-        // through every input and answers only where all of them land
-        // on the same subject — the composed shape `read.a() UNION ALL
-        // read.b()` expands to scans under the union, so the shared
-        // axis survives it. Arms landing on different columns stay
-        // None, and the grounding abstains as before.
+        // through every input and answers with all of their columns,
+        // in arm order, once each — one where the arms agree (the
+        // composed shape `read.a() UNION ALL read.b()` expands to scans
+        // under the union, so the shared axis survives it), several
+        // where they differ (an interval's `+1 at from_date, −1 at
+        // to_date`). An arm that descends from nothing makes the whole
+        // descend from nothing.
         LogicalPlan::Union(u) => {
             let i = index(plan)?;
-            let mut sources = u.inputs.iter().map(|input| {
+            let mut out: Vec<String> = Vec::new();
+            for input in &u.inputs {
                 let (qualifier, field) = input.schema().qualified_field(i);
-                source_of(
+                let sources = source_of(
                     input,
                     &Column::new(qualifier.cloned(), field.name()),
                     dataset,
                     summed,
-                )
-            });
-            let first = sources.next()??;
-            sources
-                .all(|s| s.as_deref() == Some(first.as_str()))
-                .then_some(first)
+                )?;
+                for s in sources {
+                    if !out.contains(&s) {
+                        out.push(s);
+                    }
+                }
+            }
+            Some(out)
         }
         _ => None,
     }
@@ -154,7 +196,7 @@ fn source_of(plan: &LogicalPlan, col: &Column, dataset: &str, summed: bool) -> O
 /// was computed from. Aggregates are not reached here — the `Aggregate`
 /// arm follows group expressions, and steps through one `sum` only on
 /// the verb's descent (`summed_source`).
-fn follow(input: &LogicalPlan, expr: &Expr, dataset: &str, summed: bool) -> Option<String> {
+fn follow(input: &LogicalPlan, expr: &Expr, dataset: &str, summed: bool) -> Option<Vec<String>> {
     match expr {
         Expr::Alias(a) => follow(input, &a.expr, dataset, summed),
         Expr::Column(c) => source_of(input, c, dataset, summed),
@@ -225,7 +267,24 @@ mod tests {
             ],
         )
         .unwrap();
-        for (name, batch) in [("lines", lines), ("customers", customers)] {
+        let intervals = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("from_date", DataType::Date32, false),
+                Field::new("to_date", DataType::Date32, false),
+                Field::new("amount", DataType::Float64, false),
+            ])),
+            vec![
+                Arc::new(Date32Array::from(vec![19723])),
+                Arc::new(Date32Array::from(vec![19753])),
+                Arc::new(Float64Array::from(vec![1.0])),
+            ],
+        )
+        .unwrap();
+        for (name, batch) in [
+            ("lines", lines),
+            ("customers", customers),
+            ("intervals", intervals),
+        ] {
             let schema = batch.schema();
             ctx.register_table(
                 name,
@@ -238,7 +297,7 @@ mod tests {
 
     async fn subjects(sql: &str) -> std::collections::HashMap<String, String> {
         let plan = ctx().await.state().create_logical_plan(sql).await.unwrap();
-        super::served_subjects(&plan, "fin")
+        super::single(&super::served_sources(&plan, "fin"))
     }
 
     #[tokio::test]
@@ -289,6 +348,55 @@ mod tests {
         let map = subjects("SELECT region, sum(amount) AS value FROM lines GROUP BY region").await;
         assert_eq!(map.get("region").unwrap(), "lines.region");
         assert!(!map.contains_key("value"));
+    }
+
+    async fn sources(sql: &str) -> std::collections::HashMap<String, Vec<String>> {
+        let plan = ctx().await.state().create_logical_plan(sql).await.unwrap();
+        super::served_sources(&plan, "fin")
+    }
+
+    /// A union descends from every arm's column: one where the arms
+    /// agree, several where they differ — of one table or across
+    /// tables alike, the reader's rule decides — and nothing where an
+    /// arm descends from nothing.
+    #[tokio::test]
+    async fn a_union_descends_from_every_arms_column() {
+        let shared = sources(
+            "SELECT date, amount AS value FROM lines \
+             UNION ALL SELECT date, -amount AS value FROM lines",
+        )
+        .await;
+        assert_eq!(shared.get("date").unwrap(), &vec!["lines.date".to_string()]);
+        let interval = sources(
+            "SELECT from_date AS date, amount AS value FROM intervals \
+             UNION ALL SELECT to_date AS date, -amount AS value FROM intervals",
+        )
+        .await;
+        assert_eq!(
+            interval.get("date").unwrap(),
+            &vec![
+                "intervals.from_date".to_string(),
+                "intervals.to_date".to_string()
+            ]
+        );
+        assert!(!super::single(&interval).contains_key("date"));
+        assert!(super::one_table(interval.get("date").unwrap()));
+        let across = sources(
+            "SELECT date, amount AS value FROM lines \
+             UNION ALL SELECT from_date AS date, amount AS value FROM intervals",
+        )
+        .await;
+        assert_eq!(
+            across.get("date").unwrap(),
+            &vec!["lines.date".to_string(), "intervals.from_date".to_string()]
+        );
+        assert!(!super::one_table(across.get("date").unwrap()));
+        let computed = sources(
+            "SELECT date, amount AS value FROM lines \
+             UNION ALL SELECT from_date + INTERVAL '1' DAY AS date, amount AS value FROM intervals",
+        )
+        .await;
+        assert!(!computed.contains_key("date"));
     }
 
     async fn summed(sql: &str) -> Option<String> {
