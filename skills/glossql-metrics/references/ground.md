@@ -217,6 +217,15 @@ derived metric inherits no rival from its components: when the corpus
 carries a statement line for the subtotal itself, that line is the
 rival — component ties do not stand in for it.
 
+**Four defaults where the brief is silent.** Ground on the row-level
+path; a pre-aggregated or denormalized column beside it is the second
+path, never the ground. A ratio of sums takes each row whole: a null in
+either half drops the row from both. Metrics on one cohort share its
+anchor — the same date column, the same year — unless the brief says
+otherwise. The impossible goes and the implausible stays: exclude what
+violates an identity, keep what is merely an outlier, and disclose
+both.
+
 ## Serve or stop
 
 The dirt you measured at landing reaches the metric here. Two cases,

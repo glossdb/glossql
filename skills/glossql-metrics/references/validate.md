@@ -32,6 +32,11 @@ DECLARE WITNESS hours_w ON hours_reconcile BY (AGENT, HUMAN)
 - **Promote confirmed reconciliations.** A `behavior_evidence`
   convention that reconciled at ~0 residual is a standing invariant —
   make it a check.
+- **A window has two bounds.** A readmission, a return, a repeat
+  within N days tests the next event against both ends: after the
+  index event and inside the window. Probe the rows that pass with a
+  negative interval — an event that begins inside the index event
+  counts when only the upper bound is tested.
 - **Promote basis claims.** A grounding assumption whose basis names
   a second route to the number — "ties to GL 4* net" — is a
   reconciliation in prose. Author the route as the check voice and
