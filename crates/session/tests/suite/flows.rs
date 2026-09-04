@@ -2201,3 +2201,59 @@ async fn a_grounding_the_physical_planner_refuses_abstains_at_the_write() {
     assert!(fact.contains("false"), "{fact}");
     assert!(fact.contains("Physical plan does not support"), "{fact}");
 }
+
+/// A table named like its dataset (SPEC.md §3): under the dataset's
+/// own USE a two-part path is table.column — the nearer scope wins —
+/// and the bare name stays the dataset, which a table-grain aspect
+/// refuses naming what is reachable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_table_named_like_its_dataset_is_reached_by_its_columns() {
+    let (_dir, session) = agent_session().await;
+    run(
+        &session,
+        "DECLARE DATASET hr SET (purpose: 'people'); USE hr;",
+    )
+    .await;
+    let hr = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("emp_no", DataType::Int32, false),
+            Field::new("hire_year", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(Int32Array::from(vec![2019, 2021])),
+        ],
+    )
+    .unwrap();
+    session
+        .register_table(
+            "hr",
+            Arc::new(MemTable::try_new(hr.schema(), vec![vec![hr]]).unwrap()),
+        )
+        .await
+        .unwrap();
+    run(
+        &session,
+        r#"DECLARE ASPECT role WITH $${"type": "object"}$$ AS FACT ON COLUMN;
+           DECLARE ASPECT entity WITH $${"type": "object"}$$ AS FACT ON TABLE;"#,
+    )
+    .await;
+
+    // The two-part path is the table's column, at the write and at the read.
+    run(
+        &session,
+        r#"GLOSS role ON hr.hire_year AS $${"value": "event year"}$$;"#,
+    )
+    .await;
+    let rows = table(&session, "SELECT subject FROM GLOSSARY(hr.hire_year);").await;
+    assert!(rows.contains("hr.hire_year"), "{rows}");
+    // The bare name is the dataset; the refusal names the road.
+    let e = session
+        .execute(r#"GLOSS entity ON hr AS $${"value": "employee"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`hr` is a dataset subject"), "{e}");
+    assert!(e.contains("shares its dataset's name"), "{e}");
+    assert!(e.contains("`hr.<column>`"), "{e}");
+}

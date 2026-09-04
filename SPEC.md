@@ -109,7 +109,12 @@ USE fin;
 
 `USE` sets the resolution context: unprefixed `table.column` paths resolve
 against the USE'd dataset; the full `dataset.table.column` prefix is always
-allowed.
+allowed. A two-part path whose head names both a dataset and a landed
+table of the USE'd dataset is `table.column` — the USE'd dataset is the
+nearer scope, and the other dataset's names are reached under its own
+`USE`. A table that carries its own dataset's name has no table-grain
+subject: the bare name is the dataset (§4), and its columns are reached
+as `table.column`.
 
 Derived views (enrichment, cleaning, dedup as dataset→dataset SQL) are
 closed with the rest of schema-altering SQL for now; they return as a

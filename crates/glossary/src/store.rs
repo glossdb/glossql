@@ -1518,6 +1518,12 @@ impl Store {
         self.lake_rows(relation).await
     }
 
+    /// Whether `dataset` holds a landed table `table` — one existence
+    /// query against the lake, the way [`Store::dataset_exists`] asks.
+    pub async fn table_exists(&self, dataset: &str, table: &str) -> Result<bool> {
+        Ok(self.lake.table_exists(dataset, table).await?)
+    }
+
     pub async fn dataset_exists(&self, name: &str) -> Result<bool> {
         if name == STORE_NAMESPACE {
             return Ok(false);

@@ -41,7 +41,11 @@ USE fin;
 
 `USE` sets the resolution context and persists between calls.
 Unprefixed `table.column` paths resolve against the `USE`'d dataset;
-the full `dataset.table.column` spelling is always allowed. Two actors
+the full `dataset.table.column` spelling is always allowed. A head
+that names both a dataset and a landed table of the `USE`'d dataset is
+the table: the nearer scope wins, and the other dataset's names are
+reached under its own `USE`. A table named like its own dataset is
+reached by its columns only; the bare name is the dataset. Two actors
 on the same dataset hold two sessions; one actor on two datasets holds
 two sessions.
 

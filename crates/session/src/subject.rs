@@ -29,6 +29,11 @@ impl Resolved {
 }
 
 /// Resolve a 1–3 segment path. `use_dataset` is the session's `USE` state.
+///
+/// A two-part path whose head names both a dataset and a landed table
+/// of the `USE`'d dataset is `table.column` (SPEC.md §3): the `USE`'d
+/// dataset is the nearer scope. The existence query runs only on that
+/// collision — a head that names no dataset never pays it.
 pub async fn resolve_path(
     store: &Store,
     use_dataset: Option<&str>,
@@ -62,10 +67,18 @@ pub async fn resolve_path(
                 relative(one.clone())
             }
         }
-        [first, rest @ ..] if store.dataset_exists(first).await? => Ok(Resolved {
-            dataset: first.clone(),
-            subject: rest.join("."),
-        }),
+        [first, rest @ ..] if store.dataset_exists(first).await? => {
+            if let [column] = rest
+                && let Some(used) = use_dataset
+                && store.table_exists(used, first).await?
+            {
+                return relative(format!("{first}.{column}"));
+            }
+            Ok(Resolved {
+                dataset: first.clone(),
+                subject: rest.join("."),
+            })
+        }
         [_, _] => relative(segments.join(".")),
         _ => Err(SessionError::BadSubject(format!(
             "`{}` — up to dataset.table.column, and `{}` is not a declared dataset",

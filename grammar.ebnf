@@ -80,7 +80,9 @@ dataset_decl      = "DATASET", name, "SET", "(", pair, { ",", pair }, ")" ;
                     (* keys today: purpose *)
 
 use               = "USE", name ;
-                    (* unprefixed paths resolve against the USE'd dataset *)
+                    (* unprefixed paths resolve against the USE'd dataset;
+                       a landed table of it wins over a dataset of the
+                       same name at the head of a two-part path *)
 
 (* -- relationships ------------------------------------------------------ *)
 

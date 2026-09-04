@@ -957,7 +957,8 @@ impl Session {
             self.check_glossed_subject(&resolved, &grains).await?;
         }
         let snapshot = self.stamp(&resolved).await?;
-        self.shared
+        let written = self
+            .shared
             .store
             .gloss(
                 &resolved.dataset,
@@ -967,7 +968,31 @@ impl Session {
                 &gloss.body,
                 snapshot,
             )
-            .await?;
+            .await;
+        // A table that carries its dataset's name: the bare name is the
+        // dataset (SPEC.md §4), so a table-grain aspect refuses it, and
+        // the refusal says what is reachable — the columns, as
+        // `table.column` under the dataset's own USE (SPEC.md §3).
+        if let Err(
+            e @ glossql_glossary::Error::GrainRefused {
+                grain: "dataset", ..
+            },
+        ) = &written
+            && self
+                .shared
+                .pinned(&resolved.dataset)
+                .await?
+                .iter()
+                .any(|p| p.name == resolved.subject)
+        {
+            let table = &resolved.subject;
+            return Err(SessionError::BadSubject(format!(
+                "{e} — the table `{table}` shares its dataset's name: the bare name is the \
+                 dataset, its columns are reached as `{table}.<column>` under `USE {table}`, \
+                 and the table itself has no table-grain subject"
+            )));
+        }
+        written?;
         // A grounding's write answers with the metric's fact row — the
         // `metric_axes()` shape at the pin the write moved to: whether
         // the SQL plans, the verb and where it came from, the axes the
