@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/parser", "crates/glossary", "crates/session", "crates/catalog", "crates/import", "crates/scripts", "crates/apps", "crates/serverd"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/glossdb/glossql"
