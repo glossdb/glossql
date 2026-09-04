@@ -767,12 +767,20 @@ pub(crate) async fn relationship_candidates(
         let provider = resolved
             .pin(t)
             .ok_or_else(|| bad(format!("no pin for `{t}`")))?;
+        // Scalar columns only: a key is a scalar, so a nested column is
+        // never a candidate — and the engine's distinct count over a
+        // landed list refuses on the element field's format metadata.
         let fields = provider.schema();
-        if fields.fields().is_empty() {
+        let scalar: Vec<_> = fields
+            .fields()
+            .iter()
+            .filter(|f| !f.data_type().is_nested())
+            .collect();
+        if scalar.is_empty() {
             continue;
         }
         let mut aggs = Vec::new();
-        for f in fields.fields() {
+        for f in &scalar {
             let c = f.name();
             aggs.push(count(ident(c)).alias(format!("f_{c}")));
             aggs.push(count_distinct(ident(c)).alias(format!("d_{c}")));
@@ -786,7 +794,7 @@ pub(crate) async fn relationship_candidates(
             .iter()
             .find(|b| b.num_rows() > 0)
             .ok_or_else(|| bad(format!("the shape scan of `{t}` returned nothing")))?;
-        for (i, f) in fields.fields().iter().enumerate() {
+        for (i, f) in scalar.iter().enumerate() {
             let int = |col_idx: usize| -> Result<i64, SessionError> {
                 one.column(col_idx)
                     .as_any()

@@ -2320,3 +2320,55 @@ async fn a_sequence_lands_one_append_per_relation_and_a_refusal_its_prefix() {
     assert!(store.aspect("e").await.unwrap().is_some());
     assert!(store.aspect("f").await.unwrap().is_none());
 }
+
+/// The candidates' shape scan reads scalar columns only: a list column
+/// is never a key, and the engine's distinct count over a landed list
+/// refuses on the element field's format metadata.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_read_past_a_list_column() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let mut categories = ListBuilder::new(StringBuilder::new());
+    for cats in [vec!["books", "fiction"], vec!["tools"]] {
+        for c in cats {
+            categories.values().append_value(c);
+        }
+        categories.append(true);
+    }
+    let product = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(
+                "category",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                true,
+            ),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(categories.finish()),
+        ],
+    )
+    .unwrap();
+    let review = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new(
+            "product_id",
+            DataType::Int32,
+            false,
+        )])),
+        vec![Arc::new(Int32Array::from(vec![1, 1, 2]))],
+    )
+    .unwrap();
+    for (name, batch) in [("product", product), ("review", review)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let out = table(&session, "SELECT * FROM relationship_candidates('fin');").await;
+    assert!(out.contains("product") && out.contains("review"), "{out}");
+}
