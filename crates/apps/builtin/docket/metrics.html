@@ -41,9 +41,10 @@
      only the frames whose URL changed refetch. #}
   <gl-window frame="frames/axes"></gl-window>
 
-  {# A current fact: one number, no series. `frames/fact` serves a row
-     only when this metric is a fact, so the tile renders only then —
-     `empty=""` states nothing for a series or a relation. #}
+  {# A declared fact: one number, no series. `frames/fact` serves a
+     row only when this metric is a declared fact with a number, so
+     the tile renders only then — `empty=""` states nothing for a
+     series or a relation. #}
   <gl-rows frame="frames/fact" empty="">
     <template>
       <section class="tile kpi">
@@ -185,7 +186,7 @@
 
   <section class="tile">
     <header><span class="eyebrow">Metric surfaces</span>
-      <code class="chip" title="Every declared QUERY aspect with where its judgment stands — the record — and, joined by the metric's name, the cube's newest period, the move into it and the admitted axes — the data. Two frames: a ruling refreshes the first and leaves the cube alone.">metric_surfaces · metric_series()</code></header>
+      <code class="chip" title="Every declared QUERY aspect with where its judgment stands, and the cube's reason where it charts nothing — the record — and, joined by the metric's name, the cube's newest period, the move into it and the admitted axes — the data. Two frames: a ruling refreshes the first and leaves the cube alone.">metric_surfaces · metric_axes() · metric_series()</code></header>
     <gl-rows frame="frames/pulse" join="frames/latest" on="name" empty="no metric surfaces declared yet">
       <template>
         <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 8rem">

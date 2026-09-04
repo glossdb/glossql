@@ -17,8 +17,9 @@ top. Each point's fit saw only the months before it.
   withheld; the detector scores the month before it.
 - A red `metric_bands` verdict names its metric and month through
   `band_points()` — the recorded walk as rows, no re-run.
-- What the cube does not chart — current facts, derived relations —
-  `fact_values()` serves whole, the fact's number where there is one.
+- A declared fact (`x-kind: fact`) `fact_values()` serves whole, its
+  number where the frame is one row with a value; a derived relation
+  is `read.<name>()`'s alone.
 - It follows the grounding's authored behavior — mark your stocks —
   then the `behavior` gloss on the column summed, then the evidence.
 

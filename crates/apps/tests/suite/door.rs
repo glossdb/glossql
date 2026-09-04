@@ -1137,9 +1137,11 @@ async fn the_metrics_faces_serve_the_cube() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_list_serves_a_workspace_without_a_fact() {
     // `frames/latest` unions the cube's newest periods with the facts'
-    // values. A workspace whose every grounding is a series has no
-    // fact row to add, and the frame serves the series alone: a door
-    // with nothing to say is the empty relation, not a refusal.
+    // values. A workspace that declares no fact has no fact row to
+    // add, and the frame serves the series alone: a door with nothing
+    // to say is the empty relation, not a refusal. The undated measure
+    // declares no kind, so it is no fact either: nothing shows its
+    // number, and the list carries the cube's reason in the axes slot.
     let (app, plane, _dir) = workspace().await;
     plane
         .channel(
@@ -1154,6 +1156,7 @@ async fn the_list_serves_a_workspace_without_a_fact() {
         .execute(&format!(
             r#"USE perf;
                DECLARE ASPECT dso WITH $${{"title": "DSO", "x-kind": "metric"}}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT undated WITH $${{"title": "Undated"}}$$ AS QUERY ON DATASET;
                DECLARE ASPECT temporal_profile WITH $${{"type": "object",
                  "required": ["applicable"],
                  "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
@@ -1163,6 +1166,7 @@ async fn the_list_serves_a_workspace_without_a_fact() {
                           named_struct('ratio', 1.0) AS completeness$$
                  RETURNS temporal_profile;
                GLOSS dso ON perf AS $${{"sql": "SELECT month, value FROM ledger"}}$$;
+               GLOSS undated ON perf AS $${{"sql": "SELECT sum(value) AS value FROM ledger"}}$$;
                SELECT judge_time() FROM ledger.month;"#,
             cube = shipped_cube_declaration()
         ))
@@ -1179,6 +1183,16 @@ async fn the_list_serves_a_workspace_without_a_fact() {
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
     assert_eq!(fact.status(), StatusCode::OK);
     assert_eq!(row_count(fact).await, 0, "a series is not a fact");
+    let fact = get(&app, "/perf/app/docket/frames/fact?metric=undated").await;
+    assert_eq!(row_count(fact).await, 0, "an undeclared kind is not a fact");
+
+    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
+    assert_eq!(pulse.status(), StatusCode::OK);
+    let pulse = body_text(pulse).await;
+    assert!(
+        pulse.contains("no judged time column"),
+        "the list carries the cube's reason: {pulse}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

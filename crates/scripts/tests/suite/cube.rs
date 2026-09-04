@@ -2029,9 +2029,13 @@ async fn a_door_with_nothing_to_say_serves_the_empty_relation() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fact_values_serves_what_the_cube_does_not_chart() {
-    // Four groundings without a time axis and one with. The fact is a
-    // frame of one row with a value; the others say why they are not.
+async fn fact_values_serves_the_declared_facts() {
+    // The declaration is what makes a fact. Two aspects declare
+    // `x-kind: fact`: one frame is a row with a value, the other many
+    // rows, and the read says so. A relation, a series, and a
+    // grounding that serves no date and declares no kind are not
+    // listed — the last is charted by nothing, and the cube's reason
+    // is where that shows.
     let dir = tempfile::tempdir().unwrap();
     let jan = |d: i32| 19723 + d - 1;
     let stocks = dated(
@@ -2044,36 +2048,45 @@ async fn fact_values_serves_what_the_cube_does_not_chart() {
         vec![("stocks", stocks)],
         &[
             r#"DECLARE ASPECT on_hand WITH $${"title": "On hand", "x-kind": "fact"}$$ AS QUERY ON DATASET;"#,
-            r#"DECLARE ASPECT each WITH $${"title": "Each"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT each WITH $${"title": "Each", "x-kind": "fact"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT bare WITH $${"title": "Bare", "x-kind": "relation"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT series WITH $${"title": "Series"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT undated WITH $${"title": "Undated"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS on_hand ON fin AS $${"sql": "SELECT sum(qty) AS value FROM stocks"}$$;"#,
             r#"GLOSS each ON fin AS $${"sql": "SELECT qty AS value FROM stocks"}$$;"#,
             r#"GLOSS bare ON fin AS $${"sql": "SELECT qty FROM stocks"}$$;"#,
             r#"GLOSS series ON fin AS $${"sql": "SELECT date, qty AS value FROM stocks"}$$;"#,
+            r#"GLOSS undated ON fin AS $${"sql": "SELECT sum(qty) AS value FROM stocks"}$$;"#,
         ],
     )
     .await;
     let shown = grid(
         &session,
-        "SELECT metric, kind, value, reason FROM fact_values() ORDER BY metric;",
+        "SELECT metric, value, reason FROM fact_values() ORDER BY metric;",
     )
     .await;
     assert!(
-        shown.contains("| on_hand ") && shown.contains("| fact ") && shown.contains("| 110.0 "),
+        shown.contains("| on_hand ") && shown.contains("| 110.0 "),
         "{shown}"
     );
     assert!(
         shown.contains("| each ") && shown.contains("more than one row"),
         "{shown}"
     );
+    for not_a_fact in ["bare", "series", "undated"] {
+        assert!(
+            !shown.contains(&format!("| {not_a_fact} ")),
+            "{not_a_fact} declares no fact: {shown}"
+        );
+    }
+    let reason = cell(
+        &session,
+        "SELECT reason FROM metric_axes() WHERE metric = 'undated';",
+    )
+    .await;
     assert!(
-        shown.contains("| bare ") && shown.contains("no value column"),
-        "{shown}"
-    );
-    assert!(
-        !shown.contains("| series "),
-        "a grounding with a time axis is the cube's: {shown}"
+        reason.starts_with("no judged time column"),
+        "the cube's reason is where an undated measure shows: {reason}"
     );
 }
 

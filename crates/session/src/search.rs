@@ -2530,15 +2530,15 @@ pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
     rows_batch(out, fields)
 }
 
-/// `fact_values()` — the groundings the cube does not chart, served
-/// whole: one row per current QUERY grounding whose frame serves no
-/// time-typed column, with `kind` (the aspect blob's `x-kind`, where
-/// it names one), `value` where the frame is one row with a `value`
-/// column — a current fact — and `reason` where it is not: a derived
-/// relation (no `value`), a frame of many rows, an empty one, or SQL
-/// the engine refused. A grounding with a time axis is the cube's
-/// (`metric_series()`) and is not listed here. The data at read, like
-/// the cube's cells: nothing is recorded.
+/// `fact_values()` — the declared facts, served whole: one row per
+/// current QUERY grounding whose aspect declares `x-kind: fact`, with
+/// `value` where the frame is one row with a `value` column and
+/// `reason` where it is not: a derived relation (no `value`), a frame
+/// of many rows, an empty one, or SQL the engine refused. The
+/// declaration is what makes a fact — a grounding that serves no date
+/// and declares no kind is charted by nothing, and `metric_axes()`
+/// carries the cube's reason. The data at read, like the cube's cells:
+/// nothing is recorded.
 pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
@@ -2562,6 +2562,9 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         .collect();
     let mut out = Vec::new();
     for slot in current_query_slots(&rctx, &dataset).await? {
+        if kinds.get(slot.aspect.as_str()).map(String::as_str) != Some("fact") {
+            continue;
+        }
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
@@ -2570,10 +2573,6 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         };
         let mut row = serde_json::Map::new();
         row.insert("metric".into(), json!(slot.aspect));
-        row.insert(
-            "kind".into(),
-            json!(kinds.get(slot.aspect.as_str()).cloned().unwrap_or_default()),
-        );
         let serve = |row: &mut serde_json::Map<String, Value>, reason: String| {
             row.insert("reason".into(), json!(reason));
         };
@@ -2586,9 +2585,6 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
             }
         };
         let fields = plan.schema();
-        if crate::whatif::date_column(fields.fields()).is_some() {
-            continue;
-        }
         if !fields.fields().iter().any(|f| f.name() == "value") {
             serve(
                 &mut row,
@@ -2651,7 +2647,6 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         out,
         vec![
             Field::new("metric", DataType::Utf8, true),
-            Field::new("kind", DataType::Utf8, true),
             Field::new("value", DataType::Float64, true),
             Field::new("reason", DataType::Utf8, true),
         ],

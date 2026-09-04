@@ -71,13 +71,15 @@ before you write it: the workspace accepts all four under the same
 - **A current fact** — a value with no as-of definition: a balance the
   source hands over already summed, a count from a snapshot table.
   Ground it as a QUERY aspect that serves `value` and no date, with
-  `"x-kind": "fact"` in the aspect's blob so `metric_surfaces` says
-  what it is. `read.<name>()` serves it, `fact_values()` serves every
-  fact's number in one read, and the docket shows it as a value tile
-  and in the list beside its name. The cube abstains on it — "no
-  judged time column" — and that is the right answer, not a defect to
-  work around. A fact given a date becomes a one-point series — a
-  chart of nothing.
+  `"x-kind": "fact"` in the aspect's blob — the declaration is what
+  makes it a fact. `read.<name>()` serves it, `fact_values()` serves
+  every declared fact's number in one read, and the docket shows it as
+  a value tile and in the list beside its name. The cube abstains on
+  it — "no judged time column" — and that is the right answer, not a
+  defect to work around. A fact given a date becomes a one-point
+  series — a chart of nothing. A metric that serves no date and
+  declares no kind is neither: nothing charts it and nothing shows its
+  number, and the list carries the cube's reason.
 - **A derived relation** — governed SQL other groundings build on: a
   snapshot boundary, a cleaned join, a scoped subset. Ground it as a
   QUERY aspect with `"x-kind": "relation"`; every other grounding

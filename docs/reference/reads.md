@@ -242,16 +242,15 @@ last change.
 
 ### fact_values()
 
-The groundings the cube does not chart, served whole: one row per
-current QUERY grounding whose frame serves no time-typed column —
-`metric`, `kind` (the aspect blob's `x-kind`, where it names one),
-`value` where the frame is one row with a `value` column (a current
-fact), and `reason` where it is not: a derived relation (no `value`),
-a frame of many rows, an empty one, or SQL the engine refused. A
-grounding with a time axis is `metric_series()`'s and is not listed.
-The data at read, like the cells: nothing is recorded. The docket's
-value tile and its list read the fact's number from here. Requires a
-bound dataset.
+The declared facts, served whole: one row per current QUERY grounding
+whose aspect declares `x-kind: fact` — `metric`, `value` where the
+frame is one row with a `value` column, and `reason` where it is not:
+a derived relation (no `value`), a frame of many rows, an empty one,
+or SQL the engine refused. The declaration is what makes a fact: a
+grounding that serves no date and declares no kind is charted by
+nothing, and `metric_axes()` carries the cube's reason. The data at
+read, like the cells: nothing is recorded. The docket's value tile and
+its list read the fact's number from here. Requires a bound dataset.
 
 ### band_points()
 
