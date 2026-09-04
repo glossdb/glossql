@@ -65,7 +65,14 @@ impl<'a> GlossqlParser<'a> {
             }
             if expecting_delimiter {
                 let found = self.df.parser.peek_token();
-                return Ok(expected("end of statement (`;`)", &found)?);
+                // A `{` where the statement should end is the opener
+                // mirrored as the closer: `…}$${;`.
+                let road = if found.token == Token::LBrace {
+                    MIRROR_ROAD
+                } else {
+                    ""
+                };
+                return Ok(expected_with("end of statement (`;`)", &found, road)?);
             }
             statements.push(self.parse_statement()?);
             expecting_delimiter = true;
@@ -106,8 +113,13 @@ impl<'a> GlossqlParser<'a> {
 }
 
 fn expected<T>(what: &str, found: &TokenWithSpan) -> Result<T, ParserError> {
+    expected_with(what, found, "")
+}
+
+/// [`expected`] with a road out after the engine's own text.
+fn expected_with<T>(what: &str, found: &TokenWithSpan, road: &str) -> Result<T, ParserError> {
     Err(ParserError::ParserError(format!(
-        "Expected: {what}, found: {found}{}",
+        "Expected: {what}, found: {found}{}{road}",
         found.span.start
     )))
 }
@@ -370,6 +382,11 @@ fn parse_speaker(p: &mut Parser) -> Result<Speaker, ParserError> {
 /// text after the object. Both refusals carry this.
 const DOLLAR_ROAD: &str =
     " — a dollar-quoted body closes with $$ before the semicolon: `…}$$;`, not `…};`";
+
+/// The other way a body's close goes wrong: the opener `$${` mirrored
+/// as the closer, `}$${;`. The body tokenizes whole and the stray `{`
+/// is what the statement's end finds.
+const MIRROR_ROAD: &str = " — `}$${;` mirrors the opener; a dollar-quoted body closes with `}$$;`";
 
 /// The tokenizer's `Unterminated dollar-quoted string` with
 /// [`DOLLAR_ROAD`]; every other tokenizer error passes as it came.

@@ -263,3 +263,13 @@ fn a_body_closed_by_the_semicolon_names_the_missing_dollar_quote() {
     );
     assert!(e.contains("Unterminated dollar-quoted"), "{e}");
 }
+
+#[test]
+fn a_body_closed_by_mirroring_the_opener_names_the_close() {
+    let e = error(r#"GLOSS entity ON encounters AS $${"value": "visit"}$${;"#);
+    assert!(e.contains("found: {"), "{e}");
+    assert!(e.contains("mirrors the opener"), "{e}");
+    // Any other stray token at the statement's end passes as it came.
+    let e = error(r#"GLOSS entity ON encounters AS $${"value": "visit"}$$ x;"#);
+    assert!(e.contains("found: x") && !e.contains("mirrors"), "{e}");
+}
