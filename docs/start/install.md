@@ -61,7 +61,7 @@ listens:
 | `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
-| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A plan that would exceed it is refused by name; nothing spills, because a container is the wrong place to be writing overflow. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum |
+| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, bounded at twice the limit; a container needs that much ephemeral space, or a disk at its temp directory. Past the bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum, plus the spill space |
 
 Authorization is not a flag. The server reads it from `.env` in the
 working directory, or from the environment (a set variable wins over

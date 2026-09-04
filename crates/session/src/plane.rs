@@ -20,9 +20,11 @@
 //! It lives in the session crate because every door needs it (serverd's
 //! `/mcp` and `/query`, the app door's frame reads).
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
+use datafusion::execution::memory_pool::{FairSpillPool, TrackConsumersPool};
 use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 
 use glossql_glossary::{Actor, Store};
@@ -54,10 +56,15 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
 /// this is a ceiling on what the engine knows it is holding, not on the
 /// process.
 ///
-/// **No disk manager.** Nothing spills; a plan that outgrows the pool is
-/// refused instead. Spilling is worth having when a temp directory is a
-/// real disk, and in a container it is another way to run out of room —
-/// with a refusal traded for a slower failure somewhere else.
+/// **Spilling, bounded.** A sort or a final-mode hash aggregate that
+/// outgrows the pool spills to the OS temp directory instead of
+/// refusing; the disk manager caps the spilled bytes at twice the
+/// pool, and past the cap the engine refuses by name as it does for
+/// memory. A container therefore needs that much ephemeral space or a
+/// disk mounted at its temp directory. What cannot spill — the
+/// no-GROUP-BY aggregate, a `count(DISTINCT …)` state held whole per
+/// partition — is still refused, and the refusal names the shape that
+/// fits (the session error's road).
 ///
 /// **No file caches.** The three DataFusion keeps are on by default and
 /// a limit of zero is how they are turned off. The one that decides it
@@ -66,21 +73,34 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
 /// re-reading precisely because they changed. A cache that cannot see a
 /// new file is a wrong answer, not a slow one.
 fn runtime_env(megabytes: u64) -> Arc<RuntimeEnv> {
+    let pool = megabytes * 1024 * 1024;
     Arc::new(
         RuntimeEnvBuilder::new()
-            .with_memory_limit((megabytes as usize) * 1024 * 1024, 1.0)
+            // The fair pool, not the greedy one `with_memory_limit`
+            // builds: a spillable consumer gets an even share of what
+            // the unspillable ones leave and spills past it, so a
+            // repartition buffer or a no-GROUP-BY aggregate arriving
+            // while hash tables hold the pool is not what fails. The
+            // consumer tracking is what names the top holders in a
+            // refusal.
+            .with_memory_pool(Arc::new(TrackConsumersPool::new(
+                FairSpillPool::new(pool as usize),
+                NonZeroUsize::new(5).expect("five"),
+            )))
             .with_disk_manager_builder(
-                DiskManagerBuilder::default().with_mode(DiskManagerMode::Disabled),
+                DiskManagerBuilder::default()
+                    .with_mode(DiskManagerMode::OsTmpDirectory)
+                    .with_max_temp_directory_size(pool * 2),
             )
             .with_metadata_cache_limit(0)
             .with_object_list_cache_limit(0)
             .with_file_statistics_cache_limit(0)
             // The two things `build` can refuse are a temp directory it
-            // cannot make and a cache it cannot size. Disabled makes no
-            // directory and a zero limit sizes nothing, so neither is
-            // reachable from here.
+            // cannot make and a cache it cannot size. The OS temp
+            // directory is made at the first spill, not here, and a
+            // zero limit sizes nothing, so neither is reachable.
             .build()
-            .expect("a disabled disk manager and empty caches"),
+            .expect("the OS temp directory and empty caches"),
     )
 }
 

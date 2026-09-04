@@ -52,7 +52,8 @@ follows the served scheme.
 Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB, memory
 limit 4096 MB. The cube cache and the memory limit are two budgets, not
 one: the cache holds its bytes outside the engine, so a deployment is
-sized for their sum. The workspace directory holds `catalog.sqlite`, the
+sized for their sum — and for the spill space beside them, twice the
+memory limit at the OS temp directory. The workspace directory holds `catalog.sqlite`, the
 `warehouse/` (created at boot), `apps/`, and the band model's
 `weights/`. A fresh workspace receives
 the shipped system, the measurement library and the KPI kit, before any

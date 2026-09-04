@@ -47,10 +47,13 @@ its own cycle stack, one stack for the whole nesting.
   one per session state when it is handed none, and a channel is built
   per call, so the runtime is created at boot and handed to every
   channel instead — a pool built per call would bound only that call.
-  The pool is bounded (`--memory-limit`), nothing spills, and the three
-  file caches are off — the list-files cache defaults to an infinite
-  TTL over exactly the source globs a re-import is re-reading because
-  they changed.
+  The pool is bounded (`--memory-limit`); a sort or a final-mode hash
+  aggregate past it spills to the OS temp directory, the disk manager
+  capping the spilled bytes at twice the pool, and a consumer that
+  cannot spill is refused with the shape that fits; the three file
+  caches are off — the list-files cache defaults to an infinite TTL
+  over exactly the source globs a re-import is re-reading because they
+  changed.
 - **Schema without execution** — a logical plan carries its schema, so
   column names and types are answered without reading a row.
 

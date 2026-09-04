@@ -326,6 +326,28 @@ async fn the_memory_ceiling_is_the_planes_and_every_channel_answers_to_it() {
     );
 }
 
+/// Past the pool, a sort spills to the OS temp directory and answers:
+/// a million rows ordered under a window, in one partition, is more
+/// than the pool below, and the external sorter takes the overflow to
+/// disk — bounded at twice the pool.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sort_the_pool_cannot_hold_spills_and_answers() {
+    const RANKED: &str = "SELECT count(*) AS n FROM \
+                          (SELECT value, row_number() OVER (ORDER BY value) AS r \
+                           FROM generate_series(1, 1000000)) WHERE r > 0;";
+    let dir = tempfile::tempdir().unwrap();
+    let bounded = plane(dir.path()).await.with_memory_limit(4);
+    assert_eq!(
+        single_value(
+            &bounded
+                .execute(agent("analyst"), None, RANKED)
+                .await
+                .unwrap()
+        ),
+        "1000000"
+    );
+}
+
 /// An unquoted name folds to lowercase at the declaration and at the
 /// read, as the engine folds its own; a double-quoted one keeps its
 /// case (SPEC.md §1). The engine's schema surface lists what landed
