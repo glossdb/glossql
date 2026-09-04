@@ -210,8 +210,9 @@ QUERY aspect returns the metric's fact at the pin the write moved to,
 in this shape, in place of `{"done"}` — the plan stage alone, so
 `bucketed` is empty, the member floor is not yet applied and no rival
 is run; everything else is what this read will say. A grounding whose
-SQL does not plan abstains there with the engine's refusal; the gloss
-has landed either way. The row judges the grounding that serves, so
+SQL does not plan, at either of the engine's two planning stages,
+abstains there with the engine's refusal; the gloss has landed either
+way. The row judges the grounding that serves, so
 after a human's own grounding on the aspect it is theirs the row
 describes, and a call bound to another dataset, or to none, abstains
 naming the `USE` that judges it.

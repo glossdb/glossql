@@ -2173,3 +2173,31 @@ async fn a_fold_miss_names_the_quoted_spelling() {
         .to_string();
     assert!(!e.contains("reached quoted"), "{e}");
 }
+
+/// A grounding the engine admits at the logical plan and refuses at
+/// the physical one — a scalar subquery inside an aggregate's argument
+/// — abstains at the write with the engine's refusal, instead of
+/// answering applicable and failing at the first read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grounding_the_physical_planner_refuses_abstains_at_the_write() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT cube WITH $${"type": "object", "properties": {
+             "resolution": {"default": "day"},
+             "windows": {"type": "object", "properties": {"month": {"default": "48 months"}}}}}$$
+           AS FACT ON DATASET;
+           DECLARE ASPECT orders_per_customer WITH $${"title": "orders per customer"}$$
+           AS QUERY ON DATASET;"#,
+    )
+    .await;
+    let fact = table(
+        &session,
+        r#"GLOSS orders_per_customer ON fin AS $${"sql": "SELECT max((SELECT count(*) FROM orders o WHERE o.customer_id = c.id)) AS value FROM customers c"}$$;"#,
+    )
+    .await;
+    assert!(fact.contains("false"), "{fact}");
+    assert!(fact.contains("Physical plan does not support"), "{fact}");
+}

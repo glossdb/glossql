@@ -1029,6 +1029,17 @@ async fn plan(
         .and_then(Value::as_str)
         .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
     let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    // Planned through to the physical plan as well: the engine admits
+    // at the logical stage what it refuses at the physical one — a
+    // scalar subquery inside an aggregate's argument arrives there as
+    // `ScalarSubquery` and is refused ("Physical plan does not support
+    // …") — and the row answers whether the SQL plans, so it answers
+    // for both stages. The scans are the pinned providers' and plan
+    // without I/O; nothing runs.
+    ctx.state()
+        .create_physical_plan(&probe)
+        .await
+        .map_err(|e| Abstain(format!("not served: {e}")))?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
