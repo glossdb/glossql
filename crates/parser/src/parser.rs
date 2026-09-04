@@ -1,4 +1,4 @@
-use datafusion_common::Result;
+use datafusion_common::{DataFusionError, Result};
 use datafusion_sql::parser::{DFParser, DFParserBuilder};
 use datafusion_sql::planner::IdentNormalizer;
 use datafusion_sql::sqlparser::ast::Ident;
@@ -38,7 +38,10 @@ pub struct GlossqlParser<'a> {
 
 impl<'a> GlossqlParser<'a> {
     pub fn new(sql: &'a str) -> Result<Self> {
-        let df = DFParserBuilder::new(sql).with_dialect(&DIALECT).build()?;
+        let df = DFParserBuilder::new(sql)
+            .with_dialect(&DIALECT)
+            .build()
+            .map_err(dollar_road)?;
         Ok(GlossqlParser { df })
     }
 
@@ -359,14 +362,55 @@ fn parse_speaker(p: &mut Parser) -> Result<Speaker, ParserError> {
     expected("AGENT or HUMAN", &found)
 }
 
+/// The road out of the one omission behind a dollar-quoted body that
+/// does not close: a body written `…};` — closed by the semicolon and
+/// never by `$$`. With no later `$$` in the call the tokenizer refuses
+/// the whole call as unterminated; with one, the region runs to it and
+/// swallows the statements between, which the body check then sees as
+/// text after the object. Both refusals carry this.
+const DOLLAR_ROAD: &str =
+    " — a dollar-quoted body closes with $$ before the semicolon: `…}$$;`, not `…};`";
+
+/// The tokenizer's `Unterminated dollar-quoted string` with
+/// [`DOLLAR_ROAD`]; every other tokenizer error passes as it came.
+fn dollar_road(e: DataFusionError) -> DataFusionError {
+    match e {
+        DataFusionError::SQL(inner, b) => match *inner {
+            ParserError::TokenizerError(m) if m.starts_with("Unterminated dollar-quoted") => {
+                DataFusionError::SQL(
+                    Box::new(ParserError::TokenizerError(format!("{m}{DOLLAR_ROAD}"))),
+                    b,
+                )
+            }
+            other => DataFusionError::SQL(Box::new(other), b),
+        },
+        other => other,
+    }
+}
+
 /// A dollar-quoted region holding a JSON object, validated per RFC 8259.
 fn parse_json_body(p: &mut Parser) -> Result<JsonBody, ParserError> {
     let token = p.next_token();
     let at = token.span.start;
     match token.token {
         Token::DollarQuotedString(s) => {
-            let value: serde_json::Value = serde_json::from_str(&s.value)
+            // One value, then nothing: text after the object is the
+            // region running past the body (`DOLLAR_ROAD`).
+            let mut values =
+                serde_json::Deserializer::from_str(&s.value).into_iter::<serde_json::Value>();
+            let value = values
+                .next()
+                .unwrap_or(Ok(serde_json::Value::Null))
                 .map_err(|e| ParserError::ParserError(format!("invalid JSON body{at}: {e}")))?;
+            if let Some(trailing) = values.next() {
+                let what = match trailing {
+                    Ok(_) => "a second value".to_string(),
+                    Err(e) => e.to_string(),
+                };
+                return Err(ParserError::ParserError(format!(
+                    "invalid JSON body{at}: text after the object ({what}){DOLLAR_ROAD}"
+                )));
+            }
             if !value.is_object() {
                 return Err(ParserError::ParserError(format!(
                     "JSON body must be an object{at}"

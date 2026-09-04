@@ -237,3 +237,29 @@ fn unquoted_names_fold_and_quoted_names_keep_case() {
     let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
     assert_eq!(segments, ["orders", "Amount"]);
 }
+
+/// A body written `…};` — closed by the semicolon, never by `$$` — is
+/// refused with the road out in both shapes it takes: alone in the
+/// call, the tokenizer's unterminated region; followed by another such
+/// body, the region running to the next `$$` and the body check seeing
+/// the swallowed statement as text after the object.
+#[test]
+fn a_body_closed_by_the_semicolon_names_the_missing_dollar_quote() {
+    let e = error(r#"GLOSS entity ON encounters AS $${"value": "visit"};"#);
+    assert!(e.contains("Unterminated dollar-quoted"), "{e}");
+    assert!(e.contains("closes with $$ before the semicolon"), "{e}");
+    let e = error(
+        "GLOSS entity ON encounters AS $${\"value\": \"visit\"};\n\
+         GLOSS entity ON patients AS $${\"value\": \"person\"};",
+    );
+    assert!(e.contains("invalid JSON body"), "{e}");
+    assert!(e.contains("text after the object"), "{e}");
+    assert!(e.contains("closes with $$ before the semicolon"), "{e}");
+    // A body that closes, followed by one that does not, refuses at
+    // the second with the tokenizer's text.
+    let e = error(
+        "GLOSS entity ON encounters AS $${\"value\": \"visit\"}$$;\n\
+         GLOSS entity ON patients AS $${\"value\": \"person\"};",
+    );
+    assert!(e.contains("Unterminated dollar-quoted"), "{e}");
+}
