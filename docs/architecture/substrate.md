@@ -80,8 +80,10 @@ its own cycle stack, one stack for the whole nesting.
   the store. Inside one append, the row id orders the rows: two rows
   sharing a supersession key resolve to the later one, whichever files
   they landed in.
-- **One statement, one commit.** A statement's rows land as one
-  append; replacement is a later row, never an update.
+- **One sequence, one commit per relation.** A call's rows land at
+  its end, one append per relation they touch, and what stood before
+  a refusal lands the same way; replacement is a later row, never an
+  update.
 - **Facts about a write ride the write** (snapshot properties and
   summary); claims about a subject are rows.
 - **Landings read back from snapshot summaries** — one entry per

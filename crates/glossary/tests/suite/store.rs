@@ -1460,3 +1460,41 @@ async fn a_batch_carrying_two_rows_to_one_key_lands_the_later_one() {
     let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
     assert_eq!(schema["properties"]["value"]["type"], "number", "{schema}");
 }
+
+/// A channel's batch is its own: two channels buffering the same
+/// relation each see committed state plus their own rows, and a flush
+/// on one lands for every channel.
+#[tokio::test]
+async fn a_channels_batch_is_its_own() {
+    let (_dir, store) = store().await;
+    let aspect = |name: &str| {
+        let Declaration::Aspect(a) = decl(&format!(
+            r#"DECLARE ASPECT {name} WITH $${{"type": "object"}}$$ AS FACT;"#
+        )) else {
+            unreachable!()
+        };
+        a
+    };
+    let (a, b) = (store.channel(), store.channel());
+    a.batch_begin();
+    b.batch_begin();
+    a.declare_aspect(&aspect("from_a")).await.unwrap();
+    b.declare_aspect(&aspect("from_b")).await.unwrap();
+    assert!(a.aspect("from_a").await.unwrap().is_some());
+    assert!(
+        a.aspect("from_b").await.unwrap().is_none(),
+        "b's buffer is not a's"
+    );
+    assert!(b.aspect("from_a").await.unwrap().is_none());
+    b.batch_flush().await.unwrap();
+    assert!(
+        a.aspect("from_b").await.unwrap().is_some(),
+        "a landed row reaches every channel"
+    );
+    assert!(
+        store.aspect("from_a").await.unwrap().is_none(),
+        "still buffered on a"
+    );
+    a.batch_flush().await.unwrap();
+    assert!(store.aspect("from_a").await.unwrap().is_some());
+}

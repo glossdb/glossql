@@ -179,3 +179,28 @@ async fn column_evidence_is_owed_by_role() {
         "1"
     );
 }
+
+/// The shipped system lands as one sequence: one append per relation
+/// it touches, however many declarations it carries — the whole bill
+/// on a catalog charging a round trip per commit.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shipped_system_lands_one_append_per_relation() {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
+    bootstrap(&plane, human()).await.unwrap();
+    let mut appends = std::collections::HashMap::new();
+    for l in store.lake().landings("glossql").await.unwrap() {
+        *appends.entry(l.table).or_insert(0usize) += 1;
+    }
+    assert!(appends.len() >= 3, "{appends:?}");
+    for (table, n) in &appends {
+        assert_eq!(*n, 1, "`{table}` landed {n} times: {appends:?}");
+    }
+}

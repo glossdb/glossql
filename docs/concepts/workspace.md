@@ -16,8 +16,8 @@ The record lives in the same lake: every relation the language
 declares — the glossary, aspects, functions, witnesses, sources,
 relationships, measurements, imports — is an Iceberg table. The
 catalog keeps its own small backend file; nothing of the record lives
-outside the lake. Writes are appends; one statement is one commit; no
-machinery deletes knowledge.
+outside the lake. Writes are appends; a call's writes land as one
+commit per relation; no machinery deletes knowledge.
 
 **Supersession is a read, not an update.** The current value of a slot
 is the latest row per (subject, aspect, actor kind). Re-speaking a

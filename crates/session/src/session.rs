@@ -78,6 +78,10 @@ pub enum SessionError {
     DropRefused { table: String, reason: String },
     #[error("streaming takes exactly one query — everything else answers through execute")]
     NotOneRead,
+    /// The sequence's buffered rows did not land at the flush: nothing
+    /// else can be said about the sequence, so this is the error.
+    #[error("the sequence's writes did not land: {0}")]
+    Unlanded(Box<SessionError>),
     #[error("statement {index} of {total} refused: {source} — {context}")]
     Sequence {
         index: usize,
@@ -426,6 +430,9 @@ impl Session {
         use datafusion::sql::sqlparser::ast::Ident;
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
         let ctx = self.shared.read_context().await?;
+        // Batched like a sequence: the landings are one append on
+        // `measurements`, not one per extraction.
+        self.shared.store.batch_begin();
         let mut stale: Vec<(String, Vec<String>)> = ctx
             .measurements
             .iter()
@@ -469,14 +476,15 @@ impl Session {
                 Err(e) => refused.push(format!("{function}() over {}: {e}", segments.join("."))),
             }
         }
-        if refused.is_empty() {
+        let run = if refused.is_empty() {
             Ok(ran)
         } else {
             Err(SessionError::Runtime(format!(
                 "re-measure landed {ran} and was refused on {}",
                 refused.join("; ")
             )))
-        }
+        };
+        self.landed(run).await
     }
 
     fn lake(&self) -> Lake {
@@ -534,6 +542,29 @@ impl Session {
         statements: Vec<Statement>,
     ) -> Result<Vec<Outcome>, SessionError> {
         self.refresh_mount().await?;
+        // Every sequence runs batched: the channel's slot holds the
+        // rows and the flush lands them, one append per touched
+        // relation and one head drop — whether the sequence completes
+        // or a statement refuses, because what stood before a refusal
+        // landed, and the refusal says so.
+        self.shared.store.batch_begin();
+        let run = self.run_statements(statements).await;
+        self.landed(run).await
+    }
+
+    /// Land the channel's batch after a sequence, whichever way it
+    /// went. A flush that fails is the error: the rows did not land.
+    async fn landed<T>(&self, run: Result<T, SessionError>) -> Result<T, SessionError> {
+        match self.shared.store.batch_flush().await {
+            Ok(()) => run,
+            Err(e) => Err(SessionError::Unlanded(Box::new(e.into()))),
+        }
+    }
+
+    async fn run_statements(
+        &self,
+        statements: Vec<Statement>,
+    ) -> Result<Vec<Outcome>, SessionError> {
         let total = statements.len();
         let mut outcomes = Vec::with_capacity(total);
         for (idx, statement) in statements.into_iter().enumerate() {

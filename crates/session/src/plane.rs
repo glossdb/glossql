@@ -196,7 +196,7 @@ impl Plane {
         actor: Actor,
         dataset: Option<&str>,
     ) -> Result<Arc<Session>, SessionError> {
-        let session = Session::on_runtime(self.store.clone(), actor, Arc::clone(&self.env))?
+        let session = Session::on_runtime(self.store.channel(), actor, Arc::clone(&self.env))?
             .with_row_cap(self.row_cap)
             .with_runtime(Arc::clone(&self.runtime))
             .with_cube_cache(self.cube.clone())

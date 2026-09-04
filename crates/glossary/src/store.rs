@@ -358,11 +358,17 @@ pub struct Store {
     /// costs a lake walk only for a relation a write has moved — on the
     /// same single-writer ground as the head itself.
     histories: Histories,
-    /// Writes held instead of committed, `None` outside a batch. One
-    /// sequence runs batched — bootstrap, whose rows are ruled tie-free
-    /// (each shipped name declared once) — and [`Store::batch_flush`]
-    /// is where its rows land, one append per relation.
+    /// Writes held instead of committed, `None` outside a batch. Every
+    /// statement sequence runs batched — begun before its first
+    /// statement, flushed after its last — and [`Store::batch_flush`]
+    /// is where the rows land, one append per relation. The slot is
+    /// the channel's ([`Store::channel`]): the one part of a store a
+    /// clone does not share.
     batch: Batch,
+    /// Which channel's slot this is — what tells one channel's buffered
+    /// rows from another's in the version a read is keyed by. Zero for
+    /// the root store, which buffers nothing of its own.
+    channel: u64,
     /// The resolved store behind a read, one entry per dataset, each
     /// holding the version it was built at. A read whose version still
     /// matches takes it; a read whose version moved replaces it. There
@@ -400,8 +406,23 @@ impl Store {
             head: Arc::new(std::sync::RwLock::new(None)),
             histories: Arc::new(std::sync::RwLock::new(Default::default())),
             batch: Arc::new(std::sync::Mutex::new(None)),
+            channel: 0,
             contexts: Arc::new(std::sync::RwLock::new(Default::default())),
         })
+    }
+
+    /// This store with a batch slot of its own: what a channel writes
+    /// through. The head, the histories and the read contexts stay
+    /// shared — a flush drops the head for every channel — and only
+    /// the buffered rows are the channel's, so two callers never share
+    /// a buffer and each reads committed state plus its own.
+    pub fn channel(&self) -> Store {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Store {
+            batch: Arc::new(std::sync::Mutex::new(None)),
+            channel: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ..self.clone()
+        }
     }
 
     /// The one lake behind this store — sessions and doors share it.
@@ -1305,10 +1326,15 @@ impl Store {
     }
 
     /// Begin holding writes instead of committing them; every write
-    /// until the flush buffers. The caller owns the boundary — nothing
-    /// else may write through this store while a batch is open.
+    /// until the flush buffers. The slot is the channel's, so the
+    /// boundary is the channel's own statement loop. A batch already
+    /// open stays open: its rows land at the next flush, never
+    /// dropped by a second begin.
     pub fn batch_begin(&self) {
-        *self.batch.lock().expect("batch lock") = Some(Default::default());
+        let mut held = self.batch.lock().expect("batch lock");
+        if held.is_none() {
+            *held = Some(Default::default());
+        }
     }
 
     /// Land the held writes, one append per touched relation. Two rows
@@ -1353,12 +1379,6 @@ impl Store {
         // went — a partial flush has landed relations it must not hide.
         *self.head.write().expect("head lock") = None;
         landed
-    }
-
-    /// Drop the held writes without landing them — the error path's
-    /// hygiene. Nothing crossed, so nothing is invalidated.
-    pub fn batch_discard(&self) {
-        *self.batch.lock().expect("batch lock") = None;
     }
 
     /// Walk every crossed relation into `Store::histories` at once —
@@ -1602,7 +1622,10 @@ impl Store {
     /// The store's version: every table currently in the store namespace
     /// at its snapshot, sorted and joined — the key a cached
     /// [`ReadContext`] is held under. Enumerated from the catalog, never
-    /// curated, so any store write moves it.
+    /// curated, so any store write moves it. A channel with buffered
+    /// rows is at a version of its own — the committed one, its channel
+    /// and its row count — so a read inside a sequence rebuilds on what
+    /// the sequence wrote, and no other channel takes that context.
     pub async fn version(&self) -> Result<String> {
         let mut parts: Vec<String> = self
             .store_snapshots()
@@ -1611,7 +1634,18 @@ impl Store {
             .map(|(t, snap)| format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string())))
             .collect();
         parts.sort();
-        Ok(parts.join(","))
+        let committed = parts.join(",");
+        let buffered: usize = self
+            .batch
+            .lock()
+            .expect("batch lock")
+            .as_ref()
+            .map_or(0, |held| held.values().map(Vec::len).sum());
+        Ok(if buffered == 0 {
+            committed
+        } else {
+            format!("{committed}~{}:{buffered}", self.channel)
+        })
     }
 
     /// Every store-namespace table at its snapshot — the one catalog

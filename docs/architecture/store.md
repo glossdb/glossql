@@ -10,9 +10,10 @@ under one transaction model.
 ## One store
 
 Rows are ordered by the format's own row lineage — the commit sequence
-number and the position in file — so the store never mints its own
-ordering and writers never coordinate. Writes are appends; one
-statement is one commit. Nothing updates in place.
+number and the row id the commit assigned — so the store never mints
+its own ordering and writers never coordinate. Writes are appends; a
+call's writes land as one commit per relation. Nothing updates in
+place.
 
 **Supersession is a read, never an update.** The current slot for a
 subject is the latest row per (subject, aspect, actor kind), computed

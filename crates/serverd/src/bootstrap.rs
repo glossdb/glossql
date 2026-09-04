@@ -29,28 +29,25 @@ pub async fn bootstrap(
     // The shipped system is the workspace's, not a dataset's: it
     // declares on the unbound channel.
     let session = plane.channel(actor, None).await?;
-    // The sequence lands batched — one append per relation at the
-    // flush. Safe because no two of its rows share a supersession key
-    // (each shipped name is declared once), and necessary because a
-    // remote catalog charges a round trip per commit.
-    plane.store().batch_begin();
     let shipped = async {
         // The standing relations are walked concurrently up front, so
         // the sequence's checks find them held instead of walking one
         // relation per first-touching statement.
         plane.store().warm().await?;
-        session.execute(glossql_scripts::library::KIT).await?;
-        session
-            .execute(&glossql_scripts::library::declarations()?)
-            .await?;
-        session.execute(glossql_scripts::library::WITNESSES).await?;
-        plane.store().batch_flush().await?;
+        // One sequence, so one flush: a sequence lands batched, one
+        // append per relation it touches, and a remote catalog charges
+        // a round trip per commit. The order inside it stands — the
+        // library's column evidence conditions on the kit's `role`,
+        // and a witness names an aspect and a detector that must
+        // already stand.
+        let sequence = format!(
+            "{};\n{};\n{}",
+            glossql_scripts::library::KIT,
+            glossql_scripts::library::declarations()?,
+            glossql_scripts::library::WITNESSES
+        );
+        session.execute(&sequence).await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     };
-    let out =
-        tracing::Instrument::instrument(Box::pin(shipped), tracing::info_span!("bootstrap")).await;
-    if out.is_err() {
-        plane.store().batch_discard();
-    }
-    out
+    tracing::Instrument::instrument(Box::pin(shipped), tracing::info_span!("bootstrap")).await
 }
