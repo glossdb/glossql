@@ -12,12 +12,21 @@ DECLARE ASPECT hours_reconcile WITH $${
   "properties": {"outcome": {"type": "string"}, "tolerance": {"type": "number"},
                  "breach_rate": {"type": "number"}}
 }$$ AS FACT ON TABLE WHEN entity = 'work log line';
-GLOSS hours_reconcile ON work_logs AS $${
-  "outcome": "Logged minutes match the order's recorded duration, exactly.", "tolerance": 0.0}$$;
 DECLARE WITNESS hours_w ON hours_reconcile BY (AGENT, HUMAN)
   DETECTOR rate_tolerance THRESHOLD 0.0;
+GLOSS hours_reconcile ON work_logs AS $${
+  "outcome": "Logged minutes match the order's recorded duration, exactly.", "tolerance": 0.0}$$;
 ```
 
+- **The witness first, and its `BY` list names every speaker.** A
+  witness on the aspect is the gate: an agent glossing the
+  expectation itself must be in `BY`, or the gloss is refused.
+  Declare it before the gloss, `BY (AGENT, HUMAN)`.
+- **A number the check measures is omitted until the check runs,
+  never null.** `breach_rate` is the voice's field; the expectation
+  carries `outcome` and `tolerance`. The schema types every property
+  and null is not a number — the same for any property you cannot
+  fill: leave it out.
 - **Scope the check with `WHEN`.** A check declared bare `ON TABLE`
   owes an unassessed row on every table in the workspace — a handful
   of unscoped checks fills the backlog with unfillable rows.

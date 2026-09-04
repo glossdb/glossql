@@ -121,7 +121,8 @@ most of the lost calls:
 - `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
   SELECT list, a `FILTER (WHERE …)` or a CASE they are refused, and so
   is a scalar subquery inside an aggregate, `max((SELECT count(*) …))`:
-  `Physical plan does not support logical expression`. Write the join:
+  `Physical plan does not support logical expression`, or `Invalid
+  (non-executable) plan after Analyzer`. Write the join:
   JOIN, LEFT JOIN … IS NULL, or a window function.
 - `count(DISTINCT (a, b))` over millions of rows exhausts the memory
   pool. Use `approx_distinct`, or GROUP BY the keys in a CTE and count

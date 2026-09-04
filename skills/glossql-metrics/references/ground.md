@@ -226,7 +226,9 @@ either half drops the row from both. Metrics on one cohort share its
 anchor — the same date column, the same year — unless the brief says
 otherwise. The impossible goes and the implausible stays: exclude what
 violates an identity, keep what is merely an outlier, and disclose
-both.
+both. A null key does not unmake a row: a count takes every row
+unless the brief names the entity counted, and the null share is a
+disclosure beside the number, never an exclusion.
 
 ## Serve or stop
 
