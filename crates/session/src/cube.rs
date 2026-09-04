@@ -250,6 +250,16 @@ pub(crate) struct Fact {
     /// cap. The column names the gap; the reason names the act.
     pub unadmitted: Vec<String>,
     pub unadmitted_why: Vec<String>,
+    /// The measurements this row reads and no function has landed —
+    /// the function to run, and in `wanted_over` at the same index
+    /// the column subject to run it over: the function returning
+    /// `temporal_profile` over each source column of a served date
+    /// without a verdict, the one returning `dimension_relevance`
+    /// over each candidate column with neither a verdict nor a
+    /// `dimension` gloss. `owed` lists them as `never measured`; the
+    /// docket's re-measure runs them.
+    pub wanted: Vec<String>,
+    pub wanted_over: Vec<String>,
     pub alternative: Option<String>,
     /// The measured disagreement between the metric's total series and
     /// the rival's, over their shared periods — with an authored
@@ -278,6 +288,8 @@ impl Fact {
             bucketed: Vec::new(),
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
+            wanted: Vec::new(),
+            wanted_over: Vec::new(),
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
@@ -295,7 +307,9 @@ impl Fact {
 struct Planned {
     body: Value,
     sql: String,
-    tcol: String,
+    /// The judged time axis; none is no series, and the fact row
+    /// abstains with what it wants.
+    tcol: Option<String>,
     /// The declared grain, every column verified served; empty when
     /// the grounding declares none.
     grain: Vec<String>,
@@ -308,6 +322,8 @@ struct Planned {
     judged_current: bool,
     candidates: Vec<Candidate>,
     unadmitted: Vec<(String, String)>,
+    /// What the row reads and nobody measured — `(function, subject)`.
+    wanted: Vec<(String, String)>,
     /// Whether the frame scans a workspace relation
     /// ([`reads_the_workspace`]) — the build binds such an entry to
     /// the read context's version.
@@ -332,6 +348,13 @@ impl Planned {
     /// with its reason. No member floor and no bucketing — those are
     /// the scan's — and no rival, which runs only in a build.
     fn fact(self, metric: &str) -> Fact {
+        let (wanted, wanted_over): (Vec<String>, Vec<String>) = self.wanted.iter().cloned().unzip();
+        let Some(_) = self.tcol else {
+            let mut fact = Fact::abstain(metric, NO_JUDGED_TIME.into());
+            fact.wanted = wanted;
+            fact.wanted_over = wanted_over;
+            return fact;
+        };
         let mut cand = self.candidates;
         rank_candidates(&mut cand);
         let mut unadmitted = self.unadmitted;
@@ -367,6 +390,8 @@ impl Planned {
             bucketed: Vec::new(),
             unadmitted,
             unadmitted_why,
+            wanted,
+            wanted_over,
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
@@ -599,6 +624,11 @@ pub(crate) struct Verdict {
 struct Judged {
     temporal: HashMap<String, Verdict>,
     relevance: HashMap<String, Verdict>,
+    /// The declared function returning each of the two — what a
+    /// fact row names as wanted over a column nobody judged; none
+    /// declared, nothing to want.
+    temporal_fn: Option<String>,
+    relevance_fn: Option<String>,
     /// `behavior_evidence` per column — the verb's read where the
     /// grounding carries no marker and no gloss speaks.
     behavior: HashMap<String, Verdict>,
@@ -640,6 +670,20 @@ pub(crate) fn judged_bodies(
         }
     }
     out.into_iter().map(|(s, (_, v))| (s, v)).collect()
+}
+
+/// The declared function that returns a measurement aspect from this
+/// dataset — the first by name where several do; none where none is
+/// declared.
+fn returning(rctx: &glossql_glossary::ReadContext, dataset: &str, aspect: &str) -> Option<String> {
+    rctx.functions
+        .iter()
+        .filter(|f| {
+            f.returns.as_deref() == Some(aspect)
+                && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+        })
+        .map(|f| f.name.clone())
+        .min()
 }
 
 /// When the newest landing of a measurement aspect on one subject was
@@ -918,6 +962,8 @@ async fn judged_surface(
         Judged {
             temporal: judged_bodies(rctx, dataset, "temporal_profile"),
             relevance: judged_bodies(rctx, dataset, "dimension_relevance"),
+            temporal_fn: returning(rctx, dataset, "temporal_profile"),
+            relevance_fn: returning(rctx, dataset, "dimension_relevance"),
             behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
             behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior").await?,
             dimension: crate::search::current_fact_values(rctx, dataset, "dimension").await?,
@@ -1098,9 +1144,36 @@ async fn plan(
     // reads every source; admission reads the fields with one.
     let sources = crate::provenance::served_sources(&probe, dataset);
     let subjects = crate::provenance::single(&sources);
+    // What the row reads and nobody measured: the source columns of
+    // every served date of one table without a temporal verdict; the
+    // candidate columns add theirs below.
+    let mut wanted: Vec<(String, String)> = Vec::new();
+    if let Some(function) = &judged.temporal_fn {
+        for f in fields.fields() {
+            if !crate::whatif::is_temporal(f.data_type()) {
+                continue;
+            }
+            let Some(columns) = sources.get(f.name()) else {
+                continue;
+            };
+            if !crate::provenance::one_table(columns) {
+                continue;
+            }
+            for column in columns {
+                if !judged.temporal.contains_key(column) && !wanted.iter().any(|(_, s)| s == column)
+                {
+                    wanted.push((function.clone(), column.clone()));
+                }
+            }
+        }
+    }
+    // No judged time axis is no series: the plan stage still names
+    // what it wants, and the fact row abstains carrying it.
     let (time_column, cadence, time_current) =
-        judged_time_column(fields, &sources, &judged.temporal)
-            .ok_or_else(|| Abstain(NO_JUDGED_TIME.into()))?;
+        match judged_time_column(fields, &sources, &judged.temporal) {
+            Some((column, cadence, current)) => (Some(column), cadence, current),
+            None => (None, None, true),
+        };
     // Whether every verdict admitted on stands at this pin — the time
     // axis now, each admitted dimension below.
     let mut judged_current = time_current;
@@ -1224,10 +1297,15 @@ async fn plan(
                          declare the edge, or gloss dimension on it",
                         v.body["reason"].as_str().unwrap_or("no reason given")
                     ),
-                    None => format!(
-                        "no verdict on {subject} — run dimension_relevance() over it, or \
-                         gloss dimension on it"
-                    ),
+                    None => {
+                        if let Some(function) = &judged.relevance_fn {
+                            wanted.push((function.clone(), subject.clone()));
+                        }
+                        format!(
+                            "no verdict on {subject} — run dimension_relevance() over it, or \
+                             gloss dimension on it"
+                        )
+                    }
                 };
                 unadmitted.push((n.to_string(), why));
                 continue;
@@ -1248,6 +1326,7 @@ async fn plan(
         judged_current,
         candidates: cand,
         unadmitted,
+        wanted,
         foreign: reads_the_workspace(&probe),
     })
 }
@@ -1267,10 +1346,19 @@ async fn build(
     } = surface;
     let dataset = dataset.as_str();
     let metric = slot.aspect.as_str();
+    let planned = plan(shared, surface, slot, asked).await?;
+    // No judged time axis: the entry is the plan stage's abstention,
+    // carrying what the row wants — an abstention binds to no version.
+    let Some(tcol) = planned.tcol.clone() else {
+        return Ok(Cube {
+            fact: planned.fact(metric),
+            cells: RecordBatch::new_empty(series_schema()),
+            version_bound: None,
+        });
+    };
     let Planned {
         body,
         sql,
-        tcol,
         grain,
         resolution,
         window,
@@ -1279,8 +1367,10 @@ async fn build(
         mut judged_current,
         candidates: cand,
         mut unadmitted,
+        wanted,
         mut foreign,
-    } = plan(shared, surface, slot, asked).await?;
+        ..
+    } = planned;
     let sql = sql.as_str();
     let tcol = tcol.as_str();
 
@@ -1567,6 +1657,8 @@ async fn build(
             bucketed,
             unadmitted: unadmitted.iter().map(|(c, _)| c.clone()).collect(),
             unadmitted_why: unadmitted.into_iter().map(|(_, w)| w).collect(),
+            wanted: wanted.iter().map(|(f, _)| f.clone()).collect(),
+            wanted_over: wanted.into_iter().map(|(_, s)| s).collect(),
             alternative,
             alternative_divergence,
             alternative_error,
@@ -2053,8 +2145,9 @@ pub(crate) async fn metric_series_batch(
 /// `metric_axes()` — one row per current grounding, the record read:
 /// `(metric, applicable, judged_current, reason, behavior,
 /// behavior_basis, grain, resolution, window, dims, basis,
-/// admitted_by, bucketed, unadmitted, unadmitted_why, alternative,
-/// alternative_divergence, alternative_error)`. What the cube
+/// admitted_by, bucketed, unadmitted, unadmitted_why, wanted,
+/// wanted_over, alternative, alternative_divergence,
+/// alternative_error)`. What the cube
 /// admitted and why not, and
 /// whether the verdicts it admitted on stand at this pin; served from
 /// the entry's fact row, so it builds what is not built.
@@ -2062,6 +2155,61 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
     let cubes = cubes(shared).await?;
     let facts: Vec<&Fact> = cubes.iter().map(|c| &c.fact).collect();
     fact_batch(&facts)
+}
+
+/// Every measurement the bound dataset's fact rows and its witnesses
+/// read that no function has landed, as `(function, subject)`: each
+/// row's wants over its served columns, then — while a grounding
+/// stands — every declared function returning a witnessed measurement
+/// aspect at dataset grain with no voice here (the bands walk). The
+/// same rows `owed` derives in SQL as `never measured`; re-measure
+/// runs these.
+pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    for cube in cubes(shared).await? {
+        for (function, subject) in cube.fact.wanted.iter().zip(&cube.fact.wanted_over) {
+            let want = (function.clone(), subject.clone());
+            if !out.contains(&want) {
+                out.push(want);
+            }
+        }
+    }
+    let rctx = shared.read_context().await?;
+    let grounded = current_query_slots(&rctx, &dataset)
+        .await?
+        .iter()
+        .any(|s| serde_json::from_str::<Value>(&s.body).is_ok_and(|b| b.get("sql").is_some()));
+    if !grounded {
+        return Ok(out);
+    }
+    let here = |f: &&glossql_glossary::FunctionRow| {
+        f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+    };
+    for f in rctx.functions.iter().filter(here) {
+        let Some(aspect) = f.returns.as_deref() else {
+            continue;
+        };
+        let at_dataset = rctx.aspects.iter().any(|a| {
+            a.name == aspect && a.kind == "measurement" && a.grains.as_deref() == Some("dataset")
+        });
+        let witnessed = rctx
+            .witnesses
+            .iter()
+            .any(|w| w.aspect == aspect && w.detector.is_some());
+        if at_dataset
+            && witnessed
+            && glossql_glossary::Store::measurements_in(&rctx, &dataset, &f.name).is_empty()
+        {
+            out.push((f.name.clone(), dataset.clone()));
+        }
+    }
+    Ok(out)
 }
 
 /// Fact rows as the `metric_axes()` relation — one schema for the
@@ -2124,6 +2272,16 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),
+        Field::new(
+            "wanted",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
+            "wanted_over",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
         Field::new("alternative", DataType::Utf8, true),
         Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
@@ -2152,6 +2310,8 @@ fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.bucketed),
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),
+            list(|f| &f.wanted),
+            list(|f| &f.wanted_over),
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),

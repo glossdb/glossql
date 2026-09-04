@@ -109,7 +109,9 @@ The other tiles:
 After the docket's two writes the door answers with an event, never a
 navigation: a ruling with `HX-Trigger: glossql:written`, on which the
 frame store drops its record-class caches; re-measure (every
-measurement standing from before the last change, re-run) with
+measurement standing from before the last change re-run, and every
+one the cube's fact rows or a witness read that was never made run —
+`owed`'s `never measured` rows) with
 `glossql:remeasured, glossql:written`, on which the data-class caches
 drop too — a re-measure can change the cube, a ruling cannot. Every
 connected tile refetches in place; instruments keep their DOM.

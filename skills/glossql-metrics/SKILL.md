@@ -32,7 +32,10 @@ before you write it: the workspace accepts all four under the same
 - **A metric** — a QUERY aspect whose grounding serves a row-grain
   relation with a `value` column and a date column. The cube turns it
   into a series at its judged cadence, the docket charts it, the bands
-  walk watches it. It is a series only when the machine can trace the
+  walk watches it — once you run it: `SELECT metric_bands() FROM
+  <dataset>` after the series stand, and `bands_w` adjudicates; until
+  then `owed` lists the walk as never measured. It is a series only
+  when the machine can trace the
   date column to a table column that `temporal()` has profiled:
   the cadence and the window come from that verdict, and a date
   computed inside the SQL has no verdict behind it. Serve the table's
@@ -100,9 +103,12 @@ moved to: `applicable` and `reason` (does the SQL plan; is a served
 date column judged), `behavior` and `behavior_basis` (`ratio`,
 `marked`, `glossed`, `evidence`, or `default` — summed as a flow
 because nothing said otherwise), `grain` (the declared row identity
-as served; empty is undeclared), `dims` (the axes admitted), and `unadmitted` with
+as served; empty is undeclared), `dims` (the axes admitted), `unadmitted` with
 `unadmitted_why` (every served column the cube will not slice on, and
-the act that admits it). For a metric, what the workspace accepts and
+the act that admits it), and `wanted` with `wanted_over` (the
+measurements the row reads and nobody made — the function and the
+column to run it over; `owed` lists them as never measured until they
+land). For a metric, what the workspace accepts and
 reads wrong later — a ratio summed, a stock summed, a series nobody
 can slice — shows there first: read the row, run what it names,
 re-record. For a fact or a relation the row abstains, and you move on.

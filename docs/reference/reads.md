@@ -93,18 +93,23 @@ re-record lands; nothing is marked done by hand.
 
 What stands waiting on an act, derived from the data alone — each row
 is a mismatch the act itself resolves, so nothing is marked done.
-Columns: `kind`, `subject`, `what`, `why`, `since`. Five kinds:
+Columns: `kind`, `subject`, `what`, `why`, `since`. Six kinds:
 `recipe` (an approved recipe change with no import of that table since
 the approval) · `formula` (a human formula answer newer than the
 metric's recorded materialization) · `contest` (a slot withheld at
 read — voices differ or a detector crossed) · `re-measure` (a function
 voice standing from before the last change — served and marked until
-the function runs again; one row per function) · `fold-in` (a ruling
-whose key still stands below full confidence). All five answer for the
-session's dataset: this is the read that narrows itself, because what
-is owed is owed by someone working in one dataset — and it refuses an
-unbound call rather than answering empty, so a workspace before its
-first dataset reads `workspace_next` instead.
+the function runs again; one row per function) · `never measured` (a
+measurement the cube's fact rows read over a served column and no
+function has landed — `metric_axes().wanted` — or a witnessed
+measurement at dataset grain with no voice while a grounding stands,
+the bands walk that never ran; one row per function, naming the
+subjects) · `fold-in` (a ruling whose key still stands below full
+confidence). All six answer for the session's dataset: this is the
+read that narrows itself, because what is owed is owed by someone
+working in one dataset — and it refuses an unbound call rather than
+answering empty, so a workspace before its first dataset reads
+`workspace_next` instead.
 
 ### metric_surfaces
 
@@ -200,7 +205,14 @@ back in: no verdict on its subject — run `dimension_relevance()` over
 it or gloss `dimension`; a verdict that abstained with no declared
 relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
-below the cap of four), `alternative`, `alternative_divergence` (the
+below the cap of four), `wanted` and `wanted_over` (the measurements
+the row reads and no function has landed — the function to run, and
+at the same index the column subject to run it over: the function
+returning `temporal_profile` over each source column of a served date
+without a verdict, the one returning `dimension_relevance` over each
+candidate column with neither a verdict nor a `dimension` gloss;
+`owed` lists them as `never measured`, and the docket's re-measure
+runs them), `alternative`, `alternative_divergence` (the
 measured disagreement between the metric's total and the rival's over
 their shared periods — with an authored `tolerance` on the disclosing
 assumption the count of breaching periods, otherwise the maximum
@@ -238,7 +250,7 @@ still builds — the numbers are current — and `judged_current` is
 false until the profilers run again: `temporal()` over the served
 date columns, `dimension_relevance()` over the rest, or the docket's
 re-measure, which re-runs every measurement standing from before the
-last change.
+last change and runs every one the fact rows want.
 
 ### fact_values()
 

@@ -84,6 +84,12 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
     let start = kit.find("DECLARE ASPECT ruling").expect("the kit ships it");
     let len = kit[start..].find("AS FACT;").expect("it closes") + "AS FACT;".len();
     let ruling_aspect = &kit[start..start + len];
+    // And the shipped cube aspect: `owed` reads the cube's fact rows
+    // for what a grounding wants, and the rows are computed under it.
+    let start = kit.find("DECLARE ASPECT cube").expect("the kit ships it");
+    let len =
+        kit[start..].find("AS FACT ON DATASET;").expect("it closes") + "AS FACT ON DATASET;".len();
+    let cube_aspect = &kit[start..start + len];
 
     // Two datasets, each holding a table called `orders`, each carrying
     // the same aspect on it under the same assumption key.
@@ -96,6 +102,7 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
                     r#"DECLARE DATASET {dataset} SET (purpose: 'question scope');
                        USE {dataset};
                        {ruling_aspect}
+                       {cube_aspect}
                        DECLARE ASPECT revenue WITH $${{"title": "Revenue"}}$$ AS QUERY;
                        GLOSS revenue ON orders AS $${{"sql": "SELECT 1 AS value",
                          "assumptions": [{{"dimension": "definition", "key": "net-of-returns",

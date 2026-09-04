@@ -155,7 +155,7 @@ like any table, filters riding WHERE:
 | `workspace_next` | the surfaces this workspace can be extended through, what stands and what is open on each |
 | `open_questions` | what stands open for a human to judge — the rows the door asks as forms |
 | `ruling_entries` | the human's standing judgments, with `folded_in` |
-| `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a ruling awaiting its fold-in |
+| `owed` | what waits on an act: an unexecuted recipe approval, a formula newer than its materialization, a contested slot, a measurement gone stale or never made (a served column nobody profiled, the bands walk that never ran), a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every metric of the bound dataset with its unit, meaning, formula, whether it is grounded and the `stopped` text where the author serves no number — the record; a metric is the dataset's when a grounding or a registry entry stands there; the cube's numbers are `metric_series()` and `metric_axes()` |
 | `band_points()` | the recorded `metric_bands` walk as rows, one per metric per month, with each point's displacement — which metric and which month a red band verdict rests on, without re-running the walk |

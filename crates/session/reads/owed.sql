@@ -2,7 +2,7 @@
 --
 -- Never a status flag anyone maintains: each row derives from a
 -- mismatch that the act itself resolves, so nothing has to be marked
--- done. Five sources:
+-- done. Six sources:
 --
 --   recipe   an approved recipe change with no import of that table
 --            since the approval — the re-declare has not run;
@@ -14,17 +14,22 @@
 --   re-measure  a function voice standing from before the last change
 --            — served and marked; it lands current when the function
 --            runs again;
+--   never measured  a measurement the cube's fact rows read over a
+--            served column, or a witnessed measurement at dataset
+--            grain, that no function has landed — the walk; it lands
+--            when the function runs, one row per function;
 --   fold-in  a ruling whose key still stands below full confidence in
 --            the agent's body.
 --
 -- `subject` names what the act is about, so a caller can link to it;
 -- glyphs, links and ordering stay the caller's business.
 --
--- All five scope to the session's dataset. `contest` and `re-measure`
--- come through GLOSSARY(), which serves it already; the other three
--- read the workspace-wide glossary relation and narrow themselves by
--- joining `current_dataset` — the bound dataset as a relation, which
--- is what a read written in SQL cannot otherwise name.
+-- All six scope to the session's dataset. `contest` and `re-measure`
+-- come through GLOSSARY(), which serves it already, and the cube's
+-- wants through `metric_axes()`, which does too; the others read the
+-- workspace-wide relations and narrow themselves by joining
+-- `current_dataset` — the bound dataset as a relation, which is what
+-- a read written in SQL cannot otherwise name.
 -- An unbound session is refused rather than answered empty, and the
 -- joins are not what does it: `GLOSSARY()` with no subject refuses
 -- one outright, so the GLOSSARY() legs decide that for the whole read.
@@ -100,6 +105,38 @@ remeasures AS (
          '' AS since
   FROM (SELECT DISTINCT actor FROM GLOSSARY(all => true) WHERE NOT current) v
 ),
+-- The cube's fact rows name what they read and nobody measured —
+-- the function and the column, in `wanted` / `wanted_over` — and the
+-- witnesses make an unwritten claim owed: a declared function
+-- returning a witnessed measurement aspect at dataset grain, with no
+-- voice here while a grounding stands, is the walk that never ran.
+-- One row per function, as re-measure; the act is the run.
+wanted AS (
+  SELECT DISTINCT unnest(x.wanted) AS function, unnest(x.wanted_over) AS over
+  FROM metric_axes() x
+),
+unmeasured AS (
+  SELECT 'never measured' AS kind, w.function AS subject,
+         'never measured: ' || w.function || '() over '
+           || string_agg(w.over, ', ' ORDER BY w.over) AS what,
+         'the cube reads it and no voice stands — run the function over the column, or the docket''s re-measure' AS why,
+         '' AS since
+  FROM wanted w
+  GROUP BY w.function
+),
+unwalked AS (
+  SELECT 'never measured' AS kind, f.name AS subject,
+         'never measured: ' || f.name || '() over ' || d.dataset AS what,
+         'a witnessed measurement on the dataset with no voice — run the function, or the docket''s re-measure' AS why,
+         '' AS since
+  FROM functions f
+  JOIN current_dataset d ON f.scope = 'GLOBAL' OR f.scope = d.dataset
+  JOIN aspects a ON a.name = f.returns AND a.kind = 'measurement' AND a.grains = 'dataset'
+  WHERE EXISTS (SELECT 1 FROM witnesses w WHERE w.aspect = a.name AND w.detector IS NOT NULL)
+    AND EXISTS (SELECT 1 FROM metric_surfaces s WHERE s.grounded)
+    AND NOT EXISTS (SELECT 1 FROM measurements m
+                    WHERE m.dataset = d.dataset AND m.function = f.name)
+),
 foldins AS (
   SELECT 'fold-in' AS kind, r.aspect AS subject,
          'ruling on ' || r.aspect AS what,
@@ -113,4 +150,6 @@ SELECT * FROM recipes
 UNION ALL SELECT * FROM formulas
 UNION ALL SELECT * FROM contests
 UNION ALL SELECT * FROM remeasures
+UNION ALL SELECT * FROM unmeasured
+UNION ALL SELECT * FROM unwalked
 UNION ALL SELECT * FROM foldins

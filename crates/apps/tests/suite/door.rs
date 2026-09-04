@@ -1142,6 +1142,9 @@ async fn the_list_serves_a_workspace_without_a_fact() {
     // to say is the empty relation, not a refusal. The undated measure
     // declares no kind, so it is no fact either: nothing shows its
     // number, and the list carries the cube's reason in the axes slot.
+    // The series serves `cohort`, which nobody judged: the banner
+    // counts the want, re-measure runs the judge, and the axis is
+    // admitted.
     let (app, plane, _dir) = workspace().await;
     plane
         .channel(
@@ -1160,12 +1163,18 @@ async fn the_list_serves_a_workspace_without_a_fact() {
                DECLARE ASPECT temporal_profile WITH $${{"type": "object",
                  "required": ["applicable"],
                  "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+               DECLARE ASPECT dimension_relevance WITH $${{"type": "object",
+                 "required": ["applicable"],
+                 "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
                {cube}
                DECLARE FUNCTION judge_time FOR GLOBAL AS
                  $$SELECT true AS applicable, 'month' AS granularity,
                           named_struct('ratio', 1.0) AS completeness$$
                  RETURNS temporal_profile;
-               GLOSS dso ON perf AS $${{"sql": "SELECT month, value FROM ledger"}}$$;
+               DECLARE FUNCTION judge_axis FOR GLOBAL AS
+                 $$SELECT true AS applicable, 0.8 AS relevance$$
+                 RETURNS dimension_relevance;
+               GLOSS dso ON perf AS $${{"sql": "SELECT month, value, cohort FROM ledger"}}$$;
                GLOSS undated ON perf AS $${{"sql": "SELECT sum(value) AS value FROM ledger"}}$$;
                SELECT judge_time() FROM ledger.month;"#,
             cube = shipped_cube_declaration()
@@ -1192,6 +1201,39 @@ async fn the_list_serves_a_workspace_without_a_fact() {
     assert!(
         pulse.contains("no judged time column"),
         "the list carries the cube's reason: {pulse}"
+    );
+
+    // Nobody judged `cohort`: the fact row wants the judge over it,
+    // `owed` lists it, and the banner counts it beside the stale.
+    let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
+    assert_eq!(banner.status(), StatusCode::OK);
+    let banner = body_text(banner).await;
+    assert!(
+        banner.contains("1 the cube or a witness reads were never made (judge_axis)"),
+        "{banner}"
+    );
+    let owed = get(&app, "/perf/app/docket/frames/owed").await;
+    assert_eq!(row_count(owed).await, 1, "the judge over ledger.cohort");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/perf/app/docket/remeasure")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let banner = get(&app, "/perf/app/docket/frames/remeasure").await;
+    assert_eq!(row_count(banner).await, 0, "the judge ran");
+    let dims = get(
+        &app,
+        "/perf/app/docket/frames/dims?metric=dso&grain=month&span=24",
+    )
+    .await;
+    assert!(
+        body_text(dims).await.contains("cohort"),
+        "the axis is admitted on the new verdict"
     );
 }
 

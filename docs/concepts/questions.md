@@ -29,8 +29,8 @@ ruling form — the one write the app door takes.
 
 What waits on an act is a different read, `owed` — an approved recipe
 change not yet re-landed, a formula answer newer than its recorded
-materialization, a contested slot, an unfolded ruling. Those are
-acts, not questions.
+materialization, a contested slot, a measurement gone stale or never
+made, an unfolded ruling. Those are acts, not questions.
 
 A question belongs to one dataset: a subject name is unique within a
 dataset and not across a workspace, so the same aspect on a same-named

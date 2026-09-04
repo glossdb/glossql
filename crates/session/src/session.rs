@@ -416,20 +416,24 @@ impl Session {
     }
 
     /// Re-measure: re-run every measurement whose newest landing no
-    /// longer stands — a leg it read has moved — each as the
-    /// extraction an agent would run, `SELECT f() FROM subject`, built
-    /// from the measurement row (the AST directly, never statement
-    /// text). A voice served and marked (SPEC.md §7) is current again;
-    /// each landing moves the version, and the next read — the
-    /// witnesses, the cube — rebuilds on the new rows. A function no
-    /// longer declared, or a subject the path grammar cannot name (a
-    /// relationship), cannot re-run and stays marked. Every runnable
-    /// extraction runs; the ones the engine refused are reported
-    /// together afterwards. Returns how many landed.
+    /// longer stands — a leg it read has moved — and run every one the
+    /// cube's fact rows and the witnesses read that nobody has made
+    /// (the cube's `wanted`), each as the extraction an agent
+    /// would run, `SELECT f() FROM subject`, built from the row (the
+    /// AST directly, never statement text). A voice served and marked
+    /// (SPEC.md §7) is current again; each landing moves the version,
+    /// and the next read — the witnesses, the cube — rebuilds on the
+    /// new rows. Finest grain first, so a dataset-grain run sees the
+    /// column verdicts it reads. A function no longer declared, or a
+    /// subject the path grammar cannot name (a relationship), cannot
+    /// re-run and stays marked. Every runnable extraction runs; the
+    /// ones the engine refused are reported together afterwards.
+    /// Returns how many landed.
     pub async fn remeasure(&self) -> Result<usize, SessionError> {
         use datafusion::sql::sqlparser::ast::Ident;
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
         let ctx = self.shared.read_context().await?;
+        let wanted = crate::cube::wanted(&self.shared).await?;
         // Batched like a sequence: the landings are one append on
         // `measurements`, not one per extraction.
         self.shared.store.batch_begin();
@@ -461,7 +465,13 @@ impl Session {
                 ))
             })
             .collect();
-        stale.sort();
+        for (function, subject) in wanted {
+            let segments: Vec<String> = subject.split('.').map(str::to_string).collect();
+            if !stale.iter().any(|(f, s)| *f == function && *s == segments) {
+                stale.push((function, segments));
+            }
+        }
+        stale.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.cmp(b)));
         let mut ran = 0;
         let mut refused = Vec::new();
         for (function, segments) in stale {

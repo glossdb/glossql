@@ -9,6 +9,9 @@ on the trajectory, past 0.95 or under 0.05 is outside what the
 metric's own history can explain. `band_breach` is the detector on
 top. Each point's fit saw only the months before it.
 
+- **The walk lands when you run it** — `SELECT metric_bands() FROM
+  <dataset>` once the series stand; `owed` lists it as never measured
+  until then, and the docket's re-measure runs it too.
 - **The read is recall, you are the judge.** A business shift and a
   data defect breach identically.
 - The corridor knows only the history it is shown; under about five

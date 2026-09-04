@@ -21,13 +21,14 @@
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers
      are current, the judged axes and the check verdicts stand on
-     those voices. One row while any does; the button re-runs them,
-     the frames refetch on the write event, and the next cube read
-     rebuilds. #}
+     those voices — and a measurement the cube or a witness reads may
+     never have been made. One row while either holds; the button
+     runs them, the frames refetch on the write event, and the next
+     cube read rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
       <form class="remeasure" hx-post="/{{ dataset }}/app/docket/remeasure" hx-swap="none">
-        <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
+        <span class="hint">{hint}</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>
     </template>
@@ -172,13 +173,14 @@
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers
      are current, the judged axes and the check verdicts stand on
-     those voices. One row while any does; the button re-runs them,
-     the frames refetch on the write event, and the next cube read
-     rebuilds. #}
+     those voices — and a measurement the cube or a witness reads may
+     never have been made. One row while either holds; the button
+     runs them, the frames refetch on the write event, and the next
+     cube read rebuilds. #}
   <gl-rows frame="frames/remeasure" empty="">
     <template>
       <form class="remeasure" hx-post="/{{ dataset }}/app/docket/remeasure" hx-swap="none">
-        <span class="hint">{n} measurements stand from before the last change ({functions}) — the numbers are current; the judged axes and the check verdicts may not be.</span>
+        <span class="hint">{hint}</span>
         <button type="submit" class="wbtn">Re-measure</button>
       </form>
     </template>

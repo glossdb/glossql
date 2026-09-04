@@ -1997,6 +1997,110 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_fact_row_wants_what_nobody_measured_and_re_measure_lands_it() {
+    // A grounding over a date and a region nobody judged: the row
+    // abstains (no judged time column) and names what it wants — the
+    // judge over the date, the judge over the region. A witnessed
+    // measurement at dataset grain nobody ran — the walk's shape — is
+    // wanted the same way. `owed` lists each function once; running
+    // one clears its row; re-measure runs the rest, finest grain
+    // first, and the cube admits the axis.
+    let dir = tempfile::tempdir().unwrap();
+    let jan = |d: i32| 19723 + d - 1;
+    let sales = dated(
+        vec![
+            Field::new("qty", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, false),
+        ],
+        vec![jan(15), jan(31)],
+        vec![
+            Arc::new(Float64Array::from(vec![10.0, 100.0])),
+            Arc::new(StringArray::from(vec!["north", "south"])),
+        ],
+    );
+    let session = cube_session(
+        dir.path(),
+        vec![("sales", sales)],
+        &[
+            r#"DECLARE ASPECT sold WITH $${"title": "Sold"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT probe_walk WITH $${"type": "object", "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON DATASET;"#,
+            r#"DECLARE FUNCTION walker FOR GLOBAL AS
+                 $$SELECT true AS applicable, 'walked' AS note$$ RETURNS probe_walk;"#,
+            r#"DECLARE FUNCTION walk_check FOR GLOBAL AS
+                 $$SELECT subject, 'green' AS band, 0.0 AS score FROM slots$$;"#,
+            r#"DECLARE WITNESS walk_w ON probe_walk DETECTOR walk_check THRESHOLD 0.5;"#,
+            r#"GLOSS sold ON fin AS $${"sql": "SELECT date, qty AS value, region FROM sales"}$$;"#,
+        ],
+    )
+    .await;
+
+    let row = grid(
+        &session,
+        "SELECT applicable, wanted, wanted_over FROM metric_axes() WHERE metric = 'sold';",
+    )
+    .await;
+    assert!(
+        row.contains("| false ")
+            && row.contains("[judge_time, judge_axis]")
+            && row.contains("[sales.date, sales.region]"),
+        "{row}"
+    );
+    let owed = grid(
+        &session,
+        "SELECT subject, what FROM owed WHERE kind = 'never measured' ORDER BY subject;",
+    )
+    .await;
+    assert!(
+        owed.contains("judge_axis() over sales.region")
+            && owed.contains("judge_time() over sales.date")
+            && owed.contains("walker() over fin"),
+        "{owed}"
+    );
+
+    // One want served by hand clears its row and stays out of the next.
+    session
+        .execute("SELECT judge_time() FROM sales.date;")
+        .await
+        .unwrap();
+    let owed = grid(
+        &session,
+        "SELECT subject FROM owed WHERE kind = 'never measured' ORDER BY subject;",
+    )
+    .await;
+    assert!(
+        !owed.contains("judge_time") && owed.contains("judge_axis") && owed.contains("walker"),
+        "{owed}"
+    );
+
+    // Re-measure runs what is left; the row is a series with its axis.
+    let landed = session.remeasure().await.unwrap();
+    assert_eq!(landed, 2, "the judge over the region, then the walker");
+    assert_eq!(
+        cell(&session, "SELECT count(*) FROM owed;").await,
+        "0",
+        "nothing waits"
+    );
+    let row = grid(
+        &session,
+        "SELECT applicable, dims, wanted FROM metric_axes() WHERE metric = 'sold';",
+    )
+    .await;
+    assert!(
+        row.contains("| true ") && row.contains("[region]") && row.contains("| [] "),
+        "{row}"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT count(*) FROM measurements WHERE function = 'walker' AND subject = 'fin';"
+        )
+        .await,
+        "1"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_door_with_nothing_to_say_serves_the_empty_relation() {
     // Every grounding here is a series, and no walk has landed: the
     // facts read and the recorded walk have no row to serve. Each is
