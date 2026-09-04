@@ -49,10 +49,6 @@ pub enum Error {
         grain: &'static str,
         declared: String,
     },
-    #[error(
-        "batched declarations carry two rows to `{relation}` key `{key}` — order within one landing is undefined, so nothing lands"
-    )]
-    BatchTie { relation: String, key: String },
     #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(

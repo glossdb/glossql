@@ -177,14 +177,21 @@ async fn the_format_supplies_the_write_order() {
     assert_eq!(
         names,
         vec!["t1.k", "t2.k", "t3.k", "batch.a", "batch.b"],
-        "commits order across, position orders within: (seq, pos) is total"
+        "commits order across, the row id orders within: (seq, row_id) is total"
     );
 
-    // Distinct sequence per commit; the batch shares one and splits on pos.
+    // Distinct sequence per commit; the batch shares one and splits on
+    // the row id, which the commit assigned in order after every row
+    // the earlier commits wrote.
     let seqs: Vec<i64> = ordered.iter().map(|(s, ..)| *s).collect();
     assert!(seqs[0] < seqs[1] && seqs[1] < seqs[2], "{seqs:?}");
     assert_eq!(seqs[3], seqs[4], "one commit, one sequence number");
-    assert_eq!((ordered[3].1, ordered[4].1), (0, 1), "position splits them");
+    let ids: Vec<i64> = ordered.iter().map(|(_, id, _)| *id).collect();
+    assert!(
+        ids[2] < ids[3],
+        "the batch's ids follow the earlier commits': {ids:?}"
+    );
+    assert_eq!(ids[4], ids[3] + 1, "the row id splits the batch: {ids:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

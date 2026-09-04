@@ -1415,11 +1415,11 @@ async fn a_batch_lands_one_append_per_relation() {
     assert_eq!(appends.get("functions"), Some(&1), "{appends:?}");
 }
 
-/// A batch carrying two rows to one supersession key is refused whole:
-/// within one landing only `_pos` orders rows and it is per file, so
-/// nothing may land.
+/// A batch carrying two rows to one supersession key lands, and the
+/// later row wins: inside one landing `_row_id` orders the rows, the
+/// way the sequence number orders landings.
 #[tokio::test]
-async fn a_batch_carrying_two_rows_to_one_key_is_refused() {
+async fn a_batch_carrying_two_rows_to_one_key_lands_the_later_one() {
     let (_dir, store) = store().await;
     store.batch_begin();
     let Declaration::Aspect(first) = decl(
@@ -1444,18 +1444,19 @@ async fn a_batch_carrying_two_rows_to_one_key_is_refused() {
         unreachable!()
     };
     store.declare_aspect(&second).await.unwrap();
-    match store.batch_flush().await {
-        Err(Error::BatchTie { relation, key }) => {
-            assert_eq!(relation, "aspects");
-            assert_eq!(key, "gap");
-        }
-        other => panic!("a tied batch must refuse to land: {other:?}"),
-    }
-    assert!(
-        store.aspect("gap").await.unwrap().is_none(),
-        "nothing may land from a refused batch"
+    store.batch_flush().await.unwrap();
+    let (schema, _, _) = store
+        .aspect("gap")
+        .await
+        .unwrap()
+        .expect("the batch landed");
+    assert_eq!(
+        schema["properties"]["value"]["type"], "string",
+        "the later row of the batch is the current one: {schema}"
     );
-    // The refused batch is gone: the store writes directly again.
+    // The batch is closed: the store writes directly again, and the
+    // direct write supersedes the batch's.
     store.declare_aspect(&first).await.unwrap();
-    assert!(store.aspect("gap").await.unwrap().is_some());
+    let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
+    assert_eq!(schema["properties"]["value"]["type"], "number", "{schema}");
 }

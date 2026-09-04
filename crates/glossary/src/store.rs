@@ -1311,10 +1311,10 @@ impl Store {
         *self.batch.lock().expect("batch lock") = Some(Default::default());
     }
 
-    /// Land the held writes, one append per touched relation. Within
-    /// one landing only `_pos` orders rows and it is per file, so a
-    /// batch carrying two rows to one supersession key is refused whole
-    /// before anything lands.
+    /// Land the held writes, one append per touched relation. Two rows
+    /// to one supersession key inside one landing are ordered by
+    /// `_row_id`, assigned at the commit across the files it wrote, so
+    /// the later write wins as it does across landings.
     ///
     /// A landing that fails leaves the others landed — each append is
     /// atomic, and an idempotent caller (bootstrap) completes the rest
@@ -1323,40 +1323,6 @@ impl Store {
         let Some(mut held) = self.batch.lock().expect("batch lock").take() else {
             return Ok(());
         };
-        for relation in RELATIONS {
-            let Some(rows) = held.get(relation.name) else {
-                continue;
-            };
-            if relation.key.is_empty() {
-                continue;
-            }
-            let key: Vec<usize> = relation
-                .key
-                .iter()
-                .map(|k| {
-                    relation
-                        .columns
-                        .iter()
-                        .position(|c| c == k)
-                        .expect("a key names one of its relation's columns")
-                })
-                .collect();
-            let mut seen = std::collections::HashSet::new();
-            for row in rows {
-                let k: Vec<Option<String>> =
-                    key.iter().map(|&i| row.get(i).cloned().flatten()).collect();
-                if !seen.insert(k.clone()) {
-                    return Err(Error::BatchTie {
-                        relation: relation.name.into(),
-                        key: k
-                            .into_iter()
-                            .map(|c| c.unwrap_or_default())
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    });
-                }
-            }
-        }
         let mut order = Vec::new();
         for relation in RELATIONS {
             if let Some(rows) = held.remove(relation.name) {

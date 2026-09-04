@@ -9,10 +9,11 @@
 //!
 //! - **Supersession is not ours to implement.** Iceberg v3 row lineage
 //!   supplies `_last_updated_sequence_number` (the commit that last
-//!   touched the row) and `_pos` (its position in the file); together
-//!   they are a total order over writes, assigned by the catalog with no
+//!   touched the row) and `_row_id` (the row's id, assigned at the
+//!   commit in order across every file it wrote); together they are a
+//!   total order over writes, assigned by the catalog with no
 //!   coordination between writers and nothing for us to mint
-//!   (apache/iceberg-rust#2966).
+//!   (apache/iceberg-rust#2966, #3058).
 //! - **The dataset is a key column, and the format partitions by it.**
 //!   A workspace holds many datasets, so a relation about a dataset's
 //!   subjects carries a `dataset` column and declares it as its
@@ -20,7 +21,8 @@
 //!   dataset filter are the format's own feature, not a namespace
 //!   convention of ours. [`Lake::append_batches`] splits an append by
 //!   partition value and writes one file per value. One table, one scan,
-//!   one append; `(seq, pos)` totally ordered with no caveat.
+//!   one append; `(seq, row_id)` totally ordered across the files of a
+//!   commit as well as across commits.
 //! - **Every column is a string.** The relations already read back as
 //!   text through `relation_rows`, and the rules parse what they need.
 //!   A typed schema would be a second place for the shape to live.
@@ -52,8 +54,8 @@ use crate::{COMMIT_PROPERTIES, Lake};
 pub struct Row {
     pub cells: Vec<Option<String>>,
     /// The write's position in the store's total order — the commit's
-    /// data sequence number and the row's position in its file, which
-    /// together order writes inside one commit as well as across them.
+    /// data sequence number and the row's id, which together order
+    /// writes inside one commit as well as across them.
     pub seq: (i64, i64),
 }
 
@@ -81,10 +83,13 @@ pub struct RelationSpec {
     pub partition: &'static [&'static str],
 }
 
-/// `_last_updated_sequence_number` and `_pos`, the two halves of the
-/// write order. Named here rather than spelled at each use.
+/// `_last_updated_sequence_number` and `_row_id`, the two halves of the
+/// write order. Named here rather than spelled at each use. The row id
+/// is `first_row_id + _pos`, synthesized by the reader from what the
+/// commit assigned; a file from before row ranges were assigned reads
+/// it as null, which the read refuses rather than guesses.
 const SEQ: &str = "_last_updated_sequence_number";
-const POS: &str = "_pos";
+const ROW_ID: &str = "_row_id";
 
 /// The relations seam over a workspace's lake: every crossed relation is
 /// one table in the store's namespace.
@@ -156,7 +161,7 @@ impl IcebergMetadata {
         // the caller never sees them.
         let mut select: Vec<String> = spec.columns.iter().map(|c| c.to_string()).collect();
         select.push(SEQ.into());
-        select.push(POS.into());
+        select.push(ROW_ID.into());
         let mut scan = table.scan().select(select);
         if let Some(filter) = filter {
             scan = scan.with_filter(filter);
@@ -201,7 +206,7 @@ impl IcebergMetadata {
             for r in 0..batch.num_rows() {
                 out.push(Row::new(
                     (0..spec.columns.len()).map(|i| text(i, r)).collect(),
-                    (num(SEQ, r)?, num(POS, r)?),
+                    (num(SEQ, r)?, num(ROW_ID, r)?),
                 ));
             }
         }

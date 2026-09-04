@@ -73,12 +73,13 @@ its own cycle stack, one stack for the whole nesting.
   The catalog-backed provider always reads current, so an unpinned
   pair of scans could straddle a landing.
 - **Ordering is the format's.** Iceberg v3 row lineage —
-  `_last_updated_sequence_number` and `_pos`, the commit that last
-  touched the row and its position in file — is a total order over
-  writes, assigned by the catalog with no coordination between writers
-  and nothing minted by the store. Inside one append, position orders
-  the rows: two rows sharing a supersession key resolve to the later
-  one.
+  `_last_updated_sequence_number` and `_row_id`, the commit that last
+  touched the row and the row id the commit assigned in order across
+  every file it wrote — is a total order over writes, assigned by the
+  catalog with no coordination between writers and nothing minted by
+  the store. Inside one append, the row id orders the rows: two rows
+  sharing a supersession key resolve to the later one, whichever files
+  they landed in.
 - **One statement, one commit.** A statement's rows land as one
   append; replacement is a later row, never an update.
 - **Facts about a write ride the write** (snapshot properties and
