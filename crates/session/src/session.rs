@@ -1345,6 +1345,16 @@ impl Session {
         )
         .map(|spelled| fold_road(spelled, ""))
         .unwrap_or_default();
+        // The dataset's own name in FROM is the scalar spelling of a
+        // metric read — `SELECT read.m() FROM ds` — and the road is the
+        // relation form, not the table list.
+        let dataset_road = match self.dataset() {
+            Some(d) if d == missing => format!(
+                " — `{d}` is the dataset in use, not a table; a metric reads as a relation: \
+                 `SELECT * FROM read.<name>()`"
+            ),
+            _ => String::new(),
+        };
         let tables = match (self.dataset(), tables.is_empty()) {
             (None, _) => "no dataset in use — USE one first".to_string(),
             (Some(d), true) => format!("no table landed in `{d}` yet"),
@@ -1352,7 +1362,7 @@ impl Session {
         };
         let relations: Vec<&str> = glossql_glossary::RELATIONS.iter().map(|r| r.name).collect();
         SessionError::UnknownTable(format!(
-            "{e}{fold} — {tables}; the store's relations: {}",
+            "{e}{fold}{dataset_road} — {tables}; the store's relations: {}",
             relations.join(", ")
         ))
     }

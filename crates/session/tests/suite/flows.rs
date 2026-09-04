@@ -1802,6 +1802,20 @@ async fn a_missing_table_at_the_door_names_the_roads_out() {
         "{e}"
     );
 
+    // The dataset's own name in FROM is a metric read spelled as a
+    // scalar; the road is the relation form.
+    let e = session
+        .execute("SELECT read.revenue() FROM fin ORDER BY date LIMIT 5;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("table 'datafusion.fin.fin' not found"), "{e}");
+    assert!(
+        e.contains("`fin` is the dataset in use, not a table; a metric reads as a relation: `SELECT * FROM read.<name>()`"),
+        "{e}"
+    );
+    assert!(e.contains("tables in `fin`: customers, orders"), "{e}");
+
     // Without a dataset in use the road out is USE.
     let (_dir, bare) = agent_session().await;
     let e = bare
