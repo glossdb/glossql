@@ -1969,13 +1969,40 @@ pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, Sess
                 "grain => {other}): the grain is a quoted name — one of {names}"
             ))),
         },
-        _ => Err(refuse(format!(
-            "{}): the one argument is grain => '<grain>' — filters ride WHERE",
-            args.iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
+        // Anything else is refused with the read the caller meant,
+        // spelled out: the grain they named, the metric as a filter.
+        _ => {
+            let named = |wanted: &str| {
+                args.iter().find_map(|a| match a {
+                    FunctionArg::Named {
+                        name,
+                        arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
+                        ..
+                    }
+                    | FunctionArg::ExprNamed {
+                        name: SQLExpr::Identifier(name),
+                        arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
+                        ..
+                    } if name.value.eq_ignore_ascii_case(wanted) => match &v.value {
+                        SQLValue::SingleQuotedString(s) => Some(s.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+            };
+            let grain = named("grain").unwrap_or_else(|| "month".into());
+            let filter = named("metric")
+                .map(|m| format!(" WHERE metric = '{m}'"))
+                .unwrap_or_default();
+            Err(refuse(format!(
+                "{}): the one argument is the grain — `SELECT * FROM metric_series(grain => \
+                 '{grain}'){filter}`; filters ride WHERE",
+                args.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )))
+        }
     }
 }
 

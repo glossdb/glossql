@@ -2397,3 +2397,21 @@ async fn a_landed_table_wins_over_an_aspect_of_its_name_in_a_read() {
         .to_string();
     assert!(e.contains("names an aspect, not a subject"), "{e}");
 }
+
+/// `metric_series()` takes the grain and nothing else; a metric
+/// passed as an argument is refused with the read spelled out — the
+/// grain named, the metric as a filter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metric_series_refuses_a_metric_argument_with_the_read_spelled_out() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let e = session
+        .execute("SELECT * FROM metric_series(metric => 'dso', grain => 'day');")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("`SELECT * FROM metric_series(grain => 'day') WHERE metric = 'dso'`"),
+        "{e}"
+    );
+}
