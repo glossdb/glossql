@@ -2372,3 +2372,28 @@ async fn relationship_candidates_read_past_a_list_column() {
     let out = table(&session, "SELECT * FROM relationship_candidates('fin');").await;
     assert!(out.contains("product") && out.contains("review"), "{out}");
 }
+
+/// A landed table of the USE'd dataset wins over an aspect of its
+/// name in a bare `GLOSSARY()` subject — the nearer scope — and a bare
+/// aspect name with no such table is still refused with the road out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_landed_table_wins_over_an_aspect_of_its_name_in_a_read() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT orders WITH $${"title": "Orders"}$$ AS QUERY ON DATASET;
+           DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;
+           GLOSS unit ON orders.amount AS $${"value": "EUR"}$$;"#,
+    )
+    .await;
+    let n = table(&session, "SELECT count(*) FROM GLOSSARY(orders);").await;
+    assert!(n.contains("| 1"), "{n}");
+    let e = session
+        .execute("SELECT count(*) FROM GLOSSARY(dso);")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("names an aspect, not a subject"), "{e}");
+}

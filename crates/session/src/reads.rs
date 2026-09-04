@@ -1232,15 +1232,23 @@ async fn decode_scope(
 
     if let Some(segments) = path_segments(expr) {
         // A bare aspect name is a common mistake (`GLOSSARY(dso)`): it would
-        // silently read an empty table named like the aspect.
+        // silently read an empty table named like the aspect. A landed
+        // table of the USE'd dataset wins over an aspect of its name —
+        // the nearer scope (SPEC.md §3), as it does over a dataset's.
         if let [only] = segments.as_slice()
             && aspect.is_none()
             && !store.dataset_exists(only).await?
             && store.aspect(only).await?.is_some()
         {
-            return Err(SessionError::BadSubject(format!(
-                "`{only}` names an aspect, not a subject — read it as `subject::{only}`"
-            )));
+            let landed = match use_dataset {
+                Some(d) => store.table_exists(d, only).await?,
+                None => false,
+            };
+            if !landed {
+                return Err(SessionError::BadSubject(format!(
+                    "`{only}` names an aspect, not a subject — read it as `subject::{only}`"
+                )));
+            }
         }
         let resolved = resolve_path(store, use_dataset, &segments).await?;
         return Ok(((resolved.dataset.clone(), resolved.scope()), aspect));
