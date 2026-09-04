@@ -2084,3 +2084,92 @@ async fn show_tables_lists_the_bound_dataset() {
         "{tables}"
     );
 }
+
+/// A name the fold missed is refused with the spelling that reaches
+/// it: a landed table or column whose case an unquoted name folded
+/// past is quoted in the refusal (SPEC.md §1) — in the subject checks
+/// and in the planner's own `table … not found`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fold_miss_names_the_quoted_spelling() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    // Landed by someone else: the names keep their case.
+    let posts = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("Id", DataType::Int32, false),
+            Field::new("ParentId", DataType::Int32, true),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(Int32Array::from(vec![None, Some(1)])),
+        ],
+    )
+    .unwrap();
+    for name in ["posts", "SearchInfo"] {
+        let schema = posts.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![posts.clone()]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    run(
+        &session,
+        r#"DECLARE ASPECT role WITH $${"type": "object"}$$ AS FACT ON COLUMN;"#,
+    )
+    .await;
+
+    let e = session
+        .execute(r#"GLOSS role ON posts.ParentId AS $${"value": "key"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("`posts` has no column `parentid`"), "{e}");
+    assert!(
+        e.contains(r#"`ParentId` is reached quoted, `posts."ParentId"`"#),
+        "{e}"
+    );
+    let e = session
+        .execute("DECLARE RELATIONSHIP posts.ParentId -> posts.\"Id\";")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains(r#"`posts."ParentId"`"#), "{e}");
+    let e = session
+        .execute(r#"GLOSS role ON SearchInfo.Id AS $${"value": "key"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("`searchinfo` is not a landed table in `fin`"),
+        "{e}"
+    );
+    assert!(
+        e.contains(r#"`SearchInfo` is reached quoted, `"SearchInfo"`"#),
+        "{e}"
+    );
+    let e = session
+        .execute("SELECT count(*) FROM SearchInfo;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("table 'datafusion.fin.searchinfo' not found"),
+        "{e}"
+    );
+    assert!(
+        e.contains(r#"`SearchInfo` is reached quoted, `"SearchInfo"`"#),
+        "{e}"
+    );
+    let n = table(&session, "SELECT count(*) FROM \"SearchInfo\";").await;
+    assert!(n.contains("| 2"), "{n}");
+    // A name nothing folds to is simply not there.
+    let e = session
+        .execute("SELECT count(*) FROM threads;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!e.contains("reached quoted"), "{e}");
+}

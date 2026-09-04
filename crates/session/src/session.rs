@@ -14,8 +14,9 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
+use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::sqlparser::ast::{
-    FromTable, ObjectType, Statement as SQLStatement, TableFactor, visit_relations,
+    FromTable, Ident, ObjectType, Statement as SQLStatement, TableFactor, visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
 use futures::StreamExt as _;
@@ -90,6 +91,28 @@ pub enum SessionError {
         /// a refusal must not discard: they landed.
         landed: Vec<Outcome>,
     },
+}
+
+/// The landed spelling an unquoted name folded past: a name among
+/// `landed` that is not `missing` but folds to it, so the quoted
+/// spelling reaches it (SPEC.md §1). `None` when nothing landed folds
+/// to the missing name — then it is simply not there.
+fn folded_past<'a>(
+    idents: &IdentNormalizer,
+    missing: &str,
+    landed: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    landed
+        .into_iter()
+        .find(|name| *name != missing && idents.normalize(Ident::new(*name)) == missing)
+}
+
+/// The road out of a fold miss, for a refusal: the quoted spelling
+/// after its qualifier — `table.` for a column, nothing for a table.
+fn fold_road(spelled: &str, qualifier: &str) -> String {
+    format!(
+        " — `{spelled}` is reached quoted, `{qualifier}\"{spelled}\"`: an unquoted name folds to lowercase"
+    )
 }
 
 /// What landed and what never ran, for a refusal at `index` (1-based)
@@ -879,9 +902,10 @@ impl Session {
 
     /// A subject that claims a landed table or column must find it.
     /// Refused with the road out — the dataset's tables, or the table's
-    /// columns — the way the planner's own `No field named` names the
-    /// valid fields. Reads the statement's catalog walk, so a check
-    /// costs no extra round trip.
+    /// columns, and the quoted spelling where an unquoted name folded
+    /// past a landed one — the way the planner's own `No field named`
+    /// names the valid fields. Reads the statement's catalog walk, so a
+    /// check costs no extra round trip.
     async fn check_landed(
         &self,
         dataset: &str,
@@ -889,8 +913,12 @@ impl Session {
         columns: &[&str],
     ) -> Result<(), SessionError> {
         let pins = self.shared.pinned(dataset).await?;
+        let idents = self.shared.idents();
         let Some(pin) = pins.iter().find(|p| p.name == table) else {
             let mut names: Vec<&str> = pins.iter().map(|p| p.name.as_str()).collect();
+            let fold = folded_past(&idents, table, names.iter().copied())
+                .map(|spelled| fold_road(spelled, ""))
+                .unwrap_or_default();
             names.sort_unstable();
             let tables = if names.is_empty() {
                 "none landed yet".to_string()
@@ -898,15 +926,18 @@ impl Session {
                 names.join(", ")
             };
             return Err(SessionError::BadSubject(format!(
-                "`{table}` is not a landed table in `{dataset}` — tables: {tables}"
+                "`{table}` is not a landed table in `{dataset}`{fold} — tables: {tables}"
             )));
         };
         if let Some(missing) = columns
             .iter()
             .find(|c| !pin.columns.iter().any(|have| have == *c))
         {
+            let fold = folded_past(&idents, missing, pin.columns.iter().map(String::as_str))
+                .map(|spelled| fold_road(spelled, &format!("{table}.")))
+                .unwrap_or_default();
             return Err(SessionError::BadSubject(format!(
-                "`{table}.{missing}`: `{table}` has no column `{missing}` — columns: {}",
+                "`{table}.{missing}`: `{table}` has no column `{missing}`{fold} — columns: {}",
                 pin.columns.join(", ")
             )));
         }
@@ -1201,20 +1232,34 @@ impl Session {
         Ok((json_unions_as_text(plan)?, record, reads))
     }
 
-    /// The planner's `table '…' not found` (datafusion-53.1.0
-    /// session_state.rs:1824) with the road out: what the name could
-    /// have been — the bound dataset's tables and the store's relations.
-    /// The engine's text stays in front; every other planning error
-    /// passes as it came.
+    /// The planner's `table '…' not found` (datafusion-54.1.0
+    /// session_state.rs:1961) with the road out: what the name could
+    /// have been — the bound dataset's tables and the store's relations
+    /// — and, where a landed table folds to the missing name, the
+    /// quoted spelling that reaches it. The engine's text stays in
+    /// front; every other planning error passes as it came.
     fn table_road_out(&self, e: DataFusionError, mut tables: Vec<String>) -> SessionError {
-        let missing_table = matches!(
-            e.find_root(),
-            DataFusionError::Plan(m) if m.starts_with("table '") && m.ends_with("' not found")
-        );
-        if !missing_table {
-            return e.into();
-        }
+        let missing = match e.find_root() {
+            DataFusionError::Plan(m) if m.starts_with("table '") && m.ends_with("' not found") => {
+                // `table 'datafusion.fin.searchinfo' not found`: the
+                // name is the reference's last segment.
+                let reference = &m["table '".len()..m.len() - "' not found".len()];
+                reference
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(reference)
+                    .to_string()
+            }
+            _ => return e.into(),
+        };
         tables.sort_unstable();
+        let fold = folded_past(
+            &self.shared.idents(),
+            &missing,
+            tables.iter().map(String::as_str),
+        )
+        .map(|spelled| fold_road(spelled, ""))
+        .unwrap_or_default();
         let tables = match (self.dataset(), tables.is_empty()) {
             (None, _) => "no dataset in use — USE one first".to_string(),
             (Some(d), true) => format!("no table landed in `{d}` yet"),
@@ -1222,7 +1267,7 @@ impl Session {
         };
         let relations: Vec<&str> = glossql_glossary::RELATIONS.iter().map(|r| r.name).collect();
         SessionError::UnknownTable(format!(
-            "{e} — {tables}; the store's relations: {}",
+            "{e}{fold} — {tables}; the store's relations: {}",
             relations.join(", ")
         ))
     }

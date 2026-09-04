@@ -377,6 +377,13 @@ async fn unquoted_names_fold_and_quoted_names_keep_case() {
         .await
         .expect_err("an unquoted name folds and misses the quoted table");
     assert!(refused.to_string().contains("searchstream"), "{refused}");
+    // The refusal names the spelling that reaches it.
+    assert!(
+        refused
+            .to_string()
+            .contains(r#"`SearchStream` is reached quoted, `"SearchStream"`"#),
+        "{refused}"
+    );
 
     // The engine's schema surface lists the two landed tables under
     // the dataset, each beside its Iceberg metadata tables
