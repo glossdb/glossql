@@ -675,22 +675,25 @@ fn derivation_shape() -> Vec<Field> {
 
 /// A door's fixed shape, decoded from JSON rows through the format's
 /// own decoder — the same trick the profile aggregate uses, so there is
-/// no hand-built array assembly to drift.
+/// no hand-built array assembly to drift. No rows is the empty
+/// relation, never a refusal.
 pub(crate) fn rows_batch(
     rows: Vec<Value>,
     fields: Vec<Field>,
 ) -> Result<RecordBatch, SessionError> {
     let schema = Arc::new(Schema::new(fields));
-    let mut decoder = arrow_json::ReaderBuilder::new(schema)
+    let mut decoder = arrow_json::ReaderBuilder::new(Arc::clone(&schema))
         .build_decoder()
         .map_err(|e| SessionError::Runtime(e.to_string()))?;
     decoder
         .serialize(&rows)
         .map_err(|e| SessionError::Runtime(e.to_string()))?;
-    decoder
+    // The decoder flushes nothing for no rows; a door with nothing to
+    // say serves the empty relation in its own shape.
+    Ok(decoder
         .flush()
         .map_err(|e| SessionError::Runtime(e.to_string()))?
-        .ok_or_else(|| SessionError::Runtime("a search door emitted no rows".into()))
+        .unwrap_or_else(|| RecordBatch::new_empty(schema)))
 }
 
 /// `relationship_candidates('dataset')` — the high-recall half of the

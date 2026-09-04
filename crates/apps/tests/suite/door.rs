@@ -1135,6 +1135,53 @@ async fn the_metrics_faces_serve_the_cube() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_list_serves_a_workspace_without_a_fact() {
+    // `frames/latest` unions the cube's newest periods with the facts'
+    // values. A workspace whose every grounding is a series has no
+    // fact row to add, and the frame serves the series alone: a door
+    // with nothing to say is the empty relation, not a refusal.
+    let (app, plane, _dir) = workspace().await;
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(&format!(
+            r#"USE perf;
+               DECLARE ASPECT dso WITH $${{"title": "DSO", "x-kind": "metric"}}$$ AS QUERY ON DATASET;
+               DECLARE ASPECT temporal_profile WITH $${{"type": "object",
+                 "required": ["applicable"],
+                 "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+               {cube}
+               DECLARE FUNCTION judge_time FOR GLOBAL AS
+                 $$SELECT true AS applicable, 'month' AS granularity,
+                          named_struct('ratio', 1.0) AS completeness$$
+                 RETURNS temporal_profile;
+               GLOSS dso ON perf AS $${{"sql": "SELECT month, value FROM ledger"}}$$;
+               SELECT judge_time() FROM ledger.month;"#,
+            cube = shipped_cube_declaration()
+        ))
+        .await
+        .unwrap();
+
+    let latest = get(&app, "/perf/app/docket/frames/latest").await;
+    assert_eq!(latest.status(), StatusCode::OK);
+    assert_eq!(
+        row_count(latest).await,
+        1,
+        "the one series' newest period, and no fact row"
+    );
+    let fact = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
+    assert_eq!(fact.status(), StatusCode::OK);
+    assert_eq!(row_count(fact).await, 0, "a series is not a fact");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metrics_pages_render_both_states() {
     // The pulse and the dossier, as pages: the front renders the list
     // and the front counts; a metric URL renders the dossier with the

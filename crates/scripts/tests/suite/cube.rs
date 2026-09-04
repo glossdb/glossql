@@ -1997,6 +1997,38 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_door_with_nothing_to_say_serves_the_empty_relation() {
+    // Every grounding here is a series, and no walk has landed: the
+    // facts read and the recorded walk have no row to serve. Each is
+    // the empty relation in its own shape — a frame that unions or
+    // counts over it keeps serving — never a refusal.
+    let dir = tempfile::tempdir().unwrap();
+    let jan = |d: i32| 19723 + d - 1;
+    let stocks = dated(
+        vec![Field::new("qty", DataType::Float64, false)],
+        vec![jan(15), jan(31)],
+        vec![Arc::new(Float64Array::from(vec![10.0, 100.0]))],
+    );
+    let session = cube_session(
+        dir.path(),
+        vec![("stocks", stocks)],
+        &[
+            r#"DECLARE ASPECT series WITH $${"title": "Series"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS series ON fin AS $${"sql": "SELECT date, qty AS value FROM stocks"}$$;"#,
+        ],
+    )
+    .await;
+    assert_eq!(
+        cell(&session, "SELECT count(*) FROM fact_values();").await,
+        "0"
+    );
+    assert_eq!(
+        cell(&session, "SELECT count(*) FROM band_points();").await,
+        "0"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn fact_values_serves_what_the_cube_does_not_chart() {
     // Four groundings without a time axis and one with. The fact is a
     // frame of one row with a value; the others say why they are not.
