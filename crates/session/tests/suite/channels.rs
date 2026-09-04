@@ -315,6 +315,10 @@ async fn the_memory_ceiling_is_the_planes_and_every_channel_answers_to_it() {
         refusal.contains("Resources exhausted"),
         "the refusal should name the pool, not something downstream of it: {refusal}"
     );
+    assert!(
+        refusal.contains("approx_distinct"),
+        "and the shape that fits: {refusal}"
+    );
 
     // The same statement, the same plane, no ceiling set: the query is
     // ordinary, so the refusal above was the budget and nothing else.

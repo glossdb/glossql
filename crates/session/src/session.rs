@@ -38,7 +38,9 @@ pub enum SessionError {
     Parse(#[from] ParserError),
     #[error(transparent)]
     Store(#[from] glossql_glossary::Error),
-    #[error(transparent)]
+    /// The engine's text, whole; a pool refusal carries the road out
+    /// ([`memory_road`]).
+    #[error("{}", memory_road(.0))]
     DataFusion(#[from] DataFusionError),
     #[error("no dataset in use — USE one first")]
     NoDataset,
@@ -101,6 +103,23 @@ pub enum SessionError {
 /// `landed` that is not `missing` but folds to it, so the quoted
 /// spelling reaches it (SPEC.md §1). `None` when nothing landed folds
 /// to the missing name — then it is simply not there.
+/// The engine's `Resources exhausted` with the shape that fits: a
+/// DISTINCT or a wide GROUP BY keeps every value in memory per
+/// partition, and neither the no-GROUP-BY aggregate nor a distinct
+/// count's state can spill — the sketch or the two-step count can.
+/// Every other engine error passes as it came.
+fn memory_road(e: &DataFusionError) -> String {
+    match e.find_root() {
+        DataFusionError::ResourcesExhausted(_) => format!(
+            "{e} — the statement outgrew the engine's memory pool: a `count(DISTINCT …)` or a \
+             GROUP BY over a wide column keeps every value in memory per partition; \
+             `approx_distinct(col)` sketches the count in fixed memory, or GROUP BY the keys \
+             in a CTE and count the rows"
+        ),
+        _ => e.to_string(),
+    }
+}
+
 fn folded_past<'a>(
     idents: &IdentNormalizer,
     missing: &str,
