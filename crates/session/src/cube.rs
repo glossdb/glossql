@@ -2087,8 +2087,10 @@ pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, Sess
                 .map(|m| format!(" WHERE metric = '{m}'"))
                 .unwrap_or_default();
             Err(refuse(format!(
-                "{}): the one argument is the grain — `SELECT * FROM metric_series(grain => \
-                 '{grain}'){filter}`; filters ride WHERE",
+                "{}): the one argument is the grain — `SELECT metric, period, value FROM \
+                 metric_series(grain => '{grain}'){filter}`; filters ride WHERE. The columns \
+                 are metric, dimension, member, period, value, num, den, behavior: the time \
+                 column is `period`, the total is `dimension = ''`",
                 args.iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()

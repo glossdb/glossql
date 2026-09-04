@@ -2411,7 +2411,9 @@ async fn metric_series_refuses_a_metric_argument_with_the_read_spelled_out() {
         .unwrap_err()
         .to_string();
     assert!(
-        e.contains("`SELECT * FROM metric_series(grain => 'day') WHERE metric = 'dso'`"),
+        e.contains(
+            "`SELECT metric, period, value FROM metric_series(grain => 'day') WHERE metric = 'dso'`"
+        ) && e.contains("the time column is `period`"),
         "{e}"
     );
 }
