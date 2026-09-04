@@ -122,7 +122,7 @@ async fn write_files(
     table: &iceberg::table::Table,
     batches: &[RecordBatch],
 ) -> Result<Vec<DataFile>> {
-    let table_props = table.metadata().table_properties()?;
+    let table_props = table.metadata().table_properties();
     let schema = table.metadata().current_schema().clone();
     // Landed batches carry no field-id metadata; match by name, as
     // iceberg-datafusion's own write path does.
@@ -130,7 +130,7 @@ async fn write_files(
         .with_match_mode(FieldMatchMode::Name);
     let rolling = RollingFileWriterBuilder::new(
         parquet,
-        table_props.write_target_file_size_bytes(),
+        table_props.write_target_file_size_bytes()?,
         table.file_io().clone(),
         DefaultLocationGenerator::new(table.metadata())?,
         DefaultFileNameGenerator::new(

@@ -53,27 +53,29 @@ adbc_core = "0.24"
 adbc_driver_manager = "0.24"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures = "0.3"
-# SPIKE 2026-08-17 — iceberg-rust main, to reach v3 row lineage on read
-# (`_last_updated_sequence_number`, PR #2966, merged 2026-08-10, in no
-# release; 0.10.1 was cut 2026-08-01). main pins datafusion 54.1 and the
-# same arrow 58.4, so the arrow tree does not split. REVERT if not kept.
+# iceberg-rust is pinned to a main commit, not a release: v3 row lineage
+# on read (`_last_updated_sequence_number`, PR #2966; `_row_id`, PR
+# #3058) is in no release yet. The pin is the last commit before
+# upstream's move to DataFusion 55 (#2958): datafusion moves in lockstep
+# with iceberg-datafusion, and datafusion-functions-json has no release
+# for 55. The pin advances past it when that release exists.
 datafusion = { version = "54.1", default-features = false, features = ["parquet", "sql"] }
 datafusion-sql = "54.1"
 datafusion-common = "54.1"
 datafusion-functions-json = "0.54"
-iceberg = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
-iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
+iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 # Not used directly since stage 4½ — this line exists to switch on
 # sqlx's tokio runtime for iceberg-catalog-sql, which names no runtime
 # feature of its own and panics at pool creation without one.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 # The `rest` catalog backend (glossql-catalog's `rest` feature): the
 # Iceberg REST client. Its data plane is our own `Storage` over
 # object_store — the crate DataFusion already runs on — so the binary
 # carries one storage stack; `aws` adds the S3 family. typetag is
 # iceberg's registration mechanism for storage implementations.
-iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 object_store = { version = "0.13", features = ["aws"] }
 typetag = "0.2"
 bytes = "1"

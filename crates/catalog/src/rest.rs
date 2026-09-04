@@ -93,11 +93,11 @@ impl Lake {
                 token_endpoint,
                 scope,
             } => {
-                builder = builder.with_auth_manager(Arc::new(ClientCredentials::new(
+                builder = builder.with_auth_manager(ClientCredentials::new(
                     &credential,
                     token_endpoint,
                     scope,
-                )));
+                ));
             }
         }
         let catalog = builder.load("glossql", props).await?;
