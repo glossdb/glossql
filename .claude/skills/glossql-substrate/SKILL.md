@@ -156,6 +156,104 @@ Two `GROUPING SETS` rules found the hard way (spike 6, 2026-08-17):
   returns NULL in every group — it plans, it runs, and it is wrong. Put
   the cast in the base subquery.
 
+## Set arithmetic is a plan, never a collection
+
+A door that collects an engine result and then intersects, groups, sorts
+or joins the values in Rust has left the substrate: those values sit
+outside the memory pool, nothing spills them, and the process is the
+bound.
+
+The line to hold: **a Rust structure sized by the schema is a fact
+table; one sized by the rows or the distinct values is a leak.** A dense
+matrix over the column pairs is fine. A `HashSet<String>` of a column's
+values is not, however small the dataset in front of you.
+
+**What spills in DataFusion 54.1, and what does not.** Spilling is
+per-operator, not a mode — each operator that has a spill path asks the
+disk manager itself (`aggregates/row_hash.rs`, the `OutOfMemoryMode`
+match on `disk_manager.tmp_files_enabled()`).
+
+| operator | on pool pressure |
+|---|---|
+| `SortExec`, `SortMergeJoinExec` | spill |
+| grouped aggregate, Final mode | spills |
+| grouped aggregate, Partial mode | cannot; emits early and degrades to skip-aggregation |
+| `HashJoinExec` build side | **refuses** — no spill path exists, only a `try_grow` that errors |
+
+So the memory-safe set operation is a **grouped aggregate**, and the
+memory-safe join is a **merge join** — `prefer_hash_join = false` on the
+door's own `SessionState`. A hash join's build reservation is also
+registered *unspillable*, so what it holds shrinks the share every
+spilling operator gets: `FairSpillPool::try_grow` hands each spillable
+consumer `(pool − unspillable) / num_spill`, counting every registered
+consumer in the process. Union arms multiply that count — the engine
+repartitions each arm and runs a partial aggregate per partition — which
+is why an unpivot uses one arm per table, not one per column.
+
+**Containment between many columns** (`relationship_candidates`) is the
+worked example. One pass per column type, because arms of different
+types can share nothing and a pass scoped to one type never casts:
+
+```text
+per table: scan → make_array over the arms' columns → unnest → drop nulls
+union → DISTINCT (arm, value…) → self-join on the value, filter a <= b
+      → GROUP BY the arm pair → count(*)
+```
+
+A matched row is one value both arms carry, the input being distinct;
+`(i, i)` is the arm's own distinct count, so one plan answers both the
+matched counts and the distinct counts. A composite is the same plan at
+width 2, joined on both legs. What leaves the engine is the matrix.
+
+Two things this replaced, and why neither comes back:
+
+- **The distinct values in a `HashSet<String>`.** Four row-number
+  columns in one real table are 810k distinct each; that is the whole
+  bug, and it is invisible on a fixture.
+- **A carrier bitset folded with `bit_or` and walked in Rust.** Not
+  because the fan-out is small — it does the same Σk² arithmetic, in
+  Rust, over a pattern table whose size is data-dependent, and pays a
+  64-arm ceiling for it.
+
+**The fan-out is the cost, and it is not bounded.** Two measurements,
+both real: a seven-table set put at most 7 arms on a value and 622k
+rows through the width-1 join; an event dataset's width-2 pass put ~44
+arms on a value and 9.09 billion rows through it, 423 GB and 690 s of
+join time, completing only because the sorts and the Final aggregate
+spilled. Nothing refuses, which is the point — but size the pass before
+assuming it is free.
+
+**Pruning is only free where every pair is wanted.** At width 1 the
+door wants the whole matrix, so the old prune (a to side under half the
+from side's distinct count) is implied by the acceptance bar and went
+away with the sketch that fed it — a sketch that silently changes which
+candidates are considered is worse than no prune in a door whose
+contract is recall. At width 2 the door wants **one** pair per attempt,
+and an all-pairs self-join computes every pair of the arms that share a
+value: on the run above, ~968 pairs per value where one was wanted. The
+question asked and the question answered are not the same shape at both
+widths.
+
+**BINDER-style hash-range partitioning is the spilling aggregate.**
+Partition the value space by hash, process partition by partition, merge
+— that is `row_hash.rs`'s `SpillState` and the `DiskManager`. Do not
+build it.
+
+**Dynamic filters do not reach our data** (issue #46). `HashJoinExec`
+builds one in the Post pushdown phase and offers it to the probe child;
+the `FilterPushdown` rule inserts no node, `FilterExec` refuses to
+absorb outside the `Pre` phase, and the only Post-phase absorber is
+`DataSourceExec` over a `FileScanConfig`. Every read here is an
+`IcebergTableScan` or a `MemTable`, and neither participates. Plan as if
+the feature were off, because for us it is.
+
+**The kernels' seam stays.** A statistical kernel receives a matrix, so
+the last step before one is a hand-off, not a plan. What moves into the
+plan is everything before it: the alignment of two series is a join, a
+constant column is `min(c) <> max(c)`, a fingerprint is `string_agg`
+under `GROUP BY`, time-series features are `lag`, `avg OVER`, `extract`
+and `median OVER`.
+
 ## Schema without execution
 
 A logical plan carries its schema. `ctx.state().statement_to_plan(sql)`
