@@ -17,8 +17,16 @@ use crate::{Error, Result};
 
 fn compat_type(t: &DataType) -> DataType {
     match t {
-        DataType::Timestamp(TimeUnit::Microsecond, _) => t.clone(),
-        DataType::Timestamp(_, tz) => DataType::Timestamp(TimeUnit::Microsecond, tz.clone()),
+        // A zoned timestamp is an instant; Iceberg holds it as
+        // `timestamptz` and reads it back zoned `+00:00`, and the
+        // parquet writer refuses a batch whose field names the zone
+        // any other way — `UTC` included, which is what pyarrow and
+        // pandas write. The cast keeps the instant.
+        DataType::Timestamp(_, Some(_)) => {
+            DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()))
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, None) => t.clone(),
+        DataType::Timestamp(_, None) => DataType::Timestamp(TimeUnit::Microsecond, None),
         DataType::Time32(_) | DataType::Time64(_) => DataType::Time64(TimeUnit::Microsecond),
         DataType::Date64 => DataType::Date32,
         DataType::UInt64 => DataType::Int64,

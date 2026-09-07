@@ -177,7 +177,8 @@ match on `disk_manager.tmp_files_enabled()`).
 |---|---|
 | `SortExec`, `SortMergeJoinExec` | spill |
 | grouped aggregate, Final mode | spills |
-| grouped aggregate, Partial mode | cannot; emits early and degrades to skip-aggregation |
+| grouped aggregate, Partial mode | cannot spill; emits its groups early. Separately, its probe stops aggregating when the first 100k rows of a partition reduce by under 20% (`row_hash.rs`, `SkipAggregationProbe`) — a wide group space triggers it, not memory |
+| `SortMergeJoinExec` keys | no comparator arm for a zoned timestamp or a time of day (`joins/utils.rs`, `compare_join_arrays`) — refuses at execution; join those as the integer they are stored as |
 | `HashJoinExec` build side | **refuses** — no spill path exists, only a `try_grow` that errors |
 
 So the memory-safe set operation is a **grouped aggregate**, and the
@@ -230,7 +231,7 @@ away with the sketch that fed it — a sketch that silently changes which
 candidates are considered is worse than no prune in a door whose
 contract is recall. At width 2 the door wants **one** pair per attempt,
 and an all-pairs self-join computes every pair of the arms that share a
-value: on the run above, ~968 pairs per value where one was wanted. The
+value: on the run above, 990 pairs per value where one was wanted. The
 question asked and the question answered are not the same shape at both
 widths.
 

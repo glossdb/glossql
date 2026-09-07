@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{
     Array, Float64Array, Int32Array, ListBuilder, RecordBatch, StringBuilder,
+    Time64MicrosecondArray, TimestampMicrosecondArray,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
@@ -2429,5 +2430,66 @@ async fn metric_series_refuses_a_metric_argument_with_the_read_spelled_out() {
             "`SELECT metric, period, value FROM metric_series(grain => 'day') WHERE metric = 'dso'`"
         ) && e.contains("the time column is `period`"),
         "{e}"
+    );
+}
+
+/// The pair passes join through the merge join, whose key comparator
+/// has no arm for a zoned timestamp or a time of day — the types
+/// Iceberg lands `timestamptz` and `time` as, the zone read back as
+/// `+00:00`. Two columns of either type form one pass, and the pass
+/// must still count them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_join_zoned_timestamps_and_times() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let zoned = DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()));
+    let stamps = |v: Vec<i64>| {
+        Arc::new(TimestampMicrosecondArray::from(v).with_timezone("+00:00")) as Arc<dyn Array>
+    };
+    let times = |v: Vec<i64>| Arc::new(Time64MicrosecondArray::from(v)) as Arc<dyn Array>;
+    let account = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("opened_at", zoned.clone(), false),
+            Field::new("closed_at", zoned.clone(), true),
+            Field::new("cutoff", DataType::Time64(TimeUnit::Microsecond), false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            stamps(vec![1_000_000, 2_000_000, 3_000_000]),
+            stamps(vec![9_000_000, 9_000_000, 9_000_000]),
+            times(vec![10, 20, 30]),
+        ],
+    )
+    .unwrap();
+    let payment = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("booked_at", zoned, false),
+            Field::new("at", DataType::Time64(TimeUnit::Microsecond), false),
+        ])),
+        vec![
+            stamps(vec![1_000_000, 1_000_000, 3_000_000]),
+            times(vec![10, 30, 30]),
+        ],
+    )
+    .unwrap();
+    for (name, batch) in [("account", account), ("payment", payment)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let out = table(&session, "SELECT * FROM relationship_candidates('fin');").await;
+    assert!(
+        out.contains("payment.booked_at") && out.contains("account.opened_at"),
+        "the zoned pair is a candidate: {out}"
+    );
+    assert!(
+        out.contains("payment.at") && out.contains("account.cutoff"),
+        "the time pair is a candidate: {out}"
     );
 }

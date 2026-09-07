@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray, TimestampNanosecondArray};
+use datafusion::arrow::array::{
+    Array, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
+    TimestampNanosecondArray,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
@@ -81,6 +84,55 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     );
     assert_eq!(schema.field(2).data_type(), &DataType::Utf8);
     assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
+}
+
+/// A zoned timestamp lands as the instant it is, zoned the one way the
+/// lake reads a `timestamptz` back: `+00:00`. pyarrow and pandas write
+/// `UTC`, which the parquet writer refuses against the table's schema.
+#[tokio::test(flavor = "multi_thread")]
+async fn parquet_recipe_folds_a_zoned_timestamp_onto_the_lake_zone() {
+    let dir = tempfile::tempdir().unwrap();
+    let instant = 1_700_000_000_000_000i64;
+    let batch = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new(
+            "booked_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            true,
+        )])),
+        vec![Arc::new(
+            TimestampMicrosecondArray::from(vec![instant]).with_timezone("UTC"),
+        )],
+    )
+    .unwrap();
+    let ctx = SessionContext::new();
+    ctx.register_batch("t", batch).unwrap();
+    ctx.table("t")
+        .await
+        .unwrap()
+        .write_parquet(
+            &dir.path().join("payments").display().to_string(),
+            DataFrameWriteOptions::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let landed = run_recipe(
+        &spec("parquet", dir.path()),
+        "SELECT * FROM read_parquet('payments/*.parquet')",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        landed.schema.field(0).data_type(),
+        &DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()))
+    );
+    let landed_at = landed.batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .unwrap();
+    assert_eq!(landed_at.value(0), instant, "the fold keeps the instant");
 }
 
 #[tokio::test(flavor = "multi_thread")]

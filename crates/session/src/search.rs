@@ -1186,6 +1186,22 @@ impl Counts {
     }
 }
 
+/// A key the merge join can compare. Its comparator has no arm for a
+/// zoned timestamp or a time of day (datafusion-physical-plan
+/// `joins/utils.rs`, `compare_join_arrays`), which is how Iceberg lands
+/// `timestamptz` and `time`; those join as the integer they are stored
+/// as. A pass is scoped to one stored type, so the reinterpretation
+/// meets only its own kind, and it is one-to-one, so every count is
+/// the count of the stored values. Everything else joins as stored.
+fn joinable(value: Expr, stored: &DataType) -> Expr {
+    use datafusion::logical_expr::cast;
+    match stored {
+        DataType::Timestamp(_, Some(_)) | DataType::Time64(_) => cast(value, DataType::Int64),
+        DataType::Time32(_) => cast(value, DataType::Int32),
+        _ => value,
+    }
+}
+
 /// Every arm pair's shared-value count, as plans.
 ///
 /// One pass per column-type tuple, because arms of different types can
@@ -1246,7 +1262,7 @@ async fn pair_counts(
         }
     }
 
-    for (_, members) in groups.iter().filter(|(_, m)| m.len() > 1) {
+    for (shape, members) in groups.iter().filter(|(_, m)| m.len() > 1) {
         let width = arms[members[0]].columns.len();
         let mut tables: Vec<&str> = Vec::new();
         for &i in members {
@@ -1266,10 +1282,14 @@ async fn pair_counts(
                 .collect();
             let mut lists =
                 vec![make_array(mine.iter().map(|&i| lit(i as i64)).collect()).alias("ci")];
-            for k in 0..width {
+            for (k, stored) in shape.iter().enumerate() {
                 lists.push(
-                    make_array(mine.iter().map(|&i| ident(&arms[i].columns[k])).collect())
-                        .alias(format!("v{k}")),
+                    make_array(
+                        mine.iter()
+                            .map(|&i| joinable(ident(&arms[i].columns[k]), stored))
+                            .collect(),
+                    )
+                    .alias(format!("v{k}")),
                 );
             }
             let mut zipped = vec![Column::from_name("ci")];
