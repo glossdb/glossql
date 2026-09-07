@@ -1066,8 +1066,8 @@ pub(crate) async fn served_grounding(
         .find(|r| r.subject == dataset && r.aspect == aspect && r.state != "unassessed");
     let Some(row) = row else {
         return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): no current grounding on `{dataset}` — a derived metric's \
-             definition stays in the formulas gloss until an evaluation is recorded"
+            "read.{aspect}(): no current grounding of `{aspect}` on `{dataset}` — \
+             `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$` grounds it"
         )));
     };
     if row.state != "current" {

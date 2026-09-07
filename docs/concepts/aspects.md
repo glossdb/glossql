@@ -48,7 +48,9 @@ declared relationship addressed by its pair path
 (`orders.customer_id -> customers.id`; a composite key is a tuple
 endpoint). The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP |
 SOURCE` list is the aspect's **grain** — the subject classes glosses
-may attach to. Absent, the aspect applies at all grains. Disclosure
+may attach to. Absent, the aspect applies at all grains, except a
+QUERY aspect: a metric is grounded on the dataset, so its grain is the
+dataset with or without the clause. Disclosure
 stays within grain: absence shows only on subjects the aspect is
 declared for. A `TABLE` or `COLUMN` grain also says the subject is
 landed: a gloss on a table or column that is not in the dataset is

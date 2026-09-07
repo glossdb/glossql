@@ -2612,3 +2612,41 @@ async fn relationship_candidates_never_scope_by_a_unique_column() {
         "no composite scopes by the line number: {scoped}\n{out}"
     );
 }
+
+/// A metric is grounded on the dataset: a grounding written on a table
+/// is refused with the write that lands, and the read then serves it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grounding_on_a_table_is_refused_with_the_dataset_named() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT takings WITH $${"title": "takings", "x-kind": "measure"}$$ AS QUERY;"#,
+    )
+    .await;
+    let e = session
+        .execute(
+            r#"GLOSS takings ON orders AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("grounded on the dataset") && e.contains("GLOSS takings ON fin"),
+        "{e}"
+    );
+    let e = session
+        .execute("SELECT * FROM read.takings();")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("GLOSS takings ON fin"), "{e}");
+    run(
+        &session,
+        r#"GLOSS takings ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#,
+    )
+    .await;
+    let n = table(&session, "SELECT count(*) FROM read.takings();").await;
+    assert!(!n.contains("| 0 "), "{n}");
+}

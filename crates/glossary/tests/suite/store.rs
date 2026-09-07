@@ -72,6 +72,14 @@ async fn rctx(store: &Store) -> ReadContext {
         .unwrap()
 }
 
+/// A grounding write: on the dataset, where a metric lives.
+async fn ground(store: &Store, actor: &Actor, statement: &str) -> Result<(), Error> {
+    let g = gloss(statement);
+    store
+        .gloss("fin", actor, &g.aspect.value, "fin", &g.body, None)
+        .await
+}
+
 async fn write(store: &Store, actor: &Actor, statement: &str) -> Result<(), Error> {
     let g = gloss(statement);
     store
@@ -130,72 +138,109 @@ async fn query_gloss_validates_against_the_grounding_schema() {
         unreachable!()
     };
     s.declare_aspect(&revenue).await.unwrap();
-    let e = write(
+    let e = ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"prose": "no sql"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"prose": "no sql"}$$;"#,
     )
     .await
     .unwrap_err();
     assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
-    write(
+    ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders"}$$;"#,
     )
     .await
     .unwrap();
     // A stop in place of the SQL (SPEC.md §5.2): admitted with its
     // reason; both at once is neither.
-    write(
+    ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"stopped": "amount never landed"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"stopped": "amount never landed"}$$;"#,
     )
     .await
     .unwrap();
-    let e = write(
+    let e = ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT 1", "stopped": "both"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT 1", "stopped": "both"}$$;"#,
     )
     .await
     .unwrap_err();
     assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
     // The authored stock marker:
     // "stock"/"flow" admitted, anything else refused.
-    write(
+    ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "behavior": "stock"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders", "behavior": "stock"}$$;"#,
     )
     .await
     .unwrap();
-    let e = write(
+    let e = ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "behavior": "level"}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders", "behavior": "level"}$$;"#,
     )
     .await
     .unwrap_err();
     assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
     // The declared grain: an array of served column names — admitted;
     // an empty array declares nothing and is refused.
-    write(
+    ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "grain": ["date", "account_id"]}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders", "grain": ["date", "account_id"]}$$;"#,
     )
     .await
     .unwrap();
-    let e = write(
+    let e = ground(
         &s,
         &agent(),
-        r#"GLOSS revenue ON orders.amount AS $${"sql": "SELECT amount FROM orders", "grain": []}$$;"#,
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders", "grain": []}$$;"#,
     )
     .await
     .unwrap_err();
     assert!(matches!(e, Error::BodyRejected { .. }), "{e}");
+}
+
+#[tokio::test]
+async fn a_metric_is_grounded_on_the_dataset() {
+    let (_dir, s) = store().await;
+    let Declaration::Aspect(revenue) = decl(
+        r#"DECLARE ASPECT revenue WITH $${"title": "revenue", "x-kind": "measure"}$$ AS QUERY;"#,
+    ) else {
+        unreachable!()
+    };
+    s.declare_aspect(&revenue).await.unwrap();
+    let g = gloss(r#"GLOSS revenue ON fin AS $${"sql": "SELECT amount FROM orders"}$$;"#);
+    // A table or a column cannot hold a metric; the dataset does.
+    for subject in ["orders", "orders.amount"] {
+        let e = s
+            .gloss("fin", &agent(), "revenue", subject, &g.body, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, Error::GrainRefused { .. }), "{subject}: {e}");
+    }
+    s.gloss("fin", &agent(), "revenue", "fin", &g.body, None)
+        .await
+        .unwrap();
+    // The clause may only say what the kind already says.
+    let Declaration::Aspect(spelled) =
+        decl(r#"DECLARE ASPECT dso WITH $${"title": "DSO"}$$ AS QUERY ON DATASET;"#)
+    else {
+        unreachable!()
+    };
+    s.declare_aspect(&spelled).await.unwrap();
+    let Declaration::Aspect(misplaced) =
+        decl(r#"DECLARE ASPECT dpo WITH $${"title": "DPO"}$$ AS QUERY ON COLUMN;"#)
+    else {
+        unreachable!()
+    };
+    let e = s.declare_aspect(&misplaced).await.unwrap_err();
+    assert!(matches!(e, Error::QueryGrain { .. }), "{e}");
 }
 
 #[tokio::test]

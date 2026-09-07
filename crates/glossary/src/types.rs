@@ -42,6 +42,10 @@ pub enum Error {
         "function `{function}` RETURNS `{aspect}`, a QUERY aspect — metrics run as their SQL, functions never fill them"
     )]
     ReturnsQueryAspect { function: String, aspect: String },
+    #[error(
+        "aspect `{name}` is a QUERY aspect — a metric is grounded on the dataset, and `ON {declared}` cannot hold it"
+    )]
+    QueryGrain { name: String, declared: String },
     #[error("aspect `{aspect}` is declared ON {declared} — `{subject}` is a {grain} subject")]
     GrainRefused {
         aspect: String,

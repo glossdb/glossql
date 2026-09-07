@@ -91,8 +91,8 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
         kit[start..].find("AS FACT ON DATASET;").expect("it closes") + "AS FACT ON DATASET;".len();
     let cube_aspect = &kit[start..start + len];
 
-    // Two datasets, each holding a table called `orders`, each carrying
-    // the same aspect on it under the same assumption key.
+    // Two datasets, each grounding the same metric under the same
+    // assumption key.
     for dataset in ["fin", "ops"] {
         plane
             .execute(
@@ -104,7 +104,7 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
                        {ruling_aspect}
                        {cube_aspect}
                        DECLARE ASPECT revenue WITH $${{"title": "Revenue"}}$$ AS QUERY;
-                       GLOSS revenue ON orders AS $${{"sql": "SELECT 1 AS value",
+                       GLOSS revenue ON {dataset} AS $${{"sql": "SELECT 1 AS value",
                          "assumptions": [{{"dimension": "definition", "key": "net-of-returns",
                            "assumption": "net of returns", "basis": "judgment",
                            "confidence": 0.6}}]}}$$;"#
@@ -118,8 +118,8 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
     // without the dataset, the later gloss superseded the earlier one
     // and `fin` never appeared.
     let both = vec![
-        "fin|orders|revenue|net-of-returns".to_string(),
-        "ops|orders|revenue|net-of-returns".to_string(),
+        "fin|fin|revenue|net-of-returns".to_string(),
+        "ops|ops|revenue|net-of-returns".to_string(),
     ];
     assert_eq!(
         keys(
@@ -137,7 +137,7 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
             human(),
             Some("fin"),
             r#"USE fin;
-               GLOSS ruling ON orders AS $${"rulings": [{"aspect": "revenue",
+               GLOSS ruling ON fin AS $${"rulings": [{"aspect": "revenue",
                  "key": "net-of-returns", "stance": "confirmed",
                  "dimension": "definition", "assumption": "net of returns"}]}$$;"#,
         )
@@ -153,7 +153,7 @@ async fn a_ruling_closes_its_own_dataset_s_question_and_no_other() {
                 .await
                 .unwrap()
         ),
-        vec!["ops|orders|revenue|net-of-returns".to_string()],
+        vec!["ops|ops|revenue|net-of-returns".to_string()],
         "the ruling in `fin` reached across into `ops`"
     );
 

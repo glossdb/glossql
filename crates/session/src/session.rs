@@ -1033,6 +1033,23 @@ impl Session {
                 snapshot,
             )
             .await;
+        let is_grounding = self
+            .shared
+            .store
+            .aspect(aspect)
+            .await?
+            .is_some_and(|(_, kind, _)| kind == "query");
+        // A metric is grounded on the dataset (SPEC.md §4); a grounding
+        // on a table or a column is refused with the write that lands.
+        if let Err(e @ glossql_glossary::Error::GrainRefused { .. }) = &written
+            && is_grounding
+        {
+            let dataset = &resolved.dataset;
+            return Err(SessionError::BadSubject(format!(
+                "{e} — a metric is grounded on the dataset: \
+                 `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$`"
+            )));
+        }
         // A table that carries its dataset's name: the bare name is the
         // dataset (SPEC.md §4), so a table-grain aspect refuses it, and
         // the refusal says what is reachable — the columns, as
@@ -1068,12 +1085,6 @@ impl Session {
         // discovered at the first read. Nothing is refused on it: the
         // language rules no shape for a grounding, and the row tells.
         // Every other gloss answers as it did.
-        let is_grounding = self
-            .shared
-            .store
-            .aspect(aspect)
-            .await?
-            .is_some_and(|(_, kind, _)| kind == "query");
         if is_grounding {
             let fact = crate::cube::fact_at_write(
                 &self.shared,

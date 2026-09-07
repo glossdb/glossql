@@ -198,7 +198,10 @@ The kind fixes the aspect's role:
 
 The optional `ON DATASET | TABLE | COLUMN | RELATIONSHIP | SOURCE, …` list
 is the aspect's **grain**: the subject classes glosses (and a `RETURNS`
-binding) may attach to. Absent, the aspect speaks to all grains. Disclosure
+binding) may attach to. Absent, the aspect speaks to all grains. A QUERY
+aspect is the exception: a metric is grounded on the dataset (§4), so its
+grain is the dataset with or without the clause, and a clause naming any
+other grain is refused. Disclosure
 (§5.3) stays within it: absence shows only on subjects the aspect is
 declared for.
 
@@ -252,7 +255,8 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   standard grounding schema, MEASUREMENT → rejected.
 - An aspect whose grain names `TABLE` or `COLUMN` takes only landed
   subjects: the table, and the column, must exist in the dataset. An
-  aspect without a grain clause takes the subject as spelled.
+  aspect without a grain clause takes the subject as spelled; a QUERY
+  aspect takes the dataset.
 - The **standard grounding schema** is fixed, like the attest schema (§7.2):
 
 ```json

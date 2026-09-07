@@ -670,7 +670,20 @@ impl Store {
             });
         }
         let name = decl.name.value.as_str();
-        let declared_grains = grains_str(&decl.grains);
+        // A metric is grounded on the dataset (SPEC.md §4): a QUERY
+        // aspect's grain is the dataset, clause or no clause, so one
+        // metric is one slot and the read serves what the cube folds.
+        let declared_grains = if decl.kind == AspectKind::Query {
+            if decl.grains.iter().any(|g| *g != Grain::Dataset) {
+                return Err(Error::QueryGrain {
+                    name: name.into(),
+                    declared: grains_str(&decl.grains).unwrap_or_default(),
+                });
+            }
+            Some("dataset".to_string())
+        } else {
+            grains_str(&decl.grains)
+        };
         // Conditional relevance: the referenced
         // sibling aspect must exist — nothing else ever errors on that.
         // The literal itself is not judged: a value no slot ever
