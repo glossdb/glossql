@@ -997,6 +997,24 @@ pub(crate) async fn relationship_candidates(
             columns: vec![a.clone(), b.clone()],
         })
         .collect();
+    // What the composite pass is asked to compute, for the run log: the
+    // attempts, the combinations they need, and the table pairs they
+    // span.
+    let table_pairs: HashSet<(&str, &str)> = attempts
+        .iter()
+        .map(|a| {
+            (
+                cols[pairs[a.p].f].table.as_str(),
+                cols[pairs[a.p].k].table.as_str(),
+            )
+        })
+        .collect();
+    tracing::debug!(
+        attempts = attempts.len(),
+        combos = combos.len(),
+        table_pairs = table_pairs.len(),
+        "composite rescue"
+    );
     let combo_counts = pair_counts(&state, resolved, &door, &combo_arms).await?;
     let filled = combo_filled(&scans, resolved, &door, &combos).await?;
     // The combined to side keys its table inside the scope.
@@ -1103,7 +1121,8 @@ pub(crate) async fn relationship_candidates(
     rows_batch(out, relationship_shape())
 }
 
-/// The detector's own state: a merge join, not a hash join.
+/// The detector's own state: a merge join, not a hash join, over four
+/// partitions.
 ///
 /// A hash join reserves its whole build side and refuses when the pool
 /// is short — it has no spill path at all, only a `try_grow` that
@@ -1115,10 +1134,23 @@ pub(crate) async fn relationship_candidates(
 /// refuses on a wide dataset is the failure this pass exists to
 /// remove. `SortMergeJoinExec` spills. The price is a sort per side,
 /// which the plan metrics below report.
+///
+/// The fair pool divides its share among every spilling operator
+/// instance a plan registers, and a pass registers one per partition
+/// per union arm and per sort, so the instance count — and with it
+/// the ceiling any one instance can reach — scales with the partition
+/// count. A grouped aggregate that has to spill needs room for its
+/// emitted batch on top of its share (datafusion-physical-plan
+/// `aggregates/row_hash.rs`, `GroupedHashAggregateStream::spill`), and a
+/// pass over string keys refused there at the machine's partition
+/// count. Four partitions keep every instance's share wide enough; the
+/// passes that would use more cores are the ones the pair count, not
+/// the core count, bounds.
 fn detector_state(ctx: &SessionContext) -> SessionState {
     let state = ctx.state();
     let mut config = state.config().clone();
     config.options_mut().optimizer.prefer_hash_join = false;
+    config.options_mut().execution.target_partitions = 4;
     SessionStateBuilder::new_from_existing(state)
         .with_config(config)
         .build()
