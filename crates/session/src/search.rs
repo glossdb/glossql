@@ -737,10 +737,16 @@ pub(crate) fn rows_batch(
 /// pairs between the same two tables are tried as the scoping leg in
 /// overlap order; the first whose combination makes the to side
 /// near-unique and whose two-leg intersection resolves rescues the
-/// anchor. It is the same pass at width 2, joined on both legs, so a
-/// combination's own key test and its containment come out of one
-/// plan. Width 2 only — wider composites stay future work. Data
-/// decides, not names.
+/// anchor. A scoping leg that is unique on its own is never tried: the
+/// pair could identify no more than the leg does, and the leg's own
+/// candidate already stands. Here only the named from–to pairs are
+/// wanted, not every pair, so the composite pass has a different shape
+/// from the width-1 matrix: first every combination's own distinct
+/// count, an aggregate with no join, which settles the key test and
+/// the prunes it implies in Rust over schema-sized numbers; then the
+/// surviving from combinations joined to the surviving to combinations
+/// on both legs, never a side to itself. Width 2 only — wider
+/// composites stay future work. Data decides, not names.
 pub(crate) async fn relationship_candidates(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,
@@ -901,13 +907,29 @@ pub(crate) async fn relationship_candidates(
         });
     }
 
-    // Composite rescue: the attempts, then one pass and one count plan
-    // for every combination either side of them needs.
+    // Composite rescue: the attempts, then the combinations either side
+    // needs, counted in two phases with the exact prunes between them.
     struct Attempt {
         p: usize, // into pairs — the anchor leg
         s: usize,
         order: i64,
+        from: usize, // into combos
+        to: usize,
     }
+    // The combinations both sides need, interned once each: the same
+    // (table, a, b) can be a to side for one attempt and a from side
+    // for another, and an arm counted twice is a scan wasted.
+    let mut combos: Vec<(String, String, String)> = Vec::new();
+    let mut combo_of: HashMap<(String, String, String), usize> = HashMap::new();
+    let mut intern = |leg: &ColShape, scope: &ColShape| {
+        let key = (leg.table.clone(), leg.column.clone(), scope.column.clone());
+        let next = combos.len();
+        let at = *combo_of.entry(key.clone()).or_insert(next);
+        if at == next {
+            combos.push(key);
+        }
+        at
+    };
     let mut attempts: Vec<Attempt> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for (pi, p) in pairs.iter().enumerate() {
@@ -921,6 +943,11 @@ pub(crate) async fn relationship_candidates(
                     && cols[s.k].table == cols[p.k].table
                     && cols[s.f].column != cols[p.f].column
                     && cols[s.k].column != cols[p.k].column
+                    // A scoping leg that is unique on its own did all
+                    // the identifying: the pair's distinct count cannot
+                    // exceed the leg's, so the composite would add
+                    // nothing to the leg's own candidate.
+                    && !unique(s.k)
             })
             .collect();
         // Total order over floats: a NaN sorts last instead of panicking
@@ -929,14 +956,6 @@ pub(crate) async fn relationship_candidates(
         let mut order = 0i64;
         for si in scopes {
             let s = &pairs[si];
-            // Implied by the near-unique bar, never a heuristic: the
-            // combined to side's distinct pairs cannot exceed the
-            // product of the legs' distinct counts — a product under
-            // 0.9 of the co-filled floor can never key the table.
-            let floor = cols[p.k].filled.min(cols[s.k].filled);
-            if (distinct(p.k) as f64) * (distinct(s.k) as f64) < 0.9 * floor as f64 {
-                continue;
-            }
             let key = format!(
                 "{}|{}|{}+{}|{}+{}",
                 cols[p.f].table,
@@ -963,43 +982,14 @@ pub(crate) async fn relationship_candidates(
                 p: pi,
                 s: si,
                 order,
+                from: intern(&cols[p.f], &cols[s.f]),
+                to: intern(&cols[p.k], &cols[s.k]),
             });
             order += 1;
         }
     }
-
-    // The combinations both sides need, interned once each: the same
-    // (table, a, b) can be a to side for one attempt and a from side
-    // for another, and an arm probed twice is a scan wasted.
-    let mut combos: Vec<(String, String, String)> = Vec::new();
-    let mut combo_of: HashMap<(String, String, String), usize> = HashMap::new();
-    let mut to_of: Vec<usize> = Vec::with_capacity(attempts.len());
-    let mut from_of: Vec<usize> = Vec::with_capacity(attempts.len());
-    for a in &attempts {
-        let (p, s) = (&pairs[a.p], &pairs[a.s]);
-        for (side, leg, scope) in [
-            (&mut to_of, &cols[p.k], &cols[s.k]),
-            (&mut from_of, &cols[p.f], &cols[s.f]),
-        ] {
-            let key = (leg.table.clone(), leg.column.clone(), scope.column.clone());
-            let next = combos.len();
-            let at = *combo_of.entry(key.clone()).or_insert(next);
-            if at == next {
-                combos.push(key);
-            }
-            side.push(at);
-        }
-    }
-    let combo_arms: Vec<Arm> = combos
-        .iter()
-        .map(|(t, a, b)| Arm {
-            table: t.clone(),
-            columns: vec![a.clone(), b.clone()],
-        })
-        .collect();
-    // What the composite pass is asked to compute, for the run log: the
-    // attempts, the combinations they need, and the table pairs they
-    // span.
+    // What the composite pass is asked, for the run log: the attempts,
+    // the combinations they need, and the table pairs they span.
     let table_pairs: HashSet<(&str, &str)> = attempts
         .iter()
         .map(|a| {
@@ -1013,15 +1003,66 @@ pub(crate) async fn relationship_candidates(
         attempts = attempts.len(),
         combos = combos.len(),
         table_pairs = table_pairs.len(),
-        "composite rescue"
+        "composite rescue asked"
     );
-    let combo_counts = pair_counts(&state, resolved, &door, &combo_arms).await?;
+    let combo_arms: Vec<Arm> = combos
+        .iter()
+        .map(|(t, a, b)| Arm {
+            table: t.clone(),
+            columns: vec![a.clone(), b.clone()],
+        })
+        .collect();
+
+    // The co-filled count of every combination, then the first exact
+    // prune: implied by the near-unique bar, never a heuristic. The
+    // combined to side's distinct pairs cannot exceed the product of
+    // the legs' distinct counts, so a product under 0.9 of the
+    // co-filled count can never key the table.
     let filled = combo_filled(&scans, resolved, &door, &combos).await?;
+    attempts.retain(|a| {
+        let (p, s) = (&pairs[a.p], &pairs[a.s]);
+        filled[a.to] > 0
+            && (distinct(p.k) as f64) * (distinct(s.k) as f64) >= 0.9 * filled[a.to] as f64
+    });
+
+    // Phase A: every surviving combination's own distinct count, an
+    // aggregate and no join. Then the prunes it makes exact, in Rust
+    // over schema-sized numbers.
+    let needed: HashSet<usize> = attempts.iter().flat_map(|a| [a.from, a.to]).collect();
+    let combo_distinct = arm_distinct(&state, resolved, &door, &combo_arms, &needed).await?;
     // The combined to side keys its table inside the scope.
     let combo_ok = |i: usize| {
-        let d = combo_counts.get(i, i);
+        let d = combo_distinct[i];
         filled[i] > 0 && d >= 2 && d as f64 / filled[i] as f64 >= 0.9
     };
+    attempts.retain(|a| {
+        let s = &pairs[a.s];
+        let (df, dt) = (combo_distinct[a.from], combo_distinct[a.to]);
+        combo_ok(a.to)
+            && df > 0
+            // matched ≤ the to side's distinct count, and the rescue
+            // needs matched ≥ half the from side's.
+            && dt as f64 >= 0.5 * df as f64
+            // The scoping leg must identify more with the anchor than
+            // it does alone; otherwise the leg's own candidate already
+            // carries everything the pair would. Inside one scope the
+            // anchor may well be unique by itself — that is the shape
+            // the rescue exists for — so the anchor leg is not held to
+            // this.
+            && dt > distinct(s.k)
+    });
+
+    // Phase B: the from sides joined to the to sides on both legs,
+    // never one side to itself, grouped by the pair.
+    let from_arms: HashSet<usize> = attempts.iter().map(|a| a.from).collect();
+    let to_arms: HashSet<usize> = attempts.iter().map(|a| a.to).collect();
+    tracing::debug!(
+        attempts = attempts.len(),
+        from_arms = from_arms.len(),
+        to_arms = to_arms.len(),
+        "composite rescue joined"
+    );
+    let matched = cross_counts(&state, resolved, &door, &combo_arms, &from_arms, &to_arms).await?;
 
     // The two-leg resolution reads off the pass. First passing scope
     // per anchor, in overlap order.
@@ -1036,16 +1077,9 @@ pub(crate) async fn relationship_candidates(
         fpairs: i64,
     }
     let mut rescued: HashMap<usize, Rescue> = HashMap::new();
-    for (ai, a) in attempts.iter().enumerate() {
-        let (ti, fi) = (to_of[ai], from_of[ai]);
-        if !combo_ok(ti) {
-            continue;
-        }
-        let fpairs = combo_counts.get(fi, fi);
-        if fpairs == 0 {
-            continue;
-        }
-        let matched = combo_counts.get(fi, ti);
+    for a in &attempts {
+        let fpairs = combo_distinct[a.from];
+        let matched = matched.get(&(a.from, a.to)).copied().unwrap_or(0);
         let overlap = matched as f64 / fpairs as f64;
         if overlap < 0.5 {
             continue;
@@ -1061,8 +1095,8 @@ pub(crate) async fn relationship_candidates(
                 s: a.s,
                 matched,
                 overlap,
-                to_distinct: combo_counts.get(ti, ti),
-                ffilled: filled[fi],
+                to_distinct: combo_distinct[a.to],
+                ffilled: filled[a.from],
                 fpairs,
             },
         );
@@ -1234,45 +1268,21 @@ fn joinable(value: Expr, stored: &DataType) -> Expr {
     }
 }
 
-/// Every arm pair's shared-value count, as plans.
-///
-/// One pass per column-type tuple, because arms of different types can
-/// share nothing and a pass scoped to one type never casts — the join
+/// One pass: the stored types its arms share, and the arms.
+type Pass = (Vec<DataType>, Vec<usize>);
+
+/// The passes an arm list needs: the arms grouped by their columns'
+/// stored types, in first-seen order. Arms of different types can share
+/// nothing, and a pass scoped to one type never casts — the join
 /// compares values as they are stored, which is the typed identity the
-/// counts claim. A type carried by one arm alone is skipped: nothing
-/// can pair with it.
-///
-/// Each pass unpivots its tables — `make_array` over the arms' columns
-/// and one `unnest`, so a plan carries a union arm per table rather
-/// than per column, which is what bounds its memory consumers: the
-/// engine repartitions every union arm and runs a partial aggregate
-/// per partition, and the fair pool divides its share among every
-/// consumer registered. It then takes the distinct `(arm, value…)`
-/// rows and joins that to itself on the value. A matched row is one
-/// value both arms carry, the input being distinct; grouped by the arm
-/// pair it is the containment numerator. The `a <= b` filter halves
-/// the output and keeps the diagonal, so one plan answers both the
-/// matched counts and the distinct counts. No join key is ever null —
-/// the unpivot drops those — so null equality never enters it.
-async fn pair_counts(
-    state: &SessionState,
+/// counts claim.
+fn passes(
     resolved: &crate::prepass::Resolved,
     door: &str,
     arms: &[Arm],
-) -> Result<Counts, SessionError> {
-    use datafusion::common::{Column, NullEquality, UnnestOptions};
-    use datafusion::functions_nested::expr_fn::make_array;
-    use datafusion::logical_expr::{JoinType, col};
-
+) -> Result<Vec<Pass>, SessionError> {
     let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
-    let mut counts = Counts::new(arms.len());
-    if arms.is_empty() {
-        return Ok(counts);
-    }
-
-    // The passes: arms grouped by their columns' types, in first-seen
-    // order.
-    let mut groups: Vec<(Vec<DataType>, Vec<usize>)> = Vec::new();
+    let mut groups: Vec<Pass> = Vec::new();
     for (i, arm) in arms.iter().enumerate() {
         let provider = resolved
             .pin(&arm.table)
@@ -1293,86 +1303,158 @@ async fn pair_counts(
             None => groups.push((shape, vec![i])),
         }
     }
+    Ok(groups)
+}
 
-    for (shape, members) in groups.iter().filter(|(_, m)| m.len() > 1) {
-        let width = arms[members[0]].columns.len();
-        let mut tables: Vec<&str> = Vec::new();
-        for &i in members {
-            if !tables.contains(&arms[i].table.as_str()) {
-                tables.push(arms[i].table.as_str());
-            }
+/// The distinct `(ci, value…)` rows of some arms of one pass — `ci`
+/// the arm's index, `v0…` its columns' values.
+///
+/// Each table is unpivoted — `make_array` over its arms' columns and
+/// one `unnest`, so the plan carries a union arm per table rather than
+/// per column, which is what bounds its memory consumers: the engine
+/// repartitions every union arm and runs a partial aggregate per
+/// partition, and the fair pool divides its share among every consumer
+/// registered. The union of the tables is then made distinct. A row
+/// with a null leg is dropped, so no join key downstream is ever null
+/// and null equality never enters it.
+fn distinct_values(
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    arms: &[Arm],
+    shape: &[DataType],
+    members: &[usize],
+) -> Result<LogicalPlan, SessionError> {
+    use datafusion::common::{Column, UnnestOptions};
+    use datafusion::functions_nested::expr_fn::make_array;
+    use datafusion::logical_expr::col;
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let width = shape.len();
+    let mut tables: Vec<&str> = Vec::new();
+    for &i in members {
+        if !tables.contains(&arms[i].table.as_str()) {
+            tables.push(arms[i].table.as_str());
         }
-        let mut union: Option<LogicalPlanBuilder> = None;
-        for table in tables {
-            let provider = resolved
-                .pin(table)
-                .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
-            let mine: Vec<usize> = members
-                .iter()
-                .copied()
-                .filter(|&i| arms[i].table == table)
-                .collect();
-            let mut lists =
-                vec![make_array(mine.iter().map(|&i| lit(i as i64)).collect()).alias("ci")];
-            for (k, stored) in shape.iter().enumerate() {
-                lists.push(
-                    make_array(
-                        mine.iter()
-                            .map(|&i| joinable(ident(&arms[i].columns[k]), stored))
-                            .collect(),
-                    )
-                    .alias(format!("v{k}")),
-                );
-            }
-            let mut zipped = vec![Column::from_name("ci")];
-            zipped.extend((0..width).map(|k| Column::from_name(format!("v{k}"))));
-            let mut present = col("v0").is_not_null();
-            for k in 1..width {
-                present = present.and(col(format!("v{k}")).is_not_null());
-            }
-            let arm_plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
-                .and_then(|b| b.project(lists))
-                .and_then(|b| b.unnest_columns_with_options(zipped, UnnestOptions::default()))
-                .and_then(|b| b.filter(present))
-                .and_then(|b| b.build())
-                .map_err(|e| bad(e.to_string()))?;
-            union = Some(match union {
-                None => LogicalPlanBuilder::from(arm_plan),
-                Some(u) => u.union(arm_plan).map_err(|e| bad(e.to_string()))?,
-            });
-        }
-        let values = union
-            .expect("nonempty")
-            .distinct()
-            .and_then(|b| b.build())
-            .map_err(|e| bad(e.to_string()))?;
-        let keys: (Vec<Column>, Vec<Column>) = (
-            (0..width)
-                .map(|k| Column::from_qualified_name(format!("a.v{k}")))
-                .collect(),
-            (0..width)
-                .map(|k| Column::from_qualified_name(format!("b.v{k}")))
-                .collect(),
-        );
-        let right = LogicalPlanBuilder::from(values.clone())
-            .alias("b")
-            .and_then(|b| b.build())
-            .map_err(|e| bad(e.to_string()))?;
-        let plan = LogicalPlanBuilder::from(values)
-            .alias("a")
-            .and_then(|b| {
-                b.join_detailed(
-                    right,
-                    JoinType::Inner,
-                    keys,
-                    Some(col("a.ci").lt_eq(col("b.ci"))),
-                    NullEquality::NullEqualsNothing,
+    }
+    let mut union: Option<LogicalPlanBuilder> = None;
+    for table in tables {
+        let provider = resolved
+            .pin(table)
+            .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
+        let mine: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&i| arms[i].table == table)
+            .collect();
+        let mut lists = vec![make_array(mine.iter().map(|&i| lit(i as i64)).collect()).alias("ci")];
+        for (k, stored) in shape.iter().enumerate() {
+            lists.push(
+                make_array(
+                    mine.iter()
+                        .map(|&i| joinable(ident(&arms[i].columns[k]), stored))
+                        .collect(),
                 )
-            })
-            .and_then(|b| b.project(vec![col("a.ci").alias("i"), col("b.ci").alias("j")]))
-            .and_then(|b| b.aggregate(vec![col("i"), col("j")], vec![count(lit(1)).alias("m")]))
+                .alias(format!("v{k}")),
+            );
+        }
+        let mut zipped = vec![Column::from_name("ci")];
+        zipped.extend((0..width).map(|k| Column::from_name(format!("v{k}"))));
+        let mut present = col("v0").is_not_null();
+        for k in 1..width {
+            present = present.and(col(format!("v{k}")).is_not_null());
+        }
+        let arm_plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
+            .and_then(|b| b.project(lists))
+            .and_then(|b| b.unnest_columns_with_options(zipped, UnnestOptions::default()))
+            .and_then(|b| b.filter(present))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
+        union = Some(match union {
+            None => LogicalPlanBuilder::from(arm_plan),
+            Some(u) => u.union(arm_plan).map_err(|e| bad(e.to_string()))?,
+        });
+    }
+    union
+        .ok_or_else(|| bad("a pass with no arms".into()))?
+        .distinct()
+        .and_then(|b| b.build())
+        .map_err(|e| bad(e.to_string()))
+}
+
+/// The plan of `left` joined to `right` on every value leg, grouped by
+/// the arm pair, `m` the shared-value count. Both inputs are distinct
+/// `(ci, value…)` rows, so a joined row is one value both arms carry.
+fn shared_counts(
+    door: &str,
+    width: usize,
+    left: LogicalPlan,
+    right: LogicalPlan,
+    filter: Option<Expr>,
+) -> Result<LogicalPlan, SessionError> {
+    use datafusion::common::{Column, NullEquality};
+    use datafusion::logical_expr::{JoinType, col};
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let keys: (Vec<Column>, Vec<Column>) = (
+        (0..width)
+            .map(|k| Column::from_qualified_name(format!("a.v{k}")))
+            .collect(),
+        (0..width)
+            .map(|k| Column::from_qualified_name(format!("b.v{k}")))
+            .collect(),
+    );
+    let right = LogicalPlanBuilder::from(right)
+        .alias("b")
+        .and_then(|b| b.build())
+        .map_err(|e| bad(e.to_string()))?;
+    LogicalPlanBuilder::from(left)
+        .alias("a")
+        .and_then(|b| {
+            b.join_detailed(
+                right,
+                JoinType::Inner,
+                keys,
+                filter,
+                NullEquality::NullEqualsNothing,
+            )
+        })
+        .and_then(|b| b.project(vec![col("a.ci").alias("i"), col("b.ci").alias("j")]))
+        .and_then(|b| b.aggregate(vec![col("i"), col("j")], vec![count(lit(1)).alias("m")]))
+        .and_then(|b| b.build())
+        .map_err(|e| bad(e.to_string()))
+}
+
+/// Every arm pair's shared-value count, as plans: one pass per type
+/// tuple, the distinct `(arm, value…)` rows joined to themselves on the
+/// value. Grouped by the arm pair it is the containment numerator. The
+/// `a <= b` filter halves the output and keeps the diagonal, so one
+/// plan answers both the matched counts and the distinct counts. Every
+/// pair is wanted here, which is what makes the self-join the right
+/// shape: a value carried by `k` arms costs `k(k+1)/2` join rows, one
+/// per pair asked. A type carried by one arm alone is skipped: nothing
+/// can pair with it.
+async fn pair_counts(
+    state: &SessionState,
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    arms: &[Arm],
+) -> Result<Counts, SessionError> {
+    use datafusion::logical_expr::col;
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let mut counts = Counts::new(arms.len());
+    for (shape, members) in passes(resolved, door, arms)?
+        .iter()
+        .filter(|(_, m)| m.len() > 1)
+    {
+        let values = distinct_values(resolved, door, arms, shape, members)?;
+        let plan = shared_counts(
+            door,
+            shape.len(),
+            values.clone(),
+            values,
+            Some(col("a.ci").lt_eq(col("b.ci"))),
+        )?;
         for b in run_plan(state, plan)
             .await
             .map_err(bad)?
@@ -1389,6 +1471,95 @@ async fn pair_counts(
         }
     }
     Ok(counts)
+}
+
+/// The wanted arms' own distinct counts, as plans: one pass per type
+/// tuple, the distinct `(arm, value…)` rows grouped by the arm. No
+/// join — an aggregate that spills, one traversal per table — so a
+/// combination's key test costs nothing of the pairing.
+async fn arm_distinct(
+    state: &SessionState,
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    arms: &[Arm],
+    wanted: &HashSet<usize>,
+) -> Result<Vec<i64>, SessionError> {
+    use datafusion::logical_expr::col;
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let mut out = vec![0i64; arms.len()];
+    for (shape, members) in passes(resolved, door, arms)? {
+        let members: Vec<usize> = members.into_iter().filter(|i| wanted.contains(i)).collect();
+        if members.is_empty() {
+            continue;
+        }
+        let plan = LogicalPlanBuilder::from(distinct_values(resolved, door, arms, &shape, &members)?)
+            .aggregate(vec![col("ci")], vec![count(lit(1)).alias("d")])
+            .and_then(|b| b.build())
+            .map_err(|e| bad(e.to_string()))?;
+        for b in run_plan(state, plan)
+            .await
+            .map_err(bad)?
+            .iter()
+            .filter(|b| b.num_rows() > 0)
+        {
+            let one = std::slice::from_ref(b);
+            let ci = int_column(one, "ci").map_err(|e| bad(e.to_string()))?;
+            let d = int_column(one, "d").map_err(|e| bad(e.to_string()))?;
+            for r in 0..b.num_rows() {
+                out[ci[r] as usize] = d[r];
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// How many values each from arm shares with each to arm, as plans:
+/// one pass per type tuple, the from arms' distinct rows joined to the
+/// to arms' on the value, grouped by the pair. Two sides, never one
+/// side joined to itself: a value carried by `k` from arms and `l` to
+/// arms costs `k × l` join rows, and no from–from or to–to pair, which
+/// nothing asks for, is ever computed. An arm on both sides is read on
+/// both.
+async fn cross_counts(
+    state: &SessionState,
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    arms: &[Arm],
+    from: &HashSet<usize>,
+    to: &HashSet<usize>,
+) -> Result<HashMap<(usize, usize), i64>, SessionError> {
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let mut out = HashMap::new();
+    for (shape, members) in passes(resolved, door, arms)? {
+        let f: Vec<usize> = members.iter().copied().filter(|i| from.contains(i)).collect();
+        let t: Vec<usize> = members.iter().copied().filter(|i| to.contains(i)).collect();
+        if f.is_empty() || t.is_empty() {
+            continue;
+        }
+        let plan = shared_counts(
+            door,
+            shape.len(),
+            distinct_values(resolved, door, arms, &shape, &f)?,
+            distinct_values(resolved, door, arms, &shape, &t)?,
+            None,
+        )?;
+        for b in run_plan(state, plan)
+            .await
+            .map_err(bad)?
+            .iter()
+            .filter(|b| b.num_rows() > 0)
+        {
+            let one = std::slice::from_ref(b);
+            let i = int_column(one, "i").map_err(|e| bad(e.to_string()))?;
+            let j = int_column(one, "j").map_err(|e| bad(e.to_string()))?;
+            let m = int_column(one, "m").map_err(|e| bad(e.to_string()))?;
+            for r in 0..b.num_rows() {
+                out.insert((i[r] as usize, j[r] as usize), m[r]);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// How many rows carry both legs of each combination — one aggregate

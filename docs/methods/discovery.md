@@ -19,14 +19,24 @@ is exactly what a real foreign key is.
 
 ## Mechanism
 
-All columns land once through one union-of-distincts plan;
-containment counts are the typed-key counts
-(`crates/session/src/search.rs`). Pairs below 0.5 containment are not
-served — the one floor in the door, placed to bound output, not to
-judge. Composite keys are tried where the multi-tenant shape suggests
-them — for each overlapping pair, the same two tables are tried with a
-scoping leg in overlap order, and a composite that passes the floor
-rides `key_columns` (the tuple is the key). Candidates rank orphan
+Every set operation in the door is a plan the engine runs, one pass
+per column type: each table's same-typed columns unpivoted to
+`(column, value)` rows, the distinct of those joined to itself on the
+value, and the count per column pair — the containment numerator, and
+on the diagonal each column's distinct count
+(`crates/session/src/search.rs`). Values compare as stored; nothing is
+cast. Pairs below 0.5 containment are not served — the one floor in
+the door, placed to bound output, not to judge. Composite keys are
+tried where the multi-tenant shape suggests them — for each
+overlapping pair whose target is no key alone, the same two tables are
+tried with a scoping leg in overlap order. A scoping leg that is
+unique on its own is never tried, since the pair could identify no
+more than that leg's own candidate already does. The composite pass
+first counts every combination's distinct pairs, an aggregate with no
+join, and settles the key test from those counts; only the surviving
+from-combinations are then joined to the surviving to-combinations. A
+composite that passes the floor rides `key_columns` (the tuple is the
+key). Candidates rank orphan
 evidence first, then overlap — a pair with orphans carries a judgment
 call, while a perfectly clean 1.0 overlap is as often two parallel
 surrogate sequences as an edge; the body
@@ -41,10 +51,12 @@ declaring to the judge.
 
 ## Scale
 
-The door computes distinct sets in memory — exact while the summed
-distincts fit. The ladder past that is named in the door, unbuilt
-until a dataset needs it: BINDER-style hash-range partitioning, then
-bottom-k sketches.
+No column's values are ever held outside the engine's memory pool:
+the sorts, the merge join and the aggregates of a pass spill to disk
+under pressure, and what leaves the engine is a matrix sized by the
+schema. The cost of a pass is its fan-out — a value carried by many
+columns of one type meets itself once per column pair — and the
+composite pass bounds that to the pairs it was asked.
 
 ## Limits
 

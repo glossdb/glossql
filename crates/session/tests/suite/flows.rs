@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    Array, Float64Array, Int32Array, ListBuilder, RecordBatch, StringBuilder,
+    Array, Float64Array, Int32Array, ListBuilder, RecordBatch, StringArray, StringBuilder,
     Time64MicrosecondArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -2491,5 +2491,124 @@ async fn relationship_candidates_join_zoned_timestamps_and_times() {
     assert!(
         out.contains("payment.at") && out.contains("account.cutoff"),
         "the time pair is a candidate: {out}"
+    );
+}
+
+/// The composite rescue keeps a dirty key: a reference that repeats
+/// across accounts is near-unique on its own, and unique inside the
+/// account. The pair identifies more than the reference alone, which
+/// is what admits the scope — decided by count, never by a bar.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_scope_a_reference_that_repeats_across_accounts() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    // Account 1 books r1..r10, account 2 books r1 and r11..r19: 20
+    // lines, 19 distinct references, every (account, reference) unique.
+    let mut accounts = vec![1; 10];
+    accounts.extend(vec![2; 10]);
+    let mut refs: Vec<String> = (1..=10).map(|i| format!("r{i}")).collect();
+    refs.push("r1".into());
+    refs.extend((11..=19).map(|i| format!("r{i}")));
+    let statement = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("account_no", DataType::Int32, false),
+            Field::new("reference", DataType::Utf8, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(accounts)),
+            Arc::new(StringArray::from(refs)),
+        ],
+    )
+    .unwrap();
+    let payment = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("account_no", DataType::Int32, false),
+            Field::new("reference", DataType::Utf8, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 1, 2])),
+            Arc::new(StringArray::from(vec!["r1", "r1", "r3", "r12"])),
+        ],
+    )
+    .unwrap();
+    for (name, batch) in [("statement", statement), ("payment", payment)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let out = table(
+        &session,
+        "SELECT from_col, to_col, kc_from, kc_to FROM relationship_candidates('fin') \
+         WHERE kc_to IS NOT NULL;",
+    )
+    .await;
+    assert!(
+        out.contains("payment.reference")
+            && out.contains("statement.reference")
+            && out.contains("statement.account_no"),
+        "the reference is scoped by the account: {out}"
+    );
+}
+
+/// A scoping leg that is unique on its own did all the identifying:
+/// the composite would carry nothing its leg's own candidate does not,
+/// so it is never attempted. The leg's candidate stands alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_never_scope_by_a_unique_column() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    // attendance.line_no is a row number; status takes three values.
+    // events.c2 carries line numbers and c1 the matching status, so
+    // (c1, c2) → (status, line_no) would resolve perfectly.
+    let attendance = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("line_no", DataType::Int32, false),
+            Field::new("status", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![0, 1, 2, 3, 4, 5])),
+            Arc::new(Int32Array::from(vec![0, 1, 2, 0, 1, 2])),
+        ],
+    )
+    .unwrap();
+    let events = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("c1", DataType::Int32, false),
+            Field::new("c2", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![0, 1, 2, 0, 1, 2])),
+            Arc::new(Int32Array::from(vec![0, 1, 2, 3, 4, 5])),
+        ],
+    )
+    .unwrap();
+    for (name, batch) in [("attendance", attendance), ("events", events)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let out = table(&session, "SELECT * FROM relationship_candidates('fin');").await;
+    assert!(
+        out.contains("events.c2") && out.contains("attendance.line_no"),
+        "the line number is a candidate on its own: {out}"
+    );
+    let scoped = table(
+        &session,
+        "SELECT count(*) FROM relationship_candidates('fin') WHERE kc_to IS NOT NULL;",
+    )
+    .await;
+    assert!(
+        scoped.contains("| 0 "),
+        "no composite scopes by the line number: {scoped}\n{out}"
     );
 }

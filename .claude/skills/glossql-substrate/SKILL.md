@@ -189,7 +189,12 @@ spilling operator gets: `FairSpillPool::try_grow` hands each spillable
 consumer `(pool − unspillable) / num_spill`, counting every registered
 consumer in the process. Union arms multiply that count — the engine
 repartitions each arm and runs a partial aggregate per partition — which
-is why an unpivot uses one arm per table, not one per column.
+is why an unpivot uses one arm per table, not one per column. Partitions
+multiply it again, and a grouped aggregate needs room for its emitted
+batch on top of its share before it can spill at all (`row_hash.rs`,
+`GroupedHashAggregateStream::spill`) — a pass over string keys refused
+there at the machine's partition count, so the detector's state runs
+`target_partitions = 4`.
 
 **Containment between many columns** (`relationship_candidates`) is the
 worked example. One pass per column type, because arms of different
@@ -203,8 +208,24 @@ union → DISTINCT (arm, value…) → self-join on the value, filter a <= b
 
 A matched row is one value both arms carry, the input being distinct;
 `(i, i)` is the arm's own distinct count, so one plan answers both the
-matched counts and the distinct counts. A composite is the same plan at
-width 2, joined on both legs. What leaves the engine is the matrix.
+matched counts and the distinct counts. What leaves the engine is the
+matrix.
+
+The composite pass wants something else — one from–to pair per
+attempt, not every pair — and has a different shape for it:
+
+```text
+phase A: union → DISTINCT (arm, v0, v1) → GROUP BY arm → count(*)
+         (every combination's own distinct count; an aggregate, no join)
+in Rust: the key test and the exact prunes, over schema-sized numbers
+phase B: DISTINCT from-arms ⋈ DISTINCT to-arms on (v0, v1)
+         → GROUP BY the pair → count(*)
+```
+
+A value carried by `k` from arms and `l` to arms costs `k × l` join rows
+in phase B, the pairs that were asked; a self-join would have cost
+`(k + l)(k + l + 1) / 2`, most of them from–from and to–to pairs nothing
+reads.
 
 Two things this replaced, and why neither comes back:
 
@@ -218,22 +239,24 @@ Two things this replaced, and why neither comes back:
 
 **The fan-out is the cost, and it is not bounded.** Two measurements,
 both real: a seven-table set put at most 7 arms on a value and 622k
-rows through the width-1 join; an event dataset's width-2 pass put ~44
-arms on a value and 9.09 billion rows through it, 423 GB and 690 s of
-join time, completing only because the sorts and the Final aggregate
-spilled. Nothing refuses, which is the point — but size the pass before
-assuming it is free.
+rows through the width-1 join; an event dataset's composite pass, when
+it was still a self-join, put ~44 arms on a value and 9.09 billion rows
+through it, 423 GB and 690 s of join time, 990 pairs per value where one
+was wanted. Nothing refused, which is the point — but the shape of a
+pass follows the question it answers, and size it before assuming it is
+free.
 
-**Pruning is only free where every pair is wanted.** At width 1 the
-door wants the whole matrix, so the old prune (a to side under half the
-from side's distinct count) is implied by the acceptance bar and went
-away with the sketch that fed it — a sketch that silently changes which
-candidates are considered is worse than no prune in a door whose
-contract is recall. At width 2 the door wants **one** pair per attempt,
-and an all-pairs self-join computes every pair of the arms that share a
-value: on the run above, 990 pairs per value where one was wanted. The
-question asked and the question answered are not the same shape at both
-widths.
+**Pruning is exact or it is not there.** At width 1 the door wants the
+whole matrix, so the old prune (a to side under half the from side's
+distinct count) is implied by the acceptance bar and went away with the
+sketch that fed it — a sketch that silently changes which candidates
+are considered is worse than no prune in a door whose contract is
+recall. At width 2 the prunes are implications of the bars, computed
+from counts already in hand: a scoping leg unique on its own is never
+tried (the pair cannot out-identify it), the product of two legs'
+distinct counts bounds the pair's, the to side's distinct count bounds
+the match, and a scope is admitted only where the pair's distinct count
+exceeds the scoping leg's — decided by count, never by a threshold.
 
 **BINDER-style hash-range partitioning is the spilling aggregate.**
 Partition the value space by hash, process partition by partition, merge
