@@ -215,13 +215,14 @@ pub(crate) struct Fact {
     pub reason: Option<String>,
     pub behavior: Option<String>,
     /// Where the verb came from: `ratio` when the frame served both
-    /// halves and nothing else was consulted, `marked` when the
-    /// grounding carried `behavior`, `glossed` when the `behavior`
-    /// gloss on the column the value is or sums decided, `evidence`
-    /// when the `behavior_evidence` verdict on that column did,
-    /// `default` when nothing said anything and the metric is summed
-    /// as a flow. The default is usually right — the point is that
-    /// reading it as a flow stops being a silent assumption.
+    /// halves, `shape` when the value is a running total, `evidence`
+    /// when the `behavior_evidence` verdict on the column the value is
+    /// or sums decided (`evidence over marker` / `evidence over gloss`
+    /// when the agent's word said otherwise), `marked` when the
+    /// grounding's `stock` marker did, `glossed` when a `stock` gloss
+    /// on that column did, `default` when nothing detected a stock and
+    /// the metric is summed as a flow — the common case, and the row
+    /// says so rather than leaving it a silent assumption.
     pub behavior_basis: Option<&'static str>,
     /// The declared row identity — the grounding's `grain` columns as
     /// served. Empty when the grounding declares none: the shape is
@@ -629,11 +630,14 @@ struct Judged {
     /// declared, nothing to want.
     temporal_fn: Option<String>,
     relevance_fn: Option<String>,
-    /// `behavior_evidence` per column — the verb's read where the
-    /// grounding carries no marker and no gloss speaks.
+    /// `behavior_evidence` per column — the verb's read, ahead of the
+    /// grounding's word; and the function returning it, which a
+    /// grounding write runs over the column its value sums when no
+    /// verdict stands there.
     behavior: HashMap<String, Verdict>,
+    behavior_fn: Option<String>,
     /// The collapsed `behavior` gloss per column (human over agent) —
-    /// the verb's read where the grounding carries no marker.
+    /// a `stock` there is a stock where no verdict decided.
     behavior_gloss: HashMap<String, (Value, u8)>,
     dimension: HashMap<String, (Value, u8)>,
     pointers: Vec<crate::behavior::Pointer>,
@@ -675,7 +679,11 @@ pub(crate) fn judged_bodies(
 /// The declared function that returns a measurement aspect from this
 /// dataset — the first by name where several do; none where none is
 /// declared.
-fn returning(rctx: &glossql_glossary::ReadContext, dataset: &str, aspect: &str) -> Option<String> {
+pub(crate) fn returning(
+    rctx: &glossql_glossary::ReadContext,
+    dataset: &str,
+    aspect: &str,
+) -> Option<String> {
     rctx.functions
         .iter()
         .filter(|f| {
@@ -784,22 +792,23 @@ pub(crate) fn judged_time_column(
 /// The verb a grounding folds by, and where it came from.
 pub(crate) struct Verb {
     pub verb: &'static str,
-    /// `ratio`, `marked`, `glossed`, `evidence` or `default` —
     /// `Fact::behavior_basis`.
     pub basis: &'static str,
     /// Whether the verdict read stands at this pin; true where none was.
     pub current: bool,
 }
 
-/// A grounding's verb: `ratio` when the frame serves both halves; else
-/// the grounding's top-level `behavior` marker — its own word, which
-/// outranks everything below; else the collapsed `behavior` gloss
-/// (human over agent) on the column the value is, or is one `sum` of
-/// (`provenance::summed_source`) — the kit's vocabulary, read as policy
-/// the way a `dimension` gloss admits an axis; else the
-/// `behavior_evidence` verdict on that column; else a flow, because
-/// nothing said otherwise. One function for the cube and the walk, so
-/// the two never fold one metric two ways.
+/// A grounding's verb: a flow unless something detects a ratio or a
+/// stock. A ratio serves both halves of its division. A stock is
+/// detected by the SQL's shape — the value is a running total — or by
+/// the `behavior_evidence` verdict on the column the value is, or is
+/// one `sum` of (`provenance::summed_source`), or, where no verdict
+/// decided, by the grounding's own `stock` marker or a `stock` gloss
+/// on that column — the agent's word, read only where the data could
+/// not speak. A verdict that decides also decides against the word,
+/// and the basis says so. Nothing else is consulted: a `flow` marker
+/// or gloss changes the basis, never the verb. One function for the
+/// cube and the walk, so the two never fold one metric two ways.
 pub(crate) fn verb_of(
     body: &Value,
     is_ratio: bool,
@@ -816,27 +825,40 @@ pub(crate) fn verb_of(
     if is_ratio {
         return verb("ratio", "ratio", true);
     }
-    match body.get("behavior").and_then(Value::as_str) {
-        Some("stock") => return verb("stock", "marked", true),
-        Some("flow") => return verb("flow", "marked", true),
-        _ => {}
+    if crate::provenance::running_total(probe, "value") {
+        return verb("stock", "shape", true);
     }
+    let marker = body.get("behavior").and_then(Value::as_str);
     let source = crate::provenance::summed_source(probe, "value", dataset);
-    match source
+    let gloss = source
         .as_ref()
         .and_then(|subject| glossed.get(subject))
-        .and_then(|(gloss, _)| gloss["value"].as_str())
-    {
-        Some("stock") => return verb("stock", "glossed", true),
-        Some("flow") => return verb("flow", "glossed", true),
-        _ => {}
-    }
+        .and_then(|(gloss, _)| gloss["value"].as_str());
     let judged = source
-        .and_then(|subject| behavior.get(&subject))
+        .as_ref()
+        .and_then(|subject| behavior.get(subject))
         .filter(|v| v.body["applicable"].as_bool() == Some(true));
-    match judged.map(|v| (v.body["summary"]["verdict"].as_str(), v.current)) {
-        Some((Some("stock"), current)) => verb("stock", "evidence", current),
-        Some((Some("flow"), current)) => verb("flow", "evidence", current),
+    if let Some((verdict, current)) =
+        judged.and_then(|v| Some((v.body["summary"]["verdict"].as_str()?, v.current)))
+        && matches!(verdict, "stock" | "flow")
+    {
+        let word = marker.or(gloss).filter(|w| matches!(*w, "stock" | "flow"));
+        let basis = match word {
+            Some(w) if w != verdict && marker.is_some() => "evidence over marker",
+            Some(w) if w != verdict => "evidence over gloss",
+            _ => "evidence",
+        };
+        return verb(if verdict == "stock" { "stock" } else { "flow" }, basis, current);
+    }
+    if marker == Some("stock") {
+        return verb("stock", "marked", true);
+    }
+    if gloss == Some("stock") {
+        return verb("stock", "glossed", true);
+    }
+    match (marker, gloss) {
+        (Some("flow"), _) => verb("flow", "marked", true),
+        (_, Some("flow")) => verb("flow", "glossed", true),
         _ => verb("flow", "default", true),
     }
 }
@@ -965,6 +987,7 @@ async fn judged_surface(
             temporal_fn: returning(rctx, dataset, "temporal_profile"),
             relevance_fn: returning(rctx, dataset, "dimension_relevance"),
             behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
+            behavior_fn: returning(rctx, dataset, "behavior_evidence"),
             behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior").await?,
             dimension: crate::search::current_fact_values(rctx, dataset, "dimension").await?,
             pointers: crate::behavior::declared_pointers(&edges, dataset),
@@ -993,12 +1016,11 @@ pub(crate) async fn fact_at_write(
     dataset: &str,
     subject: &str,
     aspect: &str,
-) -> Result<RecordBatch, SessionError> {
-    let fact = match write_fact(shared, dataset, subject, aspect).await {
+) -> Result<Fact, SessionError> {
+    Ok(match write_fact(shared, dataset, subject, aspect).await {
         Ok(fact) => fact,
         Err(Abstain(reason)) => Fact::abstain(aspect, reason),
-    };
-    fact_batch(&[&fact])
+    })
 }
 
 async fn write_fact(
@@ -1204,6 +1226,18 @@ async fn plan(
         &judged.behavior_gloss,
     );
     judged_current &= verb_current;
+    // The verb's own measurement, where the value is or sums a column
+    // nobody measured: the grounding write runs it, and re-measure
+    // runs it. A shape or a ratio needs none.
+    if !is_ratio
+        && behavior_basis != "shape"
+        && let Some(function) = &judged.behavior_fn
+        && let Some(column) = crate::provenance::summed_source(&probe, "value", dataset)
+        && !judged.behavior.contains_key(&column)
+        && !wanted.iter().any(|(f, s)| f == function && *s == column)
+    {
+        wanted.push((function.clone(), column));
+    }
 
     // Judged dimensions: a served column (neither the value nor
     // time-typed nor a ratio's own halves) enters when a verdict admits
@@ -2216,7 +2250,7 @@ pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>
 
 /// Fact rows as the `metric_axes()` relation — one schema for the
 /// read and for a grounding write's answer.
-fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
+pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
     let list = |pick: fn(&Fact) -> &Vec<String>| -> ArrayRef {
         let mut b = ListBuilder::new(StringBuilder::new());
         for f in facts {

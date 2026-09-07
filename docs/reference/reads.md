@@ -186,11 +186,13 @@ engine refused, a frame that breaks its declared grain — or, for a
 grounding its author stopped, `stopped: ` and the author's own text),
 `behavior`
 and `behavior_basis` (the verb and where
-it came from: `ratio` when the frame serves `num` and `den`, `marked`
-when the grounding carries `behavior`, `glossed` when the `behavior`
-gloss on the column the value is or sums decided, `evidence` when the
-`behavior_evidence` verdict on that column did, `default` when nothing
-said anything and it reads as a flow), `grain` (the grounding's
+it came from: `ratio` when the frame serves `num` and `den`, `shape`
+when the value is a running total, `evidence` when the
+`behavior_evidence` verdict on the column the value is or sums decided
+— `evidence over marker` or `evidence over gloss` when the agent's word
+said otherwise — `marked` when the grounding's `stock` marker did,
+`glossed` when a `stock` gloss on that column did, `default` when
+nothing detected a stock and it reads as a flow), `grain` (the grounding's
 declared row identity as served — the build refuses a frame that
 breaks it, and the empty list is an undeclared shape, taken as
 served), `resolution`, `window`, `dims`, `basis`

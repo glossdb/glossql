@@ -831,3 +831,64 @@ async fn two_equal_support_anchors_elect_by_name_and_the_summary_says_so() {
     assert_eq!(summary["event"], "credits", "{summary}");
     assert_eq!(summary["tiebreak"], "event-name", "{summary}");
 }
+
+/// A grounding write measures the column its value sums: the verdict
+/// lands with the write, the fact row folds by it, and nobody had to
+/// call the door.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_grounding_write_measures_the_column_it_sums() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    fixture(&root).await;
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE ledgers ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
+         DECLARE RECIPE positions ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(period AS DATE) AS period, balance, turnover, noise \
+         FROM read_parquet('positions/*.parquet')$$;\n\
+         DECLARE RECIPE moves ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(d AS DATE) AS d, amount \
+         FROM read_parquet('moves/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\
+         DECLARE RELATIONSHIP moves.entity -> ledgers.id;",
+    )
+    .await;
+    // The shipped cube aspect: the fact row is computed under it.
+    let kit = glossql_scripts::library::KIT;
+    let start = kit.find("DECLARE ASPECT cube").unwrap();
+    let len = kit[start..].find("AS FACT ON DATASET;").unwrap() + "AS FACT ON DATASET;".len();
+    session.execute(&kit[start..start + len]).await.unwrap();
+    // A judged time axis, so the fact row is a series and carries its
+    // verb; the judge is a stub, the door under test is the real one.
+    session
+        .execute(
+            r#"DECLARE ASPECT temporal_profile WITH $${"type": "object", "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+               DECLARE FUNCTION judge_time FOR GLOBAL AS
+                 $$SELECT true AS applicable, 'month' AS granularity,
+                          named_struct('ratio', 1.0) AS completeness$$
+                 RETURNS temporal_profile;
+               SELECT judge_time() FROM positions.period;
+               DECLARE ASPECT closing WITH $${"title": "Closing balance"}$$ AS QUERY;
+               GLOSS closing ON fin AS $${"sql": "SELECT period AS date, sum(balance) AS value FROM positions GROUP BY period"}$$;"#,
+        )
+        .await
+        .unwrap();
+    let landed = one(&session
+        .execute(
+            "SELECT count(*) FROM GLOSSARY(positions.balance::behavior_evidence) \
+             WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(landed, "1", "the write landed the verdict");
+    let verb = one(&session
+        .execute(
+            "SELECT behavior || ':' || behavior_basis FROM metric_axes() WHERE metric = 'closing';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(verb, "stock:evidence");
+}

@@ -134,7 +134,8 @@ async fn cube_session_on(
              "type": "object", "required": ["applicable"],
              "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
            DECLARE FUNCTION judge_behavior FOR GLOBAL AS
-             $$SELECT true AS applicable,
+             $$SELECT CASE WHEN $subject LIKE '%.level' OR $subject LIKE 'lines.amount'
+                           THEN true ELSE false END AS applicable,
                       named_struct('verdict', CASE WHEN $subject LIKE '%.level'
                                                    THEN 'stock' ELSE 'flow' END) AS summary$$
              RETURNS behavior_evidence;"#,
@@ -611,11 +612,12 @@ async fn the_cube_slices_windows_and_carries_the_rival() {
     assert_eq!(fact("applicable").await, "true");
     assert_eq!(fact("judged_current").await, "true");
     assert_eq!(fact("behavior").await, "flow");
-    // Where the verb came from. `revenue` carries no `behavior` key, so
-    // it is a flow because nothing said otherwise — the common case,
-    // and usually right; the fact says so rather than leaving it a
-    // silent assumption. `inventory` is marked and the ratio metrics
-    // never consult the marker at all.
+    // Where the verb came from. `revenue` carries no `behavior` key
+    // and the judge the write ran over its column abstained, so it is
+    // a flow because nothing detected a stock — the common case, and
+    // usually right; the fact says so rather than leaving it a silent
+    // assumption. `inventory` is marked and the ratio metrics never
+    // consult the marker at all.
     assert_eq!(fact("behavior_basis").await, "default");
     assert_eq!(fact("resolution").await, "month");
     assert_eq!(fact("window").await, "48 months");
@@ -1934,13 +1936,18 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
             r#"DECLARE ASPECT flowed WITH $${"title": "Flowed"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT counted WITH $${"title": "Counted"}$$ AS QUERY ON DATASET;"#,
             r#"DECLARE ASPECT glossed WITH $${"title": "Glossed"}$$ AS QUERY ON DATASET;"#,
-            // Unmarked, one sum of a column glossed a stock and never
-            // measured.
+            r#"DECLARE ASPECT cumulated WITH $${"title": "Cumulated"}$$ AS QUERY ON DATASET;"#,
+            // Unmarked, one sum of a column glossed a stock, on which
+            // the judge the write runs abstains.
             r#"GLOSS glossed ON fin AS $${"sql": "SELECT date, sum(qty) AS value FROM stocks GROUP BY date"}$$;"#,
             // Unmarked, one sum of a column judged a stock.
             r#"GLOSS stocked ON fin AS $${"sql": "SELECT date, sum(level) AS value FROM levels GROUP BY date"}$$;"#,
-            // The same frame, marked: the grounding's own word wins.
+            // The same frame, marked a flow: the verdict wins over the
+            // word, and the basis says so.
             r#"GLOSS overruled ON fin AS $${"sql": "SELECT date, sum(level) AS value FROM levels GROUP BY date", "behavior": "flow"}$$;"#,
+            // A running total of a flow: a stock by its own shape,
+            // before any verdict is asked for.
+            r#"GLOSS cumulated ON fin AS $${"sql": "SELECT date, sum(amount) OVER (ORDER BY date) AS value FROM lines"}$$;"#,
             // Unmarked, the value IS a column judged a flow.
             r#"GLOSS flowed ON fin AS $${"sql": "SELECT date, amount AS value FROM lines"}$$;"#,
             // Unmarked, a count: no column to read, so the default.
@@ -1967,9 +1974,10 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
         }
     };
     assert_eq!(verb("stocked").await, "stock:evidence");
-    assert_eq!(verb("overruled").await, "flow:marked");
+    assert_eq!(verb("overruled").await, "stock:evidence over marker");
     assert_eq!(verb("flowed").await, "flow:evidence");
     assert_eq!(verb("counted").await, "flow:default");
+    assert_eq!(verb("cumulated").await, "stock:shape");
     assert_eq!(verb("glossed").await, "stock:glossed");
     let total = |metric: &'static str| {
         let session = &session;
@@ -1988,7 +1996,11 @@ async fn an_unmarked_metric_takes_the_verdict_on_the_column_it_sums() {
         300.0,
         "the evidence's stock, at its last standing",
     );
-    near(total("overruled").await, 330.0, "the marker's flow, summed");
+    near(
+        total("overruled").await,
+        300.0,
+        "the verdict's stock over the marker's flow, at its last standing",
+    );
     near(
         total("glossed").await,
         100.0,

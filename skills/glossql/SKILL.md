@@ -270,7 +270,7 @@ question leaves the workspace, walk this map and run what answers it:
 | what values a column holds — range, nulls, distincts, top values | `profile()` |
 | outliers on a numeric column | `outliers()` (profile first) |
 | a date column's grain, span, gaps | `temporal()` |
-| **stock or flow — may it be summed** | `behavior_evidence()` over declared edges; its anchors carry the verdict, alternatives, and Wilson support |
+| **stock or flow — may it be summed** | `behavior_evidence()` over declared edges; its anchors carry the verdict, alternatives, and Wilson support. A grounding write runs it over the column the value sums; the cube folds by the verdict |
 | **a sign convention** (source-signed vs natural) | the `sign` partition on a `behavior_evidence` anchor — primary/mirror counts, never column names |
 | which columns join, and how well | `detect_relationships()`, then your anti-join judging; standing health is `relationship_coherence()` |
 | whether a column derives from siblings (a = b × c) | `detect_derivations()` |

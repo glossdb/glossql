@@ -100,6 +100,71 @@ pub(crate) fn summed_source(plan: &LogicalPlan, field: &str, dataset: &str) -> O
     }
 }
 
+/// Whether a served field is a running total: a `sum` window over an
+/// order, framed from the partition's start to the current row — the
+/// level a sequence of movements builds, a stock by its own shape.
+/// Reached through the nodes a column descends, so an alias, a cast or
+/// a filter over the window still reads as one.
+pub(crate) fn running_total(plan: &LogicalPlan, field: &str) -> bool {
+    let Some((qualifier, f)) = plan.schema().iter().find(|(_, f)| f.name() == field) else {
+        return false;
+    };
+    window_of(plan, &Column::new(qualifier.cloned(), f.name())).is_some_and(|w| is_running_sum(&w))
+}
+
+/// The window expression a column is, followed down to the `Window`
+/// node that computes it; none for a column no window computes.
+fn window_of(plan: &LogicalPlan, col: &Column) -> Option<Expr> {
+    let index = |p: &LogicalPlan| p.schema().index_of_column(col).ok();
+    match plan {
+        LogicalPlan::Projection(p) => window_expr(&p.input, &p.expr[index(plan)?]),
+        LogicalPlan::SubqueryAlias(a) => {
+            let (qualifier, field) = a.input.schema().qualified_field(index(plan)?);
+            window_of(&a.input, &Column::new(qualifier.cloned(), field.name()))
+        }
+        LogicalPlan::Filter(f) => window_of(&f.input, col),
+        LogicalPlan::Sort(s) => window_of(&s.input, col),
+        LogicalPlan::Limit(l) => window_of(&l.input, col),
+        LogicalPlan::Distinct(d) => window_of(d.input(), col),
+        // The input's columns lead the window's output; past them the
+        // index names a window expression.
+        LogicalPlan::Window(w) => match index(plan)?.checked_sub(w.input.schema().fields().len()) {
+            Some(k) => w.window_expr.get(k).cloned(),
+            None => window_of(&w.input, col),
+        },
+        _ => None,
+    }
+}
+
+fn window_expr(input: &LogicalPlan, expr: &Expr) -> Option<Expr> {
+    match expr {
+        Expr::Alias(a) => window_expr(input, &a.expr),
+        Expr::Cast(c) => window_expr(input, &c.expr),
+        Expr::TryCast(c) => window_expr(input, &c.expr),
+        Expr::Column(c) => window_of(input, c),
+        Expr::WindowFunction(_) => Some(expr.clone()),
+        _ => None,
+    }
+}
+
+fn is_running_sum(expr: &Expr) -> bool {
+    use datafusion::logical_expr::{WindowFrameBound, WindowFunctionDefinition};
+    match expr {
+        Expr::Alias(a) => is_running_sum(&a.expr),
+        Expr::WindowFunction(w) => {
+            let WindowFunctionDefinition::AggregateUDF(f) = &w.fun else {
+                return false;
+            };
+            let frame = &w.params.window_frame;
+            f.name() == "sum"
+                && !w.params.order_by.is_empty()
+                && matches!(&frame.start_bound, WindowFrameBound::Preceding(v) if v.is_null())
+                && matches!(frame.end_bound, WindowFrameBound::CurrentRow)
+        }
+        _ => false,
+    }
+}
+
 /// The columns `col` descends from: one at every node but a union,
 /// where it is every arm's. `summed` is the verb's descent: past an
 /// aggregate's group keys the walk may step through one `sum`;

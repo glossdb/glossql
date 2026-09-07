@@ -160,27 +160,30 @@ serves and what a drill shows. `num` and `den` are the same division's
 halves, scaled so their quotient is the metric in its own unit: here
 the day factor rides the denominator, so `sum(num)/sum(den)` is days.
 
-**`behavior`, `sign` and `grain` assumptions carry 1.0, always.** The
-round never serves them to a human — statistics are your work — so a
-measurable assumption below 1.0 is a question nobody will ever be
-asked. Settle it before recording. Below-1.0 confidence is for
-judgment dimensions only: definition, scope, convention. The inverse
-holds: a defensible default does not raise a judgment dimension to
-1.0. What "on time" means, which accounts count, whether partly paid
-rows belong — record the default you chose at the confidence it
-deserves, and the round serves it for confirmation. Judgment recorded
-at 1.0 silences the round on exactly what it exists to ask.
+**`sign` and `grain` are settled before recording, at 1.0.** A sign
+convention is read off a `behavior_evidence` anchor and a grain is
+what your frame serves — statistics and declarations are your work,
+never a question for the round. Below-1.0 confidence is for judgment
+dimensions: definition, scope, convention. The inverse holds: a
+defensible default does not raise a judgment dimension to 1.0. What
+"on time" means, which accounts count, whether partly paid rows
+belong — record the default you chose at the confidence it deserves,
+and the round serves it for confirmation. Judgment recorded at 1.0
+silences the round on exactly what it exists to ask.
 
-Mark a stock with `"behavior": "stock"` as a top-level key in the
-body. The marker is your word and wins. Without it the cube and the
-walk take the `behavior` gloss on the column the value is or sums
-(the kit's vocabulary, human over agent), and where none speaks the
-`behavior_evidence` verdict on that column; with none of the three,
-the metric reads as a flow, which sums levels and lies.
-`metric_axes().behavior_basis` says which happened — `marked`,
-`glossed`, `evidence`, or `default`. An assumption in the body saying
-"this is a flow" decides nothing: assumptions are disclosure, the
-verb reads the marker, the gloss and the evidence.
+**Behavior is measured, not assumed.** Every metric folds as a flow
+unless something detects a ratio or a stock: the SQL's shape (a
+running total), or the `behavior_evidence` verdict on the column the
+value is or sums. The grounding write runs that measurement over the
+column when no verdict stands there, so you never call it for a
+metric's sake — the write's answer says what it found. Mark
+`"behavior": "stock"` as a top-level key only where the write's
+answer shows the door could not decide (`behavior_basis` other than
+`evidence` or `shape`) and you know the column is a carried level;
+that marker is your judgment, and a verdict that later decides
+otherwise overrules it, the basis naming the contest. A `flow` marker
+changes nothing. `metric_axes().behavior_basis` says what decided —
+`shape`, `evidence`, `marked`, `glossed`, or `default`.
 
 **After grounding, run `detect_grounding_collisions`.** Two concepts
 grounding to the same extract make every ratio between them compute

@@ -9,13 +9,15 @@ fit of both readings (`r_flow`, `r_stock`), the sign structure — with
 every anchor's full evidence readable back through
 `GLOSSARY(table.column::behavior_evidence)`.
 
-Summing a stock or point-reading a flow corrupts a metric silently;
-`behavior` is the gloss that prevents it, and this measurement is the
-evidence the judge reads before glossing it. The cube reads both: a
-grounding with no `behavior` marker folds by the `behavior` gloss on
-the column its value is, or is one `sum` of, and where no gloss exists,
-by the verdict on that column — `metric_axes()` says which as
-`behavior_basis = 'glossed'` or `'evidence'`.
+Summing a stock corrupts a metric silently. The cube folds every
+metric as a flow unless something detects a ratio or a stock: the
+SQL's shape (a running total), this measurement's verdict on the
+column the value is or is one `sum` of, or — where no verdict decided
+— the grounding's `stock` marker or a `stock` gloss on that column,
+the agent's word. The grounding write runs this measurement over that
+column when no verdict stands there, so the verdict exists before
+anyone asks; `metric_axes()` says which decided as `behavior_basis`
+(`shape`, `evidence`, `marked`, `glossed`, or `default`).
 
 ## Why reconciliation, not shape statistics
 

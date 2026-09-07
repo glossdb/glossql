@@ -71,9 +71,10 @@ discriminator: reconciles the measure against every viable anchor
 convention, support, and reconciliation scores; the summary aggregates
 the votes. A composite (tuple) endpoint takes part like any other.
 Extraction serves the summary alone; every anchor reads back via
-`GLOSSARY(<table>.<column>::behavior_evidence)`. Evidence for the
-judge before glossing `behavior` — never a voice in the behavior
-slots.
+`GLOSSARY(<table>.<column>::behavior_evidence)`. The cube folds a
+metric by this verdict on the column its value sums, and a grounding
+write runs it over that column when no verdict stands there. Never a
+voice in the behavior slots.
 
 ### dimension_relevance → `dimension_relevance`
 

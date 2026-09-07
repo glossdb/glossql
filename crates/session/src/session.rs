@@ -1086,14 +1086,47 @@ impl Session {
         // language rules no shape for a grounding, and the row tells.
         // Every other gloss answers as it did.
         if is_grounding {
-            let fact = crate::cube::fact_at_write(
-                &self.shared,
-                &resolved.dataset,
-                &resolved.subject,
-                aspect,
-            )
-            .await?;
-            return Ok(Outcome::Rows(vec![fact]));
+            use datafusion::sql::sqlparser::ast::Ident;
+            let dataset = resolved.dataset.clone();
+            let mut fact =
+                crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
+                    .await?;
+            // The write measures what its verb needs: the function
+            // returning `behavior_evidence`, over the column the value
+            // is or sums, where no verdict stands — the extraction an
+            // agent would run, landed as this actor's. A refusal never
+            // fails the write; the row says what stands.
+            let rctx = self.shared.read_context().await?;
+            let door = crate::cube::returning(&rctx, &dataset, "behavior_evidence");
+            let over: Vec<String> = fact
+                .wanted
+                .iter()
+                .zip(&fact.wanted_over)
+                .filter(|(f, _)| Some(*f) == door.as_ref())
+                .map(|(_, s)| s.clone())
+                .collect();
+            let mut measured = false;
+            for subject in over {
+                let extract = Extract {
+                    calls: vec![Ident::new(door.clone().expect("a want names its door"))],
+                    subject: Subject::Path(glossql_parser::Path {
+                        segments: subject.split('.').map(Ident::new).collect(),
+                    }),
+                };
+                match self.extract(extract).await {
+                    Ok(_) => measured = true,
+                    Err(e) => tracing::debug!(
+                        error = %e,
+                        subject,
+                        "the grounding write's measurement was refused"
+                    ),
+                }
+            }
+            if measured {
+                fact = crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
+                    .await?;
+            }
+            return Ok(Outcome::Rows(vec![crate::cube::fact_batch(&[&fact])?]));
         }
         Ok(Outcome::Done(format!(
             "GLOSS {aspect} ON {}",
