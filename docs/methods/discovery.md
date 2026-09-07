@@ -31,15 +31,18 @@ tried where the multi-tenant shape suggests them — for each
 overlapping pair whose target is no key alone, the same two tables are
 tried with a scoping leg in overlap order. A scoping leg that is
 unique on its own is never tried, since the pair could identify no
-more than that leg's own candidate already does. The composite pass
+more than that leg's own candidate already does; nor are two tables
+that a key-like single pair already joins, since a scope could only
+re-key a pair that has a key. The composite pass
 first counts every combination's distinct pairs, an aggregate with no
 join, and settles the key test from those counts; only the surviving
 from-combinations are then joined to the surviving to-combinations. A
 composite that passes the floor rides `key_columns` (the tuple is the
-key). Candidates rank orphan
-evidence first, then overlap — a pair with orphans carries a judgment
-call, while a perfectly clean 1.0 overlap is as often two parallel
-surrogate sequences as an edge; the body
+key). Candidates rank by what a reference looks like: it repeats
+(many-to-one before one-to-one), it resolves (overlap), and it reaches
+its key (matched over the key's distinct count) — a one-to-one 1.0
+overlap is as often two parallel surrogate sequences as an edge, and a
+small code set is contained in every dense id space; the body
 (`crates/scripts/functions/relationships.sql`) shapes and summarizes,
 and never filters beyond the door's floor.
 

@@ -739,7 +739,9 @@ pub(crate) fn rows_batch(
 /// near-unique and whose two-leg intersection resolves rescues the
 /// anchor. A scoping leg that is unique on its own is never tried: the
 /// pair could identify no more than the leg does, and the leg's own
-/// candidate already stands. Here only the named from–to pairs are
+/// candidate already stands. Two tables a key-like pair already joins
+/// are never tried either: a scope could only re-key a pair that has
+/// a key. Here only the named from–to pairs are
 /// wanted, not every pair, so the composite pass has a different shape
 /// from the width-1 matrix: first every combination's own distinct
 /// count, an aggregate with no join, which settles the key test and
@@ -951,10 +953,27 @@ pub(crate) async fn relationship_candidates(
         // the read.
         list.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
     }
+    // Two tables one key-like pair already joins are never tried for
+    // a composite: a scope beside a second column could only re-key a
+    // pair that has a key, and what such a pass serves is two date or
+    // code columns that happen to coincide. The multi-tenant shape is
+    // untouched — no single column keys it.
+    let linked: HashSet<(&str, &str)> = pairs
+        .iter()
+        .filter(|p| key_like(p.k))
+        .map(|p| {
+            let (a, b) = (cols[p.f].table.as_str(), cols[p.k].table.as_str());
+            (a.min(b), a.max(b))
+        })
+        .collect();
     let mut attempts: Vec<Attempt> = Vec::new();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for (pi, p) in pairs.iter().enumerate() {
         if key_like(p.k) {
+            continue;
+        }
+        let (ta, tb) = (cols[p.f].table.as_str(), cols[p.k].table.as_str());
+        if linked.contains(&(ta.min(tb), ta.max(tb))) {
             continue;
         }
         let Some(scopes) = by_tables.get(&(cols[p.f].table.as_str(), cols[p.k].table.as_str()))

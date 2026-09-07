@@ -2502,13 +2502,12 @@ async fn relationship_candidates_join_zoned_timestamps_and_times() {
 async fn relationship_candidates_scope_a_reference_that_repeats_across_accounts() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
-    // Account 1 books r1..r10, account 2 books r1 and r11..r19: 20
-    // lines, 19 distinct references, every (account, reference) unique.
+    // Both accounts book r1..r10: 20 lines, 10 distinct references —
+    // no column is a key alone — and every (account, reference) unique.
     let mut accounts = vec![1; 10];
     accounts.extend(vec![2; 10]);
     let mut refs: Vec<String> = (1..=10).map(|i| format!("r{i}")).collect();
-    refs.push("r1".into());
-    refs.extend((11..=19).map(|i| format!("r{i}")));
+    refs.extend((1..=10).map(|i| format!("r{i}")));
     let statement = RecordBatch::try_new(
         Arc::new(Schema::new(vec![
             Field::new("account_no", DataType::Int32, false),
