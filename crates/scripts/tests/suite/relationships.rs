@@ -223,6 +223,71 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
     assert!(after.contains(r#""from":"orders.order_id""#), "{after}");
 }
 
+/// `SELECT detect_relationships() FROM fin` names its dataset in the
+/// FROM: a session that has `USE`d nothing — a door's first call —
+/// measures `fin`, not the empty binding, and lands what it counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_detector_reads_the_named_dataset_before_any_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    parquet_fixture(&root).await;
+
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
+    let agent = |id: &str| {
+        Session::new(
+            store.clone(),
+            Actor {
+                kind: ActorKind::Agent,
+                id: id.into(),
+            },
+        )
+        .unwrap()
+        .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))))
+    };
+    let landing = agent("agent-1");
+    landing
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'relationship judging');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp_export SET (type: parquet, location: '{}');\n\
+             DECLARE ASPECT relationship_candidates WITH $${{\n\
+               \"type\": \"object\",\n\
+               \"properties\": {{\"candidates\": {{\"type\": \"array\"}}}}\n\
+             }}$$ AS MEASUREMENT ON DATASET;\n\
+             DECLARE FUNCTION detect_relationships FOR GLOBAL \
+             AS $${RELATIONSHIPS}$$ RETURNS relationship_candidates;\n\
+             DECLARE RECIPE customers ON fin FROM erp_export AS \
+             $$SELECT * FROM read_parquet('customers/*.parquet')$$;\n\
+             DECLARE RECIPE orders ON fin FROM erp_export AS \
+             $$SELECT * FROM read_parquet('orders/*.parquet')$$;",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    let unbound = agent("agent-2");
+    assert_eq!(unbound.dataset(), None);
+    unbound
+        .execute("SELECT detect_relationships() FROM fin;")
+        .await
+        .unwrap();
+    let value = one(&landing
+        .execute(
+            "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    let body: serde_json::Value = serde_json::from_str(&value).unwrap();
+    assert_eq!(body["summary"]["candidates"], 4, "{value}");
+}
+
 /// The multi-tenant fixture: party names repeat across businesses, so
 /// `name` is no key alone — only (businessID, name) identifies a row.
 /// booksql's shape: every FK is (businessID, X) -> target(businessID, Y).

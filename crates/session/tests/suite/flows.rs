@@ -2613,6 +2613,110 @@ async fn relationship_candidates_never_scope_by_a_unique_column() {
     );
 }
 
+/// Two tables a key already joins get no composite: `b.a_id → a.id`
+/// stands, and the coincidence of `(x, y)` — a pair that would resolve
+/// perfectly — is never tried beside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_try_no_composite_where_a_key_already_joins_the_tables() {
+    let (_dir, session) = agent_session().await;
+    run(&session, SETUP).await;
+    let a = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("x", DataType::Int32, false),
+            Field::new("y", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5, 6])),
+            Arc::new(Int32Array::from(vec![10, 10, 20, 20, 30, 30])),
+            Arc::new(Int32Array::from(vec![100, 200, 100, 200, 100, 200])),
+        ],
+    )
+    .unwrap();
+    let b = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("a_id", DataType::Int32, false),
+            Field::new("x", DataType::Int32, false),
+            Field::new("y", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 1, 2, 3, 4, 5])),
+            Arc::new(Int32Array::from(vec![10, 10, 20, 20, 30, 30])),
+            Arc::new(Int32Array::from(vec![100, 200, 100, 200, 100, 200])),
+        ],
+    )
+    .unwrap();
+    for (name, batch) in [("a", a), ("b", b)] {
+        let schema = batch.schema();
+        session
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let out = table(&session, "SELECT * FROM relationship_candidates('fin');").await;
+    assert!(
+        out.contains("b.a_id") && out.contains("a.id"),
+        "the key stands: {out}"
+    );
+    let scoped = table(
+        &session,
+        "SELECT count(*) FROM relationship_candidates('fin') WHERE kc_to IS NOT NULL;",
+    )
+    .await;
+    assert!(
+        scoped.contains("| 0 "),
+        "no composite beside the key: {scoped}\n{out}"
+    );
+}
+
+/// The door's argument names the dataset it reads. A session that has
+/// `USE`d nothing — a door's first call, before any binding — reads the
+/// named dataset's tables, not the empty binding.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relationship_candidates_read_the_named_dataset_without_a_use() {
+    let (_dir, store) = scratch_store().await;
+    let landing = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&landing, SETUP).await;
+    let product = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)])),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
+    let review = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new(
+            "product_id",
+            DataType::Int32,
+            false,
+        )])),
+        vec![Arc::new(Int32Array::from(vec![1, 1, 2]))],
+    )
+    .unwrap();
+    for (name, batch) in [("product", product), ("review", review)] {
+        let schema = batch.schema();
+        landing
+            .register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+    let unbound = session_with(ActorKind::Agent, "agent-2", &store).await;
+    assert_eq!(unbound.dataset(), None);
+    let out = table(
+        &unbound,
+        "SELECT from_col, to_col FROM relationship_candidates('fin');",
+    )
+    .await;
+    assert!(
+        out.contains("review.product_id") && out.contains("product.id"),
+        "the named dataset is read: {out}"
+    );
+}
+
 /// A metric is grounded on the dataset: a grounding written on a table
 /// is refused with the write that lands, and the read then serves it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

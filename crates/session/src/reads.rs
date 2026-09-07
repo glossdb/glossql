@@ -930,7 +930,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                (crate::search::relationship_checks(shared, resolved, &dataset).await?).into(),
+                (crate::search::relationship_checks(shared, &dataset).await?).into(),
             ))
         }
         ("grounding_collisions", Some(a)) => {
@@ -954,7 +954,7 @@ pub(crate) async fn compute_batch(
                 )
             })?;
             Ok(Some(
-                (crate::search::relationship_candidates(shared, resolved, &dataset).await?).into(),
+                (crate::search::relationship_candidates(shared, &dataset).await?).into(),
             ))
         }
         ("hierarchy_candidates", Some(a)) => {

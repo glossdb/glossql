@@ -1123,8 +1123,9 @@ impl Session {
                 }
             }
             if measured {
-                fact = crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
-                    .await?;
+                fact =
+                    crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
+                        .await?;
             }
             return Ok(Outcome::Rows(vec![crate::cube::fact_batch(&[&fact])?]));
         }
@@ -1141,7 +1142,16 @@ impl Session {
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
         let resolved = self.subject(&extract.subject).await?;
-        let ctx = self.shared.read_context().await?;
+        // The context is the subject's dataset's — named by the path
+        // or by the binding — because a landing records that dataset's
+        // pin: `SELECT detect_relationships() FROM fin` before any USE
+        // measures `fin` and lands under its pin, not the empty
+        // binding's. A source subject keeps the binding's context.
+        let ctx = if store.dataset_exists(&resolved.dataset).await? {
+            self.shared.read_context_for(&resolved.dataset).await?
+        } else {
+            self.shared.read_context().await?
+        };
         let mut results = Vec::new();
         for call in &extract.calls {
             let name = call.value.clone();

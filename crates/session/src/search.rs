@@ -760,6 +760,8 @@ pub(crate) async fn relationship_candidates(
     let scans = ctx.state();
     let state = detector_state(&ctx);
 
+    let pinned = dataset_pins(shared, dataset).await?;
+    let resolved = &pinned;
     let mut tables: Vec<String> = resolved.tables();
     tables.sort();
 
@@ -1189,6 +1191,25 @@ pub(crate) async fn relationship_candidates(
 /// count. Four partitions keep every instance's share wide enough; the
 /// passes that would use more cores are the ones the pair count, not
 /// the core count, bounds.
+/// The named dataset's tables, each pinned at its current snapshot.
+/// A dataset door's argument names what it reads: the dataset in use
+/// is the statement's binding, not the door's, and a run before any
+/// `USE` — `SELECT detect_relationships() FROM fin` — reads `fin`
+/// rather than the empty binding.
+async fn dataset_pins(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<crate::prepass::Resolved, SessionError> {
+    Ok(crate::prepass::Resolved::over(
+        shared
+            .pinned(dataset)
+            .await?
+            .iter()
+            .map(|p| (p.name.clone(), Arc::clone(&p.provider)))
+            .collect(),
+    ))
+}
+
 fn detector_state(ctx: &SessionContext) -> SessionState {
     let state = ctx.state();
     let mut config = state.config().clone();
@@ -2008,13 +2029,14 @@ fn collision_shape() -> Vec<Field> {
 /// itself says nothing.
 pub(crate) async fn relationship_checks(
     shared: &Arc<Shared>,
-    resolved: &crate::prepass::Resolved,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
     use datafusion::common::JoinType;
 
     let bad =
         |d: String| SessionError::BadSubject(format!("relationship_checks('{dataset}'): {d}"));
+    let pinned = dataset_pins(shared, dataset).await?;
+    let resolved = &pinned;
     let ctx = shared.session_ctx();
     let run = |plan| async {
         ctx.execute_logical_plan(plan)

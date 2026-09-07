@@ -81,6 +81,15 @@ pub(crate) struct ReadSet {
 }
 
 impl Resolved {
+    /// A resolution holding only the given pins — what a door that
+    /// names its own dataset reads, the statement's binding aside.
+    pub(crate) fn over(pins: HashMap<String, Arc<dyn TableProvider>>) -> Self {
+        Self {
+            pins,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn plan(&self, key: &str) -> Option<Arc<LogicalPlan>> {
         self.plans.get(key).cloned()
     }
