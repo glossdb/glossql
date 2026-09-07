@@ -166,7 +166,11 @@ bound.
 The line to hold: **a Rust structure sized by the schema is a fact
 table; one sized by the rows or the distinct values is a leak.** A dense
 matrix over the column pairs is fine. A `HashSet<String>` of a column's
-values is not, however small the dataset in front of you.
+values is not, however small the dataset in front of you. Schema-sized
+has its own ceiling: a list of column-pair pairs is the fourth power of
+the width, and a table of a hundred small-integer columns put 35 million
+of them in a `Vec` before the first exact prune — so enumerate under the
+bound the shape scan already gives, never enumerate and then prune.
 
 **What spills in DataFusion 54.1, and what does not.** Spilling is
 per-operator, not a mode — each operator that has a spill path asks the

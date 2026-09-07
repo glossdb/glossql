@@ -771,6 +771,7 @@ pub(crate) async fn relationship_candidates(
         filled: i64,
     }
     let mut cols: Vec<ColShape> = Vec::new();
+    let mut rows: HashMap<String, i64> = HashMap::new();
     for t in &tables {
         let provider = resolved
             .pin(t)
@@ -786,10 +787,11 @@ pub(crate) async fn relationship_candidates(
         if scalar.is_empty() {
             continue;
         }
-        let aggs: Vec<Expr> = scalar
+        let mut aggs: Vec<Expr> = scalar
             .iter()
             .map(|f| count(ident(f.name())).alias(format!("f_{}", f.name())))
             .collect();
+        aggs.push(count(lit(1)).alias("n"));
         let plan = LogicalPlanBuilder::scan(t.as_str(), provider_as_source(provider), None)
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|b| b.build())
@@ -799,19 +801,21 @@ pub(crate) async fn relationship_candidates(
             .iter()
             .find(|b| b.num_rows() > 0)
             .ok_or_else(|| bad(format!("the shape scan of `{t}` returned nothing")))?;
-        for (i, f) in scalar.iter().enumerate() {
-            let filled = one
-                .column(i)
+        let counted = |i: usize| {
+            one.column(i)
                 .as_any()
                 .downcast_ref::<Int64Array>()
-                .ok_or_else(|| bad("a count did not read as an integer".into()))?
-                .value(0);
+                .ok_or_else(|| bad("a count did not read as an integer".into()))
+                .map(|a| a.value(0))
+        };
+        for (i, f) in scalar.iter().enumerate() {
             cols.push(ColShape {
                 table: t.clone(),
                 column: f.name().clone(),
-                filled,
+                filled: counted(i)?,
             });
         }
+        rows.insert(t.clone(), counted(scalar.len())?);
     }
 
     // One arm per scalar column, and the whole matrix in one pass per
@@ -930,54 +934,59 @@ pub(crate) async fn relationship_candidates(
         }
         at
     };
+    // The scopes an anchor can take are the pairs between its two
+    // tables, in overlap order — one order per table pair, shared by
+    // every anchor on it.
+    let mut by_tables: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
+    for (si, s) in pairs.iter().enumerate() {
+        by_tables
+            .entry((cols[s.f].table.as_str(), cols[s.k].table.as_str()))
+            .or_default()
+            .push(si);
+    }
+    for list in by_tables.values_mut() {
+        // Total order over floats: a NaN sorts last instead of panicking
+        // the read.
+        list.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
+    }
     let mut attempts: Vec<Attempt> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for (pi, p) in pairs.iter().enumerate() {
         if key_like(p.k) {
             continue;
         }
-        let mut scopes: Vec<usize> = (0..pairs.len())
-            .filter(|si| {
-                let s = &pairs[*si];
-                cols[s.f].table == cols[p.f].table
-                    && cols[s.k].table == cols[p.k].table
-                    && cols[s.f].column != cols[p.f].column
-                    && cols[s.k].column != cols[p.k].column
-                    // A scoping leg that is unique on its own did all
-                    // the identifying: the pair's distinct count cannot
-                    // exceed the leg's, so the composite would add
-                    // nothing to the leg's own candidate.
-                    && !unique(s.k)
-            })
-            .collect();
-        // Total order over floats: a NaN sorts last instead of panicking
-        // the read.
-        scopes.sort_by(|a, b| pairs[*b].overlap.total_cmp(&pairs[*a].overlap));
+        let Some(scopes) = by_tables.get(&(cols[p.f].table.as_str(), cols[p.k].table.as_str()))
+        else {
+            continue;
+        };
         let mut order = 0i64;
-        for si in scopes {
+        for &si in scopes {
             let s = &pairs[si];
-            let key = format!(
-                "{}|{}|{}+{}|{}+{}",
-                cols[p.f].table,
-                cols[p.k].table,
-                cols[p.f].column,
-                cols[s.f].column,
-                cols[p.k].column,
-                cols[s.k].column
-            );
-            let mirror = format!(
-                "{}|{}|{}+{}|{}+{}",
-                cols[p.f].table,
-                cols[p.k].table,
-                cols[s.f].column,
-                cols[p.f].column,
-                cols[s.k].column,
-                cols[p.k].column
-            );
-            if seen.contains(&key) || seen.contains(&mirror) {
+            if cols[s.f].column == cols[p.f].column || cols[s.k].column == cols[p.k].column {
                 continue;
             }
-            seen.insert(key);
+            // A scoping leg that is unique on its own did all the
+            // identifying: the pair's distinct count cannot exceed the
+            // leg's, so the composite would add nothing to the leg's
+            // own candidate.
+            if unique(s.k) {
+                continue;
+            }
+            // The near-unique bar, bounded from the shape scan alone:
+            // the pair's distinct count is at most the product of the
+            // legs', and the rows carrying both legs are at least the
+            // legs' filled counts less the table's rows. Implied by the
+            // bar, never a heuristic — what it keeps, the co-filled
+            // count settles below.
+            let floor = (cols[p.k].filled + cols[s.k].filled - rows[&cols[p.k].table]).max(0);
+            if (distinct(p.k) as f64) * (distinct(s.k) as f64) < 0.9 * floor as f64 {
+                continue;
+            }
+            // An attempt and its mirror — the scope as the anchor — are
+            // one composite.
+            if !seen.insert((pi.min(si), pi.max(si))) {
+                continue;
+            }
             attempts.push(Attempt {
                 p: pi,
                 s: si,
