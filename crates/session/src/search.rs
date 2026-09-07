@@ -15,9 +15,13 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use datafusion::common::DataFusionError;
 use datafusion::datasource::provider_as_source;
+use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
 use datafusion::functions::expr_fn::{abs, greatest};
 use datafusion::functions_aggregate::expr_fn::{avg, count};
-use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident, lit};
+use datafusion::logical_expr::{
+    Expr, ExprFunctionExt, LogicalPlan, LogicalPlanBuilder, ident, lit,
+};
+use datafusion::prelude::SessionContext;
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
@@ -702,68 +706,63 @@ pub(crate) fn rows_batch(
 /// the statistical pass optimizes recall and the judge
 /// removes false positives against the data; this door never does.
 ///
-/// The algorithm (a per-pair SQL join would be quadratic in engine
-/// round-trips): inclusion-dependency discovery on
-/// the SPIDER/SINDY shape — every candidate column's distinct values
-/// land once through one union-of-distincts plan, and containment
-/// between two columns is a set intersection in memory. Values compare
-/// by display form, which is equality-faithful inside one dtype (pairs
-/// are dtype-gated, and even floats print shortest-roundtrip), so the
-/// counts are the typed-key counts. The statistic is containment —
-/// matched over the from side's distinct count: the question is
-/// directional, and a small key set fully inside a large one scores
-/// perfectly whatever the size skew. The only pruning is
-/// algebra: a to side with fewer than half the from side's distinct
-/// values cannot reach the 0.5 bar. Exact while Σ distinct fits
-/// memory; the named ladder past that is BINDER-style hash-range
-/// partitioning and bottom-k sketches — not built until a dataset
-/// needs them.
+/// The algorithm is inclusion-dependency discovery on the SPIDER/SINDY
+/// shape, and every set operation in it is a plan: no column's values
+/// are ever held outside the memory pool. One pass per dtype
+/// ([`pair_counts`]) unpivots each table's same-typed columns into
+/// `(arm, value)` rows, takes the distinct of those, and joins the
+/// result to itself on the value — so a matched row is one value two
+/// arms share, the input being distinct. Grouped by the arm pair, the
+/// count is the containment numerator; the pair `(i, i)` is the arm's
+/// own distinct count. What leaves the engine is that matrix, one row
+/// per arm pair: sized by the schema and never by the data, which is
+/// what separates it from a set of values. The statistic is
+/// containment — matched over the from side's distinct count: the
+/// question is directional, and a small key set fully inside a large
+/// one scores perfectly whatever the size skew.
 ///
-/// The composite rescue: a to
-/// side that is no key alone can be one inside a scope — the
-/// multi-tenant shape, (businessID, name). For each overlapping pair
-/// whose to side is not key-like, the co-present pairs between the
-/// same two tables are tried as the scoping leg in overlap order; the
-/// first whose combination makes the to side near-unique and whose
-/// two-leg intersection resolves rescues the anchor. Width 2 only —
-/// wider composites stay future work. Data decides, not names.
+/// Values compare in their own type. A pass is scoped to one dtype, so
+/// nothing is cast and the join compares values as they are stored;
+/// arms of different types never meet in a pass, which is where the
+/// dtype gate lives.
+///
+/// Nothing prunes what is looked at. The 0.5 acceptance bar implies
+/// the prune this door used to carry — matched ≤ to_distinct, so a to
+/// side under half the from side's distinct count cannot reach it —
+/// and a pair costs nothing once the matrix exists.
+///
+/// The composite rescue: a to side that is no key alone can be one
+/// inside a scope — the multi-tenant shape, (businessID, name). For
+/// each overlapping pair whose to side is not key-like, the co-present
+/// pairs between the same two tables are tried as the scoping leg in
+/// overlap order; the first whose combination makes the to side
+/// near-unique and whose two-leg intersection resolves rescues the
+/// anchor. It is the same pass at width 2, joined on both legs, so a
+/// combination's own key test and its containment come out of one
+/// plan. Width 2 only — wider composites stay future work. Data
+/// decides, not names.
 pub(crate) async fn relationship_candidates(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
-    use std::collections::HashMap;
-
-    use datafusion::functions_aggregate::expr_fn::count_distinct;
-    use datafusion::logical_expr::cast;
-
-    let bad =
-        |d: String| SessionError::BadSubject(format!("relationship_candidates('{dataset}'): {d}"));
+    let door = format!("relationship_candidates('{dataset}')");
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
     let ctx = shared.session_ctx();
-    let run = |plan| async {
-        ctx.execute_logical_plan(plan)
-            .await
-            .map_err(|e| bad(e.to_string()))?
-            .collect()
-            .await
-            .map_err(|e| bad(e.to_string()))
-    };
+    // The shape scans are fixed-memory aggregates and run through the
+    // session's own state; the pair passes run through the detector's.
+    let scans = ctx.state();
+    let state = detector_state(&ctx);
 
     let mut tables: Vec<String> = resolved.tables();
     tables.sort();
 
-    // Per-column shape: filled and distinct counts decide which columns
-    // look like keys (the join's to side) — near-unique, not strictly
-    // unique, so dirty keys stay in the running.
-    #[derive(Clone)]
+    // Per-column shape: the filled count. The distinct count is the
+    // diagonal of the pair pass and is never asked for separately.
     struct ColShape {
         table: String,
         column: String,
-        dtype: String,
         filled: i64,
-        distinct: i64,
-        unique: bool,
-        key_like: bool,
     }
     let mut cols: Vec<ColShape> = Vec::new();
     for t in &tables {
@@ -771,8 +770,7 @@ pub(crate) async fn relationship_candidates(
             .pin(t)
             .ok_or_else(|| bad(format!("no pin for `{t}`")))?;
         // Scalar columns only: a key is a scalar, so a nested column is
-        // never a candidate — and the engine's distinct count over a
-        // landed list refuses on the element field's format metadata.
+        // never a candidate.
         let fields = provider.schema();
         let scalar: Vec<_> = fields
             .fields()
@@ -782,142 +780,88 @@ pub(crate) async fn relationship_candidates(
         if scalar.is_empty() {
             continue;
         }
-        let mut aggs = Vec::new();
-        for f in &scalar {
-            let c = f.name();
-            aggs.push(count(ident(c)).alias(format!("f_{c}")));
-            aggs.push(count_distinct(ident(c)).alias(format!("d_{c}")));
-        }
+        let aggs: Vec<Expr> = scalar
+            .iter()
+            .map(|f| count(ident(f.name())).alias(format!("f_{}", f.name())))
+            .collect();
         let plan = LogicalPlanBuilder::scan(t.as_str(), provider_as_source(provider), None)
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let batches = run(plan).await?;
+        let batches = run_plan(&scans, plan).await.map_err(bad)?;
         let one = batches
             .iter()
             .find(|b| b.num_rows() > 0)
             .ok_or_else(|| bad(format!("the shape scan of `{t}` returned nothing")))?;
         for (i, f) in scalar.iter().enumerate() {
-            let int = |col_idx: usize| -> Result<i64, SessionError> {
-                one.column(col_idx)
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .ok_or_else(|| bad("a count did not read as an integer".into()))
-                    .map(|a| a.value(0))
-            };
-            let filled = int(i * 2)?;
-            let distinct = int(i * 2 + 1)?;
+            let filled = one
+                .column(i)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| bad("a count did not read as an integer".into()))?
+                .value(0);
             cols.push(ColShape {
                 table: t.clone(),
                 column: f.name().clone(),
-                dtype: f.data_type().to_string(),
                 filled,
-                distinct,
-                unique: filled > 0 && distinct == filled,
-                key_like: filled > 0 && distinct >= 2 && distinct as f64 / filled as f64 >= 0.9,
             });
         }
     }
 
-    // Every type-compatible pair, keys or not — the non-key pairs are
+    // One arm per scalar column, and the whole matrix in one pass per
+    // dtype.
+    let arms: Vec<Arm> = cols
+        .iter()
+        .map(|c| Arm {
+            table: c.table.clone(),
+            columns: vec![c.column.clone()],
+        })
+        .collect();
+    let counts = pair_counts(&state, resolved, &door, &arms).await?;
+    let distinct = |i: usize| counts.get(i, i);
+    // Near-unique, not strictly unique, so dirty keys stay in the
+    // running.
+    let key_like = |i: usize| {
+        let d = distinct(i);
+        cols[i].filled > 0 && d >= 2 && d as f64 / cols[i].filled as f64 >= 0.9
+    };
+    let unique = |i: usize| cols[i].filled > 0 && distinct(i) == cols[i].filled;
+
+    // Every pair the bar admits, keys or not — the non-key pairs are
     // the raw material for composite rescue. Same-table pairs stay in.
-    let mut specs: Vec<(usize, usize)> = Vec::new(); // (from, to) into cols
-    for (ki, k) in cols.iter().enumerate() {
-        if k.distinct < 2 {
-            continue;
-        }
-        for (fi, f) in cols.iter().enumerate() {
-            if f.table == k.table && f.column == k.column {
-                continue;
-            }
-            if f.dtype != k.dtype || f.distinct == 0 {
-                continue;
-            }
-            // Implied by the acceptance bar, never a heuristic:
-            // matched ≤ to_distinct, so a to side under half the from
-            // side's distinct count cannot reach 0.5.
-            if (k.distinct as f64) < 0.5 * f.distinct as f64 {
-                continue;
-            }
-            specs.push((fi, ki));
-        }
-    }
-
-    // One distinct pass per involved column, all in one union plan.
-    let mut involved: Vec<usize> = Vec::new();
-    for (fi, ki) in &specs {
-        for side in [*fi, *ki] {
-            if !involved.contains(&side) {
-                involved.push(side);
-            }
-        }
-    }
-    let mut sets: HashMap<usize, HashSet<String>> = HashMap::new();
-    if !involved.is_empty() {
-        let mut union: Option<LogicalPlanBuilder> = None;
-        for side in &involved {
-            let shape = &cols[*side];
-            let provider = resolved
-                .pin(&shape.table)
-                .ok_or_else(|| bad(format!("no pin for `{}`", shape.table)))?;
-            let arm =
-                LogicalPlanBuilder::scan(shape.table.as_str(), provider_as_source(provider), None)
-                    .and_then(|b| b.filter(ident(&shape.column).is_not_null()))
-                    .and_then(|b| {
-                        b.project(vec![
-                            lit(*side as i64).alias("ci"),
-                            cast(ident(&shape.column), DataType::Utf8).alias("val"),
-                        ])
-                    })
-                    .and_then(|b| b.distinct())
-                    .and_then(|b| b.build())
-                    .map_err(|e| bad(e.to_string()))?;
-            union = Some(match union {
-                None => LogicalPlanBuilder::from(arm),
-                Some(u) => u.union(arm).map_err(|e| bad(e.to_string()))?,
-            });
-        }
-        let plan = union
-            .expect("nonempty")
-            .build()
-            .map_err(|e| bad(e.to_string()))?;
-        for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-            let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
-            let val_idx = b.schema().index_of("val").map_err(|e| bad(e.to_string()))?;
-            let vals = b.column(val_idx);
-            for (r, &c) in ci.iter().enumerate() {
-                if vals.is_null(r) {
-                    continue;
-                }
-                sets.entry(c as usize)
-                    .or_default()
-                    .insert(array_value_to_string(vals, r).map_err(|e| bad(e.to_string()))?);
-            }
-        }
-    }
-
-    // Pair mathematics, entirely in memory.
+    // A cross-dtype pair carries a zero off the matrix and falls out
+    // here rather than being excluded by name.
     struct Pair {
         f: usize,
         k: usize,
         overlap: f64,
         matched: i64,
     }
-    let empty = HashSet::new();
-    let set_of = |i: usize| sets.get(&i).unwrap_or(&empty);
     let mut pairs: Vec<Pair> = Vec::new();
-    for (fi, ki) in &specs {
-        let m = set_of(*fi).intersection(set_of(*ki)).count() as i64;
-        let overlap = m as f64 / cols[*fi].distinct as f64;
-        if overlap < 0.5 {
+    for ki in 0..cols.len() {
+        if distinct(ki) < 2 {
             continue;
         }
-        pairs.push(Pair {
-            f: *fi,
-            k: *ki,
-            overlap,
-            matched: m,
-        });
+        for fi in 0..cols.len() {
+            if cols[fi].table == cols[ki].table && cols[fi].column == cols[ki].column {
+                continue;
+            }
+            let from_distinct = distinct(fi);
+            if from_distinct == 0 {
+                continue;
+            }
+            let matched = counts.get(fi, ki);
+            let overlap = matched as f64 / from_distinct as f64;
+            if overlap < 0.5 {
+                continue;
+            }
+            pairs.push(Pair {
+                f: fi,
+                k: ki,
+                overlap,
+                matched,
+            });
+        }
     }
 
     // Single-column candidates: the pairs whose to side stands as a key
@@ -937,27 +881,28 @@ pub(crate) async fn relationship_candidates(
     let path = |i: usize| format!("{}.{}", cols[i].table, cols[i].column);
     let mut candidates: Vec<Candidate> = Vec::new();
     for p in &pairs {
-        if !cols[p.k].key_like {
+        if !key_like(p.k) {
             continue;
         }
         candidates.push(Candidate {
             from: path(p.f),
             to: path(p.k),
-            cardinality: if cols[p.f].unique {
+            cardinality: if unique(p.f) {
                 "one-to-one"
             } else {
                 "many-to-one"
             },
             overlap: p.overlap,
             matched: p.matched,
-            orphans: cols[p.f].distinct - p.matched,
-            from_distinct: cols[p.f].distinct,
-            to_distinct: cols[p.k].distinct,
+            orphans: distinct(p.f) - p.matched,
+            from_distinct: distinct(p.f),
+            to_distinct: distinct(p.k),
             key_columns: None,
         });
     }
 
-    // Composite rescue, three batched phases.
+    // Composite rescue: the attempts, then one pass and one count plan
+    // for every combination either side of them needs.
     struct Attempt {
         p: usize, // into pairs — the anchor leg
         s: usize,
@@ -966,7 +911,7 @@ pub(crate) async fn relationship_candidates(
     let mut attempts: Vec<Attempt> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for (pi, p) in pairs.iter().enumerate() {
-        if cols[p.k].key_like {
+        if key_like(p.k) {
             continue;
         }
         let mut scopes: Vec<usize> = (0..pairs.len())
@@ -989,7 +934,7 @@ pub(crate) async fn relationship_candidates(
             // product of the legs' distinct counts — a product under
             // 0.9 of the co-filled floor can never key the table.
             let floor = cols[p.k].filled.min(cols[s.k].filled);
-            if (cols[p.k].distinct as f64) * (cols[s.k].distinct as f64) < 0.9 * floor as f64 {
+            if (distinct(p.k) as f64) * (distinct(s.k) as f64) < 0.9 * floor as f64 {
                 continue;
             }
             let key = format!(
@@ -1023,68 +968,45 @@ pub(crate) async fn relationship_candidates(
         }
     }
 
-    // Phase 1, one union plan and one count plan per combination: is
-    // the combined to side a key inside the scope? The same combination
-    // backs many attempts — probed once.
-    let mut to_combos: Vec<(String, String, String)> = Vec::new();
-    let mut to_of: HashMap<(String, String, String), usize> = HashMap::new();
+    // The combinations both sides need, interned once each: the same
+    // (table, a, b) can be a to side for one attempt and a from side
+    // for another, and an arm probed twice is a scan wasted.
+    let mut combos: Vec<(String, String, String)> = Vec::new();
+    let mut combo_of: HashMap<(String, String, String), usize> = HashMap::new();
+    let mut to_of: Vec<usize> = Vec::with_capacity(attempts.len());
+    let mut from_of: Vec<usize> = Vec::with_capacity(attempts.len());
     for a in &attempts {
         let (p, s) = (&pairs[a.p], &pairs[a.s]);
-        let key = (
-            cols[p.k].table.clone(),
-            cols[p.k].column.clone(),
-            cols[s.k].column.clone(),
-        );
-        if !to_of.contains_key(&key) {
-            to_of.insert(key.clone(), to_combos.len());
-            to_combos.push(key);
+        for (side, leg, scope) in [
+            (&mut to_of, &cols[p.k], &cols[s.k]),
+            (&mut from_of, &cols[p.f], &cols[s.f]),
+        ] {
+            let key = (leg.table.clone(), leg.column.clone(), scope.column.clone());
+            let next = combos.len();
+            let at = *combo_of.entry(key.clone()).or_insert(next);
+            if at == next {
+                combos.push(key);
+            }
+            side.push(at);
         }
     }
-    let to_stats = combo_stats(
-        &ctx,
-        resolved,
-        &format!("relationship_candidates('{dataset}')"),
-        &to_combos,
-    )
-    .await?;
-    let to_ok = |i: usize| {
-        let t = &to_stats[i];
-        t.filled > 0 && t.distinct >= 2 && t.distinct as f64 / t.filled as f64 >= 0.9
+    let combo_arms: Vec<Arm> = combos
+        .iter()
+        .map(|(t, a, b)| Arm {
+            table: t.clone(),
+            columns: vec![a.clone(), b.clone()],
+        })
+        .collect();
+    let combo_counts = pair_counts(&state, resolved, &door, &combo_arms).await?;
+    let filled = combo_filled(&scans, resolved, &door, &combos).await?;
+    // The combined to side keys its table inside the scope.
+    let combo_ok = |i: usize| {
+        let d = combo_counts.get(i, i);
+        filled[i] > 0 && d >= 2 && d as f64 / filled[i] as f64 >= 0.9
     };
 
-    // Phase 2, survivors only: the from side's co-present pairs.
-    let mut from_combos: Vec<(String, String, String)> = Vec::new();
-    let mut from_of: HashMap<(String, String, String), usize> = HashMap::new();
-    for a in &attempts {
-        let (p, s) = (&pairs[a.p], &pairs[a.s]);
-        let tk = (
-            cols[p.k].table.clone(),
-            cols[p.k].column.clone(),
-            cols[s.k].column.clone(),
-        );
-        if !to_ok(to_of[&tk]) {
-            continue;
-        }
-        let key = (
-            cols[p.f].table.clone(),
-            cols[p.f].column.clone(),
-            cols[s.f].column.clone(),
-        );
-        if !from_of.contains_key(&key) {
-            from_of.insert(key.clone(), from_combos.len());
-            from_combos.push(key);
-        }
-    }
-    let from_stats = combo_stats(
-        &ctx,
-        resolved,
-        &format!("relationship_candidates('{dataset}')"),
-        &from_combos,
-    )
-    .await?;
-
-    // Phase 3, no scans: the two-leg resolution is a set intersection.
-    // First passing scope per anchor, in overlap order.
+    // The two-leg resolution reads off the pass. First passing scope
+    // per anchor, in overlap order.
     struct Rescue {
         order: i64,
         p: usize,
@@ -1096,28 +1018,17 @@ pub(crate) async fn relationship_candidates(
         fpairs: i64,
     }
     let mut rescued: HashMap<usize, Rescue> = HashMap::new();
-    for a in &attempts {
-        let (p, s) = (&pairs[a.p], &pairs[a.s]);
-        let tk = (
-            cols[p.k].table.clone(),
-            cols[p.k].column.clone(),
-            cols[s.k].column.clone(),
-        );
-        let ti = to_of[&tk];
-        if !to_ok(ti) {
+    for (ai, a) in attempts.iter().enumerate() {
+        let (ti, fi) = (to_of[ai], from_of[ai]);
+        if !combo_ok(ti) {
             continue;
         }
-        let fk = (
-            cols[p.f].table.clone(),
-            cols[p.f].column.clone(),
-            cols[s.f].column.clone(),
-        );
-        let fs = &from_stats[from_of[&fk]];
-        if fs.set.is_empty() {
+        let fpairs = combo_counts.get(fi, fi);
+        if fpairs == 0 {
             continue;
         }
-        let m = fs.set.intersection(&to_stats[ti].set).count() as i64;
-        let overlap = m as f64 / fs.set.len() as f64;
+        let matched = combo_counts.get(fi, ti);
+        let overlap = matched as f64 / fpairs as f64;
         if overlap < 0.5 {
             continue;
         }
@@ -1130,11 +1041,11 @@ pub(crate) async fn relationship_candidates(
                 order: a.order,
                 p: a.p,
                 s: a.s,
-                matched: m,
+                matched,
                 overlap,
-                to_distinct: to_stats[ti].distinct,
-                ffilled: fs.filled,
-                fpairs: fs.set.len() as i64,
+                to_distinct: combo_counts.get(ti, ti),
+                ffilled: filled[fi],
+                fpairs,
             },
         );
     }
@@ -1146,7 +1057,7 @@ pub(crate) async fn relationship_candidates(
         // side; the scope is the tenant leg. Which pair triggered the
         // rescue is iteration order, not evidence.
         let (mut a, mut sc) = (&pairs[r.p], &pairs[r.s]);
-        if cols[pairs[r.s].k].distinct > cols[pairs[r.p].k].distinct {
+        if distinct(pairs[r.s].k) > distinct(pairs[r.p].k) {
             (a, sc) = (&pairs[r.s], &pairs[r.p]);
         }
         candidates.push(Candidate {
@@ -1192,117 +1103,287 @@ pub(crate) async fn relationship_candidates(
     rows_batch(out, relationship_shape())
 }
 
-/// One combination's co-presence: how many rows carry both legs, and
-/// the distinct (a, b) pairs — probed once per combination through one
-/// union-of-distincts plan and one union of counts.
-struct ComboStat {
-    filled: i64,
-    distinct: i64,
-    set: std::collections::HashSet<(String, String)>,
+/// The detector's own state: a merge join, not a hash join.
+///
+/// A hash join reserves its whole build side and refuses when the pool
+/// is short — it has no spill path at all, only a `try_grow` that
+/// returns the error (datafusion-physical-plan
+/// `joins/hash_join/exec.rs`, the build-side fold), and its consumer
+/// registers as unspillable, so what it holds also shrinks the share
+/// every spilling operator gets. A pair pass joins a column's distinct
+/// values to themselves, so the build side is the data: a door that
+/// refuses on a wide dataset is the failure this pass exists to
+/// remove. `SortMergeJoinExec` spills. The price is a sort per side,
+/// which the plan metrics below report.
+fn detector_state(ctx: &SessionContext) -> SessionState {
+    let state = ctx.state();
+    let mut config = state.config().clone();
+    config.options_mut().optimizer.prefer_hash_join = false;
+    SessionStateBuilder::new_from_existing(state)
+        .with_config(config)
+        .build()
 }
 
-async fn combo_stats(
-    ctx: &datafusion::prelude::SessionContext,
+/// A plan through the given state: planned, optimized and collected
+/// under that state's configuration and the process's one pool.
+async fn run_plan(state: &SessionState, plan: LogicalPlan) -> Result<Vec<RecordBatch>, String> {
+    let physical = state
+        .create_physical_plan(&plan)
+        .await
+        .map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    let batches = datafusion::physical_plan::collect(Arc::clone(&physical), state.task_ctx())
+        .await
+        .map_err(|e| e.to_string())?;
+    // The plan with its operators' metrics — rows, compute, spills —
+    // for a door's own passes, which the statement's `executed` line
+    // does not see.
+    tracing::debug!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        metrics = %datafusion::physical_plan::display::DisplayableExecutionPlan::with_metrics(physical.as_ref())
+            .indent(false),
+        "door plan"
+    );
+    Ok(batches)
+}
+
+/// One arm of a pair pass: a table's column, or the two columns of a
+/// composite. Every arm of one pass carries the same column types.
+struct Arm {
+    table: String,
+    columns: Vec<String>,
+}
+
+/// A pair pass's answer: `get(i, j)` is how many values arms `i` and
+/// `j` both carry, and `get(i, i)` is arm `i`'s own distinct count.
+/// Square in the arm count — sized by the schema and never by the
+/// data, which is what separates it from a set of values.
+struct Counts {
+    n: usize,
+    m: Vec<i64>,
+}
+
+impl Counts {
+    fn new(n: usize) -> Self {
+        Self {
+            n,
+            m: vec![0; n * n],
+        }
+    }
+
+    fn at(&self, a: usize, b: usize) -> usize {
+        let (i, j) = if a <= b { (a, b) } else { (b, a) };
+        i * self.n + j
+    }
+
+    fn get(&self, a: usize, b: usize) -> i64 {
+        self.m[self.at(a, b)]
+    }
+
+    fn set(&mut self, a: usize, b: usize, v: i64) {
+        let at = self.at(a, b);
+        self.m[at] = v;
+    }
+}
+
+/// Every arm pair's shared-value count, as plans.
+///
+/// One pass per column-type tuple, because arms of different types can
+/// share nothing and a pass scoped to one type never casts — the join
+/// compares values as they are stored, which is the typed identity the
+/// counts claim. A type carried by one arm alone is skipped: nothing
+/// can pair with it.
+///
+/// Each pass unpivots its tables — `make_array` over the arms' columns
+/// and one `unnest`, so a plan carries a union arm per table rather
+/// than per column, which is what bounds its memory consumers: the
+/// engine repartitions every union arm and runs a partial aggregate
+/// per partition, and the fair pool divides its share among every
+/// consumer registered. It then takes the distinct `(arm, value…)`
+/// rows and joins that to itself on the value. A matched row is one
+/// value both arms carry, the input being distinct; grouped by the arm
+/// pair it is the containment numerator. The `a <= b` filter halves
+/// the output and keeps the diagonal, so one plan answers both the
+/// matched counts and the distinct counts. No join key is ever null —
+/// the unpivot drops those — so null equality never enters it.
+async fn pair_counts(
+    state: &SessionState,
+    resolved: &crate::prepass::Resolved,
+    door: &str,
+    arms: &[Arm],
+) -> Result<Counts, SessionError> {
+    use datafusion::common::{Column, NullEquality, UnnestOptions};
+    use datafusion::functions_nested::expr_fn::make_array;
+    use datafusion::logical_expr::{JoinType, col};
+
+    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let mut counts = Counts::new(arms.len());
+    if arms.is_empty() {
+        return Ok(counts);
+    }
+
+    // The passes: arms grouped by their columns' types, in first-seen
+    // order.
+    let mut groups: Vec<(Vec<DataType>, Vec<usize>)> = Vec::new();
+    for (i, arm) in arms.iter().enumerate() {
+        let provider = resolved
+            .pin(&arm.table)
+            .ok_or_else(|| bad(format!("no pin for `{}`", arm.table)))?;
+        let schema = provider.schema();
+        let mut shape = Vec::with_capacity(arm.columns.len());
+        for c in &arm.columns {
+            shape.push(
+                schema
+                    .field_with_name(c)
+                    .map_err(|e| bad(e.to_string()))?
+                    .data_type()
+                    .clone(),
+            );
+        }
+        match groups.iter_mut().find(|(s, _)| *s == shape) {
+            Some((_, members)) => members.push(i),
+            None => groups.push((shape, vec![i])),
+        }
+    }
+
+    for (_, members) in groups.iter().filter(|(_, m)| m.len() > 1) {
+        let width = arms[members[0]].columns.len();
+        let mut tables: Vec<&str> = Vec::new();
+        for &i in members {
+            if !tables.contains(&arms[i].table.as_str()) {
+                tables.push(arms[i].table.as_str());
+            }
+        }
+        let mut union: Option<LogicalPlanBuilder> = None;
+        for table in tables {
+            let provider = resolved
+                .pin(table)
+                .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
+            let mine: Vec<usize> = members
+                .iter()
+                .copied()
+                .filter(|&i| arms[i].table == table)
+                .collect();
+            let mut lists =
+                vec![make_array(mine.iter().map(|&i| lit(i as i64)).collect()).alias("ci")];
+            for k in 0..width {
+                lists.push(
+                    make_array(mine.iter().map(|&i| ident(&arms[i].columns[k])).collect())
+                        .alias(format!("v{k}")),
+                );
+            }
+            let mut zipped = vec![Column::from_name("ci")];
+            zipped.extend((0..width).map(|k| Column::from_name(format!("v{k}"))));
+            let mut present = col("v0").is_not_null();
+            for k in 1..width {
+                present = present.and(col(format!("v{k}")).is_not_null());
+            }
+            let arm_plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
+                .and_then(|b| b.project(lists))
+                .and_then(|b| b.unnest_columns_with_options(zipped, UnnestOptions::default()))
+                .and_then(|b| b.filter(present))
+                .and_then(|b| b.build())
+                .map_err(|e| bad(e.to_string()))?;
+            union = Some(match union {
+                None => LogicalPlanBuilder::from(arm_plan),
+                Some(u) => u.union(arm_plan).map_err(|e| bad(e.to_string()))?,
+            });
+        }
+        let values = union
+            .expect("nonempty")
+            .distinct()
+            .and_then(|b| b.build())
+            .map_err(|e| bad(e.to_string()))?;
+        let keys: (Vec<Column>, Vec<Column>) = (
+            (0..width)
+                .map(|k| Column::from_qualified_name(format!("a.v{k}")))
+                .collect(),
+            (0..width)
+                .map(|k| Column::from_qualified_name(format!("b.v{k}")))
+                .collect(),
+        );
+        let right = LogicalPlanBuilder::from(values.clone())
+            .alias("b")
+            .and_then(|b| b.build())
+            .map_err(|e| bad(e.to_string()))?;
+        let plan = LogicalPlanBuilder::from(values)
+            .alias("a")
+            .and_then(|b| {
+                b.join_detailed(
+                    right,
+                    JoinType::Inner,
+                    keys,
+                    Some(col("a.ci").lt_eq(col("b.ci"))),
+                    NullEquality::NullEqualsNothing,
+                )
+            })
+            .and_then(|b| b.project(vec![col("a.ci").alias("i"), col("b.ci").alias("j")]))
+            .and_then(|b| b.aggregate(vec![col("i"), col("j")], vec![count(lit(1)).alias("m")]))
+            .and_then(|b| b.build())
+            .map_err(|e| bad(e.to_string()))?;
+        for b in run_plan(state, plan)
+            .await
+            .map_err(bad)?
+            .iter()
+            .filter(|b| b.num_rows() > 0)
+        {
+            let one = std::slice::from_ref(b);
+            let i = int_column(one, "i").map_err(|e| bad(e.to_string()))?;
+            let j = int_column(one, "j").map_err(|e| bad(e.to_string()))?;
+            let m = int_column(one, "m").map_err(|e| bad(e.to_string()))?;
+            for r in 0..b.num_rows() {
+                counts.set(i[r] as usize, j[r] as usize, m[r]);
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// How many rows carry both legs of each combination — one union of
+/// counts, fixed memory, in the combinations' order.
+async fn combo_filled(
+    state: &SessionState,
     resolved: &crate::prepass::Resolved,
     door: &str,
     combos: &[(String, String, String)],
-) -> Result<Vec<ComboStat>, SessionError> {
-    use datafusion::logical_expr::{cast, col};
+) -> Result<Vec<i64>, SessionError> {
+    use datafusion::logical_expr::col;
 
     let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
-    let run = |plan| async {
-        ctx.execute_logical_plan(plan)
-            .await
-            .map_err(|e| bad(e.to_string()))?
-            .collect()
-            .await
-            .map_err(|e| bad(e.to_string()))
-    };
-    let mut out: Vec<ComboStat> = Vec::new();
-    if combos.is_empty() {
-        return Ok(out);
-    }
-
+    let mut out = vec![0i64; combos.len()];
     let mut union: Option<LogicalPlanBuilder> = None;
-    let mut count_plans = Vec::new();
     for (id, (table, a, b)) in combos.iter().enumerate() {
         let provider = resolved
             .pin(table)
             .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
         let both = ident(a).is_not_null().and(ident(b).is_not_null());
-        let arm = LogicalPlanBuilder::scan(
-            table.as_str(),
-            provider_as_source(Arc::clone(&provider)),
-            None,
-        )
-        .and_then(|p| p.filter(both.clone()))
-        .and_then(|p| {
-            p.project(vec![
-                lit(id as i64).alias("ci"),
-                cast(ident(a), DataType::Utf8).alias("va"),
-                cast(ident(b), DataType::Utf8).alias("vb"),
-            ])
-        })
-        .and_then(|p| p.distinct())
-        .and_then(|p| p.build())
-        .map_err(|e| bad(e.to_string()))?;
+        let plan = LogicalPlanBuilder::scan(table.as_str(), provider_as_source(provider), None)
+            .and_then(|p| p.filter(both))
+            .and_then(|p| p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")]))
+            .and_then(|p| p.project(vec![lit(id as i64).alias("ci"), col("c")]))
+            .and_then(|p| p.build())
+            .map_err(|e| bad(e.to_string()))?;
         union = Some(match union {
-            None => LogicalPlanBuilder::from(arm),
-            Some(u) => u.union(arm).map_err(|e| bad(e.to_string()))?,
-        });
-        count_plans.push(
-            LogicalPlanBuilder::scan(table.as_str(), provider_as_source(provider), None)
-                .and_then(|p| p.filter(both))
-                .and_then(|p| p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")]))
-                .and_then(|p| p.project(vec![lit(id as i64).alias("ci"), col("c")]))
-                .and_then(|p| p.build())
-                .map_err(|e| bad(e.to_string()))?,
-        );
-    }
-    for _ in 0..combos.len() {
-        out.push(ComboStat {
-            filled: 0,
-            distinct: 0,
-            set: HashSet::new(),
+            None => LogicalPlanBuilder::from(plan),
+            Some(u) => u.union(plan).map_err(|e| bad(e.to_string()))?,
         });
     }
-    let mut counts_union: Option<LogicalPlanBuilder> = None;
-    for p in count_plans {
-        counts_union = Some(match counts_union {
-            None => LogicalPlanBuilder::from(p),
-            Some(u) => u.union(p).map_err(|e| bad(e.to_string()))?,
-        });
-    }
-    let counts = counts_union
-        .expect("nonempty")
-        .build()
-        .map_err(|e| bad(e.to_string()))?;
-    for b in run(counts).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
-        let c = int_column(std::slice::from_ref(b), "c").map_err(|e| bad(e.to_string()))?;
+    let Some(union) = union else {
+        return Ok(out);
+    };
+    let plan = union.build().map_err(|e| bad(e.to_string()))?;
+    for b in run_plan(state, plan)
+        .await
+        .map_err(bad)?
+        .iter()
+        .filter(|b| b.num_rows() > 0)
+    {
+        let one = std::slice::from_ref(b);
+        let ci = int_column(one, "ci").map_err(|e| bad(e.to_string()))?;
+        let c = int_column(one, "c").map_err(|e| bad(e.to_string()))?;
         for r in 0..b.num_rows() {
-            out[ci[r] as usize].filled = c[r];
+            out[ci[r] as usize] = c[r];
         }
-    }
-    let plan = union
-        .expect("nonempty")
-        .build()
-        .map_err(|e| bad(e.to_string()))?;
-    for b in run(plan).await?.iter().filter(|b| b.num_rows() > 0) {
-        let ci = int_column(std::slice::from_ref(b), "ci").map_err(|e| bad(e.to_string()))?;
-        let va_idx = b.schema().index_of("va").map_err(|e| bad(e.to_string()))?;
-        let vb_idx = b.schema().index_of("vb").map_err(|e| bad(e.to_string()))?;
-        let (va, vb) = (b.column(va_idx), b.column(vb_idx));
-        for r in 0..b.num_rows() {
-            let pair = (
-                array_value_to_string(va, r).map_err(|e| bad(e.to_string()))?,
-                array_value_to_string(vb, r).map_err(|e| bad(e.to_string()))?,
-            );
-            out[ci[r] as usize].set.insert(pair);
-        }
-    }
-    for s in &mut out {
-        s.distinct = s.set.len() as i64;
     }
     Ok(out)
 }
@@ -2703,4 +2784,60 @@ fn band_shape() -> Vec<Field> {
         // complete one.
         Field::new("partial", DataType::Boolean, true),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use datafusion::common::NullEquality;
+    use datafusion::datasource::MemTable;
+    use datafusion::logical_expr::JoinType;
+    use datafusion::physical_plan::displayable;
+
+    use super::*;
+
+    /// The detector's state plans a join as a merge, not a hash: the
+    /// pair pass joins a column's distinct values to themselves, and a
+    /// hash join's build side has no spill path — it refuses instead.
+    /// The knob is on the state, so this is what keeps it plumbed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_detector_joins_by_merge_so_the_pass_can_spill() {
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![Field::new("v", DataType::Int64, true)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+        let provider: Arc<dyn datafusion::catalog::TableProvider> =
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap());
+
+        let side = |alias: &str| {
+            LogicalPlanBuilder::scan("t", provider_as_source(Arc::clone(&provider)), None)
+                .and_then(|b| b.alias(alias))
+                .and_then(|b| b.build())
+                .unwrap()
+        };
+        let plan = LogicalPlanBuilder::from(side("a"))
+            .join_detailed(
+                side("b"),
+                JoinType::Inner,
+                (vec!["a.v"], vec!["b.v"]),
+                None,
+                NullEquality::NullEqualsNothing,
+            )
+            .and_then(|b| b.build())
+            .unwrap();
+
+        let state = detector_state(&ctx);
+        let physical = state.create_physical_plan(&plan).await.unwrap();
+        let rendered = displayable(physical.as_ref()).indent(false).to_string();
+        assert!(
+            rendered.contains("SortMergeJoin"),
+            "the detector's join is a merge join:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("HashJoin"),
+            "no hash join in the detector's plan:\n{rendered}"
+        );
+    }
 }
