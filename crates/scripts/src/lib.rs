@@ -9,7 +9,7 @@
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub mod library;
@@ -28,7 +28,7 @@ use datafusion::arrow::array::{
     RecordBatch, StringArray, UInt64Array,
 };
 use datafusion::arrow::compute::kernels::aggregate;
-use datafusion::arrow::compute::{CastOptions, cast_with_options};
+use datafusion::arrow::compute::{CastOptions, cast_with_options, partition};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
 use glossql_session::{FunctionRuntime, Matrix};
@@ -326,11 +326,11 @@ impl FunctionRuntime for KernelRuntime {
     /// discriminator, over batches.
     fn reconcile(
         &self,
-        y: &[RecordBatch],
-        m: &[RecordBatch],
+        aligned: &[RecordBatch],
+        n_common: i64,
         terms: &[String],
     ) -> Result<Value, String> {
-        reconcile_kernel(y, m, terms.to_vec())
+        reconcile_kernel(aligned, n_common, terms.to_vec())
     }
 
     /// The metric-bands walk's kernel (stage 5): one fit and one read,
@@ -850,8 +850,8 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// summaries; support policy (Wilson, winner, alternatives) stays in
 /// the door.
 fn reconcile_kernel(
-    y: &[RecordBatch],
-    m: &[RecordBatch],
+    aligned: &[RecordBatch],
+    n_common: i64,
     terms: Vec<String>,
 ) -> ScriptResult<Value> {
     let k = terms.len();
@@ -861,74 +861,53 @@ fn reconcile_kernel(
     if k > 64 {
         return fail("more than 64 movement terms — the validity mask is a u64");
     }
-    let ye = cell_keys(&column_of(y, "e")?)?;
-    let yb = cell_keys(&column_of(y, "b")?)?;
-    let yv = as_floats(&column_of(y, "yv")?)?;
-    let me = cell_keys(&column_of(m, "e")?)?;
-    let mb = cell_keys(&column_of(m, "b")?)?;
+    let entity = column_of(aligned, "e")?;
+    let yv = as_floats(&column_of(aligned, "yv")?)?;
     let mut mcols = Vec::with_capacity(k);
     for t in &terms {
-        mcols.push(as_floats(&column_of(m, &format!("s_{t}"))?)?);
+        mcols.push(as_floats(&column_of(aligned, &format!("s_{t}"))?)?);
     }
 
-    let mut mrows: HashMap<(u64, u64), usize> = HashMap::with_capacity(me.len());
-    let mut m_entities: HashSet<u64> = HashSet::new();
-    for i in 0..me.len() {
-        if let (Some(e), Some(b)) = (me[i], mb[i]) {
-            m_entities.insert(e);
-            mrows.insert((e, b), i);
-        }
-    }
-
-    // Contiguous entity segments in y order; a cell pairs a y value
-    // with its matching m row. Cells missing on the m side drop —
-    // intersection pairing, as recorded in the script's header.
-    let mut segments: Vec<Vec<(f64, usize)>> = Vec::new();
-    let mut y_entities: HashSet<u64> = HashSet::new();
-    let mut current: Option<u64> = None;
-    for i in 0..ye.len() {
-        let (Some(e), Some(b)) = (ye[i], yb[i]) else {
-            continue;
-        };
-        if yv.is_null(i) {
-            continue;
-        }
-        y_entities.insert(e);
-        if current != Some(e) {
-            segments.push(Vec::new());
-            current = Some(e);
-        }
-        if let Some(&row) = mrows.get(&(e, b)) {
-            segments
-                .last_mut()
-                .expect("segment exists")
-                .push((yv.value(i), row));
-        }
-    }
-    let n_common = y_entities.intersection(&m_entities).count();
+    // Contiguous entity segments. The two sides arrive aligned and in
+    // entity order — the pairing is the door's join, and cells missing
+    // on either side never reach here — so a segment is a run of equal
+    // keys, which arrow's own partition finds by comparing the values
+    // rather than a hash of them.
+    let ranges = if entity.is_empty() {
+        Vec::new()
+    } else {
+        partition(std::slice::from_ref(&entity))
+            .map_err(|e| e.to_string())?
+            .ranges()
+    };
 
     // Stack the cells: M (cells × k, NULL as 0.0 with a validity bit)
     // and the y vector, segment bounds kept.
-    let ncells: usize = segments.iter().map(Vec::len).sum();
-    let mut mmat = vec![0.0f64; ncells * k];
-    let mut valid = vec![0u64; ncells];
-    let mut yvec = vec![0.0f64; ncells];
-    let mut bounds = Vec::with_capacity(segments.len());
-    let mut at = 0usize;
-    for seg in &segments {
-        let start = at;
-        for &(yval, row) in seg {
-            yvec[at] = yval;
+    let mut mmat: Vec<f64> = Vec::with_capacity(entity.len() * k);
+    let mut valid: Vec<u64> = Vec::with_capacity(entity.len());
+    let mut yvec: Vec<f64> = Vec::with_capacity(entity.len());
+    let mut bounds = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        let start = yvec.len();
+        for row in r {
+            if yv.is_null(row) {
+                continue;
+            }
+            yvec.push(yv.value(row));
+            let mut bits = 0u64;
             for (t, col) in mcols.iter().enumerate() {
-                if !col.is_null(row) {
-                    mmat[at * k + t] = col.value(row);
-                    valid[at] |= 1u64 << t;
+                if col.is_null(row) {
+                    mmat.push(0.0);
+                } else {
+                    mmat.push(col.value(row));
+                    bits |= 1u64 << t;
                 }
             }
-            at += 1;
+            valid.push(bits);
         }
-        bounds.push((start, at - start));
+        bounds.push((start, yvec.len() - start));
     }
+    let ncells = yvec.len();
 
     // Conventions: each term, then every ordered pair difference —
     // v0.3's enumeration, unchanged. Evaluated as M · W in one product.
@@ -1088,7 +1067,7 @@ fn reconcile_kernel(
     }
 
     Ok(json!({
-        "n_common": n_common as i64,
+        "n_common": n_common,
         "summaries": summaries,
     }))
 }

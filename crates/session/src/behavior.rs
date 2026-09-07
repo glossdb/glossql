@@ -69,6 +69,10 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field};
+use datafusion::catalog::TableProvider;
+use datafusion::common::{Column, TableReference};
+use datafusion::datasource::{MemTable, provider_as_source};
+use datafusion::logical_expr::{Expr, JoinType, LogicalPlanBuilder, col};
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
@@ -261,6 +265,28 @@ pub(crate) async fn behavior_anchors(
                 .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
         }
     };
+    // The same, held as a table: the plan's schema first, so an
+    // answer with no batches still mounts, then the batches as one
+    // partition — read as they stand, copied into nothing.
+    let run_table = |q: String| {
+        let shared = Arc::clone(shared);
+        let ctx = ctx.clone();
+        async move {
+            let plan = Box::pin(crate::whatif::build_plan(&shared, &ctx, &q)).await?;
+            let served = ctx
+                .execute_logical_plan(plan)
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+            let schema = Arc::new(served.schema().as_arrow().clone());
+            let batches = served
+                .collect()
+                .await
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+            MemTable::try_new(schema, vec![batches])
+                .map(|t| Arc::new(t) as Arc<dyn TableProvider>)
+                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+        }
+    };
     let bare = |value: Value| rows_batch(vec![value], behavior_shape());
 
     let Some((table, column)) = subject.split_once('.') else {
@@ -381,7 +407,9 @@ pub(crate) async fn behavior_anchors(
     // truncated to; event-grain axes are daily.
     let mut grain_cache: HashMap<String, String> = HashMap::new();
     let mut viable_cache: HashMap<String, i64> = HashMap::new();
-    let mut y_cache: HashMap<String, Vec<RecordBatch>> = HashMap::new();
+    let mut y_cache: HashMap<String, Arc<dyn TableProvider>> = HashMap::new();
+    // The entity intersection per alignment, keyed by its own query.
+    let mut common_cache: HashMap<String, i64> = HashMap::new();
     // The monotone read per (axis, entity, scope): entities with 4+
     // periods, how many never decrease, how many move at all, the
     // steps walked.
@@ -728,46 +756,142 @@ pub(crate) async fn behavior_anchors(
                                 }
 
                                 // Measure-side series, cached per (axis,
-                                // entity, grain, scope); the kernel consumes
-                                // the grouped result directly.
+                                // entity, grain, scope) and held as the
+                                // table it is: a MemTable over the batches
+                                // it already returned, copied into nothing
+                                // (`reads.rs` mounts a door's own rows the
+                                // same way). Held as a table it can be
+                                // joined, so the alignment is a plan.
                                 let ykey = format!("{}|{alabel}|{grain}|{scope}", maxis.label);
                                 if !y_cache.contains_key(&ykey) {
-                                    let yq = run(format!(
+                                    let yt = run_table(format!(
                                         "SELECT {m_e} AS e, \
                                      date_trunc('{grain}', {m_ts}) AS b, \
                                      SUM(CAST(s.{qcol} AS DOUBLE)) AS yv \
                                      FROM {am_from} \
                                      WHERE {m_guard} AND {m_texpr} IS NOT NULL \
                                        AND s.{qcol} IS NOT NULL \
-                                     GROUP BY 1, 2 ORDER BY 1, 2",
+                                     GROUP BY 1, 2",
                                         qcol = qi(column)
                                     ))
                                     .await?;
-                                    y_cache.insert(ykey.clone(), yq);
+                                    y_cache.insert(ykey.clone(), yt);
                                 }
-                                let yq = y_cache[&ykey].clone();
+                                let yt = Arc::clone(&y_cache[&ykey]);
 
-                                // Event-side sums for every term at once.
+                                // Event-side sums for every term at once,
+                                // joined to the measure side in the plan:
+                                // the kernel receives one aligned batch in
+                                // entity order and pairs nothing itself.
+                                // An inner join is the intersection pairing
+                                // the kernel's header records.
                                 let sel: String = terms_pool
                                     .iter()
                                     .map(|c| {
                                         format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c))
                                     })
                                     .collect();
-                                let mq = run(format!(
-                                    "SELECT {e_e} AS e, \
-                                 date_trunc('{grain}', {e_ts}) AS b{sel} \
-                                 FROM {ae_from} \
-                                 WHERE {e_guard} AND {e_texpr} IS NOT NULL \
-                                 GROUP BY 1, 2 ORDER BY 1, 2"
+                                let mp = Box::pin(crate::whatif::build_plan(
+                                    shared,
+                                    &ctx,
+                                    &format!(
+                                        "SELECT {e_e} AS e, \
+                                     date_trunc('{grain}', {e_ts}) AS b{sel} \
+                                     FROM {ae_from} \
+                                     WHERE {e_guard} AND {e_texpr} IS NOT NULL \
+                                     GROUP BY 1, 2"
+                                    ),
                                 ))
                                 .await?;
+                                let mut project = vec![
+                                    col("y.e").alias("e"),
+                                    col("y.b").alias("b"),
+                                    col("y.yv").alias("yv"),
+                                ];
+                                for t in &terms_pool {
+                                    // Through `Column::new`, never a
+                                    // qualified name: a source column may
+                                    // carry a dot and the parse would split
+                                    // on it.
+                                    project.push(
+                                        Expr::Column(Column::new(
+                                            Some(TableReference::bare("m")),
+                                            format!("s_{t}"),
+                                        ))
+                                        .alias(format!("s_{t}")),
+                                    );
+                                }
+                                let aligned =
+                                    LogicalPlanBuilder::scan("y", provider_as_source(yt), None)
+                                        .and_then(|b| {
+                                            LogicalPlanBuilder::from(mp)
+                                                .alias("m")
+                                                .and_then(|m| m.build())
+                                                .and_then(|m| {
+                                                    b.join_on(
+                                                        m,
+                                                        JoinType::Inner,
+                                                        [
+                                                            col("y.e").eq(col("m.e")),
+                                                            col("y.b").eq(col("m.b")),
+                                                        ],
+                                                    )
+                                                })
+                                        })
+                                        .and_then(|b| b.project(project))
+                                        .and_then(|b| {
+                                            b.sort(vec![
+                                                col("e").sort(true, true),
+                                                col("b").sort(true, true),
+                                            ])
+                                        })
+                                        .and_then(|b| b.build())
+                                        .map_err(|e| {
+                                            SessionError::BadSubject(format!("not served: {e}"))
+                                        })?;
+                                let aligned = ctx
+                                    .execute_logical_plan(aligned)
+                                    .await
+                                    .map_err(|e| {
+                                        SessionError::BadSubject(format!("not served: {e}"))
+                                    })?
+                                    .collect()
+                                    .await
+                                    .map_err(|e| {
+                                        SessionError::BadSubject(format!("not served: {e}"))
+                                    })?;
+
+                                // The entity intersection, which the
+                                // alignment cannot answer: an entity on
+                                // both sides with no bucket in common
+                                // carries no cell and still counts in the
+                                // Wilson denominator. Keyed by the query,
+                                // so the key cannot drift from what it
+                                // stands for.
+                                let cq = format!(
+                                    "SELECT count(*) AS n FROM (\
+                                     SELECT {m_e} AS e FROM {am_from} \
+                                     WHERE {m_guard} AND {m_texpr} IS NOT NULL \
+                                       AND s.{qcol} IS NOT NULL GROUP BY 1 \
+                                     INTERSECT \
+                                     SELECT {e_e} AS e FROM {ae_from} \
+                                     WHERE {e_guard} AND {e_texpr} IS NOT NULL \
+                                     GROUP BY 1) AS g",
+                                    qcol = qi(column)
+                                );
+                                if !common_cache.contains_key(&cq) {
+                                    let cb = run(cq.clone()).await?;
+                                    let n = crate::search::int_column(&cb, "n")
+                                        .map(|v| v[0])
+                                        .unwrap_or(0);
+                                    common_cache.insert(cq.clone(), n);
+                                }
+                                let n_common = common_cache[&cq];
 
                                 // The discriminator in one kernel call.
                                 let rec = runtime
-                                    .reconcile(&yq, &mq, &terms_pool)
+                                    .reconcile(&aligned, n_common, &terms_pool)
                                     .map_err(SessionError::Runtime)?;
-                                let n_common = rec["n_common"].as_i64().unwrap_or(0);
                                 let mut summaries: Vec<Value> =
                                     rec["summaries"].as_array().cloned().unwrap_or_default();
                                 for s in &mut summaries {

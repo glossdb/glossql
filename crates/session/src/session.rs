@@ -219,17 +219,21 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     }
 
     /// The stock/flow discriminator behind the behavior-evidence door
-    /// (stage 5): alignment by hash join on typed keys, conventions —
-    /// each term and every ordered pair difference — as one matrix
-    /// product over the stacked entity series, residuals and gates per
-    /// entity. `y` rows are `(e, b, yv)`, `m` rows `(e, b, s_<term>…)`,
-    /// both ordered by (e, b). Returns `{n_common, summaries}` as the
-    /// script kernel did. The runtime that carries the kernel overrides
-    /// this; the default refuses.
+    /// (stage 5): conventions — each term and every ordered pair
+    /// difference — as one matrix product over the stacked entity
+    /// series, residuals and gates per entity. The door aligns the two
+    /// sides in the plan and hands one batch of `(e, b, yv,
+    /// s_<term>…)` ordered by `(e, b)`, so the kernel reads segments
+    /// off it and never pairs rows itself. `n_common` is the entity
+    /// intersection, which the alignment cannot answer: an entity on
+    /// both sides with no bucket in common carries no cell and still
+    /// counts. Returns `{n_common, summaries}` as the script kernel
+    /// did. The runtime that carries the kernel overrides this; the
+    /// default refuses.
     fn reconcile(
         &self,
-        _y: &[RecordBatch],
-        _m: &[RecordBatch],
+        _aligned: &[RecordBatch],
+        _n_common: i64,
         _terms: &[String],
     ) -> Result<Value, String> {
         Err("this runtime carries no reconcile kernel".into())
