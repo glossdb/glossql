@@ -986,3 +986,46 @@ async fn the_grounding_write_measures_a_quoted_column() {
         .unwrap());
     assert_eq!(verb, "stock:evidence");
 }
+
+/// An event table wider than one reconciliation takes — here `moves`
+/// with 65 numeric columns beside the identifier — is not reconciled:
+/// its anchor abstains and names the count, the door still answers,
+/// and with every anchor abstaining the summary carries that reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_table_wider_than_the_kernel_takes_abstains_with_the_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    fixture(&root).await;
+    let wide: String = (1..=64).map(|i| format!(", amount AS a{i}")).collect();
+    let session = behavior_session(
+        dir.path(),
+        &format!(
+            "DECLARE RECIPE ledgers ON fin FROM erp_export AS \
+             $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
+             DECLARE RECIPE positions ON fin FROM erp_export AS \
+             $$SELECT entity, CAST(period AS DATE) AS period, balance, turnover, noise \
+             FROM read_parquet('positions/*.parquet')$$;\n\
+             DECLARE RECIPE moves ON fin FROM erp_export AS \
+             $$SELECT entity, CAST(d AS DATE) AS d, amount{wide} \
+             FROM read_parquet('moves/*.parquet')$$;\n\
+             DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\
+             DECLARE RELATIONSHIP moves.entity -> ledgers.id;"
+        ),
+    )
+    .await;
+    let balance = evidence(&session, "balance").await;
+    assert_eq!(balance["applicable"], true, "{balance}");
+    let anchor = moves_anchor(&balance);
+    assert_eq!(anchor["verdict"], "abstain", "{anchor}");
+    assert_eq!(
+        anchor["reason"], "65 movement terms on moves, above the 64 one reconciliation takes",
+        "{anchor}"
+    );
+    assert_eq!(balance["summary"]["verdict"], "abstain", "{balance}");
+    assert_eq!(
+        balance["summary"]["reason"],
+        "65 movement terms on moves, above the 64 one reconciliation takes",
+        "{balance}"
+    );
+}

@@ -620,6 +620,7 @@ pub(crate) async fn behavior_anchors(
                 if terms_pool.is_empty() {
                     continue;
                 }
+                let too_wide = terms_pool.len() > MAX_TERMS;
 
                 for eaxis in &e_axes {
                     let (e_from, e_texpr) = from_of(ev, eaxis);
@@ -716,7 +717,7 @@ pub(crate) async fn behavior_anchors(
                             // entities with 4+ periods cannot clear the
                             // voting floor.
                             let vkey = format!("viable|{}|{alabel}|{grain}|{scope}", maxis.label);
-                            if !viable_cache.contains_key(&vkey) {
+                            if !too_wide && !viable_cache.contains_key(&vkey) {
                                 let vq = run(format!(
                                     "SELECT count(*) AS v FROM \
                                      (SELECT {m_e} AS e FROM {am_from} \
@@ -741,6 +742,24 @@ pub(crate) async fn behavior_anchors(
                             });
                             let mono_base = base.clone();
                             'reconcile: {
+                                // Wider than the kernel takes: this
+                                // anchor abstains and says why; the
+                                // alignment's other anchors and the
+                                // monotone read still speak.
+                                if too_wide {
+                                    let mut a = base.as_object().expect("object").clone();
+                                    a.insert("verdict".into(), json!("abstain"));
+                                    a.insert(
+                                        "reason".into(),
+                                        json!(format!(
+                                            "{} movement terms on {ev}, above the {MAX_TERMS} one \
+                                             reconciliation takes",
+                                            terms_pool.len()
+                                        )),
+                                    );
+                                    anchors.push(Value::Object(a));
+                                    break 'reconcile;
+                                }
                                 if viable_cache[&vkey] < 2 {
                                     let mut a = base.as_object().expect("object").clone();
                                     a.insert("viable_entities".into(), json!(viable_cache[&vkey]));
@@ -1123,6 +1142,13 @@ pub(crate) async fn behavior_anchors(
 /// Two supports within this are a tie — the one epsilon both election
 /// layers use, per anchor and across them.
 const SUPPORT_EPS: f64 = 1.0e-9;
+
+/// The most movement terms one reconciliation takes. The kernel keys
+/// a cell's validity by one bit per term in a `u64`, and it scores
+/// every term and every ordered pair of them — a cells × terms²
+/// matrix held outside the memory pool. An event table wider than
+/// this is not reconciled; the anchor says so.
+const MAX_TERMS: usize = 64;
 
 /// The winner, the runner-up field, and the anchor's own record — the
 /// policy half the script held, verbatim: support-first; on a support
