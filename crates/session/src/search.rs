@@ -1391,50 +1391,55 @@ async fn pair_counts(
     Ok(counts)
 }
 
-/// How many rows carry both legs of each combination — one union of
-/// counts, fixed memory, in the combinations' order.
+/// How many rows carry both legs of each combination — one aggregate
+/// scan per table with a count per combination, the shape scan's form,
+/// fixed memory, in the combinations' order.
 async fn combo_filled(
     state: &SessionState,
     resolved: &crate::prepass::Resolved,
     door: &str,
     combos: &[(String, String, String)],
 ) -> Result<Vec<i64>, SessionError> {
-    use datafusion::logical_expr::col;
+    use datafusion::logical_expr::when;
 
     let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
     let mut out = vec![0i64; combos.len()];
-    let mut union: Option<LogicalPlanBuilder> = None;
-    for (id, (table, a, b)) in combos.iter().enumerate() {
+    let mut tables: Vec<&str> = Vec::new();
+    for (table, _, _) in combos {
+        if !tables.contains(&table.as_str()) {
+            tables.push(table);
+        }
+    }
+    for table in tables {
         let provider = resolved
             .pin(table)
             .ok_or_else(|| bad(format!("no pin for `{table}`")))?;
-        let both = ident(a).is_not_null().and(ident(b).is_not_null());
-        let plan = LogicalPlanBuilder::scan(table.as_str(), provider_as_source(provider), None)
-            .and_then(|p| p.filter(both))
-            .and_then(|p| p.aggregate(Vec::<Expr>::new(), vec![count(lit(1)).alias("c")]))
-            .and_then(|p| p.project(vec![lit(id as i64).alias("ci"), col("c")]))
+        let mine: Vec<usize> = (0..combos.len())
+            .filter(|&id| combos[id].0 == table)
+            .collect();
+        let mut aggs = Vec::with_capacity(mine.len());
+        for &id in &mine {
+            let (_, a, b) = &combos[id];
+            let both = ident(a).is_not_null().and(ident(b).is_not_null());
+            let one = when(both, lit(1)).end().map_err(|e| bad(e.to_string()))?;
+            aggs.push(count(one).alias(format!("c_{id}")));
+        }
+        let plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
+            .and_then(|p| p.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|p| p.build())
             .map_err(|e| bad(e.to_string()))?;
-        union = Some(match union {
-            None => LogicalPlanBuilder::from(plan),
-            Some(u) => u.union(plan).map_err(|e| bad(e.to_string()))?,
-        });
-    }
-    let Some(union) = union else {
-        return Ok(out);
-    };
-    let plan = union.build().map_err(|e| bad(e.to_string()))?;
-    for b in run_plan(state, plan)
-        .await
-        .map_err(bad)?
-        .iter()
-        .filter(|b| b.num_rows() > 0)
-    {
-        let one = std::slice::from_ref(b);
-        let ci = int_column(one, "ci").map_err(|e| bad(e.to_string()))?;
-        let c = int_column(one, "c").map_err(|e| bad(e.to_string()))?;
-        for r in 0..b.num_rows() {
-            out[ci[r] as usize] = c[r];
+        let batches = run_plan(state, plan).await.map_err(bad)?;
+        let one = batches
+            .iter()
+            .find(|b| b.num_rows() > 0)
+            .ok_or_else(|| bad(format!("the combination scan of `{table}` returned nothing")))?;
+        for (i, &id) in mine.iter().enumerate() {
+            out[id] = one
+                .column(i)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| bad("a count did not read as an integer".into()))?
+                .value(0);
         }
     }
     Ok(out)
