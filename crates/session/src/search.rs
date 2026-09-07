@@ -751,7 +751,6 @@ pub(crate) fn rows_batch(
 /// composites stay future work. Data decides, not names.
 pub(crate) async fn relationship_candidates(
     shared: &Arc<Shared>,
-    resolved: &crate::prepass::Resolved,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
     let door = format!("relationship_candidates('{dataset}')");
