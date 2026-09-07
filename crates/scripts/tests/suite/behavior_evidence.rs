@@ -892,3 +892,97 @@ async fn the_grounding_write_measures_the_column_it_sums() {
         .unwrap());
     assert_eq!(verb, "stock:evidence");
 }
+
+/// An alignment whose two sides share entities but no period — the
+/// event rows sit ten years off the measure's — joins to nothing. The
+/// kernel reads an empty alignment and the anchor abstains; the door
+/// answers, and the monotone read still speaks.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_alignment_with_no_period_in_common_abstains_instead_of_refusing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    fixture(&root).await;
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE ledgers ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
+         DECLARE RECIPE positions ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(period AS DATE) AS period, balance, turnover, noise \
+         FROM read_parquet('positions/*.parquet')$$;\n\
+         DECLARE RECIPE moves ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(CAST(d AS DATE) + INTERVAL '10 years' AS DATE) AS d, amount \
+         FROM read_parquet('moves/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\
+         DECLARE RELATIONSHIP moves.entity -> ledgers.id;",
+    )
+    .await;
+    let balance = evidence(&session, "balance").await;
+    assert_eq!(balance["applicable"], true, "{balance}");
+    let anchor = moves_anchor(&balance);
+    assert_eq!(anchor["verdict"], "abstain", "{anchor}");
+    assert!(
+        anchor["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("no entity series reconciled")),
+        "{anchor}"
+    );
+}
+
+/// The write's measurement reaches a column whose name needs quoting:
+/// the verb's descent names the column as the table spells it, and
+/// the door runs over it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_grounding_write_measures_a_quoted_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    fixture(&root).await;
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE ledgers ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('ledgers/*.parquet')$$;\n\
+         DECLARE RECIPE positions ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(period AS DATE) AS \"Period\", balance AS \"Balance\", \
+         turnover, noise FROM read_parquet('positions/*.parquet')$$;\n\
+         DECLARE RECIPE moves ON fin FROM erp_export AS \
+         $$SELECT entity, CAST(d AS DATE) AS d, amount \
+         FROM read_parquet('moves/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP positions.entity -> ledgers.id;\n\
+         DECLARE RELATIONSHIP moves.entity -> ledgers.id;",
+    )
+    .await;
+    let kit = glossql_scripts::library::KIT;
+    let start = kit.find("DECLARE ASPECT cube").unwrap();
+    let len = kit[start..].find("AS FACT ON DATASET;").unwrap() + "AS FACT ON DATASET;".len();
+    session.execute(&kit[start..start + len]).await.unwrap();
+    session
+        .execute(
+            r##"DECLARE ASPECT temporal_profile WITH $${"type": "object", "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+               DECLARE FUNCTION judge_time FOR GLOBAL AS
+                 $$SELECT true AS applicable, 'month' AS granularity,
+                          named_struct('ratio', 1.0) AS completeness$$
+                 RETURNS temporal_profile;
+               SELECT judge_time() FROM positions."Period";
+               DECLARE ASPECT closing WITH $${"title": "Closing balance"}$$ AS QUERY;
+               GLOSS closing ON fin AS $${"sql": "SELECT \"Period\" AS date, sum(\"Balance\") AS value FROM positions GROUP BY \"Period\""}$$;"##,
+        )
+        .await
+        .unwrap();
+    let landed = one(&session
+        .execute(
+            "SELECT count(*) FROM GLOSSARY(positions.\"Balance\"::behavior_evidence) \
+             WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(landed, "1", "the write landed the verdict");
+    let verb = one(&session
+        .execute(
+            "SELECT behavior || ':' || behavior_basis FROM metric_axes() WHERE metric = 'closing';",
+        )
+        .await
+        .unwrap());
+    assert_eq!(verb, "stock:evidence");
+}

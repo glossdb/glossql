@@ -849,7 +849,13 @@ pub(crate) async fn behavior_anchors(
                                         .map_err(|e| {
                                             SessionError::BadSubject(format!("not served: {e}"))
                                         })?;
-                                let aligned = ctx
+                                // The plan's schema, kept: a join with no
+                                // pair in common collects no batch at all,
+                                // and the kernel still reads its columns —
+                                // an empty intersection is an alignment
+                                // that abstains, not a refusal.
+                                let schema = Arc::new(aligned.schema().as_arrow().clone());
+                                let mut aligned = ctx
                                     .execute_logical_plan(aligned)
                                     .await
                                     .map_err(|e| {
@@ -860,6 +866,9 @@ pub(crate) async fn behavior_anchors(
                                     .map_err(|e| {
                                         SessionError::BadSubject(format!("not served: {e}"))
                                     })?;
+                                if aligned.is_empty() {
+                                    aligned.push(RecordBatch::new_empty(schema));
+                                }
 
                                 // The entity intersection, which the
                                 // alignment cannot answer: an entity on
