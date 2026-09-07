@@ -848,7 +848,11 @@ pub(crate) fn verb_of(
             Some(w) if w != verdict => "evidence over gloss",
             _ => "evidence",
         };
-        return verb(if verdict == "stock" { "stock" } else { "flow" }, basis, current);
+        return verb(
+            if verdict == "stock" { "stock" } else { "flow" },
+            basis,
+            current,
+        );
     }
     if marker == Some("stock") {
         return verb("stock", "marked", true);

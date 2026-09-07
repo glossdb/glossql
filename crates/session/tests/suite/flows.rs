@@ -2729,9 +2729,7 @@ async fn a_grounding_on_a_table_is_refused_with_the_dataset_named() {
     )
     .await;
     let e = session
-        .execute(
-            r#"GLOSS takings ON orders AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#,
-        )
+        .execute(r#"GLOSS takings ON orders AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#)
         .await
         .unwrap_err()
         .to_string();

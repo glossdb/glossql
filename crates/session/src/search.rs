@@ -1541,10 +1541,11 @@ async fn arm_distinct(
         if members.is_empty() {
             continue;
         }
-        let plan = LogicalPlanBuilder::from(distinct_values(resolved, door, arms, &shape, &members)?)
-            .aggregate(vec![col("ci")], vec![count(lit(1)).alias("d")])
-            .and_then(|b| b.build())
-            .map_err(|e| bad(e.to_string()))?;
+        let plan =
+            LogicalPlanBuilder::from(distinct_values(resolved, door, arms, &shape, &members)?)
+                .aggregate(vec![col("ci")], vec![count(lit(1)).alias("d")])
+                .and_then(|b| b.build())
+                .map_err(|e| bad(e.to_string()))?;
         for b in run_plan(state, plan)
             .await
             .map_err(bad)?
@@ -1580,7 +1581,11 @@ async fn cross_counts(
     let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
     let mut out = HashMap::new();
     for (shape, members) in passes(resolved, door, arms)? {
-        let f: Vec<usize> = members.iter().copied().filter(|i| from.contains(i)).collect();
+        let f: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|i| from.contains(i))
+            .collect();
         let t: Vec<usize> = members.iter().copied().filter(|i| to.contains(i)).collect();
         if f.is_empty() || t.is_empty() {
             continue;
@@ -1648,10 +1653,11 @@ async fn combo_filled(
             .and_then(|p| p.build())
             .map_err(|e| bad(e.to_string()))?;
         let batches = run_plan(state, plan).await.map_err(bad)?;
-        let one = batches
-            .iter()
-            .find(|b| b.num_rows() > 0)
-            .ok_or_else(|| bad(format!("the combination scan of `{table}` returned nothing")))?;
+        let one = batches.iter().find(|b| b.num_rows() > 0).ok_or_else(|| {
+            bad(format!(
+                "the combination scan of `{table}` returned nothing"
+            ))
+        })?;
         for (i, &id) in mine.iter().enumerate() {
             out[id] = one
                 .column(i)
