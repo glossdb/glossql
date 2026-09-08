@@ -19,8 +19,10 @@
 mod app;
 mod assets;
 mod builtin;
+mod export;
 mod frames;
 pub mod glossed;
+mod overview;
 mod pages;
 mod remeasure;
 mod rule;
@@ -80,10 +82,14 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// is the gesture the page was drawn for.
 ///
 /// Mounted under `/{dataset}/app`; the dataset arrives in every
-/// handler's path tuple.
+/// handler's path tuple. `/export/<name>.<csv|parquet>` is the one
+/// static segment beside the apps: a relation as a file, no app in
+/// the way. An app named `export` still serves — only its two POST
+/// paths would share the prefix, and they are the docket's.
 pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
     Router::new()
         .route("/", get(pages::home))
+        .route("/export/{file}", get(export::export))
         .route("/{app}", get(pages::index))
         .route("/{app}/p/{page}", get(pages::page))
         .route("/{app}/frames/{frame}", get(frames::frame))

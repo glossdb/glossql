@@ -27,12 +27,14 @@ use std::path::{Path, PathBuf};
 /// crate (the brief refresh, the response stream driver, the TLS door's
 /// task per connection — the shape of axum's own low-level-rustls
 /// example, keeping the handshake off the accept path) and the apps
-/// frame stream — not engine-work scheduling.
+/// crate's two response-stream drivers (a frame as Arrow IPC, a table
+/// or metric as a CSV or Parquet download) — not engine-work
+/// scheduling.
 const CEILING: [(&str, usize); 4] = [
     ("block_in_place", 3),
     ("block_on", 1),
     ("thread_local!", 0),
-    ("tokio::spawn", 4),
+    ("tokio::spawn", 5),
 ];
 
 fn crates_dir() -> PathBuf {

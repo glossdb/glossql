@@ -102,11 +102,16 @@ it does. This door reads and writes; it does not create datasets.
 
 ## `/<dataset>/app` — the door for people
 
-Server-rendered data apps. `http://127.0.0.1:8080/fin/app/docket` is
-the built-in: what is open for a human to judge, what is settled, what
-waits on an act, with the metric surfaces and the record behind them. The URL is the whole state — a filtered view is a link
-someone can send. A workspace's own apps serve beside it at
-`/<dataset>/app/<name>`, one directory per app under `apps/`.
+Server-rendered data apps. `http://127.0.0.1:8080/fin/app` is the
+dataset's page: its landed tables and served metrics, each with a CSV
+and a Parquet download (`/fin/app/export/orders.csv`,
+`/fin/app/export/read.dso.parquet`), and the apps over it.
+`http://127.0.0.1:8080/fin/app/docket` is the built-in app: what is
+open for a human to judge, what is settled, what waits on an act, with
+the metric surfaces and the record behind them. The URL is the whole
+state — a filtered view is a link someone can send. A workspace's own
+apps serve beside it at `/<dataset>/app/<name>`, one directory per app
+under `apps/`.
 
 An app names no dataset; the URL does, so the same app serves every
 dataset and the picker in the header is a link that rewrites the first
@@ -114,9 +119,10 @@ segment. The writes are human acts, signed with the token's subject:
 this is a human door, so every caller that reaches it has human
 standing.
 
-A browser needs no setup: open `http://127.0.0.1:8080/` and the
-server sends it to the issuer to sign in, then brings it back with
-the token in a cookie
+A browser needs no setup: open `http://127.0.0.1:8080/` — the
+workspace root, every dataset at a glance with the way into each —
+and the server sends it to the issuer to sign in, then brings it back
+with the token in a cookie
 (`/auth/login`, `/auth/callback`; `/auth/logout` clears it). The person
 signing in is the token's subject — the same name an agent's connection
 carries when that person is behind it.

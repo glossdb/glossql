@@ -162,6 +162,12 @@ vocabulary. Four macros and a prose block:
   `metric_axes()` frame and offers the grains from there up. Member
   moves are a frame, not a component: rank them in SQL (the docket's
   `drivers.sql` is the shape) and place them with `gl-rows`.
+- `<gl-graph nodes="frames/<nodes>" edges="frames/<edges>">` — column
+  lineage: the tables placed along their key edges, the metrics they
+  feed stacked beside them. The docket's `lineage_nodes.sql` and
+  `lineage_edges.sql` are the two frame shapes (`relationships` plus
+  `metric_sources()`); reuse them, or narrow them in SQL to one
+  metric's tables.
 - The **chip** is the tile's provenance: which read the number comes
   from, with `note` as its hover text — a disclosed assumption, a
   composition rule. A tile without a chip is a number with no address.

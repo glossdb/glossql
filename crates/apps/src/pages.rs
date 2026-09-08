@@ -7,13 +7,14 @@
 //! URL is the only state there is.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use tera::Tera;
 
 use crate::AppDoor;
 use crate::app::AppDef;
+use crate::overview;
 
 const SHELL: &str = include_str!("../templates/shell.html");
 const HOME: &str = include_str!("../templates/home.html");
@@ -63,29 +64,119 @@ async fn admit(door: &AppDoor, dataset: &str) -> Result<Vec<String>, Response> {
     ))
 }
 
-/// The workspace root: every dataset, as a way in.
-pub async fn datasets(State(door): State<AppDoor>) -> Response {
-    let names = door.plane.datasets().await.unwrap_or_default();
+/// The workspace root: every dataset at a glance and the way into
+/// each, the apps, the doors, and how an agent connects. Read from
+/// the record at each visit — one workspace read for the datasets,
+/// one bound read per dataset for its counts.
+pub async fn datasets(State(door): State<AppDoor>, headers: HeaderMap) -> Response {
+    let (mut datasets, error) = match overview::rows(&door, None, overview::DATASETS, &[]).await {
+        Ok(rows) => (rows, String::new()),
+        Err(e) => (Vec::new(), e),
+    };
+    let names: Vec<String> = datasets
+        .iter()
+        .filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut glossed = Vec::new();
+    for (row, name) in datasets.iter_mut().zip(&names) {
+        match overview::rows(&door, Some(name), overview::COUNTS, &[]).await {
+            Ok(counts) => {
+                if let (Some(into), Some(Value::Object(from))) =
+                    (row.as_object_mut(), counts.first())
+                {
+                    into.extend(from.clone());
+                }
+            }
+            Err(e) => {
+                if let Some(into) = row.as_object_mut() {
+                    into.insert("error".into(), Value::String(e));
+                }
+            }
+        }
+        glossed.extend(crate::glossed::parts(&door, name).await);
+    }
+    overview::grouped(
+        &mut datasets,
+        &["tables", "rows", "served", "stopped", "open"],
+    );
+    overview::minute(&mut datasets, "landed");
+    // An app names no dataset, so a directory or built-in app serves
+    // every one; a glossed app serves the dataset it was glossed in.
+    let apps: Vec<Value> = AppDef::list(&door.workspace, &glossed)
+        .iter()
+        .map(|a| {
+            let serves: Vec<&String> = if a.origin() == "glossed" {
+                let mut in_datasets: Vec<&String> = glossed
+                    .iter()
+                    .filter(|p| p.app == a.name)
+                    .map(|p| &p.dataset)
+                    .collect();
+                in_datasets.sort();
+                in_datasets.dedup();
+                in_datasets
+            } else {
+                names.iter().collect()
+            };
+            json!({ "name": a.name, "title": a.title, "origin": a.origin(), "datasets": serves })
+        })
+        .collect();
     let mut ctx = tera::Context::new();
-    ctx.insert("datasets", &names);
+    ctx.insert("datasets", &datasets);
+    ctx.insert("error", &error);
+    ctx.insert("apps", &apps);
+    ctx.insert("origin", &origin(&headers));
     render("datasets.html", ctx, base_tera())
+}
+
+/// The server's own address as the browser reached it, for the
+/// connect snippet — the scheme a proxy forwarded, else the plain one.
+fn origin(headers: &HeaderMap) -> String {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<this server>");
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    format!("{scheme}://{host}")
 }
 
 pub async fn home(
     State(door): State<AppDoor>,
     Path(dataset): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
+    headers: HeaderMap,
 ) -> Response {
     let datasets = match admit(&door, &dataset).await {
         Ok(names) => names,
         Err(response) => return response,
     };
     let glossed = crate::glossed::parts(&door, &dataset).await;
+    // The dataset's page: what has landed and what is served, each
+    // row a file away, then the apps over it.
+    let (mut tables, tables_error) =
+        match overview::rows(&door, Some(&dataset), overview::TABLES, &[]).await {
+            Ok(rows) => (rows, String::new()),
+            Err(e) => (Vec::new(), e),
+        };
+    overview::grouped(&mut tables, &["columns", "rows", "nulled"]);
+    overview::minute(&mut tables, "landed");
+    let (metrics, metrics_error) =
+        match overview::rows(&door, Some(&dataset), overview::METRICS, &[]).await {
+            Ok(rows) => (rows, String::new()),
+            Err(e) => (Vec::new(), e),
+        };
     let mut ctx = tera::Context::new();
     ctx.insert("apps", &apps_json(&door.workspace, &glossed));
     ctx.insert("dataset", &dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
+    ctx.insert("tables", &tables);
+    ctx.insert("tables_error", &tables_error);
+    ctx.insert("metrics", &metrics);
+    ctx.insert("metrics_error", &metrics_error);
+    ctx.insert("origin", &origin(&headers));
     render("home.html", ctx, base_tera())
 }
 

@@ -7,6 +7,8 @@ One binary, one listener.
 /mcp                       the agent door
 /<dataset>/query           the Arrow door
 /<dataset>/app             the app door
+/<dataset>/app/export/<name>.csv | .parquet
+                           a table or a served metric as a file
 /assets/<file>             the app door's embedded assets
 /auth/login, /auth/callback, /auth/logout
                            the browser's way to a token
@@ -241,12 +243,29 @@ sequence carries the outcomes of the statements that stood under
 ## `/<dataset>/app` — the app door
 
 Server-rendered data apps (see [`apps.md`](../concepts/apps.md) for
-authoring). Routes: `/<dataset>/app` (the app list),
+authoring). Routes: `/<dataset>/app` (the dataset's page),
 `/<dataset>/app/{app}`, `/<dataset>/app/{app}/p/{page}`,
 `/<dataset>/app/{app}/frames/{frame}`,
-`/<dataset>/app/{app}/specs/{spec}`, and two writes,
+`/<dataset>/app/{app}/specs/{spec}`,
+`/<dataset>/app/export/{name}.csv` and `.parquet`, and two writes,
 `POST /<dataset>/app/{app}/rule` and `.../remeasure`. The vendored
 assets are not dataset-scoped and serve at `/assets/{file}`.
+
+- **The dataset's page.** `/<dataset>/app` lists what has landed (the
+  newest landing per table: rows, cells its casts nulled, when) and
+  every metric with where it stands (`metric_surfaces`), each a file
+  away, then the apps over the dataset. The workspace root, `/`, is
+  the same at a glance for every dataset, with the apps, the doors and
+  the connect line.
+- **A relation as a file.** `GET /<dataset>/app/export/<name>.csv` or
+  `.parquet`, where `<name>` is a table or `read.<aspect>`, streams
+  the relation as it stands at the read — the same channel and plan as
+  a frame, the same streaming shape as `/query`, nothing stored twice.
+  Parquet keeps the engine's types; CSV is text. The name is an
+  identifier and nothing else, so a name the dataset does not hold is
+  the engine's refusal (422) with its text; a format other than the
+  two is 404. Anything a file does not answer — a read of the caller's
+  own, a filter — is the Arrow door's.
 
 - **An app names no dataset.** The URL binds it, so one app serves
   every dataset in the workspace and the header's picker is a link that

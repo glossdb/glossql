@@ -5,8 +5,8 @@
 //! is the shape an agent over MCP can write.
 //!
 //! One ships: the docket — what stands open for a human to judge, what
-//! has been settled, what waits on an act, with the metric surfaces
-//! and the record behind it (one app, not a model app beside a
+//! has been settled, what waits on an act, with the metric surfaces,
+//! the record behind it and the column lineage (one app, not a model app beside a
 //! metrics app: they were two faces of one workspace, and
 //! keeping them apart meant deriving the same counts twice).
 //! Built-ins move in lockstep with the binary instead of going stale
@@ -33,6 +33,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("index.html"),
         docket!("metrics.html"),
         docket!("record.html"),
+        docket!("lineage.html"),
         docket!("frames/assumptions.sql"),
         docket!("frames/axes.sql"),
         docket!("frames/census.sql"),
@@ -43,6 +44,8 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/fact.sql"),
         docket!("frames/front.sql"),
         docket!("frames/latest.sql"),
+        docket!("frames/lineage_edges.sql"),
+        docket!("frames/lineage_nodes.sql"),
         docket!("frames/metric.sql"),
         docket!("frames/open.sql"),
         docket!("frames/owed.sql"),

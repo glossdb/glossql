@@ -12,11 +12,13 @@
 <script src="/assets/vendor/vega-lite.min.js"></script>
 <script src="/assets/vendor/vega-embed.min.js"></script>
 <script src="/assets/vendor/arrow.min.js"></script>
+<script src="/assets/vendor/dagre.min.js"></script>
 <script src="/assets/store.js"></script>
 <script src="/assets/gl-window.js"></script>
 <script src="/assets/gl-chart.js"></script>
 <script src="/assets/gl-value.js"></script>
 <script src="/assets/gl-rows.js"></script>
+<script src="/assets/gl-graph.js"></script>
 </head>
 <body hx-boost="true" hx-indicator=".load-bar"{% if app %} data-approot="/{{ dataset }}/app/{{ app.name }}/"{% endif %}>
 <header class="shell-nav">
@@ -32,7 +34,8 @@
     {% if app %}<span class="ws">{{ app.title }}</span>{% endif %}
     <nav>
       {% for a in apps %}{% if not app or a.name != app.name %}<a href="/{{ dataset }}/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
-      <a{% if not app %} class="current"{% endif %} href="/{{ dataset }}/app">Apps</a>
+      {# The dataset's own page — its tables, its served metrics, its apps. #}
+      <a{% if not app %} class="current"{% endif %} href="/{{ dataset }}/app">{{ dataset }}</a>
     </nav>
   </div>
 </header>

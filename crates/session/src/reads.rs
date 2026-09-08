@@ -697,6 +697,7 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "metric_band_walk"
                 | "band_points"
                 | "metric_axes"
+                | "metric_sources"
                 | "behavior_anchors"
         )
     })
@@ -742,7 +743,7 @@ pub(crate) fn door_reads(
         }
         // The slot walkers: collapsed groundings (glossary, aspects,
         // witnesses for the collapse) run over the landed data.
-        ("grounding_collisions" | "metric_band_walk", _) => {
+        ("grounding_collisions" | "metric_band_walk" | "metric_sources", _) => {
             reads.all_tables = true;
             reads
                 .relations
@@ -910,6 +911,17 @@ pub(crate) async fn compute_batch(
                 ));
             }
             Ok(Some((crate::search::fact_values(shared).await?).into()))
+        }
+        // What feeds each grounding: the served fields and the table
+        // columns they descend from — the cube's provenance walk as
+        // rows, for a page that draws lineage.
+        ("metric_sources", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "metric_sources() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::search::metric_sources(shared).await?).into()))
         }
         // The recorded walk, flattened: what `metric_bands` landed for
         // the bound dataset, one row per metric per point.

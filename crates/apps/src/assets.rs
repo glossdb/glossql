@@ -23,11 +23,13 @@ const ASSETS: &[(&str, &[u8], &str)] = &[
     asset!("gl-value.js", "text/javascript"),
     asset!("gl-rows.js", "text/javascript"),
     asset!("gl-window.js", "text/javascript"),
+    asset!("gl-graph.js", "text/javascript"),
     asset!("vendor/htmx.min.js", "text/javascript"),
     asset!("vendor/vega.min.js", "text/javascript"),
     asset!("vendor/vega-lite.min.js", "text/javascript"),
     asset!("vendor/vega-embed.min.js", "text/javascript"),
     asset!("vendor/arrow.min.js", "text/javascript"),
+    asset!("vendor/dagre.min.js", "text/javascript"),
 ];
 
 pub async fn asset(Path(file): Path<String>) -> Response {

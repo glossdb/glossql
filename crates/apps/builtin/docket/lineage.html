@@ -1,0 +1,32 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# Column lineage: the tables on the left laid out along their key
+   edges, the metrics they feed on the right. Every line is a row of
+   the record — a declared relationship or a grounding's provenance —
+   and the element only draws them. #}
+<nav class="crumbs">
+  <a href="/{{ dataset }}/app/docket">Open</a>
+  <a href="/{{ dataset }}/app/docket/p/metrics">Metrics</a>
+  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
+  <span class="here">Lineage</span>
+</nav>
+
+<div class="tiles">
+  <section class="tile">
+    <header><span class="eyebrow">Column lineage</span>
+      <code class="chip" title="Every declared key edge between columns, and for each served metric the table columns its grounding descends from — the provenance walk the cube already runs, served as rows by metric_sources().">relationships · metric_sources()</code></header>
+    <p class="hint">Tables on the left, the metrics they feed on the right. A solid line is a declared key edge; a dashed one is a grounding reading the column. Columns with nothing attached fold under their table — open them from the count. Hover a column to follow it; clicking puts it in the URL, so the view is a link.</p>
+    <div class="graph-wrap">
+      <gl-graph nodes="frames/lineage_nodes" edges="frames/lineage_edges"
+                empty="nothing landed yet — a table lands through a recipe, and an edge is declared over two of its columns"></gl-graph>
+    </div>
+    <div class="legend">
+      <span><svg width="26" height="8" aria-hidden="true"><path d="M1 4 H25" class="lg-key"/></svg>declared key edge (→ many-to-one, ↔ one-to-one)</span>
+      <span><svg width="26" height="8" aria-hidden="true"><path d="M1 4 H25" class="lg-reads"/></svg>a grounding reads the column</span>
+      <span><span class="role-measure">measure</span> · key · dimension · timestamp — the column's judged role</span>
+    </div>
+  </section>
+</div>
+{% endblock main %}

@@ -3017,6 +3017,73 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
     )
 }
 
+/// `metric_sources()` — which dataset table columns each served field
+/// of every current grounding descends from: `metric`, `field`,
+/// `source` (`table.column`), one row per field and source — a union
+/// descends from every arm's column. A computed field (an aggregate,
+/// an expression) descends from no column and has no row. A grounding
+/// its author stopped, or one the engine cannot plan, serves one row
+/// with `reason` and no field. The walk is the cube's own
+/// (`provenance::served_sources`); this read serves it, so a page can
+/// draw what feeds a metric without building the cube. Requires a
+/// bound dataset.
+pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let ctx = shared.session_ctx();
+    let rctx = shared.read_context().await?;
+    let mut out = Vec::new();
+    for slot in current_query_slots(&rctx, &dataset).await? {
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+            continue;
+        };
+        let reason = |why: String| json!({ "metric": slot.aspect, "reason": why });
+        if let Some(stopped) = body.get("stopped").and_then(Value::as_str) {
+            out.push(reason(format!("stopped: {stopped}")));
+            continue;
+        }
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+        let plan = match Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await {
+            Ok(plan) => plan,
+            Err(e) => {
+                out.push(reason(format!("not served: {e}")));
+                continue;
+            }
+        };
+        let sources = crate::provenance::served_sources(&plan, &dataset);
+        let mut any = false;
+        for field in plan.schema().fields() {
+            let Some(columns) = sources.get(field.name()) else {
+                continue;
+            };
+            for source in columns {
+                any = true;
+                out.push(json!({ "metric": slot.aspect, "field": field.name(), "source": source }));
+            }
+        }
+        if !any {
+            out.push(reason(
+                "no served field descends from a table column".into(),
+            ));
+        }
+    }
+    rows_batch(
+        out,
+        vec![
+            Field::new("metric", DataType::Utf8, true),
+            Field::new("field", DataType::Utf8, true),
+            Field::new("source", DataType::Utf8, true),
+            Field::new("reason", DataType::Utf8, true),
+        ],
+    )
+}
+
 /// The series' resolution, where it has one: a series that repeats a
 /// value moves on a grid, and the smallest gap between two of its
 /// values is the grid's step — 0.0 when it takes one value only. A

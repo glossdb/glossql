@@ -172,6 +172,16 @@ impl AppDef {
         apps
     }
 
+    /// Where the app comes from, for a listing: the binary, a
+    /// workspace directory, or glosses.
+    pub fn origin(&self) -> &'static str {
+        match &self.source {
+            Source::Dir(_) => "workspace directory",
+            Source::Glossed(_) => "glossed",
+            Source::Builtin(_) => "built in",
+        }
+    }
+
     /// A file inside the app, by root-relative location, guarded
     /// against escaping it.
     pub fn read(&self, sub: &str, name: &str) -> Option<String> {

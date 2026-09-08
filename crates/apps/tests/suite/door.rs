@@ -93,6 +93,10 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     // verified caller in the request; here the layer stands in for it,
     // with human standing, as the gate stamps on a human door.
     let router = Router::new()
+        .merge(glossql_apps::root_router(
+            Arc::clone(&plane),
+            workspace.clone(),
+        ))
         .nest(
             "/{dataset}/app",
             glossql_apps::router(Arc::clone(&plane), workspace),
@@ -1387,4 +1391,340 @@ async fn a_ruling_answers_with_the_write_event_never_a_navigation() {
             "referer {referer:?}"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_root_lists_every_dataset_at_a_glance() {
+    // The workspace root: each dataset with what landed, what is served
+    // and what waits on a person, the apps with the datasets they
+    // serve, the doors, the connect line — every number the record's.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let root = get(&app, "/").await;
+    assert_eq!(root.status(), StatusCode::OK);
+    let root = text(root).await;
+    assert!(root.contains("app door test"), "the purpose:\n{root}");
+    assert!(root.contains("1 table · 3 rows"), "the landing:\n{root}");
+    assert!(
+        root.contains("2 metrics served"),
+        "dso and payables:\n{root}"
+    );
+    assert!(
+        root.contains("1 question waits on you"),
+        "the per-line assumption at 0.7:\n{root}"
+    );
+    // The second dataset, empty, still lists with its own way in.
+    assert!(root.contains("multi-dataset guard"), "{root}");
+    assert!(root.contains("href=\"/second/app\""), "{root}");
+    assert!(root.contains("nothing open"), "{root}");
+    // An app names no dataset: the built-in and the directory app
+    // serve both.
+    assert!(root.contains("href=\"/perf/app/docket\""), "{root}");
+    assert!(root.contains("href=\"/second/app/docket\""), "{root}");
+    assert!(root.contains("href=\"/second/app/perf\""), "{root}");
+    assert!(root.contains("workspace directory"), "{root}");
+    assert!(root.contains("built in"), "{root}");
+    // The doors and the connect line.
+    assert!(root.contains("the agent door"), "{root}");
+    assert!(root.contains("claude mcp add"), "{root}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_dataset_page_lists_tables_and_served_metrics() {
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let home = get(&app, "/perf/app").await;
+    assert_eq!(home.status(), StatusCode::OK);
+    let home = text(home).await;
+    // The landed table with its shape and its two files.
+    assert!(home.contains("ledger"), "{home}");
+    assert!(home.contains("3 columns"), "{home}");
+    assert!(
+        // A download is the browser's to save: the link opts out of
+        // the shell's hx-boost, which would otherwise swap the file's
+        // text into the page.
+        home.contains("hx-boost=\"false\" download href=\"/perf/app/export/ledger.csv\""),
+        "{home}"
+    );
+    assert!(
+        home.contains("href=\"/perf/app/export/ledger.parquet\""),
+        "{home}"
+    );
+    // The served metrics as their relations, with the definition's
+    // meaning beside them.
+    assert!(home.contains("read.dso()"), "{home}");
+    assert!(home.contains("receivables outstanding"), "{home}");
+    assert!(
+        home.contains("href=\"/perf/app/export/read.dso.csv\""),
+        "{home}"
+    );
+    assert!(home.contains("read.payables()"), "{home}");
+    // The apps still list, and the bar's last link is the dataset.
+    assert!(home.contains("Perf"), "{home}");
+    assert!(home.contains(">perf</a>"), "{home}");
+
+    // A dataset with nothing landed says so.
+    let second = text(get(&app, "/second/app").await).await;
+    assert!(second.contains("Nothing has landed"), "{second}");
+    assert!(second.contains("No metric is served"), "{second}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_table_downloads_as_csv_and_parquet() {
+    let (app, _plane, _dir) = workspace().await;
+
+    let csv = get(&app, "/perf/app/export/ledger.csv").await;
+    assert_eq!(csv.status(), StatusCode::OK);
+    assert_eq!(
+        csv.headers()[header::CONTENT_TYPE],
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(
+        csv.headers()[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"ledger.csv\""
+    );
+    let body = text(csv).await;
+    let mut lines = body.lines();
+    assert_eq!(lines.next(), Some("month,cohort,value"), "{body}");
+    assert_eq!(lines.count(), 3, "{body}");
+    assert!(body.contains("2026-01-01,a,10.5"), "{body}");
+
+    let parquet = get(&app, "/perf/app/export/ledger.parquet").await;
+    assert_eq!(parquet.status(), StatusCode::OK);
+    assert_eq!(
+        parquet.headers()[header::CONTENT_TYPE],
+        "application/vnd.apache.parquet"
+    );
+    assert_eq!(
+        parquet.headers()[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"ledger.parquet\""
+    );
+    let bytes = to_bytes(parquet.into_body(), usize::MAX).await.unwrap();
+    let builder =
+        datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .unwrap();
+    // The engine's types survive the file: the cast date and double.
+    let schema = builder.schema().clone();
+    assert_eq!(
+        schema.field_with_name("month").unwrap().data_type(),
+        &datafusion::arrow::datatypes::DataType::Date32
+    );
+    assert_eq!(
+        schema.field_with_name("value").unwrap().data_type(),
+        &datafusion::arrow::datatypes::DataType::Float64
+    );
+    let rows: usize = builder
+        .build()
+        .unwrap()
+        .map(|batch| batch.unwrap().num_rows())
+        .sum();
+    assert_eq!(rows, 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_served_metric_downloads_its_relation() {
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+
+    let csv = get(&app, "/perf/app/export/read.dso.csv").await;
+    assert_eq!(csv.status(), StatusCode::OK);
+    let body = text(csv).await;
+    let mut lines = body.lines();
+    assert_eq!(lines.next(), Some("month,value,cohort"), "{body}");
+    assert_eq!(lines.count(), 3, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_refuses_what_it_should() {
+    let (app, _plane, _dir) = workspace().await;
+
+    // An unknown dataset names the ones there are.
+    let missing = get(&app, "/nope/app/export/ledger.csv").await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(text(missing).await.contains("perf"));
+
+    // A format that is not one of the two.
+    let xlsx = get(&app, "/perf/app/export/ledger.xlsx").await;
+    assert_eq!(xlsx.status(), StatusCode::NOT_FOUND);
+    assert!(text(xlsx).await.contains("csv or parquet"));
+
+    // No format at all.
+    let bare = get(&app, "/perf/app/export/ledger").await;
+    assert_eq!(bare.status(), StatusCode::NOT_FOUND);
+
+    // A name that is not an identifier never reaches the planner.
+    let walk = get(&app, "/perf/app/export/..%2Fledger.csv").await;
+    assert_eq!(walk.status(), StatusCode::NOT_FOUND);
+    let spliced = get(
+        &app,
+        "/perf/app/export/ledger%3B%20DROP%20TABLE%20ledger.csv",
+    )
+    .await;
+    assert_eq!(spliced.status(), StatusCode::NOT_FOUND);
+
+    // A table or a metric the dataset does not hold is the engine's
+    // refusal, with its text.
+    let table = get(&app, "/perf/app/export/nothing.csv").await;
+    assert_eq!(table.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(text(table).await.contains("nothing"));
+    let metric = get(&app, "/perf/app/export/read.nothing.parquet").await;
+    assert_eq!(metric.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The table is still there.
+    let csv = get(&app, "/perf/app/export/ledger.csv").await;
+    assert_eq!(csv.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_lineage_page_draws_the_record() {
+    // The graph's two frames are the record as rows: every column of
+    // every landed table, every declared key edge, and for every
+    // grounding the columns its served fields descend from. A second
+    // table and an edge between them give the key half something to
+    // say; the seeded groundings give the reads half.
+    let (app, plane, dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    let agent = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    agent
+        .execute(&format!(
+            "USE perf;\n\
+             DECLARE SOURCE erp2 SET (type: csv, location: '{}');\n\
+             DECLARE RECIPE cohorts ON perf FROM erp2 AS $$\
+               SELECT DISTINCT cohort FROM read_csv('ledger.csv')$$;\n\
+             DECLARE RELATIONSHIP ledger.cohort -> cohorts.cohort;",
+            dir.path().display()
+        ))
+        .await
+        .unwrap();
+
+    let page = get(&app, "/perf/app/docket/p/lineage").await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = text(page).await;
+    assert!(
+        page.contains("<gl-graph nodes=\"frames/lineage_nodes\" edges=\"frames/lineage_edges\""),
+        "{page}"
+    );
+    // The other pages carry the fourth tab.
+    let open = text(get(&app, "/perf/app/docket").await).await;
+    assert!(open.contains("/perf/app/docket/p/lineage"), "{open}");
+
+    // Nodes: the two tables' columns in order, and the grounding's
+    // served fields under the metric; a grounding with only an
+    // aggregate (payables) has no field to show.
+    let nodes = get(&app, "/perf/app/docket/frames/lineage_nodes").await;
+    assert_eq!(nodes.status(), StatusCode::OK);
+    let bytes = to_bytes(nodes.into_body(), usize::MAX).await.unwrap();
+    let reader =
+        arrow_ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+            .unwrap();
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        let col = |name: &str| {
+            batch
+                .column(batch.schema().index_of(name).unwrap())
+                .as_any()
+                .downcast_ref::<datafusion::arrow::array::StringArray>()
+                .unwrap()
+                .clone()
+        };
+        let (node, kind, c, role) = (col("node"), col("kind"), col("col"), col("role"));
+        for i in 0..batch.num_rows() {
+            rows.push((
+                node.value(i).into(),
+                kind.value(i).into(),
+                c.value(i).into(),
+                role.value(i).into(),
+            ));
+        }
+    }
+    let has = |node: &str, col: &str| rows.iter().any(|r| r.0 == node && r.2 == col);
+    assert!(has("ledger", "month"), "{rows:?}");
+    assert!(has("ledger", "cohort"), "{rows:?}");
+    assert!(has("ledger", "value"), "{rows:?}");
+    assert!(has("cohorts", "cohort"), "{rows:?}");
+    assert!(has("read.dso()", "month"), "{rows:?}");
+    assert!(has("read.dso()", "cohort"), "{rows:?}");
+    assert!(
+        !rows.iter().any(|r| r.0 == "read.payables()"),
+        "an aggregate descends from no column:\n{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.0 == "read.dso()" && r.1 == "metric"),
+        "{rows:?}"
+    );
+    // The format's metadata tables sit beside every landed one in
+    // information_schema; the record's tables are the nodes.
+    assert!(
+        !rows.iter().any(|r| r.0.contains('$')),
+        "a metadata table leaked into the nodes:\n{rows:?}"
+    );
+
+    // Edges: the declared key edge and the grounding's three reads.
+    let edges = get(&app, "/perf/app/docket/frames/lineage_edges").await;
+    assert_eq!(edges.status(), StatusCode::OK);
+    let bytes = to_bytes(edges.into_body(), usize::MAX).await.unwrap();
+    let reader =
+        arrow_ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+            .unwrap();
+    let mut edges: Vec<(String, String, String)> = Vec::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        let col = |name: &str| {
+            batch
+                .column(batch.schema().index_of(name).unwrap())
+                .as_any()
+                .downcast_ref::<datafusion::arrow::array::StringArray>()
+                .unwrap()
+                .clone()
+        };
+        let (src, dst, kind) = (col("src"), col("dst"), col("kind"));
+        for i in 0..batch.num_rows() {
+            edges.push((
+                src.value(i).into(),
+                dst.value(i).into(),
+                kind.value(i).into(),
+            ));
+        }
+    }
+    assert!(
+        edges.contains(&(
+            "ledger.cohort".into(),
+            "cohorts.cohort".into(),
+            "m2o".into()
+        )),
+        "{edges:?}"
+    );
+    assert!(
+        edges.contains(&(
+            "ledger.month".into(),
+            "read.dso().month".into(),
+            "reads".into()
+        )),
+        "{edges:?}"
+    );
+    assert!(
+        edges.contains(&(
+            "ledger.value".into(),
+            "read.dso().value".into(),
+            "reads".into()
+        )),
+        "{edges:?}"
+    );
+    assert_eq!(
+        edges.iter().filter(|e| e.2 == "reads").count(),
+        3,
+        "{edges:?}"
+    );
 }

@@ -159,6 +159,7 @@ like any table, filters riding WHERE:
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every metric of the bound dataset with its unit, meaning, formula, whether it is grounded and the `stopped` text where the author serves no number — the record; a metric is the dataset's when a grounding or a registry entry stands there; the cube's numbers are `metric_series()` and `metric_axes()` |
 | `band_points()` | the recorded `metric_bands` walk as rows, one per metric per month, with each point's displacement — which metric and which month a red band verdict rests on, without re-running the walk |
+| `metric_sources()` | what feeds each grounding — one row per served field and the table column it descends from (`metric`, `field`, `source`); an aggregate has no row, a stopped or unplannable grounding serves its `reason`; the docket's lineage tab draws these beside `relationships` |
 | `source_files('erp')` | every file under a declared source's location — `path`, `size`, `modified` — what a recipe can name; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps` teaches writing one) |
 | `current_dataset` | the dataset your `USE` bound, as a one-row relation — join it to narrow a read that answers for the whole workspace |

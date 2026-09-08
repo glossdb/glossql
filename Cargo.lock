@@ -3254,6 +3254,7 @@ name = "glossql-apps"
 version = "0.1.2"
 dependencies = [
  "arrow-ipc",
+ "arrow-json",
  "axum",
  "datafusion",
  "futures",
@@ -3269,6 +3270,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tower",
+ "tracing",
 ]
 
 [[package]]

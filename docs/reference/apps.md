@@ -105,6 +105,14 @@ The other tiles:
   links over the page URL (`grain`, `span`); it reads the metric's
   resolution from a `metric_axes()` frame and offers the grains from
   there up.
+- `<gl-graph nodes="frames/x" edges="frames/y" empty="…">` — column
+  lineage over two frames: nodes one row per column (`node`, `kind`
+  as `table` or `metric`, `col`, `ord`, `role`), edges one row per
+  edge (`src`, `dst` as column paths, `kind` as `m2o`, `o2o` or
+  `reads`). dagre places the tables along their key edges, the
+  metrics stack on the right, and the element draws the rest as SVG.
+  Columns nothing touches fold under a count; hover follows a column;
+  a click puts it in the URL as `focus`.
 
 After the docket's two writes the door answers with an event, never a
 navigation: a ruling with `HX-Trigger: glossql:written`, on which the
@@ -121,6 +129,7 @@ connected tile refetches in place; instruments keep their DOM.
 `crates/apps/builtin/docket/` — the reference app and the standing
 example: what stands open for a human to judge, what has been settled,
 what waits on an act, the metric surfaces and the record behind them.
-Pages `index.html`, `metrics.html`, `record.html`; seventeen frames
-over the shipped reads and the cube's two reads; one spec. Every built-in
-frame parses under the test suite.
+Pages `index.html`, `metrics.html`, `record.html`, `lineage.html`;
+nineteen frames over the shipped reads, the cube's two reads and
+`metric_sources()`; one spec. Every built-in frame parses under the
+test suite.

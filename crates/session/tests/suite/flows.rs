@@ -2751,3 +2751,48 @@ async fn a_grounding_on_a_table_is_refused_with_the_dataset_named() {
     let n = table(&session, "SELECT count(*) FROM read.takings();").await;
     assert!(!n.contains("| 0 "), "{n}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metric_sources_serves_the_provenance_walk_as_rows() {
+    // What feeds a grounding, as rows: a served field that descends
+    // from a table column names it; an aggregate descends from none; a
+    // stopped grounding and one the engine refuses each serve their
+    // reason and no field.
+    let (_dir, session) = agent_session().await;
+    run(
+        &session,
+        "DECLARE DATASET fin SET (purpose: 'lineage'); USE fin;",
+    )
+    .await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY ON DATASET;
+           DECLARE ASPECT halted WITH $${"title": "Halted"}$$ AS QUERY ON DATASET;
+           DECLARE ASPECT broken WITH $${"title": "Broken"}$$ AS QUERY ON DATASET;
+           GLOSS spend ON fin AS $${"sql": "SELECT customer_id AS cust, sum(amount) AS value FROM orders GROUP BY 1"}$$;
+           GLOSS halted ON fin AS $${"stopped": "the export lacks the column"}$$;
+           GLOSS broken ON fin AS $${"sql": "SELECT nothing FROM nowhere"}$$;"#,
+    )
+    .await;
+    let rows = table(
+        &session,
+        "SELECT metric, field, source, reason FROM metric_sources() ORDER BY metric, field;",
+    )
+    .await;
+    assert!(rows.contains("orders.customer_id"), "{rows}");
+    assert!(rows.contains("cust"), "{rows}");
+    // The sum is computed: no source row names `value`.
+    assert!(!rows.contains("| value"), "{rows}");
+    assert!(
+        rows.contains("stopped: the export lacks the column"),
+        "{rows}"
+    );
+    assert!(rows.contains("not served:"), "{rows}");
+    let served = table(
+        &session,
+        "SELECT count(*) AS n FROM metric_sources() WHERE source IS NOT NULL;",
+    )
+    .await;
+    assert!(served.contains("| 1"), "{served}");
+}

@@ -21,6 +21,8 @@ use crate::AppDoor;
 
 /// One glossed part: which app, where it goes, what it holds.
 pub struct Part {
+    /// The dataset the part was glossed in — the one the app serves.
+    pub dataset: String,
     pub app: String,
     pub path: String,
     pub text: String,
@@ -53,7 +55,7 @@ pub(crate) async fn parts(door: &AppDoor, dataset: &str) -> Vec<Part> {
     let mut stream = query.stream;
     let mut out = Vec::new();
     while let Some(Ok(batch)) = stream.next().await {
-        out.extend(rows(&batch));
+        out.extend(rows(&batch, dataset));
     }
     out
 }
@@ -68,7 +70,7 @@ pub(crate) fn files_of(parts: &[Part], app: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn rows(batch: &RecordBatch) -> Vec<Part> {
+fn rows(batch: &RecordBatch, dataset: &str) -> Vec<Part> {
     let column = |name: &str| -> Option<&StringArray> {
         batch.column_by_name(name)?.as_any().downcast_ref()
     };
@@ -79,6 +81,7 @@ fn rows(batch: &RecordBatch) -> Vec<Part> {
     (0..batch.num_rows())
         .filter(|&i| !app.is_null(i) && !path.is_null(i) && !text.is_null(i))
         .map(|i| Part {
+            dataset: dataset.to_string(),
             app: app.value(i).to_string(),
             path: path.value(i).to_string(),
             text: text.value(i).to_string(),

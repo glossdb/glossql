@@ -55,7 +55,9 @@ frame's job in a place nobody can test.
 
 One app ships in the binary: the docket — what is open for a human to
 judge, what is settled, what waits on an act, with the metric
-surfaces and the record behind them. A workspace that wants a
+surfaces, the record behind them, and the column lineage: the landed
+tables along their declared key edges and the columns each served
+metric reads. A workspace that wants a
 different view authors its own app beside it; the door serves as many
 as the workspace writes. A part glossed under a built-in's name is
 refused — one part resolves the whole app, and the built-in's other

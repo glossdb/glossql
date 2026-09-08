@@ -13,18 +13,74 @@
   <span class="ws">workspace</span>
 </div></header>
 <main>
-<h1>Datasets</h1>
-{% if datasets | length == 0 %}
-<p class="empty">This workspace holds no dataset yet. An agent declares
-one over <code>/&lt;name&gt;/mcp</code>: point at the name you intend and
-<code>DECLARE DATASET</code> there.</p>
-{% else %}
-<ul class="cards">
-  {% for d in datasets %}
-  <li><a href="/{{ d }}/app"><strong>{{ d }}</strong><span>apps</span></a></li>
-  {% endfor %}
-</ul>
-{% endif %}
+{# The workspace root: the three doors first — where the server
+   answers is the one thing a root page is for — then each dataset at
+   a glance and the way into it, the apps, and how an agent connects.
+   Every number is the record's — the same relations the docket and
+   the agent's brief read. #}
+<div class="tiles">
+
+  <section class="tile">
+    <header><span class="eyebrow">The doors</span></header>
+    <ul class="doors">
+      <li>
+        <span class="path"><i>/</i>mcp</span>
+        <span class="who">the agent door</span>
+        <span class="why">One tool, <code>glossql</code>, taking statements. An agent declares, glosses and reads here; <code>USE</code> picks the dataset on every call, and the skills are served as resources.</span>
+      </li>
+      <li>
+        <span class="path"><i>/&lt;dataset&gt;/</i>query</span>
+        <span class="who">the arrow door</span>
+        <span class="why">POST a read as the body, get an Arrow IPC stream back — no row cap, straight from the engine. pyarrow reads it directly.</span>
+      </li>
+      <li>
+        <span class="path"><i>/&lt;dataset&gt;/</i>app</span>
+        <span class="who">the door for people</span>
+        <span class="why">The dataset's page: its tables and served metrics, each a file away, and the apps over it — the docket, where the questions the agent could not settle wait for you.</span>
+      </li>
+    </ul>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Datasets</span><span class="count">{{ datasets | length }}</span>
+      <code class="chip" title="The workspace's datasets with what has landed in each, what is served, and what waits on a person — imports, metric_surfaces and open_questions, per dataset.">datasets · imports · metric_surfaces · open_questions</code></header>
+    {% if error %}<p class="frame-error">{{ error }}</p>{% endif %}
+    {% if datasets | length == 0 and not error %}
+    <p class="rows-empty">This workspace holds no dataset yet. An agent declares
+    one over <code>/mcp</code>: <code>DECLARE DATASET</code> with the name you intend.</p>
+    {% endif %}
+    {% for d in datasets %}
+    <div class="rrow" style="grid-template-columns:8rem minmax(0,1fr) 16rem 9rem">
+      <a class="r-subj" href="/{{ d.name }}/app">{{ d.name }}</a>
+      <span class="r-what">{{ d.purpose }}{% if d.error %}<br><span class="r-meta">{{ d.error }}</span>{% else %}<br>
+        <span class="r-meta">{{ d.tables_txt }} table{% if d.tables != 1 %}s{% endif %} · {{ d.rows_txt }} row{% if d.rows != 1 %}s{% endif %}{% if d.landed_txt %} · last landed {{ d.landed_txt }}{% endif %}</span>{% endif %}</span>
+      <span class="r-meta">{% if not d.error %}{{ d.served_txt }} metric{% if d.served != 1 %}s{% endif %} served{% if d.stopped %} · {{ d.stopped_txt }} stopped{% endif %}<br>
+        {% if d.open %}<span class="r-gap">{{ d.open_txt }} question{% if d.open != 1 %}s{% endif %} wait{% if d.open == 1 %}s{% endif %} on you</span>{% else %}nothing open{% endif %}{% endif %}</span>
+      <span class="wgroup"><a class="wbtn{% if d.open %} on{% endif %}" href="/{{ d.name }}/app/docket">docket</a><a class="wbtn" href="/{{ d.name }}/app">tables</a></span>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Apps</span><span class="count">{{ apps | length }}</span>
+      <code class="chip" title="Every app the door serves. An app names no dataset — the URL does — so a directory or built-in app serves every dataset; a glossed one was written by an agent over /mcp and serves the dataset it was glossed in.">apps/ · app_parts</code></header>
+    {% for a in apps %}
+    <div class="rrow" style="grid-template-columns:14rem minmax(0,1fr) auto">
+      <span class="r-subj">{{ a.title }}<br><span class="r-meta">{{ a.name }}</span></span>
+      <span class="r-meta">{{ a.origin }}</span>
+      <span class="wgroup">{% for ds in a.datasets %}<a class="wbtn" href="/{{ ds }}/app/{{ a.name }}">{{ ds }}</a>{% endfor %}</span>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Connect an agent</span></header>
+    <p class="hint">One entry serves the whole workspace; the agent picks its dataset with <code>USE</code>. A workspace with no dataset yet starts here — <code>DECLARE DATASET</code> over the agent door is what creates one.</p>
+<pre class="statement">claude mcp add --transport http glossql {{ origin }}/mcp
+claude mcp login glossql</pre>
+  </section>
+
+</div>
 </main>
 </body>
 </html>

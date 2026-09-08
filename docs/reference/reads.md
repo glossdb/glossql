@@ -266,6 +266,19 @@ nothing, and `metric_axes()` carries the cube's reason. The data at
 read, like the cells: nothing is recorded. The docket's value tile and
 its list read the fact's number from here. Requires a bound dataset.
 
+### metric_sources()
+
+What feeds each grounding: one row per served field and the dataset
+table column it descends from — `metric`, `field`, `source`
+(`table.column`). A union descends from every arm's column, one row
+each. A computed field (an aggregate, an expression) descends from no
+column and has no row. A grounding its author stopped, or one the
+engine cannot plan, serves one row with `reason` and no field. The
+walk is the cube's own — the same provenance `metric_axes()` admits
+axes from — served as rows so a page can draw what a metric reads
+without building the cube; the docket's lineage tab draws it beside
+the declared relationships. Requires a bound dataset.
+
 ### band_points()
 
 The recorded walk, flattened: what `metric_bands` last landed for the

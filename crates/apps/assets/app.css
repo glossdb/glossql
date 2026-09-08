@@ -569,6 +569,83 @@ details.contest[open] summary { color: var(--muted); }
 .cards strong { font-weight: 600; }
 .cards span { color: var(--faint); font-size: var(--step); }
 
+/* ---- the workspace root: the doors ------------------------------- */
+
+/* The three addresses as an address block: the path in ink at reading
+   size, the door's name beside it, one sentence in sans under each.
+   The one place the root spends its size — a visitor who has just
+   landed should see where the server answers before anything else. */
+.doors { list-style: none; margin: 0.2rem 0 0; padding: 0; }
+.doors li {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: 0.2rem 1.5rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+  align-items: baseline;
+}
+.doors .path { font-size: 1.05rem; color: var(--ink); font-weight: 600; letter-spacing: 0.01em; }
+.doors .path i { font-style: normal; color: var(--faint); font-weight: 400; }
+.doors .who { font-size: var(--step); color: var(--open); letter-spacing: 0.06em; text-transform: uppercase; }
+.doors .why { grid-column: 2; font-family: var(--sans); font-size: 0.86rem; color: var(--muted); max-width: 62ch; }
+@media (max-width: 640px) {
+  .doors li { grid-template-columns: 1fr; }
+  .doors .why { grid-column: 1; }
+}
+
+/* A row's links — a dataset's docket, a table's files — right-aligned
+   in the row's last track. */
+.rrow .wgroup { justify-content: flex-end; }
+
+/* ---- the lineage graph (gl-graph) --------------------------------- */
+
+/* Tables as column boxes placed by dagre, metrics as a stack on the
+   right, the record's edges between them: a key edge solid, a
+   grounding's read dashed. Amber lights the edges a hovered or
+   focused column touches — the one thing on the page asking for the
+   eye. A graph wider than the column scrolls inside its band. */
+.graph-wrap { overflow-x: auto; overflow-y: hidden; margin-top: 1rem; }
+gl-graph { display: block; min-height: 5rem; }
+gl-graph svg { display: block; font-family: var(--mono); }
+.n-box { fill: var(--panel); stroke: var(--rule); }
+.n-box.metric { fill: var(--raised); }
+.n-head { fill: var(--ink); font-size: 12px; font-weight: 600; }
+.n-rule { stroke: var(--rule); }
+.col text { fill: var(--muted); font-size: 11px; }
+.col.keyed text { fill: var(--ink); }
+.col rect { fill: transparent; cursor: pointer; }
+.col:hover rect, .col.lit rect { fill: rgba(226, 163, 63, 0.08); }
+.col.lit text { fill: var(--ink); }
+.col .role { fill: var(--faint); font-size: 9px; }
+.col .role.measure { fill: var(--settled); }
+.fold text { fill: var(--faint); font-size: 10px; cursor: pointer; }
+.fold:hover text { fill: var(--muted); }
+.e { fill: none; stroke: var(--faint); stroke-width: 1.2; opacity: 0.7; }
+.e.reads { stroke-dasharray: 4 3; }
+.e.lit { stroke: var(--open); opacity: 1; stroke-width: 1.6; }
+.e.dim { opacity: 0.18; }
+.e-tip { fill: var(--faint); font-size: 9px; }
+.e-tip.lit { fill: var(--open); }
+.e-tip.dim { opacity: 0.18; }
+.legend {
+  display: flex;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: var(--step);
+  color: var(--faint);
+  margin-top: 0.8rem;
+}
+.legend svg { vertical-align: middle; margin-right: 0.35rem; }
+.legend .lg-key { stroke: var(--muted); stroke-width: 1.2; fill: none; }
+.legend .lg-reads { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+.legend .role-measure { color: var(--settled); }
+.focus-line { font-size: var(--step); color: var(--faint); margin: 0.4rem 0 0; min-height: 1.4em; }
+.focus-line b { color: var(--open); font-weight: 500; }
+@media (prefers-reduced-motion: no-preference) {
+  .e, .e-tip, .col rect, .col text { transition: opacity 0.12s ease, stroke 0.12s ease, fill 0.12s ease; }
+}
+
 /* ---- narrow ------------------------------------------------------- */
 
 /* Rows keep their authored columns and the band scrolls, rather than
