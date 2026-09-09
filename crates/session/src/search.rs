@@ -2463,10 +2463,12 @@ pub(crate) fn monthly_sql(sql: &str, tcol: &str, verb: &str) -> String {
 /// halves are present only where a ratio ran with `halves`.
 type GrainRow = (String, Option<f64>, Option<f64>, Option<f64>);
 
-/// A grounding's series at a grain, NULL periods kept — the walk and
-/// the cube index by position. Periods come back in the column's
-/// display form; callers cut the head they need (YYYY-MM, YYYY-MM-DD)
-/// as the scripts did.
+/// A grounding's series at a grain. A period the verb could not value
+/// is kept with a NULL value — the walk indexes by position. A NULL
+/// period is dropped: a NULL date truncates to its own bucket, and a
+/// NULL date is no period, as the cube's reader holds too. Periods
+/// come back in the column's display form; callers cut the head they
+/// need (YYYY-MM, YYYY-MM-DD) as the scripts did.
 async fn run_grain(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
@@ -2523,6 +2525,9 @@ async fn run_grain(
             c.as_ref().and_then(|c| (!c.is_null(i)).then(|| c.value(i)))
         };
         for i in 0..b.num_rows() {
+            if period.is_null(i) {
+                continue;
+            }
             out.push((
                 array_value_to_string(period, i)
                     .map_err(|e| SessionError::Runtime(e.to_string()))?,
@@ -2740,10 +2745,15 @@ pub(crate) async fn metric_band_walk(
         let mut feats: Vec<[Option<f64>; 5]> = Vec::new();
         let mut labels: Vec<Option<f64>> = Vec::new();
         for i in 1..n {
-            let moy: f64 = series[i].0[5..7]
-                .parse::<i64>()
-                .map_err(|e| SessionError::Runtime(format!("period parse: {e}")))?
-                as f64;
+            // The period in its display form is at least `YYYY-MM-DD`;
+            // a shorter one is no period the walk can read.
+            let moy: f64 = series[i]
+                .0
+                .get(5..7)
+                .and_then(|m| m.parse::<i64>().ok())
+                .ok_or_else(|| {
+                    SessionError::Runtime(format!("period {:?} has no month", series[i].0))
+                })? as f64;
             let lag1 = v[i - 1];
             let lo = i.saturating_sub(3);
             let present: Vec<f64> = (lo..i).filter_map(|j| v[j]).collect();

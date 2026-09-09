@@ -158,3 +158,97 @@ async fn a_corridor_below_the_series_resolution_withholds_the_pit() {
         assert!(!line.contains("| 0.5 "), "no PIT is served: {line}");
     }
 }
+
+/// A session over one registered table, walking with the thin kernel.
+async fn session_over(name: &str, schema: Arc<Schema>, batch: RecordBatch, setup: &str) -> Session {
+    let dir = tempfile::tempdir().expect("a scratch dir");
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .expect("a lake");
+    let store = Store::open(lake).await.expect("a store");
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
+    .expect("a session")
+    .with_runtime(Arc::new(ThinKernel));
+    session.execute(setup).await.expect("the setup lands");
+    session
+        .register_table(
+            name,
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("a table")),
+        )
+        .await
+        .expect("the table registers");
+    // The scratch dir outlives the session's use of it in every test
+    // below; leaking it is the simplest way to say so.
+    std::mem::forget(dir);
+    session
+}
+
+async fn walked(session: &Session, sql: &str) -> String {
+    let outcomes = session.execute(sql).await.expect("the walk serves");
+    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+        panic!("the walk produced no rows");
+    };
+    pretty_format_batches(&batches)
+        .expect("printable")
+        .to_string()
+}
+
+/// A NULL date is no period: the row that carries it buckets nowhere,
+/// and the walk serves the dated months as if it were absent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_null_date_is_no_period() {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("race_date", DataType::Date32, true),
+        Field::new("takings", DataType::Float64, false),
+    ]));
+    let mut dates: Vec<Option<i32>> = (0..18)
+        .map(|i| Some(mid_month(2024 + i / 12, (i % 12 + 1) as u32)))
+        .collect();
+    dates.push(None);
+    let mut takings: Vec<f64> = (0..18).map(|i| 100.0 + 3.7 * i as f64).collect();
+    takings.push(1.0e6);
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Date32Array::from(dates)),
+            Arc::new(Float64Array::from(takings)),
+        ],
+    )
+    .expect("a batch");
+    let session = session_over(
+        "races",
+        schema,
+        batch,
+        r##"
+DECLARE DATASET fin SET (purpose: 'a null date');
+USE fin;
+DECLARE ASPECT takings WITH $${"title": "Takings"}$$ AS QUERY ON DATASET;
+GLOSS takings ON fin AS $${"sql": "SELECT race_date, takings AS value FROM races"}$$;
+"##,
+    )
+    .await;
+    let shown = walked(
+        &session,
+        "SELECT metric, applicable, trained_on, period, actual FROM metric_band_walk('fin') \
+         ORDER BY point_seq;",
+    )
+    .await;
+    let points: Vec<&str> = shown.lines().filter(|l| l.contains("takings")).collect();
+    assert_eq!(points.len(), 6, "{shown}");
+    for line in &points {
+        assert!(line.contains("| true "), "{line}");
+        // Eighteen dated months trained on; the null-dated row is none.
+        assert!(line.contains("| 18 "), "{line}");
+        assert!(line.contains("| 2025-"), "{line}");
+        assert!(!line.contains("1000000"), "the null-dated row is no period: {line}");
+    }
+}

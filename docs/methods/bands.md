@@ -67,3 +67,4 @@ protocol it was evaluated against before it shipped.
   withholds the PIT, and the detector scores the month before it. An
   unjudged axis says nothing about its cadence, and nothing is
   withheld on it.
+- A NULL date is no period: the rows it dates bucket nowhere.
