@@ -1184,8 +1184,8 @@ pub(crate) async fn relationship_candidates(
     rows_batch(out, relationship_shape())
 }
 
-/// The detector's own state: a merge join, not a hash join, over two
-/// partitions.
+/// The detector's own state: a merge join, not a hash join, over four
+/// partitions, with a small batch.
 ///
 /// A hash join reserves its whole build side and refuses when the pool
 /// is short — it has no spill path at all, only a `try_grow` that
@@ -1209,12 +1209,15 @@ pub(crate) async fn relationship_candidates(
 /// (datafusion-physical-plan `aggregates/row_hash.rs`,
 /// `update_memory_reservation`), and its first state is one unnested
 /// input batch — a batch of rows times the arm's column count — which
-/// must fit the share or the spill itself is refused. Two partitions
-/// are the fewest the planner plans a merge join at — at one it plans
-/// a collect-left hash join whatever the preference (datafusion
-/// `physical_planner.rs`, the `target_partitions() > 1` arm) — and the
-/// fewest instances the pass can register; the passes that would use
-/// more cores are the ones the pair count, not the core count, bounds.
+/// must fit the share or the spill itself is refused. The batch size
+/// is what sizes that first reservation, so the state runs a batch of
+/// 1024 rows: at 8192 a 115-column table's first reservation exceeded
+/// the share under four partitions with most of the pool free, at
+/// 1024 it fits with room for wider tables. The partition count stays
+/// at four: fewer partitions widen the share but slow every pass in
+/// proportion, and at one the planner plans a collect-left hash join
+/// whatever the preference (datafusion `physical_planner.rs`, the
+/// `target_partitions() > 1` arm).
 /// The named dataset's tables, each pinned at its current snapshot.
 /// A dataset door's argument names what it reads: the dataset in use
 /// is the statement's binding, not the door's, and a run before any
@@ -1238,7 +1241,10 @@ fn detector_state(ctx: &SessionContext) -> SessionState {
     let state = ctx.state();
     let mut config = state.config().clone();
     config.options_mut().optimizer.prefer_hash_join = false;
-    config.options_mut().execution.target_partitions = 2;
+    config.options_mut().execution.target_partitions = 4;
+    // The first reservation of a final aggregate is one input batch of
+    // state; on a wide unnest that is rows × columns.
+    config.options_mut().execution.batch_size = 1024;
     SessionStateBuilder::new_from_existing(state)
         .with_config(config)
         .build()

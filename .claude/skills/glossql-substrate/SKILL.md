@@ -199,11 +199,13 @@ A final-mode grouped aggregate reserves headroom the size of its state
 before it can spill at all (`row_hash.rs`, `update_memory_reservation`),
 and its first state is one unnested input batch — rows times the arm's
 column count — so a wide table's first reservation must fit the share.
-The detector's state runs `target_partitions = 2`: the fewest the
-planner plans a merge join at (`physical_planner.rs`, the
-`target_partitions() > 1` arm; at one it plans a collect-left hash join
-whatever `prefer_hash_join` says), and the fewest instances a pass can
-register.
+The detector's state runs `target_partitions = 4` with
+`batch_size = 1024`: the batch is what sizes that first reservation,
+and a 115-column table that refused at 8192 answers at 1024 under the
+same four partitions. Fewer partitions widen the share but slow every
+pass in proportion, and at one the planner plans a collect-left hash
+join whatever `prefer_hash_join` says (`physical_planner.rs`, the
+`target_partitions() > 1` arm).
 
 **Containment between many columns** (`relationship_candidates`) is the
 worked example. One pass per column type, because arms of different
