@@ -1184,7 +1184,7 @@ pub(crate) async fn relationship_candidates(
     rows_batch(out, relationship_shape())
 }
 
-/// The detector's own state: a merge join, not a hash join, over four
+/// The detector's own state: a merge join, not a hash join, over two
 /// partitions.
 ///
 /// A hash join reserves its whole build side and refuses when the pool
@@ -1198,17 +1198,23 @@ pub(crate) async fn relationship_candidates(
 /// remove. `SortMergeJoinExec` spills. The price is a sort per side,
 /// which the plan metrics below report.
 ///
-/// The fair pool divides its share among every spilling operator
-/// instance a plan registers, and a pass registers one per partition
-/// per union arm and per sort, so the instance count — and with it
-/// the ceiling any one instance can reach — scales with the partition
-/// count. A grouped aggregate that has to spill needs room for its
-/// emitted batch on top of its share (datafusion-physical-plan
-/// `aggregates/row_hash.rs`, `GroupedHashAggregateStream::spill`), and a
-/// pass over string keys refused there at the machine's partition
-/// count. Four partitions keep every instance's share wide enough; the
-/// passes that would use more cores are the ones the pair count, not
-/// the core count, bounds.
+/// The fair pool grants every spilling operator instance the same
+/// share: the pool less the unspillable reservations, divided by the
+/// instances registered (datafusion-execution `memory_pool/pool.rs`,
+/// `FairSpillPool::try_grow`). A pass registers one instance per
+/// partition per union arm and per sort, and both sides of the
+/// self-join plan the union again, so the instance count scales with
+/// the table count times the partition count. A final-mode aggregate
+/// that has to spill first reserves headroom the size of its state
+/// (datafusion-physical-plan `aggregates/row_hash.rs`,
+/// `update_memory_reservation`), and its first state is one unnested
+/// input batch — a batch of rows times the arm's column count — which
+/// must fit the share or the spill itself is refused. Two partitions
+/// are the fewest the planner plans a merge join at — at one it plans
+/// a collect-left hash join whatever the preference (datafusion
+/// `physical_planner.rs`, the `target_partitions() > 1` arm) — and the
+/// fewest instances the pass can register; the passes that would use
+/// more cores are the ones the pair count, not the core count, bounds.
 /// The named dataset's tables, each pinned at its current snapshot.
 /// A dataset door's argument names what it reads: the dataset in use
 /// is the statement's binding, not the door's, and a run before any
@@ -1232,7 +1238,7 @@ fn detector_state(ctx: &SessionContext) -> SessionState {
     let state = ctx.state();
     let mut config = state.config().clone();
     config.options_mut().optimizer.prefer_hash_join = false;
-    config.options_mut().execution.target_partitions = 4;
+    config.options_mut().execution.target_partitions = 2;
     SessionStateBuilder::new_from_existing(state)
         .with_config(config)
         .build()

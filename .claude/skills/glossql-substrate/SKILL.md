@@ -194,11 +194,16 @@ consumer `(pool − unspillable) / num_spill`, counting every registered
 consumer in the process. Union arms multiply that count — the engine
 repartitions each arm and runs a partial aggregate per partition — which
 is why an unpivot uses one arm per table, not one per column. Partitions
-multiply it again, and a grouped aggregate needs room for its emitted
-batch on top of its share before it can spill at all (`row_hash.rs`,
-`GroupedHashAggregateStream::spill`) — a pass over string keys refused
-there at the machine's partition count, so the detector's state runs
-`target_partitions = 4`.
+multiply it again, and both sides of a self-join plan the union again.
+A final-mode grouped aggregate reserves headroom the size of its state
+before it can spill at all (`row_hash.rs`, `update_memory_reservation`),
+and its first state is one unnested input batch — rows times the arm's
+column count — so a wide table's first reservation must fit the share.
+The detector's state runs `target_partitions = 2`: the fewest the
+planner plans a merge join at (`physical_planner.rs`, the
+`target_partitions() > 1` arm; at one it plans a collect-left hash join
+whatever `prefer_hash_join` says), and the fewest instances a pass can
+register.
 
 **Containment between many columns** (`relationship_candidates`) is the
 worked example. One pass per column type, because arms of different
