@@ -503,9 +503,10 @@ fn edge(body: &serde_json::Value, i: usize) -> (String, String) {
 }
 
 /// A small dense integer column — a priority of 1, 2, 3 — is contained
-/// in every id range at overlap 1.0 and reaches almost none of it. Key
-/// coverage before overlap puts the reference first; the decoy stays
-/// in the list.
+/// in every id range at overlap 1.0 and reaches almost none of it. On
+/// equal overlap, key coverage puts the reference first; the decoy
+/// stays in the list, and an edge with orphans ranks below it, for the
+/// judge to settle against the data.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dense_code_inside_an_id_range_ranks_below_the_reference() {
     let (cs, cid) = ints("id", (1..=20).collect());
@@ -515,7 +516,7 @@ async fn a_dense_code_inside_an_id_range_ranks_below_the_reference() {
         Field::new("priority", DataType::Int64, true),
     ]));
     let mut customer_id: Vec<i64> = (1..=15).collect();
-    customer_id.extend([3, 7, 99, 99, 12]);
+    customer_id.extend([3, 7, 11, 11, 12]);
     let priority: Vec<i64> = (0..20).map(|i| i % 3 + 1).collect();
     let orders = RecordBatch::try_new(
         orders,
@@ -538,9 +539,12 @@ async fn a_dense_code_inside_an_id_range_ranks_below_the_reference() {
         ("orders.priority".into(), "customers.id".into()),
         "{body}"
     );
-    // The decoy's statistics are the better ones on overlap alone.
+    // Both resolve fully; the reference reaches three quarters of the
+    // key and the code reaches 3 of 20.
     assert_eq!(body["candidates"][1]["overlap"], 1.0, "{body}");
-    assert_eq!(body["candidates"][0]["overlap"], 0.9375, "{body}");
+    assert_eq!(body["candidates"][0]["overlap"], 1.0, "{body}");
+    assert_eq!(body["candidates"][0]["matched"], 15, "{body}");
+    assert_eq!(body["candidates"][1]["matched"], 3, "{body}");
     assert_eq!(body["candidates"][0]["to_unique"], true, "{body}");
     assert_eq!(body["candidates"][0]["to_temporal"], false, "{body}");
 }

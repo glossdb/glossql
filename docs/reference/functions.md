@@ -125,9 +125,9 @@ cardinality, overlap, matched/orphan counts, distinct counts; a
 composite endpoint rides `key_columns` (the tuple is the key), and
 `to_unique` and `to_temporal` say whether the target is exactly unique
 in its table and whether it is a Date or Timestamp. Ranked clean keys
-first (unique target, not temporal), then many-to-one, then key
-coverage (matched over the key's distinct count), then overlap; the
-order demotes and never drops. Extraction serves the summary — count
+first (unique target, not temporal), then many-to-one, then overlap,
+then key coverage (matched over the key's distinct count); the order
+demotes and never drops. Extraction serves the summary — count
 and top of the ranking — and the full list reads back via
 `GLOSSARY(<dataset>::relationship_candidates)`.
 
