@@ -1,8 +1,8 @@
 //! The SQL catalog on a server: the same three moves as the REST
 //! round trip — create through the provider, write through the lake,
 //! read through SQL — against the Postgres `GLOSSQL_E2E_CATALOG_SQL`
-//! names, the warehouse on this machine. Run by hand with a server
-//! standing:
+//! names, the warehouse on this machine or in the object store
+//! `GLOSSQL_E2E_WAREHOUSE` names. Run by hand with a server standing:
 //!
 //!     GLOSSQL_E2E_CATALOG_SQL=postgres://glossql:glossql@127.0.0.1:5432/glossql \
 //!       cargo test -p glossql-catalog live_sql -- --ignored
@@ -16,11 +16,22 @@ use std::sync::Arc;
 
 use glossql_catalog::Lake;
 
-/// The warehouse every SQL live test shares — the catalog remembers it.
-pub fn e2e_warehouse() -> std::path::PathBuf {
-    std::env::temp_dir()
-        .join("glossql-e2e-sql")
-        .join("warehouse")
+/// The warehouse every SQL live test shares — the catalog remembers
+/// it: the location `GLOSSQL_E2E_WAREHOUSE` names (an object store —
+/// the emulator's `abfss://lake@devstoreaccount1.dfs.core.windows.net/
+/// warehouse` with `AZURE_STORAGE_USE_EMULATOR=true`), else a fixed
+/// directory under the OS temp dir.
+pub fn e2e_warehouse() -> String {
+    std::env::var("GLOSSQL_E2E_WAREHOUSE")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            std::env::temp_dir()
+                .join("glossql-e2e-sql")
+                .join("warehouse")
+                .display()
+                .to_string()
+        })
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -225,9 +225,18 @@ async fn live_sql_catalog_bootstrap() {
         eprintln!("skipping: GLOSSQL_E2E_CATALOG_SQL is not set");
         return;
     };
-    let warehouse = std::env::temp_dir()
-        .join("glossql-e2e-sql")
-        .join("warehouse");
+    // The same warehouse the catalog suite's live test uses: the object
+    // store `GLOSSQL_E2E_WAREHOUSE` names, else a fixed local directory.
+    let warehouse = std::env::var("GLOSSQL_E2E_WAREHOUSE")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            std::env::temp_dir()
+                .join("glossql-e2e-sql")
+                .join("warehouse")
+                .display()
+                .to_string()
+        });
     let functions = |plane: Arc<Plane>| async move {
         let session = plane.channel(human(), None).await.unwrap();
         let outcomes = session

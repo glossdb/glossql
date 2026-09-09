@@ -59,5 +59,14 @@ on, never copied: table names, schemas, and snapshot ids are answered
 by the provider chain, not mirrored into a structure of the server's
 own.
 
+The bytes, whichever catalog answers, move through one seam: iceberg's
+`Storage` trait, implemented once over the `object_store` crate the
+engine already runs on, for the S3 family and the Azure family. A REST
+catalog's table loads deliver the store's properties and, vending, its
+credentials; a SQL catalog's warehouse in a bucket (`GLOSSQL_WAREHOUSE`)
+delivers none, and the store's own environment conventions configure
+the client — on Azure with nothing set, the managed identity. The
+local filesystem stays the dev shape.
+
 Landings read back from the format's own record: one entry per append
 snapshot, its facts taken from the snapshot summary it rode.

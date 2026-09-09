@@ -28,8 +28,10 @@ use std::sync::Arc;
 
 pub mod metadata;
 mod pushdown;
+pub mod storage;
 pub use metadata::{IcebergMetadata, RelationSpec, Row};
 pub use pushdown::PrimitivePushdown;
+pub use storage::ObjectStorageFactory;
 #[cfg(feature = "rest")]
 pub mod rest;
 
@@ -264,19 +266,24 @@ impl Lake {
         // only sqlite knows what an empty database is.
         Self::open_sql(
             &format!("sqlite:{}?mode=rwc", catalog_db.display()),
-            warehouse,
+            &warehouse.display().to_string(),
         )
         .await
     }
 
     /// The same data plane on the SQL catalog a URI names — `sqlite:`
     /// for the workspace file, `postgres://` (or `postgresql://`) for a
-    /// server — over a warehouse directory on the local filesystem. The
-    /// bind style follows the scheme: Postgres numbers its parameters,
-    /// SQLite takes question marks. The URI carries the credentials, so
-    /// it is never logged whole here or anywhere.
+    /// server — over the warehouse `warehouse` names: a directory on
+    /// this machine (a path, or `file://`), or a location in an object
+    /// store (`s3://bucket/prefix`,
+    /// `abfss://container@account.dfs.core.windows.net/prefix`), reached
+    /// through [`storage`] with the credentials the environment
+    /// carries. The bind style follows the catalog scheme: Postgres
+    /// numbers its parameters, SQLite takes question marks. The catalog
+    /// URI carries credentials, so it is never logged whole here or
+    /// anywhere.
     #[cfg(feature = "sql")]
-    pub async fn open_sql(catalog_uri: &str, warehouse: &Path) -> Result<Self> {
+    pub async fn open_sql(catalog_uri: &str, warehouse: &str) -> Result<Self> {
         let (scheme, _) = catalog_uri.split_once(':').ok_or_else(|| {
             Error::Workspace(format!(
                 "the catalog URI `{catalog_uri}` names no scheme — `sqlite:<file>` or `postgres://…`"
@@ -291,18 +298,26 @@ impl Lake {
                 )));
             }
         };
-        std::fs::create_dir_all(warehouse)
-            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
-        let warehouse = warehouse
-            .canonicalize()
-            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
-        let catalog = SqlCatalogBuilder::default()
+        let builder = SqlCatalogBuilder::default()
             .uri(catalog_uri)
-            .warehouse_location(warehouse.display().to_string())
-            .sql_bind_style(bind)
-            .with_storage_factory(Arc::new(LocalFsStorageFactory))
-            .load("glossql", HashMap::new())
-            .await?;
+            .sql_bind_style(bind);
+        let builder = match storage::Warehouse::parse(warehouse)? {
+            storage::Warehouse::Local(dir) => {
+                std::fs::create_dir_all(&dir).map_err(|e| {
+                    Error::Workspace(format!("warehouse dir {}: {e}", dir.display()))
+                })?;
+                let dir = dir.canonicalize().map_err(|e| {
+                    Error::Workspace(format!("warehouse dir {}: {e}", dir.display()))
+                })?;
+                builder
+                    .warehouse_location(dir.display().to_string())
+                    .with_storage_factory(Arc::new(LocalFsStorageFactory))
+            }
+            storage::Warehouse::Remote(location) => builder
+                .warehouse_location(location)
+                .with_storage_factory(Arc::new(ObjectStorageFactory)),
+        };
+        let catalog = builder.load("glossql", HashMap::new()).await?;
         Ok(Lake::over(Arc::new(catalog), false))
     }
 

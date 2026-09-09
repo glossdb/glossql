@@ -7,42 +7,37 @@ repository.workspace = true
 
 # The catalog backend is a build-time choice; everything downstream of
 # `Lake`'s constructors runs on `Arc<dyn Catalog>` either way.
-# `sql`: a SQLite catalog and a local-filesystem warehouse — the dev
-# shape. `rest`: an Iceberg REST catalog with the storage attached on
-# the catalog's side, S3 FileIO in the binary for the properties its
-# table loads deliver. Library dependents leave both off and the
-# binary picks; this crate's own default carries both so the workspace
-# suite always builds and tests both backends.
+# `sql`: the SQL catalog — SQLite in the workspace or Postgres — over a
+# local or remote warehouse. `rest`: an Iceberg REST catalog with the
+# storage attached on the catalog's side. The storage seam itself
+# (`storage.rs`, object_store behind iceberg's `Storage`) is always
+# built: a SQL catalog with a warehouse in a bucket needs it as much as
+# REST does. Library dependents leave both features off and the binary
+# picks; this crate's own default carries both so the workspace suite
+# always builds and tests both backends.
 [features]
 default = ["sql", "rest"]
 sql = ["dep:iceberg-catalog-sql", "dep:sqlx"]
-rest = [
-  "dep:iceberg-catalog-rest",
-  "dep:object_store",
-  "dep:typetag",
-  "dep:bytes",
-  "dep:serde",
-  "dep:serde_json",
-  "dep:http",
-]
+rest = ["dep:iceberg-catalog-rest"]
 
 [dependencies]
 datafusion = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-sql = { workspace = true, optional = true }
-# Feature-unification only: enables sqlx's tokio runtime and sqlite
-# driver for iceberg-catalog-sql, which names neither (its own sqlx
-# line carries `any` alone) — see the workspace Cargo.toml. Never
-# named in code, which is why cargo-machete is told to ignore it.
+# Feature-unification only: enables sqlx's tokio runtime and drivers
+# for iceberg-catalog-sql, which names neither (its own sqlx line
+# carries `any` alone) — see the workspace Cargo.toml. Never named in
+# code, which is why cargo-machete is told to ignore it.
 sqlx = { workspace = true, optional = true }
 iceberg-catalog-rest = { workspace = true, optional = true }
-object_store = { workspace = true, optional = true }
-typetag = { workspace = true, optional = true }
-bytes = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+object_store = { workspace = true }
+typetag = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 async-trait = { workspace = true }
-http = { workspace = true, optional = true }
+http = { workspace = true }
+url = { workspace = true }
 iceberg-datafusion = { workspace = true }
 futures.workspace = true
 uuid.workspace = true

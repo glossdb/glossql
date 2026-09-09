@@ -5,8 +5,8 @@
 //! for delegation, the credentials) that table's FileIO needs, so a
 //! connection here configures nothing about storage — only where the
 //! catalog is, which warehouse, and how to authenticate. What executes
-//! those properties is `storage`: the engine's own `object_store`,
-//! behind iceberg's `Storage` seam.
+//! those properties is [`crate::storage`]: the engine's own
+//! `object_store`, behind iceberg's `Storage` seam.
 //!
 //! Authentication is the one piece on top. A static token rides the
 //! client's own OAuth2 machinery untouched. Client credentials go
@@ -29,10 +29,7 @@ use iceberg_catalog_rest::{
     RestCatalogBuilder,
 };
 
-use crate::{Lake, Result};
-
-mod storage;
-pub use storage::S3StorageFactory;
+use crate::{Lake, ObjectStorageFactory, Result};
 
 /// A REST catalog connection: where, which warehouse, how to
 /// authenticate — and nothing about storage, which is the catalog's.
@@ -77,7 +74,7 @@ impl Lake {
             ),
         ]);
         let mut builder =
-            RestCatalogBuilder::default().with_storage_factory(Arc::new(S3StorageFactory));
+            RestCatalogBuilder::default().with_storage_factory(Arc::new(ObjectStorageFactory));
         match connection.auth {
             Auth::Token(token) => {
                 // Stated, not left for the client to infer from the

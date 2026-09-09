@@ -25,7 +25,9 @@ pair.\n\
 --workspace holds apps/, and — without a catalog connection — the \
 warehouse and the catalog themselves, which is why it is required \
 then; GLOSSQL_CATALOG_SQL moves the catalog to a Postgres server \
-(postgres://…) and leaves the warehouse in the directory. \
+(postgres://…) and GLOSSQL_WAREHOUSE the warehouse to an object store \
+(s3://…, abfss://…); with both named the directory holds apps/ alone \
+and may be left unnamed. \
 With GLOSSQL_CATALOG_URI set (a REST catalog; data and metadata live \
 behind it) it may be left unnamed: the working directory serves.\n\
 the band model behind the metric-bands walk, whatif. and misfit. is \
@@ -339,38 +341,51 @@ async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String
         };
         return Ok((lake, workspace));
     }
-    let workspace = workspace.ok_or(
-        "--workspace is required without a catalog connection: \
-         the directory holds the catalog and the warehouse themselves",
-    )?;
+    // With both the catalog and the warehouse named elsewhere, the
+    // directory holds only apps/ — the working directory serves, as
+    // behind a REST catalog.
+    let named = |name: &str| std::env::var(name).is_ok_and(|v| !v.trim().is_empty());
+    let workspace = match workspace {
+        Some(dir) => dir,
+        None if named("GLOSSQL_CATALOG_SQL") && named("GLOSSQL_WAREHOUSE") => {
+            std::env::current_dir().map_err(|e| format!("working directory: {e}"))?
+        }
+        None => {
+            return Err(
+                "--workspace is required while the catalog or the warehouse lives in it: \
+                 name both GLOSSQL_CATALOG_SQL and GLOSSQL_WAREHOUSE, or the directory"
+                    .into(),
+            );
+        }
+    };
     let lake = open_local(&workspace).await?;
     Ok((lake, workspace))
 }
 
 /// The SQL catalog: the workspace directory's own SQLite file, or the
-/// Postgres server `GLOSSQL_CATALOG_SQL` names. The warehouse stays
-/// under the workspace directory either way. The URI carries the
-/// credentials, so the record gets its scheme and nothing more.
+/// Postgres server `GLOSSQL_CATALOG_SQL` names; the warehouse under the
+/// workspace directory, or the location `GLOSSQL_WAREHOUSE` names in an
+/// object store. The catalog URI carries the credentials, so the record
+/// gets its scheme and nothing more; the warehouse carries none.
 #[cfg(feature = "sql")]
 async fn open_local(workspace: &std::path::Path) -> Result<Lake, String> {
-    let warehouse = workspace.join("warehouse");
-    match std::env::var("GLOSSQL_CATALOG_SQL")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-    {
-        Some(uri) => {
-            tracing::info!(
-                catalog = uri.split(':').next().unwrap_or("sql"),
-                "opening the catalog"
-            );
-            Lake::open_sql(uri.trim(), &warehouse)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        None => Lake::open(&workspace.join("catalog.sqlite"), &warehouse)
-            .await
-            .map_err(|e| e.to_string()),
-    }
+    let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let catalog = var("GLOSSQL_CATALOG_SQL").unwrap_or_else(|| {
+        format!(
+            "sqlite:{}?mode=rwc",
+            workspace.join("catalog.sqlite").display()
+        )
+    });
+    let warehouse = var("GLOSSQL_WAREHOUSE")
+        .unwrap_or_else(|| workspace.join("warehouse").display().to_string());
+    tracing::info!(
+        catalog = catalog.split(':').next().unwrap_or("sql"),
+        warehouse = %warehouse,
+        "opening the catalog"
+    );
+    Lake::open_sql(catalog.trim(), warehouse.trim())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(not(feature = "sql"))]
