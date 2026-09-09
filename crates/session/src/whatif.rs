@@ -227,7 +227,8 @@ async fn compute(
     // that decided, else the grounding's own word. One function, so a
     // replay never folds a metric by a different word than its cube.
     let judged_behavior = crate::cube::judged_bodies(&read_ctx, dataset, "behavior_evidence");
-    let glossed_behavior = crate::search::current_fact_values(&read_ctx, dataset, "behavior").await?;
+    let glossed_behavior =
+        crate::search::current_fact_values(&read_ctx, dataset, "behavior").await?;
     let all_verdicts = verdicts(&read_ctx, dataset, &scope, None).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
