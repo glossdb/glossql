@@ -91,7 +91,11 @@ re-import, where the drift is and where you can fix it.
 
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
-NULL — a kept row with a NULL cell, not a dropped row.
+NULL — a kept row with a NULL cell, not a dropped row. Cast dates with
+`try_to_date` and `try_to_timestamp`, never with `try_cast(x AS
+TIMESTAMP)`: that TIMESTAMP is nanoseconds and lands NULL for any year
+past 2262, while `try_to_timestamp` lands microseconds and
+`try_to_date` lands days, and both hold any year the source writes.
 
 ```glossql
 DECLARE RECIPE orders ON ops FROM erp_export AS $$
