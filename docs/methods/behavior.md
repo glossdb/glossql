@@ -38,7 +38,8 @@ under 0.01. A measure that never moves is a dead value and abstains.
 A convention decides an anchor when at least two entities voted, four
 of five agree, and the winners are a majority of the common entities.
 Under the majority the anchor abstains and the reason names the
-counts.
+counts. When every anchor abstains, the summary carries the reason of
+the anchor with the most votes.
 
 ## Mechanism
 

@@ -1244,6 +1244,13 @@ async fn positive_only_movements_meet_the_null_model() {
     // majority floor holds it back and says with what counts.
     let mixed = evidence_on(&session, "stock_levels.mixed").await;
     assert_eq!(mixed["summary"]["verdict"], "abstain", "{mixed}");
+    assert!(
+        mixed["summary"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("under the majority floor"),
+        "the summary carries the most-voted anchor's reason: {mixed}"
+    );
     let a = first_anchor(&mixed, "movements");
     assert_eq!(a["verdict"], "abstain", "{a}");
     let reason = a["reason"].as_str().unwrap();

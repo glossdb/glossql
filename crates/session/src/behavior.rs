@@ -1167,9 +1167,23 @@ pub(crate) async fn behavior_anchors(
             fact.insert("s_tiebreak".into(), json!(t));
         }
     } else {
-        // Every anchor abstained, and WHY is the whole finding.
+        // Every anchor abstained, and WHY is the whole finding: the
+        // election's own order — a reconciliation over the monotone
+        // reading, one that ran (it carries its common `entities`)
+        // over one that never aligned, then the most votes (the fit
+        // the floor held back, where one was), then the first pushed.
         fact.insert("s_verdict".into(), json!("abstain"));
-        if let Some(r) = anchors[0].get("reason").filter(|v| !v.is_null()) {
+        let most_voted = anchors
+            .iter()
+            .min_by_key(|a| {
+                (
+                    monotone(a),
+                    a.get("entities").is_none(),
+                    std::cmp::Reverse(voted(a)),
+                )
+            })
+            .expect("at least one anchor");
+        if let Some(r) = most_voted.get("reason").filter(|v| !v.is_null()) {
             fact.insert("s_reason".into(), r.clone());
         }
     }
@@ -1318,11 +1332,14 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
                 .iter()
                 .any(|s| s["voted"].as_i64().unwrap_or(0) > 0);
             let reason = match floored {
-                Some(f) => format!(
-                    "{} of {n_common} common entities voted {} — under the majority floor",
-                    winners(f) as i64,
-                    f["verdict"].as_str().unwrap_or("")
-                ),
+                Some(f) => {
+                    a.insert("voted".into(), f["voted"].clone());
+                    format!(
+                        "{} of {n_common} common entities voted {} — under the majority floor",
+                        winners(f) as i64,
+                        f["verdict"].as_str().unwrap_or("")
+                    )
+                }
                 None if any_votes => {
                     "votes below the candidacy floor (2 voters, 0.8 agreement)".to_string()
                 }
