@@ -30,6 +30,16 @@ reconciles wins. The kernel reports the fit of both (`r_flow`,
 `r_stock`), the voted convention, and the sign structure (primary /
 mirror / both), so the loser stays visible.
 
+An entity votes when the winning residual is under 0.05 and the loser
+stands off by at least a third of their sum; otherwise it abstains.
+The gate is the null model: two unrelated positive series of similar
+size sit near 0.4 on the flow residual, and a true reconciliation
+under 0.01. A measure that never moves is a dead value and abstains.
+A convention decides an anchor when at least two entities voted, four
+of five agree, and the winners are a majority of the common entities.
+Under the majority the anchor abstains and the reason names the
+counts.
+
 ## Mechanism
 
 The `behavior_anchors` door discovers candidate anchors and holds the
@@ -37,7 +47,11 @@ policy — axes, alignments, grain, which terms are movements; the
 reconcile kernel (`crates/scripts/src/lib.rs`) holds the arithmetic
 behind the runtime seam. Anchors come from declared relationships
 only; a composite (tuple) endpoint takes part like any other — every
-leg an identifier, the entity key the tuple. Pairing is on the
+leg an identifier, the entity key the tuple. Movement candidates are
+the event table's numeric columns minus its identifiers — the legs of
+declared edges and integer columns whose distinct count over filled is
+at or above 0.9 — and every pair difference of them; the identifiers
+are served as `identifier_columns`. Pairing is on the
 intersection of (entity, period) cells present on both sides; the
 anchor grain is the coarser of the two sides' native grains, and a
 measure table whose only edges are document-keyed borrows its entity

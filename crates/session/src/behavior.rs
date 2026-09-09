@@ -30,9 +30,20 @@
 //! abstention absorbs the miss.
 //!
 //! Anchor shape (the f1 lessons, kept from the rework):
-//! - Declared-edge legs leave the movement pool: a join leg is an
-//!   identifier, not a movement. Served on each anchor as
-//!   `identifier_columns` — visible, never silent.
+//! - Identifiers leave the movement pool: the legs of declared edges,
+//!   and the event table's integer columns whose distinct count over
+//!   filled is at or above 0.9 — the relationship detector's key bar —
+//!   a primary key or a surrogate key. The pool is every other numeric
+//!   column and every pair difference of them, several hundred
+//!   candidates on a wide table, and a key among them fits by chance.
+//!   Served on each anchor as `identifier_columns` — visible, never
+//!   silent. Candidate relationship lists are not read: they are door
+//!   relations, not facts.
+//! - A convention decides an anchor only when its winners are a
+//!   majority of the common entities. Wilson support ranks
+//!   conventions; the floor is on the raw share, so three agreeing
+//!   entities of three decide (their Wilson bound is 0.44) and eight
+//!   of three hundred do not.
 //! - A table's own time axes are preferred; it borrows through an edge
 //!   only when it has none.
 //! - The anchor grain is the COARSER of the two sides' native grains; a
@@ -415,6 +426,8 @@ pub(crate) async fn behavior_anchors(
     // steps walked.
     let mut mono_cache: HashMap<String, (i64, i64, i64, i64)> = HashMap::new();
     let mut mono_pushed: HashSet<String> = HashSet::new();
+    // Key-shaped integer columns per event table, one probe each.
+    let mut keyish_cache: HashMap<String, HashSet<String>> = HashMap::new();
 
     let from_of = |t: &str, axis: &Axis| -> (String, String) {
         let mut from = format!("{} s", qi(t));
@@ -596,15 +609,52 @@ pub(crate) async fn behavior_anchors(
                 continue;
             }
 
+            // Key-shaped integers, one probe per event table: distinct
+            // over filled at or above 0.9 (the relationship detector's
+            // `key_like`, `search.rs`), approximate so the probe holds
+            // fixed memory whatever the table's width.
+            if !keyish_cache.contains_key(ev.as_str()) {
+                let ints: Vec<&String> = schemas[ev.as_str()]
+                    .iter()
+                    .filter(|(_, d)| d.starts_with("Int") || d.starts_with("UInt"))
+                    .map(|(n, _)| n)
+                    .collect();
+                let mut keyish: HashSet<String> = HashSet::new();
+                if !ints.is_empty() {
+                    let sel: Vec<String> = ints
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            format!(
+                                "CAST(approx_distinct(s.{c}) AS BIGINT) AS d{i}, count(s.{c}) AS f{i}",
+                                c = qi(c)
+                            )
+                        })
+                        .collect();
+                    let kq = run(format!("SELECT {} FROM {} s", sel.join(", "), qi(ev))).await?;
+                    for (i, c) in ints.iter().enumerate() {
+                        let at =
+                            |k: &str| crate::search::int_column(&kq, k).map(|v| v[0]).unwrap_or(0);
+                        let (d, f) = (at(&format!("d{i}")), at(&format!("f{i}")));
+                        if f > 0 && d >= 2 && d as f64 / f as f64 >= 0.9 {
+                            keyish.insert((*c).clone());
+                        }
+                    }
+                }
+                keyish_cache.insert(ev.clone(), keyish);
+            }
+            let keyish = &keyish_cache[ev.as_str()];
+
             // Movement candidates: the event table's numeric columns,
-            // minus declared-edge legs and the alignment column itself.
+            // minus the identifiers — declared-edge legs and key-shaped
+            // integers — and the alignment column itself.
             let mut identifier_cols: Vec<String> = Vec::new();
             let mut base_pool: Vec<String> = Vec::new();
             for (name, dtype) in &schemas[ev.as_str()] {
                 if !numeric_dtype(dtype) {
                     continue;
                 }
-                if legs.contains(&(ev.clone(), name.clone())) {
+                if legs.contains(&(ev.clone(), name.clone())) || keyish.contains(name) {
                     identifier_cols.push(name.clone());
                 } else {
                     base_pool.push(name.clone());
@@ -1150,15 +1200,26 @@ const SUPPORT_EPS: f64 = 1.0e-9;
 /// this is not reconciled; the anchor says so.
 const MAX_TERMS: usize = 64;
 
+/// The share of the common entities a convention's winners must reach
+/// before it decides: a majority. Wilson support ranks conventions
+/// under small n; the floor is on the raw share, so three agreeing
+/// entities of three decide (their Wilson bound is 0.44) and eight of
+/// three hundred do not.
+const MAJORITY: f64 = 0.5;
+
 /// The winner, the runner-up field, and the anchor's own record — the
-/// policy half the script held, verbatim: support-first; on a support
-/// tie the fewer-term convention wins unless the higher-arity fit is
-/// decisive, ΔBIC > 10 (Kass–Raftery), v0.3's tiebreak.
+/// policy half the script held: support-first among the conventions
+/// over the majority floor; on a support tie the fewer-term
+/// convention wins unless the higher-arity fit is decisive, ΔBIC > 10
+/// (Kass–Raftery), v0.3's tiebreak.
 fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
     let sup = |s: &Value| s["support"].as_f64().unwrap_or(0.0);
+    let winners = |s: &Value| s["winners"].as_f64().unwrap_or(0.0);
+    let share = |s: &Value| winners(s) / n_common.max(1) as f64;
+    let decides = |s: &Value| s["verdict"] != json!("abstain") && share(s) >= MAJORITY;
     let mut winner: Option<&Value> = None;
     for s in summaries {
-        if s["verdict"] == json!("abstain") {
+        if !decides(s) {
             continue;
         }
         let Some(w) = winner else {
@@ -1212,7 +1273,8 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
         let Some(b) = best else { break };
         used.push(b["convention"].clone());
         alts.push(json!({
-            "convention": b["convention"], "verdict": b["verdict"],
+            "convention": b["convention"],
+            "verdict": if decides(b) { b["verdict"].clone() } else { json!("abstain") },
             "voted": b["voted"], "support": b["support"],
         }));
     }
@@ -1246,17 +1308,28 @@ fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
         }
         None => {
             a.insert("verdict".into(), json!("abstain"));
+            // The best convention the floor held back, if any: the
+            // reason names its counts, so a starved fit reads as one.
+            let floored = summaries
+                .iter()
+                .filter(|s| s["verdict"] != json!("abstain"))
+                .max_by(|x, y| share(x).total_cmp(&share(y)));
             let any_votes = summaries
                 .iter()
                 .any(|s| s["voted"].as_i64().unwrap_or(0) > 0);
-            a.insert(
-                "reason".into(),
-                json!(if any_votes {
-                    "votes below the candidacy floor (2 voters, 0.8 agreement)"
-                } else {
-                    "no entity series reconciled: wrong anchor, short series, or dead values"
-                }),
-            );
+            let reason = match floored {
+                Some(f) => format!(
+                    "{} of {n_common} common entities voted {} — under the majority floor",
+                    winners(f) as i64,
+                    f["verdict"].as_str().unwrap_or("")
+                ),
+                None if any_votes => {
+                    "votes below the candidacy floor (2 voters, 0.8 agreement)".to_string()
+                }
+                None => "no entity series reconciled: wrong anchor, short series, or dead values"
+                    .to_string(),
+            };
+            a.insert("reason".into(), json!(reason));
         }
     }
     Value::Object(a)

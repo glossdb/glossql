@@ -762,25 +762,32 @@ fn column_of(t: &[RecordBatch], name: &str) -> ScriptResult<ArrayRef> {
 
 // ---- the reconcile kernel: v0.3's stock/flow discriminator ----------
 //
-// Constants ported verbatim with their provenance; the two gates are
-// COUPLED (see behavior_evidence.sql's header for the derivation).
+// The gates. An entity votes when the winning residual is under
+// FIRE_RESIDUAL_MAX and the loser stands far enough from it to make
+// the vote a choice rather than a tie. The residual gate is the null
+// model: for two unrelated positive series of similar size the flow
+// residual Σ|y − m| / Σ|m| sits near 0.4 and the delta residual of the
+// same pair near 1.0, so a gate above 0.4 hands `flow` to any positive
+// column of the movement's size. A true reconciliation sits under
+// 0.01; 0.05 leaves room for dirt. The separation gate is
+// (loser − winner) / (loser + winner) at one third, the value the
+// port carried.
 const MIN_PERIODS: usize = 4;
-const FIRE_RESIDUAL_MAX: f64 = 0.5;
+const FIRE_RESIDUAL_MAX: f64 = 0.05;
+const MIN_SEPARATION: f64 = 1.0 / 3.0;
 const MIN_ENTITIES_FIRED: usize = 2;
 const AGREEMENT_MIN: f64 = 0.8;
 
-fn min_separation() -> f64 {
-    (1.0 - FIRE_RESIDUAL_MAX) / (1.0 + FIRE_RESIDUAL_MAX)
-}
-
-/// One entity's vote: `None` = abstained. A dead measure abstains
-/// symmetrically with a dead anchor; a wrong anchor leaves both
+/// One entity's vote: `None` = abstained. A measure that never moves
+/// is a dead value and says nothing about what a movement would do to
+/// it; a movement that is all zero has no denominator, while a
+/// constant nonzero one is a movement. A wrong anchor leaves both
 /// residuals large; a near-tie converts the last significant digit
 /// into no verdict at all.
 fn classify_series(y: &[f64], m: &[f64]) -> (Option<bool>, f64, f64) {
     const INF: f64 = f64::INFINITY;
     if y.len() < MIN_PERIODS
-        || !y.iter().any(|v| *v != 0.0)
+        || y.iter().all(|v| *v == y[0])
         || !m.iter().any(|v| *v != 0.0)
         // A NaN anywhere in the series abstains: every comparison against
         // it is false, so it would slip past the residual gate and the
@@ -822,7 +829,7 @@ fn classify_series(y: &[f64], m: &[f64]) -> (Option<bool>, f64, f64) {
     } else {
         (rl - rw) / (rl + rw)
     };
-    if sep < min_separation() {
+    if sep < MIN_SEPARATION {
         return (None, r_flow, r_stock);
     }
     (Some(r_stock < r_flow), r_flow, r_stock)

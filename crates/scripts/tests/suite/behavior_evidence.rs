@@ -1029,3 +1029,230 @@ async fn an_event_table_wider_than_the_kernel_takes_abstains_with_the_count() {
         "{balance}"
     );
 }
+
+/// Truth by construction, positive-only: five warehouses over twelve
+/// months, `movements` with `received` and `issued` drawn from
+/// 100..900, `stock_levels.on_hand` the running sum of the month's
+/// `received − issued` from 3000, `net_movement` the month's net,
+/// `noise` drawn per row at the movements' size, `reorder_point` the
+/// constant 500, and `mixed` the net for two warehouses and noise for
+/// three. `move_id` is a unique integer, a key by shape.
+async fn stockroom_fixture(root: &std::path::Path) {
+    const WAREHOUSES: [&str; 5] = ["w1", "w2", "w3", "w4", "w5"];
+    let mut seed: u64 = 20260909;
+    let mut draw = move || -> f64 {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        100.0 + ((seed >> 33) % 801) as f64
+    };
+
+    let warehouses = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, true)]));
+    write_table(
+        root,
+        "warehouses",
+        RecordBatch::try_new(
+            warehouses,
+            vec![Arc::new(StringArray::from(WAREHOUSES.to_vec()))],
+        )
+        .unwrap(),
+    )
+    .await;
+
+    let (mut l_wh, mut l_period) = (Vec::new(), Vec::new());
+    let (mut l_on_hand, mut l_net, mut l_noise, mut l_reorder, mut l_mixed) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut m_id, mut m_wh, mut m_day, mut m_received, mut m_issued) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut next_id: i64 = 0;
+    for (w, wh) in WAREHOUSES.iter().enumerate() {
+        let mut on_hand = 3000.0;
+        for month in 1..=12 {
+            let (mut received, mut issued) = (0.0, 0.0);
+            for day in ["01", "15"] {
+                let (r, i) = (draw(), draw());
+                received += r;
+                issued += i;
+                next_id += 1;
+                m_id.push(next_id);
+                m_wh.push(*wh);
+                m_day.push(format!("2025-{month:02}-{day}"));
+                m_received.push(r);
+                m_issued.push(i);
+            }
+            let net = received - issued;
+            on_hand += net;
+            let noise = draw() + draw();
+            l_wh.push(*wh);
+            l_period.push(format!("2025-{month:02}-01"));
+            l_on_hand.push(on_hand);
+            l_net.push(net);
+            l_noise.push(noise);
+            l_reorder.push(500.0);
+            l_mixed.push(if w < 2 { net } else { noise });
+        }
+    }
+    let levels = Arc::new(Schema::new(vec![
+        Field::new("warehouse", DataType::Utf8, true),
+        Field::new("period", DataType::Utf8, true),
+        Field::new("on_hand", DataType::Float64, true),
+        Field::new("net_movement", DataType::Float64, true),
+        Field::new("noise", DataType::Float64, true),
+        Field::new("reorder_point", DataType::Float64, true),
+        Field::new("mixed", DataType::Float64, true),
+    ]));
+    write_table(
+        root,
+        "stock_levels",
+        RecordBatch::try_new(
+            levels,
+            vec![
+                Arc::new(StringArray::from(l_wh)),
+                Arc::new(StringArray::from(l_period)),
+                Arc::new(Float64Array::from(l_on_hand)),
+                Arc::new(Float64Array::from(l_net)),
+                Arc::new(Float64Array::from(l_noise)),
+                Arc::new(Float64Array::from(l_reorder)),
+                Arc::new(Float64Array::from(l_mixed)),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+    let movements = Arc::new(Schema::new(vec![
+        Field::new("move_id", DataType::Int64, true),
+        Field::new("warehouse", DataType::Utf8, true),
+        Field::new("d", DataType::Utf8, true),
+        Field::new("received", DataType::Float64, true),
+        Field::new("issued", DataType::Float64, true),
+    ]));
+    write_table(
+        root,
+        "movements",
+        RecordBatch::try_new(
+            movements,
+            vec![
+                Arc::new(datafusion::arrow::array::Int64Array::from(m_id)),
+                Arc::new(StringArray::from(m_wh)),
+                Arc::new(StringArray::from(m_day)),
+                Arc::new(Float64Array::from(m_received)),
+                Arc::new(Float64Array::from(m_issued)),
+            ],
+        )
+        .unwrap(),
+    )
+    .await;
+}
+
+async fn evidence_on(session: &Session, subject: &str) -> serde_json::Value {
+    session
+        .execute(&format!("SELECT behavior_evidence() FROM {subject};"))
+        .await
+        .unwrap();
+    let value = one(&session
+        .execute(&format!(
+            "SELECT value FROM GLOSSARY({subject}::behavior_evidence) WHERE state = 'current';"
+        ))
+        .await
+        .unwrap());
+    serde_json::from_str(&value).unwrap()
+}
+
+/// The first anchor on an event table — the reconciliation at the
+/// unscoped alignment, which is pushed before its monotone reading.
+fn first_anchor<'a>(evidence: &'a serde_json::Value, event: &str) -> &'a serde_json::Value {
+    evidence["anchors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["event"] == event)
+        .unwrap_or_else(|| panic!("no {event} anchor in {evidence}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn positive_only_movements_meet_the_null_model() {
+    // The null the finance oracle never posed: every movement is
+    // positive, so an unrelated column of the movements' size sits
+    // near 0.4 on the flow residual and near 1.0 on the delta
+    // residual. Under a gate of 0.5 that was a flow vote; under 0.05
+    // it is an abstention. The reconciliations that exist stay exact,
+    // the constant is a dead value, a key by shape leaves the pool,
+    // and a fit carried by two warehouses of five stops at the
+    // majority floor.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    stockroom_fixture(&root).await;
+    let session = behavior_session(
+        dir.path(),
+        "DECLARE RECIPE warehouses ON fin FROM erp_export AS \
+         $$SELECT * FROM read_parquet('warehouses/*.parquet')$$;\n\
+         DECLARE RECIPE stock_levels ON fin FROM erp_export AS \
+         $$SELECT warehouse, CAST(period AS DATE) AS period, on_hand, net_movement, \
+         noise, reorder_point, mixed FROM read_parquet('stock_levels/*.parquet')$$;\n\
+         DECLARE RECIPE movements ON fin FROM erp_export AS \
+         $$SELECT move_id, warehouse, CAST(d AS DATE) AS d, received, issued \
+         FROM read_parquet('movements/*.parquet')$$;\n\
+         DECLARE RELATIONSHIP stock_levels.warehouse -> warehouses.id;\n\
+         DECLARE RELATIONSHIP movements.warehouse -> warehouses.id;",
+    )
+    .await;
+
+    // The level: its delta is the month's net, exactly.
+    let on_hand = evidence_on(&session, "stock_levels.on_hand").await;
+    let a = first_anchor(&on_hand, "movements");
+    assert_eq!(a["verdict"], "stock", "{a}");
+    assert_eq!(a["convention"], "received - issued", "{a}");
+    assert_eq!(a["voted"], 5, "{a}");
+    assert!(a["r_stock"].as_f64().unwrap() < 0.01, "{a}");
+    assert!(
+        a["identifier_columns"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("move_id")),
+        "a unique integer is an identifier, not a movement: {a}"
+    );
+    assert_eq!(on_hand["summary"]["verdict"], "stock", "{on_hand}");
+
+    // The net itself: a flow at the same convention.
+    let net = evidence_on(&session, "stock_levels.net_movement").await;
+    let a = first_anchor(&net, "movements");
+    assert_eq!(a["verdict"], "flow", "{a}");
+    assert_eq!(a["convention"], "received - issued", "{a}");
+    assert!(a["r_flow"].as_f64().unwrap() < 0.01, "{a}");
+
+    // Noise of the movements' size: no entity votes.
+    let noise = evidence_on(&session, "stock_levels.noise").await;
+    assert_eq!(noise["summary"]["verdict"], "abstain", "{noise}");
+    assert_eq!(noise["summary"]["decided"], 0, "{noise}");
+    let a = first_anchor(&noise, "movements");
+    assert!(
+        a["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no entity series reconciled"),
+        "{a}"
+    );
+
+    // A constant: a dead value, whatever it is compared with.
+    let constant = evidence_on(&session, "stock_levels.reorder_point").await;
+    assert_eq!(constant["summary"]["verdict"], "abstain", "{constant}");
+    assert_eq!(constant["summary"]["decided"], 0, "{constant}");
+
+    // Two warehouses of five reconcile exactly; the kernel's own
+    // floor (two voters, agreement 0.8) would call it a flow, the
+    // majority floor holds it back and says with what counts.
+    let mixed = evidence_on(&session, "stock_levels.mixed").await;
+    assert_eq!(mixed["summary"]["verdict"], "abstain", "{mixed}");
+    let a = first_anchor(&mixed, "movements");
+    assert_eq!(a["verdict"], "abstain", "{a}");
+    let reason = a["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("2 of 5 common entities voted flow") && reason.contains("majority"),
+        "{reason}"
+    );
+    assert_eq!(
+        a["alternatives"][0]["verdict"], "abstain",
+        "the runner-up field reads the floor too: {a}"
+    );
+}
