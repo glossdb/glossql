@@ -8,9 +8,11 @@ description: How a glossql release is cut — the order of operations across bot
 One release is one version everywhere: `version` in the workspace
 `Cargo.toml` (`[workspace.package]`) is the single bump point, and
 `glossql --version` answers with it. The artifacts: a macOS arm64
-tarball behind the brew tap, and one x86_64 deb. No model rides
-either: the band model is the glosskernels service, released from
-its own repository on its own cadence. **Never built**: macOS x86_64,
+tarball behind the brew tap, one x86_64 deb, and the server image on
+GHCR (`ghcr.io/glossdb/glossql:<version>` and `:latest`, built from
+the `Dockerfile` at the tag). No model rides any of them: the band
+model is the glosskernels service, released from its own repository
+on its own cadence. **Never built**: macOS x86_64,
 ARM Linux, Jetson, a cuda flavor — ruled, don't propose them back.
 
 The detail lives in the files themselves — `.github/workflows/
@@ -27,7 +29,9 @@ order, which is written nowhere else.
    fails the vendored-guide test until `vendor/datafusion/refresh.sh
    <tag>` has run.
 3. Tag and push: `git tag v<version> && git push origin v<version>`.
-   The workflow builds the deb and uploads it to a draft release.
+   The workflow builds the deb and uploads it to a draft release, and
+   builds the image and pushes it to GHCR — the image is public the
+   moment the push lands, the deb only when the draft is published.
 4. The laptop half: `.github/release-macos.sh` builds, uploads the
    tarball, and renders `.github/homebrew/glossql.rb` with the real
    checksum.
@@ -49,3 +53,7 @@ order, which is written nowhere else.
   the fix, not the formula.
 - Never put a formula in the tap before the tarball's sha256 exists;
   a placeholder breaks `brew install` publicly.
+- A package's first push to GHCR lands **private** (packages do not
+  inherit the repository's visibility); the package is made public
+  once, in the org's package settings, and cannot be made private
+  again. Until then `docker pull` answers "denied".

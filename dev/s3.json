@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "dev",
+      "credentials": [{ "accessKey": "seaweed-dev", "secretKey": "seaweed-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

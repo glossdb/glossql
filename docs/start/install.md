@@ -44,6 +44,37 @@ listens:
 2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
 ```
 
+## The container
+
+The same binary as an image: `ghcr.io/glossdb/glossql:<version>`,
+pushed at each release tag beside the deb, and `docker build .` at a
+checkout builds the same. A slim Debian, the binary and the root
+certificates — no model, no weights, no GPU. It listens on 8080, runs
+as an unprivileged user, and is configured through the environment.
+With `GLOSSQL_CATALOG_SQL` and `GLOSSQL_WAREHOUSE` named, nothing of the
+state lives in the container and `/workspace` holds `apps/` alone;
+without them `/workspace` is the whole workspace, so mount a directory
+there. `GET /healthz` answers `ok` outside the gate, for a platform's
+probe, and stays off the record.
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e GLOSSQL_ISSUER=https://issuer.example \
+  -e GLOSSQL_AUDIENCE=https://glossql.example \
+  -e GLOSSQL_CLIENT_ID=… -e GLOSSQL_CLIENT_SECRET=… \
+  -e GLOSSQL_CATALOG_SQL=postgres://glossql:…@db.example:5432/glossql \
+  -e GLOSSQL_WAREHOUSE=abfss://lake@account.dfs.core.windows.net/warehouse \
+  -e AZURE_STORAGE_ACCOUNT_NAME=account -e AZURE_STORAGE_ACCOUNT_KEY=… \
+  -e GLOSSQL_TABICL_URL=https://… -e GLOSSQL_TABICL_TOKEN=… \
+  ghcr.io/glossdb/glossql:0.1.3
+```
+
+The image's command sizes the server for a box with 8 GiB of memory
+and an 8 GiB ephemeral disk: `--memory-limit 3072`, so the spill it
+bounds at twice the pool fits the disk, and `--cube-cache 1024`; the
+rest of the memory is the process and what the pool does not track. A
+larger box overrides the command with larger numbers.
+
 ## Flags
 
 | flag | default | meaning |
@@ -73,7 +104,7 @@ the file, which is how a container is configured without one):
 | `GLOSSQL_CATALOG_CREDENTIAL` | `client_id:client_secret`, exchanged for a bearer token at `GLOSSQL_CATALOG_TOKEN_ENDPOINT` (required with it) and exchanged again when the token nears its stated expiry; `GLOSSQL_CATALOG_SCOPE` as the backend's documentation names it |
 | `GLOSSQL_TABICL_URL` | the kernel service behind the metric-bands walk, `whatif.<scenario>()` and `misfit.<frame>()` — the hosted kernel API, or a `glosskernels` service run beside the server. Unset, those three doors refuse by name and everything else serves |
 | `GLOSSQL_TABICL_TOKEN` | the bearer that service expects: a key the hosted API issued, or whatever a service of your own was started with |
-| `AWS_ACCESS_KEY_ID` …, `AZURE_STORAGE_ACCOUNT_NAME` … | storage itself needs no glossql variables behind a REST catalog — table loads answer with what FileIO needs. A store that vends nothing, a dev rig or the SQL catalog's warehouse, is configured through the store's standard conventions, read by the storage layer itself: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`; `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_USE_EMULATOR` |
+| `AWS_ACCESS_KEY_ID` …, `AZURE_STORAGE_ACCOUNT_NAME` … | storage itself needs no glossql variables behind a REST catalog — table loads answer with what FileIO needs. A store that vends nothing, a dev rig or the SQL catalog's warehouse, is configured through the store's standard conventions, read by the storage layer itself: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`; `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_USE_EMULATOR` (with `AZURITE_BLOB_STORAGE_URL` when the emulator is not on the loopback) |
 | `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` and `/v1/logs` are appended). Set, the record is also exported there — spans as traces, events as logs, OTLP over HTTP, protobuf, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_HEADERS` for a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES` for what names the deployment beyond `service.name=glossql` |
 

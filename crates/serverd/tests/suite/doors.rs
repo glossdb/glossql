@@ -785,6 +785,30 @@ async fn the_discovery_document_and_the_assets_answer_without_a_token() {
     assert_eq!(asset.status(), StatusCode::OK);
 }
 
+/// The probe answers outside the gate in both arrangements: it is the
+/// one path a platform asks every few seconds, and a probe that had to
+/// authenticate would be a platform holding a token.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_probe_answers_without_a_token_in_both_arrangements() {
+    let (gated, _dir) = app().await;
+    let (dir, store) = scratch_store().await;
+    let open = router(
+        Arc::new(Plane::new(store, Arc::new(NoRuntime))),
+        DoorConfig::default(),
+        dir.path().to_path_buf(),
+        Access::Open,
+    );
+    for app in [gated, open] {
+        let response = app
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"ok");
+    }
+}
+
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
 /// transport session; json_response mode answers in plain JSON).
 async fn mcp(app: Router, payload: Value) -> Response<Body> {

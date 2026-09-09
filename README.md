@@ -161,7 +161,7 @@ agent judges; the false positives stay visible in the measurement.
 
 A Rust workspace. `cargo build -p glossql-serverd` builds the server;
 use `--release` to run it for real. The dependency tree is heavy —
-DataFusion, Iceberg, candle — and the parallel build needs memory:
+DataFusion, Iceberg — and the parallel build needs memory:
 measured cold on a 15-core machine, compiler memory peaks at ~6 GB for
 a dev build and ~9 GB for release, with single compile units up to
 ~2.6 GB. If the build dies without a compiler error, the OOM killer

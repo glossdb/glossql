@@ -13,6 +13,7 @@ One binary, one listener.
 /auth/login, /auth/callback, /auth/logout
                            the browser's way to a token
 /.well-known/oauth-protected-resource
+/healthz                   a platform's probe: 200, outside the gate, off the record
 ```
 
 **The two door kinds scope differently because their callers do.** A

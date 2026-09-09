@@ -20,8 +20,8 @@ The server: one binary, one workspace, three doors. How it is built is
   execution at the source over ADBC; source-row counting.
 - **Scripts** — the native kernels; the shipped
   function library declared at boot; the band plane over the
-  candle-ported in-context model
-  ([functions](../reference/functions.md),
+  in-context model, served by the kernel service `GLOSSQL_TABICL_URL`
+  names ([functions](../reference/functions.md),
   [methods](../methods/README.md)).
 - **The doors** — `/mcp` (one `glossql` tool, stateless, row
   cap), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`

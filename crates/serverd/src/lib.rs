@@ -240,4 +240,8 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, access: 
                 .on_request(())
                 .on_response(telemetry::request_done),
         )
+        // The probe a platform asks every few seconds, after the trace
+        // layer so it is not on the record: the store is open before
+        // the router exists, so an answer at all says the server is up.
+        .route("/healthz", get(|| async { "ok" }))
 }
