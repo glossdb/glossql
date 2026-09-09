@@ -772,6 +772,8 @@ pub(crate) async fn relationship_candidates(
         table: String,
         column: String,
         filled: i64,
+        /// Date or Timestamp: a reference is never a point in time.
+        temporal: bool,
     }
     let mut cols: Vec<ColShape> = Vec::new();
     let mut rows: HashMap<String, i64> = HashMap::new();
@@ -816,6 +818,10 @@ pub(crate) async fn relationship_candidates(
                 table: t.clone(),
                 column: f.name().clone(),
                 filled: counted(i)?,
+                temporal: matches!(
+                    f.data_type(),
+                    DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _)
+                ),
             });
         }
         rows.insert(t.clone(), counted(scalar.len())?);
@@ -878,7 +884,9 @@ pub(crate) async fn relationship_candidates(
     }
 
     // Single-column candidates: the pairs whose to side stands as a key
-    // on its own.
+    // on its own. The row says what the to side is — exactly unique in
+    // its table, a point in time — beside how far the from side
+    // reaches it; the body ranks on both, and demotes only.
     #[derive(Clone)]
     struct Candidate {
         from: String,
@@ -889,6 +897,8 @@ pub(crate) async fn relationship_candidates(
         orphans: i64,
         from_distinct: i64,
         to_distinct: i64,
+        to_unique: bool,
+        to_temporal: bool,
         key_columns: Option<(String, String)>,
     }
     let path = |i: usize| format!("{}.{}", cols[i].table, cols[i].column);
@@ -910,6 +920,8 @@ pub(crate) async fn relationship_candidates(
             orphans: distinct(p.f) - p.matched,
             from_distinct: distinct(p.f),
             to_distinct: distinct(p.k),
+            to_unique: unique(p.k),
+            to_temporal: cols[p.k].temporal,
             key_columns: None,
         });
     }
@@ -1102,6 +1114,7 @@ pub(crate) async fn relationship_candidates(
         matched: i64,
         overlap: f64,
         to_distinct: i64,
+        tfilled: i64,
         ffilled: i64,
         fpairs: i64,
     }
@@ -1125,6 +1138,7 @@ pub(crate) async fn relationship_candidates(
                 matched,
                 overlap,
                 to_distinct: combo_distinct[a.to],
+                tfilled: filled[a.to],
                 ffilled: filled[a.from],
                 fpairs,
             },
@@ -1154,12 +1168,16 @@ pub(crate) async fn relationship_candidates(
             orphans: r.fpairs - r.matched,
             from_distinct: r.fpairs,
             to_distinct: r.to_distinct,
+            // The tuple is the key: unique when its distinct pairs are
+            // its co-filled rows; temporal when the identifying leg is.
+            to_unique: r.to_distinct == r.tfilled,
+            to_temporal: cols[a.k].temporal,
             key_columns: Some((path(sc.f), path(sc.k))),
         });
     }
 
-    // One row per candidate, seq in push order — the body's tie-breaker
-    // under overlap DESC, which reproduces the script's stable sort.
+    // One row per candidate, seq in push order — the body's last
+    // tie-breaker, which reproduces the script's stable sort.
     let mut out = Vec::new();
     for (seq, c) in candidates.iter().enumerate() {
         let mut row = serde_json::Map::new();
@@ -1172,6 +1190,8 @@ pub(crate) async fn relationship_candidates(
         row.insert("orphans".into(), json!(c.orphans));
         row.insert("from_distinct".into(), json!(c.from_distinct));
         row.insert("to_distinct".into(), json!(c.to_distinct));
+        row.insert("to_unique".into(), json!(c.to_unique));
+        row.insert("to_temporal".into(), json!(c.to_temporal));
         if let Some((kf, kt)) = &c.key_columns {
             row.insert("kc_from".into(), json!(kf));
             row.insert("kc_to".into(), json!(kt));
@@ -1693,6 +1713,8 @@ fn relationship_shape() -> Vec<Field> {
         Field::new("orphans", DataType::Int64, true),
         Field::new("from_distinct", DataType::Int64, true),
         Field::new("to_distinct", DataType::Int64, true),
+        Field::new("to_unique", DataType::Boolean, true),
+        Field::new("to_temporal", DataType::Boolean, true),
         Field::new("kc_from", DataType::Utf8, true),
         Field::new("kc_to", DataType::Utf8, true),
     ]

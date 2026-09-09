@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
+use datafusion::arrow::array::{Date32Array, Int64Array, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::prelude::SessionContext;
@@ -426,4 +426,224 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         swept,
         "txns.(business_id, party) -> parties.(business_id, name)"
     );
+}
+
+/// Lands each table as its own recipe on a fresh workspace, runs
+/// `detect_relationships`, and returns the body the door served.
+async fn ranked(tables: Vec<(&str, RecordBatch)>) -> serde_json::Value {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("lake/erp");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut recipes = String::new();
+    for (name, batch) in tables {
+        write_table(&root, name, batch).await;
+        recipes.push_str(&format!(
+            "DECLARE RECIPE {name} ON fin FROM erp_export AS \
+             $$SELECT * FROM read_parquet('{name}/*.parquet')$$;\n"
+        ));
+    }
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake.clone()).await.unwrap();
+    let session = Session::new(
+        store.clone(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
+    .unwrap()
+    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'relationship judging');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp_export SET (type: parquet, location: '{}');\n\
+             DECLARE ASPECT relationship_candidates WITH $${{\n\
+               \"type\": \"object\",\n\
+               \"properties\": {{\"candidates\": {{\"type\": \"array\"}}}}\n\
+             }}$$ AS MEASUREMENT ON DATASET;\n\
+             DECLARE FUNCTION detect_relationships FOR GLOBAL \
+             AS $${RELATIONSHIPS}$$ RETURNS relationship_candidates;\n\
+             {recipes}",
+            root.display()
+        ))
+        .await
+        .unwrap();
+    session
+        .execute("SELECT detect_relationships() FROM fin;")
+        .await
+        .unwrap();
+    let value = one(&session
+        .execute(
+            "SELECT value FROM GLOSSARY(fin::relationship_candidates) WHERE state = 'current';",
+        )
+        .await
+        .unwrap());
+    serde_json::from_str(&value).unwrap()
+}
+
+fn ints(name: &str, values: Vec<i64>) -> (Arc<Schema>, Arc<Int64Array>) {
+    (
+        Arc::new(Schema::new(vec![Field::new(name, DataType::Int64, true)])),
+        Arc::new(Int64Array::from(values)),
+    )
+}
+
+fn edge(body: &serde_json::Value, i: usize) -> (String, String) {
+    let c = &body["candidates"][i];
+    (
+        c["from"].as_str().unwrap().to_string(),
+        c["to"].as_str().unwrap().to_string(),
+    )
+}
+
+/// A small dense integer column — a priority of 1, 2, 3 — is contained
+/// in every id range at overlap 1.0 and reaches almost none of it. Key
+/// coverage before overlap puts the reference first; the decoy stays
+/// in the list.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dense_code_inside_an_id_range_ranks_below_the_reference() {
+    let (cs, cid) = ints("id", (1..=20).collect());
+    let customers = RecordBatch::try_new(cs, vec![cid]).unwrap();
+    let orders = Arc::new(Schema::new(vec![
+        Field::new("customer_id", DataType::Int64, true),
+        Field::new("priority", DataType::Int64, true),
+    ]));
+    let mut customer_id: Vec<i64> = (1..=15).collect();
+    customer_id.extend([3, 7, 99, 99, 12]);
+    let priority: Vec<i64> = (0..20).map(|i| i % 3 + 1).collect();
+    let orders = RecordBatch::try_new(
+        orders,
+        vec![
+            Arc::new(Int64Array::from(customer_id)),
+            Arc::new(Int64Array::from(priority)),
+        ],
+    )
+    .unwrap();
+    let body = ranked(vec![("customers", customers), ("orders", orders)]).await;
+
+    assert_eq!(body["summary"]["candidates"], 2, "{body}");
+    assert_eq!(
+        edge(&body, 0),
+        ("orders.customer_id".into(), "customers.id".into()),
+        "{body}"
+    );
+    assert_eq!(
+        edge(&body, 1),
+        ("orders.priority".into(), "customers.id".into()),
+        "{body}"
+    );
+    // The decoy's statistics are the better ones on overlap alone.
+    assert_eq!(body["candidates"][1]["overlap"], 1.0, "{body}");
+    assert_eq!(body["candidates"][0]["overlap"], 0.9375, "{body}");
+    assert_eq!(body["candidates"][0]["to_unique"], true, "{body}");
+    assert_eq!(body["candidates"][0]["to_temporal"], false, "{body}");
+}
+
+/// A date copied from the parent onto every child row contains the
+/// parent's dates perfectly; the parent's key is what the child refers
+/// to. A temporal target ranks below a clean key.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copied_date_column_ranks_below_the_key() {
+    let races = Arc::new(Schema::new(vec![
+        Field::new("race_id", DataType::Int64, true),
+        Field::new("race_date", DataType::Date32, true),
+    ]));
+    let day = |d: i32| 20_000 + 7 * d;
+    let races = RecordBatch::try_new(
+        races,
+        vec![
+            Arc::new(Int64Array::from((1..=8).collect::<Vec<i64>>())),
+            Arc::new(Date32Array::from((1..=8).map(day).collect::<Vec<i32>>())),
+        ],
+    )
+    .unwrap();
+    let results = Arc::new(Schema::new(vec![
+        Field::new("race_id", DataType::Int64, true),
+        Field::new("result_date", DataType::Date32, true),
+    ]));
+    // Races 1..7 with results, one orphan race 99 whose date is race
+    // 8's: the copied date resolves fully, the key does not.
+    let race_id: Vec<i64> = vec![1, 1, 2, 2, 3, 4, 5, 6, 7, 7, 99, 99];
+    let result_date: Vec<i32> = race_id
+        .iter()
+        .map(|r| if *r == 99 { day(8) } else { day(*r as i32) })
+        .collect();
+    let results = RecordBatch::try_new(
+        results,
+        vec![
+            Arc::new(Int64Array::from(race_id)),
+            Arc::new(Date32Array::from(result_date)),
+        ],
+    )
+    .unwrap();
+    let body = ranked(vec![("races", races), ("results", results)]).await;
+
+    assert_eq!(body["summary"]["candidates"], 2, "{body}");
+    assert_eq!(
+        edge(&body, 0),
+        ("results.race_id".into(), "races.race_id".into()),
+        "{body}"
+    );
+    assert_eq!(
+        edge(&body, 1),
+        ("results.result_date".into(), "races.race_date".into()),
+        "{body}"
+    );
+    assert_eq!(body["candidates"][1]["overlap"], 1.0, "{body}");
+    assert_eq!(body["candidates"][1]["to_unique"], true, "{body}");
+    assert_eq!(body["candidates"][1]["to_temporal"], true, "{body}");
+    assert_eq!(body["candidates"][0]["overlap"], 0.875, "{body}");
+}
+
+/// Two child tables on one parent key contain each other's references
+/// perfectly, and the sibling's column is near-unique enough to be
+/// key-like without being a key. A target that is not exactly unique
+/// in its table ranks below the parent's key.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sibling_on_a_shared_parent_key_ranks_below_the_parent() {
+    let (es, eid) = ints("emp_no", (1..=12).collect());
+    let employees = RecordBatch::try_new(es, vec![eid]).unwrap();
+    let mut dept: Vec<i64> = (1..=9).collect();
+    dept.push(9);
+    let (ds, did) = ints("emp_no", dept);
+    let dept_emp = RecordBatch::try_new(ds, vec![did]).unwrap();
+    let mut held: Vec<i64> = (1..=9).collect();
+    held.extend([2, 5, 7]);
+    let (ts, tid) = ints("emp_no", held);
+    let titles = RecordBatch::try_new(ts, vec![tid]).unwrap();
+    let body = ranked(vec![
+        ("employees", employees),
+        ("dept_emp", dept_emp),
+        ("titles", titles),
+    ])
+    .await;
+
+    let edges: Vec<(String, String)> = (0..body["candidates"].as_array().unwrap().len())
+        .map(|i| edge(&body, i))
+        .collect();
+    // Both true edges lead, in either order; the sibling pair follows.
+    assert_eq!(edges[0].1, "employees.emp_no", "{body}");
+    assert_eq!(edges[1].1, "employees.emp_no", "{body}");
+    assert!(
+        edges.contains(&("titles.emp_no".into(), "dept_emp.emp_no".into())),
+        "the sibling pair stays in the list: {body}"
+    );
+    let sibling = body["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["to"] == "dept_emp.emp_no" && c["from"] == "titles.emp_no")
+        .unwrap();
+    // Its statistics beat the true edge on coverage and tie on overlap.
+    assert_eq!(sibling["overlap"], 1.0, "{body}");
+    assert_eq!(sibling["matched"], 9, "{body}");
+    assert_eq!(sibling["to_distinct"], 9, "{body}");
+    assert_eq!(sibling["to_unique"], false, "{body}");
+    assert_eq!(body["candidates"][0]["to_unique"], true, "{body}");
 }

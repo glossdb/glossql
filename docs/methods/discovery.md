@@ -38,11 +38,17 @@ first counts every combination's distinct pairs, an aggregate with no
 join, and settles the key test from those counts; only the surviving
 from-combinations are then joined to the surviving to-combinations. A
 composite that passes the floor rides `key_columns` (the tuple is the
-key). Candidates rank by what a reference looks like: it repeats
-(many-to-one before one-to-one), it resolves (overlap), and it reaches
-its key (matched over the key's distinct count) — a one-to-one 1.0
-overlap is as often two parallel surrogate sequences as an edge, and a
-small code set is contained in every dense id space; the body
+key). Candidates rank by what a reference looks like: its target is a
+clean key (exactly unique in its table and not a Date or Timestamp),
+it repeats (many-to-one before one-to-one), it reaches its key
+(matched over the key's distinct count), and it resolves (overlap).
+Key coverage stands before overlap because a small code set is
+contained in every dense id space at overlap 1.0 and reaches almost
+none of it; the clean-key tier stands first because a copied date
+column and a sibling table's own foreign key both contain a
+reference's values without being what it refers to, and a one-to-one
+1.0 overlap is as often two parallel surrogate sequences as an edge.
+The order demotes and never drops. The body
 (`crates/scripts/functions/relationships.sql`) shapes and summarizes,
 and never filters beyond the door's floor.
 
