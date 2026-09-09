@@ -223,6 +223,11 @@ async fn compute(
     // what-if is charted beside the cube's own series, so it anchors
     // where the cube anchors wherever a verdict stands.
     let judged_temporal = crate::cube::judged_bodies(&read_ctx, dataset, "temporal_profile");
+    // The verb, read where the cube and the bands read it: a verdict
+    // that decided, else the grounding's own word. One function, so a
+    // replay never folds a metric by a different word than its cube.
+    let judged_behavior = crate::cube::judged_bodies(&read_ctx, dataset, "behavior_evidence");
+    let glossed_behavior = crate::search::current_fact_values(&read_ctx, dataset, "behavior").await?;
     let all_verdicts = verdicts(&read_ctx, dataset, &scope, None).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
@@ -260,6 +265,8 @@ async fn compute(
             &ctx,
             dataset,
             &judged_temporal,
+            &judged_behavior,
+            &glossed_behavior,
             &c.aspect,
             &sql,
             &body,
@@ -292,6 +299,8 @@ async fn concept_rows(
     ctx: &SessionContext,
     dataset: &str,
     judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
+    judged_behavior: &std::collections::HashMap<String, crate::cube::Verdict>,
+    glossed_behavior: &std::collections::HashMap<String, (Value, u8)>,
     concept: &str,
     sql: &str,
     body: &Value,
@@ -340,27 +349,30 @@ async fn concept_rows(
             }
         };
 
-    // The three verbs, the same ones the cube and metric_bands read.
+    // The three verbs, through the one function the cube and the
+    // bands walk read (`cube::verb_of`): a verdict that decided, else
+    // the grounding's word.
     //
     // A RATIO declares itself by serving `num` and `den` beside `value`,
     // and reads as sum(num)/sum(den). Summing it instead adds member
     // ratios together: DSO replayed at 957 days against a true 76, its
     // grounding serving segment x region.
     //
-    // A marked STOCK sums the rows standing at the month's LATEST
-    // observed date. `row_number() = 1` kept ONE arbitrary row — a
-    // receivables grounding emitting one row per open invoice replayed
-    // as 4,325 against a true 42M, and inventory as 12k against 12.4M.
+    // A STOCK sums the rows standing at the month's LATEST observed
+    // date. `row_number() = 1` kept ONE arbitrary row — a receivables
+    // grounding emitting one row per open invoice replayed as 4,325
+    // against a true 42M, and inventory as 12k against 12.4M.
     let is_ratio =
         fields.iter().any(|f| f.name() == "num") && fields.iter().any(|f| f.name() == "den");
-    let is_stock = !is_ratio && body["behavior"].as_str() == Some("stock");
-    let verb = if is_ratio {
-        "ratio"
-    } else if is_stock {
-        "stock"
-    } else {
-        "flow"
-    };
+    let verb = crate::cube::verb_of(
+        body,
+        is_ratio,
+        &probe,
+        dataset,
+        judged_behavior,
+        glossed_behavior,
+    )
+    .verb;
     let series_sql = crate::search::monthly_sql(sql, &tcol, verb);
 
     let base = run_series(shared, ctx, &series_sql, None).await?;
