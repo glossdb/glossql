@@ -204,3 +204,73 @@ async fn the_shipped_system_lands_one_append_per_relation() {
         assert_eq!(*n, 1, "`{table}` landed {n} times: {appends:?}");
     }
 }
+
+/// The whole shipped system declared over a Postgres catalog, the
+/// warehouse on this machine — the restart case included, since the
+/// catalog outlives the run and the next boot re-declares into what
+/// stands. Timed against the same boot over SQLite, for the record
+/// (cloud-deployment note, open item 7).
+///
+///     GLOSSQL_E2E_CATALOG_SQL=postgres://glossql:glossql@127.0.0.1:5432/glossql \
+///       cargo test -p glossql-serverd live_sql -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a Postgres server: GLOSSQL_E2E_CATALOG_SQL"]
+async fn live_sql_catalog_bootstrap() {
+    use glossql_scripts::KernelRuntime;
+
+    let Some(uri) = std::env::var("GLOSSQL_E2E_CATALOG_SQL")
+        .ok()
+        .filter(|v| !v.is_empty())
+    else {
+        eprintln!("skipping: GLOSSQL_E2E_CATALOG_SQL is not set");
+        return;
+    };
+    let warehouse = std::env::temp_dir()
+        .join("glossql-e2e-sql")
+        .join("warehouse");
+    let functions = |plane: Arc<Plane>| async move {
+        let session = plane.channel(human(), None).await.unwrap();
+        let outcomes = session
+            .execute("SELECT count(*) AS n FROM functions;")
+            .await
+            .unwrap();
+        let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+            panic!("a count")
+        };
+        let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
+        datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0)
+            .unwrap()
+            .parse::<i64>()
+            .unwrap()
+    };
+
+    let t = std::time::Instant::now();
+    let lake = glossql_catalog::Lake::open_sql(&uri, &warehouse)
+        .await
+        .expect("a live SQL catalog");
+    let store = Store::open(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store, Arc::new(KernelRuntime::native())));
+    bootstrap(&plane, human()).await.unwrap();
+    let postgres = t.elapsed();
+    let declared = functions(Arc::clone(&plane)).await;
+    assert!(declared >= 14, "the library stands: {declared} functions");
+
+    let dir = tempfile::tempdir().unwrap();
+    let t = std::time::Instant::now();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = Store::open(lake).await.unwrap();
+    let plane = Arc::new(Plane::new(store, Arc::new(KernelRuntime::native())));
+    bootstrap(&plane, human()).await.unwrap();
+    let sqlite = t.elapsed();
+    assert_eq!(functions(plane).await, declared);
+    eprintln!(
+        "open + bootstrap: postgres {:.2}s, sqlite {:.2}s ({declared} functions)",
+        postgres.as_secs_f64(),
+        sqlite.as_secs_f64()
+    );
+}

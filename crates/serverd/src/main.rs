@@ -23,7 +23,9 @@ with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
 pair.\n\
 --workspace holds apps/, and — without a catalog connection — the \
-catalog and warehouse themselves, which is why it is required then. \
+warehouse and the catalog themselves, which is why it is required \
+then; GLOSSQL_CATALOG_SQL moves the catalog to a Postgres server \
+(postgres://…) and leaves the warehouse in the directory. \
 With GLOSSQL_CATALOG_URI set (a REST catalog; data and metadata live \
 behind it) it may be left unnamed: the working directory serves.\n\
 the band model behind the metric-bands walk, whatif. and misfit. is \
@@ -345,14 +347,30 @@ async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String
     Ok((lake, workspace))
 }
 
+/// The SQL catalog: the workspace directory's own SQLite file, or the
+/// Postgres server `GLOSSQL_CATALOG_SQL` names. The warehouse stays
+/// under the workspace directory either way. The URI carries the
+/// credentials, so the record gets its scheme and nothing more.
 #[cfg(feature = "sql")]
 async fn open_local(workspace: &std::path::Path) -> Result<Lake, String> {
     let warehouse = workspace.join("warehouse");
-    std::fs::create_dir_all(&warehouse)
-        .map_err(|e| format!("warehouse dir {}: {e}", warehouse.display()))?;
-    Lake::open(&workspace.join("catalog.sqlite"), &warehouse)
-        .await
-        .map_err(|e| e.to_string())
+    match std::env::var("GLOSSQL_CATALOG_SQL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        Some(uri) => {
+            tracing::info!(
+                catalog = uri.split(':').next().unwrap_or("sql"),
+                "opening the catalog"
+            );
+            Lake::open_sql(uri.trim(), &warehouse)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        None => Lake::open(&workspace.join("catalog.sqlite"), &warehouse)
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[cfg(not(feature = "sql"))]

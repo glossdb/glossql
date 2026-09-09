@@ -2,9 +2,10 @@
 //! (SPEC.md §3).
 //!
 //! One `Lake` per workspace, over one of two backends the features
-//! pick: a SQL catalog on a SQLite file plus a local warehouse
-//! directory (`sql`), or an Iceberg REST catalog with its own storage
-//! behind it (`rest`, [`rest::Connection`]). Datasets are namespaces.
+//! pick: a SQL catalog — SQLite in the workspace directory, or Postgres
+//! named by a URI — plus a local warehouse directory (`sql`), or an
+//! Iceberg REST catalog with its own storage behind it (`rest`,
+//! [`rest::Connection`]). Datasets are namespaces.
 //! Tables are **created**
 //! through iceberg-datafusion's own front door — the session mounts
 //! [`IcebergCatalogProvider`] schemas and declares a recipe's table with
@@ -245,31 +246,60 @@ impl Lake {
         }
     }
 
-    /// Open (creating on first use) the workspace data plane. Must be called
-    /// inside a multi-thread tokio runtime — the catalog and the providers
-    /// built on it block in place for their async work.
+    /// Open (creating on first use) the workspace data plane on the
+    /// workspace directory's own SQLite file. Must be called inside a
+    /// multi-thread tokio runtime — the catalog and the providers built
+    /// on it block in place for their async work.
     #[cfg(feature = "sql")]
     pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
-        std::fs::create_dir_all(warehouse)
-            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
-        let warehouse = warehouse
-            .canonicalize()
-            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
         if let Some(parent) = catalog_db.parent()
             && !parent.as_os_str().is_empty()
         {
             std::fs::create_dir_all(parent)
                 .map_err(|e| Error::Workspace(format!("catalog dir {}: {e}", parent.display())))?;
         }
+        // `mode=rwc` is how sqlx is told to create the file — it parses
+        // the mode off the URL and sets `create_if_missing`. Touching an
+        // empty file first said the same thing in a second place, and
+        // only sqlite knows what an empty database is.
+        Self::open_sql(
+            &format!("sqlite:{}?mode=rwc", catalog_db.display()),
+            warehouse,
+        )
+        .await
+    }
+
+    /// The same data plane on the SQL catalog a URI names — `sqlite:`
+    /// for the workspace file, `postgres://` (or `postgresql://`) for a
+    /// server — over a warehouse directory on the local filesystem. The
+    /// bind style follows the scheme: Postgres numbers its parameters,
+    /// SQLite takes question marks. The URI carries the credentials, so
+    /// it is never logged whole here or anywhere.
+    #[cfg(feature = "sql")]
+    pub async fn open_sql(catalog_uri: &str, warehouse: &Path) -> Result<Self> {
+        let (scheme, _) = catalog_uri.split_once(':').ok_or_else(|| {
+            Error::Workspace(format!(
+                "the catalog URI `{catalog_uri}` names no scheme — `sqlite:<file>` or `postgres://…`"
+            ))
+        })?;
+        let bind = match scheme.to_ascii_lowercase().as_str() {
+            "sqlite" => SqlBindStyle::QMark,
+            "postgres" | "postgresql" => SqlBindStyle::DollarNumeric,
+            other => {
+                return Err(Error::Workspace(format!(
+                    "the catalog URI scheme `{other}` is not one this binary speaks — sqlite or postgres"
+                )));
+            }
+        };
+        std::fs::create_dir_all(warehouse)
+            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
+        let warehouse = warehouse
+            .canonicalize()
+            .map_err(|e| Error::Workspace(format!("warehouse dir {}: {e}", warehouse.display())))?;
         let catalog = SqlCatalogBuilder::default()
-            // `mode=rwc` is how sqlx is told to create the file — it
-            // parses the mode off the URL and sets `create_if_missing`.
-            // Touching an empty file first said the same thing in a
-            // second place, and only sqlite knows what an empty database
-            // is.
-            .uri(format!("sqlite:{}?mode=rwc", catalog_db.display()))
+            .uri(catalog_uri)
             .warehouse_location(warehouse.display().to_string())
-            .sql_bind_style(SqlBindStyle::QMark)
+            .sql_bind_style(bind)
             .with_storage_factory(Arc::new(LocalFsStorageFactory))
             .load("glossql", HashMap::new())
             .await?;

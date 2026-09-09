@@ -39,9 +39,11 @@ the same catalog.
 
 The catalog sits behind the `Catalog` trait, built at one site, and
 nothing above the trait changes with the builder. Two builders stand
-there: iceberg-rust's SqlCatalog on the workspace's own SQLite file,
-in process; and an Iceberg REST catalog, named by
-`GLOSSQL_CATALOG_URI` ([install](../start/install.md)). A REST
+there: iceberg-rust's SqlCatalog, in process, on the workspace's own
+SQLite file or on the Postgres server `GLOSSQL_CATALOG_SQL` names —
+one implementation, the bind style following the URI's scheme; and an
+Iceberg REST catalog, named by `GLOSSQL_CATALOG_URI`
+([install](../start/install.md)). A REST
 backend attaches storage on its own side: every table load answers
 with the storage properties that table's FileIO needs — and, where
 the backend vends them, the credentials. The connection therefore

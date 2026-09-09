@@ -66,9 +66,12 @@ datafusion-functions-json = "0.54"
 iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 # Not used directly since stage 4½ — this line exists to switch on
-# sqlx's tokio runtime for iceberg-catalog-sql, which names no runtime
-# feature of its own and panics at pool creation without one.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+# sqlx's tokio runtime and its drivers for iceberg-catalog-sql, which
+# names neither and panics at pool creation without a runtime. Two
+# drivers: SQLite for the workspace directory, Postgres for the cloud
+# (`GLOSSQL_CATALOG_SQL`); `tls-rustls` is rustls on ring, the provider
+# the rest of the tree already carries.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "tls-rustls"] }
 iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 # The `rest` catalog backend (glossql-catalog's `rest` feature): the
 # Iceberg REST client. Its data plane is our own `Storage` over

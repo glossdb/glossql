@@ -65,6 +65,7 @@ the file, which is how a container is configured without one):
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server, which the browser login on `/app` signs in and exchanges its code as |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
+| `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace`. Unset, `catalog.sqlite` in the workspace serves |
 | `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
 | `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
@@ -152,7 +153,8 @@ it. The server writes nothing outside the workspace directory.
 
 ```
 acme/
-  catalog.sqlite     the Iceberg catalog
+  catalog.sqlite     the Iceberg catalog (absent with GLOSSQL_CATALOG_SQL:
+                     the catalog is then the Postgres server it names)
   warehouse/         the lake — every table and every declared
                      relation lives here as Iceberg data
   apps/              optional: workspace apps, one directory per app;
