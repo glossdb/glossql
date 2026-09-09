@@ -2727,8 +2727,30 @@ pub(crate) async fn metric_band_walk(
             "ratio" => "ratio-of-sums",
             _ => "sum",
         };
-        let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
-        let (horizon, sub_monthly) = extract_shape(shared, &ctx, sql, &tcol).await?;
+        // The series and the extract's shape, through the engine. A
+        // grounding the engine refuses at execution — a timestamp its
+        // month bucketing cannot hold, a column it cannot truncate —
+        // abstains on this metric with the engine's reason; the other
+        // metrics walk. Only a plan that does not build fails the
+        // walk whole, above.
+        let served = async {
+            let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
+            let (horizon, sub_monthly) = extract_shape(shared, &ctx, sql, &tcol).await?;
+            Ok::<_, SessionError>((series, horizon, sub_monthly))
+        }
+        .await;
+        let (series, horizon, sub_monthly) = match served {
+            Ok(served) => served,
+            Err(SessionError::BadSubject(reason)) => {
+                out.push(json!({
+                    "seq": seq, "metric": slot.aspect, "applicable": false,
+                    "reason": reason,
+                }));
+                seq += 1;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         // Rows landing through the month stop mid-month when the
         // extract does; a monthly-dated series is whole at its one
         // row, and its horizon says nothing.

@@ -71,4 +71,8 @@ protocol it was evaluated against before it shipped.
   and the detector scores the month before it. The walk reads that
   shape from the extract, not from the column's judged cadence. A
   monthly-dated series is whole at its one row.
+- A metric whose series the engine refuses at execution — a
+  timestamp the month bucketing cannot hold, a date past 2262 — is
+  served inapplicable with the engine's reason; the other metrics
+  walk.
 - A NULL date is no period: the rows it dates bucket nowhere.

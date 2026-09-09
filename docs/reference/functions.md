@@ -163,8 +163,10 @@ month's value is — `sum` for a flow, `latest-sum` for a stock,
 `ratio-of-sums` for a ratio. Where the extract lands finer than
 monthly, the newest month is `partial` while the extract's horizon
 falls inside it: the point serves its bands and its actual so far,
-withholds the PIT, and `withheld` says so. This measurement only
-reports; the `band_breach` detector adjudicates.
+withholds the PIT, and `withheld` says so. A metric whose series the
+engine refuses at execution is served inapplicable with the reason;
+the others walk. This measurement only reports; the `band_breach`
+detector adjudicates.
 
 ## Detectors
 

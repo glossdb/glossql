@@ -91,11 +91,15 @@ re-import, where the drift is and where you can fix it.
 
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
-NULL — a kept row with a NULL cell, not a dropped row. Cast dates with
-`try_to_date` and `try_to_timestamp`, never with `try_cast(x AS
-TIMESTAMP)`: that TIMESTAMP is nanoseconds and lands NULL for any year
-past 2262, while `try_to_timestamp` lands microseconds and
-`try_to_date` lands days, and both hold any year the source writes.
+NULL — a kept row with a NULL cell, not a dropped row. The period
+axis every metric is bucketed on is a nanosecond timestamp, and it
+ends at 2262-04-11: a date past it is never a period. Cast dates with
+`try_cast(x AS TIMESTAMP)` or `try_to_date`, and check the cast
+account: a year past 2262 is a token the source wrote, not a date,
+and `try_cast(x AS TIMESTAMP)` lands it NULL where the account
+counts it. `try_to_timestamp` keeps the token as a microsecond
+value, and the walk then abstains on every metric that column
+anchors, with the reason.
 
 ```glossql
 DECLARE RECIPE orders ON ops FROM erp_export AS $$

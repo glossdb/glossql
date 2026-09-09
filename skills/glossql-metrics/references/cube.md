@@ -17,7 +17,8 @@ top. Each point's fit saw only the months before it.
 - The corridor knows only the history it is shown; under about five
   months the walk says nothing.
 - A month the extract stops inside is served `partial`, its PIT
-  withheld; the detector scores the month before it.
+  withheld; the detector scores the month before it. A metric whose
+  series the engine refuses abstains with the reason; the others walk.
 - A red `metric_bands` verdict names its metric and month through
   `band_points()` — the recorded walk as rows, no re-run.
 - A declared fact (`x-kind: fact`) `fact_values()` serves whole, its

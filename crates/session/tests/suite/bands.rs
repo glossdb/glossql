@@ -256,6 +256,74 @@ GLOSS takings ON fin AS $${"sql": "SELECT race_date, takings AS value FROM races
     }
 }
 
+/// A series the engine refuses at execution abstains on its metric
+/// with the engine's reason; the other metrics walk. A microsecond
+/// timestamp past 2262 is one such series: the month bucketing runs
+/// in nanoseconds and cannot hold it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_series_the_engine_refuses_abstains_on_its_metric_alone() {
+    use datafusion::arrow::array::TimestampMicrosecondArray;
+    use datafusion::arrow::datatypes::TimeUnit;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("race_date", DataType::Date32, false),
+        Field::new(
+            "gathered",
+            DataType::Timestamp(TimeUnit::Microsecond, None),
+            false,
+        ),
+        Field::new("takings", DataType::Float64, false),
+    ]));
+    let days: Vec<i32> = (0..18)
+        .map(|i| mid_month(2024 + i / 12, (i % 12 + 1) as u32))
+        .collect();
+    let mut micros: Vec<i64> = days
+        .iter()
+        .map(|d| i64::from(*d) * 86_400_000_000)
+        .collect();
+    // Year 2890 in microseconds: the token a text export carried.
+    micros[3] = 29_050_531_200_000_000;
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Date32Array::from(days)),
+            Arc::new(TimestampMicrosecondArray::from(micros)),
+            Arc::new(Float64Array::from(
+                (0..18).map(|i| 100.0 + 3.7 * i as f64).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    let session = session_over(
+        "races",
+        schema,
+        batch,
+        r##"
+DECLARE DATASET fin SET (purpose: 'a refused series');
+USE fin;
+DECLARE ASPECT takings WITH $${"title": "Takings"}$$ AS QUERY ON DATASET;
+DECLARE ASPECT gathered WITH $${"title": "Gathered"}$$ AS QUERY ON DATASET;
+GLOSS takings ON fin AS $${"sql": "SELECT race_date, takings AS value FROM races"}$$;
+GLOSS gathered ON fin AS $${"sql": "SELECT gathered, takings AS value FROM races"}$$;
+"##,
+    )
+    .await;
+    let shown = walked(
+        &session,
+        "SELECT metric, applicable, reason, period FROM metric_band_walk('fin') \
+         ORDER BY metric, point_seq;",
+    )
+    .await;
+    let refused: Vec<&str> = shown.lines().filter(|l| l.contains("| gathered")).collect();
+    assert_eq!(refused.len(), 1, "{shown}");
+    assert!(refused[0].contains("| false "), "{shown}");
+    assert!(
+        refused[0].contains("out of range"),
+        "the engine's reason: {shown}"
+    );
+    let walked_: Vec<&str> = shown.lines().filter(|l| l.contains("| takings")).collect();
+    assert_eq!(walked_.len(), 6, "the other metric walks: {shown}");
+}
+
 /// Rows land daily on an axis nobody judged, and the extract stops
 /// mid-month: the newest month is partial by the extract's own shape,
 /// and the walk withholds its PIT. The monthly-dated races above are
