@@ -207,6 +207,14 @@ pass in proportion, and at one the planner plans a collect-left hash
 join whatever `prefer_hash_join` says (`physical_planner.rs`, the
 `target_partitions() > 1` arm).
 
+**Dependencies within one table** (`hierarchy_candidates`) has no join
+at all: the row's own values are the pair, so the pair pass unnests
+four lists in step — `(ca, cb, av, bv)`, a cell per pool pair — and
+groups them, a slice of the pairs to a scan because unnest emits rows
+times list length per input batch. The three reductions after the
+cells (pair groups, the per-determinant maxima both ways) are one
+grouping-set aggregate, so the unnest plans once.
+
 **Containment between many columns** (`relationship_candidates`) is the
 worked example. One pass per column type, because arms of different
 types can share nothing and a pass scoped to one type never casts:

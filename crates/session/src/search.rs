@@ -290,14 +290,17 @@ pub(crate) async fn derivation_candidates(
 ///   near-unique one is legitimate hierarchy material; `rows_per_value`
 ///   keeps thin evidence visible instead of gated.
 ///
-/// Two scans replace the per-pair query wave: one long-format pass
-/// sizes every column's cells (filled, groups, modal), and one
-/// self-join pass reduces every pool pair's agreement — the fan-out is
-/// a join the engine performs, not a loop of statements. Display
-/// strings are injective off the float lane, so grouping by them counts
-/// what grouping by the raw column counted. Columns pair by pool index,
-/// exactly the order the script enumerated, and `seq` carries it so the
-/// body's array reproduces it.
+/// One scan per pass replaces the per-pair query wave: pass one
+/// unpivots every candidate column's cells through one `unnest` and
+/// sizes each column (filled, groups, modal); pass two unpivots every
+/// pool pair's cells the same way, [`PAIRS_PER_PASS`] pairs to a scan,
+/// and reduces them to per-pair agreement — the fan-out is a list the
+/// engine unnests, not a join and not a loop of statements. Both passes
+/// run through the detector's state, so their aggregates spill under
+/// its share. Display strings are injective off the float lane, so
+/// grouping by them counts what grouping by the raw column counted.
+/// Columns pair by pool index, exactly the order the script
+/// enumerated, and `seq` carries it so the body's array reproduces it.
 pub(crate) async fn hierarchy_candidates(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,
@@ -308,14 +311,8 @@ pub(crate) async fn hierarchy_candidates(
         .pin(table)
         .ok_or_else(|| bad("no such table in the bound dataset".into()))?;
     let ctx = shared.session_ctx();
-    let run = |plan| async {
-        ctx.execute_logical_plan(plan)
-            .await
-            .map_err(|e| bad(e.to_string()))?
-            .collect()
-            .await
-            .map_err(|e| bad(e.to_string()))
-    };
+    let state = detector_state(&ctx);
+    let run = |plan| async { run_plan(&state, plan).await.map_err(bad) };
     let abstain = |reason: &str| {
         rows_batch(
             vec![json!({"applicable": false, "reason": reason})],
@@ -397,14 +394,18 @@ pub(crate) async fn hierarchy_candidates(
         return abstain("fewer than two dimension-like columns");
     }
 
-    // Pass two — the pair fan-out as a self-join on row number,
-    // restricted to pool columns, reduced to per-pair agreement.
+    // Pass two — the pair fan-out, restricted to pool columns and
+    // reduced to per-pair agreement, a slice of the pairs to a scan.
     let pool_cols: Vec<(usize, String)> = pool
         .iter()
         .map(|(ci, _)| (*ci, names[*ci].clone()))
         .collect();
-    let plan = plan_pairs(table, &provider, &pool_cols).map_err(|e| bad(e.to_string()))?;
-    let paired = run(plan).await?;
+    let mut all_pairs: Vec<(usize, usize)> = Vec::new();
+    for i in 0..pool_cols.len() {
+        for j in (i + 1)..pool_cols.len() {
+            all_pairs.push((i, j));
+        }
+    }
 
     struct Pair {
         pair_groups: i64,
@@ -412,22 +413,29 @@ pub(crate) async fn hierarchy_candidates(
         agree_ba: i64,
     }
     let mut pairs: std::collections::HashMap<(usize, usize), Pair> = Default::default();
-    for b in paired.iter().filter(|b| b.num_rows() > 0) {
-        let ca = int_column(std::slice::from_ref(b), "ca").map_err(|e| bad(e.to_string()))?;
-        let cb = int_column(std::slice::from_ref(b), "cb").map_err(|e| bad(e.to_string()))?;
-        let pg =
-            int_column(std::slice::from_ref(b), "pair_groups").map_err(|e| bad(e.to_string()))?;
-        let ab = int_column(std::slice::from_ref(b), "agree_ab").map_err(|e| bad(e.to_string()))?;
-        let ba = int_column(std::slice::from_ref(b), "agree_ba").map_err(|e| bad(e.to_string()))?;
-        for r in 0..b.num_rows() {
-            pairs.insert(
-                (ca[r] as usize, cb[r] as usize),
-                Pair {
-                    pair_groups: pg[r],
-                    agree_ab: ab[r],
-                    agree_ba: ba[r],
-                },
-            );
+    for slice in all_pairs.chunks(PAIRS_PER_PASS) {
+        let plan =
+            plan_pairs(table, &provider, &pool_cols, slice).map_err(|e| bad(e.to_string()))?;
+        let paired = run(plan).await?;
+        for b in paired.iter().filter(|b| b.num_rows() > 0) {
+            let ca = int_column(std::slice::from_ref(b), "ca").map_err(|e| bad(e.to_string()))?;
+            let cb = int_column(std::slice::from_ref(b), "cb").map_err(|e| bad(e.to_string()))?;
+            let pg = int_column(std::slice::from_ref(b), "pair_groups")
+                .map_err(|e| bad(e.to_string()))?;
+            let ab =
+                int_column(std::slice::from_ref(b), "agree_ab").map_err(|e| bad(e.to_string()))?;
+            let ba =
+                int_column(std::slice::from_ref(b), "agree_ba").map_err(|e| bad(e.to_string()))?;
+            for r in 0..b.num_rows() {
+                pairs.insert(
+                    (ca[r] as usize, cb[r] as usize),
+                    Pair {
+                        pair_groups: pg[r],
+                        agree_ab: ab[r],
+                        agree_ba: ba[r],
+                    },
+                );
+            }
         }
     }
 
@@ -477,37 +485,33 @@ fn plan_count(
         .build()
 }
 
-/// The long union: one arm per named column, each row as
-/// `(rid?, ci, val)` — the pool index as `ci`, the display form as
-/// `val`. `rid` (a row number) rides only when the pair pass needs to
-/// align arms row-for-row; identical arms enumerate identically.
+/// The long form of some columns: one scan, every row unpivoted to
+/// `(ci, val)` — the pool index as `ci`, the display form as `val` —
+/// through `make_array` and one `unnest`, so the plan carries one scan
+/// and one set of consumers however many columns take part. A null
+/// cell stays a null `val`, so NULL counts as one group downstream.
 fn plan_long(
     table: &str,
     provider: &Arc<dyn datafusion::catalog::TableProvider>,
     cols: &[(usize, String)],
-    with_rid: bool,
 ) -> datafusion::common::Result<LogicalPlanBuilder> {
-    use datafusion::functions_window::expr_fn::row_number;
-    use datafusion::logical_expr::{cast, col};
+    use datafusion::common::{Column, UnnestOptions};
+    use datafusion::functions_nested::expr_fn::make_array;
+    use datafusion::logical_expr::cast;
 
-    let mut union: Option<LogicalPlanBuilder> = None;
-    for (ci, name) in cols {
-        let mut b =
-            LogicalPlanBuilder::scan(table, provider_as_source(Arc::clone(provider)), None)?;
-        let mut exprs = Vec::new();
-        if with_rid {
-            b = b.window(vec![row_number().alias("rid")])?;
-            exprs.push(col("rid"));
-        }
-        exprs.push(lit(*ci as i64).alias("ci"));
-        exprs.push(cast(ident(name), DataType::Utf8).alias("val"));
-        let arm = b.project(exprs)?.build()?;
-        union = Some(match union {
-            None => LogicalPlanBuilder::from(arm),
-            Some(u) => u.union(arm)?,
-        });
-    }
-    Ok(union.expect("at least one column"))
+    let ci = make_array(cols.iter().map(|(ci, _)| lit(*ci as i64)).collect()).alias("ci");
+    let val = make_array(
+        cols.iter()
+            .map(|(_, name)| cast(ident(name), DataType::Utf8))
+            .collect(),
+    )
+    .alias("val");
+    LogicalPlanBuilder::scan(table, provider_as_source(Arc::clone(provider)), None)?
+        .project(vec![ci, val])?
+        .unnest_columns_with_options(
+            vec![Column::from_name("ci"), Column::from_name("val")],
+            UnnestOptions::default(),
+        )
 }
 
 /// Pass one: cells per (column, value) reduced to per-column statistics.
@@ -519,7 +523,7 @@ fn plan_colstat(
     use datafusion::functions_aggregate::expr_fn::{max, sum};
     use datafusion::logical_expr::col;
 
-    plan_long(table, provider, cols, false)?
+    plan_long(table, provider, cols)?
         .aggregate(vec![col("ci"), col("val")], vec![count(lit(1)).alias("c")])?
         .aggregate(
             vec![col("ci")],
@@ -540,84 +544,101 @@ fn plan_colstat(
         .build()
 }
 
-/// Pass two: the self-join on row number, cells per (pair, value pair),
-/// reduced three ways and joined back — pair groups, and the summed
-/// per-determinant maxima both directions.
+/// Pairs to a scan in the pair pass. Unnest emits one output batch per
+/// input batch, rows × list length, and a grouped aggregate's first
+/// reservation is one input batch of state; at the detector's batch of
+/// 1024 rows, 512 pairs put 524,288 cells in a batch. The slicing
+/// sizes the work's batches, never the result: every pair runs.
+const PAIRS_PER_PASS: usize = 512;
+
+/// Pass two, one slice of the pool's pairs: every row unpivoted to a
+/// cell per pair — `(ca, cb, av, bv)` — through four lists unnested in
+/// step, no join and no row number, since the row's own values are the
+/// pair. Cells per (pair, value pair) reduce to pair groups and the
+/// summed per-determinant maxima both directions.
 fn plan_pairs(
     table: &str,
     provider: &Arc<dyn datafusion::catalog::TableProvider>,
     cols: &[(usize, String)],
+    pairs: &[(usize, usize)],
 ) -> datafusion::common::Result<datafusion::logical_expr::LogicalPlan> {
-    use datafusion::common::JoinType;
+    use datafusion::common::{Column, UnnestOptions};
     use datafusion::functions_aggregate::expr_fn::{max, sum};
-    use datafusion::logical_expr::col;
+    use datafusion::functions_nested::expr_fn::make_array;
+    use datafusion::logical_expr::{cast, col};
 
-    let a = plan_long(table, provider, cols, true)?.alias("a")?;
-    let b = plan_long(table, provider, cols, true)?
-        .alias("b")?
-        .build()?;
-    let cells = a
-        .join(
-            b,
-            JoinType::Inner,
-            (vec!["a.rid"], vec!["b.rid"]),
-            Some(col("a.ci").lt(col("b.ci"))),
+    // Each display form once, in a projection of its own: the lists
+    // name a column as many times as it has partners, and the optimizer
+    // merges a projection into the next only where every expression is
+    // referenced once (optimize_projections
+    // `merge_consecutive_projections`), so the casts stay hoisted.
+    let mut used: Vec<usize> = pairs.iter().flat_map(|(a, b)| [*a, *b]).collect();
+    used.sort_unstable();
+    used.dedup();
+    let casts: Vec<Expr> = used
+        .iter()
+        .map(|&k| cast(ident(&cols[k].1), DataType::Utf8).alias(format!("s{k}")))
+        .collect();
+    let lists = vec![
+        make_array(pairs.iter().map(|(a, _)| lit(cols[*a].0 as i64)).collect()).alias("ca"),
+        make_array(pairs.iter().map(|(_, b)| lit(cols[*b].0 as i64)).collect()).alias("cb"),
+        make_array(pairs.iter().map(|(a, _)| col(format!("s{a}"))).collect()).alias("av"),
+        make_array(pairs.iter().map(|(_, b)| col(format!("s{b}"))).collect()).alias("bv"),
+    ];
+    let cells = LogicalPlanBuilder::scan(table, provider_as_source(Arc::clone(provider)), None)?
+        .project(casts)?
+        .project(lists)?
+        .unnest_columns_with_options(
+            ["ca", "cb", "av", "bv"]
+                .into_iter()
+                .map(Column::from_name)
+                .collect(),
+            UnnestOptions::default(),
         )?
         .aggregate(
-            vec![
-                col("a.ci").alias("ca"),
-                col("b.ci").alias("cb"),
-                col("a.val").alias("av"),
-                col("b.val").alias("bv"),
-            ],
+            vec![col("ca"), col("cb"), col("av"), col("bv")],
             vec![count(lit(1)).alias("c")],
         )?
         .build()?;
 
-    let pg = LogicalPlanBuilder::from(cells.clone())
+    // The three reductions in one aggregate over the cells: grouping
+    // sets (pair, av) and (pair, bv) carry each determinant's maximum
+    // and its group count, told apart by `grouping`, and the pair's
+    // row sums them — so the cells, and the scan under them, plan once.
+    use datafusion::functions_aggregate::expr_fn::grouping;
+    use datafusion::logical_expr::grouping_set;
+    LogicalPlanBuilder::from(cells)
         .aggregate(
-            vec![col("ca"), col("cb")],
-            vec![count(lit(1)).alias("pair_groups")],
-        )?
-        .build()?;
-    let fwd = LogicalPlanBuilder::from(cells.clone())
-        .aggregate(
-            vec![col("ca"), col("cb"), col("av")],
-            vec![max(col("c")).alias("mx")],
-        )?
-        .aggregate(
-            vec![col("ca"), col("cb")],
-            vec![sum(col("mx")).alias("agree_ab")],
-        )?
-        .build()?;
-    let rev = LogicalPlanBuilder::from(cells)
-        .aggregate(
-            vec![col("ca"), col("cb"), col("bv")],
-            vec![max(col("c")).alias("mx")],
+            vec![grouping_set(vec![
+                vec![col("ca"), col("cb"), col("av")],
+                vec![col("ca"), col("cb"), col("bv")],
+            ])],
+            vec![
+                max(col("c")).alias("mx"),
+                count(lit(1)).alias("ng"),
+                grouping(col("bv")).alias("by_av"),
+            ],
         )?
         .aggregate(
             vec![col("ca"), col("cb")],
-            vec![sum(col("mx")).alias("agree_ba")],
-        )?
-        .build()?;
-
-    LogicalPlanBuilder::from(pg)
-        .alias("pg")?
-        .join(
-            LogicalPlanBuilder::from(fwd).alias("f")?.build()?,
-            JoinType::Inner,
-            (vec!["pg.ca", "pg.cb"], vec!["f.ca", "f.cb"]),
-            None,
-        )?
-        .join(
-            LogicalPlanBuilder::from(rev).alias("r")?.build()?,
-            JoinType::Inner,
-            (vec!["pg.ca", "pg.cb"], vec!["r.ca", "r.cb"]),
-            None,
+            vec![
+                sum(col("ng"))
+                    .filter(col("by_av").eq(lit(1)))
+                    .build()?
+                    .alias("pair_groups"),
+                sum(col("mx"))
+                    .filter(col("by_av").eq(lit(1)))
+                    .build()?
+                    .alias("agree_ab"),
+                sum(col("mx"))
+                    .filter(col("by_av").eq(lit(0)))
+                    .build()?
+                    .alias("agree_ba"),
+            ],
         )?
         .project(vec![
-            col("pg.ca").alias("ca"),
-            col("pg.cb").alias("cb"),
+            col("ca"),
+            col("cb"),
             col("pair_groups"),
             col("agree_ab"),
             col("agree_ba"),
@@ -3172,12 +3193,67 @@ fn band_shape() -> Vec<Field> {
 
 #[cfg(test)]
 mod tests {
+    use datafusion::arrow::array::StringArray;
     use datafusion::common::NullEquality;
     use datafusion::datasource::MemTable;
     use datafusion::logical_expr::JoinType;
     use datafusion::physical_plan::displayable;
 
     use super::*;
+
+    /// The hierarchy pass is one scan however many columns take part:
+    /// pass one unpivots through one unnest, and pass two unpivots a
+    /// cell per pair the same way, with no join and no row number
+    /// above the scan — so the consumers the pass registers do not
+    /// scale with the table's width.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_hierarchy_pass_is_one_scan_and_one_unnest() {
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Int64, true),
+            Field::new("b", DataType::Int64, true),
+            Field::new("c", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 1, 2])),
+                Arc::new(Int64Array::from(vec![10, 10, 20])),
+                Arc::new(StringArray::from(vec![Some("x"), None, Some("y")])),
+            ],
+        )
+        .unwrap();
+        let provider: Arc<dyn datafusion::catalog::TableProvider> =
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap());
+        let cols = vec![
+            (0, "a".to_string()),
+            (1, "b".to_string()),
+            (2, "c".to_string()),
+        ];
+        let state = detector_state(&ctx);
+
+        let scans = |rendered: &str| {
+            rendered
+                .lines()
+                .filter(|l| l.contains("DataSourceExec") || l.contains("MemoryExec"))
+                .count()
+        };
+        let colstat = plan_colstat("t", &provider, &cols).unwrap();
+        let physical = state.create_physical_plan(&colstat).await.unwrap();
+        let rendered = displayable(physical.as_ref()).indent(false).to_string();
+        assert_eq!(scans(&rendered), 1, "pass one scans once:\n{rendered}");
+
+        let pairs = plan_pairs("t", &provider, &cols, &[(0, 1), (0, 2), (1, 2)]).unwrap();
+        let physical = state.create_physical_plan(&pairs).await.unwrap();
+        let rendered = displayable(physical.as_ref()).indent(false).to_string();
+        assert_eq!(scans(&rendered), 1, "pass two scans once:\n{rendered}");
+        assert_eq!(
+            rendered.matches("UnnestExec").count(),
+            1,
+            "one unnest:\n{rendered}"
+        );
+        assert!(!rendered.contains("Join"), "no join:\n{rendered}");
+    }
 
     /// The detector's state plans a join as a merge, not a hash: the
     /// pair pass joins a column's distinct values to themselves, and a
