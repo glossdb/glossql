@@ -56,10 +56,11 @@ completeness, gaps. Cadence is the named grain nearest the median gap
 between distinct instants; completeness counts calendar buckets over
 the column's own window; gaps are stretches beyond twice the median
 (count exact, sample capped at the 20 largest, largest first with
-earliest-first breaking ties). Abstains when the column type is not
-Date/Timestamp
-(the reason says so — a date landed as text needs typing in the
-recipe) or when no non-null values bound a window. The output carries
+earliest-first breaking ties). Abstains when the column is numeric or
+text (the reason names the type; a date landed as text needs typing in
+the recipe) or when no non-null values bound a window. A Boolean or
+nested column is refused by the engine before any row runs, and the
+refusal names both types. The output carries
 no staleness verdict — judgment about now lives in detectors and read
 policy, never in results.
 
