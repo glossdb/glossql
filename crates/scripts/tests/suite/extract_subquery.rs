@@ -148,7 +148,7 @@ async fn a_subquery_extraction_is_refused_with_the_road_out() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(

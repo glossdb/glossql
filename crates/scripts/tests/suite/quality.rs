@@ -57,7 +57,7 @@ async fn session_over(dir: &std::path::Path) -> Session {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))))
+    .with_runtime(Arc::new(KernelRuntime::native()))
 }
 
 /// `line_amount = units * unit_price` with two silently scaled rows —

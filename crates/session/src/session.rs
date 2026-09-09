@@ -170,8 +170,11 @@ pub enum Outcome {
 /// and aggregate registrations behind the doors. Function bodies are
 /// SQL the engine plans — a measurement over data (§6), a detector over
 /// its witness's `slots` — so nothing here evaluates a body; the seam
-/// carries only what SQL cannot: the model forwards and the reconcile
-/// discriminator. Tests inject fakes.
+/// carries only what SQL cannot: the model reads and the reconcile
+/// discriminator. The model reads are async — a kernel service answers
+/// them over HTTP — and a runtime says whether it carries a model at
+/// all, so a door refuses at plan time by name instead of failing in
+/// the read. Tests inject fakes.
 /// A row-major matrix borrowed from the caller: `rows × cols` values,
 /// nulls as NaN where a kernel admits them.
 #[derive(Clone, Copy, Debug)]
@@ -181,7 +184,27 @@ pub struct Matrix<'a> {
     pub cols: usize,
 }
 
+/// The refusal every model door gives when the runtime carries no
+/// model: by name, with what to set. The three doors — the band walk,
+/// `whatif.`, `misfit.` — are served by the kernel service, hosted or
+/// run beside the server; the server itself never carries the model.
+pub fn no_model(door: &str) -> SessionError {
+    SessionError::BadSubject(format!(
+        "not served: {door} needs the kernel service and this server carries no model — \
+         set GLOSSQL_TABICL_URL (and GLOSSQL_TABICL_TOKEN) to the hosted kernel API, or to \
+         a glosskernels service of your own"
+    ))
+}
+
+#[async_trait::async_trait]
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
+    /// Whether a model stands behind the three model reads. `false`
+    /// refuses the doors at plan time ([`no_model`]); the reads' own
+    /// defaults below refuse too, for a runtime that lies.
+    fn carries_model(&self) -> bool {
+        false
+    }
+
     /// The aggregate statistics the runtime ships (`profile` — the
     /// shape SQL lacks; `mad` and `entropy` ride inside its struct).
     /// Registered on the session's context when the runtime attaches,
@@ -198,7 +221,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     /// carries the model overrides this (the ensemble — sparse replay
     /// grids are the regime it was ruled in for); the default refuses,
     /// and the door reports why.
-    fn band_grid(
+    async fn band_grid(
         &self,
         _train: Matrix<'_>,
         _train_y: &[f64],
@@ -214,7 +237,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     /// frame better). Nulls ride as NaN. The runtime that carries the
     /// model overrides this; the default refuses, and the door reports
     /// why.
-    fn misfit_scores(&self, _x: Matrix<'_>) -> Result<Vec<f64>, String> {
+    async fn misfit_scores(&self, _x: Matrix<'_>) -> Result<Vec<f64>, String> {
         Err("this runtime carries no misfit kernel".into())
     }
 
@@ -245,7 +268,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     /// quantile at which `actual` lands in the predicted distribution.
     /// The runtime that carries the model overrides this; the default
     /// refuses, and the door reports why.
-    fn band_point(
+    async fn band_point(
         &self,
         _train: Matrix<'_>,
         _train_y: &[f64],
@@ -260,6 +283,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
 #[derive(Debug)]
 pub struct NoRuntime;
 
+#[async_trait::async_trait]
 impl FunctionRuntime for NoRuntime {}
 
 /// One substrate statement out of a SQL string — the internal reads

@@ -24,7 +24,6 @@ use std::sync::Arc;
 
 use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_serverd::{Plane, bootstrap};
-use glossql_session::NoRuntime;
 
 fn human() -> Actor {
     Actor {
@@ -224,10 +223,23 @@ async fn every_skill_function_body_compiles() {
     );
 }
 
+/// A runtime that says it carries a model and serves none: the model
+/// doors pass the plan-time gate and stop at their aspect lookup, which
+/// is where an example naming an undeclared scenario or frame belongs.
+#[derive(Debug)]
+struct ModelStub;
+
+#[glossql_session::async_trait]
+impl glossql_session::FunctionRuntime for ModelStub {
+    fn carries_model(&self) -> bool {
+        true
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
     let (dir, store) = scratch_store().await;
-    let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
+    let plane = Arc::new(Plane::new(store.clone(), Arc::new(ModelStub)));
     bootstrap(&plane, human()).await.unwrap();
 
     // One session for the run, with a dataset in use — the names the

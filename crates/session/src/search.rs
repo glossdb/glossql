@@ -2655,6 +2655,9 @@ pub(crate) async fn metric_band_walk(
     let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
     let glossed_behavior = current_fact_values(&rctx, dataset, "behavior").await?;
     let runtime = shared.runtime();
+    if !runtime.carries_model() {
+        return Err(crate::session::no_model("metric_bands()"));
+    }
 
     // Median over the present values of one feature column. Even counts
     // average the two middles, as the graded protocol's pandas median
@@ -2841,6 +2844,7 @@ pub(crate) async fn metric_band_walk(
             };
             let (q, pit) = runtime
                 .band_point(train, &train_y, &filled(&feats[t - 1]), &ALPHAS, actual)
+                .await
                 .map_err(SessionError::Runtime)?;
             // A series that repeats values moves on a grid (a ratio over
             // a fixed field, a count). A corridor narrower than the

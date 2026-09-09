@@ -2,9 +2,11 @@
 
 `glossql` is one binary serving one workspace — the directory that
 holds your data lake and everything declared over it. The binary
-carries the band model's regressor; there is nothing else to install.
-The server picks the compute device at start: Metal on Apple
-Silicon, CUDA where the cuda flavor finds a device, CPU otherwise.
+carries no model. Three doors — the metric-bands walk,
+`whatif.<scenario>()` and `misfit.<frame>()` — are served by the
+kernel service, `glosskernels`, hosted or run beside the server, named
+by `GLOSSQL_TABICL_URL`. Without it those three doors refuse by name
+and everything else serves.
 
 ## Install
 
@@ -22,14 +24,7 @@ page](https://github.com/glossdb/glossql/releases) and
 sudo apt install ./glossql_<version>_amd64.deb
 ```
 
-Machines with an NVIDIA GPU take `glossql-cuda_…` instead: the band
-model then runs on GPU 0 (compute capability 8.0 — Ampere — or
-newer), falling back to CPU when no device answers. That flavor loads
-only where the NVIDIA driver and the CUDA 12 runtime libraries
-(cudart, cublas, nvrtc, curand) are installed — on machines without
-them, `glossql` is the right package.
-
-Both packages install one command, `glossql`.
+The package installs one command, `glossql`.
 
 ## Build and start
 
@@ -39,11 +34,7 @@ cp .env.example .env            # then fill it in — see Tokens below
 ./target/release/glossql --workspace ~/acme
 ```
 
-A source build expects the [tabicl-candle
-checkout](https://github.com/glossdb/tabicl-candle) as a sibling
-directory and stages its converted weights beside the binary;
-`--features embed-weights` bakes the regressor in instead, which is
-how the released artifacts are built.
+A source build needs nothing beside the repository.
 
 The server reads `.env`, reads the issuer's keys, prints its doors and
 listens:
@@ -57,7 +48,7 @@ listens:
 
 | flag | default | meaning |
 |---|---|---|
-| `--workspace <dir>` | required without a catalog connection | the workspace directory; created content lands here. With `GLOSSQL_CATALOG_URI` set it may be left unnamed — the working directory serves — since it then holds only `apps/` and `weights/` |
+| `--workspace <dir>` | required without a catalog connection | the workspace directory; created content lands here. With `GLOSSQL_CATALOG_URI` set it may be left unnamed — the working directory serves — since it then holds only `apps/` |
 | `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
@@ -78,6 +69,8 @@ the file, which is how a container is configured without one):
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
 | `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
 | `GLOSSQL_CATALOG_CREDENTIAL` | `client_id:client_secret`, exchanged for a bearer token at `GLOSSQL_CATALOG_TOKEN_ENDPOINT` (required with it) and exchanged again when the token nears its stated expiry; `GLOSSQL_CATALOG_SCOPE` as the backend's documentation names it |
+| `GLOSSQL_TABICL_URL` | the kernel service behind the metric-bands walk, `whatif.<scenario>()` and `misfit.<frame>()` — the hosted kernel API, or a `glosskernels` service run beside the server. Unset, those three doors refuse by name and everything else serves |
+| `GLOSSQL_TABICL_TOKEN` | the bearer that service expects: a key the hosted API issued, or whatever a service of your own was started with |
 | `AWS_ACCESS_KEY_ID` … | storage itself needs no glossql variables — table loads answer with what FileIO needs. A dev store that vends nothing is configured through the standard AWS conventions (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`), read by the storage layer itself |
 | `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` and `/v1/logs` are appended). Set, the record is also exported there — spans as traces, events as logs, OTLP over HTTP, protobuf, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_HEADERS` for a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES` for what names the deployment beyond `service.name=glossql` |
@@ -165,10 +158,6 @@ acme/
   apps/              optional: workspace apps, one directory per app;
                      a workspace app named like a built-in shadows it
                      whole
-  weights/           optional: a band-model weights override,
-                     verified by digest at load (a sibling ../weights
-                     directory is also searched); the released binary
-                     carries the regressor itself
 ```
 
 The lake is the whole store. There is no separate database for the
@@ -178,8 +167,8 @@ the complete, copyable state of the system.
 
 With `GLOSSQL_CATALOG_URI` set, `catalog.sqlite` and `warehouse/` move
 behind the REST catalog and its storage: the workspace directory then
-holds only `apps/` and `weights/`, the state of the system is the
-catalog's warehouse, and `--workspace` may be left unnamed (the
+holds only `apps/`, the state of the system is the catalog's
+warehouse, and `--workspace` may be left unnamed (the
 working directory serves). Everything else is the same lake —
 datasets are namespaces, every relation an Iceberg table, whichever
 side of the connection they live on.

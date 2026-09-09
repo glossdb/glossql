@@ -25,8 +25,13 @@ struct MeanKernel {
     fits: AtomicUsize,
 }
 
+#[glossql_session::async_trait]
 impl FunctionRuntime for MeanKernel {
-    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+    fn carries_model(&self) -> bool {
+        true
+    }
+
+    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
         let Matrix {
             data: x,
             rows,
@@ -63,8 +68,13 @@ impl FunctionRuntime for MeanKernel {
 #[derive(Debug, Default)]
 struct NanKernel;
 
+#[glossql_session::async_trait]
 impl FunctionRuntime for NanKernel {
-    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+    fn carries_model(&self) -> bool {
+        true
+    }
+
+    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
         Ok(vec![f64::NAN; x.rows])
     }
 }

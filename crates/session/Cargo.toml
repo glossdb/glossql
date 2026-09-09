@@ -23,6 +23,9 @@ moka.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 blake3.workspace = true
+# The model calls on the runtime seam are async: a kernel service
+# answers them over HTTP, awaited on the engine's runtime.
+async-trait.workspace = true
 
 [dev-dependencies]
 glossql-catalog = { path = "../catalog" }

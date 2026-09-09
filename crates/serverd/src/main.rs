@@ -22,11 +22,14 @@ const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
 pair.\n\
---workspace holds apps/ and weights/, and — without a catalog \
-connection — the catalog and warehouse themselves, which is why it is \
-required then. With GLOSSQL_CATALOG_URI set (a REST catalog; data and \
-metadata live behind it) it may be left unnamed: the working directory \
-serves.\n\
+--workspace holds apps/, and — without a catalog connection — the \
+catalog and warehouse themselves, which is why it is required then. \
+With GLOSSQL_CATALOG_URI set (a REST catalog; data and metadata live \
+behind it) it may be left unnamed: the working directory serves.\n\
+the band model behind the metric-bands walk, whatif. and misfit. is \
+the kernel service named by GLOSSQL_TABICL_URL (its bearer in \
+GLOSSQL_TABICL_TOKEN); unset, those three doors refuse by name and \
+everything else serves.\n\
 the authorization arrangement is read from .env or the environment: \
 GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
 — or GLOSSQL_INSECURE_OPEN=true serves the doors without authentication, \
@@ -221,9 +224,14 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
         .await
         .map_err(|e| format!("{e}\n{USAGE}"))?;
     let store = Store::open(lake).await?;
-    // The runtime's root is the workspace — the band model's weights
-    // live under it (bodies ride their declarations, fixture 24).
-    let runtime = Arc::new(KernelRuntime::new(workspace.clone()));
+    // The native kernels, and the kernel service behind the model reads
+    // when the environment names one (bodies ride their declarations,
+    // fixture 24 — nothing of the runtime's lives in the workspace).
+    let runtime = Arc::new(kernel_from(|name| std::env::var(name).ok())?);
+    match runtime.kernel_url() {
+        Some(url) => tracing::info!(url, "kernel service"),
+        None => tracing::info!("no kernel service — the model doors refuse by name"),
+    }
 
     let plane = Arc::new(
         Plane::new(store.clone(), runtime)
@@ -292,14 +300,26 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
     Ok(())
 }
 
+/// The kernel service the environment names — `GLOSSQL_TABICL_URL`,
+/// its bearer in `GLOSSQL_TABICL_TOKEN` — or the native kernels alone.
+/// Read through `get` for the reason the other arrangements are:
+/// testable without touching the process environment, never flags.
+fn kernel_from(get: impl Fn(&str) -> Option<String>) -> Result<KernelRuntime, String> {
+    let var = |name: &str| get(name).filter(|v| !v.trim().is_empty());
+    match var("GLOSSQL_TABICL_URL") {
+        Some(url) => KernelRuntime::with_remote(&url, var("GLOSSQL_TABICL_TOKEN").as_deref()),
+        None => Ok(KernelRuntime::native()),
+    }
+}
+
 /// The workspace data plane: the REST catalog when the environment
 /// names one, the workspace directory's own SQLite catalog otherwise.
 /// One backend serves a run; which one is on the record at open.
 ///
 /// The directory comes back resolved with the lake, because what it
 /// must hold depends on the backend: everything locally, only `apps/`
-/// and `weights/` behind a REST catalog — where, unnamed, the working
-/// directory serves.
+/// behind a REST catalog — where, unnamed, the working directory
+/// serves.
 async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String> {
     #[cfg(feature = "rest")]
     if let Some(connection) = catalog_from(|name| std::env::var(name).ok())? {

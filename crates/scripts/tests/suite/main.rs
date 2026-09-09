@@ -16,4 +16,5 @@ mod extract_subquery;
 mod fixture11;
 mod quality;
 mod relationships;
+mod remote;
 mod temporal;

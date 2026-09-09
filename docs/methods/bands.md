@@ -23,9 +23,7 @@ mass at the edges, which is what the detector scores.
 The `metric_band_walk` door owns the walk protocol — the monthly
 verb, the feature recipe, the point-in-time fills (no future value
 leaks into a walked point). The model call is one kernel behind the
-runtime seam, running the hand-ported
-model on candle: Metal by default, CPU fallback, weights
-digest-verified at load. The `band_breach` detector
+runtime seam, answered by the kernel service. The `band_breach` detector
 (`crates/scripts/functions/band_breach.sql`) sees only the
 measurement's slots: displacement is `|2·pit − 1|` — 0.0 at the
 median, 0.8 at a nominal-80 edge — and the score is the worst
@@ -38,13 +36,13 @@ the red line (default 0.98).
 
 ## Serving the model
 
-The model is the sibling candle port, called through one kernel
-behind the runtime seam: weights load lazily from the workspace's
-`weights/`, digest-verified; Metal when the machine has it, CPU
-fallback; the CPU work runs on a capped pool so the model never
-starves the engine. Raw densities never leave the kernel, and the
-walk's feature recipe and point-in-time fill match the graded
-protocol it was evaluated against before it shipped.
+The server carries no model. The walk's fits go to the kernel service,
+`glosskernels`, over HTTP — the reference TabICL package behind three
+routes, hosted or run beside the server, named by `GLOSSQL_TABICL_URL`
+([install](../start/install.md)). Without it the walk refuses by
+name. Raw densities never leave the kernel, and the walk's feature
+recipe and point-in-time fill match the graded protocol it was
+evaluated against before it shipped.
 
 ## Limits
 

@@ -80,7 +80,7 @@ async fn the_generator_grades_the_discriminator() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(
@@ -203,7 +203,7 @@ async fn document_keyed_events_reconcile_at_month_grain() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(

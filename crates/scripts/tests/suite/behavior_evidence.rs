@@ -201,7 +201,7 @@ async fn a_running_balance_is_a_stock_its_movement_a_flow_and_noise_abstains() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(
@@ -315,7 +315,7 @@ async fn behavior_session(dir: &std::path::Path, recipes: &str) -> Session {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
     session
         .execute(&format!(
             "DECLARE DATASET fin SET (purpose: 'behavior evidence');\n\

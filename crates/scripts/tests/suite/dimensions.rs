@@ -171,7 +171,7 @@ async fn relevance_scores_the_distribution_and_hierarchies_arrive_with_their_evi
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(

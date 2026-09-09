@@ -2,12 +2,13 @@
 //! over synthetic monthly series through a real session — since
 //! stage 5 the walk is the metric_band_walk door and the body is SQL —
 //! and the band_breach detector adjudicating the walk through its
-//! witness at the ATTEST read. The kernel's model loads from a weights directory
-//! symlinked from the sibling port checkout — tests that need it skip
-//! with a message when the sibling has no converted weights, and cost
-//! ~3s each on Metal (measured). The numeric fidelity of
-//! the forward itself is the sibling repo's suite; here the contract
-//! is shape, ordering, and policy.
+//! witness at the ATTEST read. Live tests: the model answers from a
+//! running kernel service, so they run under `--ignored` when
+//! `GLOSSQL_E2E_TABICL_URL` names one (its bearer in
+//! `GLOSSQL_E2E_TABICL_TOKEN`) and skip with a message otherwise:
+//! `cargo test -p glossql-scripts bands -- --ignored`. The numeric
+//! fidelity of the model is the service's own suite; here the
+//! contract is shape, ordering, and policy.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,38 +19,15 @@ use glossql_scripts::KernelRuntime;
 use glossql_session::{FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
-fn sibling() -> &'static Path {
-    Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../tabicl-candle"
+/// The kernel service under test, when the environment names one.
+fn live() -> Option<Arc<KernelRuntime>> {
+    let url = std::env::var("GLOSSQL_E2E_TABICL_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())?;
+    let token = std::env::var("GLOSSQL_E2E_TABICL_TOKEN").ok();
+    Some(Arc::new(
+        KernelRuntime::with_remote(&url, token.as_deref()).expect("a kernel service address"),
     ))
-}
-
-/// A workspace with a weights directory symlinked from the sibling
-/// checkout (the flat deployment layout). Scripts arrive with their
-/// declarations (fixture 24), so nothing is copied here.
-fn workspace(dir: &Path) {
-    let weights = dir.join("weights");
-    std::fs::create_dir_all(&weights).unwrap();
-    for (from, to) in [
-        (
-            "weights/tabicl-regressor.safetensors",
-            "tabicl-regressor.safetensors",
-        ),
-        (
-            "weights/tabicl-regressor.config.json",
-            "tabicl-regressor.config.json",
-        ),
-        ("fixtures/DIGESTS", "DIGESTS"),
-    ] {
-        let _ = std::os::unix::fs::symlink(sibling().join(from), weights.join(to));
-    }
-}
-
-fn have_weights() -> bool {
-    sibling()
-        .join("weights/tabicl-regressor.safetensors")
-        .exists()
 }
 
 /// Date32 day offsets for each month's first day, 2024-01 through
@@ -63,10 +41,11 @@ const FIRSTS: [i32; 18] = [
 /// verdict `judge_time` serves names a month cadence.
 async fn walk_session(
     dir: &Path,
+    rt: Arc<KernelRuntime>,
     tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
     glosses: &[&str],
 ) -> glossql_session::Session {
-    walk_session_judged(dir, tables, glosses, "month").await
+    walk_session_judged(dir, rt, tables, glosses, "month").await
 }
 
 /// [`walk_session`] with the cadence `judge_time` names — one aspect
@@ -74,6 +53,7 @@ async fn walk_session(
 /// function's.
 async fn walk_session_judged(
     dir: &Path,
+    rt: Arc<KernelRuntime>,
     tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
     glosses: &[&str],
     cadence: &str,
@@ -94,7 +74,7 @@ async fn walk_session_judged(
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(dir)));
+    .with_runtime(rt);
     session
         .execute("DECLARE DATASET fin SET (purpose: 'band walks'); USE fin;")
         .await
@@ -162,14 +142,14 @@ async fn walked(session: &glossql_session::Session) -> Value {
     serde_json::from_str(&text).unwrap()
 }
 
+#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn metric_bands_walks_and_reads_the_breach() {
-    if !have_weights() {
-        eprintln!("skipping: no converted weights in the sibling checkout");
+    let Some(rt) = live() else {
+        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
         return;
-    }
+    };
     let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
 
     // A year and a half of a rising monthly flow with seasonality; the
     // last month is an obvious breach. The stock series is a rising
@@ -187,6 +167,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
 
     let session = walk_session(
         dir.path(),
+        Arc::clone(&rt),
         vec![
             ("lines", dates.clone(), flow),
             ("levels", dates, stock),
@@ -347,14 +328,14 @@ async fn metric_bands_walks_and_reads_the_breach() {
 /// the month's latest-date SUM, not one arbitrary row. Three product
 /// rows stand at each month's day 25 (sum 1750 + 30·m); a day-5 decoy
 /// snapshot per month must be excluded by the latest-date rank.
+#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_stock_walk_sums_the_months_latest_snapshot() {
-    if !have_weights() {
-        eprintln!("skipping: no converted weights in the sibling checkout");
+    let Some(rt) = live() else {
+        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
         return;
-    }
+    };
     let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
 
     let months = 18usize;
     let (mut dates, mut values) = (Vec::new(), Vec::new());
@@ -370,6 +351,7 @@ async fn the_stock_walk_sums_the_months_latest_snapshot() {
 
     let session = walk_session(
         dir.path(),
+        Arc::clone(&rt),
         vec![("levels", dates, values)],
         &[
             r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
@@ -400,21 +382,19 @@ async fn the_stock_walk_sums_the_months_latest_snapshot() {
     }
 }
 
-#[test]
-fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
+#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[tokio::test(flavor = "multi_thread")]
+async fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
     // The whatif door's seam against the real model:
     // the eval's frame shape — (factor, month_index) over bracketing
     // support worlds, y exactly linear in the factor — read at the
     // held-out declared point. The numeric fidelity of the ensemble is
     // the sibling suite's business; here the contract is shape,
     // monotone quantiles, and a read that lands near the surface.
-    if !have_weights() {
-        eprintln!("skipping: no converted weights in the sibling checkout");
+    let Some(rt) = live() else {
+        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
         return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
-    let rt = KernelRuntime::new(dir.path());
+    };
 
     let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
     let months = 6..12;
@@ -446,6 +426,7 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
             },
             &alphas,
         )
+        .await
         .unwrap();
 
     assert_eq!(q.len(), 6 * alphas.len());
@@ -461,21 +442,19 @@ fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
     }
 }
 
-#[test]
-fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
+#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[tokio::test(flavor = "multi_thread")]
+async fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
     // The misfit door's seam (fixture 20) against the
     // real chain-rule density: a frame whose columns cohere (y ≈ 2x,
     // z = x + y) with one planted row that betrays the relation while
     // every marginal value stays in range — the eval's shuffled-pairing
     // shape. The score's fidelity is the sibling suite's business; here
     // the contract is shape and that the violator ranks worst.
-    if !have_weights() {
-        eprintln!("skipping: no converted weights in the sibling checkout");
+    let Some(rt) = live() else {
+        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
         return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
-    let rt = KernelRuntime::new(dir.path());
+    };
 
     let n = 40;
     let mut x = Vec::with_capacity(n * 3);
@@ -494,6 +473,7 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
             rows: n,
             cols: 3,
         })
+        .await
         .unwrap();
 
     assert_eq!(scores.len(), n);
@@ -510,14 +490,14 @@ fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
 /// is partial. Scored, its short sum would read as a breach that is
 /// only the calendar; the walk serves it marked, withholds its PIT,
 /// and the detector scores the month before it.
+#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
-    if !have_weights() {
-        eprintln!("skipping: no converted weights in the sibling checkout");
+    let Some(rt) = live() else {
+        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
         return;
-    }
+    };
     let dir = tempfile::tempdir().unwrap();
-    workspace(dir.path());
 
     // Eighteen months of daily rows on a slow drift — never a repeated
     // monthly sum, so no month sits on the grid the walk withholds
@@ -541,6 +521,7 @@ async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
 
     let session = walk_session_judged(
         dir.path(),
+        Arc::clone(&rt),
         vec![("lines", dates, values)],
         &[
             r#"DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY ON DATASET;"#,

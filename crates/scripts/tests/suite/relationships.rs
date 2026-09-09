@@ -111,7 +111,7 @@ async fn candidates_are_generous_and_declaration_records_the_survivor() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(
@@ -249,7 +249,7 @@ async fn the_detector_reads_the_named_dataset_before_any_use() {
             },
         )
         .unwrap()
-        .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))))
+        .with_runtime(Arc::new(KernelRuntime::native()))
     };
     let landing = agent("agent-1");
     landing
@@ -350,7 +350,7 @@ async fn a_scoped_key_is_rescued_as_a_composite_candidate() {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
 
     session
         .execute(&format!(
@@ -457,7 +457,7 @@ async fn ranked(tables: Vec<(&str, RecordBatch)>) -> serde_json::Value {
         },
     )
     .unwrap()
-    .with_runtime(Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR"))));
+    .with_runtime(Arc::new(KernelRuntime::native()));
     session
         .execute(&format!(
             "DECLARE DATASET fin SET (purpose: 'relationship judging');\n\

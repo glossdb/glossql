@@ -28,8 +28,6 @@ __pycache__/
 # Playwright MCP session artifacts (UI review loop)
 .playwright-mcp/
 
-# converted model weights (digest-verified at load; never in git)
-/weights/
 .claude/worktrees/
 # Working notes tied to an open issue; deleted when it closes
 .claude/notes/

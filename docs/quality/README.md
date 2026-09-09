@@ -64,9 +64,9 @@ judged by the actor):
   aspect's slots, `band_breach` over the walked bands,
   `rate_tolerance` between an authored expectation and its check
   voice.
-- **The band plane** — `tabicl_bands`, a native kernel over the
-  sibling candle port (weights digest-verified; Metal by default, CPU
-  fallback), with `metric_bands` and `band_breach` in the library —
+- **The band plane** — the TabICL reads behind the runtime seam,
+  served by the `glosskernels` service (the server carries no model),
+  with `metric_bands` and `band_breach` in the library —
   the walk withholding a partial trailing month where rows land
   through the month, the detector scoring the newest complete one —
   and `whatif.<scenario>()` replaying rewritten plans across

@@ -1182,9 +1182,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
     let store = Store::open(lake).await.unwrap();
     // The kit's witnesses carry detectors (slot_entropy), and reads
     // adjudicate — this test needs the real script runtime.
-    let runtime = Arc::new(glossql_scripts::KernelRuntime::new(
-        dir.path().to_path_buf(),
-    ));
+    let runtime = Arc::new(glossql_scripts::KernelRuntime::native());
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     let human = Actor {
         kind: ActorKind::Human,

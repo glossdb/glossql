@@ -48,6 +48,9 @@ pub(crate) async fn misfit_batch(
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let bad = |detail: String| SessionError::BadSubject(format!("misfit.{frame}(): {detail}"));
+    if !shared.runtime().carries_model() {
+        return Err(crate::session::no_model(&format!("misfit.{frame}()")));
+    }
 
     let Some((_, kind, _)) = shared.store.aspect(frame).await? else {
         return Err(bad(format!("no aspect `{frame}` is declared")));
@@ -182,6 +185,7 @@ pub(crate) async fn misfit_batch(
             rows,
             cols,
         })
+        .await
         .map_err(|e| bad(format!("not served: the misfit kernel refused — {e}")))?;
     // Complementary null patterns can make a conditioning column's
     // impute mean NaN inside the kernel, and NaN survives its unique

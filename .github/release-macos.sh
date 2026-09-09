@@ -11,7 +11,7 @@ version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
 tag="v${version}"
 artifact="glossql-${version}-aarch64-apple-darwin.tar.gz"
 
-cargo build --release -j8 -p glossql-serverd --features embed-weights
+cargo build --release -j8 -p glossql-serverd
 tar -C target/release -czf "target/${artifact}" glossql
 sha=$(shasum -a 256 "target/${artifact}" | cut -d' ' -f1)
 

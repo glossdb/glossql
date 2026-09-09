@@ -33,9 +33,13 @@ mod session;
 mod subject;
 mod whatif;
 
+/// The attribute a [`FunctionRuntime`] implementation carries — the
+/// model reads are async trait methods.
+pub use async_trait::async_trait;
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
 pub use reads::DoorPage;
 pub use session::{
     CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, Session, SessionError, call_shape,
+    no_model,
 };

@@ -19,8 +19,13 @@ use glossql_session::{FunctionRuntime, Matrix, Outcome, Session};
 #[derive(Debug)]
 struct ThinKernel;
 
+#[glossql_session::async_trait]
 impl FunctionRuntime for ThinKernel {
-    fn band_point(
+    fn carries_model(&self) -> bool {
+        true
+    }
+
+    async fn band_point(
         &self,
         _train: Matrix<'_>,
         train_y: &[f64],

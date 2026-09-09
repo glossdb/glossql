@@ -3,25 +3,20 @@
 //! over its witness's `slots` — so nothing here evaluates a body. What
 //! remains is what SQL cannot express: the statistical kernels in Rust,
 //! behind the engine's aggregate registrations and the runtime's typed
-//! methods.
+//! methods — and the three model reads, which the server never computes
+//! itself. They go to the kernel service ([`remote`]) when the
+//! environment names one, and refuse by name when none is.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 pub mod library;
+mod remote;
 mod statistics;
-
-/// The regressor an embed-weights build carries, generated and
-/// digest-verified by build.rs.
-#[cfg(feature = "embed-weights")]
-mod embedded {
-    include!(concat!(env!("OUT_DIR"), "/embedded_weights.rs"));
-}
-use std::sync::{Arc, RwLock};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Decimal128Array, Float64Array, Int64Array, LargeStringArray,
@@ -34,14 +29,19 @@ use datafusion::arrow::util::display::array_value_to_string;
 use glossql_session::{FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
-/// The native kernels and their one lazily loaded model.
+pub use remote::Remote;
+
+/// The native kernels, and — when the server names one — the kernel
+/// service behind the three model reads.
 pub struct KernelRuntime {
-    band_model: Arc<BandModel>,
+    remote: Option<Remote>,
 }
 
 impl std::fmt::Debug for KernelRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KernelRuntime").finish_non_exhaustive()
+        f.debug_struct("KernelRuntime")
+            .field("kernel", &self.remote.as_ref().map(Remote::url))
+            .finish()
     }
 }
 
@@ -51,196 +51,40 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
     Err(message.into())
 }
 
-/// The TabICL regressor behind the band kernel: loaded once per runtime
-/// from the workspace's weights directory on first call, shared across
-/// scripts and threads (the forward takes `&self`). A failed load is
-/// never cached — weights provisioned after the first refused read are
-/// picked up by the next call, no restart (a caching OnceLock would
-/// hold the error for the process lifetime).
-struct BandModel {
-    dir: PathBuf,
-    model: RwLock<Option<Arc<tabicl_model::tabicl::TabIcl>>>,
-    /// Chosen once: Metal when the machine has it, else CUDA device 0
-    /// when the build carries the cuda feature and the driver answers
-    /// (only the candle compute rides the GPU), CPU otherwise.
-    device: tabicl_model::Device,
-}
-
-/// The pool the candle CPU work runs on — capped so the model never
-/// takes the machine (`GLOSSQL_CANDLE_THREADS`, default 4). Only candle
-/// calls run inside it; the rest of the server is untouched.
-fn compute_pool() -> &'static rayon::ThreadPool {
-    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
-    POOL.get_or_init(|| {
-        let n = std::env::var("GLOSSQL_CANDLE_THREADS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            // rayon reads 0 as "all logical CPUs" — the opposite of the
-            // cap's point; 0 and an unparseable value both fall back.
-            .filter(|n| *n > 0)
-            .unwrap_or(4);
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .thread_name(|i| format!("candle-{i}"))
-            .build()
-            .expect("candle thread pool")
-    })
-}
-
-fn pick_device() -> tabicl_model::Device {
-    // Both constructors exist under every feature set — a backend that
-    // was not compiled in answers with an error, and a compiled-in one
-    // answers with an error when the machine has no usable device
-    // (a cuda build on a driverless machine never gets this far: the
-    // loader refuses the binary — the cpu artifact serves there).
-    tabicl_model::Device::new_metal(0)
-        .or_else(|_| tabicl_model::Device::new_cuda(0))
-        .unwrap_or(tabicl_model::Device::Cpu)
-}
-
-impl BandModel {
-    /// Where the model lives: the workspace's own `weights/` when it is
-    /// complete (the operator's override), else the directory the build
-    /// staged beside the binaries (`build.rs` copies safetensors, config,
-    /// and the pinned DIGESTS from the tabicl-candle checkout at compile
-    /// time — weights ride the build, never a runtime copy).
-    fn resolve_dir(&self) -> Result<PathBuf, String> {
-        let complete = |d: &std::path::Path| {
-            d.join("DIGESTS").exists()
-                && d.join("tabicl-regressor.safetensors").exists()
-                && d.join("tabicl-regressor.config.json").exists()
-        };
-        let mut candidates = vec![self.dir.clone()];
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            candidates.push(dir.join("weights"));
-            candidates.push(dir.join("../weights"));
-        }
-        candidates
-            .iter()
-            .find(|d| complete(d))
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "no complete weights (safetensors + config + DIGESTS) at any of: {} — \
-                     the build stages them beside the binary from ../tabicl-candle; a \
-                     workspace weights/ overrides",
-                    candidates
-                        .iter()
-                        .map(|d| d.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })
-    }
-
-    fn device(&self) -> &tabicl_model::Device {
-        &self.device
-    }
-
-    /// A directory's weights when one is complete — the workspace's
-    /// own, or the files the build staged beside the binary — else the
-    /// regressor an embed-weights binary carries (verified against the
-    /// pinned digest when it was baked in; see build.rs).
-    fn checkpoint(&self) -> Result<tabicl_model::weights::Checkpoint, String> {
-        match self.resolve_dir() {
-            Ok(dir) => tabicl_model::weights::load_dir(&dir, "regressor", &self.device)
-                .map_err(|e| format!("tabicl weights at {}: {e}", dir.display())),
-            #[cfg(feature = "embed-weights")]
-            Err(_) => tabicl_model::weights::load_bytes(
-                embedded::REGRESSOR_SAFETENSORS,
-                embedded::REGRESSOR_CONFIG,
-                &self.device,
-            )
-            .map_err(|e| format!("embedded tabicl weights: {e}")),
-            #[cfg(not(feature = "embed-weights"))]
-            Err(e) => Err(e),
-        }
-    }
-
-    fn get(&self) -> Result<Arc<tabicl_model::tabicl::TabIcl>, String> {
-        if let Some(model) = self.model.read().expect("band model lock").as_ref() {
-            return Ok(Arc::clone(model));
-        }
-        let ckpt = self.checkpoint()?;
-        let loaded = Arc::new(
-            tabicl_model::tabicl::TabIcl::from_checkpoint(ckpt).map_err(|e| e.to_string())?,
-        );
-        let mut slot = self.model.write().expect("band model lock");
-        // Two readers racing both load; the first write wins, the loads
-        // are identical (digest-verified), nothing is poisoned.
-        Ok(Arc::clone(slot.get_or_insert(loaded)))
-    }
-
-    /// The band kernel — one fit, quantiles at the
-    /// levels, and the PIT read off the monotone quantile grid. Ordinal
-    /// by construction; raw densities never leave here. Serves the
-    /// metric-bands walk door through
-    /// [`FunctionRuntime::band_point`].
-    fn bands_core(
-        &self,
-        train: Matrix<'_>,
-        y: &[f64],
-        test: &[f64],
-        levels: &[f64],
-        actual: f64,
-    ) -> Result<(Vec<f64>, f64), String> {
-        let Matrix {
-            data: x,
-            rows,
-            cols,
-        } = train;
-        if rows < 2 || x.len() != rows * cols || y.len() != rows || test.len() != cols {
-            return Err(format!(
-                "band_point: {rows} rows x {cols} features against {} values and {} test features",
-                y.len(),
-                test.len()
-            ));
-        }
-        let model = self.get()?;
-        let pred =
-            compute_pool()
-                .install(|| {
-                    tabicl_inference::regressor::TabIclRegressor::fit(&model, x, rows, cols, y)
-                        .predict(test, 1, &self.device)
-                })
-                .map_err(|e| e.to_string())?;
-        let q: Vec<f32> = pred
-            .quantiles(levels)
-            .and_then(|t| t.flatten_all()?.to_vec1())
-            .map_err(|e| e.to_string())?;
-        let grid: Vec<f32> = pred
-            .raw_quantiles()
-            .and_then(|t| t.flatten_all()?.to_vec1())
-            .map_err(|e| e.to_string())?;
-        let below = grid.iter().filter(|v| f64::from(**v) <= actual).count();
-        Ok((
-            q.into_iter().map(f64::from).collect(),
-            below as f64 / (grid.len() + 1) as f64,
-        ))
-    }
-}
-
 impl KernelRuntime {
-    /// `root` is the workspace directory. Bodies live in declarations
-    /// (fixture 24), never under it — only the band model's weights do.
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        let root = root.into();
-        // Weights load lazily, digest-verified, from the workspace's
-        // weights/ directory (flat layout: tabicl-regressor.safetensors,
-        // its config json, DIGESTS); a missing directory fails the
-        // calling door with the loader's message.
-        let band_model = Arc::new(BandModel {
-            dir: root.join("weights"),
-            model: RwLock::new(None),
-            device: pick_device(),
-        });
-        KernelRuntime { band_model }
+    /// The native kernels alone — the profile aggregates and reconcile.
+    /// The three model reads refuse by name.
+    pub fn native() -> Self {
+        KernelRuntime { remote: None }
+    }
+
+    /// The native kernels, and the model reads served by the kernel
+    /// service at `url` (`GLOSSQL_TABICL_URL`), `token` as the bearer on
+    /// every call.
+    pub fn with_remote(url: &str, token: Option<&str>) -> Result<Self, String> {
+        Ok(KernelRuntime {
+            remote: Some(Remote::new(url, token)?),
+        })
+    }
+
+    /// Where the model reads go, when they go anywhere.
+    pub fn kernel_url(&self) -> Option<&str> {
+        self.remote.as_ref().map(Remote::url)
+    }
+
+    fn model(&self) -> Result<&Remote, String> {
+        self.remote
+            .as_ref()
+            .ok_or_else(|| "this runtime carries no model".to_string())
     }
 }
 
+#[glossql_session::async_trait]
 impl FunctionRuntime for KernelRuntime {
+    fn carries_model(&self) -> bool {
+        self.remote.is_some()
+    }
+
     /// The shipped statistics (`profile`; `mad` and `entropy` ride
     /// inside its struct), registered when the runtime attaches — a
     /// measurement body and an agent's own SQL name the same
@@ -249,13 +93,11 @@ impl FunctionRuntime for KernelRuntime {
         statistics::udafs()
     }
 
-    /// The `whatif.` door's kernel: the regressor
-    /// ensemble over the replayed worlds — a replay grid is a handful
-    /// of worlds, exactly the sparse-support regime the ensemble was
-    /// ruled in for (tabicl-candle README, stage 3). Members from the
-    /// crate's own generator, seed pinned; quantiles averaged across
-    /// members in the original y space.
-    fn band_grid(
+    /// The `whatif.` door's kernel: the regressor ensemble over the
+    /// replayed worlds — a replay grid is a handful of worlds, the
+    /// sparse-support regime the ensemble was ruled in for. The shape
+    /// is checked here; the service checks that something varies.
+    async fn band_grid(
         &self,
         train: Matrix<'_>,
         train_y: &[f64],
@@ -284,46 +126,11 @@ impl FunctionRuntime for KernelRuntime {
                 test_x.len()
             ));
         }
-        // The kernel's preprocessor imputes NaN to the column mean and
-        // then drops constant columns, and the ensemble asserts each
-        // member's shuffle against the kept count — members generated
-        // over the raw count would kill the read on a pool thread
-        // whenever a feature is constant (one post month, a lever whose
-        // bracketed worlds were all skipped). Mirror the filter exactly
-        // (tabicl-candle regressor.rs; an all-NaN column stays, since
-        // NaN != NaN) and generate over the kept count.
-        let kept = (0..cols)
-            .filter(|&c| {
-                let column = || train_x.iter().skip(c).step_by(cols).copied();
-                let (sum, n) = column()
-                    .filter(|v| !v.is_nan())
-                    .fold((0.0, 0usize), |(s, n), v| (s + v, n + 1));
-                let mean = sum / n as f64;
-                let impute = move |v: f64| if v.is_nan() { mean } else { v };
-                column().map(impute).any(|v| v != impute(train_x[c]))
-            })
-            .count();
-        if kept == 0 {
-            return Err(
-                "band_grid: every feature column is constant over the training rows — \
-                 nothing varies to band on"
-                    .into(),
-            );
-        }
-        let model = self.band_model.get()?;
-        let members = tabicl_inference::ensemble::EnsembleMember::generate(kept, 8, 0);
-        compute_pool()
-            .install(|| {
-                let est = tabicl_inference::ensemble::TabIclEnsemble::fit(
-                    &model, train_x, rows, cols, train_y, members,
-                );
-                est.predict_quantiles(test_x, test_rows, alphas, self.band_model.device())
-            })
-            .map_err(|e| e.to_string())
+        self.model()?.band_grid(train, train_y, test, alphas).await
     }
 
     /// The behavior-evidence door's kernel (stage 5): the stock/flow
-    /// discriminator, over batches.
+    /// discriminator, over batches — native, never remote.
     fn reconcile(
         &self,
         aligned: &[RecordBatch],
@@ -333,9 +140,8 @@ impl FunctionRuntime for KernelRuntime {
         reconcile_kernel(aligned, n_common, terms.to_vec())
     }
 
-    /// The metric-bands walk's kernel (stage 5): one fit and one read,
-    /// typed.
-    fn band_point(
+    /// The metric-bands walk's kernel (stage 5): one fit and one read.
+    async fn band_point(
         &self,
         train: Matrix<'_>,
         train_y: &[f64],
@@ -343,65 +149,35 @@ impl FunctionRuntime for KernelRuntime {
         alphas: &[f64],
         actual: f64,
     ) -> Result<(Vec<f64>, f64), String> {
-        self.band_model
-            .bands_core(train, train_y, test_x, alphas, actual)
-    }
-
-    /// The `misfit.` door's kernel (fixture 20): the
-    /// chain-rule density read, fit on the frame and scored on the same
-    /// frame (self-fit — measured protocol-robust for this model).
-    /// Numeric features only, through the regressor checkpoint. Two
-    /// deterministic orderings — identity and reverse — so every
-    /// feature conditions both early and late; nothing semantic rides
-    /// the ordering stream (the port's own note). Log space end to end.
-    fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
         let Matrix {
             data: x,
             rows,
             cols,
-        } = x;
-        if rows < 2 || cols < 2 || x.len() != rows * cols {
+        } = train;
+        if rows < 2 || x.len() != rows * cols || train_y.len() != rows || test_x.len() != cols {
             return Err(format!(
-                "misfit_scores: {rows} rows x {cols} features against {} values",
-                x.len()
+                "band_point: {rows} rows x {cols} features against {} values and {} test features",
+                train_y.len(),
+                test_x.len()
             ));
         }
-        let model = self.band_model.get()?;
-        let xf: Vec<f32> = x.iter().map(|v| *v as f32).collect();
-        let unsup = tabicl_inference::unsupervised::Unsupervised::fit(
-            &model,
-            None,
-            xf.clone(),
-            rows,
-            cols,
-            vec![],
-        );
-        let perms: Vec<Vec<usize>> = vec![(0..cols).collect(), (0..cols).rev().collect()];
-        // The dummy column for empty conditionings: a fixed-seed normal
-        // stream — deterministic, so the read reproduces.
-        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
-        let mut noise = move |n: usize| -> Vec<f32> {
-            let mut next = || {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                (state >> 11) as f64 / (1u64 << 53) as f64
-            };
-            (0..n)
-                .map(|_| {
-                    let (u1, u2) = (next().max(1e-12), next());
-                    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-                    z as f32
-                })
-                .collect()
-        };
-        // The feature conditionals run in parallel on the capped candle
-        // pool (CPU) or in order on the accelerator's one queue.
-        compute_pool()
-            .install(|| {
-                unsup.score_log_mean(&xf, rows, &perms, &mut noise, self.band_model.device())
-            })
-            .map_err(|e| e.to_string())
+        self.model()?
+            .band_point(train, train_y, test_x, alphas, actual)
+            .await
+    }
+
+    /// The `misfit.` door's kernel (fixture 20): the chain-rule density
+    /// read, fit on the frame and scored on the same frame, log space
+    /// end to end — the service runs the two orderings.
+    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
+        let Matrix { data, rows, cols } = x;
+        if rows < 2 || cols < 2 || data.len() != rows * cols {
+            return Err(format!(
+                "misfit_scores: {rows} rows x {cols} features against {} values",
+                data.len()
+            ));
+        }
+        self.model()?.misfit(x).await
     }
 }
 
@@ -1077,122 +853,4 @@ fn reconcile_kernel(
         "n_common": n_common,
         "summaries": summaries,
     }))
-}
-
-#[cfg(test)]
-mod band_grid_filter {
-    //! The constant-column mirror in `band_grid`: the door
-    //! mechanics live in glossql-session's
-    //! suites; here the seam itself — refuse cleanly when nothing
-    //! varies, and survive the single-post-month frame whose constant
-    //! month index used to fire the kernel's shuffle assert.
-
-    use super::*;
-
-    #[test]
-    fn band_grid_refuses_when_no_feature_varies() {
-        // Both columns constant over the training rows: refused before
-        // the model would load, so no weights are needed here.
-        let rt = KernelRuntime::new("no-workspace-here");
-        let train_x = vec![1.0, 3.0, 1.0, 3.0, 1.0, 3.0];
-        let train_y = vec![10.0, 11.0, 12.0];
-        let e = rt
-            .band_grid(
-                Matrix {
-                    data: &train_x,
-                    rows: 3,
-                    cols: 2,
-                },
-                &train_y,
-                Matrix {
-                    data: &[1.0, 3.0],
-                    rows: 1,
-                    cols: 2,
-                },
-                &[0.5],
-            )
-            .unwrap_err();
-        assert!(e.contains("constant"), "{e}");
-    }
-
-    #[test]
-    fn band_grid_survives_a_constant_month_index() {
-        // Finding 1's live trigger: one post month leaves the month
-        // index constant, the preprocessor drops it, and members must
-        // span the kept column alone. Panicked before the mirror.
-        let sibling = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tabicl-candle"
-        ));
-        if !sibling
-            .join("weights/tabicl-regressor.safetensors")
-            .exists()
-        {
-            eprintln!("skipping: no converted weights in the sibling checkout");
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let weights = dir.path().join("weights");
-        std::fs::create_dir_all(&weights).unwrap();
-        for (from, to) in [
-            (
-                "weights/tabicl-regressor.safetensors",
-                "tabicl-regressor.safetensors",
-            ),
-            (
-                "weights/tabicl-regressor.config.json",
-                "tabicl-regressor.config.json",
-            ),
-            ("fixtures/DIGESTS", "DIGESTS"),
-        ] {
-            std::os::unix::fs::symlink(sibling.join(from), weights.join(to)).unwrap();
-        }
-        let rt = KernelRuntime::new(dir.path());
-
-        let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
-        let mut train_x = Vec::new();
-        let mut train_y = Vec::new();
-        for f in factors {
-            train_x.extend([f, 11.0]);
-            train_y.push(1000.0 * f);
-        }
-        let alphas = [0.05, 0.50, 0.95];
-        let q = rt
-            .band_grid(
-                Matrix {
-                    data: &train_x,
-                    rows: factors.len(),
-                    cols: 2,
-                },
-                &train_y,
-                Matrix {
-                    data: &[1.15, 11.0],
-                    rows: 1,
-                    cols: 2,
-                },
-                &alphas,
-            )
-            .unwrap();
-        assert_eq!(q.len(), alphas.len());
-        assert!(q[0] <= q[1] && q[1] <= q[2], "monotone quantiles: {q:?}");
-    }
-}
-
-#[cfg(all(test, feature = "embed-weights"))]
-mod embedded_weights_tests {
-    /// The whole embed path in one assertion: build.rs verified and
-    /// generated the include, the bytes deserialize, the checkpoint
-    /// builds the model. Runs only under
-    /// `cargo test -p glossql-scripts --features embed-weights --lib`.
-    #[test]
-    fn embedded_regressor_builds_the_model() {
-        let ckpt = tabicl_model::weights::load_bytes(
-            super::embedded::REGRESSOR_SAFETENSORS,
-            super::embedded::REGRESSOR_CONFIG,
-            &tabicl_model::Device::Cpu,
-        )
-        .unwrap();
-        assert!(ckpt.tensors.len() > 100, "got {}", ckpt.tensors.len());
-        tabicl_model::tabicl::TabIcl::from_checkpoint(ckpt).unwrap();
-    }
 }

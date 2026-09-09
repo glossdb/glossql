@@ -28,7 +28,7 @@ async fn app() -> (Router, tempfile::TempDir) {
     .await
     .unwrap();
     let store = Store::open(lake).await.unwrap();
-    let runtime = Arc::new(KernelRuntime::new(dir.path().to_path_buf()));
+    let runtime = Arc::new(KernelRuntime::native());
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     bootstrap(
         &plane,

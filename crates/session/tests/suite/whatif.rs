@@ -24,8 +24,13 @@ struct LinearKernel {
     fits: AtomicUsize,
 }
 
+#[glossql_session::async_trait]
 impl FunctionRuntime for LinearKernel {
-    fn band_grid(
+    fn carries_model(&self) -> bool {
+        true
+    }
+
+    async fn band_grid(
         &self,
         train: Matrix<'_>,
         train_y: &[f64],

@@ -71,6 +71,9 @@ pub(crate) async fn whatif_batch(
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let bad = |detail: String| refused(scenario, &detail);
+    if !shared.runtime().carries_model() {
+        return Err(crate::session::no_model(&format!("whatif.{scenario}()")));
+    }
 
     let Some((_, kind, _)) = shared.store.aspect(scenario).await? else {
         return Err(bad(format!("no aspect `{scenario}` is declared")));
@@ -491,6 +494,7 @@ async fn concept_rows(
             },
             &ALPHAS,
         )
+        .await
         .map_err(|e| refuse(format!("not served: the band kernel refused — {e}")))?;
     if q.len() != post.len() * ALPHAS.len() {
         return Err(SessionError::Runtime(format!(

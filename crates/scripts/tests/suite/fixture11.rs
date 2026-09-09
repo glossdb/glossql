@@ -56,7 +56,7 @@ async fn parquet_fixture(root: &std::path::Path) {
 }
 
 fn runtime() -> Arc<KernelRuntime> {
-    Arc::new(KernelRuntime::new(env!("CARGO_MANIFEST_DIR")))
+    Arc::new(KernelRuntime::native())
 }
 
 fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
