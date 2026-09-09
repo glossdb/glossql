@@ -1665,16 +1665,21 @@ mod detector_tests {
             rows.into_iter().next().expect("one subject, one verdict")
         };
 
+        // Two metrics scored: the worst displacement, squared.
         let (subject, band, score) = read(&[0.5, 0.62]).await;
         assert_eq!((subject.as_str(), band.as_str()), ("fin", "green"));
-        assert!(score < 0.3);
+        assert!((score - 0.24f64.powi(2)).abs() < 1e-9, "{score}");
 
+        // 0.93 alone would be yellow; among two it is 0.86² = 0.74,
+        // green — the base rate of a worst-of-two.
         let (_, band, _) = read(&[0.5, 0.93]).await;
+        assert_eq!(band, "green");
+        let (_, band, _) = read(&[0.5, 0.97]).await;
         assert_eq!(band, "yellow");
 
         let (_, band, score) = read(&[0.996, 0.5]).await;
         assert_eq!(band, "red");
-        assert!(score > 0.98);
+        assert!(score > 0.98, "{score}");
     }
 
     #[tokio::test]

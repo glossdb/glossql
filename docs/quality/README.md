@@ -67,8 +67,8 @@ judged by the actor):
 - **The band plane** — `tabicl_bands`, a native kernel over the
   sibling candle port (weights digest-verified; Metal by default, CPU
   fallback), with `metric_bands` and `band_breach` in the library —
-  the walk withholding a partial trailing month on a judged
-  sub-monthly axis, the detector scoring the newest complete one —
+  the walk withholding a partial trailing month where rows land
+  through the month, the detector scoring the newest complete one —
   and `whatif.<scenario>()` replaying rewritten plans across
   bracketed band grids.
 

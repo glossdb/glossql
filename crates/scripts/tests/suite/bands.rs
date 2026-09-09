@@ -304,15 +304,17 @@ async fn metric_bands_walks_and_reads_the_breach() {
 
     // The detector adjudicates the walk through its witness at the
     // ATTEST read: score is the worst displacement |2·pit − 1| across
-    // each metric's latest walked point; band reads against the edges
-    // with the witness's 0.98 red line.
-    let worst = ["revenue", "inventory"]
+    // each metric's latest walked point, raised to the number of
+    // metrics scored — three here; band reads against the edges with
+    // the witness's 0.98 red line.
+    let worst = ["revenue", "inventory", "share"]
         .iter()
         .map(|name| {
             let pit = by_name(name)["points"][5]["pit"].as_f64().unwrap();
             (2.0 * pit - 1.0).abs()
         })
-        .fold(0.0f64, f64::max);
+        .fold(0.0f64, f64::max)
+        .powi(3);
     let outcomes = session
         .execute("SELECT band, score FROM ATTEST(fin::metric_bands);")
         .await

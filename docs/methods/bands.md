@@ -30,8 +30,11 @@ digest-verified at load. The `band_breach` detector
 measurement's slots: displacement is `|2·pit − 1|` — 0.0 at the
 median, 0.8 at a nominal-80 edge — and the score is the worst
 displacement across the latest point of every monitored metric,
-banded green/yellow/orange with the witness threshold as the red
-line (default 0.98).
+raised to the number of metrics scored: the worst of k calibrated
+displacements sits under an edge with probability the edge to the
+k, so the power keeps the edges' base rate at any metric count. The
+score is banded green/yellow/orange with the witness threshold as
+the red line (default 0.98).
 
 ## Serving the model
 
@@ -61,10 +64,11 @@ protocol it was evaluated against before it shipped.
   short a history is served inapplicable with the reason.
 - A month the extract stops inside is partial, and its short sum
   against a corridor fitted on whole months reflects the calendar, not
-  a move. On an axis judged at a cadence finer than a month, the newest
-  point is served `partial` while the extract's horizon falls before
-  the month's last day: it keeps its bands and its actual so far,
-  withholds the PIT, and the detector scores the month before it. An
-  unjudged axis says nothing about its cadence, and nothing is
-  withheld on it.
+  a move. Where the extract lands finer than monthly — some month
+  holds more than one distinct day — the newest point is served
+  `partial` while the extract's horizon falls before the month's last
+  day: it keeps its bands and its actual so far, withholds the PIT,
+  and the detector scores the month before it. The walk reads that
+  shape from the extract, not from the column's judged cadence. A
+  monthly-dated series is whole at its one row.
 - A NULL date is no period: the rows it dates bucket nowhere.

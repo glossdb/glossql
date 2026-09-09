@@ -2556,18 +2556,29 @@ async fn run_monthly(
         .collect())
 }
 
-/// The extract's horizon on its time column — the last day it holds,
-/// `YYYY-MM-DD` in the column's display form — or None where the
-/// extract is empty. The walk reads it to tell a partial trailing
-/// month from a complete one: a period the horizon falls inside has
-/// not finished landing.
-async fn extract_horizon(
+/// The extract's shape on its time column: the horizon — the last day
+/// it holds, `YYYY-MM-DD` in the column's display form, None where the
+/// extract is empty — and whether the rows land finer than monthly,
+/// read from the extract itself: some month holds more than one
+/// distinct day. The walk reads both to tell a partial trailing month
+/// from a complete one: a period the horizon falls inside has not
+/// finished landing when rows land through the month, while a
+/// monthly-dated series is whole at its one row. The judged cadence
+/// is not the evidence here — an event-stamp column judges
+/// `irregular`, which names no cadence at all.
+async fn extract_shape(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     sql: &str,
     tcol: &str,
-) -> Result<Option<String>, SessionError> {
-    let q = format!("SELECT max(\"{tcol}\") AS horizon FROM ({sql})");
+) -> Result<(Option<String>, bool), SessionError> {
+    use datafusion::arrow::array::ArrayRef;
+    let q = format!(
+        "SELECT max(\"{tcol}\") AS horizon, \
+                count(DISTINCT date_trunc('day', \"{tcol}\")) AS days, \
+                count(DISTINCT date_trunc('month', \"{tcol}\")) AS months \
+         FROM ({sql})"
+    );
     let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
     let batches = ctx
         .execute_logical_plan(plan)
@@ -2577,18 +2588,27 @@ async fn extract_horizon(
         .await
         .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
     let Some(b) = batches.iter().find(|b| b.num_rows() > 0) else {
-        return Ok(None);
+        return Ok((None, false));
     };
-    let col = b.column(
-        b.schema()
-            .index_of("horizon")
-            .map_err(|e| SessionError::Runtime(e.to_string()))?,
-    );
+    let column = |name: &str| -> Result<&ArrayRef, SessionError> {
+        b.column_by_name(name)
+            .ok_or_else(|| SessionError::Runtime(format!("the shape read served no {name}")))
+    };
+    let count = |name: &str| -> Result<i64, SessionError> {
+        column(name)?
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .filter(|c| !c.is_null(0))
+            .map(|c| c.value(0))
+            .ok_or_else(|| SessionError::Runtime(format!("{name} did not read as a count")))
+    };
+    let sub_monthly = count("days")? > count("months")?;
+    let col = column("horizon")?;
     if col.is_null(0) {
-        return Ok(None);
+        return Ok((None, sub_monthly));
     }
     let shown = array_value_to_string(col, 0).map_err(|e| SessionError::Runtime(e.to_string()))?;
-    Ok(Some(shown.chars().take(10).collect()))
+    Ok((Some(shown.chars().take(10).collect()), sub_monthly))
 }
 
 /// The last day of a `YYYY-MM` period, `YYYY-MM-DD`.
@@ -2689,15 +2709,6 @@ pub(crate) async fn metric_band_walk(
             continue;
         };
         let axis_judged = judged_axis.is_some();
-        // Only a cadence judged finer than a month can leave a month
-        // partial: rows landing daily stop mid-month when the extract
-        // does, while a monthly-dated series is whole at its one row.
-        // An unjudged axis says nothing about its cadence, so nothing
-        // is withheld on it.
-        let sub_monthly = judged
-            .as_ref()
-            .and_then(|(_, cadence, _)| *cadence)
-            .is_some_and(|c| c < crate::cube::Resolution::Month);
         let is_ratio = has("num") && has("den");
         let verb = crate::cube::verb_of(
             &body,
@@ -2717,11 +2728,11 @@ pub(crate) async fn metric_band_walk(
             _ => "sum",
         };
         let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
-        let horizon = if sub_monthly {
-            extract_horizon(shared, &ctx, sql, &tcol).await?
-        } else {
-            None
-        };
+        let (horizon, sub_monthly) = extract_shape(shared, &ctx, sql, &tcol).await?;
+        // Rows landing through the month stop mid-month when the
+        // extract does; a monthly-dated series is whole at its one
+        // row, and its horizon says nothing.
+        let horizon = horizon.filter(|_| sub_monthly);
         let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
         let n = v.len();
         // Feature rows start at month 1 — month 0 has no lag of its own

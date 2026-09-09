@@ -249,6 +249,79 @@ GLOSS takings ON fin AS $${"sql": "SELECT race_date, takings AS value FROM races
         // Eighteen dated months trained on; the null-dated row is none.
         assert!(line.contains("| 18 "), "{line}");
         assert!(line.contains("| 2025-"), "{line}");
-        assert!(!line.contains("1000000"), "the null-dated row is no period: {line}");
+        assert!(
+            !line.contains("1000000"),
+            "the null-dated row is no period: {line}"
+        );
     }
+}
+
+/// Rows land daily on an axis nobody judged, and the extract stops
+/// mid-month: the newest month is partial by the extract's own shape,
+/// and the walk withholds its PIT. The monthly-dated races above are
+/// whole at their one row and never partial.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_partial_month_is_read_from_the_extract_not_the_judgment() {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("day", DataType::Date32, false),
+        Field::new("spend", DataType::Float64, false),
+    ]));
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+    let (mut days, mut spend) = (Vec::new(), Vec::new());
+    for i in 0..18 {
+        let (y, m) = (2024 + i / 12, (i % 12 + 1) as u32);
+        let first = chrono::NaiveDate::from_ymd_opt(y, m, 1).expect("a first");
+        // The last month holds eleven days only.
+        let last_day = if i == 17 { 11 } else { 28 };
+        for d in 0..last_day {
+            let date = first + chrono::Duration::days(d);
+            days.push((date - epoch).num_days() as i32);
+            spend.push(5.0 + 0.001 * (i * 31 + d as i32) as f64);
+        }
+    }
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Date32Array::from(days)),
+            Arc::new(Float64Array::from(spend)),
+        ],
+    )
+    .expect("a batch");
+    let session = session_over(
+        "lines",
+        schema,
+        batch,
+        r##"
+DECLARE DATASET fin SET (purpose: 'a partial month');
+USE fin;
+DECLARE ASPECT spend WITH $${"title": "Spend"}$$ AS QUERY ON DATASET;
+GLOSS spend ON fin AS $${"sql": "SELECT day, spend AS value FROM lines"}$$;
+"##,
+    )
+    .await;
+    let shown = walked(
+        &session,
+        "SELECT metric, axis_judged, period, partial, pit, withheld FROM metric_band_walk('fin') \
+         ORDER BY point_seq;",
+    )
+    .await;
+    let points: Vec<&str> = shown.lines().filter(|l| l.contains("| spend")).collect();
+    assert_eq!(points.len(), 6, "{shown}");
+    for line in &points[..5] {
+        assert!(
+            line.contains("| false "),
+            "an earlier month is whole: {line}"
+        );
+        assert!(!line.contains("partial:"), "{line}");
+    }
+    let newest = points[5];
+    assert!(newest.contains("| 2025-06 "), "{newest}");
+    assert!(
+        newest.contains(
+            "partial: the extract ends 2025-06-11, before the period's last day 2025-06-30"
+        ),
+        "{newest}"
+    );
+    // The axis is unjudged and the month is withheld anyway.
+    assert!(newest.starts_with("| spend  | false"), "{newest}");
 }
