@@ -49,13 +49,15 @@ listens:
 The same binary as an image: `ghcr.io/glossdb/glossql:<version>`,
 pushed at each release tag beside the deb, and `docker build .` at a
 checkout builds the same. A slim Debian, the binary and the root
-certificates — no model, no weights, no GPU. It listens on 8080, runs
-as an unprivileged user, and is configured through the environment.
-With `GLOSSQL_CATALOG_SQL` and `GLOSSQL_WAREHOUSE` named, nothing of the
-state lives in the container and `/workspace` holds `apps/` alone;
-without them `/workspace` is the whole workspace, so mount a directory
-there. `GET /healthz` answers `ok` outside the gate, for a platform's
-probe, and stays off the record.
+certificates — no model, no weights, no GPU. It listens on 8080 and
+runs as an unprivileged user. There is no workspace in a container:
+the state is the catalog and the warehouse `GLOSSQL_CATALOG_SQL` and
+`GLOSSQL_WAREHOUSE` name, and without both the server refuses to
+start, naming them; the apps are the built-ins and the app parts in
+the record. The configuration is the environment the platform injects,
+secrets included — nothing is read from a file, and the image holds no
+value of its own. `GET /healthz` answers `ok` outside the gate, for a
+platform's probe, and stays off the record.
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -70,24 +72,27 @@ docker run --rm -p 8080:8080 \
 ```
 
 The image's command sizes the server for a box with 8 GiB of memory
-and an 8 GiB ephemeral disk: `--memory-limit 3072`, so the spill it
-bounds at twice the pool fits the disk, and `--cube-cache 1024`; the
-rest of the memory is the process and what the pool does not track. A
-larger box overrides the command with larger numbers.
+and an 8 GiB ephemeral disk, two numbers from two facts: the engine's
+ceiling and the cube cache at their defaults, 6 GiB tracked and the
+rest of the memory to the process and what the engine does not track;
+`--spill-limit 6144` for the disk, the rest to the writable layer. A
+different box overrides the command with its own numbers.
 
 ## Flags
 
 | flag | default | meaning |
 |---|---|---|
-| `--workspace <dir>` | required without a catalog connection | the workspace directory; created content lands here. With `GLOSSQL_CATALOG_URI` set it may be left unnamed — the working directory serves — since it then holds only `apps/` |
+| `--workspace <dir>` | required when the catalog or the warehouse lives in it | the laptop's shape: the directory holding the catalog and the warehouse. A deployment names both in the environment (or a REST catalog) and runs without a directory |
 | `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
 | `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
 | `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
-| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, bounded at twice the limit; a container needs that much ephemeral space, or a disk at its temp directory. Past the bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment for the sum, plus the spill space |
+| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
+| `--spill-limit <megabytes>` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
 
-Authorization is not a flag. The server reads it from `.env` in the
-working directory, or from the environment (a set variable wins over
-the file, which is how a container is configured without one):
+Authorization is not a flag. A run with a workspace reads `.env` in
+the working directory, and the environment on top of it (a set
+variable wins over the file); a deployment reads no file — its
+platform injects the variables, secrets included:
 
 | variable | meaning |
 |---|---|
@@ -96,8 +101,8 @@ the file, which is how a container is configured without one):
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server, which the browser login on `/app` signs in and exchanges its code as |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
-| `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace`. Unset, `catalog.sqlite` in the workspace serves |
-| `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named, the workspace directory holds `apps/` alone and `--workspace` may be left unnamed |
+| `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace` unless `GLOSSQL_WAREHOUSE` moves it. Unset, `catalog.sqlite` in the workspace serves |
+| `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named the server needs no workspace directory |
 | `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
 | `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
@@ -189,9 +194,6 @@ acme/
                      the catalog is then the Postgres server it names)
   warehouse/         the lake — every table and every declared
                      relation lives here as Iceberg data
-  apps/              optional: workspace apps, one directory per app;
-                     a workspace app named like a built-in shadows it
-                     whole
 ```
 
 The lake is the whole store. There is no separate database for the
@@ -200,9 +202,10 @@ is an Iceberg table under `warehouse/`, and the workspace directory is
 the complete, copyable state of the system.
 
 With `GLOSSQL_CATALOG_URI` set, `catalog.sqlite` and `warehouse/` move
-behind the REST catalog and its storage: the workspace directory then
-holds only `apps/`, the state of the system is the catalog's
-warehouse, and `--workspace` may be left unnamed (the
-working directory serves). Everything else is the same lake —
+behind the REST catalog and its storage, and with `GLOSSQL_CATALOG_SQL`
+and `GLOSSQL_WAREHOUSE` to the Postgres server and the object store
+they name: the state of the system is then the catalog's warehouse
+and a deployment runs without a directory. Everything else is the same
+lake —
 datasets are namespaces, every relation an Iceberg table, whichever
 side of the connection they live on.

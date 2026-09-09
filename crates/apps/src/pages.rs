@@ -40,9 +40,9 @@ fn state_map(params: Vec<(String, String)>) -> Value {
     Value::Object(map)
 }
 
-fn apps_json(workspace: &std::path::Path, glossed: &[crate::glossed::Part]) -> Value {
+fn apps_json(glossed: &[crate::glossed::Part]) -> Value {
     Value::Array(
-        AppDef::list(workspace, glossed)
+        AppDef::list(glossed)
             .iter()
             .map(|a| json!({ "name": a.name, "title": a.title }))
             .collect(),
@@ -102,7 +102,7 @@ pub async fn datasets(State(door): State<AppDoor>, headers: HeaderMap) -> Respon
     overview::minute(&mut datasets, "landed");
     // An app names no dataset, so a directory or built-in app serves
     // every one; a glossed app serves the dataset it was glossed in.
-    let apps: Vec<Value> = AppDef::list(&door.workspace, &glossed)
+    let apps: Vec<Value> = AppDef::list(&glossed)
         .iter()
         .map(|a| {
             let serves: Vec<&String> = if a.origin() == "glossed" {
@@ -168,7 +168,7 @@ pub async fn home(
             Err(e) => (Vec::new(), e),
         };
     let mut ctx = tera::Context::new();
-    ctx.insert("apps", &apps_json(&door.workspace, &glossed));
+    ctx.insert("apps", &apps_json(&glossed));
     ctx.insert("dataset", &dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
@@ -208,7 +208,7 @@ async fn page_response(
         Err(response) => return response,
     };
     let glossed = crate::glossed::parts(door, dataset).await;
-    let def = match AppDef::load(&door.workspace, app, &glossed) {
+    let def = match AppDef::load(app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -228,7 +228,7 @@ async fn page_response(
     });
     let mut ctx = tera::Context::new();
     ctx.insert("app", &json!({ "name": def.name, "title": def.title }));
-    ctx.insert("apps", &apps_json(&door.workspace, &glossed));
+    ctx.insert("apps", &apps_json(&glossed));
     ctx.insert("dataset", dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
@@ -241,7 +241,7 @@ pub async fn spec(
     Path((dataset, app, spec)): Path<(String, String, String)>,
 ) -> Response {
     let glossed = crate::glossed::parts(&door, &dataset).await;
-    let def = match AppDef::load(&door.workspace, &app, &glossed) {
+    let def = match AppDef::load(&app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),

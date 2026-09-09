@@ -1,8 +1,8 @@
-//! The app shipped in the binary. It serves at its plain name unless
-//! the workspace carries `apps/<name>/` — the workspace shadows the
-//! built-in, so forking is copying the directory out and editing. A
-//! workspace can equally author apps as glosses (`glossed.rs`), which
-//! is the shape an agent over MCP can write.
+//! The app shipped in the binary. It serves at its plain name; a
+//! workspace authors its own apps as glosses (`glossed.rs`), under
+//! their own names — a glossed part under a built-in's name is refused
+//! rather than shadowing it. Forking the built-in happens where its
+//! source is, in this repository.
 //!
 //! One ships: the docket — what stands open for a human to judge, what
 //! has been settled, what waits on an act, with the metric surfaces,

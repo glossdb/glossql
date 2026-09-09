@@ -43,7 +43,7 @@ pub async fn remeasure(
         );
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
-    match AppDef::load(&door.workspace, &app, &glossed) {
+    match AppDef::load(&app, &glossed) {
         Ok(Some(_)) => {}
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return plain(StatusCode::INTERNAL_SERVER_ERROR, e),

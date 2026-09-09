@@ -1,8 +1,8 @@
 //! The app door (`/<dataset>/app`): server-rendered data apps over the
-//! session plane. An app is a directory in the workspace —
-//! `apps/<name>/` holding tera pages, frame queries (`frames/*.sql`),
-//! and vega-lite specs (`specs/*.vl.json`) — rendered against module
-//! templates and assets embedded in the binary. Pages are hypermedia
+//! session plane. An app is a named set of parts — tera pages, frame
+//! queries (`frames/*.sql`), vega-lite specs (`specs/*.vl.json`) —
+//! glossed into the record or shipped in the binary, rendered against
+//! module templates and assets embedded in the binary. Pages are hypermedia
 //! (htmx); data reaches the browser once per frame as Arrow IPC and
 //! lives in the frame store; the URL is the only state. Everything an
 //! app author — agent or human — writes is declarative: templates, SQL,
@@ -30,21 +30,18 @@ mod rule;
 pub use app::AppDef;
 pub use builtin::{BUILTINS, BuiltinApp};
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::get;
 use glossql_session::Plane;
 
-/// State behind the door: the shared plane and the workspace root the
-/// apps live under. Frames speak as a Human actor per app
-/// (`app:<name>`) and can only read — they ride the one-query streaming
-/// path.
+/// State behind the door: the shared plane. Frames speak as a Human
+/// actor per app (`app:<name>`) and can only read — they ride the
+/// one-query streaming path.
 #[derive(Clone)]
 pub struct AppDoor {
     pub plane: Arc<Plane>,
-    pub workspace: PathBuf,
 }
 
 /// The workspace's datasets, for the doors that must refuse a name it
@@ -86,7 +83,7 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// static segment beside the apps: a relation as a file, no app in
 /// the way. An app named `export` still serves — only its two POST
 /// paths would share the prefix, and they are the docket's.
-pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
+pub fn router(plane: Arc<Plane>) -> Router {
     Router::new()
         .route("/", get(pages::home))
         .route("/export/{file}", get(export::export))
@@ -99,7 +96,7 @@ pub fn router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
             "/{app}/remeasure",
             axum::routing::post(remeasure::remeasure),
         )
-        .with_state(AppDoor { plane, workspace })
+        .with_state(AppDoor { plane })
 }
 
 /// The embedded static assets, mounted at the workspace root: one copy
@@ -111,8 +108,8 @@ pub fn assets_router() -> Router {
 /// The workspace root: which datasets there are, and the way into each.
 /// It is the one page that is not about a dataset, so it is where a
 /// visitor who has just swapped a startup token for a cookie lands.
-pub fn root_router(plane: Arc<Plane>, workspace: PathBuf) -> Router {
+pub fn root_router(plane: Arc<Plane>) -> Router {
     Router::new()
         .route("/", get(pages::datasets))
-        .with_state(AppDoor { plane, workspace })
+        .with_state(AppDoor { plane })
 }

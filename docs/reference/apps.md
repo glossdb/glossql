@@ -2,35 +2,32 @@
 
 An app is a named set of declarative parts — pages, frame queries,
 chart specs, a manifest. Authors write templates, SQL, specs, prose;
-never code. The door serves as many apps as the workspace holds.
+never code. The door serves as many apps as the record holds. Nothing
+is read from disk: an app lives in the record or in the binary.
 
-## Three sources, one resolution order
+## Two sources, one resolution order
 
-1. **A workspace directory** — `apps/<name>/` with `app.toml`, pages
-   (`*.html`, tera), `frames/*.sql`, `specs/*.vl.json`. Read fresh per
-   request: save a file, reload. A directory without `app.toml` is an
-   authored app that cannot serve — the door refuses it rather than
-   half-shadowing a built-in.
-2. **Glosses** — each part its own gloss, which is what lets an agent
-   over MCP author an app at all (it has statements, no filesystem):
+1. **Glosses** — each part its own gloss, the one way an app is
+   written, by an agent over MCP or a person through any door:
    `app` on `<name>` is the manifest (`title`, optional `dataset`),
-   `app_page` on `<name>.<page>` a page, `app_frame` on
-   `<name>.<frame>` a query, `app_spec` on `<name>.<spec>` a chart
-   spec. Supersession versions each part on its own; a human's part
-   wins over the agent's. The `app_parts` read shows every part as a
-   file row.
-3. **The built-in** — the docket ships in the binary and resolves the
-   same way.
+   `app_page` on `<name>.<page>` a page (`html`), `app_frame` on
+   `<name>.<frame>` a query (`sql`), `app_spec` on `<name>.<spec>` a
+   chart spec (`spec`). Supersession versions each part on its own; a
+   human's part wins over the agent's. The `app_parts` read shows every
+   part as a file row, keyed the way a directory would spell them
+   (`index.html`, `frames/open.sql`, `specs/monthly.vl.json`).
+2. **The built-in** — the docket ships in the binary and resolves the
+   same way, after the record.
 
-The workspace shadows the built-in **whole** — forking is copying the
-directory out. A glossed part under a built-in's name is refused: one
-part would resolve the whole app and the built-in's other pages would
-stop serving. Add an app under its own name instead.
+A glossed part under a built-in's name is refused: one part would
+resolve the whole app and the built-in's other pages would stop
+serving. Add an app under its own name instead; forking the built-in
+happens where its source is, in the repository.
 
 ## The manifest
 
-```toml
-title = "Docket"
+```glossql
+GLOSS app ON docket_mine AS $${"title": "My docket"}$$;
 ```
 
 **A manifest names no dataset.** The URL does — `/<dataset>/app/<name>` —

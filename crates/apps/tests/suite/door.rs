@@ -55,52 +55,31 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
         .await
         .unwrap();
 
-    let apps = dir.path().join("apps/perf");
-    std::fs::create_dir_all(apps.join("frames")).unwrap();
-    std::fs::create_dir_all(apps.join("specs")).unwrap();
-    std::fs::write(apps.join("app.toml"), "title = \"Perf\"\n").unwrap();
-    std::fs::write(
-        apps.join("index.html"),
-        "{% extends \"shell.html\" %}\n\
-         {% import \"modules/tiles.html\" as tiles %}\n\
-         {% block main %}\n\
-         <div class=\"tiles\">\n\
-         {{ tiles::chart(frame=\"frames/monthly\", spec=\"specs/monthly.vl.json\", title=\"Monthly\") }}\n\
-         </div>\n\
-         {% endblock %}\n",
-    )
-    .unwrap();
-    std::fs::write(
-        apps.join("frames/monthly.sql"),
-        "SELECT month, sum(value) AS value FROM ledger GROUP BY month ORDER BY month",
-    )
-    .unwrap();
-    std::fs::write(
-        apps.join("frames/by_cohort.sql"),
-        "SELECT month, sum(value) AS value FROM ledger \
-         WHERE cohort = $cohort GROUP BY month ORDER BY month",
-    )
-    .unwrap();
-    std::fs::write(apps.join("frames/evil.sql"), "DROP TABLE ledger").unwrap();
-    std::fs::write(
-        apps.join("specs/monthly.vl.json"),
-        "{\"mark\": \"bar\", \"encoding\": {}}",
-    )
-    .unwrap();
+    // The app, authored as glosses — the only way an app is written:
+    // one part per gloss under the four shipped aspects. Its name is
+    // its own: an `<app>.<part>` subject whose first segment names the
+    // dataset would read as dataset-qualified (SPEC.md §3).
+    session
+        .execute(&format!(
+            r#"USE perf;
+               {aspects}
+               GLOSS app ON board AS $${{"title": "Perf"}}$$;
+               GLOSS app_page ON board.index AS $${{"html": "{{% extends \"shell.html\" %}}\n{{% import \"modules/tiles.html\" as tiles %}}\n{{% block main %}}\n<div class=\"tiles\">\n{{{{ tiles::chart(frame=\"frames/monthly\", spec=\"specs/monthly.vl.json\", title=\"Monthly\") }}}}\n</div>\n{{% endblock %}}\n"}}$$;
+               GLOSS app_frame ON board.monthly AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger GROUP BY month ORDER BY month"}}$$;
+               GLOSS app_frame ON board.by_cohort AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger WHERE cohort = $cohort GROUP BY month ORDER BY month"}}$$;
+               GLOSS app_frame ON board.evil AS $${{"sql": "DROP TABLE ledger"}}$$;
+               GLOSS app_spec ON board.monthly AS $${{"spec": "{{\"mark\": \"bar\", \"encoding\": {{}}}}"}}$$;"#,
+            aspects = shipped_app_declarations()
+        ))
+        .await
+        .unwrap();
 
-    let workspace = dir.path().to_path_buf();
     // In the binary the gate sits above this door and leaves the
     // verified caller in the request; here the layer stands in for it,
     // with human standing, as the gate stamps on a human door.
     let router = Router::new()
-        .merge(glossql_apps::root_router(
-            Arc::clone(&plane),
-            workspace.clone(),
-        ))
-        .nest(
-            "/{dataset}/app",
-            glossql_apps::router(Arc::clone(&plane), workspace),
-        )
+        .merge(glossql_apps::root_router(Arc::clone(&plane)))
+        .nest("/{dataset}/app", glossql_apps::router(Arc::clone(&plane)))
         .layer(axum::Extension(Caller(Actor {
             kind: ActorKind::Human,
             id: "ada".into(),
@@ -121,6 +100,25 @@ fn shipped_ruling_declaration() -> &'static str {
     let len = kit[start..]
         .find("AS FACT;")
         .expect("the declaration closes")
+        + "AS FACT;".len();
+    &kit[start..start + len]
+}
+
+/// The SHIPPED app aspects — `app`, `app_page`, `app_frame`,
+/// `app_spec` — cut from the kit the same way, so the door serves the
+/// parts a real workspace writes.
+fn shipped_app_declarations() -> &'static str {
+    let kit = glossql_scripts::library::KIT;
+    let start = kit
+        .find("DECLARE ASPECT app WITH")
+        .expect("the kit ships the app aspects");
+    let last = kit[start..]
+        .find("DECLARE ASPECT app_spec")
+        .expect("the kit ships app_spec");
+    let len = last
+        + kit[start + last..]
+            .find("AS FACT;")
+            .expect("the declaration closes")
         + "AS FACT;".len();
     &kit[start..start + len]
 }
@@ -181,38 +179,40 @@ async fn pages_render_and_frames_stream() {
 
     // Home lists the app.
     let home = get(&app, "/perf/app").await;
-    assert_eq!(home.status(), StatusCode::OK);
+    let status = home.status();
     let home = text(home).await;
+    assert_eq!(status, StatusCode::OK, "{home}");
     assert!(home.contains("Perf"), "home should list the app:\n{home}");
 
     // The page renders through shell + macros, carrying the app root.
-    let page = get(&app, "/perf/app/perf").await;
-    assert_eq!(page.status(), StatusCode::OK);
+    let page = get(&app, "/perf/app/board").await;
+    let status = page.status();
     let page = text(page).await;
-    assert!(page.contains("data-approot=\"/perf/app/perf/\""), "{page}");
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("data-approot=\"/perf/app/board/\""), "{page}");
     assert!(
         page.contains("<gl-chart frame=\"frames/monthly\""),
         "{page}"
     );
     // A frame streams IPC: two months, summed.
-    let frame = get(&app, "/perf/app/perf/frames/monthly").await;
+    let frame = get(&app, "/perf/app/board/frames/monthly").await;
     assert_eq!(frame.status(), StatusCode::OK);
     assert_eq!(values(frame).await, vec![12.5, 4.0]);
 
     // URL params bind as plan placeholders — cohort a only.
-    let filtered = get(&app, "/perf/app/perf/frames/by_cohort?cohort=a").await;
+    let filtered = get(&app, "/perf/app/board/frames/by_cohort?cohort=a").await;
     assert_eq!(filtered.status(), StatusCode::OK);
     assert_eq!(values(filtered).await, vec![10.5, 4.0]);
 
     // An unbound placeholder is the read telling the author what the
     // URL owed it.
-    let unbound = get(&app, "/perf/app/perf/frames/by_cohort").await;
+    let unbound = get(&app, "/perf/app/board/frames/by_cohort").await;
     assert_eq!(unbound.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let unbound = text(unbound).await;
     assert!(unbound.contains("cohort"), "{unbound}");
 
     // The spec serves as authored.
-    let spec = get(&app, "/perf/app/perf/specs/monthly.vl.json").await;
+    let spec = get(&app, "/perf/app/board/specs/monthly.vl.json").await;
     assert_eq!(spec.status(), StatusCode::OK);
     assert!(text(spec).await.contains("\"mark\""));
 }
@@ -222,7 +222,7 @@ async fn the_door_refuses_what_it_should() {
     let (app, _plane, _dir) = workspace().await;
 
     // Frames read; a write in a frame file is not one query.
-    let evil = get(&app, "/perf/app/perf/frames/evil").await;
+    let evil = get(&app, "/perf/app/board/frames/evil").await;
     assert_eq!(evil.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     // Unknown app, unknown frame, unknown page.
@@ -231,52 +231,27 @@ async fn the_door_refuses_what_it_should() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        get(&app, "/perf/app/perf/frames/nope").await.status(),
+        get(&app, "/perf/app/board/frames/nope").await.status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        get(&app, "/perf/app/perf/p/nope").await.status(),
+        get(&app, "/perf/app/board/p/nope").await.status(),
         StatusCode::NOT_FOUND
     );
 
-    // A frame name cannot walk out of the app directory.
-    let escape = get(&app, "/perf/app/perf/frames/..%2Fapp.toml").await;
+    // A frame name is one flat segment; nothing walks.
+    let escape = get(&app, "/perf/app/board/frames/..%2Findex").await;
     assert_eq!(escape.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_workspace_directory_without_a_manifest_refuses_loudly() {
-    let (app, _plane, dir) = workspace().await;
-
-    // `docket` ships in the binary; a workspace directory of the same
-    // name holding pages but no app.toml must not silently lose them
-    // to the built-in.
-    let shadow = dir.path().join("apps/docket");
-    std::fs::create_dir_all(&shadow).unwrap();
-    std::fs::write(shadow.join("index.html"), "the author's page").unwrap();
-    let page = get(&app, "/perf/app/docket").await;
-    assert_eq!(page.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let page = text(page).await;
-    assert!(page.contains("app.toml"), "{page}");
-
-    // A directory naming no built-in refuses the same way — the app
-    // exists in the workspace, it just cannot serve.
-    std::fs::create_dir_all(dir.path().join("apps/draft")).unwrap();
-    let draft = get(&app, "/perf/app/draft").await;
-    assert_eq!(draft.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(text(draft).await.contains("app.toml"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_glossed_part_may_not_take_a_builtin_name() {
     let (app, plane, _dir) = workspace().await;
 
-    // Add an app, don't fork the built-in. The
-    // directory branch refuses a half-shadow, but
-    // glossed parts reach the same hazard by the route an MCP-only
-    // agent actually takes — and they carry no manifest requirement, so
-    // one frame under the built-in's name would resolve the whole app
-    // to that single file and 404 every page the docket ships.
+    // Add an app, don't fork the built-in: a part carries no manifest
+    // requirement, so one frame under the built-in's name would resolve
+    // the whole app to that single file and 404 every page the docket
+    // ships.
     let session = plane
         .channel(
             Actor {
@@ -290,8 +265,6 @@ async fn a_glossed_part_may_not_take_a_builtin_name() {
     session
         .execute(
             r#"USE perf;
-               DECLARE ASPECT app_frame WITH $${"type": "object", "required": ["sql"],
-                 "properties": {"sql": {"type": "string"}}}$$ AS FACT;
                GLOSS app_frame ON docket.mine AS $${"sql": "SELECT 1 AS v"}$$;"#,
         )
         .await
@@ -1418,12 +1391,13 @@ async fn the_root_lists_every_dataset_at_a_glance() {
     assert!(root.contains("multi-dataset guard"), "{root}");
     assert!(root.contains("href=\"/second/app\""), "{root}");
     assert!(root.contains("nothing open"), "{root}");
-    // An app names no dataset: the built-in and the directory app
-    // serve both.
+    // The built-in serves every dataset; a glossed app is served
+    // where it was glossed and nowhere else.
     assert!(root.contains("href=\"/perf/app/docket\""), "{root}");
     assert!(root.contains("href=\"/second/app/docket\""), "{root}");
-    assert!(root.contains("href=\"/second/app/perf\""), "{root}");
-    assert!(root.contains("workspace directory"), "{root}");
+    assert!(root.contains("href=\"/perf/app/board\""), "{root}");
+    assert!(!root.contains("href=\"/second/app/board\""), "{root}");
+    assert!(root.contains("glossed"), "{root}");
     assert!(root.contains("built in"), "{root}");
     // The doors and the connect line.
     assert!(root.contains("the agent door"), "{root}");

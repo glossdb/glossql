@@ -27,9 +27,7 @@ async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::Te
     let plane = Arc::new(
         Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages()),
     );
-    // No apps live here — the app door serves an empty home.
-    let workspace = dir.path().to_path_buf();
-    (router(plane, doors, workspace, Access::Gated(login)), dir)
+    (router(plane, doors, Access::Gated(login)), dir)
 }
 
 async fn app() -> (Router, tempfile::TempDir) {
@@ -316,14 +314,9 @@ async fn the_token_names_the_subject_and_the_door_names_the_standing() {
 /// with no 401 to answer, a client is never sent to authenticate.
 #[tokio::test(flavor = "multi_thread")]
 async fn open_doors_ask_no_token_and_stamp_the_dev_actor() {
-    let (dir, store) = scratch_store().await;
+    let (_dir, store) = scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
-    let app = router(
-        plane,
-        DoorConfig::default(),
-        dir.path().to_path_buf(),
-        Access::Open,
-    );
+    let app = router(plane, DoorConfig::default(), Access::Open);
 
     // The agent door, bare: agent standing, the dev actor as the id.
     let request = Request::post("/mcp")
@@ -791,11 +784,10 @@ async fn the_discovery_document_and_the_assets_answer_without_a_token() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_probe_answers_without_a_token_in_both_arrangements() {
     let (gated, _dir) = app().await;
-    let (dir, store) = scratch_store().await;
+    let (_dir, store) = scratch_store().await;
     let open = router(
         Arc::new(Plane::new(store, Arc::new(NoRuntime))),
         DoorConfig::default(),
-        dir.path().to_path_buf(),
         Access::Open,
     );
     for app in [gated, open] {
@@ -1213,12 +1205,7 @@ async fn the_round_never_asks_the_human_for_statistics() {
         id: BOOTSTRAP.into(),
     };
     bootstrap(&plane, human).await.unwrap();
-    let app = router(
-        plane,
-        DoorConfig::default(),
-        dir.path().to_path_buf(),
-        Access::Gated(common::login()),
-    );
+    let app = router(plane, DoorConfig::default(), Access::Gated(common::login()));
 
     let setup = format!(
         r#"DECLARE DATASET perf SET (purpose: 'kit test');

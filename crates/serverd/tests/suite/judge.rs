@@ -39,14 +39,8 @@ async fn app() -> (Router, tempfile::TempDir) {
     )
     .await
     .unwrap();
-    let workspace = dir.path().to_path_buf();
     (
-        router(
-            plane,
-            DoorConfig::default(),
-            workspace,
-            Access::Gated(common::login()),
-        ),
+        router(plane, DoorConfig::default(), Access::Gated(common::login())),
         dir,
     )
 }

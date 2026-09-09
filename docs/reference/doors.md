@@ -23,9 +23,9 @@ workspace and moves between its datasets, so `/mcp` is one endpoint and
 the dataset arrives in the statements.
 
 ```
-glossql --workspace <dir> [--addr <ip:port>] [--row-cap <n>]
+glossql [--workspace <dir>] [--addr <ip:port>] [--row-cap <n>]
         [--cube-cache <megabytes>] [--memory-limit <megabytes>]
-        [--tls-cert <pem> --tls-key <pem>]
+        [--spill-limit <megabytes>] [--tls-cert <pem> --tls-key <pem>]
 ```
 
 The authorization arrangement — `GLOSSQL_ISSUER`, `GLOSSQL_AUDIENCE`,
@@ -100,7 +100,8 @@ doors — the actor rides the transport (SPEC.md §1). Nobody signs a
 standing; the supersession key's third leg, (subject, aspect, actor
 kind), is settled by where the request arrived.
 
-The gate is configured by the arrangement in `.env`. `GLOSSQL_ISSUER`
+The gate is configured by the arrangement in the environment (`.env`
+on a laptop). `GLOSSQL_ISSUER`
 is the authorization server's URL: its OpenID configuration is read at
 boot and names the key set (`jwks_uri`), which is fetched then and
 again only when a token names a key not in it. `GLOSSQL_AUDIENCE` is

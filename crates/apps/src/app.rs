@@ -1,15 +1,14 @@
-//! An app is a directory: `apps/<name>/app.toml` names its title.
-//! It names no dataset — the URL does (`/<dataset>/app/<name>`), so one
-//! app serves every dataset in the workspace and the header's picker is
-//! a link rather than a feature. Everything else in the
-//! directory *is* the app — pages (`*.html`, tera), `frames/*.sql`,
-//! `specs/*.vl.json` — read fresh per request, so an author saves a
-//! file and reloads. Apps shipped in the binary (`builtin.rs`) resolve
-//! the same way, workspace directory first: the workspace shadows the
-//! built-in, and forking is copying the directory out.
+//! An app is a named set of parts — pages (`*.html`, tera),
+//! `frames/*.sql`, `specs/*.vl.json`, a manifest — authored as glosses
+//! into the record (`glossed.rs`: one gloss per part, the shape an
+//! agent over MCP writes and a human supersedes) or shipped in the
+//! binary (`builtin.rs`). Nothing is read from disk: the record and
+//! the binary are the two sources, in that order. An app names no
+//! dataset — the URL does (`/<dataset>/app/<name>`), so one app serves
+//! every dataset in the workspace and the header's picker is a link
+//! rather than a feature.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use crate::builtin::{self, BuiltinApp};
 
@@ -22,14 +21,13 @@ pub struct AppDef {
 
 #[derive(Debug)]
 enum Source {
-    Dir(PathBuf),
     /// The app's files as the glosses spelled them, keyed like a
     /// directory: `index.html`, `frames/open.sql`.
     Glossed(BTreeMap<String, String>),
     Builtin(&'static BuiltinApp),
 }
 
-/// URL segments walk into the filesystem: one flat name, no
+/// URL segments name files inside an app: one flat name, no
 /// separators, no dot-walking, nothing hidden.
 pub fn safe_segment(name: &str) -> bool {
     !name.is_empty()
@@ -40,8 +38,9 @@ pub fn safe_segment(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// The one manifest field: the title a page and the nav print. A
-/// `dataset` key is accepted and ignored — the URL binds now.
+/// The one manifest field: the title a page and the nav print. The
+/// built-in's manifest is TOML (`app.toml` beside its pages); a
+/// `dataset` key is accepted and ignored — the URL binds.
 fn manifest(origin: &str, text: &str) -> Result<Option<String>, String> {
     let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
     Ok(value
@@ -64,49 +63,20 @@ fn manifest_json(origin: &str, text: &str) -> Result<Option<String>, String> {
 impl AppDef {
     /// The app's definition, or why there is none: `Ok(None)` is "no
     /// such app" (a 404), `Err` is an app that exists but cannot serve.
-    /// The workspace directory wins; a built-in answers for the name
-    /// only when the workspace carries nothing under it.
-    /// `glossed` is every app part the workspace has authored, loaded
-    /// once by the caller — apps are small and one read serves the
-    /// whole door.
-    pub fn load(
-        workspace: &Path,
-        name: &str,
-        glossed: &[crate::glossed::Part],
-    ) -> Result<Option<AppDef>, String> {
+    /// The record wins; a built-in answers for the name only when the
+    /// record carries nothing under it. `glossed` is every app part
+    /// the dataset carries, loaded once by the caller — apps are small
+    /// and one read serves the whole door.
+    pub fn load(name: &str, glossed: &[crate::glossed::Part]) -> Result<Option<AppDef>, String> {
         if !safe_segment(name) {
             return Ok(None);
         }
-        let dir = workspace.join("apps").join(name);
-        let path = dir.join("app.toml");
-        if path.is_file() {
-            let text = std::fs::read_to_string(&path)
-                .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            let title = manifest(&path.display().to_string(), &text)?;
-            return Ok(Some(AppDef {
-                title: title.unwrap_or_else(|| name.to_string()),
-                name: name.to_string(),
-                source: Source::Dir(dir),
-            }));
-        }
-        // A workspace directory without a manifest is an authored app
-        // that cannot serve — never a silent fall-through to a built-in
-        // it half-shadows.
-        if dir.is_dir() {
-            return Err(format!(
-                "{} exists but has no app.toml — the workspace directory shadows \
-                 any built-in `{name}` whole; add the manifest or remove the directory",
-                dir.display()
-            ));
-        }
         let files = crate::glossed::files_of(glossed, name);
-        // Add an app, don't fork the built-in. A
-        // glossed part carries no manifest requirement, so a single
-        // `GLOSS app_frame ON docket.mine` would resolve the whole app
-        // to that one file and 404 every page the built-in ships. The
-        // directory branch above refuses a half-shadow;
-        // the glossed branch is the same hazard reached by
-        // the route an MCP-only agent actually takes.
+        // Add an app, don't fork the built-in. A glossed part carries no
+        // manifest requirement, so a single `GLOSS app_frame ON
+        // docket.mine` would resolve the whole app to that one file and
+        // 404 every page the built-in ships — the hazard reached by the
+        // route an MCP-only agent actually takes.
         if !files.is_empty() && builtin::builtin(name).is_some() {
             return Err(format!(
                 "`{name}` ships in the binary and a glossed part shadows it whole — \
@@ -144,16 +114,11 @@ impl AppDef {
         }))
     }
 
-    /// Every servable app: the workspace's directories plus the
-    /// built-ins the workspace does not shadow. Broken manifests are
-    /// skipped here — their own pages say what is wrong.
-    pub fn list(workspace: &Path, glossed: &[crate::glossed::Part]) -> Vec<AppDef> {
-        let mut names: Vec<String> = std::fs::read_dir(workspace.join("apps"))
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect();
+    /// Every servable app: the glossed apps, and the built-ins nothing
+    /// shadows. Broken manifests are skipped here — their own pages say
+    /// what is wrong.
+    pub fn list(glossed: &[crate::glossed::Part]) -> Vec<AppDef> {
+        let mut names: Vec<String> = Vec::new();
         for part in glossed {
             if !names.contains(&part.app) {
                 names.push(part.app.clone());
@@ -166,77 +131,43 @@ impl AppDef {
         }
         let mut apps: Vec<AppDef> = names
             .into_iter()
-            .filter_map(|name| AppDef::load(workspace, &name, glossed).ok().flatten())
+            .filter_map(|name| AppDef::load(&name, glossed).ok().flatten())
             .collect();
         apps.sort_by(|a, b| a.name.cmp(&b.name));
         apps
     }
 
-    /// Where the app comes from, for a listing: the binary, a
-    /// workspace directory, or glosses.
+    /// Where the app comes from, for a listing: the binary, or glosses.
     pub fn origin(&self) -> &'static str {
         match &self.source {
-            Source::Dir(_) => "workspace directory",
             Source::Glossed(_) => "glossed",
             Source::Builtin(_) => "built in",
         }
     }
 
-    /// A file inside the app, by root-relative location, guarded
-    /// against escaping it.
+    /// A file inside the app, by root-relative location.
     pub fn read(&self, sub: &str, name: &str) -> Option<String> {
         if !safe_segment(name) {
             return None;
         }
+        let key = if sub.is_empty() {
+            name.to_string()
+        } else {
+            format!("{sub}/{name}")
+        };
         match &self.source {
-            Source::Dir(dir) => {
-                let path = if sub.is_empty() {
-                    dir.join(name)
-                } else {
-                    dir.join(sub).join(name)
-                };
-                path.is_file()
-                    .then(|| std::fs::read_to_string(&path).ok())
-                    .flatten()
-            }
-            Source::Glossed(files) => {
-                let key = if sub.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{sub}/{name}")
-                };
-                files.get(&key).cloned()
-            }
-            Source::Builtin(app) => {
-                let key = if sub.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{sub}/{name}")
-                };
-                app.files
-                    .iter()
-                    .find(|(p, _)| *p == key)
-                    .map(|(_, text)| (*text).to_string())
-            }
+            Source::Glossed(files) => files.get(&key).cloned(),
+            Source::Builtin(app) => app
+                .files
+                .iter()
+                .find(|(p, _)| *p == key)
+                .map(|(_, text)| (*text).to_string()),
         }
     }
 
     /// Every page of the app, so pages can include each other.
     pub fn html_pages(&self) -> Vec<(String, String)> {
         match &self.source {
-            Source::Dir(dir) => std::fs::read_dir(dir)
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let name = e.file_name().into_string().ok()?;
-                    if !name.ends_with(".html") {
-                        return None;
-                    }
-                    let text = std::fs::read_to_string(e.path()).ok()?;
-                    Some((name, text))
-                })
-                .collect(),
             Source::Glossed(files) => files
                 .iter()
                 .filter(|(p, _)| p.ends_with(".html") && !p.contains('/'))

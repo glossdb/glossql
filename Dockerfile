@@ -15,20 +15,20 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 1000 glossql \
-    && mkdir /workspace \
-    && chown glossql /workspace
+    && useradd --create-home --uid 1000 glossql
 COPY --from=build /src/target/release/glossql /usr/local/bin/glossql
 USER glossql
-# The workspace directory: apps/ alone when the catalog and the
-# warehouse are named in the environment, the whole state when they
-# are not (mount a directory here). Also the working directory, so an
-# `.env` mounted beside apps/ is read.
-WORKDIR /workspace
 EXPOSE 8080
-# The sizes for a box with 8 GiB of memory and an 8 GiB ephemeral disk:
-# the engine's pool 3 GiB, so its spill (bounded at twice the pool) fits
-# the disk; the cube cache 1 GiB; the rest of the memory is the process
-# and what the pool does not track. A larger box overrides the command.
-CMD ["glossql", "--workspace", "/workspace", "--addr", "0.0.0.0:8080", \
-     "--memory-limit", "3072", "--cube-cache", "1024"]
+# No workspace, no directory, no file: the state is the catalog and the
+# warehouse the environment names, and the environment is what the
+# platform injects — secrets included. Without both the server refuses
+# to start, naming them. The image holds no value of its own.
+#
+# The sizes for a box with 8 GiB of memory and an 8 GiB ephemeral disk,
+# two numbers set from two facts: the engine's pool and the cube cache
+# at their defaults, 6 GiB tracked, the rest of the memory to the
+# process and what the pool does not track; the spill bound 6 GiB of
+# the disk, the rest to the writable layer. A different box overrides
+# the command.
+CMD ["glossql", "--addr", "0.0.0.0:8080", \
+     "--memory-limit", "4096", "--cube-cache", "2048", "--spill-limit", "6144"]

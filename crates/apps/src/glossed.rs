@@ -30,7 +30,7 @@ pub struct Part {
 
 /// Every glossed app part the dataset carries. A dataset that does not
 /// exist, holds no glossed apps, or a store that will not read serves
-/// none — the built-ins and the workspace directories still answer.
+/// none — the built-ins still answer.
 pub(crate) async fn parts(door: &AppDoor, dataset: &str) -> Vec<Part> {
     // The loader reads as a Human — the same standing every frame
     // takes, and the read collapses human over agent anyway.

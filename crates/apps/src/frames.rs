@@ -39,7 +39,7 @@ pub async fn frame(
         );
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
-    let def = match AppDef::load(&door.workspace, &app, &glossed) {
+    let def = match AppDef::load(&app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return fail(StatusCode::NOT_FOUND, format!("no app `{app}`")),
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),

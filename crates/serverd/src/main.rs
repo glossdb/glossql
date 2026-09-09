@@ -18,18 +18,16 @@ use glossql_serverd::{
 
 const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
-[--tls-cert <pem> --tls-key <pem>] | glossql --version | glossql --help\n\
+[--spill-limit <megabytes>] [--tls-cert <pem> --tls-key <pem>] \
+| glossql --version | glossql --help\n\
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
 pair.\n\
---workspace holds apps/, and — without a catalog connection — the \
-warehouse and the catalog themselves, which is why it is required \
-then; GLOSSQL_CATALOG_SQL moves the catalog to a Postgres server \
-(postgres://…) and GLOSSQL_WAREHOUSE the warehouse to an object store \
-(s3://…, abfss://…); with both named the directory holds apps/ alone \
-and may be left unnamed. \
-With GLOSSQL_CATALOG_URI set (a REST catalog; data and metadata live \
-behind it) it may be left unnamed: the working directory serves.\n\
+--workspace is the laptop's shape: the directory holding the catalog \
+and the warehouse. GLOSSQL_CATALOG_SQL names the catalog on a Postgres server \
+(postgres://…), GLOSSQL_WAREHOUSE the warehouse in an object store \
+(s3://…, abfss://…), GLOSSQL_CATALOG_URI a REST catalog with both \
+behind it; a deployment names them and runs without a directory.\n\
 the band model behind the metric-bands walk, whatif. and misfit. is \
 the kernel service named by GLOSSQL_TABICL_URL (its bearer in \
 GLOSSQL_TABICL_TOKEN); unset, those three doors refuse by name and \
@@ -42,9 +40,9 @@ so is the catalog connection, when there is one: GLOSSQL_CATALOG_URI, \
 GLOSSQL_CATALOG_WAREHOUSE and its authentication (see .env.example)";
 
 struct Args {
-    /// Optional at parse: whether a run can do without one is known
-    /// only once the environment says where the catalog is —
-    /// [`open_lake`] resolves it.
+    /// The laptop's shape, and only that: the directory holding the
+    /// catalog and the warehouse. A deployment names both in the
+    /// environment and has no directory.
     workspace: Option<PathBuf>,
     addr: String,
     doors: DoorConfig,
@@ -54,6 +52,9 @@ struct Args {
     /// A separate budget from the cubes: the cube cache holds its bytes
     /// outside the engine, so a deployment is sized for the sum.
     memory_limit_mb: u64,
+    /// The disk the engine may spill onto, in megabytes — the box's
+    /// disk, a number of its own; unset, twice the memory ceiling.
+    spill_limit_mb: Option<u64>,
     /// The certificate and its key, both or neither: with them the
     /// doors serve https ([`glossql_serverd::tls`]).
     tls: Option<(PathBuf, PathBuf)>,
@@ -122,6 +123,7 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut doors = DoorConfig::default();
     let mut cube_cache_mb = glossql_session::DEFAULT_CUBE_CACHE_MB;
     let mut memory_limit_mb = glossql_session::DEFAULT_MEMORY_LIMIT_MB;
+    let mut spill_limit_mb = None;
     let (mut tls_cert, mut tls_key) = (None, None);
     while let Some(flag) = argv.next() {
         let mut value = || argv.next().ok_or(format!("{flag} needs a value"));
@@ -141,6 +143,13 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|e| format!("--memory-limit: {e}"))?;
             }
+            "--spill-limit" => {
+                spill_limit_mb = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--spill-limit: {e}"))?,
+                );
+            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -159,6 +168,7 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
         doors,
         cube_cache_mb,
         memory_limit_mb,
+        spill_limit_mb,
         tls,
     })
 }
@@ -194,10 +204,14 @@ fn main() {
 }
 
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // `.env` in the working directory, when there is one; a variable
-    // already set in the environment wins over it, which is how a
-    // container configures the same server without a file.
-    dotenvy::dotenv().ok();
+    // `.env` in the working directory, when the run has a workspace:
+    // the laptop's shape keeps its arrangement in a file beside where
+    // it starts, and a variable already set wins over the file. A
+    // deployment has no workspace and reads no file — its environment
+    // is injected, secrets included.
+    if args.workspace.is_some() {
+        dotenvy::dotenv().ok();
+    }
     // After `.env`, so `GLOSSQL_LOG` and the export switch may come
     // from it; before anything opens, so the opening is on the record;
     // outside the runtime, so the final flush comes after it.
@@ -224,7 +238,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
                 .map_err(|e| format!("{e}\n{USAGE}"))?,
         )
     };
-    let (lake, workspace) = open_lake(args.workspace.clone())
+    let lake = open_lake(args.workspace.as_deref())
         .await
         .map_err(|e| format!("{e}\n{USAGE}"))?;
     let store = Store::open(lake).await?;
@@ -242,7 +256,8 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
             .with_pages(glossql_serverd::skills::door_pages())
             .with_row_cap(args.doors.row_cap)
             .with_cube_cache(args.cube_cache_mb)
-            .with_memory_limit(args.memory_limit_mb),
+            .with_memory_limit(args.memory_limit_mb)
+            .with_spill_limit(args.spill_limit_mb),
     );
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
@@ -279,7 +294,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
         }
     };
 
-    let app = router(plane, args.doors, workspace, access);
+    let app = router(plane, args.doors, access);
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     tracing::info!(
         addr = %args.addr,
@@ -317,14 +332,13 @@ fn kernel_from(get: impl Fn(&str) -> Option<String>) -> Result<KernelRuntime, St
 }
 
 /// The workspace data plane: the REST catalog when the environment
-/// names one, the workspace directory's own SQLite catalog otherwise.
-/// One backend serves a run; which one is on the record at open.
-///
-/// The directory comes back resolved with the lake, because what it
-/// must hold depends on the backend: everything locally, only `apps/`
-/// behind a REST catalog — where, unnamed, the working directory
-/// serves.
-async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String> {
+/// names one, the SQL catalog otherwise — on the Postgres server the
+/// environment names, or the workspace directory's own SQLite file.
+/// One backend serves a run; which one is on the record at open. A
+/// laptop names a directory and it holds the catalog and the
+/// warehouse; a deployment names both in the environment and has no
+/// directory at all.
+async fn open_lake(workspace: Option<&std::path::Path>) -> Result<Lake, String> {
     #[cfg(feature = "rest")]
     if let Some(connection) = catalog_from(|name| std::env::var(name).ok())? {
         tracing::info!(
@@ -332,52 +346,37 @@ async fn open_lake(workspace: Option<PathBuf>) -> Result<(Lake, PathBuf), String
             warehouse = %connection.warehouse,
             "connecting the catalog"
         );
-        let lake = Lake::connect(connection)
+        return Lake::connect(connection)
             .await
-            .map_err(|e| format!("catalog connection: {e}"))?;
-        let workspace = match workspace {
-            Some(dir) => dir,
-            None => std::env::current_dir().map_err(|e| format!("working directory: {e}"))?,
-        };
-        return Ok((lake, workspace));
+            .map_err(|e| format!("catalog connection: {e}"));
     }
-    // With both the catalog and the warehouse named elsewhere, the
-    // directory holds only apps/ — the working directory serves, as
-    // behind a REST catalog.
-    let named = |name: &str| std::env::var(name).is_ok_and(|v| !v.trim().is_empty());
-    let workspace = match workspace {
-        Some(dir) => dir,
-        None if named("GLOSSQL_CATALOG_SQL") && named("GLOSSQL_WAREHOUSE") => {
-            std::env::current_dir().map_err(|e| format!("working directory: {e}"))?
-        }
-        None => {
-            return Err(
-                "--workspace is required while the catalog or the warehouse lives in it: \
-                 name both GLOSSQL_CATALOG_SQL and GLOSSQL_WAREHOUSE, or the directory"
-                    .into(),
-            );
-        }
-    };
-    let lake = open_local(&workspace).await?;
-    Ok((lake, workspace))
+    open_sql(workspace).await
 }
 
-/// The SQL catalog: the workspace directory's own SQLite file, or the
-/// Postgres server `GLOSSQL_CATALOG_SQL` names; the warehouse under the
-/// workspace directory, or the location `GLOSSQL_WAREHOUSE` names in an
-/// object store. The catalog URI carries the credentials, so the record
+/// What a run without a workspace directory is told when the
+/// environment does not name the state either.
+const NO_WORKSPACE: &str = "--workspace is required while the catalog or the warehouse lives \
+in it: name both GLOSSQL_CATALOG_SQL and GLOSSQL_WAREHOUSE, or the directory";
+
+/// The SQL catalog: on the Postgres server `GLOSSQL_CATALOG_SQL` names,
+/// or the workspace directory's own SQLite file; the warehouse at the
+/// location `GLOSSQL_WAREHOUSE` names in an object store, or under the
+/// workspace directory. Without a directory the environment has to
+/// name both. The catalog URI carries the credentials, so the record
 /// gets its scheme and nothing more; the warehouse carries none.
 #[cfg(feature = "sql")]
-async fn open_local(workspace: &std::path::Path) -> Result<Lake, String> {
+async fn open_sql(workspace: Option<&std::path::Path>) -> Result<Lake, String> {
     let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-    let catalog = var("GLOSSQL_CATALOG_SQL").unwrap_or_else(|| {
-        format!(
-            "sqlite:{}?mode=rwc",
-            workspace.join("catalog.sqlite").display()
-        )
-    });
-    let warehouse = var("GLOSSQL_WAREHOUSE")
-        .unwrap_or_else(|| workspace.join("warehouse").display().to_string());
+    let catalog = match (var("GLOSSQL_CATALOG_SQL"), workspace) {
+        (Some(uri), _) => uri,
+        (None, Some(dir)) => format!("sqlite:{}?mode=rwc", dir.join("catalog.sqlite").display()),
+        (None, None) => return Err(NO_WORKSPACE.into()),
+    };
+    let warehouse = match (var("GLOSSQL_WAREHOUSE"), workspace) {
+        (Some(location), _) => location,
+        (None, Some(dir)) => dir.join("warehouse").display().to_string(),
+        (None, None) => return Err(NO_WORKSPACE.into()),
+    };
     tracing::info!(
         catalog = catalog.split(':').next().unwrap_or("sql"),
         warehouse = %warehouse,
@@ -389,7 +388,7 @@ async fn open_local(workspace: &std::path::Path) -> Result<Lake, String> {
 }
 
 #[cfg(not(feature = "sql"))]
-async fn open_local(_workspace: &std::path::Path) -> Result<Lake, String> {
+async fn open_sql(_workspace: Option<&std::path::Path>) -> Result<Lake, String> {
     Err("this build carries no local catalog — set GLOSSQL_CATALOG_URI (see .env.example)".into())
 }
 
@@ -672,5 +671,31 @@ mod tests {
             glossql_session::DEFAULT_CUBE_CACHE_MB,
             "naming one budget must not move the other"
         );
+        assert_eq!(
+            set.spill_limit_mb, None,
+            "the disk follows the ceiling until it is named"
+        );
+    }
+
+    /// The disk is the box's own number: named on its own, and never
+    /// derived from the memory ceiling once it is.
+    #[test]
+    fn the_spill_limit_is_a_number_of_its_own() {
+        let set = parse(
+            argv(&[
+                "--workspace",
+                "/tmp/w",
+                "--memory-limit",
+                "4096",
+                "--spill-limit",
+                "6144",
+            ])
+            .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(set.spill_limit_mb, Some(6144));
+        assert_eq!(set.memory_limit_mb, 4096);
+        let bad = parse(argv(&["--workspace", "/tmp/w", "--spill-limit", "six"]).into_iter());
+        assert!(bad.err().is_some_and(|e| e.starts_with("--spill-limit:")));
     }
 }

@@ -54,7 +54,6 @@ pub use mcp::GlossqlMcp;
 pub use query::ARROW_STREAM;
 pub use wire::DEFAULT_ROW_CAP;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -115,7 +114,7 @@ pub enum Access {
 
 /// The doors. `/` is the workspace — which datasets there are;
 /// everything else hangs off one of them.
-pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, access: Access) -> Router {
+pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
@@ -164,7 +163,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, access: 
     // door; only the kind differs, and it is the door's to say
     // (SPEC.md §1, the actor rides the transport).
     let human = Router::new()
-        .merge(glossql_apps::root_router(root_plane, workspace.clone()))
+        .merge(glossql_apps::root_router(root_plane))
         .route(
             "/{dataset}/query",
             post(query::query).with_state(AppState {
@@ -172,7 +171,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, workspace: PathBuf, access: 
                 row_cap: doors.row_cap,
             }),
         )
-        .nest("/{dataset}/app", glossql_apps::router(app_plane, workspace));
+        .nest("/{dataset}/app", glossql_apps::router(app_plane));
     let agent = Router::new().nest_service("/mcp", mcp);
     let routes = match access {
         Access::Gated(login) => {

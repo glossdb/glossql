@@ -49,11 +49,11 @@
 
   <section class="tile">
     <header><span class="eyebrow">Apps over {{ dataset }}</span><span class="count">{{ apps | length }}</span>
-      <code class="chip" title="Every app the door serves for this dataset: the built-in docket, the workspace's directories, and the apps glossed here.">apps/ · app_parts</code></header>
+      <code class="chip" title="Every app the door serves for this dataset: the built-in docket and the apps glossed here.">app_parts</code></header>
     {% if apps | length == 0 %}
-    <p class="rows-empty">No apps yet. An app is a directory under <code>apps/</code>
-    in the workspace: <code>app.toml</code> (title), pages
-    (<code>*.html</code>), <code>frames/*.sql</code>, <code>specs/*.vl.json</code>.
+    <p class="rows-empty">No apps yet. An app is glossed into the record, one part
+    per gloss: <code>app</code> (title), <code>app_page</code> (pages),
+    <code>app_frame</code> (queries), <code>app_spec</code> (chart specs).
     It names no dataset — this URL does.</p>
     {% else %}
     <ul class="cards" style="margin-top:0.9rem">

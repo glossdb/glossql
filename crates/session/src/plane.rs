@@ -58,10 +58,12 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
 ///
 /// **Spilling, bounded.** A sort or a final-mode hash aggregate that
 /// outgrows the pool spills to the OS temp directory instead of
-/// refusing; the disk manager caps the spilled bytes at twice the
-/// pool, and past the cap the engine refuses by name as it does for
-/// memory. A container therefore needs that much ephemeral space or a
-/// disk mounted at its temp directory. What cannot spill — the
+/// refusing; the disk manager caps the spilled bytes at the spill
+/// limit, and past the cap the engine refuses by name as it does for
+/// memory. The limit is the disk's own number (serverd's
+/// `--spill-limit`: a container's ephemeral disk, or a disk mounted at
+/// the temp directory); unnamed, it follows the pool at twice its
+/// size, which is what a laptop gets. What cannot spill — the
 /// no-GROUP-BY aggregate, a `count(DISTINCT …)` state held whole per
 /// partition — is still refused, and the refusal names the shape that
 /// fits (the session error's road).
@@ -72,8 +74,9 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
 /// directories it would cache are the source globs a re-import is
 /// re-reading precisely because they changed. A cache that cannot see a
 /// new file is a wrong answer, not a slow one.
-fn runtime_env(megabytes: u64) -> Arc<RuntimeEnv> {
+fn runtime_env(megabytes: u64, spill_megabytes: Option<u64>) -> Arc<RuntimeEnv> {
     let pool = megabytes * 1024 * 1024;
+    let spill = spill_megabytes.map_or(pool * 2, |mb| mb * 1024 * 1024);
     Arc::new(
         RuntimeEnvBuilder::new()
             // The fair pool, not the greedy one `with_memory_limit`
@@ -90,7 +93,7 @@ fn runtime_env(megabytes: u64) -> Arc<RuntimeEnv> {
             .with_disk_manager_builder(
                 DiskManagerBuilder::default()
                     .with_mode(DiskManagerMode::OsTmpDirectory)
-                    .with_max_temp_directory_size(pool * 2),
+                    .with_max_temp_directory_size(spill),
             )
             .with_metadata_cache_limit(0)
             .with_object_list_cache_limit(0)
@@ -127,6 +130,10 @@ pub struct Plane {
     /// held here and not built per channel because a channel is built
     /// per call: a pool each call carries its own of bounds one call.
     env: Arc<RuntimeEnv>,
+    /// The two numbers the runtime is built from, kept so that naming
+    /// either rebuilds it with the other as it stands.
+    memory_limit_mb: u64,
+    spill_limit_mb: Option<u64>,
     row_cap: usize,
     /// The pages the door serves, for `pages()` — what the binary
     /// embeds, handed to every channel.
@@ -145,7 +152,9 @@ impl Plane {
             store,
             runtime,
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
-            env: runtime_env(DEFAULT_MEMORY_LIMIT_MB),
+            env: runtime_env(DEFAULT_MEMORY_LIMIT_MB, None),
+            memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
+            spill_limit_mb: None,
             row_cap: usize::MAX,
             pages: Arc::from(Vec::new()),
         }
@@ -179,7 +188,18 @@ impl Plane {
     /// holds its bytes outside the engine. Set before the first channel
     /// is built — a channel keeps the runtime it was handed.
     pub fn with_memory_limit(mut self, megabytes: u64) -> Self {
-        self.env = runtime_env(megabytes);
+        self.memory_limit_mb = megabytes;
+        self.env = runtime_env(self.memory_limit_mb, self.spill_limit_mb);
+        self
+    }
+
+    /// How much of the disk the engine may spill onto, in megabytes
+    /// (serverd's `--spill-limit`): the box's own number, never derived
+    /// from the memory ceiling once it is named. `None` follows the
+    /// ceiling at twice its size. Set before the first channel is built.
+    pub fn with_spill_limit(mut self, megabytes: Option<u64>) -> Self {
+        self.spill_limit_mb = megabytes;
+        self.env = runtime_env(self.memory_limit_mb, self.spill_limit_mb);
         self
     }
 
