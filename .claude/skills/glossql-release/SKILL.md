@@ -46,8 +46,10 @@ order, which is written nowhere else.
 - A tag-push run uses the workflow file **at the tag's commit**. A
   workflow fix after tagging needs the tag re-pointed:
   `git tag -f v<version> && git push -f origin v<version>`.
-  `workflow_dispatch` builds but never uploads (the upload step is
-  gated on a tag ref).
+  `workflow_dispatch` builds the deb without uploading it (the upload
+  step is gated on a tag ref) and pushes the image as `:main` and
+  `:sha-<commit>` — the road to an image between releases; `:latest`
+  moves at a tag only.
 - Draft assets are not served at the public download URL — brew
   fails against a draft with a bare "Download failed". Publishing is
   the fix, not the formula.
