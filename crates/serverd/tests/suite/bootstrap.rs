@@ -264,6 +264,57 @@ async fn live_sql_catalog_bootstrap() {
     let declared = functions(Arc::clone(&plane)).await;
     assert!(declared >= 14, "the library stands: {declared} functions");
 
+    // A landing over the live lake — the table created through the
+    // catalog, its rows committed to the warehouse — from the session's
+    // own fixture road, `register_table`. This path stalled the whole
+    // runtime while the create went through iceberg-datafusion's
+    // blocking door, which only a networked catalog and warehouse reveal.
+    {
+        use datafusion::arrow::array::{Int64Array, StringArray};
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+        use datafusion::datasource::MemTable;
+        let session = plane.channel(human(), None).await.unwrap();
+        let name = format!("e2e_{}", std::process::id());
+        session
+            .execute(&format!(
+                "DECLARE DATASET {name} SET (purpose: 'a live landing');"
+            ))
+            .await
+            .unwrap();
+        let session = plane.channel(human(), Some(&name)).await.unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let batch = datafusion::arrow::array::RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec!["a", "b", "c"])),
+            ],
+        )
+        .unwrap();
+        let fixture = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
+        let t = std::time::Instant::now();
+        session
+            .register_table("landed", Arc::new(fixture))
+            .await
+            .expect("a landing over the live lake");
+        let landing = t.elapsed();
+        let outcomes = session
+            .execute("SELECT count(*) AS n FROM landed;")
+            .await
+            .unwrap();
+        let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+            panic!("a count")
+        };
+        let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
+        let n =
+            datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap();
+        assert_eq!(n, "3", "the landed rows read back");
+        eprintln!("landing over the live lake: {:.2}s", landing.as_secs_f64());
+    }
+
     let dir = tempfile::tempdir().unwrap();
     let t = std::time::Instant::now();
     let lake = glossql_catalog::Lake::open(

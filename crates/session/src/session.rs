@@ -7,7 +7,6 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider, TableProvider};
 use datafusion::common::{Column, DataFusionError, ParamValues};
-use datafusion::datasource::MemTable;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -563,9 +562,9 @@ impl Session {
             .await
     }
 
-    /// One landing: the table created through the mounted schema (the
-    /// framework's front door), the batches committed through iceberg-rust
-    /// so `facts` ride the snapshot — DataFusion's INSERT cannot carry
+    /// One landing: the table created through the lake — the catalog's
+    /// own create — and the batches committed through iceberg-rust so
+    /// `facts` ride the snapshot: DataFusion's INSERT cannot carry
     /// them, and facts about a write ride the write.
     async fn land(
         &self,
@@ -577,10 +576,7 @@ impl Session {
     ) -> Result<(), SessionError> {
         let lake = self.lake();
         lake.ensure_namespace(dataset, Default::default()).await?;
-        let mounted = self.mount_schema(dataset).await?;
-        let empty = RecordBatch::new_empty(Arc::clone(&schema));
-        let shape = MemTable::try_new(schema, vec![vec![empty]])?;
-        mounted.register_table(table.to_string(), Arc::new(shape))?;
+        lake.create_table(dataset, table, &schema).await?;
         lake.append_batches(dataset, table, batches, facts).await?;
         Ok(())
     }
@@ -731,8 +727,7 @@ impl Session {
                     )
                     .await?;
                     if replaced {
-                        let mounted = self.mount_schema(dataset).await?;
-                        mounted.deregister_table(table)?;
+                        lake.drop_table(dataset, table).await?;
                     }
                     let (summary, casts) = self.materialize(dataset, table, landed).await?;
                     store.put_recipe(d).await?;
@@ -1747,11 +1742,7 @@ impl Session {
                 reason: format!("{glosses} gloss(es) sit under it"),
             });
         }
-        // Through the mounted schema provider: iceberg-datafusion's
-        // deregister drops the catalog table and updates its own map in one
-        // move (iceberg-datafusion-0.10.1 schema.rs:215-236).
-        let mounted = self.mount_schema(&dataset).await?;
-        mounted.deregister_table(table)?;
+        self.lake().drop_table(&dataset, table).await?;
         // The recipe and the import record die with the table (its
         // properties and snapshots); measurements that read it sit at
         // pins that no longer resolve.

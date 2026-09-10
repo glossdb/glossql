@@ -6,11 +6,16 @@
 //! named by a URI — plus a local warehouse directory (`sql`), or an
 //! Iceberg REST catalog with its own storage behind it (`rest`,
 //! [`rest::Connection`]). Datasets are namespaces.
-//! Tables are **created**
-//! through iceberg-datafusion's own front door — the session mounts
-//! [`IcebergCatalogProvider`] schemas and declares a recipe's table with
-//! `SchemaProvider::register_table`. They are **written** through
-//! [`Lake::append_batches`], one path for every table the workspace has:
+//! Tables are **created** through [`Lake::create_table`] and dropped
+//! through [`Lake::drop_table`]: the catalog's own async calls, the
+//! table description built the way iceberg-datafusion's
+//! `SchemaProvider::register_table` builds it — minus that door's
+//! blocking wait on the runtime's worker for the async create, which
+//! stalls the whole process once the catalog and the warehouse are
+//! reached over the network. The session mounts
+//! [`IcebergCatalogProvider`] schemas to read. Tables are **written**
+//! through [`Lake::append_batches`], one path for every table the
+//! workspace has:
 //! a landing that materializes a recipe and a store append that records a
 //! gloss differ in what they carry, not in how they commit. Writing here
 //! rather than through the engine is what lets facts ride the snapshot
@@ -40,8 +45,10 @@ use datafusion::arrow::array::RecordBatch;
 use iceberg::CatalogBuilder as _;
 use iceberg::arrow::FieldMatchMode;
 use iceberg::arrow::RecordBatchPartitionSplitter;
+use iceberg::arrow::arrow_schema_to_schema_auto_assign_ids;
 #[cfg(feature = "sql")]
 use iceberg::io::LocalFsStorageFactory;
+use iceberg::spec::FormatVersion;
 use iceberg::spec::{DataFile, DataFileFormat};
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
@@ -53,7 +60,7 @@ use iceberg::writer::file_writer::rolling_writer::RollingFileWriterBuilder;
 use iceberg::writer::partitioning::PartitioningWriter;
 use iceberg::writer::partitioning::fanout_writer::FanoutWriter;
 use iceberg::writer::partitioning::unpartitioned_writer::UnpartitionedWriter;
-use iceberg::{Catalog, NamespaceIdent, TableIdent};
+use iceberg::{Catalog, NamespaceIdent, TableCreation, TableIdent};
 #[cfg(feature = "sql")]
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
 pub use iceberg_datafusion::IcebergCatalogProvider;
@@ -191,10 +198,10 @@ pub struct Lake {
     catalog: Arc<dyn Catalog>,
     /// The one mounted representation of the lake, shared by every
     /// session — `provider()` hands out Arc clones of it. A namespace
-    /// create invalidates it, and so does a table create:
+    /// create invalidates it, and so does a table create or drop:
     /// [`IcebergCatalogProvider`] freezes the table map per namespace
     /// at build (iceberg-datafusion schema.rs, `try_new`), so only a
-    /// rebuild or an explicit `register_table` sees a new table.
+    /// rebuild sees a new table.
     provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
     /// Moved by every invalidation, so a build can tell whether the
     /// catalog changed while it ran. Without it an invalidation that
@@ -343,6 +350,48 @@ impl Lake {
         self.catalog.create_namespace(&ns, properties).await?;
         self.invalidate_provider();
         Ok(true)
+    }
+
+    /// Create `dataset.table` with the schema the engine computed. The
+    /// Arrow schema becomes an Iceberg one — every column given the
+    /// permanent id Iceberg tracks it by — at the lowest format version
+    /// its types allow, V2 at least: the description iceberg-datafusion's
+    /// `register_table` builds (schema.rs in the pin), created through
+    /// the catalog directly. The mounted provider is invalidated, so the
+    /// next mount sees the table.
+    pub async fn create_table(
+        &self,
+        dataset: &str,
+        table: &str,
+        schema: &datafusion::arrow::datatypes::Schema,
+    ) -> Result<()> {
+        let schema = arrow_schema_to_schema_auto_assign_ids(schema)?;
+        let version = schema.calc_min_compatible_format().max(FormatVersion::V2);
+        let creation = TableCreation::builder()
+            .name(table.to_string())
+            .schema(schema);
+        // How the backend is told the version: `version_rides_properties`.
+        let creation = if self.version_rides_properties {
+            creation
+                .properties([("format-version".to_string(), (version as u8).to_string())])
+                .build()
+        } else {
+            creation.format_version(version).build()
+        };
+        self.catalog
+            .create_table(&NamespaceIdent::new(dataset.to_string()), creation)
+            .await?;
+        self.invalidate_provider();
+        Ok(())
+    }
+
+    /// Drop `dataset.table` from the catalog — its metadata and its
+    /// snapshots go with it — and invalidate the mounted provider.
+    pub async fn drop_table(&self, dataset: &str, table: &str) -> Result<()> {
+        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
+        self.catalog.drop_table(&ident).await?;
+        self.invalidate_provider();
+        Ok(())
     }
 
     /// Append Arrow batches to `dataset.table` as one commit, with the
