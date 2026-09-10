@@ -1,4 +1,4 @@
-# The server image: one Rust binary on a slim Debian — no model, no
+# The server image: one Rust binary on a distroless base — no model, no
 # weights, no GPU; the commodity container (docs/start/install.md, "The
 # container"). Built at a release tag by the workflow and pushed to
 # ghcr.io/glossdb/glossql; `docker build .` builds the same image from
@@ -9,15 +9,15 @@ WORKDIR /src
 COPY . .
 RUN cargo build --release -p glossql-serverd
 
-FROM debian:trixie-slim
-# The issuer's keys, the kernel service, Postgres over TLS and the
-# object stores are all reached over https: the roots have to be here.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 1000 glossql
+# What the binary links is glibc, libm and libgcc (`ldd` on it), and
+# what it needs beside them is the root certificates — the issuer's
+# keys, the kernel service, Postgres over TLS and the object stores are
+# all reached over https — and a /tmp for the engine's spill files.
+# The distroless C-runtime image is exactly that, with an unprivileged
+# user and no shell or package manager.
+FROM gcr.io/distroless/cc-debian13:nonroot
 COPY --from=build /src/target/release/glossql /usr/local/bin/glossql
-USER glossql
+USER nonroot
 EXPOSE 8080
 # No workspace, no directory, no file: the state is the catalog and the
 # warehouse the environment names, and the environment is what the
@@ -30,5 +30,5 @@ EXPOSE 8080
 # process and what the pool does not track; the spill bound 6 GiB of
 # the disk, the rest to the writable layer. A different box overrides
 # the command.
-CMD ["glossql", "--addr", "0.0.0.0:8080", \
+CMD ["/usr/local/bin/glossql", "--addr", "0.0.0.0:8080", \
      "--memory-limit", "4096", "--cube-cache", "2048", "--spill-limit", "6144"]
