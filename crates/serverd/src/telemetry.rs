@@ -52,10 +52,36 @@ pub const FILTER_VAR: &str = "GLOSSQL_LOG";
 /// The export switch, the SDK's own variable: where an OTLP collector
 /// listens (`http://127.0.0.1:4318`; the SDK appends `/v1/traces` and
 /// `/v1/logs`). Unset, nothing is exported. The rest of the exporter's
-/// configuration is the SDK's as well — `OTEL_EXPORTER_OTLP_HEADERS`
-/// carries a hosted collector's credentials, `OTEL_RESOURCE_ATTRIBUTES`
-/// what names a deployment beyond `service.name`, which is `glossql`.
+/// configuration is the SDK's as well — [`PROTOCOL_VAR`] picks the
+/// transport, `OTEL_EXPORTER_OTLP_HEADERS` carries a hosted collector's
+/// credentials, `OTEL_RESOURCE_ATTRIBUTES` what names a deployment
+/// beyond `service.name`, which is `glossql`. A platform's managed
+/// collector injects the endpoint and the protocol itself.
 pub const ENDPOINT_VAR: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
+
+/// The transport, the SDK's own variable: `http/protobuf` (the default
+/// when unset) or `grpc`. Anything else is refused at start by name —
+/// `http/json` is in the specification and not in this binary.
+pub const PROTOCOL_VAR: &str = "OTEL_EXPORTER_OTLP_PROTOCOL";
+
+/// The two transports this binary speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transport {
+    HttpProtobuf,
+    Grpc,
+}
+
+/// Read through `get` for the reason the other arrangements are:
+/// testable without touching the process environment.
+fn transport(get: impl Fn(&str) -> Option<String>) -> Result<Transport, String> {
+    match get(PROTOCOL_VAR).as_deref().map(str::trim) {
+        None | Some("") | Some("http/protobuf") => Ok(Transport::HttpProtobuf),
+        Some("grpc") => Ok(Transport::Grpc),
+        Some(other) => Err(format!(
+            "{PROTOCOL_VAR}: `{other}` is not a transport this binary speaks — grpc or http/protobuf"
+        )),
+    }
+}
 
 /// The directives a bare level stands for. Targets match by prefix
 /// (tracing-subscriber `filter/env/directive.rs`), so `glossql` is
@@ -81,9 +107,11 @@ struct Export {
 
 impl Telemetry {
     /// Send what is still queued and stop the export threads, within
-    /// the SDK's five seconds each. For after the runtime, on the main
-    /// thread: it blocks, and nothing produces spans or events any
-    /// more — which is also why a failure here can only go to stdout.
+    /// the SDK's five seconds each. For after the server has stopped
+    /// and before its runtime ends, since the gRPC channel lives on
+    /// that runtime: it blocks, and nothing produces spans or events
+    /// any more — which is also why a failure here can only go to
+    /// stdout.
     pub fn shutdown(self) {
         let Some(export) = self.export else {
             return;
@@ -103,7 +131,10 @@ impl Telemetry {
 /// bridged into the same stream, which is why a bare level stays
 /// ours: at `debug` the Avro reader alone writes ten thousand lines
 /// per boot. One filter gates both sinks: what is not on the record
-/// is not exported either.
+/// is not exported either. Called inside the server's runtime: the
+/// gRPC exporter's channel spawns its connection task onto the runtime
+/// it is built in (the crate's own guidance, opentelemetry-otlp
+/// lib.rs), and the batch threads reach it from outside.
 pub fn install() -> Result<Telemetry, String> {
     let requested = std::env::var(FILTER_VAR)
         .or_else(|_| std::env::var("RUST_LOG"))
@@ -114,7 +145,8 @@ pub fn install() -> Result<Telemetry, String> {
     } else {
         EnvFilter::new(requested)
     };
-    let export = export().map_err(|e| format!("{ENDPOINT_VAR}: {e}"))?;
+    let transport = transport(|name| std::env::var(name).ok())?;
+    let export = export(transport).map_err(|e| format!("{ENDPOINT_VAR}: {e}"))?;
     // No thread attributes: a span here is a task's, and the thread it
     // was opened on says nothing about where it ran.
     let spans = export.as_ref().map(|e| {
@@ -138,17 +170,19 @@ pub fn install() -> Result<Telemetry, String> {
     if export.is_some() {
         tracing::info!(
             endpoint = %std::env::var(ENDPOINT_VAR).unwrap_or_default(),
+            transport = ?transport,
             "exporting traces and logs"
         );
     }
     Ok(Telemetry { export })
 }
 
-/// The export pipelines when [`ENDPOINT_VAR`] is set: the OTLP/HTTP
-/// exporters with the SDK's own client and environment, batched, under
-/// this service's name. The W3C trace context becomes the propagator,
-/// so a `traceparent` a client sends is read at the door.
-fn export() -> Result<Option<Export>, opentelemetry_otlp::ExporterBuildError> {
+/// The export pipelines when [`ENDPOINT_VAR`] is set: the OTLP
+/// exporters over the transport named, with the SDK's own client and
+/// environment, batched, under this service's name. The W3C trace
+/// context becomes the propagator, so a `traceparent` a client sends
+/// is read at the door.
+fn export(transport: Transport) -> Result<Option<Export>, opentelemetry_otlp::ExporterBuildError> {
     if std::env::var_os(ENDPOINT_VAR).is_none() {
         return Ok(None);
     }
@@ -156,21 +190,29 @@ fn export() -> Result<Option<Export>, opentelemetry_otlp::ExporterBuildError> {
         .with_service_name("glossql")
         .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
         .build();
+    let spans = match transport {
+        Transport::HttpProtobuf => opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .build()?,
+        Transport::Grpc => opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .build()?,
+    };
+    let events = match transport {
+        Transport::HttpProtobuf => opentelemetry_otlp::LogExporter::builder()
+            .with_http()
+            .build()?,
+        Transport::Grpc => opentelemetry_otlp::LogExporter::builder()
+            .with_tonic()
+            .build()?,
+    };
     let traces = SdkTracerProvider::builder()
         .with_resource(resource.clone())
-        .with_batch_exporter(
-            opentelemetry_otlp::SpanExporter::builder()
-                .with_http()
-                .build()?,
-        )
+        .with_batch_exporter(spans)
         .build();
     let logs = SdkLoggerProvider::builder()
         .with_resource(resource)
-        .with_batch_exporter(
-            opentelemetry_otlp::LogExporter::builder()
-                .with_http()
-                .build()?,
-        )
+        .with_batch_exporter(events)
         .build();
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
     Ok(Some(Export { traces, logs }))
@@ -203,4 +245,45 @@ pub fn request_span<B>(request: &Request<B>) -> Span {
 /// carries the timing.
 pub fn request_done<B>(response: &Response<B>, _latency: Duration, span: &Span) {
     span.record("status", response.status().as_u16());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unset or the specification's default is HTTP; `grpc` is gRPC;
+    /// a transport this binary does not speak is refused by name.
+    #[test]
+    fn the_transport_is_the_protocol_variable() {
+        let env = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+            }
+        };
+        assert_eq!(transport(env(&[])).unwrap(), Transport::HttpProtobuf);
+        assert_eq!(
+            transport(env(&[(PROTOCOL_VAR, "http/protobuf")])).unwrap(),
+            Transport::HttpProtobuf
+        );
+        assert_eq!(
+            transport(env(&[(PROTOCOL_VAR, "grpc")])).unwrap(),
+            Transport::Grpc
+        );
+        assert_eq!(
+            transport(env(&[(PROTOCOL_VAR, " grpc ")])).unwrap(),
+            Transport::Grpc
+        );
+        let refused = transport(env(&[(PROTOCOL_VAR, "http/json")])).unwrap_err();
+        assert!(
+            refused.contains("http/json") && refused.contains(PROTOCOL_VAR),
+            "{refused}"
+        );
+    }
 }

@@ -212,20 +212,30 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.workspace.is_some() {
         dotenvy::dotenv().ok();
     }
-    // After `.env`, so `GLOSSQL_LOG` and the export switch may come
-    // from it; before anything opens, so the opening is on the record;
-    // outside the runtime, so the final flush comes after it.
-    let telemetry = glossql_serverd::telemetry::install()?;
-    let served = serve(args);
-    telemetry.shutdown();
-    served
+    serve(args)
 }
 
 /// The runtime's whole life: built by the macro, dropped when the
-/// server has stopped — before the export's final flush, on the main
-/// thread.
+/// server has stopped and the export's final flush is done — the
+/// telemetry is installed inside it, since the gRPC export's channel
+/// lives on the runtime it is built in, and flushed inside it for the
+/// same reason.
 #[tokio::main]
 async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // After `.env`, so `GLOSSQL_LOG` and the export switch may come
+    // from it; before anything opens, so the opening is on the record.
+    let telemetry = glossql_serverd::telemetry::install()?;
+    let served = doors(args).await;
+    // The flush blocks, so it runs on the blocking pool while the
+    // runtime — and the gRPC channel on it — is still alive.
+    tokio::task::spawn_blocking(move || telemetry.shutdown())
+        .await
+        .map_err(|e| format!("the export's final flush: {e}"))?;
+    served
+}
+
+/// Everything between the runtime's start and the server's stop.
+async fn doors(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let scheme = if args.tls.is_some() { "https" } else { "http" };
     // The open switch is read where the arrangement would be, before
     // anything opens: a run is one or the other, and a misconfigured
