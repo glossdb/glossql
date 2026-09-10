@@ -80,17 +80,24 @@ pub const BOOTSTRAP: &str = "bootstrap";
 /// says on the record that nobody was verified.
 pub const INSECURE_DEV_MODE: &str = "insecure_dev_mode";
 
-/// How much an agent sees at once.
+/// How much an agent sees at once, and whose `Host` header the agent
+/// door answers.
 #[derive(Clone)]
 pub struct DoorConfig {
     /// Rows an MCP tool result ships before declaring `truncated`.
     pub row_cap: usize,
+    /// Hostnames the agent door accepts in the `Host` header; empty
+    /// is every host. The transport's default — loopback only — is
+    /// the DNS-rebinding guard of a server on a laptop; a deployment
+    /// names the host the world uses (`main.rs`, `allowed_hosts`).
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Default for DoorConfig {
     fn default() -> Self {
         DoorConfig {
             row_cap: DEFAULT_ROW_CAP,
+            allowed_hosts: StreamableHttpServerConfig::default().allowed_hosts,
         }
     }
 }
@@ -138,6 +145,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     config.json_response = true;
     config.legacy_session_mode = false;
     config.stateless_protocol_metadata_required = false;
+    config.allowed_hosts = mcp_doors.allowed_hosts.clone();
     // The connect-time brief: shared across handler instances, boot-
     // filled, refreshed after every writing call (see
     // mcp::refresh_brief). One shared baseline, no per-actor state.

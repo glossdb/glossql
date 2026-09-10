@@ -186,6 +186,12 @@ instructions open with how to start — the two skill pages through
 `pages()`, then `datasets` — and map the objects. All of it is embedded at compile time, so
 what a build serves is what its suite tested.
 
+- **The `Host` header.** The transport's DNS-rebinding guard accepts
+  loopback hosts, the guard a laptop server needs, and the host of
+  `GLOSSQL_AUDIENCE`, this server's own URL — read under the open
+  switch as well. A deployment names its URL; one that does not
+  answers its bind address alone, and every real request is refused
+  with the transport's reason.
 - **The actor is the token's subject.** Without one the call writes as
   `agent`, with agent standing. The request's own `clientInfo` name is
   not used: a caller names itself on every request, so the string

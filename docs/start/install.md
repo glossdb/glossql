@@ -48,9 +48,10 @@ listens:
 
 The same binary as an image: `ghcr.io/glossdb/glossql:<version>`,
 pushed at each release tag beside the deb, and `docker build .` at a
-checkout builds the same. A slim Debian, the binary and the root
-certificates — no model, no weights, no GPU. It listens on 8080 and
-runs as an unprivileged user. There is no workspace in a container:
+checkout builds the same. A distroless base — glibc, the C runtime
+libraries, the root certificates, no shell and no package manager —
+and the binary; no model, no weights, no GPU. It listens on 8080 and
+runs as the base's unprivileged `nonroot` user. There is no workspace in a container:
 the state is the catalog and the warehouse `GLOSSQL_CATALOG_SQL` and
 `GLOSSQL_WAREHOUSE` name, and without both the server refuses to
 start, naming them; the apps are the built-ins and the app parts in
@@ -99,7 +100,7 @@ platform injects the variables, secrets included:
 | variable | meaning |
 |---|---|
 | `GLOSSQL_ISSUER` | the authorization server's issuer URL; its OpenID configuration names the keys tokens are verified against |
-| `GLOSSQL_AUDIENCE` | this server's canonical URI, the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2); defaults to `http://<addr>` |
+| `GLOSSQL_AUDIENCE` | this server's canonical URI: the API identifier registered at the issuer and the `aud` a token must name (RFC 8707 §2), and the host the agent door answers beside loopback — read under the open switch too, so a deployment always names its URL; defaults to `http://<addr>` |
 | `GLOSSQL_CLIENT_ID` | the application registered at the issuer for this server, which the browser login on `/app` signs in and exchanges its code as |
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |

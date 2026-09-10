@@ -100,11 +100,20 @@ impl Auth {
             issuer: required("GLOSSQL_ISSUER")?,
             client_id: required("GLOSSQL_CLIENT_ID")?,
             client_secret: required("GLOSSQL_CLIENT_SECRET")?,
-            audience: get("GLOSSQL_AUDIENCE")
-                .filter(|v| !v.trim().is_empty())
-                .unwrap_or_else(|| format!("{scheme}://{addr}")),
+            audience: audience(&get, addr, scheme),
         })
     }
+}
+
+/// This server's own URI — `GLOSSQL_AUDIENCE`, the API identifier a
+/// token must name and the host the world reaches the doors at —
+/// defaulting to the bind address. Read under both arrangements: the
+/// open switch verifies nobody, and the door still has to know its
+/// name.
+fn audience(get: &impl Fn(&str) -> Option<String>, addr: &str, scheme: &str) -> String {
+    get("GLOSSQL_AUDIENCE")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| format!("{scheme}://{addr}"))
 }
 
 /// The explicit way to serve without the arrangement:
@@ -235,7 +244,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
 }
 
 /// Everything between the runtime's start and the server's stop.
-async fn doors(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let scheme = if args.tls.is_some() { "https" } else { "http" };
     // The open switch is read where the arrangement would be, before
     // anything opens: a run is one or the other, and a misconfigured
@@ -248,6 +257,11 @@ async fn doors(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
                 .map_err(|e| format!("{e}\n{USAGE}"))?,
         )
     };
+    let own_uri = match &auth {
+        Some(auth) => auth.audience.clone(),
+        None => audience(&|name| std::env::var(name).ok(), &args.addr, scheme),
+    };
+    args.doors.allowed_hosts = allowed_hosts(&own_uri);
     let lake = open_lake(args.workspace.as_deref())
         .await
         .map_err(|e| format!("{e}\n{USAGE}"))?;
@@ -327,6 +341,25 @@ async fn doors(args: Args) -> Result<(), Box<dyn std::error::Error + Send + Sync
         }
     }
     Ok(())
+}
+
+/// Whose `Host` header the agent door answers: loopback — the
+/// transport's DNS-rebinding guard, for a server on a laptop where a
+/// browser could be steered at 127.0.0.1 — and the audience's host,
+/// the name the world reaches this server by. A deployment names its
+/// URL; one that does not answers its bind address alone, and the
+/// transport says so to every real request.
+fn allowed_hosts(audience: &str) -> Vec<String> {
+    let mut hosts = DoorConfig::default().allowed_hosts;
+    if let Some(host) = audience
+        .parse::<axum::http::Uri>()
+        .ok()
+        .and_then(|uri| uri.host().map(str::to_string))
+        && !hosts.contains(&host)
+    {
+        hosts.push(host);
+    }
+    hosts
 }
 
 /// The kernel service the environment names — `GLOSSQL_TABICL_URL`,
@@ -469,12 +502,36 @@ async fn stop() {
 #[cfg(test)]
 mod tests {
     use super::{Auth, parse};
+    use super::{allowed_hosts, audience};
 
     fn argv(flags: &[&str]) -> Vec<String> {
         std::iter::once("glossql")
             .chain(flags.iter().copied())
             .map(str::to_string)
             .collect()
+    }
+
+    /// The audience's host joins the transport's loopback list; a bind
+    /// address as the audience adds the bind address and nothing else.
+    #[test]
+    fn the_agent_door_answers_loopback_and_its_own_name() {
+        let named = allowed_hosts("https://glossql-trial.example.azurecontainerapps.io");
+        assert!(named.contains(&"glossql-trial.example.azurecontainerapps.io".to_string()));
+        assert!(named.contains(&"127.0.0.1".to_string()) && named.len() == 4);
+        let bound = allowed_hosts("http://0.0.0.0:8080");
+        assert!(bound.contains(&"0.0.0.0".to_string()) && bound.len() == 4);
+        assert_eq!(allowed_hosts("http://127.0.0.1:8080").len(), 3);
+        let env = |name: &str| {
+            (name == "GLOSSQL_AUDIENCE").then(|| "https://glossql.example".to_string())
+        };
+        assert_eq!(
+            audience(&env, "0.0.0.0:8080", "http"),
+            "https://glossql.example"
+        );
+        assert_eq!(
+            audience(&|_| None, "127.0.0.1:8080", "http"),
+            "http://127.0.0.1:8080"
+        );
     }
 
     /// There is no open mode: without an issuer and a registered

@@ -804,11 +804,16 @@ async fn the_probe_answers_without_a_token_in_both_arrangements() {
 /// One stateless JSON-RPC POST to /mcp (the 2026-07-28 revision needs no
 /// transport session; json_response mode answers in plain JSON).
 async fn mcp(app: Router, payload: Value) -> Response<Body> {
+    mcp_at(app, "127.0.0.1", payload).await
+}
+
+/// The same call under the `Host` a client would send.
+async fn mcp_at(app: Router, host: &str, payload: Value) -> Response<Body> {
     let method = payload["method"].as_str().unwrap().to_string();
     let mut request = Request::post("/mcp")
         // oneshot skips what every real client sends; the transport's
         // rebinding guard (allowed_hosts) rightly insists on it.
-        .header(header::HOST, "127.0.0.1")
+        .header(header::HOST, host)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
         .header(header::AUTHORIZATION, common::bearer("dev-agent"))
@@ -857,6 +862,24 @@ async fn expect_ok(response: Response<Body>) -> Value {
     let text = String::from_utf8_lossy(&bytes);
     assert_eq!(status, StatusCode::OK, "{text}");
     serde_json::from_str(&text).unwrap()
+}
+
+/// The agent door's `Host` guard: the transport's loopback default
+/// refuses a public hostname — the DNS-rebinding guard of a laptop
+/// server — and a config that names the host, the deployment's own
+/// URL, answers it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_door_answers_the_hosts_its_config_names() {
+    let public = "glossql-trial.example.azurecontainerapps.io";
+    let (app, _dir) = app().await;
+    let refused = mcp_at(app, public, initialize()).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+    let mut named = DoorConfig::default();
+    named.allowed_hosts.push(public.to_string());
+    let (app, _dir) = app_with(named, common::login()).await;
+    let body = expect_ok(mcp_at(app, public, initialize()).await).await;
+    assert_eq!(body["result"]["serverInfo"]["name"], "glossql-serverd");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1761,7 +1784,14 @@ async fn the_clients_own_name_never_reaches_the_record() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(DoorConfig { row_cap: 3 }, common::login()).await;
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..DoorConfig::default()
+        },
+        common::login(),
+    )
+    .await;
     let call = |id: u64, statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1816,7 +1846,14 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(DoorConfig { row_cap: 3 }, common::login()).await;
+    let (app, _dir) = app_with(
+        DoorConfig {
+            row_cap: 3,
+            ..DoorConfig::default()
+        },
+        common::login(),
+    )
+    .await;
     let body = expect_ok(
         mcp(
             app,
