@@ -18,10 +18,20 @@
 //! the store is and, vending, whom it lets in; the environment says how
 //! this process reaches it and supplies credentials only where the
 //! catalog vends none — a static key must never shadow a vended one.
-//! On Azure with nothing set at all, object_store's client reads the
-//! managed identity from `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`,
-//! which is the Container Apps arrangement: the identity is the
-//! credential and there is no secret. No surface of ours either way.
+//! On Azure with no credential set at all, the client asks the managed
+//! identity — the Container Apps arrangement: the identity is the
+//! credential and there is no secret. The platform names its token
+//! endpoint in `IDENTITY_ENDPOINT`, which this seam hands the builder
+//! (object_store reads it only in its own `from_env`); the client reads
+//! `IDENTITY_HEADER` itself at token time. Without the endpoint the
+//! client would ask the virtual machine's metadata address, which
+//! Container Apps does not offer. A user-assigned identity is named by
+//! `AZURE_STORAGE_CLIENT_ID`. No surface of ours either way.
+//!
+//! The same clients serve a file source whose location is in a store
+//! ([`environment_store`]): there no catalog vends, the environment
+//! alone configures, and the location carries no credential
+//! (SPEC.md §3).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -254,8 +264,22 @@ impl ObjectStorage {
     /// the catalog's `adls.*` properties, then the environment's
     /// `AZURE_*` conventions minus credentials the catalog vended. With
     /// no credential from either side, object_store's client resolves
-    /// the managed identity itself.
+    /// the managed identity itself, at the endpoint the platform names.
     fn azure(&self, root: &str, authority: &str) -> Result<Arc<dyn ObjectStore>> {
+        Ok(Arc::new(
+            self.azure_builder(root, std::env::vars())
+                .build()
+                .map_err(|e| does_not_build("Azure", authority, e))?,
+        ))
+    }
+
+    /// The builder behind [`Self::azure`], the environment passed in so
+    /// the pass is testable without touching the process's own.
+    fn azure_builder(
+        &self,
+        root: &str,
+        env: impl IntoIterator<Item = (String, String)>,
+    ) -> MicrosoftAzureBuilder {
         let mut builder = MicrosoftAzureBuilder::new().with_url(root);
         let p = &self.props;
         if let Some(v) = p.get(ADLS_ACCOUNT_NAME) {
@@ -283,7 +307,12 @@ impl ObjectStorage {
             || p.contains_key(ADLS_SAS_TOKEN)
             || p.contains_key(ADLS_CLIENT_SECRET);
         let mut plain_http = false;
-        for (name, value) in std::env::vars() {
+        for (name, value) in env {
+            // The platform's token endpoint, outside the `AZURE_*` family.
+            if name == "IDENTITY_ENDPOINT" {
+                builder = builder.with_msi_endpoint(value);
+                continue;
+            }
             if !name.starts_with("AZURE_") {
                 continue;
             }
@@ -310,11 +339,7 @@ impl ObjectStorage {
         if plain_http {
             builder = builder.with_allow_http(true);
         }
-        Ok(Arc::new(
-            builder
-                .build()
-                .map_err(|e| does_not_build("Azure", authority, e))?,
-        ))
+        builder
     }
 
     fn store(&self, at: &Location) -> Result<Arc<dyn ObjectStore>> {
@@ -336,6 +361,22 @@ impl ObjectStorage {
         let at = location(path)?;
         Ok((self.store(&at)?, at.key))
     }
+}
+
+/// The client for a location this seam reaches, configured by the
+/// environment alone — a file source's root, where no catalog vends —
+/// and the URL it registers under in an engine context: the location's
+/// `scheme://authority/`, which is how the engine keys a store
+/// (datafusion-execution object_store.rs, `get_url_key`: scheme and
+/// host, the container name in the userinfo dropped). A scratch context
+/// registers one root, so the key collides with nothing.
+pub fn environment_store(location: &str) -> crate::Result<(Arc<dyn ObjectStore>, Url)> {
+    let at = self::location(location)?;
+    let store = ObjectStorage::new(HashMap::new()).store(&at)?;
+    let key = Url::parse(&format!("{}/", at.authority)).map_err(|e| {
+        crate::Error::Workspace(format!("location `{}` is not a URL: {e}", at.authority))
+    })?;
+    Ok((store, key))
 }
 
 #[async_trait]
@@ -523,6 +564,61 @@ mod tests {
         assert!(location("file:///tmp/x").is_err());
         assert!(location("gs://lake/x").is_err());
         assert!(location("s3://bucketonly").unwrap().key.as_ref().is_empty());
+    }
+
+    /// The platform's token endpoint reaches the client, and the
+    /// user-assigned identity's client id with it, while a name outside
+    /// the two conventions passes by. The pass is checked on the
+    /// builder: the endpoint is asked only at token time.
+    #[test]
+    fn the_managed_identity_endpoint_reaches_the_client() {
+        let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let storage = ObjectStorage::new(HashMap::new());
+        let root = "abfss://lake@acme.dfs.core.windows.net";
+        let builder = storage.azure_builder(
+            root,
+            env(&[
+                ("IDENTITY_ENDPOINT", "http://localhost:42356/msi/token"),
+                (
+                    "AZURE_STORAGE_CLIENT_ID",
+                    "11111111-2222-3333-4444-555555555555",
+                ),
+                ("HOME", "/home/glossql"),
+            ]),
+        );
+        assert_eq!(
+            builder
+                .get_config_value(&AzureConfigKey::MsiEndpoint)
+                .as_deref(),
+            Some("http://localhost:42356/msi/token")
+        );
+        assert_eq!(
+            builder
+                .get_config_value(&AzureConfigKey::ClientId)
+                .as_deref(),
+            Some("11111111-2222-3333-4444-555555555555")
+        );
+        let bare = storage.azure_builder(root, env(&[]));
+        assert_eq!(bare.get_config_value(&AzureConfigKey::MsiEndpoint), None);
+    }
+
+    /// A file source's root builds its client from the environment alone
+    /// and registers under the location's authority; off the two
+    /// families it is refused by name.
+    #[test]
+    fn a_source_root_registers_under_its_authority() {
+        let (_, key) =
+            environment_store("abfss://lake@acme.dfs.core.windows.net/sources/finance").unwrap();
+        assert_eq!(key.as_str(), "abfss://lake@acme.dfs.core.windows.net/");
+        let (_, key) = environment_store("wasbs://lake@acme.blob.core.windows.net/p").unwrap();
+        assert_eq!(key.as_str(), "wasbs://lake@acme.blob.core.windows.net/");
+        assert!(environment_store("gs://lake/sources").is_err());
+        assert!(environment_store("/tmp/sources").is_err());
     }
 
     /// A warehouse is a directory or a remote location; the scheme
