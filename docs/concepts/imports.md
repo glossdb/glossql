@@ -14,9 +14,14 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 ```
 
 `type` is `relational_db | parquet | csv | json`; any other spelling
-is refused at the declaration. For file sources,
-`location` is the root directory recipe paths resolve under; for a
-relational source it is the connection URI the recipe executes over.
+is refused at the declaration. For file sources, `location` is the
+root recipe paths resolve under: a directory on the server's machine,
+or a location in an object store — `s3://bucket/prefix`,
+`abfss://container@account.dfs.core.windows.net/prefix` — read with
+the rights the server process has (its environment's conventions, or
+the platform's managed identity), never a credential in the location
+itself. For a relational source it is the connection URI the recipe
+executes over.
 A file type describes the export, it does not constrain the recipe:
 the recipe names its own reader — `read_parquet`, `read_csv`,
 `read_json` — and all three resolve under the location whatever the

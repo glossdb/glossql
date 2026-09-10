@@ -82,6 +82,8 @@ iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "c8
 # iceberg's registration mechanism for storage implementations.
 iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
 object_store = { version = "0.13", features = ["aws", "azure"] }
+# The engine's own glob crate, for the glob a remote source path carries.
+glob = "0.3"
 # Whole-location parsing for the storage seam; in the tree under object_store.
 url = "2"
 typetag = "0.2"

@@ -73,7 +73,7 @@ reads across datasets from anywhere.
 |---|---|
 | `USE ops;` | bind the statements after it in this call to a dataset — every call needs its own |
 | `DECLARE DATASET ops SET (…);` | create a dataset |
-| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root directory, globs belong in recipe SQL; a file `type` describes the export — the recipe's `read_parquet`/`read_csv`/`read_json` picks the reader |
+| `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; location is a root — a directory on the server's machine, or an object-store URL (`s3://…`, `abfss://…`) it may read — and globs belong in recipe SQL; a file `type` describes the export — the recipe's `read_parquet`/`read_csv`/`read_json` picks the reader |
 | `PROBE erp AS $$sql$$;` | run recipe-shaped SQL at the source, landing nothing |
 | `DECLARE RECIPE work_orders ON ops FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table |
 | `DROP TABLE work_orders;` | remove a table — refused while it holds data |

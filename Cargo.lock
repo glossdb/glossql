@@ -2933,10 +2933,14 @@ dependencies = [
  "chrono",
  "datafusion",
  "futures",
+ "glob",
+ "glossql-catalog",
+ "object_store",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "url",
 ]
 
 [[package]]

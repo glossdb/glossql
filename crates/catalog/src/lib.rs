@@ -237,6 +237,7 @@ impl Lake {
     /// The lake over a built catalog — everything below the
     /// constructors runs on the trait, whichever backend built it.
     /// `version_rides_properties`: see the field.
+    #[cfg(any(feature = "sql", feature = "rest"))]
     fn over(catalog: Arc<dyn Catalog>, version_rides_properties: bool) -> Self {
         Lake {
             catalog,

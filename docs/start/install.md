@@ -54,7 +54,9 @@ runs as an unprivileged user. There is no workspace in a container:
 the state is the catalog and the warehouse `GLOSSQL_CATALOG_SQL` and
 `GLOSSQL_WAREHOUSE` name, and without both the server refuses to
 start, naming them; the apps are the built-ins and the app parts in
-the record. The configuration is the environment the platform injects,
+the record. A file source is a URL too — a container or bucket path
+the server's identity may read — since there is no directory for
+files. The configuration is the environment the platform injects,
 secrets included — nothing is read from a file, and the image holds no
 value of its own. `GET /healthz` answers `ok` outside the gate, for a
 platform's probe, and stays off the record.

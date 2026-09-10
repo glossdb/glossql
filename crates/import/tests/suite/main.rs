@@ -5,3 +5,4 @@
 //! binary links once and runs them all concurrently.
 
 mod recipes;
+mod remote;

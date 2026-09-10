@@ -78,9 +78,9 @@ pub(crate) fn run_at_source(spec: &SourceSpec, sql: &str, row_cap: usize) -> Res
             })?;
     // The source's location IS its URI — one setting names where a
     // source lives, whatever kind it is.
-    let uri = spec.location.to_string_lossy();
+    let uri = spec.location.as_str();
     let database = driver
-        .new_database_with_opts([(OptionDatabase::Uri, uri.as_ref().into())])
+        .new_database_with_opts([(OptionDatabase::Uri, uri.into())])
         .map_err(adbc)?;
     let mut connection = database.new_connection().map_err(adbc)?;
     let mut statement = connection.new_statement().map_err(adbc)?;

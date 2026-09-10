@@ -57,6 +57,15 @@ AZURE_STORAGE_USE_EMULATOR=true \
   cargo test -p glossql-catalog -p glossql-serverd live_sql -- --ignored
 ```
 
+A file source in the emulator, the same client the warehouse uses: one
+CSV put under the root, then listed, landed, and probed over a glob.
+
+```bash
+GLOSSQL_E2E_SOURCE=abfss://lake@devstoreaccount1.dfs.core.windows.net/sources/finance \
+AZURE_STORAGE_USE_EMULATOR=true \
+  cargo test -p glossql-import live_source -- --ignored
+```
+
 The REST catalog over S3:
 
 ```bash

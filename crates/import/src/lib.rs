@@ -2,7 +2,9 @@
 //!
 //! A recipe at a file source runs on the server: the recipe SQL executes in
 //! a scratch DataFusion context where `read_parquet` / `read_csv` /
-//! `read_json` resolve under the source's `location` root, and
+//! `read_json` resolve under the source's `location` root — a directory
+//! on this machine, or a location in an object store the storage seam
+//! reaches, read with the rights this process has — and
 //! `try_to_date`/`try_to_timestamp` are registered — the recipe carries
 //! the casts. A probe is the same SQL surface
 //! without a landing: paths' first segment names the source. A recipe at a
@@ -23,6 +25,9 @@ pub use accounting::{CastAccounting, CastCheck};
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use object_store::ObjectStore;
+use url::Url;
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -116,9 +121,10 @@ impl SourceKind {
 pub struct SourceSpec {
     pub name: String,
     pub kind: SourceKind,
-    /// Where the source lives: file sources, the root directory recipe
-    /// paths resolve under; relational sources, the connection URI.
-    pub location: PathBuf,
+    /// Where the source lives: file sources, the root recipe paths
+    /// resolve under — a directory, or a URL in an object store
+    /// ([`Root`]); relational sources, the connection URI.
+    pub location: String,
     /// Relational sources: the ADBC driver, a searched name or a library
     /// path. Meaningless (and ignored) for file sources.
     pub driver: Option<String>,
@@ -154,7 +160,7 @@ impl SourceSpec {
         Ok(SourceSpec {
             name: name.into(),
             kind,
-            location: PathBuf::from(get("location")?),
+            location: get("location")?.to_string(),
             driver,
         })
     }
@@ -319,13 +325,141 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
 /// failure count, then one grouped read per failing column for its top
 /// tokens. Costs one extra scan, plus one per column that actually
 /// failed.
+/// A file source's root, as `location` spells it: a directory on this
+/// machine (a path, or `file://`), or a location in an object store the
+/// storage seam reaches — `s3://bucket/prefix`,
+/// `abfss://container@account.dfs.core.windows.net/prefix` — read with
+/// the rights this process has: the environment's conventions, or the
+/// platform's managed identity. The location itself carries no
+/// credential (SPEC.md §3). Either way a recipe path resolves under it
+/// and cannot leave it.
+#[derive(Debug, Clone)]
+enum Root {
+    Local(PathBuf),
+    Remote {
+        /// The root with its trailing slash — what a recipe path joins.
+        url: Url,
+        store: Arc<dyn ObjectStore>,
+        /// Where the store registers in a scratch context.
+        key: Url,
+    },
+}
+
+impl Root {
+    fn of(spec: &SourceSpec) -> Result<Self> {
+        let bad = |detail: String| Error::BadSource {
+            name: spec.name.clone(),
+            detail,
+        };
+        let location = spec.location.trim();
+        let dir = match location.split_once("://") {
+            None => PathBuf::from(location),
+            Some((scheme, path)) if scheme.eq_ignore_ascii_case("file") => PathBuf::from(path),
+            Some(_) => {
+                let (store, key) = glossql_catalog::storage::environment_store(location)
+                    .map_err(|e| bad(format!("location {location}: {e}")))?;
+                let url = Url::parse(&format!("{}/", location.trim_end_matches('/')))
+                    .map_err(|e| bad(format!("location {location}: {e}")))?;
+                return Ok(Root::Remote { url, store, key });
+            }
+        };
+        let dir = dir
+            .canonicalize()
+            .map_err(|e| bad(format!("location {}: {e}", dir.display())))?;
+        Ok(Root::Local(dir))
+    }
+
+    /// A remote root's store, into the scratch context that reads it; a
+    /// directory needs nothing, the local store is the engine's default.
+    fn register(&self, ctx: &SessionContext) {
+        if let Root::Remote { store, key, .. } = self {
+            ctx.register_object_store(key, Arc::clone(store));
+        }
+    }
+
+    /// The whole root, for a listing.
+    fn listing(&self) -> datafusion::error::Result<ListingTableUrl> {
+        match self {
+            Root::Local(dir) => ListingTableUrl::parse(format!("{}/", dir.display())),
+            Root::Remote { url, .. } => ListingTableUrl::try_new(url.clone(), None),
+        }
+    }
+
+    /// `rel` — the path or glob a `read_*` call names — under the root,
+    /// refused where it would leave it.
+    fn resolve(&self, rel: &str) -> datafusion::error::Result<ListingTableUrl> {
+        let plan_err = |m: String| DataFusionError::Plan(m);
+        let rel_path = Path::new(rel);
+        if rel_path.is_absolute()
+            || rel.contains("://")
+            || rel_path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+        {
+            return Err(plan_err(format!(
+                "`{rel}` must stay under the source's location — relative, no `..`"
+            )));
+        }
+        match self {
+            Root::Local(root) => {
+                let target = root.join(rel_path);
+                // `..` is not the only way out: a symlink under the root
+                // resolves wherever it points. Check the deepest real
+                // directory the path names — everything before the first
+                // glob segment.
+                let mut real = root.clone();
+                for component in rel_path.components() {
+                    if component
+                        .as_os_str()
+                        .to_string_lossy()
+                        .contains(['*', '?', '['])
+                    {
+                        break;
+                    }
+                    real.push(component);
+                }
+                if let Ok(resolved) = real.canonicalize()
+                    && !resolved.starts_with(root)
+                {
+                    return Err(plan_err(format!(
+                        "`{rel}` resolves outside the source's location"
+                    )));
+                }
+                ListingTableUrl::parse(target.display().to_string())
+            }
+            Root::Remote { url, .. } => {
+                // The engine splits a glob from a filesystem path only; a
+                // URL's glob is the application's to split, the same way:
+                // the prefix ends at the last separator before the first
+                // glob character (datafusion-datasource url.rs, `try_new`).
+                let (prefix, glob) = match rel.find(['*', '?', '[']) {
+                    Some(at) => {
+                        let cut = rel[..at].rfind('/').map_or(0, |i| i + 1);
+                        (&rel[..cut], Some(&rel[cut..]))
+                    }
+                    None => (rel, None),
+                };
+                let target = url
+                    .join(prefix)
+                    .map_err(|e| plan_err(format!("`{rel}`: {e}")))?;
+                let glob = glob
+                    .map(glob::Pattern::new)
+                    .transpose()
+                    .map_err(|e| plan_err(format!("`{rel}`: {e}")))?;
+                ListingTableUrl::try_new(target, glob)
+            }
+        }
+    }
+}
+
 /// The file-source reader context: the try-cast functions plus the
 /// three read functions, path resolution rooted at the source. One
 /// builder serves the recipe (which counts scans) and the probe (which
 /// does not).
 fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext> {
-    let root = canonical_root(spec)?;
+    let root = Root::of(spec)?;
     let ctx = SessionContext::new();
+    root.register(&ctx);
     casts::register_try_functions(&ctx);
     for (fn_name, kind) in [
         ("read_parquet", SourceKind::Parquet),
@@ -542,7 +676,7 @@ pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
             detail: "a relational source has no files to list — PROBE it".into(),
         });
     }
-    let root = canonical_root(spec)?;
+    let root = Root::of(spec)?;
     // The session default ignores subdirectories; a source root holds
     // its exports in folders as often as not, and a recipe reaches
     // them, so the listing does too.
@@ -551,8 +685,9 @@ pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
         false,
     );
     let ctx = SessionContext::new_with_config(config);
+    root.register(&ctx);
     let state = ctx.state();
-    let url = ListingTableUrl::parse(format!("{}/", root.display())).map_err(Error::List)?;
+    let url = root.listing().map_err(Error::List)?;
     let store = state
         .runtime_env()
         .object_store(url.object_store())
@@ -581,13 +716,6 @@ pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
     Ok(files)
 }
 
-fn canonical_root(spec: &SourceSpec) -> Result<PathBuf> {
-    spec.location.canonicalize().map_err(|e| Error::BadSource {
-        name: spec.name.clone(),
-        detail: format!("location {}: {e}", spec.location.display()),
-    })
-}
-
 /// Providers a recipe run scanned — the `read_*` path each was called
 /// with and the provider — recorded so source rows can be counted per
 /// scan.
@@ -600,7 +728,7 @@ type Scanned = Arc<Mutex<Vec<(String, Arc<dyn TableProvider>)>>>;
 /// built is recorded so the caller can count source rows.
 #[derive(Debug)]
 struct ReadFiles {
-    root: PathBuf,
+    root: Root,
     kind: SourceKind,
     seen: Option<Scanned>,
 }
@@ -626,38 +754,7 @@ impl TableFunctionImpl for ReadFiles {
                 ));
             }
         };
-        let rel_path = Path::new(&rel);
-        if rel_path.is_absolute()
-            || rel_path
-                .components()
-                .any(|c| matches!(c, Component::ParentDir))
-        {
-            return Err(plan_err(format!(
-                "`{rel}` must stay under the source's location — relative, no `..`"
-            )));
-        }
-        let target = self.root.join(rel_path);
-        // `..` is not the only way out: a symlink under the root resolves
-        // wherever it points. Check the deepest real directory the path
-        // names — everything before the first glob segment.
-        let mut real = self.root.clone();
-        for component in rel_path.components() {
-            if component
-                .as_os_str()
-                .to_string_lossy()
-                .contains(['*', '?', '['])
-            {
-                break;
-            }
-            real.push(component);
-        }
-        if let Ok(resolved) = real.canonicalize()
-            && !resolved.starts_with(&self.root)
-        {
-            return Err(plan_err(format!(
-                "`{rel}` resolves outside the source's location"
-            )));
-        }
+        let url = self.root.resolve(&rel)?;
 
         let format: Arc<dyn FileFormat> = match self.kind {
             SourceKind::Parquet => Arc::new(ParquetFormat::default()),
@@ -687,8 +784,6 @@ impl TableFunctionImpl for ReadFiles {
             // the glob names the files; the extension filter would fight it
             options = options.with_file_extension("");
         }
-        let url = ListingTableUrl::parse(target.display().to_string())?;
-
         // Blocking, because `call_with_args` is synchronous and schema
         // inference is not — the one place in this crate where that is
         // forced by a trait rather than by a blocking driver. Against the
@@ -707,7 +802,7 @@ impl TableFunctionImpl for ReadFiles {
         if let Some(seen) = &self.seen {
             seen.lock()
                 .expect("seen")
-                .push((rel.clone(), Arc::clone(&provider)));
+                .push((rel, Arc::clone(&provider)));
         }
         Ok(provider)
     }

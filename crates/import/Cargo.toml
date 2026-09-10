@@ -19,6 +19,12 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 adbc_core = { workspace = true }
 adbc_driver_manager = { workspace = true }
+# A file source's root in an object store: the storage seam's clients.
+glossql-catalog = { path = "../catalog", default-features = false }
+object_store = { workspace = true }
+url = { workspace = true }
+# A glob under a remote root is the application's to split (datafusion-datasource url.rs, `try_new`).
+glob = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
