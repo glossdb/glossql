@@ -168,6 +168,11 @@ impl Plane {
         self
     }
 
+    /// The pages the door serves, as set at boot.
+    pub fn pages(&self) -> Arc<[crate::reads::DoorPage]> {
+        Arc::clone(&self.pages)
+    }
+
     /// The cap the doors render at, pushed down so the engine is not asked
     /// for rows nobody will read.
     pub fn with_row_cap(mut self, cap: usize) -> Self {

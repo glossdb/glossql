@@ -1,0 +1,680 @@
+{
+ "nodes": [
+  "ATTEST",
+  "DECLARE ASPECT query",
+  "DECLARE FUNCTION",
+  "DECLARE RECIPE",
+  "DECLARE RELATIONSHIP",
+  "EXTRACT",
+  "End",
+  "GLOSS app",
+  "GLOSS dimension",
+  "GLOSS formulas",
+  "GLOSS query",
+  "GLOSSARY",
+  "SQL",
+  "Start",
+  "USE",
+  "band_points",
+  "detect_grounding_collisions",
+  "dimension_relevance",
+  "metric_axes",
+  "metric_bands",
+  "owed",
+  "relationship_coherence",
+  "ruling_entries",
+  "source_files",
+  "temporal",
+  "workspace_next"
+ ],
+ "edges": [
+  {
+   "from": "Start",
+   "to": "owed",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "session start, before the first write"
+   },
+   "guidance": "read human writings, contested, red and `owed` once",
+   "pitfalls": "a ruling landed while away is missed",
+   "source": "glossql/SKILL.md"
+  },
+  {
+   "from": "Start",
+   "to": "USE",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "the call names a dataset's tables"
+   },
+   "guidance": "open the call with `USE <dataset>`",
+   "pitfalls": "refused, or a workspace-scoped read",
+   "source": "glossql/SKILL.md"
+  },
+  {
+   "from": "Start",
+   "to": "workspace_next",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "deciding what next"
+   },
+   "guidance": "read it; it is state, never an order",
+   "pitfalls": "",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "USE",
+   "to": "workspace_next",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "deciding what next"
+   },
+   "guidance": "read it; state, never an order",
+   "pitfalls": "",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "USE",
+   "to": "owed",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "before the first write of the session"
+   },
+   "guidance": "read `owed` once",
+   "pitfalls": "a ruling landed while away is missed",
+   "source": "glossql/SKILL.md"
+  },
+  {
+   "from": "source_files",
+   "to": "GLOSSARY",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "a source has a `conventions` gloss",
+    "key": {
+     "read": "glossary",
+     "where": {
+      "aspect": "conventions"
+     }
+    }
+   },
+   "guidance": "read it before the first probe",
+   "pitfalls": "warts rediscovered",
+   "source": "glossql-metrics/references/land.md"
+  },
+  {
+   "from": "DECLARE RECIPE",
+   "to": "SQL",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a table landed"
+   },
+   "guidance": "`DESCRIBE` it",
+   "pitfalls": "numeric-as-text found three reads later",
+   "source": "glossql-metrics/references/land.md"
+  },
+  {
+   "from": "DECLARE RECIPE",
+   "to": "DECLARE RECIPE",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "the cast account shows nulled cells",
+    "key": {
+     "read": "workspace_next",
+     "where": {
+      "surface": "tables",
+      "open": "nonzero"
+     }
+    }
+   },
+   "guidance": "judge the tokens; `NULLIF` a marker; re-declare; re-run measurements on changed columns",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/land.md"
+  },
+  {
+   "from": "DECLARE RECIPE",
+   "to": "temporal",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "`judged_current` is false after an import",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "judged_current": false
+     }
+    }
+   },
+   "guidance": "re-run `temporal()` and `dimension_relevance()` over the served columns",
+   "pitfalls": "the cube builds on stale verdicts",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "DECLARE RELATIONSHIP",
+   "to": "relationship_coherence",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "edges declared, or a new batch landed"
+   },
+   "guidance": "run it: orphan rate, child before parent",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/structure.md"
+  },
+  {
+   "from": "relationship_coherence",
+   "to": "ATTEST",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "the coherence check landed and a witness stands",
+    "key": {
+     "read": "witnesses",
+     "where": {}
+    }
+   },
+   "guidance": "read the orphan verdict by band",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/structure.md"
+  },
+  {
+   "from": "DECLARE ASPECT query",
+   "to": "GLOSS formulas",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "adding a concept"
+   },
+   "guidance": "read the standing map joined to `current_dataset`; read operands back against `aspects`",
+   "pitfalls": "a blind write drops entries",
+   "source": "glossql-metrics/references/ground.md"
+  },
+  {
+   "from": "DECLARE ASPECT query",
+   "to": "GLOSS query",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "the aspect is declared"
+   },
+   "guidance": "ground it: the SQL at row grain with the time axis and the dimensions served, the judgment calls as keyed assumptions; the write answers with the fact row",
+   "pitfalls": "a declared aspect with no gloss serves nothing",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "metric_axes",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "the write answered"
+   },
+   "guidance": "read the fact row it returned; then `metric_axes()` for `applicable`, `judged_current`, `unadmitted_why`, `wanted`",
+   "pitfalls": "a ratio or stock summed; unsliceable",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "GLOSS query",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "the frame serves only a date and a value",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "applicable": true,
+      "dims": "empty",
+      "unadmitted": "empty"
+     }
+    }
+   },
+   "guidance": "serve the judged dimension columns of the scanned table; re-record",
+   "pitfalls": "no axis admitted anywhere",
+   "source": "glossql-metrics/references/ground.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "detect_grounding_collisions",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a grounding landed"
+   },
+   "guidance": "run it; a pair is a synonym or an error",
+   "pitfalls": "ratios compute 1.0 silently",
+   "source": "glossql-metrics/references/ground.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "temporal",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "`judged_current` is false after a gloss",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "judged_current": false
+     }
+    }
+   },
+   "guidance": "re-run `temporal()` and `dimension_relevance()` over the served columns",
+   "pitfalls": "the cube builds on stale verdicts",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "metric_bands",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "series stand",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "never measured"
+     }
+    }
+   },
+   "guidance": "run the walk once",
+   "pitfalls": "`owed` lists never measured",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "GLOSS query",
+   "to": "GLOSS query",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "`wanted` names a measurement",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "wanted": "nonempty"
+     }
+    }
+   },
+   "guidance": "run what `wanted` names; re-record",
+   "pitfalls": "",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "temporal",
+   "to": "dimension_relevance",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "verdicts re-run after a change"
+   },
+   "guidance": "re-run `dimension_relevance()` over the same columns",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "dimension_relevance",
+   "to": "metric_axes",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "verdicts landed"
+   },
+   "guidance": "read what the cube admits now",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "metric_axes",
+   "to": "GLOSS query",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "an axis bucketed",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "bucketed": "nonempty"
+     }
+    }
+   },
+   "guidance": "serve a narrower column in the SQL",
+   "pitfalls": "`'other'` read as a member",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "metric_axes",
+   "to": "GLOSS dimension",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a served column is unadmitted",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "unadmitted": "nonempty"
+     }
+    }
+   },
+   "guidance": "read `unadmitted_why`; gloss the column's role or run `dimension_relevance()`",
+   "pitfalls": "no axis admitted anywhere",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "metric_axes",
+   "to": "metric_bands",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "series stand and the walk never ran",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "never measured"
+     }
+    }
+   },
+   "guidance": "run the walk once",
+   "pitfalls": "`owed` lists never measured",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "metric_axes",
+   "to": "GLOSS app",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "at least one metric applicable and `judged_current`",
+    "key": {
+     "read": "metric_axes",
+     "where": {
+      "applicable": true,
+      "judged_current": true
+     }
+    }
+   },
+   "guidance": "an app is admissible; before that it is a picture of nothing",
+   "pitfalls": "",
+   "source": "glossql-apps/SKILL.md"
+  },
+  {
+   "from": "metric_bands",
+   "to": "ATTEST",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "the walk ran"
+   },
+   "guidance": "read the verdicts by band",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "metric_bands",
+   "to": "band_points",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "a red verdict",
+    "key": {
+     "read": "ATTEST",
+     "where": {
+      "band": "red"
+     }
+    }
+   },
+   "guidance": "read it; shift and defect breach alike; you judge",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "ATTEST",
+   "to": "End",
+   "relation": "CONVERGES_TO",
+   "when": {
+    "text": "no red witness stands, or every red one is a disclosed contest",
+    "key": {
+     "read": "ATTEST",
+     "where": {
+      "band": "red"
+     },
+     "none": true
+    }
+   },
+   "guidance": "done",
+   "pitfalls": "",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "DECLARE FUNCTION",
+   "to": "EXTRACT",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a function declared"
+   },
+   "guidance": "run it once over its subjects",
+   "pitfalls": "a declared check that never measured",
+   "source": "glossql-functions/SKILL.md"
+  },
+  {
+   "from": "EXTRACT",
+   "to": "ATTEST",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "a measurement landed and a witness stands",
+    "key": {
+     "read": "witnesses",
+     "where": {}
+    }
+   },
+   "guidance": "read its verdict",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "owed",
+   "to": "ruling_entries",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "a fold-in owed",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "fold-in"
+     }
+    }
+   },
+   "guidance": "read the ruling entries",
+   "pitfalls": "",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "ruling_entries",
+   "to": "GLOSS query",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a ruling on a grounding",
+    "key": {
+     "read": "ruling_entries",
+     "where": {
+      "folded_in": false
+     }
+    }
+   },
+   "guidance": "re-record under the same key at 1.0 `human-ruled`; `unclear` opens a new key; a formula re-records",
+   "pitfalls": "the old SQL keeps serving",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "ruling_entries",
+   "to": "DECLARE RECIPE",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "an approved recipe change",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "recipe"
+     }
+    }
+   },
+   "guidance": "re-declare the recipe; import again",
+   "pitfalls": "the old landing keeps serving",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "owed",
+   "to": "EXTRACT",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a function voice stands from before the last change",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "re-measure"
+     }
+    }
+   },
+   "guidance": "run the function again",
+   "pitfalls": "",
+   "source": "docs/reference/reads.md"
+  },
+  {
+   "from": "owed",
+   "to": "GLOSSARY",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "a slot is contested",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "contest"
+     }
+    }
+   },
+   "guidance": "read the slots; re-ground; re-gloss only if evidence moved",
+   "pitfalls": "",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "owed",
+   "to": "metric_bands",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a measurement never ran",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "never measured"
+     }
+    }
+   },
+   "guidance": "run the walk once",
+   "pitfalls": "",
+   "source": "glossql-metrics/references/cube.md"
+  },
+  {
+   "from": "owed",
+   "to": "GLOSS formulas",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "a human formula answer is newer than the materialization",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "formula"
+     }
+    }
+   },
+   "guidance": "re-record the formula",
+   "pitfalls": "",
+   "source": "docs/reference/reads.md"
+  },
+  {
+   "from": "owed",
+   "to": "End",
+   "relation": "CONVERGES_TO",
+   "when": {
+    "text": "nothing owed",
+    "key": {
+     "read": "owed",
+     "where": {},
+     "none": true
+    }
+   },
+   "guidance": "the record is settled",
+   "pitfalls": "",
+   "source": "docs/reference/reads.md"
+  },
+  {
+   "from": "GLOSSARY",
+   "to": "GLOSS query",
+   "relation": "TRIGGERS",
+   "when": {
+    "text": "`state = contested`",
+    "key": {
+     "read": "owed",
+     "where": {
+      "kind": "contest"
+     }
+    }
+   },
+   "guidance": "re-ground; re-gloss only if evidence moved",
+   "pitfalls": "",
+   "source": "glossql/references/rulings.md"
+  },
+  {
+   "from": "workspace_next",
+   "to": "End",
+   "relation": "CONVERGES_TO",
+   "when": {
+    "text": "it names nothing open",
+    "key": {
+     "read": "workspace_next",
+     "where": {
+      "open": "nonzero"
+     },
+     "none": true
+    }
+   },
+   "guidance": "done",
+   "pitfalls": "",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "workspace_next",
+   "to": "owed",
+   "relation": "PROVIDES_INPUT_FOR",
+   "when": {
+    "text": "it names an owed act",
+    "key": {
+     "read": "owed",
+     "where": {}
+    }
+   },
+   "guidance": "read `owed`",
+   "pitfalls": "",
+   "source": "docs/reference/reads.md"
+  },
+  {
+   "from": "workspace_next",
+   "to": "GLOSS query",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "it names a metric to ground or re-record",
+    "key": {
+     "read": "workspace_next",
+     "where": {
+      "surface": "metrics",
+      "open": "nonzero"
+     }
+    }
+   },
+   "guidance": "ground it",
+   "pitfalls": "",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "workspace_next",
+   "to": "GLOSS app",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "a metric is applicable and no app stands",
+    "key": [
+     {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true
+      }
+     },
+     {
+      "read": "app_parts",
+      "where": {},
+      "none": true
+     }
+    ]
+   },
+   "guidance": "an app is the last thing built",
+   "pitfalls": "a picture of nothing",
+   "source": "glossql-apps/SKILL.md"
+  }
+ ]
+}

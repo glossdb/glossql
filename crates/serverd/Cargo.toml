@@ -27,6 +27,7 @@ glossql-session = { path = "../session" }
 glossql-apps = { path = "../apps" }
 glossql-catalog = { path = "../catalog", default-features = false }
 glossql-scripts = { path = "../scripts" }
+glossql-parser = { path = "../parser" }
 datafusion = { workspace = true }
 arrow-ipc = { workspace = true }
 arrow-json = { workspace = true }

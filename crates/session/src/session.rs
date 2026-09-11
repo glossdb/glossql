@@ -2054,3 +2054,41 @@ fn kind(statement: &Statement) -> &'static str {
         Statement::Substrate(_) => "substrate",
     }
 }
+
+/// A callable the door's SQL can name: its kind, its name, and the
+/// syntax the engine documents for it, where it documents one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Registered {
+    pub kind: &'static str,
+    pub name: String,
+    pub syntax: Option<String>,
+}
+
+fn registered(list: Vec<(&'static str, String, Option<String>)>) -> Vec<Registered> {
+    list.into_iter()
+        .map(|(kind, name, syntax)| Registered { kind, name, syntax })
+        .collect()
+}
+
+impl Session {
+    /// Every function this session's planner resolves — the engine's
+    /// defaults, the JSON functions, the try-casts, the runtime's
+    /// aggregates — read from the registry itself, never a hand list.
+    pub fn registered_functions(&self) -> Vec<Registered> {
+        registered(glossql_import::registry(&self.ctx.state()))
+    }
+}
+
+/// What a recipe's or a probe's SQL can call
+/// (`glossql_import::reader_functions`).
+pub fn reader_functions() -> Vec<Registered> {
+    registered(glossql_import::reader_functions())
+}
+
+/// What a detector's query can call: the defaults of the context it
+/// plans on (`reads::detector_ctx`).
+pub fn detector_functions() -> Vec<Registered> {
+    registered(glossql_import::registry(
+        &crate::reads::detector_ctx().state(),
+    ))
+}

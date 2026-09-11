@@ -79,7 +79,7 @@ pub struct Doc {
     pub body: &'static str,
 }
 
-pub const DOCS: [Doc; 2] = [
+pub const DOCS: [Doc; 3] = [
     Doc {
         name: "SPEC.md",
         description: "The glossql language specification — the normative prose the \
@@ -92,6 +92,14 @@ pub const DOCS: [Doc; 2] = [
         description: "The machine-readable glossql grammar.",
         mime: "text/plain",
         body: include_str!("../../../grammar.ebnf"),
+    },
+    Doc {
+        name: "window.json",
+        description: "The mechanical layer of the procedural graph: the acts the record \
+                      admits after each act, keyed to the reads that decide. The window \
+                      on every tool result is its localized view.",
+        mime: "application/json",
+        body: crate::window::GRAPH_JSON,
     },
 ];
 
@@ -170,6 +178,16 @@ pub fn door_pages() -> std::sync::Arc<[glossql_session::DoorPage]> {
                 body: p.body.to_string(),
             }),
     );
+    out.into()
+}
+
+/// The door's pages plus the ones built at boot — the function
+/// listings — in one list, the boot pages last.
+pub fn door_pages_with(
+    extra: Vec<glossql_session::DoorPage>,
+) -> std::sync::Arc<[glossql_session::DoorPage]> {
+    let mut out: Vec<glossql_session::DoorPage> = door_pages().to_vec();
+    out.extend(extra);
     out.into()
 }
 

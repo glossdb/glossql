@@ -18,7 +18,7 @@ use glossql_serverd::{
 
 const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
-[--spill-limit <megabytes>] [--tls-cert <pem> --tls-key <pem>] \
+[--spill-limit <megabytes>] [--window on|off] [--tls-cert <pem> --tls-key <pem>] \
 | glossql --version | glossql --help\n\
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
@@ -159,6 +159,13 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
                         .map_err(|e| format!("--spill-limit: {e}"))?,
                 );
             }
+            "--window" => {
+                doors.window = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    other => return Err(format!("--window: `{other}` — on or off")),
+                }
+            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -275,14 +282,11 @@ async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + 
         None => tracing::info!("no kernel service — the model doors refuse by name"),
     }
 
-    let plane = Arc::new(
-        Plane::new(store.clone(), runtime)
-            .with_pages(glossql_serverd::skills::door_pages())
-            .with_row_cap(args.doors.row_cap)
-            .with_cube_cache(args.cube_cache_mb)
-            .with_memory_limit(args.memory_limit_mb)
-            .with_spill_limit(args.spill_limit_mb),
-    );
+    let plane = Plane::new(store.clone(), runtime)
+        .with_row_cap(args.doors.row_cap)
+        .with_cube_cache(args.cube_cache_mb)
+        .with_memory_limit(args.memory_limit_mb)
+        .with_spill_limit(args.spill_limit_mb);
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
         &plane,
@@ -292,6 +296,10 @@ async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + 
         },
     )
     .await?;
+    // The function listings read the registries the shipped system
+    // declared into, so they follow the bootstrap.
+    let listings = glossql_serverd::functions::pages(&plane).await?;
+    let plane = Arc::new(plane.with_pages(glossql_serverd::skills::door_pages_with(listings)));
 
     // Who may speak: whoever the issuer says. Its keys are discovered
     // here, and a server that cannot reach them does not open. Under

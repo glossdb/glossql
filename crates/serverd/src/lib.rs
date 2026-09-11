@@ -38,12 +38,14 @@
 
 mod auth;
 mod bootstrap;
+pub mod functions;
 mod login;
 mod mcp;
 mod query;
 pub mod skills;
 pub mod telemetry;
 pub mod tls;
+pub mod window;
 mod wire;
 
 pub use auth::{Endpoints, Gate};
@@ -91,6 +93,10 @@ pub struct DoorConfig {
     /// the DNS-rebinding guard of a server on a laptop; a deployment
     /// names the host the world uses (`main.rs`, `allowed_hosts`).
     pub allowed_hosts: Vec<String>,
+    /// Whether every tool result carries the window — the localized
+    /// mechanical view of the procedural graph (`window`). Off is the
+    /// control arm of the run that measures it.
+    pub window: bool,
 }
 
 impl Default for DoorConfig {
@@ -98,6 +104,7 @@ impl Default for DoorConfig {
         DoorConfig {
             row_cap: DEFAULT_ROW_CAP,
             allowed_hosts: StreamableHttpServerConfig::default().allowed_hosts,
+            window: true,
         }
     }
 }

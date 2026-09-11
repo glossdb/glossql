@@ -452,6 +452,59 @@ impl Root {
     }
 }
 
+/// The three readers a recipe or a probe calls, by name: one per file
+/// kind, over the source's root.
+pub const READERS: [(&str, SourceKind); 3] = [
+    ("read_parquet", SourceKind::Parquet),
+    ("read_csv", SourceKind::Csv),
+    ("read_json", SourceKind::Json),
+];
+
+/// Every function a context registers — scalar, aggregate, window,
+/// table — read from the registry its planner resolves against, with
+/// the syntax the engine documents where it documents one. A listing
+/// built from this cannot drift from what the context runs with.
+pub fn registry(
+    state: &datafusion::execution::session_state::SessionState,
+) -> Vec<(&'static str, String, Option<String>)> {
+    let mut out = Vec::new();
+    for (name, f) in state.scalar_functions() {
+        let syntax = f.documentation().map(|d| d.syntax_example.clone());
+        out.push(("scalar", name.clone(), syntax));
+    }
+    for (name, f) in state.aggregate_functions() {
+        let syntax = f.documentation().map(|d| d.syntax_example.clone());
+        out.push(("aggregate", name.clone(), syntax));
+    }
+    for (name, f) in state.window_functions() {
+        let syntax = f.documentation().map(|d| d.syntax_example.clone());
+        out.push(("window", name.clone(), syntax));
+    }
+    for name in state.table_functions().keys() {
+        out.push(("table", name.clone(), None));
+    }
+    out.sort();
+    out
+}
+
+/// What a recipe's or a probe's SQL can call: the reader context's own
+/// registry — the engine's defaults and the try-casts — and the three
+/// readers by name, which that context registers over a source root.
+pub fn reader_functions() -> Vec<(&'static str, String, Option<String>)> {
+    let ctx = SessionContext::new();
+    casts::register_try_functions(&ctx);
+    let mut out = registry(&ctx.state());
+    out.extend(READERS.iter().map(|(name, _)| {
+        (
+            "table",
+            (*name).to_string(),
+            Some(format!("{name}('<glob under the source root>')")),
+        )
+    }));
+    out.sort();
+    out
+}
+
 /// The file-source reader context: the try-cast functions plus the
 /// three read functions, path resolution rooted at the source. One
 /// builder serves the recipe (which counts scans) and the probe (which
@@ -461,11 +514,7 @@ fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext
     let ctx = SessionContext::new();
     root.register(&ctx);
     casts::register_try_functions(&ctx);
-    for (fn_name, kind) in [
-        ("read_parquet", SourceKind::Parquet),
-        ("read_csv", SourceKind::Csv),
-        ("read_json", SourceKind::Json),
-    ] {
+    for (fn_name, kind) in READERS {
         ctx.register_udtf(
             fn_name,
             Arc::new(ReadFiles {

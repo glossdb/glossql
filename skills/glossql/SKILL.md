@@ -55,6 +55,13 @@ per statement:
   with a second block `{"landed": [...]}` carrying the outcomes of
   the statements that stood, in the usual shape. What landed stays
   landed; the rest never ran.
+- a window — a last block, `[procedural graph] you are at: …`, on every
+  result: the acts the record admits after the one you just landed,
+  each with its condition, how, and what goes wrong, then the acts one
+  step further. It is a map of what is admissible now, never an order;
+  the skills say how. What SQL can call in each context:
+  `doc://functions/door.md`, `doc://functions/recipe.md`,
+  `doc://functions/detector.md`.
 
 Who you are (agent or human) rides the connection — the door's token
 says which. There is no BY clause and nothing to declare.

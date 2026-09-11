@@ -63,6 +63,11 @@ pub(crate) fn read_sql(name: &str) -> Option<&'static str> {
         .map(|(_, sql)| *sql)
 }
 
+/// The name of every shipped read, for a listing or a vocabulary.
+pub fn library_reads() -> Vec<&'static str> {
+    LIBRARY.iter().map(|(name, _)| *name).collect()
+}
+
 #[cfg(test)]
 mod tests {
     /// Every shipped read is one query under the pre-pass's own rule —
