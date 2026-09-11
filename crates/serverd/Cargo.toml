@@ -81,18 +81,3 @@ ed25519-dalek = { version = "2", features = ["pkcs8"] }
 
 [lints]
 workspace = true
-
-# How the Linux artifact is assembled: `cargo deb -p glossql-serverd
-# --no-build` over a release binary. The binary is the whole package;
-# it carries no model — the model doors call the kernel service.
-[package.metadata.deb]
-name = "glossql"
-maintainer = "glossdb <phas02@users.noreply.github.com>"
-copyright = "glossql contributors, Apache-2.0"
-extended-description = """glossql is one binary serving one workspace: the SQL-shaped
-surface over a workspace's data and its context. The band model behind
-three of its doors is served by the glosskernels service, hosted or run
-beside it (GLOSSQL_TABICL_URL)."""
-section = "database"
-priority = "optional"
-assets = [["target/release/glossql", "usr/bin/glossql", "755"]]

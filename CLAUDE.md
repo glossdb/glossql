@@ -25,7 +25,7 @@ follow the corpus-first process below.
   humans alike; enterprise-customer quality, constantly current.
   Never normative language prose.
 - `.github/` — the release machinery: `workflows/release.yml` builds
-  the debs on a `v*` tag, `release-macos.sh` is the laptop half, the
+  the image on a `v*` tag, `release-macos.sh` is the laptop half, the
   rendered tap formula sits beside them. The order and its sharp
   edges: the glossql-release skill.
 - `dev/` — the rig the live tests and a laptop run against: Postgres,

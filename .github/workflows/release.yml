@@ -1,8 +1,8 @@
-# The release build: one Debian package (x86_64; ARM is not a target)
-# and the server image, assembled when a v* tag is pushed. A manual
-# dispatch pushes the image by branch and commit and keeps the deb as a
-# run artifact — a deployment pins a commit between releases. The macOS artifact is built on a
-# laptop — .github/release-macos.sh — and the tap formula points at it.
+# The release build: the server image, assembled when a v* tag is
+# pushed. A manual dispatch pushes the image by branch and commit — a
+# deployment pins a commit between releases. The macOS artifact is built
+# on a laptop — .github/release-macos.sh — and the tap formula points at
+# it; the script also opens the draft release.
 # This is not CI: nothing here runs on push, the test suite gates
 # changes locally. Nothing built here carries a model: the band model
 # is the glosskernels service, released from its own repository.
@@ -14,44 +14,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
-  deb:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: build
-        run: cargo build --release -p glossql-serverd
-      - name: smoke
-        run: target/release/glossql --version
-      - name: package
-        run: |
-          cargo install cargo-deb --locked
-          cargo deb -p glossql-serverd --no-build
-      - uses: actions/upload-artifact@v7
-        with:
-          name: deb-${{ runner.arch }}
-          path: target/debian/*.deb
-          if-no-files-found: error
-      - name: upload to the release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --draft --verify-tag --title "$tag" --notes "" \
-            || true
-          gh release upload "$tag" target/debian/*.deb --clobber
-
   # The image is the Dockerfile at the tag, built from source on the
-  # runner (its own compile: the deb's binary is Ubuntu's glibc, the
-  # image's is Debian's) and pushed as ghcr.io/glossdb/glossql:<version>
-  # plus :latest. A dispatch run pushes :<branch> and :sha-<commit>;
-  # :latest moves at a tag only.
+  # runner and pushed as ghcr.io/glossdb/glossql:<version> plus :latest.
+  # A dispatch run pushes :<branch> and :sha-<commit>; :latest moves at
+  # a tag only.
   image:
     runs-on: ubuntu-24.04
     steps:
