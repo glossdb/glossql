@@ -22,7 +22,12 @@
 //! record — the dataset, the metric, the table its value comes from,
 //! the standing body, the columns a verdict admits and the frame does
 //! not serve, the metric and period a red band names — and the agent
-//! edits it and sends it, or does not. Hypermedia in the REST sense:
+//! edits it and sends it, or does not. The slots that select are SQL
+//! in `window.json`, one read each, `$metric` bound from the step's
+//! row and the dataset the session's own through `current_dataset`,
+//! planned through the same pipeline as every read; the four that
+//! render text — the dataset, the standing body, the body with the
+//! band's question appended, the first app — are the door's own. Hypermedia in the REST sense:
 //! the representation carries the links and the forms, and the client
 //! holds the goal.
 //!
@@ -38,6 +43,7 @@ use std::sync::{Arc, OnceLock};
 
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::{ParamValues, ScalarValue};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
     Expr as SQLExpr, FunctionArg, FunctionArgExpr, Value as SQLValue,
@@ -51,11 +57,17 @@ use crate::session::SessionError;
 /// The graph, verbatim — `doc://window.json` serves the same bytes.
 pub const GRAPH_JSON: &str = include_str!("../../../window.json");
 
-/// The routes, and the vocabulary the localizer names an act by: the
-/// statement kinds, the doors and reads, the acts the routes hand.
+/// The routes, the slots their statements are filled from, and the
+/// vocabulary the localizer names an act by: the statement kinds, the
+/// doors and reads, the acts the routes hand.
 #[derive(Deserialize)]
 pub struct Graph {
     pub nodes: Vec<String>,
+    /// A slot as one read: the first row's first column, as text —
+    /// none where no row or a null comes back. `$metric` binds from
+    /// the step's row; the dataset is `current_dataset`'s.
+    #[serde(default)]
+    pub slots: BTreeMap<String, String>,
     #[serde(default)]
     pub surfaces: Vec<Surface>,
 }
@@ -147,26 +159,11 @@ impl Graph {
     }
 }
 
-/// The slots a form may name, beside `{dataset}` and `{row.<field>}` /
-/// `{row.<field>[0]}`: what the door derives from the record for the
-/// matching row. The suite refuses a form naming any other.
-pub const SLOTS: &[&str] = &[
-    "dataset",
-    "table",
-    "body",
-    "columns",
-    "other_axes",
-    "unjudged",
-    "relevance_form",
-    "unjudged_table",
-    "wanted_table",
-    "metrics",
-    "n",
-    "app_form",
-    "red_metric",
-    "red_period",
-    "red_body",
-];
+/// The slots the door renders itself, beside the SQL slots of
+/// `window.json`, `{dataset}` and `{row.<field>}` / `{row.<field>[0]}`:
+/// the standing body, the body with the band's question appended, the
+/// first app. The suite refuses a form naming any other.
+pub const SLOTS: &[&str] = &["dataset", "body", "red_body", "app_form"];
 
 /// The SQL that reads a key's relation on the bound dataset: a door by
 /// its call, a store relation narrowed to the dataset where it carries
@@ -330,7 +327,7 @@ pub(crate) async fn answer(
         ctx: shared.session_ctx(),
         dataset,
         reads: HashMap::new(),
-        candidates: HashMap::new(),
+        slots: HashMap::new(),
     };
     let mut out = Vec::with_capacity(surfaces.len());
     for surface in surfaces {
@@ -380,27 +377,39 @@ struct Record<'a> {
     ctx: SessionContext,
     dataset: String,
     reads: HashMap<String, Result<Vec<Value>, String>>,
-    candidates: HashMap<String, Option<Candidates>>,
-}
-
-/// What a wider frame over a metric's table could add, from the
-/// record: the unserved columns a `dimension` gloss or an applicable
-/// `dimension_relevance` verdict admits as an axis; the unserved
-/// columns glossed `role` dimension that no verdict judged; and
-/// whether nobody judged any unserved column at all.
-#[derive(Clone, Default)]
-struct Candidates {
-    admitted: Vec<String>,
-    unjudged: Vec<String>,
-    unserved: Vec<String>,
-    unjudged_table: bool,
+    /// The SQL slots served, by name and the metric they were bound to.
+    slots: HashMap<(String, Option<String>), Option<String>>,
 }
 
 impl Record<'_> {
     async fn sql(&self, sql: &str) -> Result<Vec<Value>, String> {
-        let plan = Box::pin(crate::whatif::build_plan(self.shared, &self.ctx, sql))
-            .await
-            .map_err(|e| e.to_string())?;
+        self.sql_bound(sql, HashMap::new()).await
+    }
+
+    /// A read with `$name` parameters bound as string literals before
+    /// resolution — a slot's `$metric`.
+    async fn sql_bound(
+        &self,
+        sql: &str,
+        params: HashMap<String, String>,
+    ) -> Result<Vec<Value>, String> {
+        let values: HashMap<String, ScalarValue> = params
+            .into_iter()
+            .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))
+            .collect();
+        let map = match ParamValues::from(values) {
+            ParamValues::Map(map) => map,
+            _ => HashMap::new(),
+        };
+        let plan = Box::pin(crate::whatif::build_plan_bound(
+            self.shared,
+            &self.ctx,
+            sql,
+            "the slot",
+            &map,
+        ))
+        .await
+        .map_err(|e| e.to_string())?;
         let batches = self
             .ctx
             .execute_logical_plan(plan)
@@ -567,50 +576,14 @@ impl Record<'_> {
             .and_then(|r| r.get("metric"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        if let Some(sql) = graph().slots.get(name) {
+            return Box::pin(self.sql_slot(name, sql, metric)).await;
+        }
         match name {
-            "table" => self.table_of(metric.as_deref()?).await,
             "body" => self.body_of(metric.as_deref()?).await,
-            "columns" => Some(self.candidates(&metric?).await?.admitted.join(", ")),
-            "other_axes" => Some(Box::pin(self.other_axes(&metric?)).await),
-            "unjudged" => Some(self.candidates(&metric?).await?.unjudged.join(", ")),
-            // The detector over each column glossed a dimension and not
-            // judged; over every unserved column where nobody judged one.
-            "relevance_form" => {
-                let metric = metric?;
-                let table = self.table_of(&metric).await?;
-                let c = self.candidates(&metric).await?;
-                let columns = if !c.unjudged.is_empty() {
-                    c.unjudged
-                } else if c.unjudged_table {
-                    c.unserved
-                } else {
-                    Vec::new()
-                };
-                Some(
-                    columns
-                        .iter()
-                        .map(|c| {
-                            format!(
-                                "SELECT dimension_relevance() FROM {}.{table}.{c}",
-                                self.dataset
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(";\n"),
-                )
-            }
-            "unjudged_table" => {
-                let metric = metric?;
-                if self.candidates(&metric).await?.unjudged_table {
-                    self.table_of(&metric).await
-                } else {
-                    Some(String::new())
-                }
-            }
-            "red_metric" => self.worst_point().await.map(|(metric, _)| metric),
-            "red_period" => self.worst_point().await.map(|(_, period)| period),
             "red_body" => {
-                let (metric, period) = self.worst_point().await?;
+                let metric = Box::pin(self.slot("red_metric", None)).await?;
+                let period = Box::pin(self.slot("red_period", None)).await?;
                 let mut body = self.body_value(&metric).await?;
                 let stub = serde_json::json!({
                     "dimension": "definition",
@@ -627,41 +600,42 @@ impl Record<'_> {
                 }
                 serde_json::to_string_pretty(&body).ok()
             }
-            "wanted_table" => {
-                let over = row?.get("wanted_over")?.as_array()?.first()?.as_str()?;
-                Some(table_part(over).to_string())
-            }
-            "metrics" => Some(self.applicable().await.join(", ")),
-            "n" => Some(self.applicable().await.len().to_string()),
             "app_form" => Some(Box::pin(self.app_form()).await),
             _ => None,
         }
     }
 
-    /// The applicable metrics, by name.
-    async fn applicable(&mut self) -> Vec<String> {
-        let Ok(rows) = self.read("metric_axes").await else {
-            return Vec::new();
+    /// A slot written as SQL: `$metric` bound from the row where the
+    /// read names it, served once per binding; the first row's first
+    /// column as text, none where no row or a null comes back, and
+    /// none where the read refuses.
+    async fn sql_slot(&mut self, name: &str, sql: &str, metric: Option<String>) -> Option<String> {
+        let bound = sql.contains("$metric");
+        if bound && metric.is_none() {
+            return None;
+        }
+        let key = (name.to_string(), if bound { metric.clone() } else { None });
+        if let Some(served) = self.slots.get(&key) {
+            return served.clone();
+        }
+        let mut params = HashMap::new();
+        if let (true, Some(metric)) = (bound, metric) {
+            params.insert("metric".to_string(), metric);
+        }
+        let value = match self.sql_bound(sql, params).await {
+            Ok(rows) => rows
+                .first()
+                .and_then(Value::as_object)
+                .and_then(|row| row.values().next())
+                .filter(|v| !v.is_null())
+                .map(text),
+            Err(e) => {
+                tracing::debug!(slot = name, error = %e, "next: a slot refused");
+                None
+            }
         };
-        rows.iter()
-            .filter(|r| r.get("applicable") == Some(&Value::Bool(true)))
-            .filter_map(|r| r.get("metric")?.as_str().map(str::to_string))
-            .collect()
-    }
-
-    /// The table a metric's value comes from — its `value` field's
-    /// source, else the first source it names.
-    async fn table_of(&mut self, metric: &str) -> Option<String> {
-        let rows = self.read("metric_sources").await.ok()?;
-        let mine = rows
-            .iter()
-            .filter(|r| r.get("metric").and_then(Value::as_str) == Some(metric));
-        let source = mine
-            .clone()
-            .find(|r| r.get("field").and_then(Value::as_str) == Some("value"))
-            .or_else(|| mine.clone().next())
-            .and_then(|r| r.get("source")?.as_str().map(str::to_string))?;
-        Some(table_part(&source).to_string())
+        self.slots.insert(key, value.clone());
+        value
     }
 
     /// The standing grounding body of a metric, pretty-printed.
@@ -681,170 +655,16 @@ impl Record<'_> {
         serde_json::from_str::<Value>(raw).ok()
     }
 
-    /// The other applicable metrics without an axis whose table has an
-    /// admitted column to serve, each with its columns — so the line
-    /// moves when any of them takes one, and holds on none.
-    async fn other_axes(&mut self, metric: &str) -> String {
-        let Ok(rows) = self.read("metric_axes").await else {
-            return String::new();
-        };
-        let others: Vec<String> = rows
-            .iter()
-            .filter(|r| r.get("applicable") == Some(&Value::Bool(true)))
-            .filter(|r| is_empty(r.get("dims")))
-            .filter_map(|r| r.get("metric")?.as_str().map(str::to_string))
-            .filter(|m| m != metric)
-            .collect();
-        let mut out = Vec::new();
-        for other in others {
-            if let Some(c) = self.candidates(&other).await
-                && !c.admitted.is_empty()
-            {
-                out.push(format!("{other}: {}", c.admitted.join(", ")));
-            }
-        }
-        if out.is_empty() {
-            String::new()
-        } else {
-            format!(" — also {}", out.join("; "))
-        }
-    }
-
-    /// The wider-frame candidates of a metric, computed once per call.
-    async fn candidates(&mut self, metric: &str) -> Option<Candidates> {
-        if let Some(c) = self.candidates.get(metric) {
-            return c.clone();
-        }
-        let built = Box::pin(self.build_candidates(metric)).await;
-        self.candidates.insert(metric.to_string(), built.clone());
-        built
-    }
-
-    /// The unserved columns of the metric's table, by what admits
-    /// them: a `dimension` gloss (`primary` before `supporting`;
-    /// `none` closes the column), then an applicable
-    /// `dimension_relevance` verdict by relevance — the cube's own
-    /// admission rule, read from the same verdicts and glosses. The
-    /// judgment is the detector's and the gloss's; the door lists.
-    async fn build_candidates(&mut self, metric: &str) -> Option<Candidates> {
-        let table = self.table_of(metric).await?;
-        let sql = format!(
-            "SELECT column_name FROM information_schema.columns \
-             WHERE table_schema = '{}' AND table_name = '{}' ORDER BY ordinal_position",
-            self.dataset, table
-        );
-        let columns = self.sql(&sql).await.ok()?;
-        let served: Vec<String> = self
-            .read("metric_sources")
-            .await
-            .ok()?
-            .iter()
-            .filter(|r| r.get("metric").and_then(Value::as_str) == Some(metric))
-            .filter_map(|r| {
-                r.get("source")?
-                    .as_str()
-                    .map(|s| column_part(s).to_string())
-            })
-            .collect();
-        let unserved: Vec<String> = columns
-            .iter()
-            .filter_map(|r| r.get("column_name")?.as_str().map(str::to_string))
-            .filter(|c| !served.contains(c))
-            .collect();
-        let rctx = Box::pin(self.shared.read_context()).await.ok()?;
-        let relevance = crate::cube::judged_bodies(&rctx, &self.dataset, "dimension_relevance");
-        let dimension = Box::pin(crate::search::current_fact_values(
-            &rctx,
-            &self.dataset,
-            "dimension",
-        ))
-        .await
-        .ok()?;
-        let role = Box::pin(crate::search::current_fact_values(
-            &rctx,
-            &self.dataset,
-            "role",
-        ))
-        .await
-        .ok()?;
-        let subject = |c: &str| format!("{table}.{c}");
-        let word = |glosses: &HashMap<String, (Value, u8)>, c: &str| {
-            glosses
-                .get(&subject(c))
-                .and_then(|(v, _)| v["value"].as_str())
-                .map(str::to_string)
-        };
-        let judged =
-            |c: &str| relevance.contains_key(&subject(c)) || dimension.contains_key(&subject(c));
-        let mut admitted: Vec<(u8, f64, String)> = Vec::new();
-        for c in &unserved {
-            match word(&dimension, c).as_deref() {
-                Some("primary") => admitted.push((0, 0.0, c.clone())),
-                Some("supporting") => admitted.push((1, 0.0, c.clone())),
-                Some(_) => {}
-                None => {
-                    if let Some(v) = relevance.get(&subject(c))
-                        && v.body["applicable"] == Value::Bool(true)
-                    {
-                        let score = v.body["relevance"].as_f64().unwrap_or(0.0);
-                        admitted.push((2, -score, c.clone()));
-                    }
-                }
-            }
-        }
-        admitted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
-        let unjudged = unserved
-            .iter()
-            .filter(|c| word(&role, c).as_deref() == Some("dimension") && !judged(c))
-            .cloned()
-            .collect();
-        let unjudged_table = !unserved.is_empty() && unserved.iter().all(|c| !judged(c));
-        Some(Candidates {
-            admitted: admitted.into_iter().map(|(_, _, c)| c).collect(),
-            unjudged,
-            unserved,
-            unjudged_table,
-        })
-    }
-
-    /// The metric whose newest complete walked point sits furthest
-    /// from its corridor's median, and that point's period — the
-    /// point the bands detector scored. None where no walk stands.
-    async fn worst_point(&mut self) -> Option<(String, String)> {
-        let rows = self.read("band_points").await.ok()?;
-        let mut by_metric: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
-        for row in rows {
-            if let (Some(metric), Some(_)) = (
-                row.get("metric").and_then(Value::as_str),
-                row.get("point_seq").and_then(Value::as_i64),
-            ) {
-                by_metric.entry(metric).or_default().push(row);
-            }
-        }
-        let mut worst: Option<(f64, String, String)> = None;
-        for (metric, mut points) in by_metric {
-            points.sort_by_key(|p| p.get("point_seq").and_then(Value::as_i64));
-            let partial = |p: &&Value| p.get("partial") == Some(&Value::Bool(true));
-            let newest = match points.last() {
-                Some(last) if partial(last) => points.iter().rev().nth(1).copied(),
-                other => other.copied(),
-            };
-            let Some(point) = newest else { continue };
-            let Some(displacement) = point.get("displacement").and_then(Value::as_f64) else {
-                continue;
-            };
-            if worst.as_ref().is_none_or(|(d, _, _)| displacement > *d) {
-                let period = point.get("period").and_then(Value::as_str).unwrap_or("");
-                worst = Some((displacement, metric.to_string(), period.to_string()));
-            }
-        }
-        worst.map(|(_, metric, period)| (metric, period))
-    }
-
     /// A first app over the applicable metrics: the manifest, one
     /// frame over the cube's monthly cells, one spec, one page.
     async fn app_form(&mut self) -> String {
-        let metrics = self.applicable().await;
+        let metrics: Vec<String> = Box::pin(self.slot("metrics", None))
+            .await
+            .unwrap_or_default()
+            .split(", ")
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+            .collect();
         let title = format!("{} review", self.dataset);
         let html = concat!(
             "{% extends \"shell.html\" %}\n",
@@ -893,20 +713,6 @@ fn text(v: &Value) -> String {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     }
-}
-
-/// `table` of a `table.column` (or `dataset.table.column`) subject.
-fn table_part(subject: &str) -> &str {
-    let parts: Vec<&str> = subject.split('.').collect();
-    match parts.as_slice() {
-        [.., table, _] => table,
-        [only] => only,
-        [] => subject,
-    }
-}
-
-fn column_part(subject: &str) -> &str {
-    subject.rsplit('.').next().unwrap_or(subject)
 }
 
 /// The `{slot}` names a template uses — a name in braces, inside a

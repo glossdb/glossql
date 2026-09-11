@@ -191,7 +191,8 @@ async fn every_node_names_a_real_thing() {
                 for slot in slots_in(template) {
                     let ok = slot == "dataset"
                         || slot.starts_with("row.")
-                        || SLOTS.contains(&slot.as_str());
+                        || SLOTS.contains(&slot.as_str())
+                        || graph.slots.contains_key(&slot);
                     assert!(
                         ok,
                         "route {} names a slot the door cannot fill: {{{slot}}}",
@@ -238,6 +239,23 @@ async fn every_key_names_a_read_and_a_column_it_serves() {
         checked.insert(key.read.clone());
     }
     assert!(checked.len() >= 8, "keyed reads: {checked:?}");
+
+    // every slot written as SQL plans on the bound dataset, its
+    // `$metric` bound as the door binds it
+    use datafusion::common::{ParamValues, ScalarValue};
+    for (name, sql) in &next::graph().slots {
+        let params = ParamValues::from(std::collections::HashMap::from([(
+            "metric".to_string(),
+            ScalarValue::Utf8(Some("takings".into())),
+        )]));
+        let wrapped = format!("SELECT * FROM ({sql}) AS slot LIMIT 0");
+        if let Err(e) = session
+            .query_stream_with_params(&wrapped, Some(params))
+            .await
+        {
+            panic!("slot `{name}` does not plan: {e}");
+        }
+    }
 }
 
 #[test]

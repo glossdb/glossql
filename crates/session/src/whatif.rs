@@ -563,12 +563,35 @@ pub(crate) async fn build_plan(
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<LogicalPlan, SessionError> {
+    build_plan_bound(
+        shared,
+        ctx,
+        sql,
+        "the grounding",
+        &std::collections::HashMap::new(),
+    )
+    .await
+}
+
+/// [`build_plan`] with `$name` string parameters bound into the
+/// statement before resolution, as a door argument binds — what a
+/// `next()` slot written as SQL reads its `$metric` through.
+pub(crate) async fn build_plan_bound(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+    what: &str,
+    params: &std::collections::HashMap<String, datafusion::common::metadata::ScalarAndMetadata>,
+) -> Result<LogicalPlan, SessionError> {
     // Parsed once, under the pre-pass's one-query rule; the same
     // statement is resolved and then planned.
-    let query = crate::prepass::parse(sql, "the grounding")?;
-    let statement = datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(
-        Box::new(query),
-    )));
+    let query = crate::prepass::parse(sql, what)?;
+    let mut statement = datafusion::sql::parser::Statement::Statement(Box::new(
+        SQLStatement::Query(Box::new(query)),
+    ));
+    if !params.is_empty() {
+        crate::measure::bind_params(&mut statement, params);
+    }
     // A grounding body may name `read.<x>()`; resolve before planning.
     let resolved = crate::prepass::resolve(shared, ctx, &statement).await?;
     crate::reads::state_with(ctx, shared, resolved)
