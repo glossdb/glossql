@@ -16,15 +16,8 @@ macOS (Apple Silicon):
 brew install glossdb/glossql/glossql
 ```
 
-Debian-based Linux, x86_64 (Debian 13 / Ubuntu 24.04 or newer):
-download the `.deb` from the [releases
-page](https://github.com/glossdb/glossql/releases) and
-
-```bash
-sudo apt install ./glossql_<version>_amd64.deb
-```
-
-The package installs one command, `glossql`.
+The formula installs one command, `glossql`. On Linux, run the
+container (below) or build from source.
 
 ## Build and start
 
@@ -46,9 +39,9 @@ listens:
 
 ## The container
 
-The same binary as an image: `ghcr.io/glossdb/glossql:<version>`,
-pushed at each release tag beside the deb, and `docker build .` at a
-checkout builds the same. A distroless base — glibc, the C runtime
+The same binary as an x86_64 image: `ghcr.io/glossdb/glossql:<version>`,
+pushed at each release tag. `docker build .` at a checkout builds the
+same. A distroless base — glibc, the C runtime
 libraries, the root certificates, no shell and no package manager —
 and the binary; no model, no weights, no GPU. It listens on 8080 and
 runs as the base's unprivileged `nonroot` user. There is no workspace in a container:

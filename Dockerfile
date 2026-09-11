@@ -7,7 +7,7 @@
 FROM rust:1-trixie AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p glossql-serverd
+RUN cargo build --locked --release -p glossql-serverd
 
 # What the binary links is glibc, libm and libgcc (`ldd` on it), and
 # what it needs beside them is the root certificates — the issuer's
