@@ -333,6 +333,15 @@ pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> 
         let first = reason.split(". ").next().unwrap_or(reason);
         line.push_str(&format!("not applicable — {first}"));
     }
+    // A re-record says what it changed against the writing it
+    // supersedes — the totals over their shared months.
+    if let Some(drift) = fact
+        .get("superseded_divergence")
+        .and_then(Value::as_str)
+        .filter(|d| !d.is_empty())
+    {
+        line.push_str(&format!("; against the other writing: {drift}"));
+    }
     line
 }
 

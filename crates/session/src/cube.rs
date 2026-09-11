@@ -277,6 +277,12 @@ pub(crate) struct Fact {
     /// no rival is served.
     pub alternative_divergence: Option<String>,
     pub alternative_error: Option<String>,
+    /// At a grounding write only: the gap between the serving frame's
+    /// totals and the newest other writing on the same slot over their
+    /// shared periods, and the periods one serves and the other does
+    /// not — what the re-record changed, read at the decision moment.
+    /// None on a read and on a first grounding.
+    pub superseded_divergence: Option<String>,
 }
 
 impl Fact {
@@ -303,6 +309,7 @@ impl Fact {
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
+            superseded_divergence: None,
         }
     }
 }
@@ -407,6 +414,7 @@ impl Planned {
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
+            superseded_divergence: None,
         }
     }
 }
@@ -1060,7 +1068,108 @@ async fn write_fact(
         .find(|s| s.subject == subject && s.aspect == aspect)
         .ok_or_else(withheld)?;
     let planned = Box::pin(plan(shared, &surface, slot, None)).await?;
-    Ok(planned.fact(aspect))
+    let mut fact = planned.fact(aspect);
+    // Beside the serving frame, the newest other writing on the slot:
+    // the one this write superseded, or the standing human grounding
+    // the agent's writing does not displace. Both frames build here,
+    // uncached, and the row says what the write changed as the totals
+    // over their shared months — serving an axis must keep the total,
+    // and a join that drops rows shows at the write, not at the
+    // read-back. A first grounding has no other writing and no row.
+    // The slot's history, newest first — the raw read serves one row
+    // per actor kind and never the one a write superseded.
+    let rctx = shared.read_context().await?;
+    let mut rows: Vec<_> = rctx
+        .glossary
+        .iter()
+        .filter(|g| g.dataset == dataset && g.subject == subject && g.aspect == aspect)
+        .collect();
+    rows.sort_by_key(|g| std::cmp::Reverse(g.seq));
+    let serving = rows.iter().position(|r| r.body == slot.body);
+    let other = rows
+        .iter()
+        .enumerate()
+        .find(|(i, _)| Some(*i) != serving)
+        .map(|(_, r)| r);
+    if let Some(other) = other
+        && fact.applicable
+    {
+        let before = QuerySlot {
+            subject: subject.to_string(),
+            aspect: aspect.to_string(),
+            body: other.body.clone(),
+        };
+        let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
+        let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
+        fact.superseded_divergence = Some(if before.fact.applicable {
+            drift(&now.cells, &before.cells)
+        } else {
+            format!(
+                "the other writing served nothing: {}",
+                before.fact.reason.as_deref().unwrap_or("no reason given")
+            )
+        });
+    }
+    Ok(fact)
+}
+
+/// The totals of a cube's cells by period — the undimensioned rows.
+fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
+    use datafusion::arrow::array::AsArray;
+    use datafusion::arrow::datatypes::{Float64Type, TimestampNanosecondType};
+    let dimension = cells.column(1).as_string::<i32>();
+    let period = cells.column(3).as_primitive::<TimestampNanosecondType>();
+    let value = cells.column(4).as_primitive::<Float64Type>();
+    (0..cells.num_rows())
+        .filter(|&i| dimension.value(i).is_empty())
+        .map(|i| (period.value(i), value.value(i)))
+        .collect()
+}
+
+/// The gap between two frames' totals over their shared periods, in
+/// the rival divergence's words, and the periods one serves and the
+/// other does not. Agreement is a zero gap, never silence.
+fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
+    let (now, before) = (totals(now), totals(before));
+    let day = |p: i64| {
+        chrono::DateTime::from_timestamp_nanos(p)
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let mut shared = 0usize;
+    let mut max: Option<(f64, i64)> = None;
+    for (p, v) in &now {
+        let Some(b) = before.get(p) else { continue };
+        shared += 1;
+        let scale = v.abs().max(b.abs());
+        let gap = if scale == 0.0 {
+            0.0
+        } else {
+            (v - b).abs() / scale
+        };
+        if max.is_none_or(|(g, _)| gap > g) {
+            max = Some((gap, *p));
+        }
+    }
+    let mut out = match max {
+        None => "no shared periods".to_string(),
+        Some((0.0, _)) => format!("no gap over {shared} shared periods"),
+        Some((gap, at)) => format!(
+            "max relative gap {gap:.4} at {} over {shared} shared periods",
+            day(at)
+        ),
+    };
+    let only_before = before.keys().filter(|p| !now.contains_key(p)).count();
+    let only_now = now.keys().filter(|p| !before.contains_key(p)).count();
+    if only_before > 0 {
+        out.push_str(&format!(
+            "; {only_before} periods only in the other writing"
+        ));
+    }
+    if only_now > 0 {
+        out.push_str(&format!("; {only_now} periods only now"));
+    }
+    out
 }
 
 /// One metric's cube at this pin. A grounding that cannot serve — no
@@ -1725,6 +1834,7 @@ async fn build(
             alternative,
             alternative_divergence,
             alternative_error,
+            superseded_divergence: None,
         },
         cells: cells_batch(&slot.aspect, &cells),
         version_bound: foreign.then(|| version.to_string()),
@@ -2370,6 +2480,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
         Field::new("alternative", DataType::Utf8, true),
         Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
+        Field::new("superseded_divergence", DataType::Utf8, true),
     ]));
     RecordBatch::try_new(
         schema,
@@ -2401,6 +2512,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),
+            text(|f| f.superseded_divergence.as_deref()),
         ],
     )
     .map_err(|e| SessionError::Runtime(e.to_string()))

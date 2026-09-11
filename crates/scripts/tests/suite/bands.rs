@@ -353,6 +353,36 @@ async fn metric_bands_walks_and_reads_the_breach() {
         statement.contains(&format!("WHERE metric = '{breached}'")),
         "{statement}"
     );
+
+    // The judgment recorded as an assumption under the band's key is
+    // the question for the human, and the goal is blocked on it — and
+    // the re-record owes the walk again, as only a grounding does.
+    let body = if *breached == "revenue" {
+        r#"{"sql": "SELECT date, value FROM lines", "assumptions": [{"dimension": "definition", "key": "band-2025-06", "assumption": "a shift: the June campaign", "basis": "the sales calendar", "confidence": 0.7}]}"#
+    } else {
+        r#"{"sql": "SELECT date, value FROM levels", "behavior": "stock", "assumptions": [{"dimension": "definition", "key": "band-2025-06", "assumption": "a shift: the warehouse move", "basis": "operations", "confidence": 0.7}]}"#
+    };
+    session
+        .execute(&format!("GLOSS {breached} ON fin AS $${body}$$;"))
+        .await
+        .unwrap();
+    let outcomes = session
+        .execute("SELECT state, why FROM next(surface => 'bands');")
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("next rows")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
+    let text = |c: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batch.column(c), 0).unwrap()
+    };
+    let (state, why) = (text(0), text(1));
+    assert!(
+        state == "next" && why.contains("run the walk again")
+            || state == "blocked" && why.contains("the question stands"),
+        "{state}: {why}"
+    );
 }
 
 /// The multi-row stock regression: a stock's walk actuals must be

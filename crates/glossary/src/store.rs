@@ -43,6 +43,9 @@ pub struct ReadContext {
     /// The statement's pin — what every measurement this read serves or
     /// computes is keyed by.
     pub pin: Pin,
+    /// The dataset's grounding surface as one number — the pin's
+    /// `glossql.grounding` leg ([`grounding_digest`]).
+    pub grounding: u64,
     /// The store's version when this context was built — every relation
     /// table at its snapshot, derived from the catalog. This is what the
     /// cache is keyed by, and it is enumerated rather than curated so a
@@ -123,6 +126,77 @@ pub fn measurement_stands(
 /// an import moves it, a gloss does not.
 pub fn data_legs(pin_text: &str, dataset: &str) -> String {
     read_view(pin_text, dataset, "*")
+}
+
+/// The dataset's grounding surface as one number: every glossary
+/// writing on a QUERY aspect, the QUERY aspects themselves and the
+/// witnesses on them, in a fixed order. The pin carries it as the leg
+/// `glossql.grounding`, so a measurement that reads the groundings —
+/// the bands walk, the collision and source walkers — names that leg
+/// and stands until a grounding changes: a definitions entry, an app
+/// page or a declared check moves the glossary relation and not this.
+pub fn grounding_digest(
+    dataset: &str,
+    glossary: &[GlossRow],
+    aspects: &[AspectRow],
+    witnesses: &[WitnessRow],
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let query: std::collections::BTreeSet<&str> = aspects
+        .iter()
+        .filter(|a| a.kind == "query")
+        .map(|a| a.name.as_str())
+        .collect();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut aspects: Vec<&AspectRow> = aspects
+        .iter()
+        .filter(|a| query.contains(a.name.as_str()))
+        .collect();
+    aspects.sort_by(|a, b| a.name.cmp(&b.name));
+    for a in aspects {
+        (&a.name, &a.grains, &a.schema).hash(&mut h);
+    }
+    let mut witnesses: Vec<&WitnessRow> = witnesses
+        .iter()
+        .filter(|w| query.contains(w.aspect.as_str()))
+        .collect();
+    witnesses.sort_by(|a, b| a.name.cmp(&b.name));
+    for w in witnesses {
+        (
+            &w.name,
+            &w.aspect,
+            w.admits_agent,
+            w.admits_human,
+            &w.detector,
+            w.threshold.map(f64::to_bits),
+        )
+            .hash(&mut h);
+    }
+    let mut rows: Vec<&GlossRow> = glossary
+        .iter()
+        .filter(|g| g.dataset == dataset && query.contains(g.aspect.as_str()))
+        .collect();
+    rows.sort_by_key(|g| g.seq);
+    for g in rows {
+        (
+            &g.subject,
+            &g.aspect,
+            &g.actor_kind,
+            &g.actor_id,
+            &g.body,
+            &g.written_at,
+            g.seq,
+        )
+            .hash(&mut h);
+    }
+    h.finish()
+}
+
+/// The pin from its parts and the grounding leg — the one part no
+/// relation snapshot carries.
+fn with_grounding(mut parts: Vec<String>, grounding: u64) -> Pin {
+    parts.push(format!("{STORE_NAMESPACE}.grounding:{grounding}"));
+    Pin::new(parts)
 }
 
 /// One side of the currency comparison: the pin's parts whose names
@@ -1596,7 +1670,7 @@ impl Store {
         universe: Vec<String>,
         snapshots: std::collections::HashMap<String, i64>,
     ) -> Result<ReadContext> {
-        let pin = self.pin(dataset, &snapshots).await?;
+        let parts = self.pin_parts(dataset, &snapshots).await?;
         let version = self.version().await?;
         let cached = self
             .contexts
@@ -1610,19 +1684,24 @@ impl Store {
         if let Some(mut ctx) = cached {
             ctx.universe = universe;
             ctx.snapshots = snapshots;
-            ctx.pin = pin;
+            ctx.pin = with_grounding(parts, ctx.grounding);
             return Ok(ctx);
         }
+        let glossary = std::sync::Arc::new(self.glossary_history().await?);
+        let witnesses = std::sync::Arc::new(self.witnesses_all().await?);
+        let aspects = std::sync::Arc::new(self.aspects_all().await?);
+        let grounding = grounding_digest(dataset, &glossary, &aspects, &witnesses);
         let ctx = ReadContext {
-            glossary: std::sync::Arc::new(self.glossary_history().await?),
+            glossary,
             measurements: std::sync::Arc::new(self.measurements_newest(dataset).await?),
             functions: std::sync::Arc::new(self.functions_all().await?),
-            witnesses: std::sync::Arc::new(self.witnesses_all().await?),
+            witnesses,
             sources: std::sync::Arc::new(self.sources_all().await?),
-            aspects: std::sync::Arc::new(self.aspects_all().await?),
+            aspects,
             universe,
             snapshots,
-            pin,
+            pin: with_grounding(parts, grounding),
+            grounding,
             version,
         };
         self.contexts
@@ -1697,12 +1776,31 @@ impl Store {
     // -- the pin, and the measurements it keys -------------------------
 
     /// The statement's pin over `dataset`, from the data snapshots the
-    /// session resolved plus the declaration relations' own.
+    /// session resolved plus the declaration relations' own, and the
+    /// grounding leg ([`grounding_digest`]) — the same pin a read
+    /// context carries, so a measurement landed at it is served there.
     pub async fn pin(
         &self,
         dataset: &str,
         data: &std::collections::HashMap<String, i64>,
     ) -> Result<Pin> {
+        let parts = self.pin_parts(dataset, data).await?;
+        let glossary = self.glossary_history().await?;
+        let aspects = self.aspects_all().await?;
+        let witnesses = self.witnesses_all().await?;
+        Ok(with_grounding(
+            parts,
+            grounding_digest(dataset, &glossary, &aspects, &witnesses),
+        ))
+    }
+
+    /// The pin's parts from the snapshots alone — what a read context
+    /// completes with the grounding leg it has the rows for.
+    async fn pin_parts(
+        &self,
+        dataset: &str,
+        data: &std::collections::HashMap<String, i64>,
+    ) -> Result<Vec<String>> {
         let mut parts: Vec<String> = data
             .iter()
             .map(|(table, snap)| format!("{dataset}.{table}:{snap}"))
@@ -1720,7 +1818,7 @@ impl Store {
                 snap.map_or_else(|| "-".into(), |s| s.to_string())
             ));
         }
-        Ok(Pin::new(parts))
+        Ok(parts)
     }
 
     /// The measurements at one pin — the pin pushed into the format's

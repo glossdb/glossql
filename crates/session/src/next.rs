@@ -8,13 +8,15 @@
 //! route is a list of steps in `window.json`. A step is a condition
 //! over a shipped read (a key, as the mechanical edges carry: some row
 //! matches every predicate, or none does; `"null"` matches an absent
-//! field, `"{dataset}"` the bound dataset, and a list field matches
-//! when one member does) and what holds when it does — a step may
-//! also `need` a slot the door can fill:
-//! the goal is blocked and why, or one act with its statement, or the
-//! goal is done. The first step whose condition holds decides. The
-//! order of a route is the goal's preconditions and nothing more; an
-//! act that is not a precondition of the goal is not a step.
+//! field, a value may name a slot the record fills without a row —
+//! `"{dataset}"`, `"{red_metric}"` — and a list field matches when one
+//! member does) and what holds when it does — a step may also `need`
+//! a slot the door can fill, and then it holds on the first matching
+//! row the door can fill it for: the goal is blocked and why, or one
+//! act with its statement, or the goal is done. The first step whose
+//! condition holds decides. The order of a route is the goal's
+//! preconditions and nothing more; an act that is not a precondition
+//! of the goal is not a step.
 //!
 //! The statement is the imperative part. The door fills it from the
 //! record — the dataset, the metric, the table its value comes from,
@@ -180,6 +182,7 @@ pub const SLOTS: &[&str] = &[
     "table",
     "body",
     "columns",
+    "other_axes",
     "unjudged",
     "relevance_form",
     "unjudged_table",
@@ -189,6 +192,7 @@ pub const SLOTS: &[&str] = &[
     "app_form",
     "red_metric",
     "red_period",
+    "red_body",
 ];
 
 /// The SQL that reads a key's relation on the bound dataset: a door by
@@ -222,11 +226,18 @@ pub fn read_sql(read: &str, dataset: &str) -> String {
 /// The first row matching every predicate of a key; `"{dataset}"` as
 /// a value is the bound dataset.
 pub fn matching<'a>(key: &Key, rows: &'a [Value], dataset: &str) -> Option<&'a Value> {
-    rows.iter().find(|row| {
-        key.conditions
-            .iter()
-            .all(|(field, want)| predicate(row.get(field), want, dataset))
-    })
+    matching_all(key, rows, dataset).into_iter().next()
+}
+
+/// Every row matching every predicate of a key, in the read's order.
+pub fn matching_all<'a>(key: &Key, rows: &'a [Value], dataset: &str) -> Vec<&'a Value> {
+    rows.iter()
+        .filter(|row| {
+            key.conditions
+                .iter()
+                .all(|(field, want)| predicate(row.get(field), want, dataset))
+        })
+        .collect()
 }
 
 /// Whether a key holds on the rows its read served.
@@ -437,81 +448,49 @@ impl Record<'_> {
         }
     }
 
-    /// The first step whose condition holds decides.
+    /// The first step whose condition holds decides — on the first
+    /// matching row the door can fill its needs for.
     async fn resolve(&mut self, surface: &Surface) -> Result<Next, SessionError> {
         let dataset = self.dataset.clone();
-        for step in &surface.route {
-            let row = match &step.when {
-                None => None,
-                Some(keys) => {
-                    let mut first: Option<Value> = None;
-                    let mut all = true;
-                    for (i, key) in keys.each().enumerate() {
-                        let Ok(rows) = self.read(&key.read).await else {
-                            all = false;
-                            break;
-                        };
-                        let m = matching(key, rows, &dataset);
-                        if if key.none { m.is_some() } else { m.is_none() } {
-                            all = false;
-                            break;
-                        }
-                        if i == 0 {
-                            first = m.cloned();
-                        }
+        'steps: for step in &surface.route {
+            // The rows the step may decide on: every match of its first
+            // key while every key holds; one empty row without a
+            // condition.
+            let mut rows: Vec<Option<Value>> = vec![None];
+            if let Some(keys) = &step.when {
+                let mut first: Vec<Value> = Vec::new();
+                for (i, key) in keys.each().enumerate() {
+                    let key = Box::pin(self.bound(key)).await;
+                    let Ok(read) = self.read(&key.read).await else {
+                        continue 'steps;
+                    };
+                    let matches = matching_all(&key, read, &dataset);
+                    if key.none == !matches.is_empty() {
+                        continue 'steps;
                     }
-                    if !all {
-                        continue;
-                    }
-                    first
-                }
-            };
-            let mut needed = true;
-            for need in &step.needs {
-                if self
-                    .slot(need, row.as_ref())
-                    .await
-                    .is_none_or(|v| v.trim().is_empty())
-                {
-                    needed = false;
-                    break;
-                }
-            }
-            if !needed {
-                continue;
-            }
-            let mut next = Next {
-                surface: surface.name.clone(),
-                state: "done",
-                act: String::new(),
-                say: String::new(),
-                why: String::new(),
-                statement: String::new(),
-                then: String::new(),
-            };
-            if let Some(reason) = &step.blocked {
-                next.state = "blocked";
-                next.why = self.fill(reason, row.as_ref()).await;
-                return Ok(next);
-            }
-            if let Some(done) = &step.done {
-                next.why = self.fill(done, row.as_ref()).await;
-                return Ok(next);
-            }
-            if let Some(act) = &step.act {
-                next.state = "next";
-                next.act = act.clone();
-                for (slot, template) in [
-                    (&mut next.say, &step.say),
-                    (&mut next.why, &step.why),
-                    (&mut next.statement, &step.form),
-                    (&mut next.then, &step.then),
-                ] {
-                    if let Some(template) = template {
-                        *slot = self.fill(template, row.as_ref()).await;
+                    if i == 0 {
+                        first = matches.into_iter().cloned().collect();
                     }
                 }
-                return Ok(next);
+                if !first.is_empty() {
+                    rows = first.into_iter().map(Some).collect();
+                }
+            }
+            for row in rows {
+                let mut needed = true;
+                for need in &step.needs {
+                    if self
+                        .slot(need, row.as_ref())
+                        .await
+                        .is_none_or(|v| v.trim().is_empty())
+                    {
+                        needed = false;
+                        break;
+                    }
+                }
+                if needed {
+                    return Ok(Box::pin(self.decide(surface, step, row.as_ref())).await);
+                }
             }
         }
         Ok(Next {
@@ -523,6 +502,57 @@ impl Record<'_> {
             statement: String::new(),
             then: String::new(),
         })
+    }
+
+    /// A key with its slot-naming values filled — `"{dataset}"`,
+    /// `"{red_metric}"` — from the record, without a row.
+    async fn bound(&mut self, key: &Key) -> Key {
+        let mut out = key.clone();
+        for value in out.conditions.values_mut() {
+            if let Some(text) = value.as_str()
+                && text.contains('{')
+            {
+                *value = Value::String(Box::pin(self.fill(text, None)).await);
+            }
+        }
+        out
+    }
+
+    /// What a step says once it holds on a row.
+    async fn decide(&mut self, surface: &Surface, step: &Step, row: Option<&Value>) -> Next {
+        let mut next = Next {
+            surface: surface.name.clone(),
+            state: "done",
+            act: String::new(),
+            say: String::new(),
+            why: String::new(),
+            statement: String::new(),
+            then: String::new(),
+        };
+        if let Some(reason) = &step.blocked {
+            next.state = "blocked";
+            next.why = self.fill(reason, row).await;
+            return next;
+        }
+        if let Some(done) = &step.done {
+            next.why = self.fill(done, row).await;
+            return next;
+        }
+        if let Some(act) = &step.act {
+            next.state = "next";
+            next.act = act.clone();
+            for (slot, template) in [
+                (&mut next.say, &step.say),
+                (&mut next.why, &step.why),
+                (&mut next.statement, &step.form),
+                (&mut next.then, &step.then),
+            ] {
+                if let Some(template) = template {
+                    *slot = self.fill(template, row).await;
+                }
+            }
+        }
+        next
     }
 
     /// A template with its `{slots}` filled from the matching row and
@@ -563,6 +593,7 @@ impl Record<'_> {
             "table" => self.table_of(metric.as_deref()?).await,
             "body" => self.body_of(metric.as_deref()?).await,
             "columns" => Some(self.candidates(&metric?).await?.admitted.join(", ")),
+            "other_axes" => Some(Box::pin(self.other_axes(&metric?)).await),
             "unjudged" => Some(self.candidates(&metric?).await?.unjudged.join(", ")),
             "relevance_form" => {
                 let metric = metric?;
@@ -591,13 +622,31 @@ impl Record<'_> {
             }
             "red_metric" => self.worst_point().await.map(|(metric, _)| metric),
             "red_period" => self.worst_point().await.map(|(_, period)| period),
+            "red_body" => {
+                let (metric, period) = self.worst_point().await?;
+                let mut body = self.body_value(&metric).await?;
+                let stub = serde_json::json!({
+                    "dimension": "definition",
+                    "key": format!("band-{period}"),
+                    "assumption": format!("<a shift at {period}, in the business's words — or the defect and its fix>"),
+                    "basis": "<what it rests on>",
+                    "confidence": 0.7
+                });
+                match body.get_mut("assumptions").and_then(Value::as_array_mut) {
+                    Some(list) => list.push(stub),
+                    None => {
+                        body["assumptions"] = Value::Array(vec![stub]);
+                    }
+                }
+                serde_json::to_string_pretty(&body).ok()
+            }
             "wanted_table" => {
                 let over = row?.get("wanted_over")?.as_array()?.first()?.as_str()?;
                 Some(table_part(over).to_string())
             }
             "metrics" => Some(self.applicable().await.join(", ")),
             "n" => Some(self.applicable().await.len().to_string()),
-            "app_form" => Some(self.app_form().await),
+            "app_form" => Some(Box::pin(self.app_form()).await),
             _ => None,
         }
     }
@@ -630,18 +679,48 @@ impl Record<'_> {
 
     /// The standing grounding body of a metric, pretty-printed.
     async fn body_of(&mut self, metric: &str) -> Option<String> {
+        let body = self.body_value(metric).await?;
+        serde_json::to_string_pretty(&body).ok()
+    }
+
+    /// The standing grounding body of a metric, as JSON.
+    async fn body_value(&mut self, metric: &str) -> Option<Value> {
         let sql = format!(
             "SELECT value FROM GLOSSARY({}::{}) WHERE state = 'current'",
             self.dataset, metric
         );
         let rows = self.sql(&sql).await.ok()?;
         let raw = rows.first()?.get("value")?.as_str()?;
-        Some(
-            serde_json::from_str::<Value>(raw)
-                .ok()
-                .and_then(|v| serde_json::to_string_pretty(&v).ok())
-                .unwrap_or_else(|| raw.to_string()),
-        )
+        serde_json::from_str::<Value>(raw).ok()
+    }
+
+    /// The other applicable metrics without an axis whose table has an
+    /// admitted column to serve, each with its columns — so the line
+    /// moves when any of them takes one, and holds on none.
+    async fn other_axes(&mut self, metric: &str) -> String {
+        let Ok(rows) = self.read("metric_axes").await else {
+            return String::new();
+        };
+        let others: Vec<String> = rows
+            .iter()
+            .filter(|r| r.get("applicable") == Some(&Value::Bool(true)))
+            .filter(|r| is_empty(r.get("dims")))
+            .filter_map(|r| r.get("metric")?.as_str().map(str::to_string))
+            .filter(|m| m != metric)
+            .collect();
+        let mut out = Vec::new();
+        for other in others {
+            if let Some(c) = self.candidates(&other).await
+                && !c.admitted.is_empty()
+            {
+                out.push(format!("{other}: {}", c.admitted.join(", ")));
+            }
+        }
+        if out.is_empty() {
+            String::new()
+        } else {
+            format!(" — also {}", out.join("; "))
+        }
     }
 
     /// The wider-frame candidates of a metric, computed once per call.
@@ -649,7 +728,7 @@ impl Record<'_> {
         if let Some(c) = self.candidates.get(metric) {
             return c.clone();
         }
-        let built = self.build_candidates(metric).await;
+        let built = Box::pin(self.build_candidates(metric)).await;
         self.candidates.insert(metric.to_string(), built.clone());
         built
     }
@@ -685,14 +764,22 @@ impl Record<'_> {
             .filter_map(|r| r.get("column_name")?.as_str().map(str::to_string))
             .filter(|c| !served.contains(c))
             .collect();
-        let rctx = self.shared.read_context().await.ok()?;
+        let rctx = Box::pin(self.shared.read_context()).await.ok()?;
         let relevance = crate::cube::judged_bodies(&rctx, &self.dataset, "dimension_relevance");
-        let dimension = crate::search::current_fact_values(&rctx, &self.dataset, "dimension")
-            .await
-            .ok()?;
-        let role = crate::search::current_fact_values(&rctx, &self.dataset, "role")
-            .await
-            .ok()?;
+        let dimension = Box::pin(crate::search::current_fact_values(
+            &rctx,
+            &self.dataset,
+            "dimension",
+        ))
+        .await
+        .ok()?;
+        let role = Box::pin(crate::search::current_fact_values(
+            &rctx,
+            &self.dataset,
+            "role",
+        ))
+        .await
+        .ok()?;
         let subject = |c: &str| format!("{table}.{c}");
         let word = |glosses: &HashMap<String, (Value, u8)>, c: &str| {
             glosses
@@ -834,23 +921,25 @@ fn column_part(subject: &str) -> &str {
     subject.rsplit('.').next().unwrap_or(subject)
 }
 
-/// The `{slot}` names a template uses.
+/// The `{slot}` names a template uses — a name in braces, inside a
+/// JSON body or not; a brace opening anything else is the body's own.
 pub fn slots_in(template: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         let after = &rest[start + 1..];
-        let Some(end) = after.find('}') else { break };
-        let name = &after[..end];
-        if !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '[' | ']'))
-            && !out.contains(&name.to_string())
-        {
-            out.push(name.to_string());
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '[' | ']')))
+            .unwrap_or(after.len());
+        if end > 0 && after[end..].starts_with('}') {
+            let name = &after[..end];
+            if !out.contains(&name.to_string()) {
+                out.push(name.to_string());
+            }
+            rest = &after[end + 1..];
+        } else {
+            rest = after;
         }
-        rest = &after[end + 1..];
     }
     out
 }

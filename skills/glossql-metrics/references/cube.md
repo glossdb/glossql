@@ -20,7 +20,11 @@ top. Each point's fit saw only the months before it.
   withheld; the detector scores the month before it. A metric whose
   series the engine refuses abstains with the reason; the others walk.
 - A red `metric_bands` verdict names its metric and month through
-  `band_points()` — the recorded walk as rows, no re-run.
+  `band_points()` — the recorded walk as rows, no re-run. A defect is
+  the grounding's to fix; a shift is the human's to hear: record it as
+  an assumption under the key `band-<period>` on the metric's
+  grounding, and the docket asks. The walk re-runs when a grounding
+  changes, not for a definitions entry, a page or a declared check.
 - A declared fact (`x-kind: fact`) `fact_values()` serves whole, its
   number where the frame is one row with a value; a derived relation
   is `read.<name>()`'s alone.

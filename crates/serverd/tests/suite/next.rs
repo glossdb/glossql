@@ -496,8 +496,27 @@ async fn the_routes_answer_from_the_record() {
         )
         .await
         .unwrap();
+    // Declared and claimed by nobody: the claim is the act, with the
+    // name filled — the declare counts on the declare.
     session
-        .execute("DECLARE ASPECT takings WITH $${\"title\": \"Takings\"}$$ AS QUERY ON DATASET; GLOSS definitions ON fin AS $${\"definitions\": {\"takings\": {\"unit\": \"GBP\", \"meaning\": \"gate takings per race\"}}}$$")
+        .execute("DECLARE ASPECT takings WITH $${\"title\": \"Takings\"}$$ AS QUERY ON DATASET")
+        .await
+        .unwrap();
+    let unclaimed = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
+    assert_eq!(
+        unclaimed["metrics"]["act"], "GLOSS definitions",
+        "{unclaimed:?}"
+    );
+    assert_eq!(unclaimed["metrics"]["say"], "claim takings for fin");
+    assert!(
+        unclaimed["metrics"]["statement"]
+            .as_str()
+            .unwrap()
+            .starts_with("GLOSS definitions ON fin AS $${\"definitions\": {\"takings\":"),
+        "{unclaimed:?}"
+    );
+    session
+        .execute("GLOSS definitions ON fin AS $${\"definitions\": {\"takings\": {\"unit\": \"GBP\", \"meaning\": \"gate takings per race\"}}}$$")
         .await
         .unwrap();
     let declared = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);

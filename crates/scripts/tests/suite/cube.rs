@@ -439,6 +439,24 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
         "the read says the same: {read}"
     );
 
+    // A re-record says what it changed against the writing it
+    // supersedes: the same frame agrees; a frame that drops a
+    // constructor loses a third of every month's points and says so.
+    // The read never carries it — it is the write's answer.
+    let row = grid(&session, &ground(FRAME)).await;
+    assert!(row.contains("no gap over 12 shared periods"), "{row}");
+    let row = grid(
+        &session,
+        &ground("SELECT r.date, r.constructor_id AS cid, r.points AS value FROM results r WHERE r.constructor_id <> 'c3'"),
+    )
+    .await;
+    assert!(
+        row.contains("max relative gap 0.5000 at") && row.contains("over 12 shared periods"),
+        "{row}"
+    );
+    let read = grid(&session, "SELECT superseded_divergence FROM metric_axes();").await;
+    assert!(!read.contains("shared periods"), "{read}");
+
     // A grounding the engine refuses lands too, and its row carries
     // the refusal rather than a read discovering it later.
     let row = grid(&session, &ground("SELECT nope AS value FROM results")).await;
@@ -452,7 +470,65 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
             "SELECT count(*) FROM glossary WHERE aspect = 'points';"
         )
         .await,
-        "4"
+        "6"
+    );
+}
+
+/// A measurement that walks the groundings — the bands walk, the
+/// collision and source walkers — reads the groundings as one leg of
+/// its own: a FACT gloss or a declared function does not move it, a
+/// grounding write does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slot_walkers_measurement_owes_its_re_run_to_a_grounding_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[
+            r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.venue AS venue, r.points AS value FROM results r"}$$;"#,
+            "SELECT judge_time() FROM results.date;",
+            r#"DECLARE ASPECT sources_seen WITH $${"type": "object", "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}, "n": {"type": "integer"}}}$$ AS MEASUREMENT ON DATASET;"#,
+            "DECLARE FUNCTION sources_seen FOR GLOBAL AS $$SELECT true AS applicable, CAST(count(*) AS BIGINT) AS n FROM metric_sources()$$ RETURNS sources_seen;",
+            "SELECT sources_seen() FROM fin;",
+        ],
+    )
+    .await;
+    const OWED: &str = "SELECT kind, subject FROM owed WHERE subject = 'sources_seen';";
+    assert!(!grid(&session, OWED).await.contains("re-measure"), "fresh");
+
+    // A FACT gloss and a declared check — its aspect, its detector,
+    // its witness, its function — move the glossary, the aspects, the
+    // witnesses and the functions relations, not the groundings.
+    session
+        .execute(r#"GLOSS dimension ON results.venue AS $${"value": "supporting"}$$;"#)
+        .await
+        .unwrap();
+    session
+        .execute(
+            r#"DECLARE ASPECT tie_check WITH $${"type": "object", "required": ["outcome"],
+                 "properties": {"outcome": {"type": "string"}}}$$ AS FACT ON DATASET;
+               DECLARE FUNCTION tie_detect FOR GLOBAL AS
+                 $$SELECT subject, 0.0 AS score, 'green' AS band FROM slots$$;
+               DECLARE WITNESS tie_w ON tie_check BY (AGENT, HUMAN) DETECTOR tie_detect THRESHOLD 0.0;
+               DECLARE FUNCTION tie_check_fn FOR fin AS $$SELECT 'ok' AS outcome$$ RETURNS tie_check;"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !grid(&session, OWED).await.contains("re-measure"),
+        "a gloss on a FACT aspect and a declared check owe no re-run"
+    );
+
+    // A grounding write does.
+    session
+        .execute(r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.points AS value FROM results r"}$$;"#)
+        .await
+        .unwrap();
+    assert!(
+        grid(&session, OWED).await.contains("re-measure"),
+        "a re-record owes the walk"
     );
 }
 

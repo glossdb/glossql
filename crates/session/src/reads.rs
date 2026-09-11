@@ -778,13 +778,14 @@ pub(crate) fn door_reads(
             reads.all_tables = true;
             reads.relations.insert("relationships".into());
         }
-        // The slot walkers: collapsed groundings (glossary, aspects,
-        // witnesses for the collapse) run over the landed data.
+        // The slot walkers: the collapsed groundings run over the
+        // landed data. The groundings are one leg of their own —
+        // `glossql.grounding`, the digest of every QUERY writing, the
+        // QUERY aspects and their witnesses — so a definitions entry,
+        // an app page or a declared check moves none of these.
         ("grounding_collisions" | "metric_band_walk" | "metric_sources", _) => {
             reads.all_tables = true;
-            reads
-                .relations
-                .extend(["glossary".into(), "aspects".into(), "witnesses".into()]);
+            reads.relations.insert("grounding".into());
         }
         // The binding, not state: no pin leg moves it. The door's
         // pages are the binary's: nothing in the workspace moves them.

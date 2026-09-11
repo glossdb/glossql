@@ -10,6 +10,7 @@
   "EXTRACT",
   "End",
   "GLOSS app",
+  "GLOSS definitions",
   "GLOSS dimension",
   "GLOSS formulas",
   "GLOSS query",
@@ -195,6 +196,47 @@
    },
    "guidance": "ground it: the SQL at row grain with the time axis and the dimensions served, the judgment calls as keyed assumptions; the write answers with the fact row",
    "pitfalls": "a declared aspect with no gloss serves nothing",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "DECLARE ASPECT query",
+   "to": "GLOSS definitions",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "the aspect is declared and no dataset claims it",
+    "key": [
+     {
+      "read": "aspects",
+      "where": {
+       "kind": "query"
+      }
+     },
+     {
+      "read": "metric_surfaces",
+      "where": {},
+      "none": true
+     }
+    ]
+   },
+   "guidance": "the definitions entry — unit and meaning in the business's words — makes the concept this dataset's; the grounding does too",
+   "pitfalls": "a declared aspect claimed by nobody is no dataset's metric",
+   "source": "glossql-metrics/SKILL.md"
+  },
+  {
+   "from": "GLOSS definitions",
+   "to": "GLOSS query",
+   "relation": "LEADS_TO",
+   "when": {
+    "text": "the concept is claimed and not grounded",
+    "key": {
+     "read": "metric_surfaces",
+     "where": {
+      "grounded": false
+     }
+    }
+   },
+   "guidance": "ground it: the SQL at row grain with the time axis and the dimensions served, the judgment calls as keyed assumptions",
+   "pitfalls": "",
    "source": "glossql-metrics/SKILL.md"
   },
   {
@@ -771,6 +813,26 @@
    "goal": "every metric the dataset claims grounded",
    "route": [
     {
+     "when": [
+      {
+       "read": "aspects",
+       "where": {
+        "kind": "query"
+       }
+      },
+      {
+       "read": "metric_surfaces",
+       "where": {},
+       "none": true
+      }
+     ],
+     "act": "GLOSS definitions",
+     "say": "claim {row.name} for {dataset}",
+     "why": "{row.name} is declared and no dataset claims it: its definitions entry or its grounding makes it this dataset's",
+     "form": "GLOSS definitions ON {dataset} AS $${\"definitions\": {\"{row.name}\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures, in the business's words>\"}}}$$;",
+     "then": "GLOSS {row.name} ON {dataset} AS $${\"sql\": \"<the grounding>\"}$$;"
+    },
+    {
      "when": {
       "read": "metric_surfaces",
       "where": {},
@@ -876,9 +938,9 @@
       "columns"
      ],
      "act": "GLOSS query",
-     "say": "re-record {row.metric} serving one of {columns}",
-     "why": "the frame serves only a date and a value; a verdict or a gloss admits {columns} of {table} as an axis, and the cube slices only on served columns",
-     "form": "-- admitted and not served: {columns}\nGLOSS {row.metric} ON {dataset} AS $${body}$$;"
+     "say": "re-record {row.metric} serving one of {columns}{other_axes}",
+     "why": "the frame serves only a date and a value; a verdict or a gloss admits {columns} of {table} as an axis, and the cube slices only on served columns. Serve the axis as the frame's own column, or a label reached through a declared edge by a LEFT JOIN: the total must hold, and the write's row says what changed against the standing frame",
+     "form": "-- admitted and not served: {columns}; the frame's own column, or a LEFT JOIN to a label — the total must hold\nGLOSS {row.metric} ON {dataset} AS $${body}$$;"
     },
     {
      "when": {
@@ -960,6 +1022,46 @@
      "form": "SELECT metric_bands() FROM {dataset}"
     },
     {
+     "when": [
+      {
+       "read": "ATTEST",
+       "where": {
+        "witness": "bands_w",
+        "band": "red"
+       }
+      },
+      {
+       "read": "ruling_entries",
+       "where": {
+        "dataset": "{dataset}",
+        "aspect": "{red_metric}",
+        "key": "band-{red_period}"
+       }
+      }
+     ],
+     "done": "the walk stands; the red on {red_metric} at {red_period} carries the human's ruling"
+    },
+    {
+     "when": [
+      {
+       "read": "ATTEST",
+       "where": {
+        "witness": "bands_w",
+        "band": "red"
+       }
+      },
+      {
+       "read": "open_questions",
+       "where": {
+        "dataset": "{dataset}",
+        "aspect": "{red_metric}",
+        "key": "band-{red_period}"
+       }
+      }
+     ],
+     "blocked": "{red_metric} is red at {red_period} and the question stands for the human"
+    },
+    {
      "when": {
       "read": "ATTEST",
       "where": {
@@ -972,8 +1074,9 @@
      ],
      "act": "band_points",
      "say": "judge {red_metric}, red at {red_period}",
-     "why": "the newest complete point of {red_metric} sits outside its corridor at {red_period}; a shift and a defect breach alike — a defect is the grounding's to fix, a shift the human's to hear",
-     "form": "SELECT period, actual, p05, p50, p95, pit, partial FROM band_points() WHERE metric = '{red_metric}' ORDER BY point_seq"
+     "why": "the newest complete point of {red_metric} sits outside its corridor at {red_period}; a shift and a defect breach alike. A defect is the grounding's to fix; a shift is the human's to hear — record it as an assumption under the key band-{red_period}, and the docket asks",
+     "form": "SELECT period, actual, p05, p50, p95, pit, partial FROM band_points() WHERE metric = '{red_metric}' ORDER BY point_seq",
+     "then": "GLOSS {red_metric} ON {dataset} AS $${red_body}$$;"
     },
     {
      "when": {
@@ -989,7 +1092,7 @@
      "form": "SELECT metric, period, displacement FROM band_points() ORDER BY displacement DESC"
     },
     {
-     "done": "the walk stands and no band is red"
+     "done": "the walk stands and no band is red, or the red carries a question or a ruling"
     }
    ]
   },
@@ -1098,6 +1201,7 @@
      "when": {
       "read": "ruling_entries",
       "where": {
+       "dataset": "{dataset}",
        "folded_in": false
       }
      },

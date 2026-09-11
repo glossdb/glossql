@@ -98,8 +98,11 @@ Columns: `kind`, `subject`, `what`, `why`, `since`. Six kinds:
 the approval) · `formula` (a human formula answer newer than the
 metric's recorded materialization) · `contest` (a slot withheld at
 read — voices differ or a detector crossed) · `re-measure` (a function
-voice standing from before the last change — served and marked until
-the function runs again; one row per function) · `never measured` (a
+voice standing from before the last change it read — served and marked
+until the function runs again; one row per function. A measurement
+names what it read: the bands walk and the collision and source
+walkers read the groundings as one leg, so a definitions entry, an app
+page or a declared check owes them nothing, and a grounding write does) · `never measured` (a
 measurement the cube's fact rows read over a served column and no
 function has landed — `metric_axes().wanted` — or a witnessed
 measurement at dataset grain with no voice while a grounding stands,
@@ -222,7 +225,11 @@ measured disagreement between the metric's total and the rival's over
 their shared periods — with an authored `tolerance` on the disclosing
 assumption the count of breaching periods, otherwise the maximum
 relative gap and its period; null when no rival is served),
-`alternative_error`.
+`alternative_error`, `superseded_divergence` (at a grounding write
+only, in the row the write answers with: the gap between the serving
+frame's totals and the newest other writing on the slot over their
+shared periods, and the periods one serves and the other does not —
+what the re-record changed; null on a read and on a first grounding).
 Record-class: it says what the judged verdicts admitted.
 
 The same row is what a grounding's write answers with: `GLOSS` on a
@@ -335,7 +342,10 @@ statement, filled from the record — the dataset, the metric, the table
 its value comes from, the standing body, the unserved columns a
 verdict or a `dimension` gloss admits, the metric and period a red
 band names; `<…>` marks what only the author can fill, and a step
-the record cannot fill hands none) and `then` (what follows it). A route is the goal's preconditions in order, in
+the record cannot fill hands none) and `then` (what follows it). A
+step that needs a slot holds on the first matching row the door can
+fill it for, and a key's value may name a slot — `{dataset}`, the red
+metric — the record fills without a row. A route is the goal's preconditions in order, in
 `doc://window.json`; the first whose condition holds decides. A
 statement is a proposal: edit it, send it, or do not. Needs a `USE`.
 The MCP door serves the same rows as the resource template
