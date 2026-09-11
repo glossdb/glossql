@@ -474,6 +474,90 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
     );
 }
 
+/// The grounding's own word on its axes: `axes` admits what it lists,
+/// in order, whatever was measured, closes the rest, names back what
+/// it lists and the frame does not serve, and the empty list closes
+/// them all.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_grounding_names_its_axes() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[
+            r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#,
+            "SELECT judge_time() FROM results.date;",
+            "SELECT judge_axis() FROM results.constructor_id;",
+        ],
+    )
+    .await;
+    const FRAME: &str = "SELECT r.date, r.constructor_id AS cid, r.venue AS venue, \
+                         r.points AS value FROM results r";
+    let ground =
+        |axes: &str| format!(r#"GLOSS points ON fin AS $${{"sql": "{FRAME}", "axes": {axes}}}$$;"#);
+    const AXES: &str =
+        "SELECT dims, admitted_by, axes_basis, unadmitted, unadmitted_act FROM metric_axes();";
+
+    // The verdict admits cid and nobody judged venue; the author says
+    // venue, and venue it is — cid is closed by the author's word.
+    session.execute(&ground(r#"["venue"]"#)).await.unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[venue]") && read.contains("[agent]") && read.contains("| authored "),
+        "{read}"
+    );
+    assert!(
+        read.contains("[cid]") && read.contains("[closed]"),
+        "{read}"
+    );
+
+    // Both, in the author's order.
+    session
+        .execute(&ground(r#"["venue", "cid"]"#))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[venue, cid]") && read.contains("[agent, agent]"),
+        "{read}"
+    );
+
+    // A name the frame does not serve as a sliceable column is named
+    // back; the value is one.
+    session
+        .execute(&ground(r#"["venue", "team", "value"]"#))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[cid, team, value]") && read.contains("[closed, unserved, unserved]"),
+        "{read}"
+    );
+
+    // The empty list closes them all, and the row says the author did.
+    session.execute(&ground("[]")).await.unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("| [] ")
+            && read.contains("[cid, venue]")
+            && read.contains("[closed, closed]"),
+        "{read}"
+    );
+
+    // Without the word, the verdicts decide again.
+    session
+        .execute(&format!(
+            r#"GLOSS points ON fin AS $${{"sql": "{FRAME}"}}$$;"#
+        ))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[cid]") && read.contains("[measurement]") && read.contains("| measured "),
+        "{read}"
+    );
+}
+
 /// A measurement that walks the groundings — the bands walk, the
 /// collision and source walkers — reads the groundings as one leg of
 /// its own: a FACT gloss or a declared function does not move it, a

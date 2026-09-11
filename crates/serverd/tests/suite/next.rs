@@ -568,6 +568,17 @@ async fn the_routes_answer_from_the_record() {
                 statement.contains("SELECT race_date, takings AS value FROM races"),
                 "{statement}"
             );
+            // The author's word closes the question: a grounding that
+            // lists no axis is done for the slices goal.
+            session
+                .execute(
+                    "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\", \"axes\": []}$$",
+                )
+                .await
+                .unwrap();
+            let closed =
+                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
+            assert_eq!(closed["slices"]["state"], "done", "{closed:?}");
             assert_eq!(answers["bands"]["act"], "metric_bands", "{answers:?}");
             assert_eq!(answers["app"]["state"], "next", "{answers:?}");
             let app = answers["app"]["statement"].as_str().unwrap();

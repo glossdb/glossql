@@ -1883,10 +1883,14 @@ pub(crate) async fn grounding_collisions(
 }
 
 /// One current QUERY grounding — a collapsed slot.
+#[derive(Clone)]
 pub(crate) struct QuerySlot {
     pub subject: String,
     pub aspect: String,
     pub body: String,
+    /// The serving voice's rank — 0 human, 1 agent — whose word the
+    /// body's `axes` are.
+    pub rank: u8,
 }
 
 /// The current QUERY groundings the metric doors run — the store's own
@@ -1937,6 +1941,7 @@ pub(crate) async fn current_query_slots(
                     subject: r.subject,
                     aspect: r.aspect,
                     body,
+                    rank: r.rank.unwrap_or(1),
                 })
             })
             .collect();

@@ -582,8 +582,11 @@ impl Session {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<Vec<Outcome>, SessionError> {
-        self.execute_statements(GlossqlParser::parse_sql(sql)?)
-            .await
+        // Boxed: the statement loop's future carries every statement
+        // kind's state, and a caller that awaits several calls in one
+        // body — a suite, a page — would hold each inline on its own
+        // stack. Boxed once here, a call is a pointer to every caller.
+        Box::pin(self.execute_statements(GlossqlParser::parse_sql(sql)?)).await
     }
 
     /// The statement loop over parsed statements — the plane's channel

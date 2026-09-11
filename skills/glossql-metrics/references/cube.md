@@ -38,7 +38,12 @@ and cached, never recorded. Nothing to run and nothing to land:
 `metric_series()` builds what is not built. A dimension the cube
 should slice must be a served column of the extract.
 
-The axes come from judged verdicts, not from the data's shape. A
+The axes come from judged verdicts, not from the data's shape — or
+from the grounding's own word: `"axes": ["region", "channel"]` in the
+body lists the served columns the metric is sliced by, in that order,
+and closes the rest; `"axes": []` says the metric slices by nothing
+(a distinct count, a ratio whose own discriminator is served), and
+the `slices` goal is done for it. Absent, a
 served column enters as a dimension when a verdict admits it: its own
 `dimension_relevance`, or — for a label in a dimension table, a
 near-key there by construction — the verdict on the key column that

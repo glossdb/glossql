@@ -14,6 +14,7 @@ pub const GROUNDING_SCHEMA: &str = r#"{
     "stopped": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
     "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "axes": {"type": "array", "items": {"type": "string"}},
     "assumptions": {
       "type": "array",
       "items": {

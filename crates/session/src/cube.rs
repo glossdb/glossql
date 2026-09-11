@@ -237,8 +237,11 @@ pub(crate) struct Fact {
     pub basis: Vec<String>,
     /// Per admitted dimension, in `dims` order, what decided:
     /// `measurement` when the verdict alone did, `human` or `agent`
-    /// when a `dimension` gloss admitted it or put it first.
+    /// when a `dimension` gloss or the grounding's `axes` admitted it.
     pub admitted_by: Vec<String>,
+    /// What decides the axes: `authored` when the grounding lists them
+    /// (`axes`), `measured` when the verdicts and the column glosses do.
+    pub axes_basis: &'static str,
     pub bucketed: Vec<String>,
     /// The served columns the cube does not slice on — every one that
     /// is neither the value, a ratio's half nor time-typed and was not
@@ -255,9 +258,12 @@ pub(crate) struct Fact {
     /// can read: `verdict` (no verdict yet — run `dimension_relevance()`
     /// over the subject, or gloss `dimension`), `abstained` (the
     /// verdict abstained — declare the edge, or gloss `dimension`),
-    /// `none` (closed by a `dimension` gloss), `expression`, `single`
-    /// and `cap` — the last four are terminal: nothing admits the
-    /// column as it is served.
+    /// `none` (closed by a `dimension` gloss), `closed` (by the
+    /// grounding's `axes`), `unserved` (listed in `axes` and not a
+    /// column the cube can slice on), `expression`, `single` and `cap`
+    /// — the last five are terminal: nothing admits the column as it
+    /// is served, and the grounding is where `closed` and `unserved`
+    /// change.
     pub unadmitted_act: Vec<String>,
     /// The measurements this row reads and no function has landed —
     /// the function to run, and in `wanted_over` at the same index
@@ -300,6 +306,7 @@ impl Fact {
             dims: Vec::new(),
             basis: Vec::new(),
             admitted_by: Vec::new(),
+            axes_basis: "measured",
             bucketed: Vec::new(),
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
@@ -339,6 +346,7 @@ struct Planned {
     judged_current: bool,
     candidates: Vec<Candidate>,
     unadmitted: Vec<(String, String, &'static str)>,
+    axes_basis: &'static str,
     /// What the row reads and nobody measured — `(function, subject)`.
     wanted: Vec<(String, String)>,
     /// Whether the frame scans a workspace relation
@@ -405,6 +413,7 @@ impl Planned {
             dims,
             basis,
             admitted_by,
+            axes_basis: self.axes_basis,
             bucketed: Vec::new(),
             unadmitted,
             unadmitted_why,
@@ -1098,6 +1107,7 @@ async fn write_fact(
             subject: subject.to_string(),
             aspect: aspect.to_string(),
             body: other.body.clone(),
+            rank: if other.actor_kind == "human" { 0 } else { 1 },
         };
         let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
         let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
@@ -1385,12 +1395,51 @@ async fn plan(
     let scanned = crate::provenance::scanned_tables(&probe, dataset);
     let mut cand: Vec<Candidate> = Vec::new();
     let mut unadmitted: Vec<(String, String, &'static str)> = Vec::new();
+    // The grounding's own word on its axes: `axes` lists the served
+    // columns the metric is sliced by, in order, and closes every other
+    // served column — the empty list closes them all. Its author's
+    // word admits a listed column whatever was measured, as a
+    // `dimension` gloss would; a listed name the frame does not serve
+    // as a sliceable column is named back. Absent, the verdicts and
+    // the column glosses decide below.
+    let authored: Option<Vec<String>> = body.get("axes").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    });
+    let axes_basis: &'static str = if authored.is_some() {
+        "authored"
+    } else {
+        "measured"
+    };
+    let author: &'static str = if slot.rank == 0 { "human" } else { "agent" };
+    let mut sliceable: Vec<&str> = Vec::new();
     for f in fields.fields() {
         let n = f.name().as_str();
         if n == "value"
             || (is_ratio && (n == "num" || n == "den"))
             || crate::whatif::is_temporal(f.data_type())
         {
+            continue;
+        }
+        sliceable.push(n);
+        if let Some(listed) = &authored {
+            match listed.iter().position(|a| a == n) {
+                Some(i) => cand.push(Candidate {
+                    column: n.to_string(),
+                    relevance: (listed.len() - i) as f64,
+                    current: true,
+                    basis: subjects.get(n).cloned().unwrap_or_else(|| n.to_string()),
+                    admitted_by: author,
+                    primary: false,
+                }),
+                None => unadmitted.push((
+                    n.to_string(),
+                    format!("closed by the grounding's axes ({author})"),
+                    "closed",
+                )),
+            }
             continue;
         }
         let Some(subject) = subjects.get(n) else {
@@ -1487,6 +1536,17 @@ async fn plan(
         };
         cand.push(candidate);
     }
+    if let Some(listed) = &authored {
+        for a in listed.iter().filter(|a| !sliceable.contains(&a.as_str())) {
+            unadmitted.push((
+                a.clone(),
+                "listed in the grounding's axes and not a served column the cube can slice \
+                 on — serve it, or drop it from `axes`"
+                    .into(),
+                "unserved",
+            ));
+        }
+    }
     let sql = sql.to_string();
     Ok(Planned {
         body,
@@ -1500,6 +1560,7 @@ async fn plan(
         judged_current,
         candidates: cand,
         unadmitted,
+        axes_basis,
         wanted,
         foreign: reads_the_workspace(&probe),
     })
@@ -1520,7 +1581,9 @@ async fn build(
     } = surface;
     let dataset = dataset.as_str();
     let metric = slot.aspect.as_str();
-    let planned = plan(shared, surface, slot, asked).await?;
+    // Boxed: the plan stage's future is most of the build's, and a
+    // build constructed on the stack under a write's depth must fit.
+    let planned = Box::pin(plan(shared, surface, slot, asked)).await?;
     // No judged time axis: the entry is the plan stage's abstention,
     // carrying what the row wants — an abstention binds to no version.
     let Some(tcol) = planned.tcol.clone() else {
@@ -1541,6 +1604,7 @@ async fn build(
         mut judged_current,
         candidates: cand,
         mut unadmitted,
+        axes_basis,
         wanted,
         mut foreign,
         ..
@@ -1830,6 +1894,7 @@ async fn build(
             dims,
             basis,
             admitted_by,
+            axes_basis,
             bucketed,
             unadmitted: unadmitted.iter().map(|(c, _, _)| c.clone()).collect(),
             unadmitted_why: unadmitted.iter().map(|(_, w, _)| w.clone()).collect(),
@@ -2455,6 +2520,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),
+        Field::new("axes_basis", DataType::Utf8, true),
         Field::new(
             "bucketed",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
@@ -2511,6 +2577,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.dims),
             list(|f| &f.basis),
             list(|f| &f.admitted_by),
+            text(|f| Some(f.axes_basis)),
             list(|f| &f.bucketed),
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),

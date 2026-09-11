@@ -201,7 +201,10 @@ breaks it, and the empty list is an undeclared shape, taken as
 served), `resolution`, `window`, `dims`, `basis`
 and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
-or `human` / `agent` where a `dimension` gloss did), `bucketed` (the
+or `human` / `agent` where a `dimension` gloss or the grounding's
+`axes` did), `axes_basis` (`authored` when the grounding lists its
+axes, `measured` when the verdicts and the column glosses decide),
+`bucketed` (the
 dimensions wider than 24 members, served as their top 23 by weight
 plus `'other'`), `unadmitted` and `unadmitted_why` (every served
 column that is neither the value, a ratio's half nor time-typed and
@@ -212,7 +215,9 @@ relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
 below the cap of four), `unadmitted_act` (the act behind each, at the
 same index, as a tag: `verdict` — no verdict yet; `abstained`; `none`
-— closed by a gloss; `expression`, `single`, `cap` — terminal),
+— closed by a gloss; `closed` — by the grounding's `axes`; `unserved`
+— listed in `axes` and not a column the cube can slice on;
+`expression`, `single`, `cap` — terminal),
 `wanted` and `wanted_over` (the measurements
 the row reads and no function has landed — the function to run, and
 at the same index the column subject to run it over: the function

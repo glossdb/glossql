@@ -269,6 +269,7 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
     "stopped": {"type": "string"},
     "behavior": {"enum": ["stock", "flow"]},
     "grain": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "axes": {"type": "array", "items": {"type": "string"}},
     "assumptions": {
       "type": "array",
       "items": {
@@ -294,6 +295,12 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   aggregates validates the frame against it and refuses a frame that
   breaks it (the cube abstains, the reason naming the columns);
   absent, the shape is undeclared and the frame is taken as served.
+- `axes` is the authored slice list: the served columns the metric is
+  sliced by, in that order, every other served column closed; the
+  empty list closes them all — a distinct count, a ratio whose own
+  discriminator is served. Absent, the judged verdicts and the
+  `dimension` glosses on the columns decide. The time axis is not an
+  entry: it is the served date column with a verdict.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   door refuses with that text, the cube abstains with it (`stopped: …`

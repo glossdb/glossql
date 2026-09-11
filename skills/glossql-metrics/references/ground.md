@@ -120,6 +120,14 @@ that groups to `(date, value)` can never be sliced — a cohort
 grounded entirely that way reports "no axes admitted" on every
 metric: headline numbers nobody can cut.
 
+**Name the axes when the verdicts would get them wrong.** `"axes"` in
+the body lists the served columns the metric is sliced by, in order,
+and closes every other served column; the empty list closes them all.
+A distinct count sliced by a column double-counts across members, and
+a ratio sliced by its own discriminator reads one and zero: say
+`"axes": []`, and the `slices` goal is done for that metric. Absent,
+the judged verdicts and the `dimension` glosses decide.
+
 A ratio is never drilled from its output rows. Drilling backlog days
 by region means **re-scoping its components per the `formulas` gloss**
 — each operand evaluated at the new scope, then the formula applied

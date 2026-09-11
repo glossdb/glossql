@@ -34,7 +34,7 @@ order, and the line is never one.
 |---|---|---|
 | `structure` | the edges are declared and the coherence check ran | `references/structure.md` |
 | `metrics` | every metric the dataset claims is grounded | `references/ground.md`, and below |
-| `slices` | every applicable metric admits an axis | `references/cube.md` |
+| `slices` | every applicable metric admits an axis, or its grounding names its own (`"axes": []` for none) | `references/cube.md` |
 | `bands` | the walk ran and no band is red, or the red carries your question or a ruling | `references/cube.md` |
 | `checks` | a check of your own stands, every check ran, none is red | `references/validate.md` |
 | `app` | a page stands over the grounded metrics | the `glossql-apps` skill |
