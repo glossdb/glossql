@@ -344,8 +344,9 @@ verdict or a `dimension` gloss admits, the metric and period a red
 band names; `<…>` marks what only the author can fill, and a step
 the record cannot fill hands none) and `then` (what follows it). A
 step that needs a slot holds on the first matching row the door can
-fill it for, and a key's value may name a slot — `{dataset}`, the red
-metric — the record fills without a row. A route is the goal's preconditions in order, in
+fill it for; a key's value may name a slot — `{dataset}`, the red
+metric — the record fills without a row, and `{"not": v}` matches
+anything but `v`. A route is the goal's preconditions in order, in
 `doc://window.json`; the first whose condition holds decides. A
 statement is a proposal: edit it, send it, or do not. Needs a `USE`.
 The MCP door serves the same rows as the resource template

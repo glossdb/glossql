@@ -6,9 +6,9 @@
 //! every surface. A surface is a goal a workspace is extended toward —
 //! structure, metrics, slices, bands, checks, app, rulings — and its
 //! route is a list of steps in `window.json`. A step is a condition
-//! over a shipped read (a key, as the mechanical edges carry: some row
-//! matches every predicate, or none does; `"null"` matches an absent
-//! field, a value may name a slot the record fills without a row —
+//! over a shipped read (a key: some row matches every predicate, or
+//! none does; `"null"` matches an absent field, `{"not": v}` anything
+//! but `v`, a value may name a slot the record fills without a row —
 //! `"{dataset}"`, `"{red_metric}"` — and a list field matches when one
 //! member does) and what holds when it does — a step may also `need`
 //! a slot the door can fill, and then it holds on the first matching
@@ -51,35 +51,13 @@ use crate::session::SessionError;
 /// The graph, verbatim — `doc://window.json` serves the same bytes.
 pub const GRAPH_JSON: &str = include_str!("../../../window.json");
 
+/// The routes, and the vocabulary the localizer names an act by: the
+/// statement kinds, the doors and reads, the acts the routes hand.
 #[derive(Deserialize)]
 pub struct Graph {
     pub nodes: Vec<String>,
-    pub edges: Vec<Edge>,
     #[serde(default)]
     pub surfaces: Vec<Surface>,
-}
-
-#[derive(Deserialize, Clone)]
-pub struct Edge {
-    pub from: String,
-    pub to: String,
-    #[serde(default)]
-    pub relation: String,
-    pub when: When,
-    #[serde(default)]
-    pub guidance: String,
-    #[serde(default)]
-    pub pitfalls: String,
-    #[serde(default)]
-    pub source: String,
-}
-
-#[derive(Deserialize, Clone, Default)]
-pub struct When {
-    #[serde(default)]
-    pub text: String,
-    #[serde(default)]
-    pub key: Option<Keys>,
 }
 
 /// A condition over one read: some row matches every `where`
@@ -164,11 +142,6 @@ impl Graph {
             .find(|n| n.eq_ignore_ascii_case(name))
     }
 
-    /// The edges out of a node, in file order.
-    pub fn out(&self, node: &str) -> Vec<&Edge> {
-        self.edges.iter().filter(|e| e.from == node).collect()
-    }
-
     pub fn surface(&self, name: &str) -> Option<&Surface> {
         self.surfaces.iter().find(|s| s.name == name)
     }
@@ -247,6 +220,10 @@ pub fn holds(key: &Key, rows: &[Value], dataset: &str) -> bool {
 }
 
 fn predicate(have: Option<&Value>, want: &Value, dataset: &str) -> bool {
+    // `{"not": v}`: anything but `v`, an absent field included.
+    if let Some(not) = want.get("not") {
+        return !predicate(have, not, dataset);
+    }
     match want.as_str() {
         Some("{dataset}") => have.and_then(Value::as_str) == Some(dataset),
         Some("null") => have.is_none_or(Value::is_null),
@@ -415,6 +392,7 @@ struct Record<'a> {
 struct Candidates {
     admitted: Vec<String>,
     unjudged: Vec<String>,
+    unserved: Vec<String>,
     unjudged_table: bool,
 }
 
@@ -595,12 +573,21 @@ impl Record<'_> {
             "columns" => Some(self.candidates(&metric?).await?.admitted.join(", ")),
             "other_axes" => Some(Box::pin(self.other_axes(&metric?)).await),
             "unjudged" => Some(self.candidates(&metric?).await?.unjudged.join(", ")),
+            // The detector over each column glossed a dimension and not
+            // judged; over every unserved column where nobody judged one.
             "relevance_form" => {
                 let metric = metric?;
                 let table = self.table_of(&metric).await?;
-                let unjudged = self.candidates(&metric).await?.unjudged;
+                let c = self.candidates(&metric).await?;
+                let columns = if !c.unjudged.is_empty() {
+                    c.unjudged
+                } else if c.unjudged_table {
+                    c.unserved
+                } else {
+                    Vec::new()
+                };
                 Some(
-                    unjudged
+                    columns
                         .iter()
                         .map(|c| {
                             format!(
@@ -815,6 +802,7 @@ impl Record<'_> {
         Some(Candidates {
             admitted: admitted.into_iter().map(|(_, _, c)| c).collect(),
             unjudged,
+            unserved,
             unjudged_table,
         })
     }

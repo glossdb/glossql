@@ -6,7 +6,7 @@
 //! `situation:` and `next:` lines, serves `next://` as a resource
 //! template.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
@@ -90,13 +90,6 @@ async fn names(session: &Session, sql: &str, column: &str) -> BTreeSet<String> {
 fn keys_of_graph() -> Vec<(String, next::Key)> {
     let graph = next::graph();
     let mut out = Vec::new();
-    for e in &graph.edges {
-        if let Some(keys) = &e.when.key {
-            for k in keys.each() {
-                out.push((format!("edge {} → {}", e.from, e.to), k.clone()));
-            }
-        }
-    }
     for s in &graph.surfaces {
         for (i, step) in s.route.iter().enumerate() {
             if let Some(keys) = &step.when {
@@ -156,16 +149,6 @@ async fn every_node_names_a_real_thing() {
             || glossql_glossary::relation_columns(n).is_some()
             || families.contains(&n);
         assert!(ok, "window.json names nothing the server has: `{node}`");
-    }
-    for e in &graph.edges {
-        for end in [&e.from, &e.to] {
-            assert!(
-                graph.nodes.contains(end),
-                "edge endpoint is not a node: `{end}` ({} → {})",
-                e.from,
-                e.to
-            );
-        }
     }
     // every route's act is a node, every route ends in a step that
     // always holds, and every form names slots the door fills
@@ -255,27 +238,6 @@ async fn every_key_names_a_read_and_a_column_it_serves() {
         checked.insert(key.read.clone());
     }
     assert!(checked.len() >= 8, "keyed reads: {checked:?}");
-}
-
-#[test]
-fn every_node_reaches_end() {
-    let graph = next::graph();
-    let mut reaches: BTreeSet<&str> = BTreeSet::from(["End"]);
-    let mut queue: VecDeque<&str> = VecDeque::from(["End"]);
-    while let Some(to) = queue.pop_front() {
-        for e in graph.edges.iter().filter(|e| e.to == to) {
-            if reaches.insert(e.from.as_str()) {
-                queue.push_back(e.from.as_str());
-            }
-        }
-    }
-    for e in &graph.edges {
-        assert!(
-            reaches.contains(e.from.as_str()),
-            "no path to End from `{}`",
-            e.from
-        );
-    }
 }
 
 #[test]
@@ -545,12 +507,12 @@ async fn the_routes_answer_from_the_record() {
     match judged {
         Ok(_) => {
             // Nobody judged a column of races: the detector is the act,
-            // one column per call, and the column is the author's.
+            // one statement per unserved column, filled.
             let slices = &answers["slices"];
             assert_eq!(slices["state"], "next", "{answers:?}");
             assert_eq!(slices["act"], "dimension_relevance", "{answers:?}");
             assert_eq!(
-                slices["statement"], "SELECT dimension_relevance() FROM fin.races.<column>",
+                slices["statement"], "SELECT dimension_relevance() FROM fin.races.track",
                 "{answers:?}"
             );
             // A role names track a dimension and no verdict stands on

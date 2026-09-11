@@ -1101,13 +1101,21 @@ async fn write_fact(
         };
         let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
         let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
-        fact.superseded_divergence = Some(if before.fact.applicable {
-            drift(&now.cells, &before.cells)
-        } else {
+        // Like against like: a ratio's monthly value and a flow's
+        // total are different numbers, and the row says so instead.
+        fact.superseded_divergence = Some(if !before.fact.applicable {
             format!(
                 "the other writing served nothing: {}",
                 before.fact.reason.as_deref().unwrap_or("no reason given")
             )
+        } else if now.fact.behavior != before.fact.behavior {
+            format!(
+                "the verb changed, {} against {}: totals not compared",
+                now.fact.behavior.as_deref().unwrap_or("none"),
+                before.fact.behavior.as_deref().unwrap_or("none")
+            )
+        } else {
+            drift(&now.cells, &before.cells)
         });
     }
     Ok(fact)

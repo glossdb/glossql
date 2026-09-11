@@ -1252,10 +1252,13 @@ impl GlossqlMcp {
                 .map(str::to_string)
                 .unwrap_or_else(|| "GLOSS".to_string()),
         };
+        // The last statement's outcome, its last row — the act the
+        // situation names is the last one; a `USE` ahead of it is not.
         let last_outcome = rendered
             .as_ref()
             .ok()
-            .and_then(|v| v.get(0))
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.last())
             .and_then(|a| a.as_array())
             .and_then(|a| a.last())
             .cloned();
