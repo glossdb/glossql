@@ -36,9 +36,9 @@ nowhere else.
 4. The laptop half: `.github/release-macos.sh` opens the draft
    release on the tag, builds, uploads the tarball, and renders
    `.github/homebrew/glossql.rb` with the real checksum.
-5. Write the notes on the release: what changed for a user since the
-   last version, in plain prose (the glossql-prose skill), never a
-   commit list. When the image run is green and the tarball sits on
+5. Write the notes on the release: a very short overview and the
+   fixes, one line each. Brief — the notes are not the docs, and
+   never a commit list. When the image run is green and the tarball sits on
    the draft: `gh release edit v<version> --notes-file <notes>
    --draft=false`. Publish once, complete — that is the standing
    preference.
