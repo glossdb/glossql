@@ -135,26 +135,6 @@ For a grounding you stopped (`stopped` in place of `sql`,
 `references/ground.md`) the row abstains with your own text as the
 reason.
 
-## SQL here
-
-The engine is DataFusion behind a postgres parser. Three refusals cost
-most of the lost calls:
-
-- Unquoted names fold to lowercase, in glossql statements and in SQL
-  alike: a table declared `AdsInfo` is read as `adsinfo` or `AdsInfo`.
-  A column landed with capitals from a source header is reached only
-  quoted: `"ObjectType"`. Alias it lowercase in the recipe and the
-  quotes are never needed.
-- `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
-  SELECT list, a `FILTER (WHERE …)` or a CASE they are refused, and so
-  is a scalar subquery inside an aggregate, `max((SELECT count(*) …))`:
-  `Physical plan does not support logical expression`, or `Invalid
-  (non-executable) plan after Analyzer`. Write the join:
-  JOIN, LEFT JOIN … IS NULL, or a window function.
-- `count(DISTINCT (a, b))` over millions of rows exhausts the memory
-  pool. Use `approx_distinct`, or GROUP BY the keys in a CTE and count
-  the rows.
-
 ## The pages
 
 | reference | open it |
@@ -163,7 +143,7 @@ most of the lost calls:
 | `references/structure.md` | once tables stand: what each table is, the join structure, the slice axes |
 | `references/vocabulary.md` | before glossing a column: role first, behavior by evidence, unit |
 | `references/ground.md` | before writing a grounding: the two registries, the row-grain shape, ratios and stocks, keys on assumptions, the rival, what a basis must be, serve or stop |
-| `references/read-sql.md` | before any read over a metric: flows, stocks and ratios, and what this engine has that postgres lacks |
+| `references/read-sql.md` | before any read over a metric: flows, stocks and ratios, what this engine has that postgres lacks, and the three refusals that cost most calls |
 | `references/validate.md` | when a number needs a check that says why it holds, and at the close — a reconciliation run by hand becomes a standing check |
 | `references/cube.md` | when a metric's axes, resolution or window are not what you expected, and after every ruling |
 | `references/doors.md` | for a what-if, a which-rows question, a bespoke function or an app |

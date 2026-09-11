@@ -1186,14 +1186,10 @@ impl ServerHandler for GlossqlMcp {
         };
         // Where the call left the agent and one act per goal from there,
         // on every call (`window`). It rides the result, never the
-        // instructions, so the stable prefix holds; `--next off` is the
-        // control arm of the run that measures it.
-        let window = if self.doors.next {
-            self.situation_block(actor, statements, ran, &rendered)
-                .await
-        } else {
-            None
-        };
+        // instructions, so the stable prefix holds.
+        let window = self
+            .situation_block(actor, statements, ran, &rendered)
+            .await;
         Ok(match rendered {
             Ok(body) => {
                 let mut blocks = vec![ContentBlock::text(body.to_string())];

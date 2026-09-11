@@ -251,6 +251,14 @@ pub(crate) struct Fact {
     /// cap. The column names the gap; the reason names the act.
     pub unadmitted: Vec<String>,
     pub unadmitted_why: Vec<String>,
+    /// The act behind each, at the same index, as a keyed tag a route
+    /// can read: `verdict` (no verdict yet — run `dimension_relevance()`
+    /// over the subject, or gloss `dimension`), `abstained` (the
+    /// verdict abstained — declare the edge, or gloss `dimension`),
+    /// `none` (closed by a `dimension` gloss), `expression`, `single`
+    /// and `cap` — the last four are terminal: nothing admits the
+    /// column as it is served.
+    pub unadmitted_act: Vec<String>,
     /// The measurements this row reads and no function has landed —
     /// the function to run, and in `wanted_over` at the same index
     /// the column subject to run it over: the function returning
@@ -289,6 +297,7 @@ impl Fact {
             bucketed: Vec::new(),
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
+            unadmitted_act: Vec::new(),
             wanted: Vec::new(),
             wanted_over: Vec::new(),
             alternative: None,
@@ -322,7 +331,7 @@ struct Planned {
     /// dimension folds its own in later.
     judged_current: bool,
     candidates: Vec<Candidate>,
-    unadmitted: Vec<(String, String)>,
+    unadmitted: Vec<(String, String, &'static str)>,
     /// What the row reads and nobody measured — `(function, subject)`.
     wanted: Vec<(String, String)>,
     /// Whether the frame scans a workspace relation
@@ -366,6 +375,7 @@ impl Planned {
                 unadmitted.push((
                     c.column,
                     format!("ranked below the {DIMS_CAP} admitted axes"),
+                    "cap",
                 ));
                 continue;
             }
@@ -374,7 +384,7 @@ impl Planned {
             admitted_by.push(c.admitted_by.to_string());
             judged_current &= c.current;
         }
-        let (unadmitted, unadmitted_why) = unadmitted.into_iter().unzip();
+        let (unadmitted, unadmitted_why, unadmitted_act) = split_unadmitted(unadmitted);
         Fact {
             metric: metric.to_string(),
             applicable: true,
@@ -391,6 +401,7 @@ impl Planned {
             bucketed: Vec::new(),
             unadmitted,
             unadmitted_why,
+            unadmitted_act,
             wanted,
             wanted_over,
             alternative: None,
@@ -1256,7 +1267,7 @@ async fn plan(
     // floor and the bucketing split, one aggregate pass.
     let scanned = crate::provenance::scanned_tables(&probe, dataset);
     let mut cand: Vec<Candidate> = Vec::new();
-    let mut unadmitted: Vec<(String, String)> = Vec::new();
+    let mut unadmitted: Vec<(String, String, &'static str)> = Vec::new();
     for f in fields.fields() {
         let n = f.name().as_str();
         if n == "value"
@@ -1271,6 +1282,7 @@ async fn plan(
                 "an expression, not a table column: no verdict can reach it — serve the \
                  column it derives from, or land it as a recipe column"
                     .into(),
+                "expression",
             ));
             continue;
         };
@@ -1285,6 +1297,7 @@ async fn plan(
             unadmitted.push((
                 n.to_string(),
                 format!("closed by a dimension gloss on {subject} ({speaker}: none)"),
+                "none",
             ));
             continue;
         }
@@ -1328,24 +1341,30 @@ async fn plan(
                 primary: stance == "primary",
             },
             (None, _) => {
-                let why = match judged.relevance.get(subject) {
-                    Some(v) => format!(
-                        "dimension_relevance abstained on {subject} ({}), and no declared \
-                         relationship reaches it from a judged key the grounding scans — \
-                         declare the edge, or gloss dimension on it",
-                        v.body["reason"].as_str().unwrap_or("no reason given")
+                let (why, act) = match judged.relevance.get(subject) {
+                    Some(v) => (
+                        format!(
+                            "dimension_relevance abstained on {subject} ({}), and no declared \
+                             relationship reaches it from a judged key the grounding scans — \
+                             declare the edge, or gloss dimension on it",
+                            v.body["reason"].as_str().unwrap_or("no reason given")
+                        ),
+                        "abstained",
                     ),
                     None => {
                         if let Some(function) = &judged.relevance_fn {
                             wanted.push((function.clone(), subject.clone()));
                         }
-                        format!(
-                            "no verdict on {subject} — run dimension_relevance() over it, or \
-                             gloss dimension on it"
+                        (
+                            format!(
+                                "no verdict on {subject} — run dimension_relevance() over it, \
+                                 or gloss dimension on it"
+                            ),
+                            "verdict",
                         )
                     }
                 };
-                unadmitted.push((n.to_string(), why));
+                unadmitted.push((n.to_string(), why, act));
                 continue;
             }
         };
@@ -1482,6 +1501,7 @@ async fn build(
             unadmitted.push((
                 c.column.clone(),
                 format!("ranked below the {DIMS_CAP} admitted axes"),
+                "cap",
             ));
             continue;
         }
@@ -1489,6 +1509,7 @@ async fn build(
             unadmitted.push((
                 c.column.clone(),
                 "one member across the frame: nothing to slice".into(),
+                "single",
             ));
             continue;
         }
@@ -1693,8 +1714,12 @@ async fn build(
             basis,
             admitted_by,
             bucketed,
-            unadmitted: unadmitted.iter().map(|(c, _)| c.clone()).collect(),
-            unadmitted_why: unadmitted.into_iter().map(|(_, w)| w).collect(),
+            unadmitted: unadmitted.iter().map(|(c, _, _)| c.clone()).collect(),
+            unadmitted_why: unadmitted.iter().map(|(_, w, _)| w.clone()).collect(),
+            unadmitted_act: unadmitted
+                .into_iter()
+                .map(|(_, _, a)| a.to_string())
+                .collect(),
             wanted: wanted.iter().map(|(f, _)| f.clone()).collect(),
             wanted_over: wanted.into_iter().map(|(_, s)| s).collect(),
             alternative,
@@ -2185,7 +2210,7 @@ pub(crate) async fn metric_series_batch(
 /// `metric_axes()` — one row per current grounding, the record read:
 /// `(metric, applicable, judged_current, reason, behavior,
 /// behavior_basis, grain, resolution, window, dims, basis,
-/// admitted_by, bucketed, unadmitted, unadmitted_why, wanted,
+/// admitted_by, bucketed, unadmitted, unadmitted_why, unadmitted_act, wanted,
 /// wanted_over, alternative, alternative_divergence,
 /// alternative_error)`. What the cube
 /// admitted and why not, and
@@ -2254,6 +2279,21 @@ pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>
 
 /// Fact rows as the `metric_axes()` relation — one schema for the
 /// read and for a grounding write's answer.
+/// The three columns of the unadmitted list, in one order.
+fn split_unadmitted(
+    unadmitted: Vec<(String, String, &'static str)>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut columns = Vec::with_capacity(unadmitted.len());
+    let mut whys = Vec::with_capacity(unadmitted.len());
+    let mut acts = Vec::with_capacity(unadmitted.len());
+    for (column, why, act) in unadmitted {
+        columns.push(column);
+        whys.push(why);
+        acts.push(act.to_string());
+    }
+    (columns, whys, acts)
+}
+
 pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
     let list = |pick: fn(&Fact) -> &Vec<String>| -> ArrayRef {
         let mut b = ListBuilder::new(StringBuilder::new());
@@ -2313,6 +2353,11 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             true,
         ),
         Field::new(
+            "unadmitted_act",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
             "wanted",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
@@ -2350,6 +2395,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.bucketed),
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),
+            list(|f| &f.unadmitted_act),
             list(|f| &f.wanted),
             list(|f| &f.wanted_over),
             text(|f| f.alternative.as_deref()),

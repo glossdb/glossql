@@ -1,5 +1,25 @@
 # Reading — read before any read over a metric: the verbs, and what this engine has that postgres lacks
 
+## What this engine refuses
+
+The engine is DataFusion behind a postgres parser. Three refusals cost
+most of the lost calls:
+
+- Unquoted names fold to lowercase, in glossql statements and in SQL
+  alike: a table declared `AdsInfo` is read as `adsinfo` or `AdsInfo`.
+  A column landed with capitals from a source header is reached only
+  quoted: `"ObjectType"`. Alias it lowercase in the recipe and the
+  quotes are never needed.
+- `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
+  SELECT list, a `FILTER (WHERE …)` or a CASE they are refused, and so
+  is a scalar subquery inside an aggregate, `max((SELECT count(*) …))`:
+  `Physical plan does not support logical expression`, or `Invalid
+  (non-executable) plan after Analyzer`. Write the join:
+  JOIN, LEFT JOIN … IS NULL, or a window function.
+- `count(DISTINCT (a, b))` over millions of rows exhausts the memory
+  pool. Use `approx_distinct`, or GROUP BY the keys in a CTE and count
+  the rows.
+
 ## Read at the reader's grain
 
 Grain is the reader's: the app asks by month, another reader by day,

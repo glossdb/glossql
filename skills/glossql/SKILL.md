@@ -200,49 +200,22 @@ SELECT r.aspect, r.key, r.stance, r.folded_in FROM ruling_entries r
 JOIN current_dataset d ON d.dataset = r.dataset ORDER BY r.written_at DESC
 ```
 
-## The brief — the session's first read
+## The brief, the questions, the rulings
 
 Human answers land while you are away — through the door's question
-forms or another session. Some govern immediately (the human slot
-outranks at every read), some owe you an act. Read what changed once,
-before the first write. `SELECT * FROM datasets` first: a workspace
-with none has no brief to sweep — `owed`, `GLOSSARY(d)` and
-`ATTEST(d)` all need a dataset — and `SELECT * FROM workspace_next`
-is the whole of its live state; the metrics skill's landing page is
-where it begins. With a dataset, `USE` it and read:
+forms or another session. The brief the door serves at connect leads
+with what is owed and closes with the record's size; it rides any
+tool result whose call moved it as a `brief: Live now: …` block. The
+`rulings` goal on the `next:` line carries every owed act — a
+fold-in, an approved recipe change, a formula answer, a contested
+slot — and hands you the statement for each.
 
-```glossql
-SELECT subject, aspect, actor_id, written_at FROM glossary
-WHERE actor_kind = 'human' ORDER BY written_at DESC LIMIT 20;
-SELECT subject, aspect FROM GLOSSARY(ops) WHERE state = 'contested';
-SELECT subject, band, score FROM ATTEST(ops) WHERE band = 'red';
-SELECT what, why, since FROM owed ORDER BY since DESC;
-```
-
-The brief the door serves at connect leads with what is owed —
-rulings awaiting your fold-in, approvals awaiting your re-declare,
-and **judgment questions** (assumptions below full confidence —
-conventions and definitions the data cannot arbitrate) — and closes
-with the record's size: how many human writings stand and when the
-latest landed. The first part is work; the second's timestamp tells
-you something landed while you were away. The brief also rides any
-tool result whose call moved it, as a
-`brief: Live now: …` block — so mid-session changes reach you
-without reconnecting; a call that carries no brief block changed
-nothing.
-
-A question is served once and then waits. Forms ride record reads: a
-call that reads the glossary — `GLOSSARY()`, `ATTEST()`, the store
-relations — and writes nothing carries one question form; landing
-calls and plain data reads run uninterrupted, and nothing re-asks
-until your next record read while the question stands. Waiting is not
-a gate: the work goes on, the grounding stays yours, and the answer
-lands as a ruling whether you are there or not — every grounding you
-write with an assumption below 1.0 adds to the count, which is the
-brief counting your disclosures, not an order to stop. A client
-without question forms gets none — read what stands open yourself and
-relay it in chat, multiple choice with your grounds, then run the
-statement the answer names:
+A question is served once and then waits: forms ride record reads
+and never interrupt a landing. Waiting is not a gate: the work goes
+on, the grounding stays yours, and the answer lands as a ruling
+whether you are there or not. A client without question forms gets
+none — read what stands open and relay it in chat, multiple choice
+with your grounds, then run the statement the answer names:
 
 ```sql
 SELECT o.aspect, o.dimension, o.key, o.assumption, o.conf
@@ -251,13 +224,10 @@ ORDER BY o.conf ASC;
 ```
 
 An answer lands as a **ruling** in the human's slot — the judgment
-alone, naming the claim by its `key`, never a copy of your body. A
-ruling holds its question closed; some rulings owe you an act, and the
-brief counts them. What a ruling is, what each kind owes you (the
-fold-in, an `unclear`, a formula answer, an approved recipe change, a
-contested slot), why every assumption carries a `key`, and what the
-confidence number means are `references/rulings.md` — open it the
-moment the brief counts anything, and before disclosing your first
+alone, naming the claim by its `key`, never a copy of your body. What
+a ruling is, what each kind owes you, why every assumption carries a
+`key`, and what the confidence number means are
+`references/rulings.md` — open it before disclosing your first
 assumption.
 
 ## Measurements over-produce — you are the judge

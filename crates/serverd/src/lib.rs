@@ -93,10 +93,6 @@ pub struct DoorConfig {
     /// the DNS-rebinding guard of a server on a laptop; a deployment
     /// names the host the world uses (`main.rs`, `allowed_hosts`).
     pub allowed_hosts: Vec<String>,
-    /// Whether every tool result carries the `situation:` and `next:`
-    /// lines (`window`). Off is the control arm of the run that
-    /// measures them.
-    pub next: bool,
 }
 
 impl Default for DoorConfig {
@@ -104,7 +100,6 @@ impl Default for DoorConfig {
         DoorConfig {
             row_cap: DEFAULT_ROW_CAP,
             allowed_hosts: StreamableHttpServerConfig::default().allowed_hosts,
-            next: true,
         }
     }
 }

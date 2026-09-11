@@ -5,6 +5,7 @@
   "DECLARE FUNCTION",
   "DECLARE RECIPE",
   "DECLARE RELATIONSHIP",
+  "DECLARE SOURCE",
   "DECLARE WITNESS",
   "EXTRACT",
   "End",
@@ -682,15 +683,44 @@
  "surfaces": [
   {
    "name": "structure",
-   "goal": "the join structure declared and checked",
+   "goal": "the tables landed, the join structure declared and checked",
    "route": [
     {
-     "when": {
-      "read": "imports",
-      "where": {},
-      "none": true
-     },
-     "blocked": "no table landed"
+     "when": [
+      {
+       "read": "imports",
+       "where": {},
+       "none": true
+      },
+      {
+       "read": "sources",
+       "where": {},
+       "none": true
+      }
+     ],
+     "act": "DECLARE SOURCE",
+     "say": "declare the source the files come from",
+     "why": "no source is declared and no table is landed",
+     "form": "DECLARE SOURCE <name> SET (type: parquet, location: '<the root the files sit under>');",
+     "then": "SELECT path, size FROM source_files('<name>')"
+    },
+    {
+     "when": [
+      {
+       "read": "sources",
+       "where": {}
+      },
+      {
+       "read": "imports",
+       "where": {},
+       "none": true
+      }
+     ],
+     "act": "DECLARE RECIPE",
+     "say": "land the tables from {row.name}",
+     "why": "{row.name} is declared and no table is landed; a recipe lands one table, typed, and nothing more",
+     "form": "SELECT path, size FROM source_files('{row.name}')",
+     "then": "DECLARE RECIPE <table> ON {dataset} FROM {row.name} AS $$SELECT * FROM read_parquet('<path under the root>')$$;"
     },
     {
      "when": {
@@ -732,14 +762,26 @@
      "form": "SELECT relationship_coherence() FROM {dataset}"
     },
     {
-     "done": "edges declared and checked"
+     "done": "tables landed, edges declared and checked"
     }
    ]
   },
   {
    "name": "metrics",
-   "goal": "every declared metric grounded",
+   "goal": "every metric the dataset claims grounded",
    "route": [
+    {
+     "when": {
+      "read": "metric_surfaces",
+      "where": {},
+      "none": true
+     },
+     "act": "DECLARE ASPECT query",
+     "say": "declare and claim the first concept",
+     "why": "no metric is claimed by this dataset: a declared QUERY aspect is this dataset's once its definitions entry or its grounding stands",
+     "form": "DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET;\nGLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures, in the business's words>\"}}}$$;",
+     "then": "GLOSS <name> ON {dataset} AS $${\"sql\": \"<the grounding>\"}$$;"
+    },
     {
      "when": {
       "read": "metric_surfaces",
@@ -753,7 +795,7 @@
      "form": "GLOSS {row.name} ON {dataset} AS $${\n  \"sql\": \"SELECT <date column> AS date, <measure> AS value FROM <table>\",\n  \"assumptions\": [{\"dimension\": \"<scope|behavior|definition>\", \"key\": \"<stable-key>\", \"assumption\": \"<the judgment call, and the reading you rejected>\", \"basis\": \"<what it rests on>\", \"confidence\": 0.7}]\n}$$;"
     },
     {
-     "done": "every metric the dataset claims is grounded; the next concept is the human's to name — DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET, then its definitions entry (GLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures>\"}}}$$) claims it for this dataset, then its grounding"
+     "done": "every metric the dataset claims is grounded; the next concept is the human's to name — DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET, its definitions entry, its grounding"
     }
    ]
   },
@@ -775,13 +817,27 @@
      "when": {
       "read": "metric_axes",
       "where": {
+       "applicable": true,
        "wanted": "nonempty"
       }
      },
      "act": "EXTRACT",
      "say": "run {row.wanted[0]} over {row.wanted_over[0]}",
-     "why": "{row.metric} reads {row.wanted_over[0]} and nobody measured it",
-     "form": "SELECT {row.wanted[0]}() FROM {dataset}.{wanted_table}"
+     "why": "{row.metric} reads {row.wanted_over[0]} and no verdict stands on it",
+     "form": "SELECT {row.wanted[0]}() FROM {dataset}.{row.wanted_over[0]}"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "judged_current": "null"
+      }
+     },
+     "act": "dimension_relevance",
+     "say": "judge the served columns of {row.metric}",
+     "why": "no verdict stands on the served columns of {row.metric} yet",
+     "form": "SELECT dimension_relevance() FROM {dataset}.{table}.<served column>"
     },
     {
      "when": {
@@ -794,21 +850,34 @@
      "act": "temporal",
      "say": "re-judge the served columns of {row.metric}",
      "why": "the verdicts {row.metric} stands on predate the last change",
-     "form": "SELECT temporal(), dimension_relevance() FROM {dataset}.{table}"
+     "form": "SELECT temporal() FROM {dataset}.{table}.<date column>;\nSELECT dimension_relevance() FROM {dataset}.{table}.<served column>"
     },
     {
      "when": {
       "read": "metric_axes",
       "where": {
        "applicable": true,
-       "unadmitted": "nonempty"
+       "unadmitted_act": "verdict"
       }
      },
      "act": "dimension_relevance",
-     "say": "judge the served columns of {row.metric} the cube does not slice on",
+     "say": "judge {row.unadmitted[0]} on {row.metric}",
      "why": "{row.unadmitted_why[0]}",
-     "form": "SELECT dimension_relevance() FROM {dataset}.{table}",
-     "then": "GLOSS dimension ON {dataset}.{table}.<column> AS $${\"dimension\": \"supporting\"}$$;"
+     "form": "SELECT dimension_relevance() FROM {dataset}.{table}.{row.unadmitted[0]}",
+     "then": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"dimension\": \"supporting\"}$$;"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "unadmitted_act": "abstained"
+      }
+     },
+     "act": "GLOSS dimension",
+     "say": "admit {row.unadmitted[0]} on {row.metric} by gloss, or declare the edge",
+     "why": "{row.unadmitted_why[0]}",
+     "form": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"dimension\": \"supporting\"}$$;"
     },
     {
      "when": {
@@ -818,14 +887,17 @@
        "dims": "empty"
       }
      },
+     "needs": [
+      "columns"
+     ],
      "act": "GLOSS query",
-     "say": "re-record {row.metric} serving a dimension column of {table}",
+     "say": "re-record {row.metric} serving one of {columns}",
      "why": "the frame serves only a date and a value; the cube slices only on served columns with a verdict",
      "form": "-- columns of {table} not served: {columns}\nGLOSS {row.metric} ON {dataset} AS $${body}$$;",
-     "then": "SELECT dimension_relevance() FROM {dataset}.{table}"
+     "then": "SELECT dimension_relevance() FROM {dataset}.{table}.<the column you served>"
     },
     {
-     "done": "every applicable metric admits an axis"
+     "done": "every applicable metric admits an axis, or none of its served columns can be one"
     }
    ]
   },
@@ -889,7 +961,7 @@
   },
   {
    "name": "checks",
-   "goal": "every check spoken and green",
+   "goal": "a check of your own stands, every check ran, none is red",
    "route": [
     {
      "when": {
@@ -999,7 +1071,7 @@
      "say": "fold in the ruling on {row.aspect} ({row.key}: {row.stance})",
      "why": "{row.note}",
      "form": "-- the assumption under key \"{row.key}\" at confidence 1.0 with basis \"human-ruled\"; an unclear stance is a reformulation under a new key\nGLOSS {row.aspect} ON {row.subject} AS $${body}$$;",
-     "then": "SELECT temporal(), dimension_relevance() FROM {dataset}.<table>; SELECT metric_bands() FROM {dataset}"
+     "then": "SELECT temporal() FROM {dataset}.<table>.<date column>; SELECT metric_bands() FROM {dataset}"
     },
     {
      "when": {

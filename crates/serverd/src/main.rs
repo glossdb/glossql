@@ -18,7 +18,7 @@ use glossql_serverd::{
 
 const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
-[--spill-limit <megabytes>] [--next on|off] [--tls-cert <pem> --tls-key <pem>] \
+[--spill-limit <megabytes>] [--tls-cert <pem> --tls-key <pem>] \
 | glossql --version | glossql --help\n\
 with --tls-cert and --tls-key the doors serve https — what a desktop \
 MCP client requires; certs/ in the repo holds a self-signed localhost \
@@ -158,13 +158,6 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
                         .parse()
                         .map_err(|e| format!("--spill-limit: {e}"))?,
                 );
-            }
-            "--next" => {
-                doors.next = match value()?.as_str() {
-                    "on" => true,
-                    "off" => false,
-                    other => return Err(format!("--next: `{other}` — on or off")),
-                }
             }
             other => return Err(format!("unknown flag {other}")),
         }

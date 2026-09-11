@@ -207,7 +207,10 @@ back in: no verdict on its subject — run `dimension_relevance()` over
 it or gloss `dimension`; a verdict that abstained with no declared
 relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
-below the cap of four), `wanted` and `wanted_over` (the measurements
+below the cap of four), `unadmitted_act` (the act behind each, at the
+same index, as a tag: `verdict` — no verdict yet; `abstained`; `none`
+— closed by a gloss; `expression`, `single`, `cap` — terminal),
+`wanted` and `wanted_over` (the measurements
 the row reads and no function has landed — the function to run, and
 at the same index the column subject to run it over: the function
 returning `temporal_profile` over each source column of a served date

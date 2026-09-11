@@ -235,8 +235,7 @@ what a build serves is what its suite tested.
   rows through the tool. Its answer carries the statement to send,
   filled from the record. The goal is the caller's, never stored: what
   the human asked for decides which link to follow. The routes are
-  data, `doc://window.json`, and none is an order. `--next off` turns
-  the lines off.
+  data, `doc://window.json`, and none is an order.
 - **The function listings.** `doc://functions/door.md`,
   `doc://functions/recipe.md` and `doc://functions/detector.md` list
   every function each execution context registers, read from that

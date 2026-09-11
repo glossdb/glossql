@@ -7,8 +7,10 @@
 //! structure, metrics, slices, bands, checks, app, rulings — and its
 //! route is a list of steps in `window.json`. A step is a condition
 //! over a shipped read (a key, as the mechanical edges carry: some row
-//! matches every predicate, or none does; `"{dataset}"` as a value is
-//! the bound dataset) and what holds when it does:
+//! matches every predicate, or none does; `"null"` matches an absent
+//! field, `"{dataset}"` the bound dataset, and a list field matches
+//! when one member does) and what holds when it does — a step may
+//! also `need` a slot the door can fill:
 //! the goal is blocked and why, or one act with its statement, or the
 //! goal is done. The first step whose condition holds decides. The
 //! order of a route is the goal's preconditions and nothing more; an
@@ -135,6 +137,10 @@ pub struct Step {
     pub form: Option<String>,
     #[serde(default)]
     pub then: Option<String>,
+    /// Slots the door must fill non-empty for the step to hold — a
+    /// wider frame needs a column to add.
+    #[serde(default)]
+    pub needs: Vec<String>,
 }
 
 /// The embedded graph, parsed once.
@@ -226,20 +232,22 @@ pub fn holds(key: &Key, rows: &[Value], dataset: &str) -> bool {
 fn predicate(have: Option<&Value>, want: &Value, dataset: &str) -> bool {
     match want.as_str() {
         Some("{dataset}") => have.and_then(Value::as_str) == Some(dataset),
+        Some("null") => have.is_none_or(Value::is_null),
         Some("empty") => is_empty(have),
         Some("nonempty") => !is_empty(have),
         Some("nonzero") => have.and_then(Value::as_f64).is_some_and(|n| n != 0.0),
         _ => match have {
             None => false,
-            Some(h) => {
-                h == want
-                    || match (h.as_str(), want.as_str()) {
-                        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-                        _ => false,
-                    }
-            }
+            // A list field matches when one of its members does.
+            Some(Value::Array(items)) if !want.is_array() => items.iter().any(|h| same(h, want)),
+            Some(h) => same(h, want),
         },
     }
+}
+
+fn same(have: &Value, want: &Value) -> bool {
+    have == want
+        || matches!((have.as_str(), want.as_str()), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
 }
 
 fn is_empty(have: Option<&Value>) -> bool {
@@ -438,6 +446,20 @@ impl Record<'_> {
                     first
                 }
             };
+            let mut needed = true;
+            for need in &step.needs {
+                if self
+                    .slot(need, row.as_ref())
+                    .await
+                    .is_none_or(|v| v.trim().is_empty())
+                {
+                    needed = false;
+                    break;
+                }
+            }
+            if !needed {
+                continue;
+            }
             let mut next = Next {
                 surface: surface.name.clone(),
                 state: "done",

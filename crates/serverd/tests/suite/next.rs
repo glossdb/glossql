@@ -4,7 +4,7 @@
 //! every node reaches `End`; the function listings are the registries;
 //! the routes answer from the record; and the door carries the
 //! `situation:` and `next:` lines, serves `next://` as a resource
-//! template, and stays silent with `--next off`.
+//! template.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -467,11 +467,20 @@ async fn the_routes_answer_from_the_record() {
 
     // A fresh dataset: nothing landed, nothing grounded.
     let fresh = by_surface(&rows(&session, "SELECT * FROM next()").await);
-    assert_eq!(fresh["structure"]["state"], "blocked", "{fresh:?}");
+    assert_eq!(fresh["structure"]["state"], "next", "{fresh:?}");
+    assert_eq!(fresh["structure"]["act"], "DECLARE SOURCE");
     assert_eq!(fresh["slices"]["state"], "blocked");
     assert_eq!(fresh["bands"]["state"], "blocked");
     assert_eq!(fresh["app"]["state"], "blocked");
-    assert_eq!(fresh["metrics"]["state"], "done", "{fresh:?}");
+    assert_eq!(fresh["metrics"]["state"], "next", "{fresh:?}");
+    assert_eq!(fresh["metrics"]["act"], "DECLARE ASPECT query");
+    assert!(
+        fresh["metrics"]["statement"]
+            .as_str()
+            .unwrap()
+            .contains("GLOSS definitions ON fin"),
+        "{fresh:?}"
+    );
     assert_eq!(fresh["rulings"]["state"], "done");
     assert!(
         fresh["checks"]["statement"]
@@ -643,7 +652,10 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     assert_eq!(lines.next(), Some("situation: owed landed"), "{block}");
     let next = lines.next().expect("the next line rides a bound call");
     assert!(next.starts_with("next: "), "{block}");
-    assert!(next.contains("metrics: done"), "{block}");
+    assert!(
+        next.contains("metrics → declare and claim the first concept (next://fin/metrics)"),
+        "{block}"
+    );
     assert!(
         next.contains("slices → blocked: no applicable metric stands"),
         "{block}"
@@ -700,7 +712,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         .as_str()
         .unwrap_or_else(|| panic!("{body}"));
     assert!(text.starts_with("# next on fin"), "{text}");
-    assert!(text.contains("## metrics: done"), "{text}");
+    assert!(text.contains("## metrics: next"), "{text}");
     assert!(text.contains("DECLARE ASPECT <name>"), "{text}");
     let body = body_of(
         mcp(
@@ -715,19 +727,6 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         .as_str()
         .unwrap_or_else(|| panic!("{body}"));
     assert!(text.contains("## app: blocked"), "{text}");
-
-    // Off is off: the control arm of the run that measures it.
-    let off = router(
-        plane,
-        DoorConfig {
-            next: false,
-            ..DoorConfig::default()
-        },
-        Access::Gated(common::login()),
-    );
-    let body = body_of(mcp(off, call(7, "USE fin; SELECT * FROM owed")).await).await;
-    assert_ne!(body["result"]["isError"], json!(true), "{body}");
-    assert!(situation_of(&body).is_none(), "{body}");
 }
 
 #[test]
