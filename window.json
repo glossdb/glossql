@@ -753,11 +753,7 @@
      "form": "GLOSS {row.name} ON {dataset} AS $${\n  \"sql\": \"SELECT <date column> AS date, <measure> AS value FROM <table>\",\n  \"assumptions\": [{\"dimension\": \"<scope|behavior|definition>\", \"key\": \"<stable-key>\", \"assumption\": \"<the judgment call, and the reading you rejected>\", \"basis\": \"<what it rests on>\", \"confidence\": 0.7}]\n}$$;"
     },
     {
-     "act": "DECLARE ASPECT query",
-     "say": "declare the next concept",
-     "why": "every metric this dataset claims is grounded; the next concept is yours and the human's to name — a declared aspect is this dataset's once its definitions entry or its grounding stands",
-     "form": "DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET;\nGLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures, in the business's words>\"}}}$$;",
-     "then": "GLOSS <name> ON {dataset} AS $${\"sql\": \"<the grounding>\"}$$;"
+     "done": "every metric the dataset claims is grounded; the next concept is the human's to name — DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET, then its definitions entry (GLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures>\"}}}$$) claims it for this dataset, then its grounding"
     }
    ]
   },
@@ -932,11 +928,21 @@
      "form": "SELECT subject, aspect, witness, band, score FROM ATTEST({dataset}) WHERE band = 'red' ORDER BY witness, subject"
     },
     {
+     "when": {
+      "read": "functions",
+      "where": {
+       "scope": "{dataset}"
+      },
+      "none": true
+     },
      "act": "DECLARE WITNESS",
      "say": "promote a reconciliation to a standing check",
-     "why": "no check is owed; a tie-out you ran by hand is a check that re-runs at every pin move",
+     "why": "no check is owed and none is yours: a tie-out you ran by hand is a check that re-runs at every pin move",
      "form": "DECLARE ASPECT <name>_check WITH $${\n  \"type\": \"object\", \"required\": [\"outcome\"],\n  \"properties\": {\"outcome\": {\"type\": \"string\"}, \"tolerance\": {\"type\": \"number\"}, \"breach_rate\": {\"type\": \"number\"}}\n}$$ AS FACT ON DATASET;\nDECLARE WITNESS <name>_w ON <name>_check BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;\nDECLARE FUNCTION <name>_check_fn FOR {dataset} AS $$\n  SELECT '<what was compared>' AS outcome, <the violation share, as DOUBLE> AS breach_rate\n  FROM <the second route to the number>\n$$ RETURNS <name>_check;\nGLOSS <name>_check ON {dataset} AS $${\"outcome\": \"<what must hold>\", \"tolerance\": <the rate you measured>}$$;",
      "then": "SELECT <name>_check_fn() FROM {dataset}"
+    },
+    {
+     "done": "your own checks stand, every check ran, none is red"
     }
    ]
   },

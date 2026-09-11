@@ -471,8 +471,7 @@ async fn the_routes_answer_from_the_record() {
     assert_eq!(fresh["slices"]["state"], "blocked");
     assert_eq!(fresh["bands"]["state"], "blocked");
     assert_eq!(fresh["app"]["state"], "blocked");
-    assert_eq!(fresh["metrics"]["state"], "next");
-    assert_eq!(fresh["metrics"]["act"], "DECLARE ASPECT query");
+    assert_eq!(fresh["metrics"]["state"], "done", "{fresh:?}");
     assert_eq!(fresh["rulings"]["state"], "done");
     assert!(
         fresh["checks"]["statement"]
@@ -515,7 +514,9 @@ async fn the_routes_answer_from_the_record() {
         )
         .await
         .unwrap();
-    let judged = session.execute("SELECT temporal() FROM fin.races.race_date").await;
+    let judged = session
+        .execute("SELECT temporal() FROM fin.races.race_date")
+        .await;
     let answers = by_surface(&rows(&session, "SELECT * FROM next()").await);
     match judged {
         Ok(_) => {
@@ -642,10 +643,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     assert_eq!(lines.next(), Some("situation: owed landed"), "{block}");
     let next = lines.next().expect("the next line rides a bound call");
     assert!(next.starts_with("next: "), "{block}");
-    assert!(
-        next.contains("metrics → declare the next concept (next://fin/metrics)"),
-        "{block}"
-    );
+    assert!(next.contains("metrics: done"), "{block}");
     assert!(
         next.contains("slices → blocked: no applicable metric stands"),
         "{block}"
@@ -668,7 +666,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         block.starts_with("situation: refused at owed — statement 3 of 3 refused"),
         "{block}"
     );
-    assert!(block.contains("next://fin/metrics"), "{block}");
+    assert!(block.contains("next://fin/checks"), "{block}");
 
     // The resource template, and one page through it.
     let body = body_of(
@@ -702,7 +700,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         .as_str()
         .unwrap_or_else(|| panic!("{body}"));
     assert!(text.starts_with("# next on fin"), "{text}");
-    assert!(text.contains("## metrics: next"), "{text}");
+    assert!(text.contains("## metrics: done"), "{text}");
     assert!(text.contains("DECLARE ASPECT <name>"), "{text}");
     let body = body_of(
         mcp(

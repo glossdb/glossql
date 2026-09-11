@@ -1,27 +1,47 @@
 ---
 name: glossql-metrics
-description: Take a glossql workspace from raw exports to metrics someone can trust — land what the topic needs, judge the structure, gloss the vocabulary, ground the cohort, stand up validations, and close with the question round. Use for any substantive work in a workspace: onboarding a source, declaring relationships, grounding a metric, authoring a check or a surface.
+description: Take a glossql workspace from raw exports to a workspace someone can use — the seven goals the door's next: line tracks: structure, metrics, slices, bands, checks, a page, rulings folded in; done when every goal is done or blocked. Use for any substantive work in a workspace: onboarding a source, declaring relationships, grounding a metric, authoring a check or a page.
 ---
 
 # From files to numbers someone trusts
 
-The deliverable is metrics the business trusts and the validations
-that say why. The `glossql` skill teaches the language and the reads;
-this one teaches judgment — what to decide, what to measure, what to
-ask. One page, nine references; each is named below with the moment
-to open it, and none is needed before that moment.
+The deliverable is a workspace someone can use, and it has seven
+goals: the join structure, the metrics the business trusts, the axes
+they slice on, the bands that watch them, the checks that say why a
+number holds, a page to look at them, and every ruling the human made
+folded in. The `glossql` skill teaches the language and the reads;
+this one teaches the judgment inside each goal — what to decide, what
+to measure, what to ask.
 
-**There is no fixed order.** This is not a pipeline: a person is
-talking to you while the work happens. Ask the workspace what it
-affords and where it stands, then do the next thing that matters:
+**The work is done when every goal is done or blocked.** The door
+says where you stand on each after every call, on the `next:` line:
 
-```sql
-SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
+```text
+next: structure: done · metrics → ground churn (next://ops/metrics) · slices → re-record churn serving a dimension column of orders (next://ops/slices) · bands → blocked: no applicable metric stands · checks → run metric_bands (next://ops/checks) · app → write the first page over 3 metrics (next://ops/app) · rulings: done
 ```
 
-One row per surface the system affords: what it is extended through,
-what stands, what is open. It reports state, never an order — the
-judgment is yours.
+A goal that is neither done nor blocked is yours to move. Read its
+link — `next://<dataset>/<goal>` as a resource, or `SELECT * FROM
+next(surface => '<goal>')` through the tool — and send the statement
+it hands you, edited to your judgment. A metric list is one goal of
+seven, not the deliverable: the metrics the human names are the ones
+to ground first, and the other six goals stand whether or not anyone
+named them. The human's ask sets the order and can close a goal ("no
+page this round"); nothing else does. Beyond that there is no fixed
+order, and the line is never one.
+
+| goal | done when | the judgment |
+|---|---|---|
+| `structure` | the edges are declared and the coherence check ran | `references/structure.md` |
+| `metrics` | every metric the dataset claims is grounded | `references/ground.md`, and below |
+| `slices` | every applicable metric admits an axis | `references/cube.md` |
+| `bands` | the walk ran and no band is red | `references/cube.md` |
+| `checks` | a check of your own stands, every check ran, none is red | `references/validate.md` |
+| `app` | a page stands over the grounded metrics | the `glossql-apps` skill |
+| `rulings` | every ruling is folded in and nothing is owed | `skill://glossql/references/rulings.md` |
+
+`workspace_next` is the map behind the line — every surface, what
+stands, what is open — when you want the counts.
 
 ## What you are making
 

@@ -66,12 +66,12 @@ Then close what owes an act, in the same session:
   the moment your current body carries that key at full confidence;
   until then the ruling keeps the question closed for you both. Keep
   the key and rewrite the prose as freely as the correction requires
-  — the join is on the key alone. **Fold in every standing ruling,
-  then re-measure, then the walk** — each write moves the pin; the
-  cube rebuilds at its next read on the newest verdicts and marks
-  them (`metric_axes().judged_current`) until the profilers run again,
-  and the walk lands at the pin it runs at — so one batch of
-  fold-ins, the profilers once, the walk once. **That closing
+  — the join is on the key alone. Each write moves the pin: the cube
+  rebuilds at its next read on the newest verdicts and marks them
+  (`metric_axes().judged_current`) until the profilers run again, and
+  the walk lands at the pin it runs at. The `rulings`, `slices` and
+  `bands` goals on the `next:` line carry the order — the fold-ins,
+  then the profilers once, then the walk once. **That closing
   re-measure is the audit of the batch, not hygiene**: a ruling
   outranks your judgment, never the measurements — and the batch moved
   the pin, so every check voice stands stale until it runs again

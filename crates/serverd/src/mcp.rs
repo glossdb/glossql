@@ -43,7 +43,7 @@ dataset itself), and a QUERY aspect's gloss is SQL, served back as `read.<name>(
 metric, a current fact, or a derived relation, which the metrics skill tells apart; \
 functions measure, and their measurements are the evidence; witnesses adjudicate the \
 voices on a slot; a human's ruling outranks every agent gloss. Live state is read through \
-the tool, never assumed. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
+the tool, never assumed. Every result closes with `next:`, one act per goal — structure, metrics, slices, bands, checks, app, rulings — and the work is done when every goal is done or blocked; a goal's link hands you the statement that moves it. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
 and `doc://grammar.ebnf` — rows of `pages()` too.";
 
 /// What the brief is decided on: the store's counts plus the open

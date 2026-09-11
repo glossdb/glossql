@@ -7,7 +7,8 @@
 //! structure, metrics, slices, bands, checks, app, rulings — and its
 //! route is a list of steps in `window.json`. A step is a condition
 //! over a shipped read (a key, as the mechanical edges carry: some row
-//! matches every predicate, or none does) and what holds when it does:
+//! matches every predicate, or none does; `"{dataset}"` as a value is
+//! the bound dataset) and what holds when it does:
 //! the goal is blocked and why, or one act with its statement, or the
 //! goal is done. The first step whose condition holds decides. The
 //! order of a route is the goal's preconditions and nothing more; an
@@ -206,23 +207,25 @@ pub fn read_sql(read: &str, dataset: &str) -> String {
     }
 }
 
-/// The first row matching every predicate of a key.
-pub fn matching<'a>(key: &Key, rows: &'a [Value]) -> Option<&'a Value> {
+/// The first row matching every predicate of a key; `"{dataset}"` as
+/// a value is the bound dataset.
+pub fn matching<'a>(key: &Key, rows: &'a [Value], dataset: &str) -> Option<&'a Value> {
     rows.iter().find(|row| {
         key.conditions
             .iter()
-            .all(|(field, want)| predicate(row.get(field), want))
+            .all(|(field, want)| predicate(row.get(field), want, dataset))
     })
 }
 
 /// Whether a key holds on the rows its read served.
-pub fn holds(key: &Key, rows: &[Value]) -> bool {
-    let any = matching(key, rows).is_some();
+pub fn holds(key: &Key, rows: &[Value], dataset: &str) -> bool {
+    let any = matching(key, rows, dataset).is_some();
     if key.none { !any } else { any }
 }
 
-fn predicate(have: Option<&Value>, want: &Value) -> bool {
+fn predicate(have: Option<&Value>, want: &Value, dataset: &str) -> bool {
     match want.as_str() {
+        Some("{dataset}") => have.and_then(Value::as_str) == Some(dataset),
         Some("empty") => is_empty(have),
         Some("nonempty") => !is_empty(have),
         Some("nonzero") => have.and_then(Value::as_f64).is_some_and(|n| n != 0.0),
@@ -408,6 +411,7 @@ impl Record<'_> {
 
     /// The first step whose condition holds decides.
     async fn resolve(&mut self, surface: &Surface) -> Result<Next, SessionError> {
+        let dataset = self.dataset.clone();
         for step in &surface.route {
             let row = match &step.when {
                 None => None,
@@ -419,7 +423,7 @@ impl Record<'_> {
                             all = false;
                             break;
                         };
-                        let m = matching(key, rows);
+                        let m = matching(key, rows, &dataset);
                         if if key.none { m.is_some() } else { m.is_none() } {
                             all = false;
                             break;
