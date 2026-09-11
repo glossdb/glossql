@@ -5,7 +5,6 @@
 //! everything live (declared functions, the glossary, the tables) is
 //! read through the language itself, where it is always current.
 
-use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use rmcp::model::{
@@ -17,6 +16,7 @@ use rmcp::model::{
     ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
     ServerInfo, Tool,
 };
+use rmcp::model::{ListResourceTemplatesResult, ResourceTemplate};
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler};
 
@@ -903,11 +903,39 @@ impl ServerHandler for GlossqlMcp {
         })
     }
 
+    /// The one dynamic resource: where the record stands toward a goal
+    /// on a dataset, as a page with the statement to send.
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![
+                ResourceTemplate::new("next://{dataset}/{surface}", "next")
+                    .with_description(
+                        "Where the record stands toward one goal on a dataset — structure, \
+                         metrics, slices, bands, checks, app, rulings — and the one act that \
+                         moves it, as a statement to send. `next://{dataset}` serves every \
+                         goal; the same rows through the tool are \
+                         `SELECT * FROM next(surface => '<surface>')`.",
+                    )
+                    .with_mime_type("text/markdown"),
+            ],
+            ..Default::default()
+        })
+    }
+
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
+        // `next://<dataset>[/<surface>]` is computed from the record for
+        // the caller, never a page of the binary.
+        if let Some(rest) = request.uri.strip_prefix("next://") {
+            return self.next_resource(rest, &request.uri, &context).await;
+        }
         let (mime, body) = match crate::skills::read(&request.uri) {
             Some((mime, body)) => (mime, body.to_string()),
             None => self
@@ -1156,12 +1184,12 @@ impl ServerHandler for GlossqlMcp {
         } else {
             None
         };
-        // The window: where the call left the agent and what the record
-        // admits next, on every call (`window`). It rides the result,
-        // never the instructions, so the stable prefix holds; the
-        // `--window off` arm is the control of the run that measures it.
-        let window = if self.doors.window {
-            self.window_block(actor, statements, ran, rendered.is_err())
+        // Where the call left the agent and one act per goal from there,
+        // on every call (`window`). It rides the result, never the
+        // instructions, so the stable prefix holds; `--next off` is the
+        // control arm of the run that measures it.
+        let window = if self.doors.next {
+            self.situation_block(actor, statements, ran, &rendered)
                 .await
         } else {
             None
@@ -1206,17 +1234,17 @@ impl ServerHandler for GlossqlMcp {
 }
 
 impl GlossqlMcp {
-    /// The window for one call: locate the act, evaluate the keyed
-    /// conditions out of it on the dataset the call bound, render.
-    async fn window_block(
+    /// The two lines every result carries: where the call left the
+    /// agent, and one act per goal from there (`window`).
+    async fn situation_block(
         &self,
         actor: Actor,
         statements: &str,
         ran: Option<usize>,
-        refused: bool,
+        rendered: &Result<serde_json::Value, String>,
     ) -> Option<String> {
-        let graph = window::graph();
-        let locus = window::locate(graph, statements, ran, refused);
+        let graph = glossql_session::next::graph();
+        let locus = window::locate(graph, statements, ran, rendered.is_err());
         let node = match locus.act {
             Act::Node(node) => node,
             // A gloss on an aspect the graph does not name localizes
@@ -1228,35 +1256,41 @@ impl GlossqlMcp {
                 .map(str::to_string)
                 .unwrap_or_else(|| "GLOSS".to_string()),
         };
-        let needed: BTreeSet<String> = graph
-            .out(&node)
-            .iter()
-            .flat_map(|e| e.when.key.iter().flat_map(|k| k.each()))
-            .map(|k| k.read.clone())
-            .collect();
-        let mut record: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
-        if !needed.is_empty()
-            && let Some(dataset) = &locus.dataset
-        {
-            match self.plane.channel(actor.clone(), Some(dataset)).await {
-                Ok(session) => {
-                    for read in needed {
-                        match self.rows(&session, &window::read_sql(&read, dataset)).await {
-                            Ok(rows) => {
-                                record.insert(read, rows);
-                            }
-                            Err(e) => {
-                                tracing::debug!(read, error = %e, "window: condition not read")
-                            }
-                        }
-                    }
-                }
-                Err(e) => tracing::debug!(error = %e, "window: no channel"),
+        let last_outcome = rendered
+            .as_ref()
+            .ok()
+            .and_then(|v| v.get(0))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.last())
+            .cloned();
+        let refusal = rendered.as_ref().err().map(String::as_str);
+        let mut lines = vec![window::situation(&node, refusal, last_outcome.as_ref())];
+        if let Some(dataset) = &locus.dataset {
+            match self.next_rows(&actor, dataset, None).await {
+                Ok(rows) => lines.push(window::next_line(dataset, &rows)),
+                Err(e) => tracing::debug!(error = %e, "next: not served"),
             }
         }
-        window::render(graph, &node, &|key| {
-            record.get(&key.read).map(|rows| window::holds(key, rows))
-        })
+        Some(lines.join("\n"))
+    }
+
+    /// `next()` on a channel bound to the dataset, as JSON rows.
+    async fn next_rows(
+        &self,
+        actor: &Actor,
+        dataset: &str,
+        surface: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let session = self
+            .plane
+            .channel(actor.clone(), Some(dataset))
+            .await
+            .map_err(|e| e.to_string())?;
+        let sql = match surface {
+            Some(s) => format!("SELECT * FROM next(surface => '{}')", s.replace('\'', "''")),
+            None => "SELECT * FROM next()".to_string(),
+        };
+        self.rows(&session, &sql).await
     }
 
     /// The rows of one read, as the wire renders them.
@@ -1281,6 +1315,40 @@ impl GlossqlMcp {
         let rows = self.rows(&session, &sql).await.ok()?;
         rows.first()?.get("kind")?.as_str().map(str::to_string)
     }
+
+    /// `next://<dataset>[/<surface>]` as a page: every answer with its
+    /// statement, for the caller the gate stamped.
+    async fn next_resource(
+        &self,
+        rest: &str,
+        uri: &str,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let actor = caller(context)?;
+        let (dataset, surface) = match rest.split_once('/') {
+            Some((d, s)) => (d, Some(s)),
+            None => (rest, None),
+        };
+        let rows = self
+            .next_rows(&actor, dataset, surface)
+            .await
+            .map_err(|e| McpError::resource_not_found(format!("`{uri}`: {e}"), None))?;
+        let body = window::next_page(dataset, &rows);
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(body, uri).with_mime_type("text/markdown"),
+        ])
+        .into())
+    }
+}
+
+/// The caller the gate stamped on the request.
+fn caller(context: &RequestContext<RoleServer>) -> Result<Actor, McpError> {
+    context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<Caller>())
+        .map(|caller| caller.0.clone())
+        .ok_or_else(|| McpError::internal_error("the door is not behind the gate: no caller", None))
 }
 
 #[cfg(test)]

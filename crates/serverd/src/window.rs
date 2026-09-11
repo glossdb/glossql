@@ -1,128 +1,25 @@
-//! The window — the mechanical layer of the procedural graph, served
-//! on every door call's result, localized to the act the call landed
-//! on. The shape is the localized two-hop view of arXiv 2609.09153;
-//! what that paper cannot have, and this door does, is the record as
-//! the localizer's second input.
+//! Where a call left the agent, on its result: the act its last
+//! statement was (`situation:`), and one act per goal the record
+//! affords from there (`next:`), each a link into `next://` and the
+//! `next()` read. The representation carries the links; the client
+//! holds the goal. Nothing rides the instructions or the stable
+//! prefix, and nothing is an order: the skills say how, the record
+//! says what is admissible now.
 //!
-//! The graph is `window.json` at the repository root: embedded here,
-//! served as `doc://window.json`, held to its vocabulary by the suite
-//! (`tests/suite/window.rs`). A node names an act: a statement kind
-//! (`USE`, `PROBE`, `EXTRACT`, `SQL`, `DECLARE <what>`, `DECLARE ASPECT
-//! <kind>`, `GLOSS <aspect>` for an aspect the graph names, `GLOSS
-//! <kind>` for any other), a function, a read, `Start` or `End`. An
-//! edge says `to` is admissible after `from`: `when` under what
-//! condition, `guidance` how, `pitfalls` what goes wrong, `source` the
-//! page that states it. A `key` makes the condition a fact of the
-//! record — `{read, where, none}`: some row of `read` matches every
-//! `where` predicate (a value, `"empty"`, `"nonempty"`, `"nonzero"`),
-//! or no row does when `none` is true. An edge without a key is
-//! admissible whenever its node is.
-//!
-//! Served: the hop-1 edges out of the node whose key holds or that
-//! carry none, keyed first, capped, then the hop-2 names on one line.
-//! A key is evaluated only for edges out of the current node, one read
-//! per relation per call, and only when the call bound a dataset — an
-//! edge whose key cannot be evaluated is not served. No order: the
-//! block says what the record admits next, and judgment stays the
-//! agent's. No model, no store row, no procedural edge: those the loop
-//! learns in the eval harness, and nothing learned rides here until
-//! the gate accepted it.
+//! The localizer names the act from the parsed statement — a gloss by
+//! the aspect the graph names, otherwise by the aspect's kind from the
+//! record; SQL by the door or read it names, else `SQL`; a refused
+//! call by the statement that refused, and the dataset by the last
+//! `USE` that landed. The graph's nodes are the vocabulary
+//! (`glossql_session::next`).
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
-use std::sync::OnceLock;
 
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::visit_relations;
 use glossql_parser::{AspectKind, Declaration, GlossqlParser, Statement};
-use serde::Deserialize;
+use glossql_session::next::Graph;
 use serde_json::Value;
-
-/// The graph, verbatim — `doc://window.json` serves the same bytes.
-pub const GRAPH_JSON: &str = include_str!("../../../window.json");
-
-/// How many hop-1 edges a window shows before it counts the rest.
-pub const CAP: usize = 10;
-
-#[derive(Deserialize)]
-pub struct Graph {
-    pub nodes: Vec<String>,
-    pub edges: Vec<Edge>,
-}
-
-#[derive(Deserialize, Clone)]
-pub struct Edge {
-    pub from: String,
-    pub to: String,
-    #[serde(default)]
-    pub relation: String,
-    pub when: When,
-    #[serde(default)]
-    pub guidance: String,
-    #[serde(default)]
-    pub pitfalls: String,
-    #[serde(default)]
-    pub source: String,
-}
-
-#[derive(Deserialize, Clone, Default)]
-pub struct When {
-    #[serde(default)]
-    pub text: String,
-    #[serde(default)]
-    pub key: Option<Keys>,
-}
-
-#[derive(Deserialize, Clone)]
-pub struct Key {
-    pub read: String,
-    #[serde(rename = "where", default)]
-    pub conditions: BTreeMap<String, Value>,
-    #[serde(default)]
-    pub none: bool,
-}
-
-/// One key, or several that must all hold — a condition over two
-/// reads, such as a metric applicable and no app standing.
-#[derive(Deserialize, Clone)]
-#[serde(untagged)]
-pub enum Keys {
-    One(Key),
-    All(Vec<Key>),
-}
-
-impl Keys {
-    pub fn each(&self) -> impl Iterator<Item = &Key> {
-        match self {
-            Keys::One(key) => std::slice::from_ref(key).iter(),
-            Keys::All(keys) => keys.iter(),
-        }
-    }
-}
-
-/// The embedded graph, parsed once.
-pub fn graph() -> &'static Graph {
-    static GRAPH: OnceLock<Graph> = OnceLock::new();
-    GRAPH.get_or_init(|| {
-        serde_json::from_str(GRAPH_JSON).expect("window.json parses; the suite holds it")
-    })
-}
-
-impl Graph {
-    /// The node spelled as the graph spells it, matched without case —
-    /// `attest` in SQL is the graph's `ATTEST`.
-    pub fn node_named(&self, name: &str) -> Option<&str> {
-        self.nodes
-            .iter()
-            .map(String::as_str)
-            .find(|n| n.eq_ignore_ascii_case(name))
-    }
-
-    /// The edges out of a node, in file order.
-    pub fn out(&self, node: &str) -> Vec<&Edge> {
-        self.edges.iter().filter(|e| e.from == node).collect()
-    }
-}
 
 /// Where a call left the agent: the dataset its statements bound, and
 /// the act its last statement was.
@@ -304,20 +201,19 @@ fn locate_by_text(graph: &Graph, statements: &str, ran: Option<usize>, refused: 
             }
         });
     }
-    let act = acts
-        .into_iter()
-        .rev()
-        .fold((None, None), |(non_use, last), a| {
-            let last = last.or_else(|| Some(a.clone_kind()));
-            match (&non_use, &a) {
-                (None, Act::Node(n)) if n != "USE" => (Some(a), last),
-                (None, Act::Gloss(_)) => (Some(a), last),
-                _ => (non_use, last),
-            }
-        });
+    let mut last_non_use = None;
+    let mut last = None;
+    for a in acts.into_iter().rev() {
+        if last.is_none() {
+            last = Some(a.clone_kind());
+        }
+        if last_non_use.is_none() && !matches!(&a, Act::Node(n) if n == "USE") {
+            last_non_use = Some(a);
+        }
+    }
     Locus {
         dataset,
-        act: act.0.or(act.1).unwrap_or(Act::Node("SQL".into())),
+        act: last_non_use.or(last).unwrap_or(Act::Node("SQL".into())),
     }
 }
 
@@ -402,126 +298,94 @@ fn words_of(statement: &str) -> Vec<(&str, bool)> {
     out
 }
 
-/// The SQL that reads a key's relation on the bound dataset: a door by
-/// its call, a relation or a shipped read by its name.
-pub fn read_sql(read: &str, dataset: &str) -> String {
-    match read {
-        "GLOSSARY" => "SELECT * FROM GLOSSARY()".to_string(),
-        "ATTEST" => format!("SELECT * FROM ATTEST({dataset})"),
-        name => {
-            let lower = name.to_ascii_lowercase();
-            // A door called with no arguments is called; a relation or
-            // a shipped read is named. A door that takes an argument
-            // cannot be a key's read — the suite plans every key.
-            let call = glossql_session::DOORS
-                .iter()
-                .any(|(door, syntax)| *door == lower && *syntax == format!("{door}()"));
-            if call {
-                format!("SELECT * FROM {lower}()")
-            } else {
-                format!("SELECT * FROM {lower}")
-            }
-        }
+/// The `situation:` line: the act, landed or refused, and for a
+/// grounding what its fact row said.
+pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> String {
+    if let Some(text) = refusal {
+        let first = text.lines().next().unwrap_or(text);
+        return format!("situation: refused at {node} — {first}");
     }
-}
-
-/// Whether a keyed condition holds on the rows its read served: some
-/// row matches every predicate, or none does when the key says so.
-pub fn holds(key: &Key, rows: &[Value]) -> bool {
-    let any = rows.iter().any(|row| {
-        key.conditions
-            .iter()
-            .all(|(field, want)| predicate(row.get(field), want))
-    });
-    if key.none { !any } else { any }
-}
-
-fn predicate(have: Option<&Value>, want: &Value) -> bool {
-    match want.as_str() {
-        Some("empty") => is_empty(have),
-        Some("nonempty") => !is_empty(have),
-        Some("nonzero") => have.and_then(Value::as_f64).is_some_and(|n| n != 0.0),
-        _ => match have {
-            None => false,
-            Some(h) => {
-                h == want
-                    || match (h.as_str(), want.as_str()) {
-                        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-                        _ => false,
-                    }
-            }
-        },
-    }
-}
-
-fn is_empty(have: Option<&Value>) -> bool {
-    match have {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) => s.is_empty() || s == "[]",
-        Some(Value::Array(a)) => a.is_empty(),
-        Some(Value::Object(o)) => o.is_empty(),
-        _ => false,
-    }
-}
-
-/// The window at a node: the hop-1 edges whose key `held` says holds or
-/// that carry none, keyed first, capped; then the hop-2 names. `None`
-/// when nothing is admissible — an unknown node, or every keyed edge
-/// off. The text is what glossval's mining parses; keep the shape.
-pub fn render(graph: &Graph, node: &str, held: &dyn Fn(&Key) -> Option<bool>) -> Option<String> {
-    let hop1 = graph.out(node);
-    if hop1.is_empty() {
-        return None;
-    }
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
-    seen.insert(node);
-    seen.extend(hop1.iter().map(|e| e.to.as_str()));
-    let mut horizon: BTreeSet<&str> = BTreeSet::new();
-    for e in &hop1 {
-        for e2 in graph.out(&e.to) {
-            if !seen.contains(e2.to.as_str()) {
-                horizon.insert(e2.to.as_str());
-            }
-        }
-    }
-    let mut keyed = Vec::new();
-    let mut open = Vec::new();
-    for e in hop1 {
-        match &e.when.key {
-            None => open.push(e),
-            Some(keys) if keys.each().all(|k| held(k) == Some(true)) => keyed.push(e),
-            Some(_) => {}
-        }
-    }
-    let ordered: Vec<&Edge> = keyed.into_iter().chain(open).collect();
-    if ordered.is_empty() {
-        return None;
-    }
-    let mut lines = vec![
-        format!("[procedural graph] you are at: {node}"),
-        "admissible next:".to_string(),
-    ];
-    for e in ordered.iter().take(CAP) {
-        let mut line = format!("- {}", e.to);
-        if !e.when.text.is_empty() {
-            line.push_str(&format!(" — when {}", e.when.text));
-        }
-        if !e.guidance.is_empty() {
-            line.push_str(&format!(": {}", e.guidance));
-        }
-        if !e.pitfalls.is_empty() {
-            line.push_str(&format!(" (pitfall: {})", e.pitfalls));
-        }
-        lines.push(line);
-    }
-    if ordered.len() > CAP {
-        lines.push(format!("- … and {} more from {node}", ordered.len() - CAP));
-    }
-    if !horizon.is_empty() {
-        lines.push(format!(
-            "then: {}",
-            horizon.into_iter().collect::<Vec<_>>().join(", ")
+    let Some(fact) = outcome.filter(|o| o.get("metric").is_some()) else {
+        return format!("situation: {node} landed");
+    };
+    let list = |field: &str| -> String {
+        fact.get(field)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
+    let metric = fact.get("metric").and_then(Value::as_str).unwrap_or("");
+    let mut line = format!("situation: {node} landed — {metric}: ");
+    if fact.get("applicable") == Some(&Value::Bool(true)) {
+        line.push_str(&format!(
+            "applicable; axes [{}]; unadmitted [{}]; wanted [{}]",
+            list("dims"),
+            list("unadmitted"),
+            list("wanted")
         ));
+    } else {
+        let reason = fact.get("reason").and_then(Value::as_str).unwrap_or("");
+        let first = reason.split(". ").next().unwrap_or(reason);
+        line.push_str(&format!("not applicable — {first}"));
     }
-    Some(lines.join("\n"))
+    line
+}
+
+fn field(row: &Value, name: &str) -> String {
+    row.get(name)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// The `next:` line: one act per goal, the link beside it; a blocked
+/// goal says what blocks it; a done goal says so.
+pub fn next_line(dataset: &str, rows: &[Value]) -> String {
+    let parts: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let surface = field(row, "surface");
+            match field(row, "state").as_str() {
+                "next" => format!(
+                    "{surface} → {} (next://{dataset}/{surface})",
+                    field(row, "say")
+                ),
+                "blocked" => format!("{surface} → blocked: {}", field(row, "why")),
+                _ => format!("{surface}: done"),
+            }
+        })
+        .collect();
+    format!("next: {}", parts.join(" · "))
+}
+
+/// The `next://<dataset>[/<surface>]` page: every answer with its form.
+pub fn next_page(dataset: &str, rows: &[Value]) -> String {
+    let mut out = format!("# next on {dataset}\n\n");
+    for row in rows {
+        let surface = field(row, "surface");
+        let state = field(row, "state");
+        out.push_str(&format!("## {surface}: {state}\n\n"));
+        if state == "next" {
+            out.push_str(&format!(
+                "**act:** {} — {}\n\n**why:** {}\n\n```glossql\n{}\n```\n",
+                field(row, "act"),
+                field(row, "say"),
+                field(row, "why"),
+                field(row, "statement")
+            ));
+            let then = field(row, "then");
+            if !then.is_empty() {
+                out.push_str(&format!("\nthen:\n\n```glossql\n{then}\n```\n"));
+            }
+            out.push('\n');
+        } else {
+            out.push_str(&format!("{}\n\n", field(row, "why")));
+        }
+    }
+    out
 }

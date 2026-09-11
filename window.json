@@ -5,6 +5,7 @@
   "DECLARE FUNCTION",
   "DECLARE RECIPE",
   "DECLARE RELATIONSHIP",
+  "DECLARE WITNESS",
   "EXTRACT",
   "End",
   "GLOSS app",
@@ -17,6 +18,7 @@
   "USE",
   "band_points",
   "detect_grounding_collisions",
+  "detect_relationships",
   "dimension_relevance",
   "metric_axes",
   "metric_bands",
@@ -675,6 +677,364 @@
    "guidance": "an app is the last thing built",
    "pitfalls": "a picture of nothing",
    "source": "glossql-apps/SKILL.md"
+  }
+ ],
+ "surfaces": [
+  {
+   "name": "structure",
+   "goal": "the join structure declared and checked",
+   "route": [
+    {
+     "when": {
+      "read": "imports",
+      "where": {},
+      "none": true
+     },
+     "blocked": "no table landed"
+    },
+    {
+     "when": {
+      "read": "measurements",
+      "where": {
+       "function": "detect_relationships"
+      },
+      "none": true
+     },
+     "act": "detect_relationships",
+     "say": "run the relationship detector",
+     "why": "the candidates come from the detector; you judge them",
+     "form": "SELECT detect_relationships() FROM {dataset}",
+     "then": "SELECT * FROM relationship_candidates('{dataset}')"
+    },
+    {
+     "when": {
+      "read": "relationships",
+      "where": {},
+      "none": true
+     },
+     "act": "DECLARE RELATIONSHIP",
+     "say": "declare the edges you judge from the candidates",
+     "why": "no edge is declared; the detector's candidates stand",
+     "form": "SELECT * FROM relationship_candidates('{dataset}')",
+     "then": "DECLARE RELATIONSHIP <child>.<column> -> <parent>.<column>;"
+    },
+    {
+     "when": {
+      "read": "measurements",
+      "where": {
+       "function": "relationship_coherence"
+      },
+      "none": true
+     },
+     "act": "relationship_coherence",
+     "say": "run the coherence check over the declared edges",
+     "why": "edges declared and never checked: orphan rate, child before parent",
+     "form": "SELECT relationship_coherence() FROM {dataset}"
+    },
+    {
+     "done": "edges declared and checked"
+    }
+   ]
+  },
+  {
+   "name": "metrics",
+   "goal": "every declared metric grounded",
+   "route": [
+    {
+     "when": {
+      "read": "metric_surfaces",
+      "where": {
+       "grounded": false
+      }
+     },
+     "act": "GLOSS query",
+     "say": "ground {row.name}",
+     "why": "{row.name} is declared and not grounded",
+     "form": "GLOSS {row.name} ON {dataset} AS $${\n  \"sql\": \"SELECT <date column> AS date, <measure> AS value FROM <table>\",\n  \"assumptions\": [{\"dimension\": \"<scope|behavior|definition>\", \"key\": \"<stable-key>\", \"assumption\": \"<the judgment call, and the reading you rejected>\", \"basis\": \"<what it rests on>\", \"confidence\": 0.7}]\n}$$;"
+    },
+    {
+     "act": "DECLARE ASPECT query",
+     "say": "declare the next concept",
+     "why": "every metric this dataset claims is grounded; the next concept is yours and the human's to name — a declared aspect is this dataset's once its definitions entry or its grounding stands",
+     "form": "DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET;\nGLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures, in the business's words>\"}}}$$;",
+     "then": "GLOSS <name> ON {dataset} AS $${\"sql\": \"<the grounding>\"}$$;"
+    }
+   ]
+  },
+  {
+   "name": "slices",
+   "goal": "every applicable metric admits an axis",
+   "route": [
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true
+      },
+      "none": true
+     },
+     "blocked": "no applicable metric stands"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "wanted": "nonempty"
+      }
+     },
+     "act": "EXTRACT",
+     "say": "run {row.wanted[0]} over {row.wanted_over[0]}",
+     "why": "{row.metric} reads {row.wanted_over[0]} and nobody measured it",
+     "form": "SELECT {row.wanted[0]}() FROM {dataset}.{wanted_table}"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "judged_current": false
+      }
+     },
+     "act": "temporal",
+     "say": "re-judge the served columns of {row.metric}",
+     "why": "the verdicts {row.metric} stands on predate the last change",
+     "form": "SELECT temporal(), dimension_relevance() FROM {dataset}.{table}"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "unadmitted": "nonempty"
+      }
+     },
+     "act": "dimension_relevance",
+     "say": "judge the served columns of {row.metric} the cube does not slice on",
+     "why": "{row.unadmitted_why[0]}",
+     "form": "SELECT dimension_relevance() FROM {dataset}.{table}",
+     "then": "GLOSS dimension ON {dataset}.{table}.<column> AS $${\"dimension\": \"supporting\"}$$;"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "dims": "empty"
+      }
+     },
+     "act": "GLOSS query",
+     "say": "re-record {row.metric} serving a dimension column of {table}",
+     "why": "the frame serves only a date and a value; the cube slices only on served columns with a verdict",
+     "form": "-- columns of {table} not served: {columns}\nGLOSS {row.metric} ON {dataset} AS $${body}$$;",
+     "then": "SELECT dimension_relevance() FROM {dataset}.{table}"
+    },
+    {
+     "done": "every applicable metric admits an axis"
+    }
+   ]
+  },
+  {
+   "name": "bands",
+   "goal": "the bands walk stands and no band is red",
+   "route": [
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true
+      },
+      "none": true
+     },
+     "blocked": "no applicable metric stands"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "never measured",
+       "subject": "metric_bands"
+      }
+     },
+     "act": "metric_bands",
+     "say": "run the walk",
+     "why": "{row.why}",
+     "form": "SELECT metric_bands() FROM {dataset}"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "re-measure",
+       "subject": "metric_bands"
+      }
+     },
+     "act": "metric_bands",
+     "say": "run the walk again",
+     "why": "{row.why}",
+     "form": "SELECT metric_bands() FROM {dataset}"
+    },
+    {
+     "when": {
+      "read": "ATTEST",
+      "where": {
+       "witness": "bands_w",
+       "band": "red"
+      }
+     },
+     "act": "band_points",
+     "say": "read the red bands on {row.subject}",
+     "why": "a shift and a defect breach alike; you judge",
+     "form": "SELECT * FROM band_points() WHERE band = 'red' ORDER BY metric, period"
+    },
+    {
+     "done": "the walk stands and no band is red"
+    }
+   ]
+  },
+  {
+   "name": "checks",
+   "goal": "every check spoken and green",
+   "route": [
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "re-measure"
+      }
+     },
+     "act": "EXTRACT",
+     "say": "re-run {row.subject}",
+     "why": "{row.why}",
+     "form": "SELECT {row.subject}() FROM {dataset}"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "never measured"
+      }
+     },
+     "act": "EXTRACT",
+     "say": "run {row.subject}",
+     "why": "{row.why}",
+     "form": "SELECT {row.subject}() FROM {dataset}"
+    },
+    {
+     "when": {
+      "read": "ATTEST",
+      "where": {
+       "band": "red"
+      }
+     },
+     "act": "ATTEST",
+     "say": "read the red verdicts",
+     "why": "{row.witness} bands {row.subject} red",
+     "form": "SELECT subject, aspect, witness, band, score FROM ATTEST({dataset}) WHERE band = 'red' ORDER BY witness, subject"
+    },
+    {
+     "act": "DECLARE WITNESS",
+     "say": "promote a reconciliation to a standing check",
+     "why": "no check is owed; a tie-out you ran by hand is a check that re-runs at every pin move",
+     "form": "DECLARE ASPECT <name>_check WITH $${\n  \"type\": \"object\", \"required\": [\"outcome\"],\n  \"properties\": {\"outcome\": {\"type\": \"string\"}, \"tolerance\": {\"type\": \"number\"}, \"breach_rate\": {\"type\": \"number\"}}\n}$$ AS FACT ON DATASET;\nDECLARE WITNESS <name>_w ON <name>_check BY (AGENT, HUMAN) DETECTOR rate_tolerance THRESHOLD 0.0;\nDECLARE FUNCTION <name>_check_fn FOR {dataset} AS $$\n  SELECT '<what was compared>' AS outcome, <the violation share, as DOUBLE> AS breach_rate\n  FROM <the second route to the number>\n$$ RETURNS <name>_check;\nGLOSS <name>_check ON {dataset} AS $${\"outcome\": \"<what must hold>\", \"tolerance\": <the rate you measured>}$$;",
+     "then": "SELECT <name>_check_fn() FROM {dataset}"
+    }
+   ]
+  },
+  {
+   "name": "app",
+   "goal": "a page over the grounded metrics",
+   "route": [
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true
+      },
+      "none": true
+     },
+     "blocked": "no applicable metric stands; an app over nothing is a picture of nothing"
+    },
+    {
+     "when": {
+      "read": "app_parts",
+      "where": {},
+      "none": true
+     },
+     "act": "GLOSS app",
+     "say": "write the first page over {n} metrics",
+     "why": "{metrics} stand and no app does; the page is the proposal made concrete, shape it with the human from there",
+     "form": "{app_form}",
+     "then": "-- serves at /{dataset}/app/review"
+    },
+    {
+     "when": {
+      "read": "app_parts",
+      "where": {}
+     },
+     "done": "an app stands: /{dataset}/app/{row.app}"
+    },
+    {
+     "done": "an app stands"
+    }
+   ]
+  },
+  {
+   "name": "rulings",
+   "goal": "every ruling folded in, nothing owed",
+   "route": [
+    {
+     "when": {
+      "read": "ruling_entries",
+      "where": {
+       "folded_in": false
+      }
+     },
+     "act": "GLOSS query",
+     "say": "fold in the ruling on {row.aspect} ({row.key}: {row.stance})",
+     "why": "{row.note}",
+     "form": "-- the assumption under key \"{row.key}\" at confidence 1.0 with basis \"human-ruled\"; an unclear stance is a reformulation under a new key\nGLOSS {row.aspect} ON {row.subject} AS $${body}$$;",
+     "then": "SELECT temporal(), dimension_relevance() FROM {dataset}.<table>; SELECT metric_bands() FROM {dataset}"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "recipe"
+      }
+     },
+     "act": "DECLARE RECIPE",
+     "say": "re-declare {row.subject} as approved",
+     "why": "{row.why}",
+     "form": "DECLARE RECIPE {row.subject} ON {dataset} FROM <source> AS $$<the approved sql>$$;"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "formula"
+      }
+     },
+     "act": "GLOSS formulas",
+     "say": "re-record the formula of {row.subject}",
+     "why": "{row.why}",
+     "form": "GLOSS formulas ON {dataset} AS $$<the standing map, {row.subject} as the human answered>$$;"
+    },
+    {
+     "when": {
+      "read": "owed",
+      "where": {
+       "kind": "contest"
+      }
+     },
+     "act": "GLOSSARY",
+     "say": "read the contested slot on {row.subject}",
+     "why": "{row.why}",
+     "form": "SELECT subject, aspect, actor_kind, value, state FROM GLOSSARY(all => true) WHERE subject = '{row.subject}'"
+    },
+    {
+     "done": "nothing owed"
+    }
+   ]
   }
  ]
 }

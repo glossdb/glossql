@@ -319,3 +319,21 @@ same pages are the door's MCP resources under the same URIs; `pages()`
 is the read for a client that has the statement tool and nothing
 else. `SELECT uri, title FROM pages()` lists them, `WHERE uri = '…'`
 reads one. Needs no `USE`.
+
+### next() · next(surface => '…')
+
+Where the record stands toward each goal on the bound dataset, and
+the one act that moves it. One row per surface — `structure`,
+`metrics`, `slices`, `bands`, `checks`, `app`, `rulings` — or the one
+named: `surface`, `state` (`next`, `blocked`, `done`), `act` (the
+statement kind, function or read), `say` (the act in a clause), `why`
+(the condition on the record that decided), `statement` (the act as a
+statement, filled from the record — the dataset, the metric, the table
+its value comes from, the standing body, the columns not yet served;
+`<…>` marks what only the author can fill) and `then` (what follows
+it). A route is the goal's preconditions in order, in
+`doc://window.json`; the first whose condition holds decides. A
+statement is a proposal: edit it, send it, or do not. Needs a `USE`.
+The MCP door serves the same rows as the resource template
+`next://<dataset>/<surface>`, and carries a one-line `next:` on every
+tool result.

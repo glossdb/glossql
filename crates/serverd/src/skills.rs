@@ -95,11 +95,11 @@ pub const DOCS: [Doc; 3] = [
     },
     Doc {
         name: "window.json",
-        description: "The mechanical layer of the procedural graph: the acts the record \
-                      admits after each act, keyed to the reads that decide. The window \
-                      on every tool result is its localized view.",
+        description: "The procedural graph: the acts the record admits after each act, \
+                      keyed to the reads that decide, and the routes `next()` answers \
+                      from — one act per goal, as a statement.",
         mime: "application/json",
-        body: crate::window::GRAPH_JSON,
+        body: glossql_session::next::GRAPH_JSON,
     },
 ];
 

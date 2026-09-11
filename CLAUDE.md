@@ -10,10 +10,11 @@ follow the corpus-first process below.
   in §9 and close by transcription verdict, never by argument.
 - `grammar.ebnf` — the machine-readable grammar; the source of truth
   for syntax.
-- `window.json` — the mechanical layer of the procedural graph: the
-  acts the record admits after each act, keyed to the reads that
-  decide; served localized on every tool result
-  (`crates/serverd/src/window.rs`).
+- `window.json` — the procedural graph: the acts the record admits
+  after each act, keyed to the reads that decide, and the routes
+  `next()` answers from, one act per goal as a statement
+  (`crates/session/src/next.rs`; the door's two lines,
+  `crates/serverd/src/window.rs`).
 - `crates/parser/tests/corpus/` — transcriptions of real artifacts,
   the parser's acceptance suite: ` ```glossql ` must parse,
   ` ```glossql-gap ` documents a gap and must fail.
