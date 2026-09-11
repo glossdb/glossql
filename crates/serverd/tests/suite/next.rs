@@ -474,13 +474,9 @@ async fn the_routes_answer_from_the_record() {
     assert_eq!(fresh["app"]["state"], "blocked");
     assert_eq!(fresh["metrics"]["state"], "next", "{fresh:?}");
     assert_eq!(fresh["metrics"]["act"], "DECLARE ASPECT query");
-    assert!(
-        fresh["metrics"]["statement"]
-            .as_str()
-            .unwrap()
-            .contains("GLOSS definitions ON fin"),
-        "{fresh:?}"
-    );
+    assert_eq!(fresh["metrics"]["say"], "declare the first concept");
+    // the names are the human's: no statement to hand
+    assert_eq!(fresh["metrics"]["statement"], "", "{fresh:?}");
     assert_eq!(fresh["rulings"]["state"], "done");
     assert!(
         fresh["checks"]["statement"]
@@ -529,16 +525,45 @@ async fn the_routes_answer_from_the_record() {
     let answers = by_surface(&rows(&session, "SELECT * FROM next()").await);
     match judged {
         Ok(_) => {
+            // Nobody judged a column of races: the detector is the act,
+            // one column per call, and the column is the author's.
             let slices = &answers["slices"];
             assert_eq!(slices["state"], "next", "{answers:?}");
+            assert_eq!(slices["act"], "dimension_relevance", "{answers:?}");
+            assert_eq!(
+                slices["statement"], "SELECT dimension_relevance() FROM fin.races.<column>",
+                "{answers:?}"
+            );
+            // A role names track a dimension and no verdict stands on
+            // it: the detector's form is filled with the column.
+            session
+                .execute("GLOSS role ON fin.races.track AS $${\"value\": \"dimension\"}$$")
+                .await
+                .unwrap();
+            let roled =
+                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
+            assert_eq!(roled["slices"]["say"], "judge track of races", "{roled:?}");
+            assert_eq!(
+                roled["slices"]["statement"], "SELECT dimension_relevance() FROM fin.races.track",
+                "{roled:?}"
+            );
+            // A gloss admits track: the wider frame names it, and
+            // nothing a verdict or a gloss did not admit.
+            session
+                .execute("GLOSS dimension ON fin.races.track AS $${\"value\": \"supporting\"}$$")
+                .await
+                .unwrap();
+            let judged =
+                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
+            let slices = &judged["slices"];
+            assert_eq!(
+                slices["say"], "re-record takings serving one of track",
+                "{judged:?}"
+            );
             let statement = slices["statement"].as_str().unwrap();
             assert!(
                 statement.contains("GLOSS takings ON fin AS $$"),
                 "{statement}"
-            );
-            assert!(
-                statement.contains("track"),
-                "the unserved column is named: {statement}"
             );
             assert!(
                 statement.contains("SELECT race_date, takings AS value FROM races"),
@@ -653,7 +678,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     let next = lines.next().expect("the next line rides a bound call");
     assert!(next.starts_with("next: "), "{block}");
     assert!(
-        next.contains("metrics → declare and claim the first concept (next://fin/metrics)"),
+        next.contains("metrics → declare the first concept (next://fin/metrics)"),
         "{block}"
     );
     assert!(
@@ -713,7 +738,8 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         .unwrap_or_else(|| panic!("{body}"));
     assert!(text.starts_with("# next on fin"), "{text}");
     assert!(text.contains("## metrics: next"), "{text}");
-    assert!(text.contains("DECLARE ASPECT <name>"), "{text}");
+    assert!(text.contains("declare the first concept"), "{text}");
+    assert!(!text.contains("```glossql\n\n```"), "no empty form: {text}");
     let body = body_of(
         mcp(
             app.clone(),

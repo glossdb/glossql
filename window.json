@@ -777,10 +777,8 @@
       "none": true
      },
      "act": "DECLARE ASPECT query",
-     "say": "declare and claim the first concept",
-     "why": "no metric is claimed by this dataset: a declared QUERY aspect is this dataset's once its definitions entry or its grounding stands",
-     "form": "DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET;\nGLOSS definitions ON {dataset} AS $${\"definitions\": {\"<name>\": {\"unit\": \"<unit>\", \"meaning\": \"<what it measures, in the business's words>\"}}}$$;",
-     "then": "GLOSS <name> ON {dataset} AS $${\"sql\": \"<the grounding>\"}$$;"
+     "say": "declare the first concept",
+     "why": "no metric is claimed by this dataset: a declared QUERY aspect is this dataset's once its definitions entry or its grounding stands; the names are the human's"
     },
     {
      "when": {
@@ -795,7 +793,7 @@
      "form": "GLOSS {row.name} ON {dataset} AS $${\n  \"sql\": \"SELECT <date column> AS date, <measure> AS value FROM <table>\",\n  \"assumptions\": [{\"dimension\": \"<scope|behavior|definition>\", \"key\": \"<stable-key>\", \"assumption\": \"<the judgment call, and the reading you rejected>\", \"basis\": \"<what it rests on>\", \"confidence\": 0.7}]\n}$$;"
     },
     {
-     "done": "every metric the dataset claims is grounded; the next concept is the human's to name — DECLARE ASPECT <name> WITH $${\"title\": \"<Title>\"}$$ AS QUERY ON DATASET, its definitions entry, its grounding"
+     "done": "every metric the dataset claims is grounded; the next concept is the human's to name"
     }
    ]
   },
@@ -831,19 +829,6 @@
       "read": "metric_axes",
       "where": {
        "applicable": true,
-       "judged_current": "null"
-      }
-     },
-     "act": "dimension_relevance",
-     "say": "judge the served columns of {row.metric}",
-     "why": "no verdict stands on the served columns of {row.metric} yet",
-     "form": "SELECT dimension_relevance() FROM {dataset}.{table}.<served column>"
-    },
-    {
-     "when": {
-      "read": "metric_axes",
-      "where": {
-       "applicable": true,
        "judged_current": false
       }
      },
@@ -864,7 +849,7 @@
      "say": "judge {row.unadmitted[0]} on {row.metric}",
      "why": "{row.unadmitted_why[0]}",
      "form": "SELECT dimension_relevance() FROM {dataset}.{table}.{row.unadmitted[0]}",
-     "then": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"dimension\": \"supporting\"}$$;"
+     "then": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"value\": \"supporting\"}$$;"
     },
     {
      "when": {
@@ -877,7 +862,7 @@
      "act": "GLOSS dimension",
      "say": "admit {row.unadmitted[0]} on {row.metric} by gloss, or declare the edge",
      "why": "{row.unadmitted_why[0]}",
-     "form": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"dimension\": \"supporting\"}$$;"
+     "form": "GLOSS dimension ON {dataset}.{table}.{row.unadmitted[0]} AS $${\"value\": \"supporting\"}$$;"
     },
     {
      "when": {
@@ -892,12 +877,45 @@
      ],
      "act": "GLOSS query",
      "say": "re-record {row.metric} serving one of {columns}",
-     "why": "the frame serves only a date and a value; the cube slices only on served columns with a verdict",
-     "form": "-- columns of {table} not served: {columns}\nGLOSS {row.metric} ON {dataset} AS $${body}$$;",
-     "then": "SELECT dimension_relevance() FROM {dataset}.{table}.<the column you served>"
+     "why": "the frame serves only a date and a value; a verdict or a gloss admits {columns} of {table} as an axis, and the cube slices only on served columns",
+     "form": "-- admitted and not served: {columns}\nGLOSS {row.metric} ON {dataset} AS $${body}$$;"
     },
     {
-     "done": "every applicable metric admits an axis, or none of its served columns can be one"
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "dims": "empty"
+      }
+     },
+     "needs": [
+      "unjudged"
+     ],
+     "act": "dimension_relevance",
+     "say": "judge {unjudged} of {table}",
+     "why": "the frame serves only a date and a value; {unjudged} carries the dimension role and no verdict",
+     "form": "{relevance_form}",
+     "then": "GLOSS {row.metric} ON {dataset} AS $${body}$$;"
+    },
+    {
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": true,
+       "dims": "empty"
+      }
+     },
+     "needs": [
+      "unjudged_table"
+     ],
+     "act": "dimension_relevance",
+     "say": "judge the columns of {table} you would slice {row.metric} by",
+     "why": "the frame serves only a date and a value, and no column of {table} is judged; the detector admits or abstains, one column per call",
+     "form": "SELECT dimension_relevance() FROM {dataset}.{table}.<column>",
+     "then": "GLOSS {row.metric} ON {dataset} AS $${body}$$;"
+    },
+    {
+     "done": "every applicable metric admits an axis, or no judged column of its table can be one"
     }
    ]
   },
@@ -949,10 +967,26 @@
        "band": "red"
       }
      },
+     "needs": [
+      "red_metric"
+     ],
      "act": "band_points",
-     "say": "read the red bands on {row.subject}",
-     "why": "a shift and a defect breach alike; you judge",
-     "form": "SELECT * FROM band_points() WHERE band = 'red' ORDER BY metric, period"
+     "say": "judge {red_metric}, red at {red_period}",
+     "why": "the newest complete point of {red_metric} sits outside its corridor at {red_period}; a shift and a defect breach alike — a defect is the grounding's to fix, a shift the human's to hear",
+     "form": "SELECT period, actual, p05, p50, p95, pit, partial FROM band_points() WHERE metric = '{red_metric}' ORDER BY point_seq"
+    },
+    {
+     "when": {
+      "read": "ATTEST",
+      "where": {
+       "witness": "bands_w",
+       "band": "red"
+      }
+     },
+     "act": "band_points",
+     "say": "read the walk behind the red verdict on {row.subject}",
+     "why": "{row.witness} bands {row.subject} red and the walk names no complete point",
+     "form": "SELECT metric, period, displacement FROM band_points() ORDER BY displacement DESC"
     },
     {
      "done": "the walk stands and no band is red"

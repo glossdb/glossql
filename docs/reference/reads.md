@@ -332,9 +332,10 @@ named: `surface`, `state` (`next`, `blocked`, `done`), `act` (the
 statement kind, function or read), `say` (the act in a clause), `why`
 (the condition on the record that decided), `statement` (the act as a
 statement, filled from the record — the dataset, the metric, the table
-its value comes from, the standing body, the columns not yet served;
-`<…>` marks what only the author can fill) and `then` (what follows
-it). A route is the goal's preconditions in order, in
+its value comes from, the standing body, the unserved columns a
+verdict or a `dimension` gloss admits, the metric and period a red
+band names; `<…>` marks what only the author can fill, and a step
+the record cannot fill hands none) and `then` (what follows it). A route is the goal's preconditions in order, in
 `doc://window.json`; the first whose condition holds decides. A
 statement is a proposal: edit it, send it, or do not. Needs a `USE`.
 The MCP door serves the same rows as the resource template

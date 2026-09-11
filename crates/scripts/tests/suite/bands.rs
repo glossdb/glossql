@@ -322,6 +322,37 @@ async fn metric_bands_walks_and_reads_the_breach() {
         _ => "red",
     };
     assert_eq!(band, expected, "band at score {score}");
+
+    // The bands goal names the breach: the metric whose newest complete
+    // point sits furthest from its corridor, and that point's period —
+    // read from the recorded walk, never a re-run.
+    let outcomes = session
+        .execute("SELECT say, statement FROM next(surface => 'bands');")
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        panic!("next rows")
+    };
+    let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
+    let text = |c: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batch.column(c), 0).unwrap()
+    };
+    let (say, statement) = (text(0), text(1));
+    let breached = ["revenue", "inventory"]
+        .iter()
+        .max_by(|a, b| {
+            let d = |name: &str| {
+                let pit = by_name(name)["points"][5]["pit"].as_f64().unwrap();
+                (2.0 * pit - 1.0).abs()
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    assert_eq!(say, format!("judge {breached}, red at 2025-06"), "{say}");
+    assert!(
+        statement.contains(&format!("WHERE metric = '{breached}'")),
+        "{statement}"
+    );
 }
 
 /// The multi-row stock regression: a stock's walk actuals must be

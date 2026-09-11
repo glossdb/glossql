@@ -372,12 +372,17 @@ pub fn next_page(dataset: &str, rows: &[Value]) -> String {
         out.push_str(&format!("## {surface}: {state}\n\n"));
         if state == "next" {
             out.push_str(&format!(
-                "**act:** {} — {}\n\n**why:** {}\n\n```glossql\n{}\n```\n",
+                "**act:** {} — {}\n\n**why:** {}\n",
                 field(row, "act"),
                 field(row, "say"),
                 field(row, "why"),
-                field(row, "statement")
             ));
+            // A step the record cannot fill hands no statement — the
+            // names are the author's.
+            let statement = field(row, "statement");
+            if !statement.is_empty() {
+                out.push_str(&format!("\n```glossql\n{statement}\n```\n"));
+            }
             let then = field(row, "then");
             if !then.is_empty() {
                 out.push_str(&format!("\nthen:\n\n```glossql\n{then}\n```\n"));
