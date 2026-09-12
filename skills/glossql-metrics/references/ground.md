@@ -86,7 +86,29 @@ cube validates the frame against it instead of trusting it: a frame
 that breaks its declared grain abstains, with the counts in the
 reason. An interval table is a stock with two event columns, `+1` at
 the start date and `-1` at the end date, unioned into one served
-date; both columns must be judged for the axis to trace.
+date; both columns must be judged for the axis to trace. Mark
+`"behavior": "stock"` — a window sum blocks the verb's trace, and an
+unmarked stock sums as a flow — and declare the grain; a GROUP BY
+keeps the date column's verdict, because group keys trace, and a date
+spine you generate has none and abstains. Both shapes written down:
+
+```glossql
+GLOSS payables_outstanding ON fin AS $${
+  "sql": "WITH daily AS (SELECT entry_date, sum(amount) AS delta FROM journal_lines GROUP BY entry_date) SELECT entry_date AS date, sum(delta) OVER (ORDER BY entry_date) AS value FROM daily",
+  "behavior": "stock",
+  "grain": ["date"]
+}$$;
+```
+
+```glossql
+GLOSS headcount ON hr AS $${
+  "sql": "WITH events AS (SELECT from_date AS date, 1 AS delta FROM stints UNION ALL SELECT to_date AS date, -1 AS delta FROM stints WHERE to_date IS NOT NULL), daily AS (SELECT date, sum(delta) AS delta FROM events GROUP BY date) SELECT date, CAST(sum(delta) OVER (ORDER BY date) AS DOUBLE) AS value FROM daily",
+  "behavior": "stock",
+  "grain": ["date"]
+}$$;
+```
+
+A flow, written down, with its judgment disclosed:
 
 ```glossql
 GLOSS throughput ON ops AS $${

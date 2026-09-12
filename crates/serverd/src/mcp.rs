@@ -32,10 +32,9 @@ const INSTRUCTIONS: &str = "glossql workspace server — one SQL-shaped surface 
 workspace's data and its context, behind one tool, `glossql`, which runs statements and \
 plain SQL; its description is the contract for every call. Start here, in this order. \
 1. Read the two skill pages through the tool: `SELECT body FROM pages() WHERE uri IN \
-('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')`. Every page the door \
-serves is a row of `pages()` — `SELECT uri, title FROM pages()` lists them — and a client \
-with an MCP resource reader can read the same URIs as resources. Each skill page names its \
-references (`skill://<name>/references/…`) for the moment they matter. \
+('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')` — the door and the \
+language, then the seven goals; each names its references (`skill://<name>/references/…`) \
+for the moment they matter, and every page the door serves is a row of `pages()`. \
 2. `SELECT * FROM datasets`, then what the brief below names. \
 The objects: a dataset holds tables, landed by recipes from sources; an aspect is a named \
 JSON contract; a gloss speaks an aspect's value on a subject (a table, a column, the \
