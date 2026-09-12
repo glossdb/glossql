@@ -296,11 +296,12 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   breaks it (the cube abstains, the reason naming the columns);
   absent, the shape is undeclared and the frame is taken as served.
 - `axes` is the authored slice list: the served columns the metric is
-  sliced by, in that order, every other served column closed; the
-  empty list closes them all — a distinct count, a ratio whose own
-  discriminator is served. Absent, the judged verdicts and the
-  `dimension` glosses on the columns decide. The time axis is not an
-  entry: it is the served date column with a verdict.
+  sliced by, in that order, every other served column closed. The
+  empty list closes them all and holds for a distinct count and a
+  ratio — the shapes no column slices whole; on any other shape it is
+  read as absent. Absent, the judged verdicts and the `dimension`
+  glosses on the columns decide. The time axis is not an entry: it is
+  the served date column with a verdict.
 - `stopped` in place of `sql` records that the author serves no number,
   and why: what is missing, where, how much, what closes it. The read
   door refuses with that text, the cube abstains with it (`stopped: …`

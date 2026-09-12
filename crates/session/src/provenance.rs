@@ -112,6 +112,74 @@ pub(crate) fn running_total(plan: &LogicalPlan, field: &str) -> bool {
     window_of(plan, &Column::new(qualifier.cloned(), f.name())).is_some_and(|w| is_running_sum(&w))
 }
 
+/// Whether a served field is a distinct count: a `count(DISTINCT …)`
+/// aggregate, reached through the nodes a column descends — an alias,
+/// a cast, a subquery over the aggregate. The members of such a count
+/// double-count across any column, so nothing slices it whole: with a
+/// ratio, the one shape the grounding's empty `axes` holds for. A sum
+/// over distinct counts is a sum, and reads as one.
+pub(crate) fn distinct_count(plan: &LogicalPlan, field: &str) -> bool {
+    let Some((qualifier, f)) = plan.schema().iter().find(|(_, f)| f.name() == field) else {
+        return false;
+    };
+    aggregate_of(plan, &Column::new(qualifier.cloned(), f.name()))
+        .is_some_and(|a| is_distinct_count(&a))
+}
+
+/// The aggregate expression a column is, followed down to the
+/// `Aggregate` node that computes it; none for a column no aggregate
+/// computes, a group key included.
+fn aggregate_of(plan: &LogicalPlan, col: &Column) -> Option<Expr> {
+    let index = |p: &LogicalPlan| p.schema().index_of_column(col).ok();
+    match plan {
+        LogicalPlan::Projection(p) => aggregate_expr(&p.input, &p.expr[index(plan)?]),
+        LogicalPlan::SubqueryAlias(a) => {
+            let (qualifier, field) = a.input.schema().qualified_field(index(plan)?);
+            aggregate_of(&a.input, &Column::new(qualifier.cloned(), field.name()))
+        }
+        LogicalPlan::Filter(f) => aggregate_of(&f.input, col),
+        LogicalPlan::Sort(s) => aggregate_of(&s.input, col),
+        LogicalPlan::Limit(l) => aggregate_of(&l.input, col),
+        LogicalPlan::Distinct(d) => aggregate_of(d.input(), col),
+        LogicalPlan::Window(w) => {
+            w.input.schema().index_of_column(col).ok()?;
+            aggregate_of(&w.input, col)
+        }
+        LogicalPlan::Join(j) => {
+            if j.left.schema().index_of_column(col).is_ok() {
+                aggregate_of(&j.left, col)
+            } else {
+                aggregate_of(&j.right, col)
+            }
+        }
+        // Group keys lead the output schema; an index past them names
+        // an aggregate.
+        LogicalPlan::Aggregate(a) => a
+            .aggr_expr
+            .get(index(plan)?.checked_sub(a.group_expr.len())?)
+            .cloned(),
+        _ => None,
+    }
+}
+
+fn aggregate_expr(input: &LogicalPlan, expr: &Expr) -> Option<Expr> {
+    match expr {
+        Expr::Alias(a) => aggregate_expr(input, &a.expr),
+        Expr::Cast(c) => aggregate_expr(input, &c.expr),
+        Expr::TryCast(c) => aggregate_expr(input, &c.expr),
+        Expr::Column(c) => aggregate_of(input, c),
+        _ => None,
+    }
+}
+
+fn is_distinct_count(expr: &Expr) -> bool {
+    match expr {
+        Expr::Alias(a) => is_distinct_count(&a.expr),
+        Expr::AggregateFunction(f) => f.func.name() == "count" && f.params.distinct,
+        _ => false,
+    }
+}
+
 /// The window expression a column is, followed down to the `Window`
 /// node that computes it; none for a column no window computes.
 fn window_of(plan: &LogicalPlan, col: &Column) -> Option<Expr> {
@@ -413,6 +481,36 @@ mod tests {
         let map = subjects("SELECT region, sum(amount) AS value FROM lines GROUP BY region").await;
         assert_eq!(map.get("region").unwrap(), "lines.region");
         assert!(!map.contains_key("value"));
+    }
+
+    async fn distinct(sql: &str) -> bool {
+        let plan = ctx().await.state().create_logical_plan(sql).await.unwrap();
+        super::distinct_count(&plan, "value")
+    }
+
+    #[tokio::test]
+    async fn a_distinct_count_reads_through_alias_cast_and_subquery() {
+        assert!(
+            distinct("SELECT date, count(DISTINCT customer) AS value FROM lines GROUP BY date")
+                .await
+        );
+        assert!(
+            distinct(
+                "WITH d AS (SELECT date, count(DISTINCT customer) AS n FROM lines GROUP BY date) \
+                 SELECT date, CAST(n AS DOUBLE) AS value FROM d"
+            )
+            .await
+        );
+        // A plain count, a sum, and a sum over distinct counts are not one.
+        assert!(!distinct("SELECT date, count(*) AS value FROM lines GROUP BY date").await);
+        assert!(!distinct("SELECT date, sum(amount) AS value FROM lines GROUP BY date").await);
+        assert!(
+            !distinct(
+                "WITH d AS (SELECT date, region, count(DISTINCT customer) AS n FROM lines \
+                 GROUP BY date, region) SELECT date, sum(n) AS value FROM d GROUP BY date"
+            )
+            .await
+        );
     }
 
     async fn sources(sql: &str) -> std::collections::HashMap<String, Vec<String>> {

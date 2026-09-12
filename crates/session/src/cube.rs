@@ -240,7 +240,10 @@ pub(crate) struct Fact {
     /// when a `dimension` gloss or the grounding's `axes` admitted it.
     pub admitted_by: Vec<String>,
     /// What decides the axes: `authored` when the grounding lists them
-    /// (`axes`), `measured` when the verdicts and the column glosses do.
+    /// (`axes`), `measured` when the verdicts and the column glosses
+    /// do, `measured over authored` when the grounding's empty list did
+    /// not hold — it closes a distinct count or a ratio, the shapes no
+    /// column slices whole, and on any other the verdicts decide.
     pub axes_basis: &'static str,
     pub bucketed: Vec<String>,
     /// The served columns the cube does not slice on — every one that
@@ -259,7 +262,9 @@ pub(crate) struct Fact {
     /// over the subject, or gloss `dimension`), `abstained` (the
     /// verdict abstained — declare the edge, or gloss `dimension`),
     /// `none` (closed by a `dimension` gloss), `closed` (by the
-    /// grounding's `axes`), `unserved` (listed in `axes` and not a
+    /// grounding's `axes` — `closed over verdict` or `closed over
+    /// gloss` where a verdict or a `dimension` gloss admits the column
+    /// the author closed), `unserved` (listed in `axes` and not a
     /// column the cube can slice on), `expression`, `single` and `cap`
     /// — the last five are terminal: nothing admits the column as it
     /// is served, and the grounding is where `closed` and `unserved`
@@ -1397,21 +1402,55 @@ async fn plan(
     let mut unadmitted: Vec<(String, String, &'static str)> = Vec::new();
     // The grounding's own word on its axes: `axes` lists the served
     // columns the metric is sliced by, in order, and closes every other
-    // served column — the empty list closes them all. Its author's
-    // word admits a listed column whatever was measured, as a
-    // `dimension` gloss would; a listed name the frame does not serve
-    // as a sliceable column is named back. Absent, the verdicts and
-    // the column glosses decide below.
+    // served column — the empty list closes them all, where it holds.
+    // Its author's word admits a listed column whatever was measured,
+    // as a `dimension` gloss would; a listed name the frame does not
+    // serve as a sliceable column is named back. Absent, the verdicts
+    // and the column glosses decide below.
     let authored: Option<Vec<String>> = body.get("axes").and_then(Value::as_array).map(|a| {
         a.iter()
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect()
     });
-    let axes_basis: &'static str = if authored.is_some() {
-        "authored"
-    } else {
-        "measured"
+    // The empty list holds for the two shapes no column slices whole:
+    // a distinct count, whose members double-count across any column,
+    // and a ratio, whose members do not add up to it. On any other
+    // shape every member adds up to the total, so the verdicts keep
+    // deciding, and the row says the word was measured over.
+    let (authored, axes_basis): (Option<Vec<String>>, &'static str) = match authored {
+        Some(list)
+            if list.is_empty()
+                && !is_ratio
+                && !crate::provenance::distinct_count(&probe, "value") =>
+        {
+            (None, "measured over authored")
+        }
+        Some(list) => (Some(list), "authored"),
+        None => (None, "measured"),
+    };
+    // What the record says of a column without the author's word: a
+    // `dimension` gloss that admits it, a verdict that does — its own,
+    // or one reached through a declared edge — or nothing. A closed
+    // column's act carries it, so the line can name what the word
+    // closed over.
+    let admits = |subject: &String| -> Option<&'static str> {
+        match judged
+            .dimension
+            .get(subject)
+            .and_then(|(v, _)| v["value"].as_str())
+        {
+            Some("none") => return None,
+            Some("primary" | "supporting") => return Some("gloss"),
+            _ => {}
+        }
+        let measured = judged
+            .relevance
+            .get(subject)
+            .filter(|v| v.body["applicable"].as_bool() == Some(true))
+            .is_some()
+            || through_edge(subject, &scanned, &judged.pointers, &judged.relevance).is_some();
+        measured.then_some("verdict")
     };
     let author: &'static str = if slot.rank == 0 { "human" } else { "agent" };
     let mut sliceable: Vec<&str> = Vec::new();
@@ -1434,11 +1473,18 @@ async fn plan(
                     admitted_by: author,
                     primary: false,
                 }),
-                None => unadmitted.push((
-                    n.to_string(),
-                    format!("closed by the grounding's axes ({author})"),
-                    "closed",
-                )),
+                None => {
+                    let (why, act) = match subjects.get(n).and_then(admits) {
+                        Some("gloss") => ("a dimension gloss admits it", "closed over gloss"),
+                        Some("verdict") => ("a verdict admits it", "closed over verdict"),
+                        _ => ("nothing measured admits it", "closed"),
+                    };
+                    unadmitted.push((
+                        n.to_string(),
+                        format!("closed by the grounding's axes ({author}); {why}"),
+                        act,
+                    ));
+                }
             }
             continue;
         }

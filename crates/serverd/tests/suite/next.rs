@@ -568,11 +568,25 @@ async fn the_routes_answer_from_the_record() {
                 statement.contains("SELECT race_date, takings AS value FROM races"),
                 "{statement}"
             );
-            // The author's word closes the question: a grounding that
-            // lists no axis is done for the slices goal.
+            // The empty list on a flow does not hold — takings add up
+            // to their total by any column — so the goal still asks
+            // for the axis; on a distinct count it does, and the
+            // author's word closes the goal for that metric.
             session
                 .execute(
                     "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\", \"axes\": []}$$",
+                )
+                .await
+                .unwrap();
+            let held = by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
+            assert_eq!(held["slices"]["state"], "next", "{held:?}");
+            assert_eq!(
+                held["slices"]["say"], "re-record takings serving one of track",
+                "{held:?}"
+            );
+            session
+                .execute(
+                    "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, CAST(count(DISTINCT track) AS DOUBLE) AS value FROM races GROUP BY race_date\", \"axes\": []}$$",
                 )
                 .await
                 .unwrap();
@@ -763,6 +777,64 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         .as_str()
         .unwrap_or_else(|| panic!("{body}"));
     assert!(text.contains("## app: blocked"), "{text}");
+
+    // A grounding's write carries its fact row on the line — the last
+    // statement's, behind the `USE` — even where the row abstains.
+    let body = body_of(
+        mcp(
+            app.clone(),
+            call(
+                20,
+                "DECLARE ASPECT takings WITH $${\"title\": \"Takings\"}$$ AS QUERY ON DATASET; \
+                 USE fin; GLOSS takings ON fin AS $${\"sql\": \"SELECT CAST('2024-01-15' AS DATE) AS race_date, 1.0 AS value\"}$$",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let block = situation_of(&body).expect("the situation rides every result");
+    assert!(
+        block.starts_with(
+            "situation: GLOSS query landed — takings: not applicable — no judged time column"
+        ),
+        "{block}"
+    );
+    // The line of a re-record's row: what the author's word closed and
+    // over what, and the drift against the other writing.
+    let line = window::situation(
+        "GLOSS query",
+        None,
+        Some(&json!({
+            "metric": "takings", "applicable": true, "behavior": "flow",
+            "dims": [], "axes_basis": "authored",
+            "unadmitted": ["track", "venue"],
+            "unadmitted_act": ["closed over verdict", "closed"],
+            "wanted": [],
+            "superseded_divergence": "no gap over 12 shared periods"
+        })),
+    );
+    assert_eq!(
+        line,
+        "situation: GLOSS query landed — takings: applicable; axes [] (the grounding's word — \
+         closes track, venue; a verdict admits track); unadmitted [track, venue]; wanted []; \
+         against the other writing: no gap over 12 shared periods"
+    );
+    let line = window::situation(
+        "GLOSS query",
+        None,
+        Some(&json!({
+            "metric": "takings", "applicable": true, "behavior": "flow",
+            "dims": ["track"], "axes_basis": "measured over authored",
+            "unadmitted": [], "unadmitted_act": [], "wanted": []
+        })),
+    );
+    assert_eq!(
+        line,
+        "situation: GLOSS query landed — takings: applicable; axes [track] (measured over the \
+         authored empty list — a flow keeps its verdicts; the empty list closes a distinct count \
+         or a ratio); unadmitted []; wanted []"
+    );
 }
 
 #[test]

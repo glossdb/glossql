@@ -1254,13 +1254,16 @@ impl GlossqlMcp {
         };
         // The last statement's outcome, its last row — the act the
         // situation names is the last one; a `USE` ahead of it is not.
+        // The wire renders an outcome as `{columns, rows, …}`
+        // (`wire::outcomes_json`), so the row sits under `rows`.
         let last_outcome = rendered
             .as_ref()
             .ok()
             .and_then(|v| v.as_array())
             .and_then(|a| a.last())
-            .and_then(|a| a.as_array())
-            .and_then(|a| a.last())
+            .and_then(|o| o.get("rows"))
+            .and_then(|r| r.as_array())
+            .and_then(|r| r.last())
             .cloned();
         let refusal = rendered.as_ref().err().map(String::as_str);
         let mut lines = vec![window::situation(&node, refusal, last_outcome.as_ref())];

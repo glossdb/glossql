@@ -477,7 +477,7 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
 /// The grounding's own word on its axes: `axes` admits what it lists,
 /// in order, whatever was measured, closes the rest, names back what
 /// it lists and the frame does not serve, and the empty list closes
-/// them all.
+/// them all where the shape admits it — a distinct count, a ratio.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_grounding_names_its_axes() {
     let dir = tempfile::tempdir().unwrap();
@@ -507,7 +507,7 @@ async fn the_grounding_names_its_axes() {
         "{read}"
     );
     assert!(
-        read.contains("[cid]") && read.contains("[closed]"),
+        read.contains("[cid]") && read.contains("[closed over verdict]"),
         "{read}"
     );
 
@@ -530,17 +530,35 @@ async fn the_grounding_names_its_axes() {
         .unwrap();
     let read = grid(&session, AXES).await;
     assert!(
-        read.contains("[cid, team, value]") && read.contains("[closed, unserved, unserved]"),
+        read.contains("[cid, team, value]")
+            && read.contains("[closed over verdict, unserved, unserved]"),
         "{read}"
     );
 
-    // The empty list closes them all, and the row says the author did.
+    // The empty list on a flow does not hold: every member adds up to
+    // the total, so the verdicts decide and the row says the word was
+    // measured over.
     session.execute(&ground("[]")).await.unwrap();
     let read = grid(&session, AXES).await;
     assert!(
+        read.contains("[cid]") && read.contains("| measured over authored "),
+        "{read}"
+    );
+
+    // On a distinct count it holds: the row names what it closed, and
+    // what a verdict would have admitted.
+    session
+        .execute(
+            r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.constructor_id AS cid, r.venue AS venue, CAST(count(DISTINCT r.points) AS DOUBLE) AS value FROM results r GROUP BY r.date, r.constructor_id, r.venue", "axes": []}$$;"#,
+        )
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
         read.contains("| [] ")
+            && read.contains("| authored ")
             && read.contains("[cid, venue]")
-            && read.contains("[closed, closed]"),
+            && read.contains("[closed over verdict, closed]"),
         "{read}"
     );
 
@@ -560,8 +578,9 @@ async fn the_grounding_names_its_axes() {
 
 /// A measurement that walks the groundings — the bands walk, the
 /// collision and source walkers — reads the groundings as one leg of
-/// its own: a FACT gloss or a declared function does not move it, a
-/// grounding write does.
+/// its own: a FACT gloss, a declared function or a re-record that
+/// keeps the series does not move it, a re-record that changes the
+/// series does.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slot_walkers_measurement_owes_its_re_run_to_a_grounding_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -605,14 +624,25 @@ async fn a_slot_walkers_measurement_owes_its_re_run_to_a_grounding_alone() {
         "a gloss on a FACT aspect and a declared check owe no re-run"
     );
 
-    // A grounding write does.
+    // A re-record that keeps the series — the same SQL, its axes named
+    // — owes nothing: the leg is the series, not the writing.
+    session
+        .execute(r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.venue AS venue, r.points AS value FROM results r", "axes": ["venue"]}$$;"#)
+        .await
+        .unwrap();
+    assert!(
+        !grid(&session, OWED).await.contains("re-measure"),
+        "a re-record that keeps the series owes no re-run"
+    );
+
+    // A re-record that changes the series does.
     session
         .execute(r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.points AS value FROM results r"}$$;"#)
         .await
         .unwrap();
     assert!(
         grid(&session, OWED).await.contains("re-measure"),
-        "a re-record owes the walk"
+        "a re-record that changes the series owes the walk"
     );
 }
 

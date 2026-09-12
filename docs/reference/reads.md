@@ -101,8 +101,10 @@ read — voices differ or a detector crossed) · `re-measure` (a function
 voice standing from before the last change it read — served and marked
 until the function runs again; one row per function. A measurement
 names what it read: the bands walk and the collision and source
-walkers read the groundings as one leg, so a definitions entry, an app
-page or a declared check owes them nothing, and a grounding write does) · `never measured` (a
+walkers read the groundings as one leg — of each serving grounding
+the SQL, a stop, the grain and the verb marker — so a definitions
+entry, an app page, a declared check or a re-record that names its
+axes owes them nothing, and a re-record that changes the series does) · `never measured` (a
 measurement the cube's fact rows read over a served column and no
 function has landed — `metric_axes().wanted` — or a witnessed
 measurement at dataset grain with no voice while a grounding stands,
@@ -203,7 +205,10 @@ and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
 or `human` / `agent` where a `dimension` gloss or the grounding's
 `axes` did), `axes_basis` (`authored` when the grounding lists its
-axes, `measured` when the verdicts and the column glosses decide),
+axes, `measured` when the verdicts and the column glosses decide,
+`measured over authored` when the grounding's empty list did not hold
+— it closes a distinct count or a ratio, and on any other shape the
+verdicts decide),
 `bucketed` (the
 dimensions wider than 24 members, served as their top 23 by weight
 plus `'other'`), `unadmitted` and `unadmitted_why` (every served
@@ -215,7 +220,9 @@ relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
 below the cap of four), `unadmitted_act` (the act behind each, at the
 same index, as a tag: `verdict` — no verdict yet; `abstained`; `none`
-— closed by a gloss; `closed` — by the grounding's `axes`; `unserved`
+— closed by a gloss; `closed` — by the grounding's `axes`, `closed
+over verdict` or `closed over gloss` where a verdict or a gloss admits
+the column the author closed; `unserved`
 — listed in `axes` and not a column the cube can slice on;
 `expression`, `single`, `cap` — terminal),
 `wanted` and `wanted_over` (the measurements

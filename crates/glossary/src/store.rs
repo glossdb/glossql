@@ -128,13 +128,15 @@ pub fn data_legs(pin_text: &str, dataset: &str) -> String {
     read_view(pin_text, dataset, "*")
 }
 
-/// The dataset's grounding surface as one number: every glossary
-/// writing on a QUERY aspect, the QUERY aspects themselves and the
-/// witnesses on them, in a fixed order. The pin carries it as the leg
-/// `glossql.grounding`, so a measurement that reads the groundings —
-/// the bands walk, the collision and source walkers — names that leg
-/// and stands until a grounding changes: a definitions entry, an app
-/// page or a declared check moves the glossary relation and not this.
+/// The dataset's grounding surface as one number: the serving writing
+/// on every QUERY slot per actor kind, reduced to the keys that decide
+/// its series, the QUERY aspects themselves and the witnesses on them,
+/// in a fixed order. The pin carries it as the leg `glossql.grounding`,
+/// so a measurement that reads the groundings — the bands walk, the
+/// collision and source walkers — names that leg and stands until a
+/// series changes: a definitions entry, an app page or a declared
+/// check moves the glossary relation and not this, and a re-record
+/// that names its axes or adds an assumption keeps it.
 pub fn grounding_digest(
     dataset: &str,
     glossary: &[GlossRow],
@@ -172,24 +174,45 @@ pub fn grounding_digest(
         )
             .hash(&mut h);
     }
-    let mut rows: Vec<&GlossRow> = glossary
+    // The serving writing per slot and actor kind — the supersession
+    // key — and of it the series-deciding keys alone: a re-record that
+    // keeps them keeps every series a walker reads.
+    let mut newest: std::collections::BTreeMap<(&str, &str, &str), &GlossRow> =
+        std::collections::BTreeMap::new();
+    for g in glossary
         .iter()
         .filter(|g| g.dataset == dataset && query.contains(g.aspect.as_str()))
-        .collect();
-    rows.sort_by_key(|g| g.seq);
-    for g in rows {
-        (
-            &g.subject,
-            &g.aspect,
-            &g.actor_kind,
-            &g.actor_id,
-            &g.body,
-            &g.written_at,
-            g.seq,
-        )
-            .hash(&mut h);
+    {
+        let key = (g.subject.as_str(), g.aspect.as_str(), g.actor_kind.as_str());
+        if newest.get(&key).is_none_or(|have| have.seq < g.seq) {
+            newest.insert(key, g);
+        }
+    }
+    for (key, g) in newest {
+        (key, series_view(&g.body)).hash(&mut h);
     }
     h.finish()
+}
+
+/// The keys of a grounding body that decide the series it serves
+/// (SPEC.md §5.2): the SQL, a stop in its place, the declared grain
+/// and the verb marker. `axes` decides the slices and `assumptions`
+/// the rival, and no walker reads either.
+const SERIES_KEYS: [&str; 4] = ["sql", "stopped", "grain", "behavior"];
+
+/// The body reduced to its series-deciding keys; a body that is not a
+/// JSON object is taken whole.
+fn series_view(body: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(serde_json::Value::Object(map)) => {
+            let kept: serde_json::Map<String, serde_json::Value> = SERIES_KEYS
+                .iter()
+                .filter_map(|k| map.get(*k).map(|v| ((*k).to_string(), v.clone())))
+                .collect();
+            serde_json::Value::Object(kept).to_string()
+        }
+        _ => body.to_string(),
+    }
 }
 
 /// The pin from its parts and the grounding leg — the one part no

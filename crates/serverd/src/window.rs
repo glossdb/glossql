@@ -322,8 +322,41 @@ pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> 
     let metric = fact.get("metric").and_then(Value::as_str).unwrap_or("");
     let mut line = format!("situation: {node} landed — {metric}: ");
     if fact.get("applicable") == Some(&Value::Bool(true)) {
+        // The grounding's word on its axes, where it spoke: what the
+        // list closed and what a verdict or a gloss would have
+        // admitted, or that the empty list did not hold.
+        let word = match fact.get("axes_basis").and_then(Value::as_str) {
+            Some("authored") => {
+                let closed = tagged(
+                    fact,
+                    &["closed", "closed over verdict", "closed over gloss"],
+                );
+                let by_verdict = tagged(fact, &["closed over verdict"]);
+                let by_gloss = tagged(fact, &["closed over gloss"]);
+                let mut word = String::from(" (the grounding's word");
+                if !closed.is_empty() {
+                    word.push_str(&format!(" — closes {}", closed.join(", ")));
+                }
+                if !by_verdict.is_empty() {
+                    word.push_str(&format!("; a verdict admits {}", by_verdict.join(", ")));
+                }
+                if !by_gloss.is_empty() {
+                    word.push_str(&format!("; a gloss admits {}", by_gloss.join(", ")));
+                }
+                word.push(')');
+                word
+            }
+            Some("measured over authored") => format!(
+                " (measured over the authored empty list — a {} keeps its verdicts; the empty \
+                 list closes a distinct count or a ratio)",
+                fact.get("behavior")
+                    .and_then(Value::as_str)
+                    .unwrap_or("flow")
+            ),
+            _ => String::new(),
+        };
         line.push_str(&format!(
-            "applicable; axes [{}]; unadmitted [{}]; wanted [{}]",
+            "applicable; axes [{}]{word}; unadmitted [{}]; wanted [{}]",
             list("dims"),
             list("unadmitted"),
             list("wanted")
@@ -343,6 +376,22 @@ pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> 
         line.push_str(&format!("; against the other writing: {drift}"));
     }
     line
+}
+
+/// The unadmitted columns of a fact row whose act is one of `tags`,
+/// in the row's order.
+fn tagged(fact: &Value, tags: &[&str]) -> Vec<String> {
+    let columns = fact.get("unadmitted").and_then(Value::as_array);
+    let acts = fact.get("unadmitted_act").and_then(Value::as_array);
+    let (Some(columns), Some(acts)) = (columns, acts) else {
+        return Vec::new();
+    };
+    columns
+        .iter()
+        .zip(acts.iter())
+        .filter(|(_, act)| act.as_str().is_some_and(|t| tags.contains(&t)))
+        .filter_map(|(column, _)| column.as_str().map(str::to_string))
+        .collect()
 }
 
 fn field(row: &Value, name: &str) -> String {

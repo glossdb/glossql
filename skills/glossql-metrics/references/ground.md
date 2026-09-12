@@ -122,11 +122,14 @@ metric: headline numbers nobody can cut.
 
 **Name the axes when the verdicts would get them wrong.** `"axes"` in
 the body lists the served columns the metric is sliced by, in order,
-and closes every other served column; the empty list closes them all.
-A distinct count sliced by a column double-counts across members, and
-a ratio sliced by its own discriminator reads one and zero: say
-`"axes": []`, and the `slices` goal is done for that metric. Absent,
-the judged verdicts and the `dimension` glosses decide.
+and closes every other served column. A distinct count sliced by a
+column double-counts across members, and a ratio sliced by its own
+discriminator reads one and zero: for those two shapes say
+`"axes": []`, and the write's row says what it closed. On a flow or a
+stock the empty list does not hold — every member adds up to the
+total — so the verdicts decide, the row says `measured over
+authored`, and the axis is yours to serve. Absent, the judged
+verdicts and the `dimension` glosses decide.
 
 A ratio is never drilled from its output rows. Drilling backlog days
 by region means **re-scoping its components per the `formulas` gloss**
