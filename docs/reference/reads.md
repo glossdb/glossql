@@ -207,8 +207,9 @@ or `human` / `agent` where a `dimension` gloss or the grounding's
 `axes` did), `axes_basis` (`authored` when the grounding lists its
 axes, `measured` when the verdicts and the column glosses decide,
 `measured over authored` when the grounding's empty list did not hold
-— it closes a distinct count or a ratio, and on any other shape the
-verdicts decide),
+— it closes a distinct count, written as `count(DISTINCT …)` or as
+one row per distinct key with a constant value, or a ratio, and on any
+other shape the verdicts decide),
 `bucketed` (the
 dimensions wider than 24 members, served as their top 23 by weight
 plus `'other'`), `unadmitted` and `unadmitted_why` (every served

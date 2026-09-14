@@ -9,6 +9,7 @@
   "DECLARE WITNESS",
   "EXTRACT",
   "GLOSS app",
+  "GLOSS app_page",
   "GLOSS definitions",
   "GLOSS dimension",
   "GLOSS formulas",
@@ -40,7 +41,8 @@
   "metrics": "-- the applicable metrics, by name\nSELECT array_to_string(array_agg(metric ORDER BY metric), ', ') AS metrics\nFROM metric_axes() WHERE applicable",
   "n": "-- how many metrics are applicable\nSELECT count(*) AS n FROM metric_axes() WHERE applicable",
   "red_metric": "-- the metric whose newest complete walked point sits furthest from its corridor's median — what the bands detector scored\nWITH walked AS (\n  SELECT metric, period, COALESCE(partial, false) AS partial, displacement,\n         row_number() OVER (PARTITION BY metric ORDER BY point_seq DESC) AS rn\n  FROM band_points() WHERE point_seq IS NOT NULL\n),\nnewest AS (\n  SELECT a.metric,\n         CASE WHEN a.partial THEN b.period ELSE a.period END AS period,\n         CASE WHEN a.partial THEN b.displacement ELSE a.displacement END AS displacement\n  FROM walked a LEFT JOIN walked b ON b.metric = a.metric AND b.rn = 2\n  WHERE a.rn = 1\n)\nSELECT metric FROM newest WHERE displacement IS NOT NULL ORDER BY displacement DESC, metric LIMIT 1",
-  "red_period": "-- that point's period\nWITH walked AS (\n  SELECT metric, period, COALESCE(partial, false) AS partial, displacement,\n         row_number() OVER (PARTITION BY metric ORDER BY point_seq DESC) AS rn\n  FROM band_points() WHERE point_seq IS NOT NULL\n),\nnewest AS (\n  SELECT a.metric,\n         CASE WHEN a.partial THEN b.period ELSE a.period END AS period,\n         CASE WHEN a.partial THEN b.displacement ELSE a.displacement END AS displacement\n  FROM walked a LEFT JOIN walked b ON b.metric = a.metric AND b.rn = 2\n  WHERE a.rn = 1\n)\nSELECT period FROM newest WHERE displacement IS NOT NULL ORDER BY displacement DESC, metric LIMIT 1"
+  "red_period": "-- that point's period\nWITH walked AS (\n  SELECT metric, period, COALESCE(partial, false) AS partial, displacement,\n         row_number() OVER (PARTITION BY metric ORDER BY point_seq DESC) AS rn\n  FROM band_points() WHERE point_seq IS NOT NULL\n),\nnewest AS (\n  SELECT a.metric,\n         CASE WHEN a.partial THEN b.period ELSE a.period END AS period,\n         CASE WHEN a.partial THEN b.displacement ELSE a.displacement END AS displacement\n  FROM walked a LEFT JOIN walked b ON b.metric = a.metric AND b.rn = 2\n  WHERE a.rn = 1\n)\nSELECT period FROM newest WHERE displacement IS NOT NULL ORDER BY displacement DESC, metric LIMIT 1",
+  "refusal": "-- the cube's reason for refusing a claimed measure's grounding; a relation and a fact serve no number by design, and a stop is the author's word\nSELECT a.reason\nFROM metric_axes() a\nJOIN metric_surfaces s ON s.name = a.metric\nWHERE a.metric = $metric AND NOT a.applicable AND s.stopped = '' AND s.kind NOT IN ('relation', 'fact')"
  },
  "surfaces": [
   {
@@ -130,7 +132,7 @@
   },
   {
    "name": "metrics",
-   "goal": "every metric the dataset claims grounded",
+   "goal": "every metric the dataset claims served, or stopped",
    "route": [
     {
      "when": [
@@ -176,7 +178,23 @@
      "form": "GLOSS {row.name} ON {dataset} AS $${\n  \"sql\": \"SELECT <date column> AS date, <measure> AS value FROM <table>\",\n  \"assumptions\": [{\"dimension\": \"<scope|behavior|definition>\", \"key\": \"<stable-key>\", \"assumption\": \"<the judgment call, and the reading you rejected>\", \"basis\": \"<what it rests on>\", \"confidence\": 0.7}]\n}$$;\n-- or, where no number should be served: GLOSS {row.name} ON {dataset} AS $${\"stopped\": \"<what is missing, and why no number is served>\"}$$;"
     },
     {
-     "done": "every metric the dataset claims is grounded or stopped; the next concept is the human's to name"
+     "when": {
+      "read": "metric_axes",
+      "where": {
+       "applicable": false,
+       "wanted": "empty"
+      }
+     },
+     "needs": [
+      "refusal"
+     ],
+     "act": "GLOSS query",
+     "say": "re-record {row.metric}",
+     "why": "{row.metric} is grounded and the cube refuses the grounding — {refusal}. A grounding the cube cannot serve holds this goal: re-record it, or stop it with the reason no number is served",
+     "form": "GLOSS {row.metric} ON {dataset} AS $${body}$$;\n-- or, where no number should be served: GLOSS {row.metric} ON {dataset} AS $${\"stopped\": \"<what is missing, and why no number is served>\"}$$;"
+    },
+    {
+     "done": "every metric the dataset claims is served or stopped; the next concept is the human's to name"
     }
    ]
   },
@@ -519,9 +537,31 @@
      "then": "-- serves at /{dataset}/app/review"
     },
     {
+     "when": [
+      {
+       "read": "app_parts",
+       "where": {}
+      },
+      {
+       "read": "app_parts",
+       "where": {
+        "path": "index.html"
+       },
+       "none": true
+      }
+     ],
+     "act": "GLOSS app_page",
+     "say": "write the page of {row.app}",
+     "why": "{row.app} stands without its page: the door serves index.html, so nothing is served yet; the frames and the specs are parts like it",
+     "form": "GLOSS app_page ON {row.app}.index AS $${\"html\": \"{% extends \\\"shell.html\\\" %}\\n{% import \\\"modules/tiles.html\\\" as tiles %}\\n{% block main %}\\n<the page over the app's frames and specs — the glossql-apps skill>\\n{% endblock %}\\n\"}$$;",
+     "then": "-- serves at /{dataset}/app/{row.app}"
+    },
+    {
      "when": {
       "read": "app_parts",
-      "where": {}
+      "where": {
+       "path": "index.html"
+      }
      },
      "done": "an app stands: /{dataset}/app/{row.app}"
     },

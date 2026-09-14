@@ -122,8 +122,88 @@ pub(crate) fn distinct_count(plan: &LogicalPlan, field: &str) -> bool {
     let Some((qualifier, f)) = plan.schema().iter().find(|(_, f)| f.name() == field) else {
         return false;
     };
-    aggregate_of(plan, &Column::new(qualifier.cloned(), f.name()))
-        .is_some_and(|a| is_distinct_count(&a))
+    let col = Column::new(qualifier.cloned(), f.name());
+    aggregate_of(plan, &col).is_some_and(|a| is_distinct_count(&a)) || constant_per_key(plan, &col)
+}
+
+/// A distinct count written at row grain: a constant over a
+/// `DISTINCT` or a `GROUP BY` with no aggregate — one row per distinct
+/// key, so the column sums to the count of keys.
+fn constant_per_key(plan: &LogicalPlan, col: &Column) -> bool {
+    match plan {
+        LogicalPlan::Distinct(d) => constant_column(d.input(), col),
+        LogicalPlan::Projection(p) => {
+            let Ok(i) = plan.schema().index_of_column(col) else {
+                return false;
+            };
+            match &p.expr[i] {
+                Expr::Column(c) => constant_per_key(&p.input, c),
+                e => constant(e) && keyed_rows(&p.input),
+            }
+        }
+        LogicalPlan::SubqueryAlias(a) => {
+            let Ok(i) = plan.schema().index_of_column(col) else {
+                return false;
+            };
+            let (qualifier, field) = a.input.schema().qualified_field(i);
+            constant_per_key(&a.input, &Column::new(qualifier.cloned(), field.name()))
+        }
+        LogicalPlan::Filter(f) => constant_per_key(&f.input, col),
+        LogicalPlan::Sort(s) => constant_per_key(&s.input, col),
+        LogicalPlan::Limit(l) => constant_per_key(&l.input, col),
+        _ => false,
+    }
+}
+
+/// Whether a column is a literal where it is projected.
+fn constant_column(plan: &LogicalPlan, col: &Column) -> bool {
+    match plan {
+        LogicalPlan::Projection(p) => {
+            let Ok(i) = plan.schema().index_of_column(col) else {
+                return false;
+            };
+            match &p.expr[i] {
+                Expr::Column(c) => constant_column(&p.input, c),
+                e => constant(e),
+            }
+        }
+        LogicalPlan::SubqueryAlias(a) => {
+            let Ok(i) = plan.schema().index_of_column(col) else {
+                return false;
+            };
+            let (qualifier, field) = a.input.schema().qualified_field(i);
+            constant_column(&a.input, &Column::new(qualifier.cloned(), field.name()))
+        }
+        LogicalPlan::Filter(f) => constant_column(&f.input, col),
+        LogicalPlan::Sort(s) => constant_column(&s.input, col),
+        LogicalPlan::Limit(l) => constant_column(&l.input, col),
+        _ => false,
+    }
+}
+
+fn constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::Alias(a) => constant(&a.expr),
+        Expr::Cast(c) => constant(&c.expr),
+        Expr::TryCast(c) => constant(&c.expr),
+        Expr::Literal(..) => true,
+        _ => false,
+    }
+}
+
+/// One row per distinct key: a `DISTINCT`, or a `GROUP BY` with no
+/// aggregate, under nodes that keep every row.
+fn keyed_rows(plan: &LogicalPlan) -> bool {
+    match plan {
+        LogicalPlan::Distinct(_) => true,
+        LogicalPlan::Aggregate(a) => a.aggr_expr.is_empty(),
+        LogicalPlan::Projection(p) => keyed_rows(&p.input),
+        LogicalPlan::SubqueryAlias(a) => keyed_rows(&a.input),
+        LogicalPlan::Filter(f) => keyed_rows(&f.input),
+        LogicalPlan::Sort(s) => keyed_rows(&s.input),
+        LogicalPlan::Limit(l) => keyed_rows(&l.input),
+        _ => false,
+    }
 }
 
 /// The aggregate expression a column is, followed down to the
@@ -501,6 +581,23 @@ mod tests {
             )
             .await
         );
+        // Written at row grain: a constant per distinct key, over a
+        // DISTINCT or a bare GROUP BY, through a CTE and a cast.
+        assert!(distinct("SELECT DISTINCT date, customer, 1.0 AS value FROM lines").await);
+        assert!(
+            distinct("SELECT date, customer, 1 AS value FROM lines GROUP BY date, customer").await
+        );
+        assert!(
+            distinct(
+                "WITH k AS (SELECT DISTINCT date, customer FROM lines) \
+                 SELECT date, customer, CAST(1 AS DOUBLE) AS value FROM k"
+            )
+            .await
+        );
+        // A constant per row is a row count, and a distinct row with a
+        // measure is a measure.
+        assert!(!distinct("SELECT date, customer, 1.0 AS value FROM lines").await);
+        assert!(!distinct("SELECT DISTINCT date, amount AS value FROM lines").await);
         // A plain count, a sum, and a sum over distinct counts are not one.
         assert!(!distinct("SELECT date, count(*) AS value FROM lines GROUP BY date").await);
         assert!(!distinct("SELECT date, sum(amount) AS value FROM lines GROUP BY date").await);

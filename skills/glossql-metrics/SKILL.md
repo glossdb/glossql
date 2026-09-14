@@ -33,7 +33,7 @@ order, and the line is never one.
 | goal | done when | the judgment |
 |---|---|---|
 | `structure` | the edges are declared and the coherence check ran | `references/structure.md` |
-| `metrics` | every metric the dataset claims is grounded, or stopped with the reason | `references/ground.md`, and below |
+| `metrics` | every metric the dataset claims is served by the cube, or stopped with the reason | `references/ground.md`, and below |
 | `slices` | every applicable metric admits an axis, or its grounding names its own — `"axes": []` holds for a distinct count or a ratio, which no column slices whole | `references/cube.md` |
 | `bands` | the walk ran and no band is red, or the red carries your question or a ruling | `references/cube.md` |
 | `checks` | a check of your own stands, every check ran, none is red | `references/validate.md` |

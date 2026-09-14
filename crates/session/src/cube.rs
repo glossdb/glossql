@@ -1662,6 +1662,14 @@ async fn build(
     // per key, or the metric abstains — a frame that breaks its
     // declared identity multiplies every aggregating reader, and
     // nothing downstream can tell duplication from multi-entity.
+    // One aggregate over the frame, never a count over the frame
+    // grouped again: the engine's projection pruner keeps only the
+    // group keys the input's functional dependencies call sufficient
+    // when the parent reads no key (`optimize_projections`), and an
+    // aggregate over a join whose one side is DISTINCT mints a
+    // dependency from that side's key to the whole row, which is
+    // false — the grouped shape then counts one side's keys. At this
+    // pin and on upstream main.
     if !grain.is_empty() {
         let keys = grain
             .iter()
@@ -1669,8 +1677,7 @@ async fn build(
             .collect::<Vec<_>>()
             .join(", ");
         let q = format!(
-            "SELECT count(*) AS keys, coalesce(sum(c), 0) AS total FROM \
-             (SELECT count(*) AS c FROM ({sql}) GROUP BY {keys})"
+            "SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})"
         );
         let batches = run(shared, ctx, &q).await?;
         let key_count = int_column(&batches, "keys").map_err(|e| Abstain(e.to_string()))?[0];

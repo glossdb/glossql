@@ -1077,6 +1077,8 @@ async fn the_declared_grain_gates_the_frame_one_row_per_key() {
             r#"GLOSS unserved ON fin AS $${"sql": "SELECT date, value FROM events", "grain": ["account"]}$$;"#,
             r#"DECLARE ASPECT undeclared WITH $${"title": "Undeclared"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS undeclared ON fin AS $${"sql": "SELECT date, value FROM events"}$$;"#,
+            r#"DECLARE ASPECT joined WITH $${"title": "Joined"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS joined ON fin AS $${"sql": "WITH dates AS (SELECT DISTINCT date AS as_of FROM events), snap AS (SELECT d.as_of, i.account, i.value FROM dates d JOIN events i ON i.date <= d.as_of) SELECT as_of AS date, account, sum(value) AS value FROM snap GROUP BY as_of, account", "behavior": "stock", "grain": ["date", "account"]}$$;"#,
             "SELECT judge_time() FROM events.date;",
         ],
     )
@@ -1099,6 +1101,27 @@ async fn the_declared_grain_gates_the_frame_one_row_per_key() {
     )
     .await;
     assert!(total.contains("2024-01-01T00:00:00 | 300.0"), "{total}");
+
+    // Declared and held over a join whose one side is DISTINCT on the
+    // date: four keys over four rows. The engine reads two when the
+    // frame is grouped again under a count — the check is one
+    // aggregate over the frame.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'joined';"
+        )
+        .await,
+        "true"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(grain, ',') FROM metric_axes() WHERE metric = 'joined';"
+        )
+        .await,
+        "date,account"
+    );
 
     // Declared and broken: the metric abstains, the reason naming the
     // columns and the counts.

@@ -599,6 +599,35 @@ async fn the_routes_answer_from_the_record() {
             assert!(app.contains("GLOSS app ON review AS"), "{app}");
             assert!(app.contains("'takings'"), "{app}");
             assert!(app.contains("GLOSS app_page ON review.index AS"), "{app}");
+            // The manifest alone is not an app: the door serves
+            // index.html, so the page is the act until it stands.
+            session
+                .execute("GLOSS app ON review AS $${\"title\": \"fin review\"}$$")
+                .await
+                .unwrap();
+            let paged = by_surface(&rows(&session, "SELECT * FROM next(surface => 'app')").await);
+            assert_eq!(paged["app"]["state"], "next", "{paged:?}");
+            assert_eq!(paged["app"]["act"], "GLOSS app_page", "{paged:?}");
+            assert_eq!(paged["app"]["say"], "write the page of review", "{paged:?}");
+            assert!(
+                paged["app"]["statement"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("GLOSS app_page ON review.index AS $${\"html\":"),
+                "{paged:?}"
+            );
+            session
+                .execute(
+                    "GLOSS app_page ON review.index AS $${\"html\": \"{% extends \\\"shell.html\\\" %}{% block main %}<p>fin</p>{% endblock %}\"}$$",
+                )
+                .await
+                .unwrap();
+            let stands = by_surface(&rows(&session, "SELECT * FROM next(surface => 'app')").await);
+            assert_eq!(stands["app"]["state"], "done", "{stands:?}");
+            assert_eq!(
+                stands["app"]["why"], "an app stands: /fin/app/review",
+                "{stands:?}"
+            );
         }
         Err(e) => {
             eprintln!(
@@ -607,6 +636,51 @@ async fn the_routes_answer_from_the_record() {
             assert_eq!(answers["slices"]["state"], "blocked", "{answers:?}");
         }
     }
+    // A measure the cube refuses holds the metrics goal with the
+    // cube's reason and the standing body to re-record; a relation
+    // serves no number by design and a stop is the author's word, so
+    // neither does.
+    session
+        .execute("DECLARE ASPECT gate WITH $${\"title\": \"Gate\"}$$ AS QUERY ON DATASET")
+        .await
+        .unwrap();
+    session
+        .execute("GLOSS gate ON fin AS $${\"sql\": \"SELECT race_date, takings FROM races\"}$$")
+        .await
+        .unwrap();
+    session
+        .execute("DECLARE ASPECT entries WITH $${\"title\": \"Entries\", \"x-kind\": \"relation\"}$$ AS QUERY ON DATASET")
+        .await
+        .unwrap();
+    session
+        .execute("GLOSS entries ON fin AS $${\"sql\": \"SELECT race_date, track FROM races\"}$$")
+        .await
+        .unwrap();
+    let refused = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
+    assert_eq!(refused["metrics"]["state"], "next", "{refused:?}");
+    assert_eq!(refused["metrics"]["act"], "GLOSS query", "{refused:?}");
+    assert_eq!(refused["metrics"]["say"], "re-record gate", "{refused:?}");
+    assert!(
+        refused["metrics"]["why"]
+            .as_str()
+            .unwrap()
+            .contains("no value column"),
+        "{refused:?}"
+    );
+    assert!(
+        refused["metrics"]["statement"]
+            .as_str()
+            .unwrap()
+            .contains("SELECT race_date, takings FROM races"),
+        "{refused:?}"
+    );
+    session
+        .execute("GLOSS gate ON fin AS $${\"stopped\": \"races carry no gate count\"}$$")
+        .await
+        .unwrap();
+    let stopped = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
+    assert_eq!(stopped["metrics"]["state"], "done", "{stopped:?}");
+
     // an unknown surface is refused by name
     let err = session
         .execute("SELECT * FROM next(surface => 'nothing')")
