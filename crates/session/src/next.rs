@@ -5,38 +5,35 @@
 //! read as an argument, `next(surface => 'app')`, or the read serves
 //! every surface. A surface is a goal a workspace is extended toward —
 //! structure, metrics, slices, bands, checks, app, rulings — and its
-//! route is a list of steps in `window.json`. A step is a condition
-//! over a shipped read (a key: some row matches every predicate, or
-//! none does; `"null"` matches an absent field, `{"not": v}` anything
-//! but `v`, a value may name a slot the record fills without a row —
-//! `"{dataset}"`, `"{red_metric}"` — and a list field matches when one
-//! member does) and what holds when it does — a step may also `need`
-//! a slot the door can fill, and then it holds on the first matching
-//! row the door can fill it for: the goal is blocked and why, or one
+//! route is a list of steps in `window.json`. A step's condition is a
+//! query over the record: the step holds when the query serves a row,
+//! and every row it serves is a row the step may decide on, its
+//! columns the `{row.<column>}` slots of the step's text. A condition
+//! may name a slot as `$<slot>` — the red metric, its period — bound
+//! as text before the query plans, and a step may `need` a slot the
+//! door fills from the row; it then holds on the first row the door
+//! can fill it for. What holds: the goal is blocked and why, or one
 //! act with its statement, or the goal is done. The first step whose
 //! condition holds decides. The order of a route is the goal's
 //! preconditions and nothing more; an act that is not a precondition
 //! of the goal is not a step.
 //!
 //! The statement is the imperative part. The door fills it from the
-//! record — the dataset, the metric, the table its value comes from,
-//! the standing body, the columns a verdict admits and the frame does
-//! not serve, the metric and period a red band names — and the agent
-//! edits it and sends it, or does not. The slots that select are SQL
-//! in `window.json`, one read each, `$metric` bound from the step's
-//! row and the dataset the session's own through `current_dataset`,
-//! planned through the same pipeline as every read; the four that
-//! render text — the dataset, the standing body, the body with the
-//! band's question appended, the first app — are the door's own. Hypermedia in the REST sense:
-//! the representation carries the links and the forms, and the client
-//! holds the goal.
+//! record through the slots — SQL in `window.json`, one read each,
+//! `$metric` bound from the step's row and the dataset the session's
+//! own through `current_dataset`, planned through the same pipeline
+//! as every read; a slot that serves a JSON object is handed
+//! pretty-printed. Two the door renders itself: the dataset, and the
+//! standing body with the red band's question appended. Hypermedia in
+//! the REST sense: the representation carries the links and the forms,
+//! and the client holds the goal.
 //!
-//! Reads run through the session's own pipeline (`whatif::build_plan`),
-//! one per relation per call, only for the steps reached. A read that
-//! refuses leaves its step undecided, never "done". Nothing here is
-//! stored, ordered globally, or learned: the routes are data the eval
-//! harness edits under its gate, and the suite holds every key to a
-//! read and a column it serves.
+//! Conditions and slots run through the session's own pipeline
+//! (`whatif::build_plan`), once per query per call, only for the
+//! steps reached. A query that refuses leaves its step undecided,
+//! never "done". Nothing here is stored, ordered globally, or learned:
+//! the routes are data, and the suite plans every condition and holds
+//! every row field a step's text names to a column it serves.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, OnceLock};
@@ -72,35 +69,6 @@ pub struct Graph {
     pub surfaces: Vec<Surface>,
 }
 
-/// A condition over one read: some row matches every `where`
-/// predicate — a value, `"empty"`, `"nonempty"`, `"nonzero"` — or no
-/// row does when `none` is set.
-#[derive(Deserialize, Clone)]
-pub struct Key {
-    pub read: String,
-    #[serde(rename = "where", default)]
-    pub conditions: std::collections::BTreeMap<String, Value>,
-    #[serde(default)]
-    pub none: bool,
-}
-
-/// One key, or several that must all hold.
-#[derive(Deserialize, Clone)]
-#[serde(untagged)]
-pub enum Keys {
-    One(Key),
-    All(Vec<Key>),
-}
-
-impl Keys {
-    pub fn each(&self) -> impl Iterator<Item = &Key> {
-        match self {
-            Keys::One(key) => std::slice::from_ref(key).iter(),
-            Keys::All(keys) => keys.iter(),
-        }
-    }
-}
-
 /// A goal and its route.
 #[derive(Deserialize)]
 pub struct Surface {
@@ -109,13 +77,16 @@ pub struct Surface {
     pub route: Vec<Step>,
 }
 
-/// One step of a route: when its condition holds, the goal is blocked
-/// (`blocked`), done (`done`), or one act is next (`act`, with its
-/// `say`, `why`, `form` and `then`). A step without a condition holds.
+/// One step of a route: when its condition serves a row, the goal is
+/// blocked (`blocked`), done (`done`), or one act is next (`act`, with
+/// its `say`, `why`, `form` and `then`). A step without a condition
+/// holds.
 #[derive(Deserialize)]
 pub struct Step {
+    /// The condition: a query over the record, `$<slot>` bound from
+    /// the record first. Absent, the step holds on one empty row.
     #[serde(default)]
-    pub when: Option<Keys>,
+    pub when: Option<String>,
     #[serde(default)]
     pub blocked: Option<String>,
     #[serde(default)]
@@ -130,8 +101,8 @@ pub struct Step {
     pub form: Option<String>,
     #[serde(default)]
     pub then: Option<String>,
-    /// Slots the door must fill non-empty for the step to hold — a
-    /// wider frame needs a column to add.
+    /// Slots the door must fill non-empty for the step to hold on a
+    /// row — a wider frame needs a column to add.
     #[serde(default)]
     pub needs: Vec<String>,
 }
@@ -161,95 +132,9 @@ impl Graph {
 
 /// The slots the door renders itself, beside the SQL slots of
 /// `window.json`, `{dataset}` and `{row.<field>}` / `{row.<field>[0]}`:
-/// the standing body, the body with the band's question appended, the
-/// first app. The suite refuses a form naming any other.
-pub const SLOTS: &[&str] = &["dataset", "body", "red_body", "app_form"];
-
-/// The SQL that reads a key's relation on the bound dataset: a door by
-/// its call, a store relation narrowed to the dataset where it carries
-/// one, a shipped read by its name.
-pub fn read_sql(read: &str, dataset: &str) -> String {
-    match read {
-        "GLOSSARY" => "SELECT * FROM GLOSSARY()".to_string(),
-        "ATTEST" => format!("SELECT * FROM ATTEST({dataset})"),
-        name => {
-            let lower = name.to_ascii_lowercase();
-            let call = crate::reads::DOORS
-                .iter()
-                .any(|(door, syntax)| *door == lower && *syntax == format!("{door}()"));
-            if call {
-                format!("SELECT * FROM {lower}()")
-            } else if glossql_glossary::relation_columns(&lower)
-                .is_some_and(|columns| columns.contains(&"dataset"))
-            {
-                format!(
-                    "SELECT * FROM {lower} WHERE dataset = '{}'",
-                    dataset.replace('\'', "''")
-                )
-            } else {
-                format!("SELECT * FROM {lower}")
-            }
-        }
-    }
-}
-
-/// The first row matching every predicate of a key; `"{dataset}"` as
-/// a value is the bound dataset.
-pub fn matching<'a>(key: &Key, rows: &'a [Value], dataset: &str) -> Option<&'a Value> {
-    matching_all(key, rows, dataset).into_iter().next()
-}
-
-/// Every row matching every predicate of a key, in the read's order.
-pub fn matching_all<'a>(key: &Key, rows: &'a [Value], dataset: &str) -> Vec<&'a Value> {
-    rows.iter()
-        .filter(|row| {
-            key.conditions
-                .iter()
-                .all(|(field, want)| predicate(row.get(field), want, dataset))
-        })
-        .collect()
-}
-
-/// Whether a key holds on the rows its read served.
-pub fn holds(key: &Key, rows: &[Value], dataset: &str) -> bool {
-    let any = matching(key, rows, dataset).is_some();
-    if key.none { !any } else { any }
-}
-
-fn predicate(have: Option<&Value>, want: &Value, dataset: &str) -> bool {
-    // `{"not": v}`: anything but `v`, an absent field included.
-    if let Some(not) = want.get("not") {
-        return !predicate(have, not, dataset);
-    }
-    match want.as_str() {
-        Some("{dataset}") => have.and_then(Value::as_str) == Some(dataset),
-        Some("null") => have.is_none_or(Value::is_null),
-        Some("empty") => is_empty(have),
-        Some("nonempty") => !is_empty(have),
-        Some("nonzero") => have.and_then(Value::as_f64).is_some_and(|n| n != 0.0),
-        _ => match have {
-            None => false,
-            // A list field matches when one of its members does.
-            Some(Value::Array(items)) if !want.is_array() => items.iter().any(|h| same(h, want)),
-            Some(h) => same(h, want),
-        },
-    }
-}
-
-fn same(have: &Value, want: &Value) -> bool {
-    have == want
-        || matches!((have.as_str(), want.as_str()), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
-}
-
-fn is_empty(have: Option<&Value>) -> bool {
-    match have {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) => s.is_empty() || s == "[]",
-        Some(Value::Array(a)) => a.is_empty(),
-        Some(Value::Object(o)) => o.is_empty(),
-        _ => false,
-    }
-}
+/// the dataset, and the standing body with the band's question
+/// appended. The suite refuses a form naming any other.
+pub const SLOTS: &[&str] = &["dataset", "red_body"];
 
 /// One surface's answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +211,7 @@ pub(crate) async fn answer(
         shared,
         ctx: shared.session_ctx(),
         dataset,
-        reads: HashMap::new(),
+        conditions: HashMap::new(),
         slots: HashMap::new(),
     };
     let mut out = Vec::with_capacity(surfaces.len());
@@ -369,33 +254,31 @@ pub(crate) fn surface_arg(args: &[FunctionArg]) -> Result<Option<String>, Sessio
     }
 }
 
-/// The record as the routes read it: one read per relation per call,
-/// through the session's own pipeline, a refusal remembered so a step
-/// on it stays undecided.
+/// The record as the routes read it: every condition and slot through
+/// the session's own pipeline, once per query per call, a refusal
+/// remembered so a step on it stays undecided.
 struct Record<'a> {
     shared: &'a Arc<Shared>,
     ctx: SessionContext,
     dataset: String,
-    reads: HashMap<String, Result<Vec<Value>, String>>,
+    /// The conditions served, by their SQL.
+    conditions: HashMap<String, Result<Vec<Value>, String>>,
     /// The SQL slots served, by name and the metric they were bound to.
     slots: HashMap<(String, Option<String>), Option<String>>,
 }
 
 impl Record<'_> {
-    async fn sql(&self, sql: &str) -> Result<Vec<Value>, String> {
-        self.sql_bound(sql, HashMap::new()).await
-    }
-
-    /// A read with `$name` parameters bound as string literals before
-    /// resolution — a slot's `$metric`.
+    /// A read with `$name` parameters bound as text before resolution
+    /// — a slot's `$metric`, a condition's `$<slot>`; null where the
+    /// slot served nothing.
     async fn sql_bound(
         &self,
         sql: &str,
-        params: HashMap<String, String>,
+        params: HashMap<String, Option<String>>,
     ) -> Result<Vec<Value>, String> {
         let values: HashMap<String, ScalarValue> = params
             .into_iter()
-            .map(|(k, v)| (k, ScalarValue::Utf8(Some(v))))
+            .map(|(k, v)| (k, ScalarValue::Utf8(v)))
             .collect();
         let map = match ParamValues::from(values) {
             ParamValues::Map(map) => map,
@@ -421,48 +304,38 @@ impl Record<'_> {
         rows_json(&batches)
     }
 
-    async fn read(&mut self, name: &str) -> Result<&[Value], String> {
-        if !self.reads.contains_key(name) {
-            let rows = self.sql(&read_sql(name, &self.dataset)).await;
-            if let Err(e) = &rows {
-                tracing::debug!(read = name, error = %e, "next: a read refused");
+    /// A step's condition: the rows its query serves, every `$<slot>`
+    /// it names bound from the record first.
+    async fn condition(&mut self, sql: &str) -> Result<Vec<Value>, String> {
+        if !self.conditions.contains_key(sql) {
+            let mut params = HashMap::new();
+            for name in placeholders(sql) {
+                let value = Box::pin(self.slot(&name, None)).await;
+                params.insert(name, value);
             }
-            self.reads.insert(name.to_string(), rows);
+            let rows = self.sql_bound(sql, params).await;
+            if let Err(e) = &rows {
+                tracing::debug!(error = %e, sql, "next: a condition refused");
+            }
+            self.conditions.insert(sql.to_string(), rows);
         }
-        match &self.reads[name] {
-            Ok(rows) => Ok(rows.as_slice()),
-            Err(e) => Err(e.clone()),
-        }
+        self.conditions[sql].clone()
     }
 
     /// The first step whose condition holds decides — on the first
-    /// matching row the door can fill its needs for.
+    /// row it served that the door can fill its needs for.
     async fn resolve(&mut self, surface: &Surface) -> Result<Next, SessionError> {
-        let dataset = self.dataset.clone();
-        'steps: for step in &surface.route {
-            // The rows the step may decide on: every match of its first
-            // key while every key holds; one empty row without a
-            // condition.
-            let mut rows: Vec<Option<Value>> = vec![None];
-            if let Some(keys) = &step.when {
-                let mut first: Vec<Value> = Vec::new();
-                for (i, key) in keys.each().enumerate() {
-                    let key = Box::pin(self.bound(key)).await;
-                    let Ok(read) = self.read(&key.read).await else {
-                        continue 'steps;
-                    };
-                    let matches = matching_all(&key, read, &dataset);
-                    if key.none == !matches.is_empty() {
-                        continue 'steps;
-                    }
-                    if i == 0 {
-                        first = matches.into_iter().cloned().collect();
-                    }
-                }
-                if !first.is_empty() {
-                    rows = first.into_iter().map(Some).collect();
-                }
-            }
+        for step in &surface.route {
+            // The rows the step may decide on: what its condition
+            // served; one empty row without a condition.
+            let rows: Vec<Option<Value>> = match &step.when {
+                None => vec![None],
+                Some(sql) => match self.condition(sql).await {
+                    Ok(rows) if rows.is_empty() => continue,
+                    Ok(rows) => rows.into_iter().map(Some).collect(),
+                    Err(_) => continue,
+                },
+            };
             for row in rows {
                 let mut needed = true;
                 for need in &step.needs {
@@ -489,20 +362,6 @@ impl Record<'_> {
             statement: String::new(),
             then: String::new(),
         })
-    }
-
-    /// A key with its slot-naming values filled — `"{dataset}"`,
-    /// `"{red_metric}"` — from the record, without a row.
-    async fn bound(&mut self, key: &Key) -> Key {
-        let mut out = key.clone();
-        for value in out.conditions.values_mut() {
-            if let Some(text) = value.as_str()
-                && text.contains('{')
-            {
-                *value = Value::String(Box::pin(self.fill(text, None)).await);
-            }
-        }
-        out
     }
 
     /// What a step says once it holds on a row.
@@ -542,8 +401,8 @@ impl Record<'_> {
         next
     }
 
-    /// A template with its `{slots}` filled from the matching row and
-    /// the record. A slot the record cannot fill stays as `<slot>`.
+    /// A template with its `{slots}` filled from the row and the
+    /// record. A slot the record cannot fill stays as `<slot>`.
     async fn fill(&mut self, template: &str, row: Option<&Value>) -> String {
         let mut out = template.to_string();
         for name in slots_in(template) {
@@ -580,11 +439,15 @@ impl Record<'_> {
             return Box::pin(self.sql_slot(name, sql, metric)).await;
         }
         match name {
-            "body" => self.body_of(metric.as_deref()?).await,
+            // The standing body of the red band's metric with the
+            // question appended as an assumption to fill: the one slot
+            // that edits a JSON body, and the door's own for it.
             "red_body" => {
                 let metric = Box::pin(self.slot("red_metric", None)).await?;
                 let period = Box::pin(self.slot("red_period", None)).await?;
-                let mut body = self.body_value(&metric).await?;
+                let row = serde_json::json!({ "metric": metric });
+                let body = Box::pin(self.slot("body", Some(&row))).await?;
+                let mut body: Value = serde_json::from_str(&body).ok()?;
                 let stub = serde_json::json!({
                     "dimension": "definition",
                     "key": format!("band-{period}"),
@@ -600,7 +463,6 @@ impl Record<'_> {
                 }
                 serde_json::to_string_pretty(&body).ok()
             }
-            "app_form" => Some(Box::pin(self.app_form()).await),
             _ => None,
         }
     }
@@ -608,7 +470,8 @@ impl Record<'_> {
     /// A slot written as SQL: `$metric` bound from the row where the
     /// read names it, served once per binding; the first row's first
     /// column as text, none where no row or a null comes back, and
-    /// none where the read refuses.
+    /// none where the read refuses. A JSON object is handed
+    /// pretty-printed — the standing body, for the author to edit.
     async fn sql_slot(&mut self, name: &str, sql: &str, metric: Option<String>) -> Option<String> {
         let bound = sql.contains("$metric");
         if bound && metric.is_none() {
@@ -620,7 +483,7 @@ impl Record<'_> {
         }
         let mut params = HashMap::new();
         if let (true, Some(metric)) = (bound, metric) {
-            params.insert("metric".to_string(), metric);
+            params.insert("metric".to_string(), Some(metric));
         }
         let value = match self.sql_bound(sql, params).await {
             Ok(rows) => rows
@@ -628,7 +491,11 @@ impl Record<'_> {
                 .and_then(Value::as_object)
                 .and_then(|row| row.values().next())
                 .filter(|v| !v.is_null())
-                .map(text),
+                .map(text)
+                .map(|v| match serde_json::from_str::<Value>(&v) {
+                    Ok(json @ Value::Object(_)) => serde_json::to_string_pretty(&json).unwrap_or(v),
+                    _ => v,
+                }),
             Err(e) => {
                 tracing::debug!(slot = name, error = %e, "next: a slot refused");
                 None
@@ -636,75 +503,6 @@ impl Record<'_> {
         };
         self.slots.insert(key, value.clone());
         value
-    }
-
-    /// The standing grounding body of a metric, pretty-printed.
-    async fn body_of(&mut self, metric: &str) -> Option<String> {
-        let body = self.body_value(metric).await?;
-        serde_json::to_string_pretty(&body).ok()
-    }
-
-    /// The standing grounding body of a metric, as JSON.
-    async fn body_value(&mut self, metric: &str) -> Option<Value> {
-        let sql = format!(
-            "SELECT value FROM GLOSSARY({}::{}) WHERE state = 'current'",
-            self.dataset, metric
-        );
-        let rows = self.sql(&sql).await.ok()?;
-        let raw = rows.first()?.get("value")?.as_str()?;
-        serde_json::from_str::<Value>(raw).ok()
-    }
-
-    /// A first app over the applicable metrics: the manifest, one
-    /// frame over the cube's monthly cells, one spec, one page.
-    async fn app_form(&mut self) -> String {
-        let metrics: Vec<String> = Box::pin(self.slot("metrics", None))
-            .await
-            .unwrap_or_default()
-            .split(", ")
-            .filter(|m| !m.is_empty())
-            .map(str::to_string)
-            .collect();
-        let title = format!("{} review", self.dataset);
-        let html = concat!(
-            "{% extends \"shell.html\" %}\n",
-            "{% import \"modules/tiles.html\" as tiles %}\n",
-            "{% block main %}\n",
-            "<div class=\"tiles\">\n",
-            "  {{ tiles::chart(frame=\"frames/series\", spec=\"specs/trend.vl.json\", ",
-            "title=\"By month\", chip=\"metric_series(grain => 'month')\") }}\n",
-            "</div>\n",
-            "{% endblock %}\n"
-        );
-        let spec = serde_json::json!({
-            "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-            "data": {"name": "frame"},
-            "mark": "line",
-            "encoding": {
-                "x": {"field": "period", "type": "temporal"},
-                "y": {"field": "value", "type": "quantitative"},
-                "color": {"field": "metric", "type": "nominal"}
-            }
-        });
-        let members = metrics
-            .iter()
-            .map(|m| format!("'{m}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let frame = format!(
-            "SELECT metric, period, value FROM metric_series(grain => 'month') \
-             WHERE dimension = '' AND metric IN ({members}) ORDER BY metric, period"
-        );
-        format!(
-            "GLOSS app ON review AS $${}$$;\n\
-             GLOSS app_frame ON review.series AS $${}$$;\n\
-             GLOSS app_spec ON review.trend AS $${}$$;\n\
-             GLOSS app_page ON review.index AS $${}$$;",
-            serde_json::json!({"title": title}),
-            serde_json::json!({"sql": frame}),
-            serde_json::json!({"spec": spec.to_string()}),
-            serde_json::json!({"html": html}),
-        )
     }
 }
 
@@ -734,6 +532,29 @@ pub fn slots_in(template: &str) -> Vec<String> {
         } else {
             rest = after;
         }
+    }
+    out
+}
+
+/// The `$<slot>` names a condition binds from the record — a name
+/// after a dollar sign, `$metric` excluded, which binds from the row.
+pub fn placeholders(sql: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = sql;
+    while let Some(start) = rest.find('$') {
+        let after = &rest[start + 1..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        let name = &after[..end];
+        if !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name != "metric"
+            && !out.contains(&name.to_string())
+        {
+            out.push(name.to_string());
+        }
+        rest = &after[end..];
     }
     out
 }

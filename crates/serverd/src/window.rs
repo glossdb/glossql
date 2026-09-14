@@ -6,18 +6,19 @@
 //! prefix, and nothing is an order: the skills say how, the record
 //! says what is admissible now.
 //!
-//! The localizer names the act from the parsed statement — a gloss by
-//! the aspect the graph names, otherwise by the aspect's kind from the
-//! record; SQL by the door or read it names, else `SQL`; a refused
-//! call by the statement that refused, and the dataset by the last
-//! `USE` that landed. The graph's nodes are the vocabulary
-//! (`glossql_session::next`).
+//! The localizer names the act from the statements the door parsed
+//! once and ran — a gloss by the aspect the graph names, otherwise by
+//! the aspect's kind from the record; SQL by the door or read it
+//! names, else `SQL`; a refused call by the statement that refused,
+//! and the dataset by the last `USE` that landed. A call the parser
+//! refused ran nothing and localizes nowhere. The graph's nodes are
+//! the vocabulary (`glossql_session::next`).
 
 use std::ops::ControlFlow;
 
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::sqlparser::ast::visit_relations;
-use glossql_parser::{AspectKind, Declaration, GlossqlParser, Statement};
+use glossql_parser::{AspectKind, Declaration, Statement};
 use glossql_session::next::Graph;
 use serde_json::Value;
 
@@ -36,32 +37,27 @@ pub enum Act {
     Gloss(String),
 }
 
-/// The locus of a call: its statements, and how many of them ran —
-/// every one when the call landed, the refused one's place when it did
-/// not (`refused`), unknown when the parser refused the call whole.
-pub fn locate(graph: &Graph, statements: &str, ran: Option<usize>, refused: bool) -> Locus {
-    match GlossqlParser::parse_sql(statements) {
-        Ok(parsed) => {
-            let n = ran.unwrap_or(parsed.len()).min(parsed.len());
-            // A refused statement bound nothing: the dataset is the
-            // last USE that landed.
-            let landed = if refused { n.saturating_sub(1) } else { n };
-            let ran = &parsed[..n];
-            let dataset = parsed[..landed].iter().rev().find_map(|s| match s {
-                Statement::Use(u) => Some(u.dataset.value.clone()),
-                _ => None,
-            });
-            let act = ran
-                .iter()
-                .rev()
-                .find(|s| !matches!(s, Statement::Use(_)))
-                .map(|s| act_of(graph, s))
-                .or_else(|| ran.last().map(|_| Act::Node("USE".into())))
-                .unwrap_or(Act::Node("SQL".into()));
-            Locus { dataset, act }
-        }
-        Err(_) => locate_by_text(graph, statements, ran, refused),
-    }
+/// The locus of a call: its statements as parsed, and how many of
+/// them ran — every one when the call landed, the refused one's place
+/// when it did not (`refused`).
+pub fn locate(graph: &Graph, statements: &[Statement], ran: Option<usize>, refused: bool) -> Locus {
+    let n = ran.unwrap_or(statements.len()).min(statements.len());
+    // A refused statement bound nothing: the dataset is the last USE
+    // that landed.
+    let landed = if refused { n.saturating_sub(1) } else { n };
+    let ran = &statements[..n];
+    let dataset = statements[..landed].iter().rev().find_map(|s| match s {
+        Statement::Use(u) => Some(u.dataset.value.clone()),
+        _ => None,
+    });
+    let act = ran
+        .iter()
+        .rev()
+        .find(|s| !matches!(s, Statement::Use(_)))
+        .map(|s| act_of(graph, s))
+        .or_else(|| ran.last().map(|_| Act::Node("USE".into())))
+        .unwrap_or(Act::Node("SQL".into()));
+    Locus { dataset, act }
 }
 
 /// The aspect kind as the graph spells it.
@@ -136,174 +132,17 @@ fn substrate_node(graph: &Graph, df: &DFStatement) -> String {
     found.unwrap_or_else(|| "SQL".into())
 }
 
-/// The locus of a call the parser refused: the same rules over the
-/// text, statement by statement, so a refusal still localizes.
-fn locate_by_text(graph: &Graph, statements: &str, ran: Option<usize>, refused: bool) -> Locus {
-    let parts = split_statements(statements);
-    let n = ran.unwrap_or(parts.len()).min(parts.len());
-    let ran = &parts[..n];
-    let mut dataset = None;
-    let mut acts = Vec::new();
-    for (i, s) in ran.iter().enumerate() {
-        let words = words_of(s);
-        let head = words
-            .first()
-            .map(|(w, _)| w.to_ascii_uppercase())
-            .unwrap_or_default();
-        acts.push(match head.as_str() {
-            "USE" => {
-                if !(refused && i + 1 == n) {
-                    dataset = words.get(1).map(|(w, _)| (*w).to_string());
-                }
-                Act::Node("USE".into())
-            }
-            "PROBE" => Act::Node("PROBE".into()),
-            "DECLARE" => {
-                let second = words
-                    .get(1)
-                    .map(|(w, _)| w.to_ascii_uppercase())
-                    .unwrap_or_default();
-                if second == "ASPECT" {
-                    let kind = words
-                        .windows(2)
-                        .find(|w| w[0].0.eq_ignore_ascii_case("AS"))
-                        .map(|w| w[1].0.to_ascii_lowercase())
-                        .filter(|k| matches!(k.as_str(), "query" | "fact" | "measurement"));
-                    Act::Node(match kind {
-                        Some(k) => format!("DECLARE ASPECT {k}"),
-                        None => "DECLARE ASPECT".into(),
-                    })
-                } else {
-                    Act::Node(format!("DECLARE {second}"))
-                }
-            }
-            "GLOSS" => match words.get(1) {
-                Some((aspect, _)) => gloss_act(graph, aspect),
-                None => Act::Node("GLOSS".into()),
-            },
-            _ => {
-                let mut node = None;
-                for (i, (word, called)) in words.iter().enumerate() {
-                    let after_from = i > 0 && words[i - 1].0.eq_ignore_ascii_case("FROM");
-                    if !(*called || after_from) {
-                        continue;
-                    }
-                    let candidate = match word.split_once('.') {
-                        Some((family, _)) => format!("{family}.<name>"),
-                        None => (*word).to_string(),
-                    };
-                    if let Some(n) = graph.node_named(&candidate) {
-                        node = Some(n.to_string());
-                        break;
-                    }
-                }
-                Act::Node(node.unwrap_or_else(|| "SQL".into()))
-            }
-        });
-    }
-    let mut last_non_use = None;
-    let mut last = None;
-    for a in acts.into_iter().rev() {
-        if last.is_none() {
-            last = Some(a.clone_kind());
-        }
-        if last_non_use.is_none() && !matches!(&a, Act::Node(n) if n == "USE") {
-            last_non_use = Some(a);
-        }
-    }
-    Locus {
-        dataset,
-        act: last_non_use.or(last).unwrap_or(Act::Node("SQL".into())),
-    }
-}
-
-impl Act {
-    fn clone_kind(&self) -> Act {
-        match self {
-            Act::Node(n) => Act::Node(n.clone()),
-            Act::Gloss(a) => Act::Gloss(a.clone()),
-        }
-    }
-}
-
-/// `;`-separated statements, a `;` inside `$$…$$`, `'…'` or `"…"` kept.
-pub fn split_statements(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut buf = String::new();
-    let mut quote: Option<&str> = None;
-    let mut chars = text.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        if let Some(q) = quote {
-            buf.push(c);
-            if q == "$$" && text[i..].starts_with("$$") {
-                buf.push('$');
-                chars.next();
-                quote = None;
-            } else if q.len() == 1 && q.starts_with(c) {
-                quote = None;
-            }
-            continue;
-        }
-        if text[i..].starts_with("$$") {
-            buf.push_str("$$");
-            chars.next();
-            quote = Some("$$");
-        } else if c == '\'' {
-            buf.push(c);
-            quote = Some("'");
-        } else if c == '"' {
-            buf.push(c);
-            quote = Some("\"");
-        } else if c == ';' {
-            let s = buf.trim();
-            if !s.is_empty() {
-                out.push(s.to_string());
-            }
-            buf.clear();
-        } else {
-            buf.push(c);
-        }
-    }
-    let s = buf.trim();
-    if !s.is_empty() {
-        out.push(s.to_string());
-    }
-    out
-}
-
-/// The words of a statement — identifiers, dotted names included —
-/// each with whether a `(` follows it.
-fn words_of(statement: &str) -> Vec<(&str, bool)> {
-    let bytes = statement.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
-        if c.is_ascii_alphabetic() || c == '_' {
-            let start = i;
-            while i < bytes.len()
-                && ((bytes[i] as char).is_ascii_alphanumeric() || matches!(bytes[i], b'_' | b'.'))
-            {
-                i += 1;
-            }
-            let mut j = i;
-            while j < bytes.len() && (bytes[j] as char).is_ascii_whitespace() {
-                j += 1;
-            }
-            out.push((&statement[start..i], j < bytes.len() && bytes[j] == b'('));
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-/// The `situation:` line: the act, landed or refused, and for a
-/// grounding what its fact row said.
+/// The `situation:` line: the act, landed or refused — refused with
+/// no act when the call did not parse — and for a grounding what its
+/// fact row said.
 pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> String {
     if let Some(text) = refusal {
         let first = text.lines().next().unwrap_or(text);
-        return format!("situation: refused at {node} — {first}");
+        return if node.is_empty() {
+            format!("situation: refused — {first}")
+        } else {
+            format!("situation: refused at {node} — {first}")
+        };
     }
     let Some(fact) = outcome.filter(|o| o.get("metric").is_some()) else {
         return format!("situation: {node} landed");

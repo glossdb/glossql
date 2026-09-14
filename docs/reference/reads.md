@@ -356,16 +356,19 @@ its value comes from, the standing body, the unserved columns a
 verdict or a `dimension` gloss admits, the metric and period a red
 band names; `<…>` marks what only the author can fill, and a step
 the record cannot fill hands none) and `then` (what follows it). A
-step that needs a slot holds on the first matching row the door can
-fill it for; a key's value may name a slot — `{dataset}`, the red
-metric — the record fills without a row, and `{"not": v}` matches
-anything but `v`. The slots that select are SQL in the same file, one
-read each with `$metric` bound from the step's row and the dataset
-`current_dataset`'s; the door renders four itself: the dataset, the
-standing body, the body with the band's question appended, and the
-first app. A route is the goal's preconditions in order, in
-`doc://window.json`; the first whose condition holds decides. A
-statement is a proposal: edit it, send it, or do not. Needs a `USE`.
+step's condition is a query over the record: the step holds when the
+query serves a row, and the rows it serves are the rows the step
+decides on, their columns the `{row.<column>}` slots of its text. A
+condition may name a slot as `$<slot>` — the red metric, its period —
+bound as text before it plans, and a step that needs a slot holds on
+the first row the door can fill it for. The slots are SQL in the same
+file, one read each with `$metric` bound from the step's row and the
+dataset `current_dataset`'s, a JSON object handed pretty-printed; the
+door renders two itself: the dataset, and the standing body with the
+band's question appended. A route is the goal's preconditions in
+order, in `doc://window.json`; the first whose condition holds
+decides. A statement is a proposal: edit it, send it, or do not. Needs
+a `USE`.
 The MCP door serves the same rows as the resource template
 `next://<dataset>/<surface>`, and carries a one-line `next:` on every
 tool result.

@@ -1,10 +1,9 @@
 //! `next` and the two lines on every result. The graph's vocabulary is
-//! the server's own; every key, in the edges and the routes, names a
-//! read and a column it serves; every form names slots the door fills;
-//! every node reaches `End`; the function listings are the registries;
-//! the routes answer from the record; and the door carries the
-//! `situation:` and `next:` lines, serves `next://` as a resource
-//! template.
+//! the server's own; every condition plans and serves the row fields
+//! its step's text names; every form names slots the door fills; the
+//! function listings are the registries; the routes answer from the
+//! record; and the door carries the `situation:` and `next:` lines,
+//! serves `next://` as a resource template.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -16,8 +15,9 @@ use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch, StringArr
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_parser::GlossqlParser;
 use glossql_serverd::{Access, BOOTSTRAP, DoorConfig, Plane, bootstrap, functions, router, window};
-use glossql_session::next::{self, Keys, SLOTS, slots_in};
+use glossql_session::next::{self, SLOTS, slots_in};
 use glossql_session::{DOORS, NoRuntime, Outcome, Session};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -85,21 +85,6 @@ async fn names(session: &Session, sql: &str, column: &str) -> BTreeSet<String> {
         .iter()
         .filter_map(|r| r.get(column)?.as_str().map(str::to_string))
         .collect()
-}
-
-fn keys_of_graph() -> Vec<(String, next::Key)> {
-    let graph = next::graph();
-    let mut out = Vec::new();
-    for s in &graph.surfaces {
-        for (i, step) in s.route.iter().enumerate() {
-            if let Some(keys) = &step.when {
-                for k in keys.each() {
-                    out.push((format!("route {} step {i}", s.name), k.clone()));
-                }
-            }
-        }
-    }
-    out
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -205,7 +190,7 @@ async fn every_node_names_a_real_thing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn every_key_names_a_read_and_a_column_it_serves() {
+async fn every_condition_plans_and_serves_the_row_fields_its_step_names() {
     let (_dir, plane) = scratch_plane().await;
     plane
         .execute(
@@ -216,41 +201,76 @@ async fn every_key_names_a_read_and_a_column_it_serves() {
         .await
         .unwrap();
     let session = plane.channel(human(), Some("fin")).await.unwrap();
-    let mut checked = BTreeSet::new();
-    for (place, key) in keys_of_graph() {
-        let sql = format!("{} LIMIT 0", next::read_sql(&key.read, "fin"));
-        let query = session.query_stream(&sql).await.unwrap_or_else(|err| {
-            panic!("{place}: the key read `{}` does not plan: {err}", key.read)
-        });
-        let columns: BTreeSet<String> = query
-            .stream
-            .schema()
-            .fields()
-            .iter()
-            .map(|f| f.name().clone())
+    use datafusion::common::{ParamValues, ScalarValue};
+    // every slot a condition may name, bound as the door binds it:
+    // text, and `$metric` from the row
+    let bound = || {
+        let mut map: std::collections::HashMap<String, ScalarValue> = next::graph()
+            .slots
+            .keys()
+            .map(|k| (k.clone(), ScalarValue::Utf8(Some("x".into()))))
             .collect();
-        for field in key.conditions.keys() {
-            assert!(
-                columns.contains(field),
-                "{place}: the key on `{}` names no column `{field}`; it serves {columns:?}",
-                key.read
-            );
+        map.insert("metric".into(), ScalarValue::Utf8(Some("takings".into())));
+        ParamValues::from(map)
+    };
+    let mut checked = 0;
+    for s in &next::graph().surfaces {
+        for (i, step) in s.route.iter().enumerate() {
+            let place = format!("route {} step {i}", s.name);
+            for need in &step.needs {
+                assert!(
+                    next::graph().slots.contains_key(need),
+                    "{place}: needs a slot the file does not write: {need}"
+                );
+            }
+            let Some(sql) = &step.when else {
+                continue;
+            };
+            let wrapped = format!("SELECT * FROM ({sql}) AS condition LIMIT 0");
+            let query = session
+                .query_stream_with_params(&wrapped, Some(bound()))
+                .await
+                .unwrap_or_else(|e| panic!("{place}: the condition does not plan: {e}"));
+            let columns: BTreeSet<String> = query
+                .stream
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect();
+            for template in [
+                &step.say,
+                &step.why,
+                &step.form,
+                &step.then,
+                &step.blocked,
+                &step.done,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                for slot in slots_in(template) {
+                    if let Some(field) = slot.strip_prefix("row.") {
+                        let field = field.strip_suffix("[0]").unwrap_or(field);
+                        assert!(
+                            columns.contains(field),
+                            "{place}: the text names `{{row.{field}}}` and the condition \
+                             serves {columns:?}"
+                        );
+                    }
+                }
+            }
+            checked += 1;
         }
-        checked.insert(key.read.clone());
     }
-    assert!(checked.len() >= 8, "keyed reads: {checked:?}");
+    assert!(checked >= 30, "conditions: {checked}");
 
     // every slot written as SQL plans on the bound dataset, its
     // `$metric` bound as the door binds it
-    use datafusion::common::{ParamValues, ScalarValue};
     for (name, sql) in &next::graph().slots {
-        let params = ParamValues::from(std::collections::HashMap::from([(
-            "metric".to_string(),
-            ScalarValue::Utf8(Some("takings".into())),
-        )]));
         let wrapped = format!("SELECT * FROM ({sql}) AS slot LIMIT 0");
         if let Err(e) = session
-            .query_stream_with_params(&wrapped, Some(params))
+            .query_stream_with_params(&wrapped, Some(bound()))
             .await
         {
             panic!("slot `{name}` does not plan: {e}");
@@ -261,13 +281,12 @@ async fn every_key_names_a_read_and_a_column_it_serves() {
 #[test]
 fn the_localizer_names_the_last_act() {
     let graph = next::graph();
-    let node = |statements: &str, ran: Option<usize>, refused: bool| match window::locate(
-        graph, statements, ran, refused,
-    )
-    .act
-    {
-        window::Act::Node(n) => n,
-        window::Act::Gloss(a) => format!("gloss:{a}"),
+    let node = |statements: &str, ran: Option<usize>, refused: bool| {
+        let parsed = GlossqlParser::parse_sql(statements).unwrap();
+        match window::locate(graph, &parsed, ran, refused).act {
+            window::Act::Node(n) => n,
+            window::Act::Gloss(a) => format!("gloss:{a}"),
+        }
     };
     assert_eq!(
         node(
@@ -310,18 +329,17 @@ fn the_localizer_names_the_last_act() {
         ),
         "gloss:churn"
     );
-    // the parser refused the call: the text still localizes
-    assert_eq!(node("SELEC * FROM owed", None, false), "owed");
-    let located = window::locate(graph, "USE fin; SELEC * FROM owed", None, false);
-    assert_eq!(located.dataset.as_deref(), Some("fin"));
+    // the parser refused the call: nothing ran, and the line says so
+    // with no act
+    assert!(GlossqlParser::parse_sql("SELEC * FROM owed").is_err());
+    assert_eq!(
+        window::situation("", Some("statement 1 of 1: no such verb\nmore"), None),
+        "situation: refused — statement 1 of 1: no such verb"
+    );
     // a refused USE bound nothing: the act is the last that landed,
     // the dataset the last USE that did
-    let located = window::locate(
-        graph,
-        "USE fin; SELECT * FROM owed; USE nothing",
-        Some(3),
-        true,
-    );
+    let parsed = GlossqlParser::parse_sql("USE fin; SELECT * FROM owed; USE nothing").unwrap();
+    let located = window::locate(graph, &parsed, Some(3), true);
     assert!(matches!(&located.act, window::Act::Node(n) if n == "owed"));
     assert_eq!(located.dataset.as_deref(), Some("fin"));
 }
@@ -909,16 +927,10 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
          authored empty list — a flow keeps its verdicts; the empty list closes a distinct count \
          or a ratio); unadmitted []; wanted []"
     );
-}
-
-#[test]
-fn keys_carry_their_shape() {
-    // one key or several, all must hold — the untagged form parses both
-    let one: Keys = serde_json::from_str(r#"{"read": "owed", "where": {}}"#).unwrap();
-    assert_eq!(one.each().count(), 1);
-    let all: Keys = serde_json::from_str(
-        r#"[{"read": "owed", "where": {}}, {"read": "app_parts", "where": {}, "none": true}]"#,
-    )
-    .unwrap();
-    assert_eq!(all.each().count(), 2);
+    // A call the parser refuses ran nothing: the parser's word is the
+    // result, and the line says refused with no act and no next.
+    let body = body_of(mcp(app.clone(), call(4, "USE fin; SELEC * FROM owed")).await).await;
+    let block = situation_of(&body).unwrap_or_else(|| panic!("{body}"));
+    assert!(block.starts_with("situation: refused — "), "{block}");
+    assert!(!block.contains("next:"), "{block}");
 }

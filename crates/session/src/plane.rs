@@ -267,6 +267,20 @@ impl Plane {
         dataset: Option<&str>,
         sql: &str,
     ) -> Result<Vec<Outcome>, SessionError> {
+        let statements = GlossqlParser::parse_sql(sql)?;
+        self.execute_parsed(actor, dataset, sql, statements).await
+    }
+
+    /// [`Plane::execute`] over the statements the door parsed once —
+    /// the call's shape and its locus come from the same parse; `sql`
+    /// keys the span to the call's text.
+    pub async fn execute_parsed(
+        &self,
+        actor: Actor,
+        dataset: Option<&str>,
+        sql: &str,
+        statements: Vec<Statement>,
+    ) -> Result<Vec<Outcome>, SessionError> {
         let span = tracing::info_span!(
             "call",
             actor = %actor.kind,
@@ -276,7 +290,8 @@ impl Plane {
             sql_len = sql.len(),
         );
         // Boxed for the reason `Session::query_stream_with_params` is.
-        tracing::Instrument::instrument(Box::pin(self.run(actor, dataset, sql)), span).await
+        tracing::Instrument::instrument(Box::pin(self.run(actor, dataset, sql, statements)), span)
+            .await
     }
 
     /// The call, under its span.
@@ -285,9 +300,9 @@ impl Plane {
         actor: Actor,
         dataset: Option<&str>,
         sql: &str,
+        statements: Vec<Statement>,
     ) -> Result<Vec<Outcome>, SessionError> {
         tracing::debug!(text = %sql, "the call's text");
-        let statements = GlossqlParser::parse_sql(sql)?;
         let total = statements.len();
         // A refusal names its GLOBAL place in the call: runs between
         // `USE`s report local indices, rebased here on the outcomes

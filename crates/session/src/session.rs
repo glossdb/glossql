@@ -301,16 +301,24 @@ fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
 /// statement of the language, a query that is not a `SELECT` —
 /// belongs in [`Session::execute`].
 fn one_read(sql: &str) -> Result<DFStatement, SessionError> {
-    let mut statements = GlossqlParser::parse_sql(sql)?;
-    let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
-        if matches!(&**statement, DFStatement::Statement(inner)
-            if matches!(inner.as_ref(), SQLStatement::Query(_))));
-    if !one_query {
-        return Err(SessionError::NotOneRead);
-    }
-    match statements.pop() {
-        Some(Statement::Substrate(statement)) => Ok(*statement),
-        _ => unreachable!("just matched"),
+    let statements = GlossqlParser::parse_sql(sql)?;
+    single_read(&statements)
+        .cloned()
+        .ok_or(SessionError::NotOneRead)
+}
+
+/// The one substrate query a call is, when it is one — a `SELECT` and
+/// nothing else; the door streams that, and runs any other call as a
+/// sequence at the plane.
+pub fn single_read(statements: &[Statement]) -> Option<&DFStatement> {
+    match statements {
+        [Statement::Substrate(statement)]
+            if matches!(&**statement, DFStatement::Statement(inner)
+                if matches!(inner.as_ref(), SQLStatement::Query(_))) =>
+        {
+            Some(statement)
+        }
+        _ => None,
     }
 }
 
@@ -1461,10 +1469,28 @@ impl Session {
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
-        // Before the span: the door tries every call as a read first,
-        // and a sequence that goes on to execute is not a read that
-        // failed — it never opens one.
+        // Before the span: a sequence is not a read that failed — it
+        // never opens one.
         let statement = one_read(sql)?;
+        self.read_under_span(statement, sql, params).await
+    }
+
+    /// [`Session::query_stream`] over the one read the door parsed the
+    /// call to — parsed once, at the door, and never again here.
+    pub async fn query_stream_parsed(
+        &self,
+        statement: DFStatement,
+        sql: &str,
+    ) -> Result<QueryStream, SessionError> {
+        self.read_under_span(statement, sql, None).await
+    }
+
+    async fn read_under_span(
+        &self,
+        statement: DFStatement,
+        sql: &str,
+        params: Option<ParamValues>,
+    ) -> Result<QueryStream, SessionError> {
         let span = tracing::info_span!(
             "read",
             actor = %self.actor.kind,
@@ -1878,18 +1904,11 @@ pub struct CallShape {
     pub writes: bool,
 }
 
-/// A call that does not parse shapes as neither — the statement router
-/// names the refusal when it runs.
-pub fn call_shape(statements: &str) -> CallShape {
-    let Ok(parsed) = GlossqlParser::parse_sql(statements) else {
-        return CallShape {
-            reviews: false,
-            writes: false,
-        };
-    };
+/// The shape of a call, from the statements the door parsed once.
+pub fn call_shape(statements: &[Statement]) -> CallShape {
     let mut reads_record = false;
     let mut writes = false;
-    for statement in &parsed {
+    for statement in statements {
         match statement {
             Statement::Use(_) => {}
             Statement::Substrate(df) => {
