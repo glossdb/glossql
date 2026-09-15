@@ -532,7 +532,7 @@ WHERE NOT EXISTS (SELECT 1 FROM axes WHERE applicable)
 -- from there
 UNION ALL
 SELECT 'app', 2, 'next', 'GLOSS app',
-       'write the first page over ' || m.n || ' metrics',
+       'write the first page over ' || m.n || CASE WHEN m.n = 1 THEN ' metric' ELSE ' metrics' END,
        m.metrics || ' stand and no app does; the page is the proposal made concrete, shape it with the human from there',
        $f$GLOSS app ON review AS $${"title": "$f$ || ds.dataset || $f$ review"}$$;
 GLOSS app_frame ON review.series AS $${"sql": "SELECT metric, period, value FROM metric_series(grain => 'month') WHERE dimension = '' AND metric IN ($f$ || m.metric_list || $f$) ORDER BY metric, period"}$$;

@@ -387,7 +387,7 @@ async fn the_routes_answer_from_the_record() {
             assert_eq!(answers["bands"]["say"], "run the walk", "{answers:?}");
             assert_eq!(answers["app"]["state"], "next", "{answers:?}");
             assert_eq!(
-                answers["app"]["say"], "write the first page over 1 metrics",
+                answers["app"]["say"], "write the first page over 1 metric",
                 "{answers:?}"
             );
             let app = answers["app"]["statement"].as_str().unwrap();
