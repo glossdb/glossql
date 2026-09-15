@@ -293,14 +293,19 @@ its list read the fact's number from here. Requires a bound dataset.
 
 What feeds each grounding: one row per served field and the dataset
 table column it descends from — `metric`, `field`, `source`
-(`table.column`). A union descends from every arm's column, one row
-each. A computed field (an aggregate, an expression) descends from no
-column and has no row. A grounding its author stopped, or one the
-engine cannot plan, serves one row with `reason` and no field. The
-walk is the cube's own — the same provenance `metric_axes()` admits
-axes from — served as rows so a page can draw what a metric reads
-without building the cube; the docket's lineage tab draws it beside
-the declared relationships. Requires a bound dataset.
+(`table.column`) and its `table_name`. A union descends from every
+arm's column, one row each. A computed field (an aggregate, an
+expression) descends from no column and has no row. Beside those, one
+row per table the grounding scans, `table_name` alone and no field:
+the tables a metric reads, whether or not a served field traces to a
+column — a fact's whole frame is computed and still reads its tables.
+A grounding its author stopped, or one the engine cannot plan, serves
+one row with `reason` and no field. The walk is the cube's own — the
+same provenance `metric_axes()` admits axes from — served as rows so
+a page can draw what a metric reads without building the cube; the
+docket's lineage tab draws it beside the declared relationships, and
+the metrics done row counts the tables no grounding scans. Requires a
+bound dataset.
 
 ### band_points()
 

@@ -4,12 +4,15 @@
 {% block main %}
 {% set metric = state.metric | default(value="") %}
 {% set dim = state.dim | default(value="") %}
+{% set kind = state.kind | default(value="") %}
 
 {% if metric %}
 {# ---- one metric: the number, then its reasons -------------------- #}
 {# Picking a metric is going deeper, not somewhere else: the Metrics
    tab stays the current one, every tile names the metric, and the tab
-   is the way back to the list. #}
+   is the way back to the list. A fact's link carries `kind=fact`, and
+   the page draws it without the series tiles — there is no window, no
+   story and no slice over one number. #}
 <div class="tiles">
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers
@@ -33,7 +36,7 @@
      control reads the cube's fact row so it offers only the grains
      the metric's cells can answer, and changing one is navigation:
      only the frames whose URL changed refetch. #}
-  <gl-window frame="frames/axes"></gl-window>
+  {% if kind != "fact" %}<gl-window frame="frames/axes"></gl-window>{% endif %}
 
   {# A declared fact: one number, no series. `frames/fact` serves a
      row only when this metric is a declared fact with a number, so
@@ -43,13 +46,15 @@
     <template>
       <section class="tile kpi">
         <header><span class="eyebrow">Current fact · {{ metric }}</span>
-          <code class="chip" title="The grounding served whole: one row, one value, no date. No historical series is defined and none is owed — the story and the slices below stay empty by design; a level with an as-of definition is a stock metric instead, and charts.">fact_values()</code></header>
-        <span class="kpi-num">{shown}</span>
-        <p class="hint">a current fact — no historical series is defined</p>
+          <code class="chip" title="The grounding served whole: one row, one value, no date of its own. The as-of is the newest landing of the tables the grounding reads. No historical series is defined and none is owed; a level with an as-of definition is a stock metric instead, and charts.">fact_values()</code></header>
+        <span class="kpi-num">{value}</span><span class="r-meta"> {unit}</span>
+        <p class="hint">{meaning}</p>
+        <p class="r-meta">{asof}</p>
       </section>
     </template>
   </gl-rows>
 
+  {% if kind != "fact" %}
   {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
        empty="no cells at this grain — the cube's reasons below say what it admitted; a grain finer than the metric's resolution serves nothing",
@@ -70,8 +75,9 @@
       </template>
     </gl-rows>
   </section>
+  {% endif %}
 
-  <div class="half">
+  <div{% if kind != "fact" %} class="half"{% endif %}>
   <section class="tile">
     <header><span class="eyebrow">The formula · {{ metric }}</span>
       <code class="chip" title="The ruled definition: a window-generic expression over sibling concepts, with the window w as its one free variable. It covers every window because it names none — drilling this metric re-scopes its components per this formula, never regroups its output rows.">formulas</code></header>
@@ -88,6 +94,7 @@
   </section>
   </div>
 
+  {% if kind != "fact" %}
   <div class="half">
   <section class="tile">
     <header><span class="eyebrow">Slice</span>
@@ -123,6 +130,7 @@
       </template>
     </gl-rows>
   </section>
+  {% endif %}
 
   <section class="tile">
     <header><span class="eyebrow">The assumptions behind it</span>
@@ -179,11 +187,27 @@
       <code class="chip" title="Every declared QUERY aspect with where its judgment stands, and the cube's reason where it charts nothing — the record — and, joined by the metric's name, the cube's newest period, the move into it and the admitted axes — the data. Two frames: a ruling refreshes the first and leaves the cube alone.">metric_surfaces · metric_axes() · metric_series()</code></header>
     <gl-rows frame="frames/pulse" join="frames/latest" on="name" empty="no metric surfaces declared yet">
       <template>
-        <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 8rem">
+        <a class="rrow" href="{link}" style="grid-template-columns:11rem 7rem 5rem 1fr 11rem">
           <span class="r-subj">{title}<br><span class="r-meta">{name} <em>{mkind}</em></span></span>
           <span class="r-num">{latest}<br><span class="r-meta">{unit} {period}</span></span>
           <span class="r-num">{delta}</span>
           <span class="r-meta">{axes}</span>
+          <code class="chip {scls}">{status}</code>
+        </a>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Current facts</span>
+      <code class="chip" title="Every declared fact — a QUERY aspect with x-kind fact — with the one number its grounding serves and the newest landing of the tables it reads. No period and no move: a fact has no as-of definition of its own, so the data's date is the one that stands.">metric_surfaces · fact_values()</code></header>
+    <gl-rows frame="frames/facts" empty="no current fact is declared — a value with no as-of definition is glossed with x-kind fact, and the cube leaves it whole">
+      <template>
+        <a class="rrow" href="{link}" style="grid-template-columns:11rem 1fr 9rem 11rem 11rem">
+          <span class="r-subj">{title}<br><span class="r-meta">{name}</span></span>
+          <span class="r-what">{meaning}</span>
+          <span class="r-num">{value}<br><span class="r-meta">{unit}</span></span>
+          <span class="r-meta">{asof}{note}</span>
           <code class="chip {scls}">{status}</code>
         </a>
       </template>

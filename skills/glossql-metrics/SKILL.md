@@ -77,8 +77,9 @@ before you write it: the workspace accepts all four under the same
   table. Ground it as a QUERY aspect that serves `value` and no date,
   with `"x-kind": "fact"` in the aspect's blob — the declaration is
   what makes it a fact. `read.<name>()` serves it, `fact_values()`
-  serves every declared fact's number, and the docket shows it as a
-  tile. The cube abstains on it, and that is the right answer. A fact
+  serves every declared fact's number, and the docket lists it under
+  current facts: one number, as of the newest landing of the tables it
+  reads. The cube abstains on it, and that is the right answer. A fact
   given a date becomes a one-point series — a chart of nothing.
 - **A derived relation** — governed SQL other groundings build on: a
   snapshot boundary, a cleaned join, a scoped subset. Ground it with

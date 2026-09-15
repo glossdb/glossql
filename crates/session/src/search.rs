@@ -3128,14 +3128,18 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
 
 /// `metric_sources()` — which dataset table columns each served field
 /// of every current grounding descends from: `metric`, `field`,
-/// `source` (`table.column`), one row per field and source — a union
-/// descends from every arm's column. A computed field (an aggregate,
-/// an expression) descends from no column and has no row. A grounding
-/// its author stopped, or one the engine cannot plan, serves one row
-/// with `reason` and no field. The walk is the cube's own
-/// (`provenance::served_sources`); this read serves it, so a page can
-/// draw what feeds a metric without building the cube. Requires a
-/// bound dataset.
+/// `source` (`table.column`) and its `table_name`, one row per field
+/// and source — a union descends from every arm's column. A computed
+/// field (an aggregate, an expression) descends from no column and
+/// has no row. Beside those, one row per table the grounding scans,
+/// `table_name` alone: the tables a metric reads, whether or not a
+/// served field traces to a column — a fact's whole frame is computed
+/// and still reads its tables. A grounding its author stopped, or one
+/// the engine cannot plan, serves one row with `reason` and no field.
+/// The walk is the cube's own (`provenance::served_sources`,
+/// `scanned_tables`); this read serves it, so a page can draw what
+/// feeds a metric without building the cube. Requires a bound
+/// dataset.
 pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
     let dataset = shared
         .dataset
@@ -3173,13 +3177,26 @@ pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, 
             };
             for source in columns {
                 any = true;
-                out.push(json!({ "metric": slot.aspect, "field": field.name(), "source": source }));
+                let table = source.split('.').next().unwrap_or(source);
+                out.push(json!({
+                    "metric": slot.aspect,
+                    "field": field.name(),
+                    "source": source,
+                    "table_name": table,
+                }));
             }
         }
         if !any {
             out.push(reason(
                 "no served field descends from a table column".into(),
             ));
+        }
+        let mut scanned: Vec<String> = crate::provenance::scanned_tables(&plan, &dataset)
+            .into_iter()
+            .collect();
+        scanned.sort();
+        for table in scanned {
+            out.push(json!({ "metric": slot.aspect, "table_name": table }));
         }
     }
     rows_batch(
@@ -3188,6 +3205,7 @@ pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, 
             Field::new("metric", DataType::Utf8, true),
             Field::new("field", DataType::Utf8, true),
             Field::new("source", DataType::Utf8, true),
+            Field::new("table_name", DataType::Utf8, true),
             Field::new("reason", DataType::Utf8, true),
         ],
     )

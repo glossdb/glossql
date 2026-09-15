@@ -1019,23 +1019,34 @@ async fn the_metrics_faces_serve_the_cube() {
     assert_eq!(pulse.status(), StatusCode::OK);
     assert_eq!(
         row_count(pulse).await,
-        2,
-        "two declared surfaces — the series and the fact — two rows"
+        1,
+        "two declared surfaces, the series and the fact — the pulse lists the series"
     );
 
     let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
     assert_eq!(
         row_count(latest).await,
-        2,
-        "the newest period of the one series, and the fact's one value"
+        1,
+        "the newest period of the one series; a fact has no period"
     );
+
+    // The facts list: the fact with its one value, as of the landing
+    // of the table its grounding reads, linked with its kind.
+    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    assert_eq!(facts.status(), StatusCode::OK);
+    let facts = body_text(facts).await;
+    assert!(facts.contains("payables\n"), "{facts}");
+    assert!(facts.contains("as of 20"), "{facts}");
+    assert!(facts.contains("?metric=payables&kind=fact\n"), "{facts}");
+    assert!(!facts.contains("dso\n"), "a series is not a fact:\n{facts}");
 
     // The fact's tile frame: a row for the fact, none for the series,
     // so the tile renders only where there is a number.
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=payables").await;
     assert_eq!(fact.status(), StatusCode::OK);
-    assert_eq!(row_count(fact).await, 1, "the fact's one value");
+    let fact = body_text(fact).await;
+    assert!(fact.contains("as of 20"), "{fact}");
     let none = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
     assert_eq!(none.status(), StatusCode::OK);
     assert_eq!(row_count(none).await, 0, "a series is not a fact");
@@ -1170,10 +1181,9 @@ async fn the_metrics_faces_serve_the_cube() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_list_serves_a_workspace_without_a_fact() {
-    // `frames/latest` unions the cube's newest periods with the facts'
-    // values. A workspace that declares no fact has no fact row to
-    // add, and the frame serves the series alone: a door with nothing
-    // to say is the empty relation, not a refusal. The undated measure
+    // A workspace that declares no fact has an empty facts list, and
+    // `frames/latest` serves the series alone: a door with nothing to
+    // say is the empty relation, not a refusal. The undated measure
     // declares no kind, so it is no fact either: nothing shows its
     // number, and the list carries the cube's reason in the axes slot.
     // The series serves `cohort`, which nobody judged: the banner
@@ -1223,6 +1233,9 @@ async fn the_list_serves_a_workspace_without_a_fact() {
         1,
         "the one series' newest period, and no fact row"
     );
+    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    assert_eq!(facts.status(), StatusCode::OK);
+    assert_eq!(row_count(facts).await, 0, "no fact declared, no fact row");
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
     assert_eq!(fact.status(), StatusCode::OK);
     assert_eq!(row_count(fact).await, 0, "a series is not a fact");

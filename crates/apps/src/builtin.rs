@@ -47,6 +47,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/dims.sql"),
         docket!("frames/drivers.sql"),
         docket!("frames/fact.sql"),
+        docket!("frames/facts.sql"),
         docket!("frames/front.sql"),
         docket!("frames/latest.sql"),
         docket!("frames/lineage_edges.sql"),

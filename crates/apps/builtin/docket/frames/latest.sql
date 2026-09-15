@@ -5,10 +5,8 @@
 -- by `name`, the metric's own key, so a ruling refreshes the record
 -- without touching the cube. Formatting is this frame's: the rounded
 -- value, the percentage, the em dash the pulse shows until this
--- arrives. A declared fact has no period and no move: its one value
--- joins the same rows from `fact_values()`, so the list shows the
--- number beside the surface instead of the dash — or, where the fact
--- served no number, the read's reason.
+-- arrives. A declared fact has no period and no move, and no row
+-- here: `frames/facts` lists the facts with their one value each.
 WITH totals AS (
   SELECT metric, period, value,
          value - lag(value) OVER (PARTITION BY metric ORDER BY period) AS delta
@@ -32,10 +30,3 @@ SELECT t.metric AS name,
        arrow_cast(coalesce(x.axes, 'no axes admitted'), 'Utf8') AS axes
 FROM totals t
 LEFT JOIN axes x ON x.metric = t.metric
-UNION ALL
-SELECT f.metric AS name,
-       arrow_cast(NULL, 'Timestamp(Nanosecond, None)') AS period,
-       arrow_cast(coalesce(CAST(round(f.value, 1) AS VARCHAR), '—'), 'Utf8') AS latest,
-       arrow_cast('', 'Utf8') AS delta,
-       arrow_cast(coalesce(f.reason, 'a current fact — no series'), 'Utf8') AS axes
-FROM fact_values() f

@@ -137,7 +137,7 @@ unjudged_table AS (
 -- column and no served field descends from it. Facts, not ideas: the
 -- next concept is the human's to name
 read_tables AS (
-  SELECT DISTINCT split_part(source, '.', 1) AS t FROM metric_sources() WHERE source IS NOT NULL
+  SELECT DISTINCT table_name AS t FROM metric_sources() WHERE table_name IS NOT NULL
 ),
 unread AS (
   SELECT nullif(array_to_string(array_agg(i.table_name ORDER BY i.table_name), ', '), '') AS tables

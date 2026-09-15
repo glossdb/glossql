@@ -1,5 +1,7 @@
--- The pulse: every metric surface with its validation chip. The rows
--- are `metric_surfaces` — the record; the numbers beside them (latest
+-- The pulse: every metric surface that is a series with its
+-- validation chip — the declared facts have their own list,
+-- `frames/facts`, with no period and no move. The rows are
+-- `metric_surfaces` — the record; the numbers beside them (latest
 -- period, the move into it, the admitted axes) are `frames/latest`, a
 -- data frame the page joins to these rows by `name`, the metric's
 -- key. The defaults below stand until it arrives, so the two frames
@@ -32,7 +34,6 @@ SELECT s.title,
        arrow_cast('—', 'Utf8') AS latest,
        arrow_cast('', 'Utf8') AS delta,
        arrow_cast(CASE
-         WHEN s.kind = 'fact' THEN 'a current fact — no series'
          WHEN x.applicable IS FALSE THEN split_part(x.reason, ':', 1)
          ELSE 'no axes admitted' END, 'Utf8') AS axes,
        arrow_cast(CASE
@@ -52,4 +53,5 @@ FROM metric_surfaces s
 LEFT JOIN asked q ON q.aspect = s.name
 LEFT JOIN ruled r ON r.aspect = s.name
 LEFT JOIN metric_axes() x ON x.metric = s.name
-ORDER BY CASE WHEN s.kind = 'metric' THEN 0 ELSE 1 END, name
+WHERE s.kind <> 'fact'
+ORDER BY name

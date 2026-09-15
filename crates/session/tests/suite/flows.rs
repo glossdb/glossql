@@ -2755,9 +2755,10 @@ async fn a_grounding_on_a_table_is_refused_with_the_dataset_named() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metric_sources_serves_the_provenance_walk_as_rows() {
     // What feeds a grounding, as rows: a served field that descends
-    // from a table column names it; an aggregate descends from none; a
-    // stopped grounding and one the engine refuses each serve their
-    // reason and no field.
+    // from a table column names it; an aggregate descends from none,
+    // and the table the grounding scans still has its row; a stopped
+    // grounding and one the engine refuses each serve their reason and
+    // no field.
     let (_dir, session) = agent_session().await;
     run(
         &session,
@@ -2777,13 +2778,24 @@ async fn metric_sources_serves_the_provenance_walk_as_rows() {
     .await;
     let rows = table(
         &session,
-        "SELECT metric, field, source, reason FROM metric_sources() ORDER BY metric, field;",
+        "SELECT metric, field, source, table_name, reason FROM metric_sources() ORDER BY metric, field;",
     )
     .await;
     assert!(rows.contains("orders.customer_id"), "{rows}");
     assert!(rows.contains("cust"), "{rows}");
     // The sum is computed: no source row names `value`.
     assert!(!rows.contains("| value"), "{rows}");
+    // The scan row: the table alone, no field, no source.
+    assert!(
+        rows.contains("| spend  |       |                    | orders"),
+        "{rows}"
+    );
+    let scanned = table(
+        &session,
+        "SELECT count(*) AS n FROM metric_sources() WHERE field IS NULL AND table_name IS NOT NULL;",
+    )
+    .await;
+    assert!(scanned.contains("| 1"), "{scanned}");
     assert!(
         rows.contains("stopped: the export lacks the column"),
         "{rows}"

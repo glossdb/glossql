@@ -126,7 +126,7 @@ filters riding WHERE. Every column of every one is
 | `agent_assumptions` | every assumption you currently disclose |
 | `metric_surfaces` | every metric of the bound dataset: unit, meaning, formula, whether grounded, the `stopped` text — the record; the numbers are `metric_series()` and `metric_axes()` |
 | `band_points()` | the recorded `metric_bands` walk, one row per metric and month with its displacement |
-| `metric_sources()` | what feeds each grounding — per served field, the table column it descends from |
+| `metric_sources()` | what feeds each grounding — per served field, the table column it descends from, and every table it scans |
 | `source_files('erp')` | every file under a source's location — `path`, `size`, `modified`; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps`) |
 | `current_dataset` | the dataset your `USE` bound, one row — join it to narrow a workspace-wide read |
