@@ -1,15 +1,17 @@
 -- Coverage with denominators from the model's own rules: behavior and
 -- unit are owed only where role = measure. A table with no measures
--- shows an em dash — not applicable, not a gap. Composite and
--- relationship subjects stay out; this is the column grid.
+-- shows an em dash — not applicable, not a gap. This is the column
+-- grid: a subject counts only where the dataset holds that column,
+-- so an app's parts (`<app>.<part>`, dotted the same way) and the
+-- composite and relationship subjects stay out.
 WITH cols AS (
-  SELECT arrow_cast(substr(subject, 1, strpos(subject, '.') - 1), 'Utf8') AS t,
-         subject, aspect, body
-  FROM GLOSSARY(all => true)
-  WHERE kind = 'fact'
-    AND strpos(subject, '.') > 0
-    AND strpos(subject, '(') = 0
-    AND strpos(subject, '->') = 0
+  SELECT arrow_cast(c.table_name, 'Utf8') AS t,
+         g.subject, g.aspect, g.body
+  FROM GLOSSARY(all => true) g
+  JOIN current_dataset d ON true
+  JOIN information_schema.columns c
+    ON c.table_schema = d.dataset AND c.table_name || '.' || c.column_name = g.subject
+  WHERE g.kind = 'fact'
 ),
 per AS (
   SELECT t,

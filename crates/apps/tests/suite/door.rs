@@ -1003,6 +1003,58 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_quality_page_accounts_for_each_landing() {
+    // The landing account is the import's own: what each scan held,
+    // what landed, what the casts nulled — and per column, the values
+    // a cast could not read, most frequent first.
+    let (app, plane, dir) = workspace().await;
+    std::fs::write(dir.path().join("dirty.csv"), "v\n1\nx\nx\n2\n").unwrap();
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(
+            "USE perf;\n\
+             DECLARE RECIPE dirty ON perf FROM erp AS $$\
+               SELECT try_cast(v AS DOUBLE) AS v FROM read_csv('dirty.csv')$$;",
+        )
+        .await
+        .unwrap();
+
+    let page = text(get(&app, "/perf/app/docket/p/quality").await).await;
+    assert!(page.contains("Landing account"), "{page}");
+    assert!(
+        page.contains("aria-current=\"page\" href=\"/perf/app/docket/p/quality\">Quality</a>"),
+        "{page}"
+    );
+
+    let landing = body_text(get(&app, "/perf/app/docket/frames/landing").await).await;
+    assert!(landing.contains("scanned ledger.csv 3\n"), "{landing}");
+    assert!(landing.contains("scanned dirty.csv 4\n"), "{landing}");
+    assert!(
+        landing.contains("nulled\n"),
+        "the dirty table's cells:\n{landing}"
+    );
+
+    let casts = body_text(get(&app, "/perf/app/docket/frames/casts").await).await;
+    assert!(casts.contains("dirty.v\n"), "{casts}");
+    assert!(casts.contains("x ×2\n"), "{casts}");
+    assert!(
+        !casts.contains("ledger"),
+        "every ledger cast held:\n{casts}"
+    );
+
+    let census = body_text(get(&app, "/perf/app/docket/frames/census").await).await;
+    assert!(census.starts_with("2\n"), "two tables landed:\n{census}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metrics_faces_serve_the_cube() {
     // The business surface end to end from the cube: nothing is
     // planted — the frames read `metric_series()` and `metric_axes()`,

@@ -132,9 +132,11 @@ connected tile refetches in place; instruments keep their DOM.
 `crates/apps/builtin/docket/` — the reference app and the standing
 example, and the dataset's own page (`/<dataset>/app` opens it): what
 stands open for a human to judge, what has been settled, what waits
-on an act, the metric surfaces and the record behind them, the column
-lineage, and every table and read as a file. Pages `index.html`,
-`metrics.html`, `record.html`, `lineage.html`, `export.html`; frames
+on an act, the metric surfaces, how well the data is held (the
+landing account, the standing checks, the column coverage), the
+column lineage, and every table and read as a file. Pages
+`index.html`, `metrics.html`, `quality.html`, `lineage.html`,
+`export.html`; frames
 over the shipped reads, the cube's two reads, `metric_sources()` and
 `imports`; one spec. Every built-in frame executes under the test
 suite.

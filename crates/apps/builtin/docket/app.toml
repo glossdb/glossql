@@ -4,7 +4,7 @@ title = "Docket"
 pages = [
   { name = "index", title = "Open" },
   { name = "metrics", title = "Metrics" },
-  { name = "record", title = "Record" },
+  { name = "quality", title = "Quality" },
   { name = "lineage", title = "Lineage" },
   { name = "export", title = "Export" },
 ]

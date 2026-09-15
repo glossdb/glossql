@@ -275,8 +275,9 @@ authoring). Routes: `/<dataset>/app` (the dataset's page),
 assets are not dataset-scoped and serve at `/assets/{file}`.
 
 - **The dataset's page.** `/<dataset>/app` opens the docket, the
-  built-in app: what waits on a person, the metrics, the record, the
-  column lineage, and under Export every landed table (the newest
+  built-in app: what waits on a person, the metrics, the quality of
+  the data (each landing's account, the checks, the column coverage),
+  the column lineage, and under Export every landed table (the newest
   landing per table: rows, cells its casts nulled, when) and every
   read the record serves (`metric_surfaces`), each a file away. The
   bar carries the dataset and app pickers and the app's pages as

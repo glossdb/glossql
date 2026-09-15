@@ -56,8 +56,9 @@ frame's job in a place nobody can test.
 
 One app ships in the binary, and it is the dataset's own page: the
 docket — what is open for a human to judge, what is settled, what
-waits on an act, with the metric surfaces, the record behind them,
-the column lineage (the landed tables along their declared key edges
+waits on an act, with the metric surfaces, how well the data is held
+(what each landing dropped and nulled, the checks and their bands,
+the column coverage), the column lineage (the landed tables along their declared key edges
 and the columns each served metric reads), and under Export every
 table and every served read as a file. A workspace that wants a
 different view authors its own app beside it; the door serves as many
