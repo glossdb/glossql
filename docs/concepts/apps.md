@@ -5,8 +5,9 @@ A data app is its own page, served at `/<dataset>/app/<name>`, and
 every filter a reader picks lands in the query string, so any view is
 a link they can paste to somebody else. Not a dashboard to log into —
 a page to send. An app names no dataset of its own, so one app serves
-every dataset in the workspace and the picker in the header is a link
-that rewrites the first segment.
+every dataset in the workspace. The bar reads as the URL: a dataset
+picker, an app picker, then the app's pages as tabs; each picker
+rewrites one path segment.
 
 ## An app is glosses
 
@@ -53,11 +54,12 @@ frame's job in a place nobody can test.
 
 ## The docket
 
-One app ships in the binary: the docket — what is open for a human to
-judge, what is settled, what waits on an act, with the metric
-surfaces, the record behind them, and the column lineage: the landed
-tables along their declared key edges and the columns each served
-metric reads. A workspace that wants a
+One app ships in the binary, and it is the dataset's own page: the
+docket — what is open for a human to judge, what is settled, what
+waits on an act, with the metric surfaces, the record behind them,
+the column lineage (the landed tables along their declared key edges
+and the columns each served metric reads), and under Export every
+table and every served read as a file. A workspace that wants a
 different view authors its own app beside it; the door serves as many
 as the workspace writes. A part glossed under a built-in's name is
 refused — one part resolves the whole app, and the built-in's other

@@ -6,11 +6,12 @@
 //!
 //! One ships: the docket — what stands open for a human to judge, what
 //! has been settled, what waits on an act, with the metric surfaces,
-//! the record behind it and the column lineage (one app, not a model app beside a
-//! metrics app: they were two faces of one workspace, and
-//! keeping them apart meant deriving the same counts twice).
-//! Built-ins move in lockstep with the binary instead of going stale
-//! in a workspace copy.
+//! the record behind it, the column lineage, and every table and read
+//! as a file (one app, not a model app beside a metrics app: they were
+//! two faces of one workspace, and keeping them apart meant deriving
+//! the same counts twice). It is the dataset's own page: `/<dataset>/app`
+//! opens it. Built-ins move in lockstep with the binary instead of
+//! going stale in a workspace copy.
 
 #[derive(Debug)]
 pub struct BuiltinApp {
@@ -20,6 +21,9 @@ pub struct BuiltinApp {
     pub files: &'static [(&'static str, &'static str)],
 }
 
+/// The app `/<dataset>/app` opens: the dataset's own page.
+pub const DATASET_PAGE: &str = "docket";
+
 macro_rules! docket {
     ($path:literal) => {
         ($path, include_str!(concat!("../builtin/docket/", $path)))
@@ -27,13 +31,14 @@ macro_rules! docket {
 }
 
 pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
-    name: "docket",
+    name: DATASET_PAGE,
     files: &[
         docket!("app.toml"),
         docket!("index.html"),
         docket!("metrics.html"),
         docket!("record.html"),
         docket!("lineage.html"),
+        docket!("export.html"),
         docket!("frames/assumptions.sql"),
         docket!("frames/axes.sql"),
         docket!("frames/census.sql"),
@@ -50,9 +55,11 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/open.sql"),
         docket!("frames/owed.sql"),
         docket!("frames/pulse.sql"),
+        docket!("frames/reads.sql"),
         docket!("frames/remeasure.sql"),
         docket!("frames/settled.sql"),
         docket!("frames/slices.sql"),
+        docket!("frames/tables.sql"),
         docket!("frames/trend.sql"),
         docket!("specs/series.vl.json"),
     ],

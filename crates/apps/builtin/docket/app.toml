@@ -1,3 +1,10 @@
 title = "Docket"
 # no dataset line, ever: the URL binds it (/<dataset>/app/docket), so one
-# app serves every dataset and the header picker switches between them
+# app serves every dataset and the bar's picker switches between them
+pages = [
+  { name = "index", title = "Open" },
+  { name = "metrics", title = "Metrics" },
+  { name = "record", title = "Record" },
+  { name = "lineage", title = "Lineage" },
+  { name = "export", title = "Export" },
+]

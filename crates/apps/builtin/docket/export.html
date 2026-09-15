@@ -1,0 +1,55 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# Every relation of the dataset as a file: the landed tables and the
+   reads the record serves, each a download away. A file is the
+   relation as it stands at the read, encoded on the way out; nothing
+   is stored twice. The download links opt out of the shell's hx-boost:
+   boosted, htmx would fetch the file and swap its text into the page
+   instead of letting the browser save it. #}
+<div class="tiles">
+
+  <section class="tile">
+    <header><span class="eyebrow">Tables</span>
+      <code class="chip" title="The newest landing of each table is the table: its rows, the cells its casts nulled, and when it landed. Column counts are the engine's own schema.">imports · information_schema</code></header>
+    <p class="hint">A file is the table as it stands now. Parquet keeps the engine's types, CSV is text.</p>
+    <gl-rows frame="frames/tables" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(10rem,1fr) 7rem 6rem 9rem 9rem">
+          <span class="r-subj">{name}<br><span class="r-meta">{columns} {columns_label}</span></span>
+          <span class="r-num">{rows}<br><span class="r-meta">rows</span></span>
+          <span class="r-num {ncls}">{nulled}{dash}<br><span class="r-meta">{nulled_label}</span></span>
+          <span class="r-meta">{landed}</span>
+          <span class="wgroup"><a class="wbtn" hx-boost="false" download href="{csv}">csv</a><a class="wbtn" hx-boost="false" download href="{parquet}">parquet</a></span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Reads</span>
+      <code class="chip" title="Every read of this dataset, as the relation read.<name>() serves it — a metric's row-grain frame whole, before the cube buckets it; a current fact; a derived relation. A stopped grounding carries its author's reason and serves no file.">metric_surfaces · read.&lt;name&gt;()</code></header>
+    <p class="hint">The chip says what a read is while it serves, and why not when it does not.</p>
+    <gl-rows frame="frames/reads" empty="no read is served here yet — a read is a QUERY aspect with a grounding, a GLOSS with its sql">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(12rem,16rem) minmax(0,1fr) 5rem 6rem 9rem">
+          <span class="r-subj">{read}<br><span class="r-meta">{title}</span></span>
+          <span class="r-what">{what}</span>
+          <span class="r-meta">{unit}</span>
+          <code class="chip {ccls}">{chip}</code>
+          <span class="wgroup {fcls}"><a class="wbtn" hx-boost="false" download href="{csv}">csv</a><a class="wbtn" hx-boost="false" download href="{parquet}">parquet</a></span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">A read of your own</span></header>
+    <p class="hint">Anything these files do not answer, the Arrow door does: post the read, receive the stream. The downloads above go through the same door, with the file as the shape.</p>
+<pre class="statement">curl -s --data 'SELECT * FROM &lt;table&gt; LIMIT 10' \
+  -H "Authorization: Bearer $TOKEN" {{ origin }}/{{ dataset }}/query</pre>
+  </section>
+
+</div>
+{% endblock main %}

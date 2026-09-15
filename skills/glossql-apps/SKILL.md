@@ -72,7 +72,11 @@ GLOSS app_frame ON delivery.monthly AS $${"sql":
 
 A manifest names no dataset — the URL binds it, so the same app serves
 every dataset in the workspace and the reader switches with the picker
-in the header. Read back what an app is made of:
+in the bar. A manifest may list its pages, `"pages": [{"name":
+"index", "title": "Overview"}, {"name": "cash", "title": "Cash"}]`:
+that is the order and the wording of the bar's tabs. Without the list
+every page shows by its file name, `index` first; a one-page app shows
+no tabs. Read back what an app is made of:
 
 ```sql
 SELECT app, path, actor_kind FROM app_parts ORDER BY app, path

@@ -24,19 +24,27 @@
 <header class="shell-nav">
   <div class="bar-in">
     <a class="brand" href="/">glossql<span class="dot">.</span></a>
-    {# The picker rewrites the first path segment — a dataset is a place,
-       not a setting, so switching is a plain navigation and the browser's
-       back button means what it says. #}
-    <select class="ds-pick" aria-label="dataset"
-            onchange="location.assign('/' + this.value + '/app{% if app %}/{{ app.name }}{% endif %}')">
+    {# The bar reads as the URL: the dataset, the app, then the app's
+       pages. Each picker rewrites one path segment — a dataset is a
+       place and so is an app, not a setting — so switching is a plain
+       navigation and the browser's back button means what it says. A
+       dataset switch keeps the page; the query string is the old
+       dataset's state and stays behind. #}
+    <select class="pick" aria-label="dataset"
+            onchange="location.assign('/' + this.value + '/app{% if app %}/{{ app.name }}{% if page and page != 'index' %}/p/{{ page }}{% endif %}{% endif %}')">
       {% for d in datasets %}<option value="{{ d }}"{% if d == dataset %} selected{% endif %}>{{ d }}</option>{% endfor %}
     </select>
-    {% if app %}<span class="ws">{{ app.title }}</span>{% endif %}
-    <nav>
-      {% for a in apps %}{% if not app or a.name != app.name %}<a href="/{{ dataset }}/app/{{ a.name }}">{{ a.title }}</a>{% endif %}{% endfor %}
-      {# The dataset's own page — its tables, its served metrics, its apps. #}
-      <a{% if not app %} class="current"{% endif %} href="/{{ dataset }}/app">{{ dataset }}</a>
+    <select class="pick" aria-label="app"
+            onchange="location.assign('/{{ dataset }}/app/' + this.value)">
+      {% for a in apps %}<option value="{{ a.name }}"{% if app and a.name == app.name %} selected{% endif %}>{{ a.title }}</option>{% endfor %}
+    </select>
+    {# The app's pages, as the manifest lists them. A one-page app has
+       nothing to switch between, so it shows no tabs. #}
+    {% if app and pages | length > 1 %}
+    <nav class="tabs" aria-label="pages">
+      {% for p in pages %}<a{% if p.name == page %} class="current" aria-current="page"{% endif %} href="/{{ dataset }}/app/{{ app.name }}{% if p.name != 'index' %}/p/{{ p.name }}{% endif %}">{{ p.title }}</a>{% endfor %}
     </nav>
+    {% endif %}
   </div>
 </header>
 <div class="load-bar"></div>

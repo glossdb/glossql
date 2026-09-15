@@ -7,17 +7,9 @@
 
 {% if metric %}
 {# ---- one metric: the number, then its reasons -------------------- #}
-{# The three views stand, and the chosen metric joins them as a fourth
-   tab rather than taking Record's place — picking a metric is going
-   deeper, not going somewhere else. Choosing another metric replaces
-   this tab, since there is one metric in view at a time. #}
-<nav class="crumbs">
-  <a href="/{{ dataset }}/app/docket">Open</a>
-  <a href="?">Metrics</a>
-  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
-  <a href="/{{ dataset }}/app/docket/p/lineage">Lineage</a>
-  <span class="here">{{ metric }}</span>
-</nav>
+{# Picking a metric is going deeper, not somewhere else: the Metrics
+   tab stays the current one, every tile names the metric, and the tab
+   is the way back to the list. #}
 <div class="tiles">
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers
@@ -165,12 +157,6 @@
 
 {% else %}
 {# ---- the surfaces list ------------------------------------------- #}
-<nav class="crumbs">
-  <a href="/{{ dataset }}/app/docket">Open</a>
-  <span class="here">Metrics</span>
-  <a href="/{{ dataset }}/app/docket/p/record">Record</a>
-  <a href="/{{ dataset }}/app/docket/p/lineage">Lineage</a>
-</nav>
 <div class="tiles">
   {# The re-measure banner: every write moves the pin, and a function
      voice landed at an earlier pin is served and marked — the numbers

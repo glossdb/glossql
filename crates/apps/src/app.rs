@@ -5,7 +5,7 @@
 //! binary (`builtin.rs`). Nothing is read from disk: the record and
 //! the binary are the two sources, in that order. An app names no
 //! dataset — the URL does (`/<dataset>/app/<name>`), so one app serves
-//! every dataset in the workspace and the header's picker is a link
+//! every dataset in the workspace and the bar's pickers are links
 //! rather than a feature.
 
 use std::collections::BTreeMap;
@@ -16,6 +16,9 @@ use crate::builtin::{self, BuiltinApp};
 pub struct AppDef {
     pub name: String,
     pub title: String,
+    /// The app's pages as the bar lists them: `(name, title)` in the
+    /// manifest's order, else every page by its file name, index first.
+    pub pages: Vec<(String, String)>,
     source: Source,
 }
 
@@ -38,26 +41,63 @@ pub fn safe_segment(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// The one manifest field: the title a page and the nav print. The
-/// built-in's manifest is TOML (`app.toml` beside its pages); a
-/// `dataset` key is accepted and ignored — the URL binds.
-fn manifest(origin: &str, text: &str) -> Result<Option<String>, String> {
-    let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-    Ok(value
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(str::to_string))
+/// What a manifest says: the title the picker prints, and the pages
+/// the bar shows as tabs, in the author's order. A `dataset` key is
+/// accepted and ignored — the URL binds.
+#[derive(Default)]
+struct Manifest {
+    title: Option<String>,
+    pages: Vec<(String, String)>,
 }
 
-/// The manifest of a glossed app: the same field, arriving as the
-/// `app` aspect's body rather than as TOML text.
-fn manifest_json(origin: &str, text: &str) -> Result<Option<String>, String> {
+/// The built-in's manifest is TOML (`app.toml` beside its pages).
+fn manifest_toml(origin: &str, text: &str) -> Result<Manifest, String> {
+    let value: toml::Value = toml::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
+    let value = serde_json::to_value(value).map_err(|e| format!("{origin}: {e}"))?;
+    Ok(manifest(&value))
+}
+
+/// A glossed app's manifest is the `app` aspect's JSON body.
+fn manifest_json(origin: &str, text: &str) -> Result<Manifest, String> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-    Ok(value
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(str::to_string))
+    Ok(manifest(&value))
+}
+
+fn manifest(value: &serde_json::Value) -> Manifest {
+    let pages = value
+        .get("pages")
+        .and_then(serde_json::Value::as_array)
+        .map(|pages| {
+            pages
+                .iter()
+                .filter_map(|p| {
+                    Some((
+                        p.get("name")?.as_str()?.to_string(),
+                        p.get("title")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Manifest {
+        title: value
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        pages,
+    }
+}
+
+/// The pages a manifest did not list: every page by its file name,
+/// `index` first, the rest in name order.
+fn pages_by_name<'a>(files: impl Iterator<Item = &'a str>) -> Vec<(String, String)> {
+    let mut names: Vec<String> = files
+        .filter(|p| p.ends_with(".html") && !p.contains('/'))
+        .map(|p| p.trim_end_matches(".html").to_string())
+        .collect();
+    names.sort_by_key(|n| (n != "index", n.clone()));
+    names.into_iter().map(|n| (n.clone(), n)).collect()
 }
 
 impl AppDef {
@@ -85,15 +125,21 @@ impl AppDef {
             ));
         }
         if !files.is_empty() {
-            let title = match files.get("app") {
+            let manifest = match files.get("app") {
                 Some(body) => manifest_json(&format!("glossed app `{name}`"), body)?,
                 // Parts without a manifest still serve: the app is named
                 // by its subject and bound by the URL like any other.
-                None => None,
+                None => Manifest::default(),
+            };
+            let pages = if manifest.pages.is_empty() {
+                pages_by_name(files.keys().map(String::as_str))
+            } else {
+                manifest.pages
             };
             return Ok(Some(AppDef {
-                title: title.unwrap_or_else(|| name.to_string()),
+                title: manifest.title.unwrap_or_else(|| name.to_string()),
                 name: name.to_string(),
+                pages,
                 source: Source::Glossed(files),
             }));
         }
@@ -106,10 +152,16 @@ impl AppDef {
             .find(|(p, _)| *p == "app.toml")
             .map(|(_, text)| *text)
             .unwrap_or("");
-        let title = manifest(&format!("builtin `{name}`"), toml)?;
+        let manifest = manifest_toml(&format!("builtin `{name}`"), toml)?;
+        let pages = if manifest.pages.is_empty() {
+            pages_by_name(app.files.iter().map(|(p, _)| *p))
+        } else {
+            manifest.pages
+        };
         Ok(Some(AppDef {
-            title: title.unwrap_or_else(|| name.to_string()),
+            title: manifest.title.unwrap_or_else(|| name.to_string()),
             name: name.to_string(),
+            pages,
             source: Source::Builtin(app),
         }))
     }

@@ -31,10 +31,16 @@ GLOSS app ON docket_mine AS $${"title": "My docket"}$$;
 ```
 
 **A manifest names no dataset.** The URL does — `/<dataset>/app/<name>` —
-so one app serves every dataset in the workspace and the header's picker
+so one app serves every dataset in the workspace and the bar's picker
 switches between them. A `dataset` key is accepted and ignored. App,
 page, frame, and spec names are flat segments — ASCII alphanumerics,
 `_`, `-`, `.`; nothing hidden, no dot-walking.
+
+**A manifest may list its pages.** `"pages": [{"name": "index",
+"title": "Overview"}, {"name": "cash", "title": "Cash"}]` is the
+order and the wording of the bar's tabs; without the list every page
+shows by its file name, `index` first. An app with one page shows no
+tabs — the picker names it.
 
 ## Frames
 
@@ -124,9 +130,11 @@ connected tile refetches in place; instruments keep their DOM.
 ## The built-in docket
 
 `crates/apps/builtin/docket/` — the reference app and the standing
-example: what stands open for a human to judge, what has been settled,
-what waits on an act, the metric surfaces and the record behind them.
-Pages `index.html`, `metrics.html`, `record.html`, `lineage.html`;
-nineteen frames over the shipped reads, the cube's two reads and
-`metric_sources()`; one spec. Every built-in frame parses under the
-test suite.
+example, and the dataset's own page (`/<dataset>/app` opens it): what
+stands open for a human to judge, what has been settled, what waits
+on an act, the metric surfaces and the record behind them, the column
+lineage, and every table and read as a file. Pages `index.html`,
+`metrics.html`, `record.html`, `lineage.html`, `export.html`; frames
+over the shipped reads, the cube's two reads, `metric_sources()` and
+`imports`; one spec. Every built-in frame executes under the test
+suite.

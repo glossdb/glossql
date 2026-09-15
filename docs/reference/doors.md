@@ -274,12 +274,14 @@ authoring). Routes: `/<dataset>/app` (the dataset's page),
 `POST /<dataset>/app/{app}/rule` and `.../remeasure`. The vendored
 assets are not dataset-scoped and serve at `/assets/{file}`.
 
-- **The dataset's page.** `/<dataset>/app` lists what has landed (the
-  newest landing per table: rows, cells its casts nulled, when) and
-  every metric with where it stands (`metric_surfaces`), each a file
-  away, then the apps over the dataset. The workspace root, `/`, is
-  the same at a glance for every dataset, with the apps, the doors and
-  the connect line.
+- **The dataset's page.** `/<dataset>/app` opens the docket, the
+  built-in app: what waits on a person, the metrics, the record, the
+  column lineage, and under Export every landed table (the newest
+  landing per table: rows, cells its casts nulled, when) and every
+  read the record serves (`metric_surfaces`), each a file away. The
+  bar carries the dataset and app pickers and the app's pages as
+  tabs. The workspace root, `/`, is each dataset at a glance, with
+  the apps, the doors and the connect line.
 - **A relation as a file.** `GET /<dataset>/app/export/<name>.csv` or
   `.parquet`, where `<name>` is a table or `read.<aspect>`, streams
   the relation as it stands at the read — the same channel and plan as
