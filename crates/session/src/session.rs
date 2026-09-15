@@ -345,6 +345,11 @@ pub struct Session {
     mounted_provider: std::sync::Mutex<Option<std::sync::Weak<IcebergCatalogProvider>>>,
 }
 
+/// The aspects whose subject is an app address, `<app>` or
+/// `<app>.<part>` — the kit's app family, the names `app_parts` and the
+/// app door read.
+const APP_PARTS: [&str; 4] = ["app", "app_page", "app_frame", "app_spec"];
+
 impl Session {
     /// Who this session writes as.
     pub fn actor(&self) -> &Actor {
@@ -1039,8 +1044,26 @@ impl Session {
     }
 
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
-        let resolved = self.subject(&gloss.subject).await?;
         let aspect = gloss.aspect.value.as_str();
+        // An app part's subject is `<app>.<part>` under the bound
+        // dataset: the head is the app, never a dataset, so an app
+        // named like its dataset keeps its parts (`app_parts`, the
+        // app door). Every other subject is a path (SPEC.md §4).
+        let resolved = match &gloss.subject {
+            Subject::Path(p) if APP_PARTS.contains(&aspect) && p.segments.len() == 2 => {
+                let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+                Resolved {
+                    dataset,
+                    subject: p
+                        .segments
+                        .iter()
+                        .map(|i| i.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join("."),
+                }
+            }
+            _ => self.subject(&gloss.subject).await?,
+        };
         // An aspect declared ON TABLE or ON COLUMN says its subject is
         // one, so the subject must be landed — checked here, where the
         // typo is. An aspect with no grain clause claims nothing about

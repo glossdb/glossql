@@ -428,6 +428,27 @@ async fn the_routes_answer_from_the_record() {
                 stands["why"], "an app stands: /fin/app/review",
                 "{stands:?}"
             );
+            // An app named like its dataset: the part's subject is the
+            // app's, not a dataset path, so the page lands on the app
+            // and the goal closes on it.
+            session
+                .execute("GLOSS app ON fin AS $${\"title\": \"fin\"}$$")
+                .await
+                .unwrap();
+            session
+                .execute("GLOSS app_page ON fin.index AS $${\"html\": \"<p>fin</p>\"}$$")
+                .await
+                .unwrap();
+            let parts = rows(
+                &session,
+                "SELECT path FROM app_parts WHERE dataset = 'fin' AND app = 'fin' ORDER BY path",
+            )
+            .await;
+            let paths: Vec<&str> = parts.iter().map(|r| r["path"].as_str().unwrap()).collect();
+            assert_eq!(paths, ["app", "index.html"], "{parts:?}");
+            let stands = goal(&session, "app").await;
+            assert_eq!(stands["state"], "done", "{stands:?}");
+            assert_eq!(stands["why"], "an app stands: /fin/app/fin", "{stands:?}");
         }
         Err(e) => {
             eprintln!(

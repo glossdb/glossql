@@ -45,7 +45,9 @@ the full `dataset.table.column` spelling is always allowed. A head
 that names both a dataset and a landed table of the `USE`'d dataset is
 the table: the nearer scope wins, and the other dataset's names are
 reached under its own `USE`. A table named like its own dataset is
-reached by its columns only; the bare name is the dataset. Two actors
+reached by its columns only; the bare name is the dataset. An app
+part's subject is the app's, `<app>.<part>` under the `USE`'d
+dataset, so an app named like its dataset keeps its parts. Two actors
 on the same dataset hold two sessions; one actor on two datasets holds
 two sessions.
 

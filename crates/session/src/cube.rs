@@ -1849,11 +1849,20 @@ async fn build(
                         named.push(format!("'{}'", m.replace('\'', "''")));
                     }
                 }
-                format!(
-                    "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
-                     THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
-                    named.join(", ")
-                )
+                if named.is_empty() {
+                    // No member stands inside the window — every row
+                    // of the column there is NULL — so there is
+                    // nothing to name and no cell to serve; the plain
+                    // cast, never an empty IN list, which is not a
+                    // query.
+                    format!("CAST(\"{dcol}\" AS VARCHAR)")
+                } else {
+                    format!(
+                        "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
+                         THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
+                        named.join(", ")
+                    )
+                }
             } else {
                 format!("CAST(\"{dcol}\" AS VARCHAR)")
             };

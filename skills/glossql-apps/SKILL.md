@@ -50,7 +50,9 @@ No forms anywhere in this flow — this is the conversation register.
 
 One gloss per part, so a frame can be edited without rewriting the app
 and supersession versions each part on its own. The aspect says what
-kind of file it is; the subject says where it goes.
+kind of file it is; the subject says where it goes, and its head is
+the app, under the `USE`'d dataset, even when the app is named like
+the dataset.
 
 | aspect | subject | becomes |
 |---|---|---|

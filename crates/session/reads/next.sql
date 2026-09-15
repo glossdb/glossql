@@ -568,7 +568,7 @@ FROM ds
 
 -- the lowest step that serves decides each goal
 first AS (
-  SELECT *, row_number() OVER (PARTITION BY surface ORDER BY step, say) AS rn FROM steps
+  SELECT *, row_number() OVER (PARTITION BY surface ORDER BY step, say, why) AS rn FROM steps
 )
 SELECT CASE surface
          WHEN 'structure' THEN 1 WHEN 'metrics' THEN 2 WHEN 'slices' THEN 3 WHEN 'bands' THEN 4

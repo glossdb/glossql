@@ -2613,3 +2613,105 @@ async fn a_frame_over_a_workspace_relation_rebuilds_with_the_version() {
         "a version-bound entry misses after any write"
     );
 }
+
+/// A dimension wider than the member cap is bucketed, never refused:
+/// the top members by weight are named, the rest fold into `other`,
+/// and the fact row names the bucketed axis. When the window holds no
+/// member at all — the column is NULL on every row inside it — the
+/// series serves no member cell, and the grounding still stands.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wide_dimension_is_bucketed_never_refused() {
+    let (mut dates, mut values, mut regions) = (Vec::new(), Vec::new(), Vec::new());
+    for m in 0..3 {
+        for r in 0..30 {
+            dates.push(19723 + 31 * m);
+            values.push(1.0 + r as f64);
+            regions.push(Some(format!("r{r:02}")));
+        }
+    }
+    let events = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, true),
+        ],
+        dates.clone(),
+        vec![
+            Arc::new(Float64Array::from(values.clone())),
+            Arc::new(StringArray::from(regions.clone())),
+        ],
+    );
+    // The same rows, then two years of rows with no region: the
+    // window measured from the data's edge holds only those.
+    for m in 0..24 {
+        dates.push(19723 + 31 * (36 + m));
+        values.push(1.0);
+        regions.push(None);
+    }
+    let tail = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, true),
+        ],
+        dates,
+        vec![
+            Arc::new(Float64Array::from(values)),
+            Arc::new(StringArray::from(regions)),
+        ],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("events", events), ("late", tail)],
+        &[
+            r#"DECLARE ASPECT wide WITH $${"title": "Wide"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS wide ON fin AS $${"sql": "SELECT date, value, region FROM events"}$$;"#,
+            r#"GLOSS dimension ON events.region AS $${"value": "supporting"}$$;"#,
+            r#"DECLARE ASPECT emptied WITH $${"title": "Emptied"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS emptied ON fin AS $${"sql": "SELECT date, value, region FROM late"}$$;"#,
+            r#"GLOSS dimension ON late.region AS $${"value": "supporting"}$$;"#,
+            "SELECT judge_time() FROM events.date;",
+            "SELECT judge_time() FROM late.date;",
+        ],
+    )
+    .await;
+    let row = grid(
+        &session,
+        "SELECT applicable, dims, bucketed, reason FROM metric_axes() WHERE metric = 'wide'",
+    )
+    .await;
+    assert!(row.contains("true"), "{row}");
+    assert!(row.contains("[region]"), "{row}");
+    let members = grid(
+        &session,
+        "SELECT member, sum(value) AS value FROM metric_series() \
+         WHERE metric = 'wide' AND dimension = 'region' GROUP BY member ORDER BY member",
+    )
+    .await;
+    assert!(members.contains("other"), "{members}");
+    assert!(
+        !members.contains("r00"),
+        "the lightest member folds into other: {members}"
+    );
+    assert!(members.contains("r29"), "{members}");
+    // The window holds no member: applicable, the axis stands, and
+    // the member series is empty rather than refused.
+    let row = grid(
+        &session,
+        "SELECT applicable, dims, bucketed, reason FROM metric_axes() WHERE metric = 'emptied'",
+    )
+    .await;
+    assert!(row.contains("true"), "{row}");
+    assert!(row.contains("[region]"), "{row}");
+    let cells = number(
+        &session,
+        "SELECT count(*) FROM metric_series() WHERE metric = 'emptied' AND dimension = 'region'",
+    )
+    .await;
+    assert_eq!(cells, 0.0);
+    let total = number(
+        &session,
+        "SELECT count(*) FROM metric_series() WHERE metric = 'emptied' AND dimension = ''",
+    )
+    .await;
+    assert!(total > 0.0, "{total}");
+}
