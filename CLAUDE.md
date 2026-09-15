@@ -1,7 +1,7 @@
 # glossql — workspace rules
 
-The context language and its server. Current phase: **PoC server
-build-out**; corpus fixture 11 is the acceptance test. Grammar changes
+The context language and its server. The server ships: a brew tap and
+an image on GHCR, both cut at the workspace version. Grammar changes
 follow the corpus-first process below.
 
 ## The map
@@ -43,10 +43,8 @@ follow the corpus-first process below.
   resolves, served on the door as `doc://vendor/datafusion/sql/…`.
   `vendor/datafusion/refresh.sh <tag>` at every pin move; the serverd
   suite holds its VERSION to Cargo.lock.
-- `.claude/notes/` (gitignored) — working notes tied to an open
-  issue; deleted when it closes.
 
-## The record: issues, code, docs, notes
+## The record: issues, code, docs
 
 GitHub issues (`glossdb/glossql`) are the work record. One issue is
 one actionable unit at a uniform depth: what it buys, what stands

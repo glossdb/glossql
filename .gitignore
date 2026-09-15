@@ -29,8 +29,6 @@ __pycache__/
 .playwright-mcp/
 
 .claude/worktrees/
-# Working notes tied to an open issue; deleted when it closes
-.claude/notes/
 
 # The server's own configuration (dotenv); never committed
 .env
