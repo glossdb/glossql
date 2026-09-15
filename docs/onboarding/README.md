@@ -4,9 +4,12 @@ Onboarding is the path from a company's exports and definitions to a
 working glossed workspace: add-source → relationships → dimensions →
 metrics, an agent driving the flows through the doors, a human
 answering the questions only a human can. There is no manual sequence:
-the `workspace_next` read reports what the workspace affords and where
-it stands, and the agent asks the record instead of following a staged
-arc.
+every tool result closes with a `next:` line, one act per goal —
+structure, metrics, slices, bands, checks, app, rulings — and the work
+is done when every goal is done or blocked. The `next` read behind the
+line hands the statement that moves a goal, filled from the record;
+`workspace_next` is the map behind it. The agent asks the record
+instead of following a staged arc.
 
 ## What stands
 

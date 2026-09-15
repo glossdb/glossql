@@ -135,8 +135,9 @@ the span (`dense_rank() OVER (ORDER BY period DESC)` against `$span`).
 A reference's own params are the author's defaults
 (`frames/trend?grain=month&span=24`); the page URL overrides them, and
 only the frames whose URL changed refetch. Keep the back-control on
-top: whatever narrows a view — the window, a slice picker, the crumbs
-— sits above what it narrows, never below or inside it.
+top: whatever narrows a view — the window, a slice picker, the way
+back to a list — sits above what it narrows, never below or inside
+it.
 
 ## Tiles place what the frame computed
 
