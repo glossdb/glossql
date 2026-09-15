@@ -38,7 +38,10 @@ No forms anywhere in this flow — this is the conversation register.
    slice and its chip — "cycle-time trend with the rival line ·
    throughput by region, top 8 · the open-questions count". Propose from what the
    glossary already ranks: the judged axes, the grounded surfaces.
-   The user prunes and extends in words.
+   The user prunes and extends in words. When the app stands and the
+   metrics are done, the served metrics its pages do not show are the
+   candidates for one more page: propose one, in a sentence, and write
+   nothing until they say so.
 3. **Author, then hand over the URL.** The rendered page *is* the
    proposal made concrete. They react in prose — "swap the trend for
    by-region", "wrong grain on that number" — and you re-gloss.

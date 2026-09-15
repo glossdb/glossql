@@ -40,6 +40,16 @@ order, and the line is never one.
 | `app` | a page stands over the grounded metrics | the `glossql-apps` skill |
 | `rulings` | every ruling is folded in and nothing is owed | `skill://glossql/references/rulings.md` |
 
+**When every goal is done or blocked, offer one next step of each
+kind, as a proposal.** The metrics done row's why names what the
+record left unused: the tables no grounding reads, the judged columns
+none serves. From those, say what one more metric could be, in a
+sentence, with its grounds. From the served metrics the app's pages
+do not show, say what one more page could be, the same way. One of
+each, in prose. Write nothing until the human says so: the next
+concept is theirs to name, and the proposal is there to help them
+think, not to fill the workspace.
+
 `workspace_next` is the map behind the line — every surface, what
 stands, what is open — when you want the counts.
 

@@ -503,6 +503,27 @@ async fn the_routes_answer_from_the_record() {
         .unwrap();
     let stopped = goal(&session, "metrics").await;
     assert_eq!(stopped["state"], "done", "{stopped:?}");
+    // The done row names what the record left unused, as facts: a
+    // table no grounding reads, a judged column none serves.
+    let (schema, batch) = races();
+    session
+        .register_table(
+            "venues",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+    session
+        .execute("GLOSS dimension ON fin.venues.track AS $${\"value\": \"supporting\"}$$")
+        .await
+        .unwrap();
+    let done = goal(&session, "metrics").await;
+    let why = done["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("every metric the dataset claims is served or stopped")
+            && why.ends_with(" — unread: venues; judged and unserved: venues.track"),
+        "{done:?}"
+    );
 }
 
 // ---- the door -------------------------------------------------------------

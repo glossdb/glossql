@@ -362,7 +362,10 @@ query arm each in the shipped read: an arm serves a row when its
 condition holds on the record, one row per thing the step may act
 on, and the lowest step that serves decides the goal. A route is the
 goal's preconditions and nothing more. A statement is a proposal:
-edit it, send it, or do not. Needs a `USE`.
+edit it, send it, or do not. A done row's why names what the record
+left unused where that is a fact the record can state: the metrics
+row lists the tables no grounding reads and the judged columns none
+serves. Needs a `USE`.
 The MCP door serves the same rows as the resource template
 `next://<dataset>/<surface>`, and carries a one-line `next:` on every
 tool result.

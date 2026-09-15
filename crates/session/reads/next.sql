@@ -131,6 +131,39 @@ unjudged AS (
 unjudged_table AS (
   SELECT metric, min(t) AS t FROM pool GROUP BY metric HAVING NOT bool_or(judged)
 ),
+-- what the record left unused, for the metrics done row: the tables
+-- no grounding reads, and the judged columns no grounding serves — a
+-- dimension gloss or an applicable relevance verdict stands on the
+-- column and no served field descends from it. Facts, not ideas: the
+-- next concept is the human's to name
+read_tables AS (
+  SELECT DISTINCT split_part(source, '.', 1) AS t FROM metric_sources() WHERE source IS NOT NULL
+),
+unread AS (
+  SELECT nullif(array_to_string(array_agg(i.table_name ORDER BY i.table_name), ', '), '') AS tables
+  FROM information_schema.tables i
+  CROSS JOIN ds
+  LEFT JOIN read_tables r ON r.t = i.table_name
+  WHERE i.table_schema = ds.dataset AND i.table_type = 'BASE TABLE'
+    AND strpos(i.table_name, '$') = 0 AND r.t IS NULL
+),
+read_columns AS (
+  SELECT DISTINCT source FROM metric_sources() WHERE source IS NOT NULL
+),
+judged AS (
+  SELECT subject FROM gloss WHERE stance IN ('primary', 'supporting')
+  UNION
+  SELECT subject FROM verdict WHERE applicable
+),
+unserved AS (
+  SELECT nullif(array_to_string(array_agg(j.subject ORDER BY j.subject), ', '), '') AS columns
+  FROM judged j
+  CROSS JOIN ds
+  JOIN information_schema.columns c
+    ON c.table_schema = ds.dataset AND c.table_name || '.' || c.column_name = j.subject
+  LEFT JOIN read_columns r ON r.source = j.subject
+  WHERE r.source IS NULL
+),
 -- the detector over each column glossed a dimension and not judged;
 -- over every unserved column where nobody judged one
 targets AS (
@@ -278,8 +311,11 @@ WHERE NOT a.applicable AND cardinality(a.wanted) = 0
   AND coalesce(a.reason, '') <> ''
 
 UNION ALL
-SELECT 'metrics', 5, 'done', '', '', 'every metric the dataset claims is served or stopped; the next concept is the human''s to name', '', ''
-FROM ds
+SELECT 'metrics', 5, 'done', '', '',
+       'every metric the dataset claims is served or stopped; the next concept is the human''s to name'
+         || coalesce(' — unread: ' || u.tables, '') || coalesce('; judged and unserved: ' || v.columns, ''),
+       '', ''
+FROM ds CROSS JOIN unread u CROSS JOIN unserved v
 
 -- ---- slices: every applicable metric admits an axis
 
