@@ -31,6 +31,16 @@ pub fn situation(refusal: Option<&str>, outcome: Option<&Value>) -> String {
     };
     let metric = fact.get("metric").and_then(Value::as_str).unwrap_or("");
     let mut line = format!("situation: landed — {metric}: ");
+    // A re-record says first what it changed against the writing it
+    // supersedes — the totals over their shared periods: the line is
+    // read left to right, and a moved total unsays the axes after it.
+    if let Some(drift) = fact
+        .get("superseded_divergence")
+        .and_then(Value::as_str)
+        .filter(|d| !d.is_empty())
+    {
+        line.push_str(&format!("{drift}; "));
+    }
     if fact.get("applicable") == Some(&Value::Bool(true)) {
         // The grounding's word on its axes, where it spoke: what the
         // list closed and what a verdict or a gloss would have
@@ -75,15 +85,6 @@ pub fn situation(refusal: Option<&str>, outcome: Option<&Value>) -> String {
         let reason = fact.get("reason").and_then(Value::as_str).unwrap_or("");
         let first = reason.split(". ").next().unwrap_or(reason);
         line.push_str(&format!("not applicable — {first}"));
-    }
-    // A re-record says what it changed against the writing it
-    // supersedes — the totals over their shared months.
-    if let Some(drift) = fact
-        .get("superseded_divergence")
-        .and_then(Value::as_str)
-        .filter(|d| !d.is_empty())
-    {
-        line.push_str(&format!("; against the other writing: {drift}"));
     }
     line
 }

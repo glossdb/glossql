@@ -480,7 +480,12 @@ async fn the_routes_answer_from_the_record() {
     let refused = goal(&session, "metrics").await;
     assert_eq!(refused["state"], "next", "{refused:?}");
     assert_eq!(refused["act"], "GLOSS query", "{refused:?}");
-    assert_eq!(refused["say"], "re-record gate", "{refused:?}");
+    // The say carries the refusal's head — the line is what the agent
+    // reads; the why on the page carries the whole reason.
+    assert_eq!(
+        refused["say"], "re-record gate — no value column",
+        "{refused:?}"
+    );
     assert!(
         refused["why"].as_str().unwrap().contains("no value column"),
         "{refused:?}"
@@ -691,14 +696,15 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
             "unadmitted": ["track", "venue"],
             "unadmitted_act": ["closed over verdict", "closed"],
             "wanted": [],
-            "superseded_divergence": "no gap over 12 shared periods"
+            "superseded_divergence": "no gap against the writing it supersedes over 12 shared periods"
         })),
     );
+    // The drift comes first: a moved total unsays the axes after it.
     assert_eq!(
         line,
-        "situation: landed — takings: applicable; axes [] (the grounding's word — closes track, \
-         venue; a verdict admits track); unadmitted [track, venue]; wanted []; against the \
-         other writing: no gap over 12 shared periods"
+        "situation: landed — takings: no gap against the writing it supersedes over 12 shared \
+         periods; applicable; axes [] (the grounding's word — closes track, venue; a verdict \
+         admits track); unadmitted [track, venue]; wanted []"
     );
     let line = window::situation(
         None,

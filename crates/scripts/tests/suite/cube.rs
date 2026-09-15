@@ -444,14 +444,17 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
     // constructor loses a third of every month's points and says so.
     // The read never carries it — it is the write's answer.
     let row = grid(&session, &ground(FRAME)).await;
-    assert!(row.contains("no gap over 12 shared periods"), "{row}");
+    assert!(
+        row.contains("no gap against the writing it supersedes over 12 shared periods"),
+        "{row}"
+    );
     let row = grid(
         &session,
         &ground("SELECT r.date, r.constructor_id AS cid, r.points AS value FROM results r WHERE r.constructor_id <> 'c3'"),
     )
     .await;
     assert!(
-        row.contains("max relative gap 0.5000 at") && row.contains("over 12 shared periods"),
+        row.contains("the total moved 50.0 % at") && row.contains("over 12 shared periods"),
         "{row}"
     );
     let read = grid(&session, "SELECT superseded_divergence FROM metric_axes();").await;

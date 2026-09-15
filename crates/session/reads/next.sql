@@ -264,7 +264,7 @@ WHERE NOT s.grounded AND s.stopped = ''
 -- author's word
 UNION ALL
 SELECT 'metrics', 4, 'next', 'GLOSS query',
-       're-record ' || a.metric,
+       're-record ' || a.metric || ' — ' || split_part(split_part(a.reason, '. ', 1), ': ', 1),
        a.metric || ' is grounded and the cube refuses the grounding — ' || a.reason || '. A grounding the cube cannot serve holds this goal: re-record it, or stop it with the reason no number is served',
        $f$GLOSS $f$ || a.metric || $f$ ON $f$ || ds.dataset || $f$ AS $$$f$ || b.body || $f$$$;
 -- or, where no number should be served: GLOSS $f$ || a.metric || $f$ ON $f$ || ds.dataset || $f$ AS $${"stopped": "<what is missing, and why no number is served>"}$$;$f$,

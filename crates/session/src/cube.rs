@@ -1120,12 +1120,12 @@ async fn write_fact(
         // total are different numbers, and the row says so instead.
         fact.superseded_divergence = Some(if !before.fact.applicable {
             format!(
-                "the other writing served nothing: {}",
+                "the writing it supersedes served nothing: {}",
                 before.fact.reason.as_deref().unwrap_or("no reason given")
             )
         } else if now.fact.behavior != before.fact.behavior {
             format!(
-                "the verb changed, {} against {}: totals not compared",
+                "the verb changed against the writing it supersedes, {} against {}: totals not compared",
                 now.fact.behavior.as_deref().unwrap_or("none"),
                 before.fact.behavior.as_deref().unwrap_or("none")
             )
@@ -1175,10 +1175,14 @@ fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
         }
     }
     let mut out = match max {
-        None => "no shared periods".to_string(),
-        Some((0.0, _)) => format!("no gap over {shared} shared periods"),
+        None => "no shared periods with the writing it supersedes".to_string(),
+        Some((0.0, _)) => {
+            format!("no gap against the writing it supersedes over {shared} shared periods")
+        }
         Some((gap, at)) => format!(
-            "max relative gap {gap:.4} at {} over {shared} shared periods",
+            "the total moved {:.1} % at {} against the writing it supersedes, the widest gap \
+             over {shared} shared periods",
+            gap * 100.0,
             day(at)
         ),
     };
@@ -1186,7 +1190,7 @@ fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
     let only_now = now.keys().filter(|p| !before.contains_key(p)).count();
     if only_before > 0 {
         out.push_str(&format!(
-            "; {only_before} periods only in the other writing"
+            "; {only_before} periods only in the writing it supersedes"
         ));
     }
     if only_now > 0 {
