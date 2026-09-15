@@ -38,12 +38,14 @@
 
 mod auth;
 mod bootstrap;
+pub mod functions;
 mod login;
 mod mcp;
 mod query;
 pub mod skills;
 pub mod telemetry;
 pub mod tls;
+pub mod window;
 mod wire;
 
 pub use auth::{Endpoints, Gate};

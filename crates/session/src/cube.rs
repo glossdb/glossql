@@ -237,8 +237,14 @@ pub(crate) struct Fact {
     pub basis: Vec<String>,
     /// Per admitted dimension, in `dims` order, what decided:
     /// `measurement` when the verdict alone did, `human` or `agent`
-    /// when a `dimension` gloss admitted it or put it first.
+    /// when a `dimension` gloss or the grounding's `axes` admitted it.
     pub admitted_by: Vec<String>,
+    /// What decides the axes: `authored` when the grounding lists them
+    /// (`axes`), `measured` when the verdicts and the column glosses
+    /// do, `measured over authored` when the grounding's empty list did
+    /// not hold — it closes a distinct count or a ratio, the shapes no
+    /// column slices whole, and on any other the verdicts decide.
+    pub axes_basis: &'static str,
     pub bucketed: Vec<String>,
     /// The served columns the cube does not slice on — every one that
     /// is neither the value, a ratio's half nor time-typed and was not
@@ -251,6 +257,19 @@ pub(crate) struct Fact {
     /// cap. The column names the gap; the reason names the act.
     pub unadmitted: Vec<String>,
     pub unadmitted_why: Vec<String>,
+    /// The act behind each, at the same index, as a keyed tag a route
+    /// can read: `verdict` (no verdict yet — run `dimension_relevance()`
+    /// over the subject, or gloss `dimension`), `abstained` (the
+    /// verdict abstained — declare the edge, or gloss `dimension`),
+    /// `none` (closed by a `dimension` gloss), `closed` (by the
+    /// grounding's `axes` — `closed over verdict` or `closed over
+    /// gloss` where a verdict or a `dimension` gloss admits the column
+    /// the author closed), `unserved` (listed in `axes` and not a
+    /// column the cube can slice on), `expression`, `single` and `cap`
+    /// — the last five are terminal: nothing admits the column as it
+    /// is served, and the grounding is where `closed` and `unserved`
+    /// change.
+    pub unadmitted_act: Vec<String>,
     /// The measurements this row reads and no function has landed —
     /// the function to run, and in `wanted_over` at the same index
     /// the column subject to run it over: the function returning
@@ -269,6 +288,12 @@ pub(crate) struct Fact {
     /// no rival is served.
     pub alternative_divergence: Option<String>,
     pub alternative_error: Option<String>,
+    /// At a grounding write only: the gap between the serving frame's
+    /// totals and the newest other writing on the same slot over their
+    /// shared periods, and the periods one serves and the other does
+    /// not — what the re-record changed, read at the decision moment.
+    /// None on a read and on a first grounding.
+    pub superseded_divergence: Option<String>,
 }
 
 impl Fact {
@@ -286,14 +311,17 @@ impl Fact {
             dims: Vec::new(),
             basis: Vec::new(),
             admitted_by: Vec::new(),
+            axes_basis: "measured",
             bucketed: Vec::new(),
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
+            unadmitted_act: Vec::new(),
             wanted: Vec::new(),
             wanted_over: Vec::new(),
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
+            superseded_divergence: None,
         }
     }
 }
@@ -322,7 +350,8 @@ struct Planned {
     /// dimension folds its own in later.
     judged_current: bool,
     candidates: Vec<Candidate>,
-    unadmitted: Vec<(String, String)>,
+    unadmitted: Vec<(String, String, &'static str)>,
+    axes_basis: &'static str,
     /// What the row reads and nobody measured — `(function, subject)`.
     wanted: Vec<(String, String)>,
     /// Whether the frame scans a workspace relation
@@ -366,6 +395,7 @@ impl Planned {
                 unadmitted.push((
                     c.column,
                     format!("ranked below the {DIMS_CAP} admitted axes"),
+                    "cap",
                 ));
                 continue;
             }
@@ -374,7 +404,7 @@ impl Planned {
             admitted_by.push(c.admitted_by.to_string());
             judged_current &= c.current;
         }
-        let (unadmitted, unadmitted_why) = unadmitted.into_iter().unzip();
+        let (unadmitted, unadmitted_why, unadmitted_act) = split_unadmitted(unadmitted);
         Fact {
             metric: metric.to_string(),
             applicable: true,
@@ -388,14 +418,17 @@ impl Planned {
             dims,
             basis,
             admitted_by,
+            axes_basis: self.axes_basis,
             bucketed: Vec::new(),
             unadmitted,
             unadmitted_why,
+            unadmitted_act,
             wanted,
             wanted_over,
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
+            superseded_divergence: None,
         }
     }
 }
@@ -1049,7 +1082,121 @@ async fn write_fact(
         .find(|s| s.subject == subject && s.aspect == aspect)
         .ok_or_else(withheld)?;
     let planned = Box::pin(plan(shared, &surface, slot, None)).await?;
-    Ok(planned.fact(aspect))
+    let mut fact = planned.fact(aspect);
+    // Beside the serving frame, the newest other writing on the slot:
+    // the one this write superseded, or the standing human grounding
+    // the agent's writing does not displace. Both frames build here,
+    // uncached, and the row says what the write changed as the totals
+    // over their shared months — serving an axis must keep the total,
+    // and a join that drops rows shows at the write, not at the
+    // read-back. A first grounding has no other writing and no row.
+    // The slot's history, newest first — the raw read serves one row
+    // per actor kind and never the one a write superseded.
+    let rctx = shared.read_context().await?;
+    let mut rows: Vec<_> = rctx
+        .glossary
+        .iter()
+        .filter(|g| g.dataset == dataset && g.subject == subject && g.aspect == aspect)
+        .collect();
+    rows.sort_by_key(|g| std::cmp::Reverse(g.seq));
+    let serving = rows.iter().position(|r| r.body == slot.body);
+    let other = rows
+        .iter()
+        .enumerate()
+        .find(|(i, _)| Some(*i) != serving)
+        .map(|(_, r)| r);
+    if let Some(other) = other
+        && fact.applicable
+    {
+        let before = QuerySlot {
+            subject: subject.to_string(),
+            aspect: aspect.to_string(),
+            body: other.body.clone(),
+            rank: if other.actor_kind == "human" { 0 } else { 1 },
+        };
+        let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
+        let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
+        // Like against like: a ratio's monthly value and a flow's
+        // total are different numbers, and the row says so instead.
+        fact.superseded_divergence = Some(if !before.fact.applicable {
+            format!(
+                "the writing it supersedes served nothing: {}",
+                before.fact.reason.as_deref().unwrap_or("no reason given")
+            )
+        } else if now.fact.behavior != before.fact.behavior {
+            format!(
+                "the verb changed against the writing it supersedes, {} against {}: totals not compared",
+                now.fact.behavior.as_deref().unwrap_or("none"),
+                before.fact.behavior.as_deref().unwrap_or("none")
+            )
+        } else {
+            drift(&now.cells, &before.cells)
+        });
+    }
+    Ok(fact)
+}
+
+/// The totals of a cube's cells by period — the undimensioned rows.
+fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
+    use datafusion::arrow::array::AsArray;
+    use datafusion::arrow::datatypes::{Float64Type, TimestampNanosecondType};
+    let dimension = cells.column(1).as_string::<i32>();
+    let period = cells.column(3).as_primitive::<TimestampNanosecondType>();
+    let value = cells.column(4).as_primitive::<Float64Type>();
+    (0..cells.num_rows())
+        .filter(|&i| dimension.value(i).is_empty())
+        .map(|i| (period.value(i), value.value(i)))
+        .collect()
+}
+
+/// The gap between two frames' totals over their shared periods, in
+/// the rival divergence's words, and the periods one serves and the
+/// other does not. Agreement is a zero gap, never silence.
+fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
+    let (now, before) = (totals(now), totals(before));
+    let day = |p: i64| {
+        chrono::DateTime::from_timestamp_nanos(p)
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let mut shared = 0usize;
+    let mut max: Option<(f64, i64)> = None;
+    for (p, v) in &now {
+        let Some(b) = before.get(p) else { continue };
+        shared += 1;
+        let scale = v.abs().max(b.abs());
+        let gap = if scale == 0.0 {
+            0.0
+        } else {
+            (v - b).abs() / scale
+        };
+        if max.is_none_or(|(g, _)| gap > g) {
+            max = Some((gap, *p));
+        }
+    }
+    let mut out = match max {
+        None => "no shared periods with the writing it supersedes".to_string(),
+        Some((0.0, _)) => {
+            format!("no gap against the writing it supersedes over {shared} shared periods")
+        }
+        Some((gap, at)) => format!(
+            "the total moved {:.1} % at {} against the writing it supersedes, the widest gap \
+             over {shared} shared periods",
+            gap * 100.0,
+            day(at)
+        ),
+    };
+    let only_before = before.keys().filter(|p| !now.contains_key(p)).count();
+    let only_now = now.keys().filter(|p| !before.contains_key(p)).count();
+    if only_before > 0 {
+        out.push_str(&format!(
+            "; {only_before} periods only in the writing it supersedes"
+        ));
+    }
+    if only_now > 0 {
+        out.push_str(&format!("; {only_now} periods only now"));
+    }
+    out
 }
 
 /// One metric's cube at this pin. A grounding that cannot serve — no
@@ -1256,7 +1403,61 @@ async fn plan(
     // floor and the bucketing split, one aggregate pass.
     let scanned = crate::provenance::scanned_tables(&probe, dataset);
     let mut cand: Vec<Candidate> = Vec::new();
-    let mut unadmitted: Vec<(String, String)> = Vec::new();
+    let mut unadmitted: Vec<(String, String, &'static str)> = Vec::new();
+    // The grounding's own word on its axes: `axes` lists the served
+    // columns the metric is sliced by, in order, and closes every other
+    // served column — the empty list closes them all, where it holds.
+    // Its author's word admits a listed column whatever was measured,
+    // as a `dimension` gloss would; a listed name the frame does not
+    // serve as a sliceable column is named back. Absent, the verdicts
+    // and the column glosses decide below.
+    let authored: Option<Vec<String>> = body.get("axes").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    });
+    // The empty list holds for the two shapes no column slices whole:
+    // a distinct count, whose members double-count across any column,
+    // and a ratio, whose members do not add up to it. On any other
+    // shape every member adds up to the total, so the verdicts keep
+    // deciding, and the row says the word was measured over.
+    let (authored, axes_basis): (Option<Vec<String>>, &'static str) = match authored {
+        Some(list)
+            if list.is_empty()
+                && !is_ratio
+                && !crate::provenance::distinct_count(&probe, "value") =>
+        {
+            (None, "measured over authored")
+        }
+        Some(list) => (Some(list), "authored"),
+        None => (None, "measured"),
+    };
+    // What the record says of a column without the author's word: a
+    // `dimension` gloss that admits it, a verdict that does — its own,
+    // or one reached through a declared edge — or nothing. A closed
+    // column's act carries it, so the line can name what the word
+    // closed over.
+    let admits = |subject: &String| -> Option<&'static str> {
+        match judged
+            .dimension
+            .get(subject)
+            .and_then(|(v, _)| v["value"].as_str())
+        {
+            Some("none") => return None,
+            Some("primary" | "supporting") => return Some("gloss"),
+            _ => {}
+        }
+        let measured = judged
+            .relevance
+            .get(subject)
+            .filter(|v| v.body["applicable"].as_bool() == Some(true))
+            .is_some()
+            || through_edge(subject, &scanned, &judged.pointers, &judged.relevance).is_some();
+        measured.then_some("verdict")
+    };
+    let author: &'static str = if slot.rank == 0 { "human" } else { "agent" };
+    let mut sliceable: Vec<&str> = Vec::new();
     for f in fields.fields() {
         let n = f.name().as_str();
         if n == "value"
@@ -1265,12 +1466,39 @@ async fn plan(
         {
             continue;
         }
+        sliceable.push(n);
+        if let Some(listed) = &authored {
+            match listed.iter().position(|a| a == n) {
+                Some(i) => cand.push(Candidate {
+                    column: n.to_string(),
+                    relevance: (listed.len() - i) as f64,
+                    current: true,
+                    basis: subjects.get(n).cloned().unwrap_or_else(|| n.to_string()),
+                    admitted_by: author,
+                    primary: false,
+                }),
+                None => {
+                    let (why, act) = match subjects.get(n).and_then(admits) {
+                        Some("gloss") => ("a dimension gloss admits it", "closed over gloss"),
+                        Some("verdict") => ("a verdict admits it", "closed over verdict"),
+                        _ => ("nothing measured admits it", "closed"),
+                    };
+                    unadmitted.push((
+                        n.to_string(),
+                        format!("closed by the grounding's axes ({author}); {why}"),
+                        act,
+                    ));
+                }
+            }
+            continue;
+        }
         let Some(subject) = subjects.get(n) else {
             unadmitted.push((
                 n.to_string(),
                 "an expression, not a table column: no verdict can reach it — serve the \
                  column it derives from, or land it as a recipe column"
                     .into(),
+                "expression",
             ));
             continue;
         };
@@ -1285,6 +1513,7 @@ async fn plan(
             unadmitted.push((
                 n.to_string(),
                 format!("closed by a dimension gloss on {subject} ({speaker}: none)"),
+                "none",
             ));
             continue;
         }
@@ -1328,28 +1557,45 @@ async fn plan(
                 primary: stance == "primary",
             },
             (None, _) => {
-                let why = match judged.relevance.get(subject) {
-                    Some(v) => format!(
-                        "dimension_relevance abstained on {subject} ({}), and no declared \
-                         relationship reaches it from a judged key the grounding scans — \
-                         declare the edge, or gloss dimension on it",
-                        v.body["reason"].as_str().unwrap_or("no reason given")
+                let (why, act) = match judged.relevance.get(subject) {
+                    Some(v) => (
+                        format!(
+                            "dimension_relevance abstained on {subject} ({}), and no declared \
+                             relationship reaches it from a judged key the grounding scans — \
+                             declare the edge, or gloss dimension on it",
+                            v.body["reason"].as_str().unwrap_or("no reason given")
+                        ),
+                        "abstained",
                     ),
                     None => {
                         if let Some(function) = &judged.relevance_fn {
                             wanted.push((function.clone(), subject.clone()));
                         }
-                        format!(
-                            "no verdict on {subject} — run dimension_relevance() over it, or \
-                             gloss dimension on it"
+                        (
+                            format!(
+                                "no verdict on {subject} — run dimension_relevance() over it, \
+                                 or gloss dimension on it"
+                            ),
+                            "verdict",
                         )
                     }
                 };
-                unadmitted.push((n.to_string(), why));
+                unadmitted.push((n.to_string(), why, act));
                 continue;
             }
         };
         cand.push(candidate);
+    }
+    if let Some(listed) = &authored {
+        for a in listed.iter().filter(|a| !sliceable.contains(&a.as_str())) {
+            unadmitted.push((
+                a.clone(),
+                "listed in the grounding's axes and not a served column the cube can slice \
+                 on — serve it, or drop it from `axes`"
+                    .into(),
+                "unserved",
+            ));
+        }
     }
     let sql = sql.to_string();
     Ok(Planned {
@@ -1364,6 +1610,7 @@ async fn plan(
         judged_current,
         candidates: cand,
         unadmitted,
+        axes_basis,
         wanted,
         foreign: reads_the_workspace(&probe),
     })
@@ -1384,7 +1631,9 @@ async fn build(
     } = surface;
     let dataset = dataset.as_str();
     let metric = slot.aspect.as_str();
-    let planned = plan(shared, surface, slot, asked).await?;
+    // Boxed: the plan stage's future is most of the build's, and a
+    // build constructed on the stack under a write's depth must fit.
+    let planned = Box::pin(plan(shared, surface, slot, asked)).await?;
     // No judged time axis: the entry is the plan stage's abstention,
     // carrying what the row wants — an abstention binds to no version.
     let Some(tcol) = planned.tcol.clone() else {
@@ -1405,6 +1654,7 @@ async fn build(
         mut judged_current,
         candidates: cand,
         mut unadmitted,
+        axes_basis,
         wanted,
         mut foreign,
         ..
@@ -1416,6 +1666,14 @@ async fn build(
     // per key, or the metric abstains — a frame that breaks its
     // declared identity multiplies every aggregating reader, and
     // nothing downstream can tell duplication from multi-entity.
+    // One aggregate over the frame, never a count over the frame
+    // grouped again: the engine's projection pruner keeps only the
+    // group keys the input's functional dependencies call sufficient
+    // when the parent reads no key (`optimize_projections`), and an
+    // aggregate over a join whose one side is DISTINCT mints a
+    // dependency from that side's key to the whole row, which is
+    // false — the grouped shape then counts one side's keys. At this
+    // pin and on upstream main.
     if !grain.is_empty() {
         let keys = grain
             .iter()
@@ -1423,8 +1681,7 @@ async fn build(
             .collect::<Vec<_>>()
             .join(", ");
         let q = format!(
-            "SELECT count(*) AS keys, coalesce(sum(c), 0) AS total FROM \
-             (SELECT count(*) AS c FROM ({sql}) GROUP BY {keys})"
+            "SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})"
         );
         let batches = run(shared, ctx, &q).await?;
         let key_count = int_column(&batches, "keys").map_err(|e| Abstain(e.to_string()))?[0];
@@ -1482,6 +1739,7 @@ async fn build(
             unadmitted.push((
                 c.column.clone(),
                 format!("ranked below the {DIMS_CAP} admitted axes"),
+                "cap",
             ));
             continue;
         }
@@ -1489,6 +1747,7 @@ async fn build(
             unadmitted.push((
                 c.column.clone(),
                 "one member across the frame: nothing to slice".into(),
+                "single",
             ));
             continue;
         }
@@ -1594,11 +1853,20 @@ async fn build(
                         named.push(format!("'{}'", m.replace('\'', "''")));
                     }
                 }
-                format!(
-                    "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
-                     THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
-                    named.join(", ")
-                )
+                if named.is_empty() {
+                    // No member stands inside the window — every row
+                    // of the column there is NULL — so there is
+                    // nothing to name and no cell to serve; the plain
+                    // cast, never an empty IN list, which is not a
+                    // query.
+                    format!("CAST(\"{dcol}\" AS VARCHAR)")
+                } else {
+                    format!(
+                        "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
+                         THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
+                        named.join(", ")
+                    )
+                }
             } else {
                 format!("CAST(\"{dcol}\" AS VARCHAR)")
             };
@@ -1692,14 +1960,20 @@ async fn build(
             dims,
             basis,
             admitted_by,
+            axes_basis,
             bucketed,
-            unadmitted: unadmitted.iter().map(|(c, _)| c.clone()).collect(),
-            unadmitted_why: unadmitted.into_iter().map(|(_, w)| w).collect(),
+            unadmitted: unadmitted.iter().map(|(c, _, _)| c.clone()).collect(),
+            unadmitted_why: unadmitted.iter().map(|(_, w, _)| w.clone()).collect(),
+            unadmitted_act: unadmitted
+                .into_iter()
+                .map(|(_, _, a)| a.to_string())
+                .collect(),
             wanted: wanted.iter().map(|(f, _)| f.clone()).collect(),
             wanted_over: wanted.into_iter().map(|(_, s)| s).collect(),
             alternative,
             alternative_divergence,
             alternative_error,
+            superseded_divergence: None,
         },
         cells: cells_batch(&slot.aspect, &cells),
         version_bound: foreign.then(|| version.to_string()),
@@ -2185,7 +2459,7 @@ pub(crate) async fn metric_series_batch(
 /// `metric_axes()` — one row per current grounding, the record read:
 /// `(metric, applicable, judged_current, reason, behavior,
 /// behavior_basis, grain, resolution, window, dims, basis,
-/// admitted_by, bucketed, unadmitted, unadmitted_why, wanted,
+/// admitted_by, bucketed, unadmitted, unadmitted_why, unadmitted_act, wanted,
 /// wanted_over, alternative, alternative_divergence,
 /// alternative_error)`. What the cube
 /// admitted and why not, and
@@ -2254,6 +2528,21 @@ pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>
 
 /// Fact rows as the `metric_axes()` relation — one schema for the
 /// read and for a grounding write's answer.
+/// The three columns of the unadmitted list, in one order.
+fn split_unadmitted(
+    unadmitted: Vec<(String, String, &'static str)>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut columns = Vec::with_capacity(unadmitted.len());
+    let mut whys = Vec::with_capacity(unadmitted.len());
+    let mut acts = Vec::with_capacity(unadmitted.len());
+    for (column, why, act) in unadmitted {
+        columns.push(column);
+        whys.push(why);
+        acts.push(act.to_string());
+    }
+    (columns, whys, acts)
+}
+
 pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
     let list = |pick: fn(&Fact) -> &Vec<String>| -> ArrayRef {
         let mut b = ListBuilder::new(StringBuilder::new());
@@ -2297,6 +2586,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),
+        Field::new("axes_basis", DataType::Utf8, true),
         Field::new(
             "bucketed",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
@@ -2313,6 +2603,11 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             true,
         ),
         Field::new(
+            "unadmitted_act",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
+        Field::new(
             "wanted",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
@@ -2325,6 +2620,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
         Field::new("alternative", DataType::Utf8, true),
         Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
+        Field::new("superseded_divergence", DataType::Utf8, true),
     ]));
     RecordBatch::try_new(
         schema,
@@ -2347,14 +2643,17 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.dims),
             list(|f| &f.basis),
             list(|f| &f.admitted_by),
+            text(|f| Some(f.axes_basis)),
             list(|f| &f.bucketed),
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),
+            list(|f| &f.unadmitted_act),
             list(|f| &f.wanted),
             list(|f| &f.wanted_over),
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),
+            text(|f| f.superseded_divergence.as_deref()),
         ],
     )
     .map_err(|e| SessionError::Runtime(e.to_string()))

@@ -173,6 +173,16 @@ pub fn door_pages() -> std::sync::Arc<[glossql_session::DoorPage]> {
     out.into()
 }
 
+/// The door's pages plus the ones built at boot — the function
+/// listings — in one list, the boot pages last.
+pub fn door_pages_with(
+    extra: Vec<glossql_session::DoorPage>,
+) -> std::sync::Arc<[glossql_session::DoorPage]> {
+    let mut out: Vec<glossql_session::DoorPage> = door_pages().to_vec();
+    out.extend(extra);
+    out.into()
+}
+
 /// The body behind a resource URI, with its MIME type. The URI is the
 /// key, exactly as listed.
 pub fn read(uri: &str) -> Option<(&'static str, &'static str)> {

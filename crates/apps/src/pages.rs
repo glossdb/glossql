@@ -1,14 +1,14 @@
 //! Pages: tera over two template tiers. The shell and the module
-//! macros ship embedded in the binary; an app's own pages load fresh
-//! from its directory on every request — save and reload, no rebuild.
-//! A page's context is the app, the workspace's app list (for the
-//! nav), the dataset the URL bound and every dataset the workspace
-//! holds (for the picker), and the URL's query params as `state` — the
-//! URL is the only state there is.
+//! macros ship embedded in the binary; an app's own pages come from
+//! the record or the binary on every request. A page's context is the
+//! app with its pages (the bar's tabs) and which of them this is, the
+//! workspace's app list and its datasets (the bar's two pickers), the
+//! dataset the URL bound, the server's own address, and the URL's
+//! query params as `state` — the URL is the only state there is.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde_json::{Map, Value, json};
 use tera::Tera;
 
@@ -17,7 +17,6 @@ use crate::app::AppDef;
 use crate::overview;
 
 const SHELL: &str = include_str!("../templates/shell.html");
-const HOME: &str = include_str!("../templates/home.html");
 const DATASETS: &str = include_str!("../templates/datasets.html");
 const TILES: &str = include_str!("../templates/modules/tiles.html");
 
@@ -25,7 +24,6 @@ fn base_tera() -> Result<Tera, tera::Error> {
     let mut tera = Tera::default();
     tera.add_raw_templates(vec![
         ("shell.html", SHELL),
-        ("home.html", HOME),
         ("datasets.html", DATASETS),
         ("modules/tiles.html", TILES),
     ])?;
@@ -142,58 +140,31 @@ fn origin(headers: &HeaderMap) -> String {
     format!("{scheme}://{host}")
 }
 
-pub async fn home(
-    State(door): State<AppDoor>,
-    Path(dataset): Path<String>,
-    Query(params): Query<Vec<(String, String)>>,
-    headers: HeaderMap,
-) -> Response {
-    let datasets = match admit(&door, &dataset).await {
-        Ok(names) => names,
-        Err(response) => return response,
-    };
-    let glossed = crate::glossed::parts(&door, &dataset).await;
-    // The dataset's page: what has landed and what is served, each
-    // row a file away, then the apps over it.
-    let (mut tables, tables_error) =
-        match overview::rows(&door, Some(&dataset), overview::TABLES, &[]).await {
-            Ok(rows) => (rows, String::new()),
-            Err(e) => (Vec::new(), e),
-        };
-    overview::grouped(&mut tables, &["columns", "rows", "nulled"]);
-    overview::minute(&mut tables, "landed");
-    let (metrics, metrics_error) =
-        match overview::rows(&door, Some(&dataset), overview::METRICS, &[]).await {
-            Ok(rows) => (rows, String::new()),
-            Err(e) => (Vec::new(), e),
-        };
-    let mut ctx = tera::Context::new();
-    ctx.insert("apps", &apps_json(&glossed));
-    ctx.insert("dataset", &dataset);
-    ctx.insert("datasets", &datasets);
-    ctx.insert("state", &state_map(params));
-    ctx.insert("tables", &tables);
-    ctx.insert("tables_error", &tables_error);
-    ctx.insert("metrics", &metrics);
-    ctx.insert("metrics_error", &metrics_error);
-    ctx.insert("origin", &origin(&headers));
-    render("home.html", ctx, base_tera())
+/// The dataset's page is the built-in: `/<dataset>/app` opens the
+/// docket, and the URL says so.
+pub async fn home(State(door): State<AppDoor>, Path(dataset): Path<String>) -> Response {
+    if let Err(response) = admit(&door, &dataset).await {
+        return response;
+    }
+    Redirect::to(&format!("/{dataset}/app/{}", crate::builtin::DATASET_PAGE)).into_response()
 }
 
 pub async fn index(
     State(door): State<AppDoor>,
     Path((dataset, app)): Path<(String, String)>,
     Query(params): Query<Vec<(String, String)>>,
+    headers: HeaderMap,
 ) -> Response {
-    page_response(&door, &dataset, &app, "index", params).await
+    page_response(&door, &dataset, &app, "index", params, &headers).await
 }
 
 pub async fn page(
     State(door): State<AppDoor>,
     Path((dataset, app, page)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
+    headers: HeaderMap,
 ) -> Response {
-    page_response(&door, &dataset, &app, &page, params).await
+    page_response(&door, &dataset, &app, &page, params, &headers).await
 }
 
 async fn page_response(
@@ -202,6 +173,7 @@ async fn page_response(
     app: &str,
     page: &str,
     params: Vec<(String, String)>,
+    headers: &HeaderMap,
 ) -> Response {
     let datasets = match admit(door, dataset).await {
         Ok(names) => names,
@@ -226,12 +198,23 @@ async fn page_response(
         }
         Ok(tera)
     });
+    let pages: Vec<Value> = def
+        .pages
+        .iter()
+        .map(|(name, title)| json!({ "name": name, "title": title }))
+        .collect();
     let mut ctx = tera::Context::new();
-    ctx.insert("app", &json!({ "name": def.name, "title": def.title }));
+    ctx.insert(
+        "app",
+        &json!({ "name": def.name, "title": def.title, "origin": def.origin() }),
+    );
     ctx.insert("apps", &apps_json(&glossed));
+    ctx.insert("pages", &pages);
+    ctx.insert("page", page);
     ctx.insert("dataset", dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
+    ctx.insert("origin", &origin(headers));
     render(&format!("pages/{page}.html"), ctx, tera)
 }
 

@@ -102,19 +102,20 @@ it does. This door reads and writes; it does not create datasets.
 
 ## `/<dataset>/app` — the door for people
 
-Server-rendered data apps. `http://127.0.0.1:8080/fin/app` is the
-dataset's page: its landed tables and served metrics, each with a CSV
-and a Parquet download (`/fin/app/export/orders.csv`,
-`/fin/app/export/read.dso.parquet`), and the apps over it.
-`http://127.0.0.1:8080/fin/app/docket` is the built-in app: what is
-open for a human to judge, what is settled, what waits on an act, with
-the metric surfaces and the record behind them. The URL is the whole
-state — a filtered view is a link someone can send. A workspace's own
-apps serve beside it at `/<dataset>/app/<name>`, one directory per app
-under `apps/`.
+Server-rendered data apps. `http://127.0.0.1:8080/fin/app` opens the
+docket, the dataset's page: what is open for a human to judge, what
+is settled, what waits on an act; the metrics; the quality of the
+data (each landing's account, the checks, the column coverage); the
+column lineage; and under Export every landed table and every served
+read with a CSV and a Parquet download (`/fin/app/export/orders.csv`,
+`/fin/app/export/read.dso.parquet`). The URL is the whole state — a
+filtered view is a link someone can send. A workspace's own apps
+serve beside it at `/<dataset>/app/<name>`, authored as glosses over
+the agent door.
 
 An app names no dataset; the URL does, so the same app serves every
-dataset and the picker in the header is a link that rewrites the first
+dataset. The bar reads as the URL — a dataset picker, an app picker,
+then the app's pages as tabs — and each picker rewrites one path
 segment. The writes are human acts, signed with the token's subject:
 this is a human door, so every caller that reaches it has human
 standing.

@@ -224,6 +224,22 @@ what a build serves is what its suite tested.
   before its first dataset has no brief to sweep, and reads
   `workspace_next`; one with a dataset opens with the brief, once,
   as a read and never a gate. That opening rides initialize only.
+- **Where the call left you, and what is next.** Every tool result
+  closes with two lines. `situation:` says whether the call's last
+  statement landed or was refused, and for a grounding what its fact
+  row said. `next:` names one act per goal the record affords from
+  there — structure, metrics, slices, bands, checks, app, rulings —
+  with a link beside it; a blocked goal says what blocks it, a done
+  goal says so. The link, `next://<dataset>/<goal>`, is a resource
+  template; `SELECT * FROM next WHERE surface = '<goal>'` serves the
+  same rows through the tool. Its answer carries the statement to
+  send, filled from the record. The goal is the caller's, never
+  stored: what the human asked for decides which link to follow. The
+  routes are one shipped read, `next`, and none is an order.
+- **The function listings.** `doc://functions/door.md`,
+  `doc://functions/recipe.md` and `doc://functions/detector.md` list
+  every function each execution context registers, read from that
+  context's registry when the door opened.
 - **The question round.** While `open_questions` derives rows, calls
   that read the record carry a round of forms — landings and judging
   queries run uninterrupted, and a question served once waits for the
@@ -258,12 +274,15 @@ authoring). Routes: `/<dataset>/app` (the dataset's page),
 `POST /<dataset>/app/{app}/rule` and `.../remeasure`. The vendored
 assets are not dataset-scoped and serve at `/assets/{file}`.
 
-- **The dataset's page.** `/<dataset>/app` lists what has landed (the
-  newest landing per table: rows, cells its casts nulled, when) and
-  every metric with where it stands (`metric_surfaces`), each a file
-  away, then the apps over the dataset. The workspace root, `/`, is
-  the same at a glance for every dataset, with the apps, the doors and
-  the connect line.
+- **The dataset's page.** `/<dataset>/app` opens the docket, the
+  built-in app: what waits on a person, the metrics, the quality of
+  the data (each landing's account, the checks, the column coverage),
+  the column lineage, and under Export every landed table (the newest
+  landing per table: rows, cells its casts nulled, when) and every
+  read the record serves (`metric_surfaces`), each a file away. The
+  bar carries the dataset and app pickers and the app's pages as
+  tabs. The workspace root, `/`, is each dataset at a glance, with
+  the apps, the doors and the connect line.
 - **A relation as a file.** `GET /<dataset>/app/export/<name>.csv` or
   `.parquet`, where `<name>` is a table or `read.<aspect>`, streams
   the relation as it stands at the read — the same channel and plan as

@@ -1,0 +1,90 @@
+{% extends "shell.html" %}
+{% import "modules/tiles.html" as tiles %}
+
+{% block main %}
+{# How well the data is held: what each landing took in, dropped and
+   nulled; the standing checks and their bands; how much of the
+   vocabulary is judged. Everything here is measured — the landing's
+   own account, a witness's live verdict, the glossary's own counts —
+   never assumed. #}
+<div class="tiles">
+  <div class="counts">
+    {{ tiles::value(frame="frames/census", field="tables", label="Tables landed", chip="imports") }}
+    {{ tiles::value(frame="frames/census", field="dropped", label="Rows dropped", chip="imports",
+         note="Rows the recipes dropped at landing, summed over the newest landing of each table. A landing whose recipe could not count its drops adds nothing here and says so below.") }}
+    {{ tiles::value(frame="frames/census", field="red", label="Red checks", chip="ATTEST()",
+         note="Standing checks whose band is red. The list below carries every band.") }}
+    {{ tiles::value(frame="frames/census", field="judged", label="Columns judged", format="text",
+         chip="GLOSSARY()", note="Columns with any claim on them, over every column the dataset holds.") }}
+  </div>
+
+  <section class="tile">
+    <header><span class="eyebrow">Landing account</span>
+      <code class="chip" title="The newest landing of each table: what each source scan held (a join's scans listed, never summed), what landed, what the recipe dropped, the cells its casts nulled, and when. A landing that could not account for its casts says so.">imports</code></header>
+    <gl-rows frame="frames/landing" empty="nothing has landed here yet — a table lands through a recipe, DECLARE RECIPE over the agent door">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(9rem,1fr) minmax(10rem,1fr) 6rem 6rem 6rem 9rem">
+          <span class="r-subj">{name}<br><span class="r-meta">{casts}</span></span>
+          <span class="r-meta">{scanned}</span>
+          <span class="r-num">{landed}<br><span class="r-meta">landed</span></span>
+          <span class="r-num">{dropped}{dropped_dash}<br><span class="r-meta">{dropped_label}</span></span>
+          <span class="r-num {ncls}">{nulled}{dash}<br><span class="r-meta">{nulled_label}</span></span>
+          <span class="r-meta">{landed_at}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Cast failures</span>
+      <code class="chip" title="One row per column whose cast nulled a cell in the newest landing of its table: how many cells, and the values it could not read, most frequent first (the landing keeps eight).">imports</code></header>
+    <gl-rows frame="frames/casts" empty="no cast nulled a cell in the newest landings">
+      <template>
+        <div class="rrow" style="grid-template-columns:minmax(10rem,14rem) 6rem minmax(0,1fr) 9rem">
+          <span class="r-subj">{subject}</span>
+          <span class="r-num r-gap">{failed}<br><span class="r-meta">nulled</span></span>
+          <span class="r-meta">{top}</span>
+          <span class="r-meta">{landed_at}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Standing checks</span>
+      <code class="chip" title="Each row is a witness's live verdict: the expectation is the witness's own declaration, measured and band come from ATTEST(). A new import invalidates the measurement, so the next read recomputes.">ATTEST()</code></header>
+    <div class="scroll">
+    <gl-rows frame="frames/checks" empty="no witness carries a detector yet — nothing is checked">
+      <template>
+        <div class="rrow" style="grid-template-columns:10rem 1fr 10rem 6rem 5rem">
+          <span class="r-subj">{checked}</span>
+          <span class="r-what">{what}</span>
+          <span class="r-meta">{expectation}</span>
+          <span class="r-num">{measured}</span>
+          <code class="chip {bcls}">{band}</code>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+
+  <section class="tile">
+    <header><span class="eyebrow">Column coverage</span>
+      <code class="chip" title="Denominators from the model's own rules: behavior and unit are owed only where role = measure. A table with no measures shows a dash — not applicable, not a gap.">GLOSSARY(all =&gt; true)</code></header>
+    <div class="scroll">
+    <gl-rows frame="frames/coverage" empty="no column claims yet">
+      <template>
+        <div class="rrow" style="grid-template-columns:12rem 4rem 6rem 5rem 5rem 4rem">
+          <span class="r-subj">{t}</span>
+          <span class="r-num">{cols}</span>
+          <span class="r-num">{meaning} named</span>
+          <span class="r-num {bcls}">{btxt}</span>
+          <span class="r-num {ucls}">{utxt}</span>
+          <span class="r-num">{dims}</span>
+        </div>
+      </template>
+    </gl-rows>
+    </div>
+  </section>
+</div>
+{% endblock main %}

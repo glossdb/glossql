@@ -25,8 +25,9 @@ The server: one binary, one workspace, three doors. How it is built is
   [methods](../methods/README.md)).
 - **The doors** — `/mcp` (one `glossql` tool, stateless, row
   cap), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`
-  (the dataset's page with its tables and metrics as CSV or Parquet,
-  glossed apps, the built-in docket, the ruling form)
+  (the docket as the dataset's page: what waits on a person and the
+  ruling form, the metrics, the quality of the data, the lineage,
+  every table and read as CSV or Parquet; the glossed apps beside it)
   ([doors](../reference/doors.md)). The dataset is the resource and the
   doors are protocols over it: a call arrives already bound, no door
   keeps a cursor. The actor is the bearer token's subject, verified

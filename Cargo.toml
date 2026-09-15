@@ -55,16 +55,16 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures = "0.3"
 # iceberg-rust is pinned to a main commit, not a release: v3 row lineage
 # on read (`_last_updated_sequence_number`, PR #2966; `_row_id`, PR
-# #3058) is in no release yet. The pin is the last commit before
-# upstream's move to DataFusion 55 (#2958): datafusion moves in lockstep
-# with iceberg-datafusion, and datafusion-functions-json has no release
-# for 55. The pin advances past it when that release exists.
-datafusion = { version = "54.1", default-features = false, features = ["parquet", "sql"] }
-datafusion-sql = "54.1"
-datafusion-common = "54.1"
-datafusion-functions-json = "0.54"
-iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
-iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
+# #3058) is in no release yet. datafusion moves in lockstep with
+# iceberg-datafusion: the pin sets the DataFusion major, and the pin
+# crosses a major only once datafusion-functions-json has a release for
+# it.
+datafusion = { version = "55.1", default-features = false, features = ["parquet", "sql"] }
+datafusion-sql = "55.1"
+datafusion-common = "55.1"
+datafusion-functions-json = "0.55"
+iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
+iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
 # Not used directly since stage 4½ — this line exists to switch on
 # sqlx's tokio runtime and its drivers for iceberg-catalog-sql, which
 # names neither and panics at pool creation without a runtime. Two
@@ -72,7 +72,7 @@ iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "c
 # (`GLOSSQL_CATALOG_SQL`); `tls-rustls` is rustls on ring, the provider
 # the rest of the tree already carries.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "tls-rustls"] }
-iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
+iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
 # The `rest` catalog backend (glossql-catalog's `rest` feature): the
 # Iceberg REST client. The data plane behind every catalog — REST or
 # SQL with a remote warehouse — is our own `Storage` over object_store,
@@ -80,7 +80,7 @@ iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "c8
 # storage stack: `aws` is the S3 family, `azure` the ADLS/Blob family
 # (Container Apps' managed identity is read by that client). typetag is
 # iceberg's registration mechanism for storage implementations.
-iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "c8fc70e5dcf4591a4c0d834223b4c7078ddb28c2" }
+iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
 object_store = { version = "0.13", features = ["aws", "azure"] }
 # The engine's own glob crate, for the glob a remote source path carries.
 glob = "0.3"
@@ -88,18 +88,21 @@ glob = "0.3"
 url = "2"
 typetag = "0.2"
 bytes = "1"
-serde_json = "1"
+# `preserve_order`: a JSON object keeps its authored key order.
+# datafusion-physical-plan 55 switches it on for every workspace build;
+# named here so a single crate built alone orders the same way.
+serde_json = { version = "1", features = ["preserve_order"] }
 # The cube cache (crates/session/src/cube.rs): moka is already in the
 # tree through iceberg-rust, at this version; its ObjectCache is their
 # metadata seam, not reusable.
 moka = { version = "0.12", features = ["future"] }
-# arrow-ipc/arrow-json ride the arrow that datafusion 53.1 pins (58.4) — the
+# arrow-ipc/arrow-json ride the arrow that datafusion 55 pins (59.2) — the
 # same lockstep rule as above; bumping either alone splits the arrow tree.
-arrow-ipc = "58.4"
-arrow-json = "58.4"
+arrow-ipc = "59.2"
+arrow-json = "59.2"
 axum = "0.8"
 rmcp = { version = "3.1", features = ["transport-streamable-http-server", "elicitation"] }
-jsonschema = { version = "0.49", default-features = false }
+jsonschema = { version = "0.56", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2"
 insta = "1"
@@ -107,10 +110,10 @@ async-trait = "0.1"
 # The header/status types the REST catalog client speaks; already in
 # the tree under axum, reqwest and iceberg.
 http = "1"
-faer = "0.22"
+faer = "0.24"
 serde = { version = "1", features = ["derive"] }
 tera = { version = "1", default-features = false }
-toml = "0.8"
+toml = "1"
 uuid = { version = "1", features = ["v7"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
@@ -137,10 +140,12 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # The exporter's clients, one per transport OTEL_EXPORTER_OTLP_PROTOCOL
 # names: protobuf over HTTP on reqwest, and gRPC on tonic — what a
 # platform's managed collector speaks (Container Apps' agent takes
-# gRPC alone). reqwest here is 0.13 while iceberg-rust (main, 0.12.12)
-# and oauth2 5 pin 0.12, so the tree carries both. The way back to one:
-# oauth2-reqwest (same author, reqwest 0.13, alpha as of 0.1.0-alpha.3)
-# for the login, once iceberg-rust has moved too. The SDK exports from
+# gRPC alone). reqwest here is 0.13 while object_store 0.13 (the one
+# datafusion 55 pins), iceberg-rust main and oauth2 5 require 0.12, so
+# the tree carries both. The way back to one: object_store 0.14
+# (reqwest 0.13) reaching datafusion and iceberg-rust, then the login
+# through a reqwest 0.13 client (oauth2-reqwest, alpha as of
+# 0.1.0-alpha.3, or oauth2's own client trait). The SDK exports from
 # its own thread, which is why the blocking HTTP client fits; the gRPC
 # channel spawns its connection onto the runtime it is built in.
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client", "grpc-tonic"] }

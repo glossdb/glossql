@@ -246,18 +246,37 @@ SELECT aspect, key, stance, folded_in FROM ruling_entries ORDER BY written_at DE
 
 ## The docket
 
-Open `http://127.0.0.1:8080/fin/app/docket`: what is open to judge,
-what is settled, what waits on an act — with the metric surfaces
-and the record behind them. The ruling form there is the same write
-the question round lands; a person who stepped away has a way back
-into the record.
+Open `http://127.0.0.1:8080/ops/app`: the docket is the dataset's
+page. Its tabs are Open (what is open to judge, what is settled, what
+waits on an act), Metrics (the surfaces, the facts, one metric's
+story and slices), Quality (each landing's account, the checks, the
+column coverage), Lineage (the tables along their key edges and the
+columns each metric reads) and Export (every table and read as a
+file). The ruling form on Open is the same write the question round
+lands; a person who stepped away has a way back into the record.
 
 ## Where the workspace stands
+
+Every tool result closed with two lines, and the last one reads:
+
+```text
+next: structure: done · metrics: done · slices: done · bands → run the walk (next://ops/bands) · checks: done · app → write the first page over 1 metric (next://ops/app) · rulings: done
+```
+
+One act per goal — structure, metrics, slices, bands, checks, app,
+rulings — and the work is done when every goal is done or blocked.
+The link is a resource on the MCP door; the same rows come through
+the tool, with the statement to send filled from the record:
+
+```sql
+SELECT surface, state, say, statement FROM next ORDER BY goal
+```
+
+A statement there is a proposal: edit it, send it, or do not. The
+map behind the line is `workspace_next` — every surface the
+workspace can be extended through, what stands and what is open on
+each:
 
 ```sql
 SELECT surface, how, stands, open FROM workspace_next ORDER BY open DESC;
 ```
-
-Every surface the workspace can be extended through, what stands and
-what is open on each. It reports state, never an order — what to do
-next is judgment.

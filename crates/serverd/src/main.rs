@@ -275,14 +275,11 @@ async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + 
         None => tracing::info!("no kernel service — the model doors refuse by name"),
     }
 
-    let plane = Arc::new(
-        Plane::new(store.clone(), runtime)
-            .with_pages(glossql_serverd::skills::door_pages())
-            .with_row_cap(args.doors.row_cap)
-            .with_cube_cache(args.cube_cache_mb)
-            .with_memory_limit(args.memory_limit_mb)
-            .with_spill_limit(args.spill_limit_mb),
-    );
+    let plane = Plane::new(store.clone(), runtime)
+        .with_row_cap(args.doors.row_cap)
+        .with_cube_cache(args.cube_cache_mb)
+        .with_memory_limit(args.memory_limit_mb)
+        .with_spill_limit(args.spill_limit_mb);
     // A fresh workspace receives the shipped system before any door opens.
     bootstrap(
         &plane,
@@ -292,6 +289,10 @@ async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + 
         },
     )
     .await?;
+    // The function listings read the registries the shipped system
+    // declared into, so they follow the bootstrap.
+    let listings = glossql_serverd::functions::pages(&plane).await?;
+    let plane = Arc::new(plane.with_pages(glossql_serverd::skills::door_pages_with(listings)));
 
     // Who may speak: whoever the issuer says. Its keys are discovered
     // here, and a server that cannot reach them does not open. Under

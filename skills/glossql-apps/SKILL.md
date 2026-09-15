@@ -38,7 +38,10 @@ No forms anywhere in this flow — this is the conversation register.
    slice and its chip — "cycle-time trend with the rival line ·
    throughput by region, top 8 · the open-questions count". Propose from what the
    glossary already ranks: the judged axes, the grounded surfaces.
-   The user prunes and extends in words.
+   The user prunes and extends in words. When the app stands and the
+   metrics are done, the served metrics its pages do not show are the
+   candidates for one more page: propose one, in a sentence, and write
+   nothing until they say so.
 3. **Author, then hand over the URL.** The rendered page *is* the
    proposal made concrete. They react in prose — "swap the trend for
    by-region", "wrong grain on that number" — and you re-gloss.
@@ -50,7 +53,9 @@ No forms anywhere in this flow — this is the conversation register.
 
 One gloss per part, so a frame can be edited without rewriting the app
 and supersession versions each part on its own. The aspect says what
-kind of file it is; the subject says where it goes.
+kind of file it is; the subject says where it goes, and its head is
+the app, under the `USE`'d dataset, even when the app is named like
+the dataset.
 
 | aspect | subject | becomes |
 |---|---|---|
@@ -67,7 +72,13 @@ GLOSS app_frame ON delivery.monthly AS $${"sql":
 
 A manifest names no dataset — the URL binds it, so the same app serves
 every dataset in the workspace and the reader switches with the picker
-in the header. Read back what an app is made of:
+in the bar. A manifest may list its pages, `"pages": [{"name":
+"index", "title": "Overview"}, {"name": "cash", "title": "Cash"}]`:
+that is the order and the wording of the bar's tabs. Without the list
+every page shows by its file name, `index` first; a one-page app shows
+no tabs. Every page of your app opens with the manifest's title,
+printed by the shell — write no heading of your own for it. Read back
+what an app is made of:
 
 ```sql
 SELECT app, path, actor_kind FROM app_parts ORDER BY app, path
@@ -124,8 +135,9 @@ the span (`dense_rank() OVER (ORDER BY period DESC)` against `$span`).
 A reference's own params are the author's defaults
 (`frames/trend?grain=month&span=24`); the page URL overrides them, and
 only the frames whose URL changed refetch. Keep the back-control on
-top: whatever narrows a view — the window, a slice picker, the crumbs
-— sits above what it narrows, never below or inside it.
+top: whatever narrows a view — the window, a slice picker, the way
+back to a list — sits above what it narrows, never below or inside
+it.
 
 ## Tiles place what the frame computed
 

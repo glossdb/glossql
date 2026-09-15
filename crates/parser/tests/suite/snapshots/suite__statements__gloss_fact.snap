@@ -28,8 +28,8 @@ expression: "GlossqlParser ::\nparse_sql(r#\"GLOSS unit ON orders.amount AS $${\
             ),
             body: JsonBody {
                 value: Object {
-                    "source_column": String("currency_code"),
                     "value": String("EUR"),
+                    "source_column": String("currency_code"),
                 },
                 raw: "{\"value\": \"EUR\", \"source_column\": \"currency_code\"}",
             },

@@ -120,10 +120,11 @@ dataset is named in the statements:
   same call.
 - **`/<dataset>/query`** — Arrow IPC streaming for programmatic reads.
 - **`/<dataset>/app`** — server-rendered data apps (htmx + vega-lite,
-  URL as the only state). The binary ships a docket app: open
-  questions for the human, settled rulings, and the metrics and record
-  behind them. A workspace can add its own apps — as a directory, or
-  as glosses, which an agent can write.
+  URL as the only state). The binary ships the docket, the dataset's
+  page: open questions for the human, settled rulings, the metrics,
+  the quality of the data, the column lineage, and every table and
+  read as a file. A workspace adds its own apps as glosses, which an
+  agent can write.
 
 A bearer token from the workspace's issuer says who is speaking; the
 server verifies it against the issuer's published keys, and `sub` is

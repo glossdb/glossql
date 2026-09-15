@@ -46,7 +46,7 @@ The `make_map` function creates a map from two lists: one for keys and one for v
 
 ```sql
 map(key, value)
-map(key: value)
+map {key: value}
 make_map(['key1', 'key2'], ['value1', 'value2'])
 ```
 

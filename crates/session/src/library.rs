@@ -41,6 +41,7 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
         "metric_surfaces",
         include_str!("../reads/metric_surfaces.sql"),
     ),
+    ("next", include_str!("../reads/next.sql")),
 ];
 
 /// The SQL behind a shipped read, or `None` for a name we do not ship —

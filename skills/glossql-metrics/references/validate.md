@@ -38,6 +38,8 @@ GLOSS hours_reconcile ON work_logs AS $${
   landing; author that rate as the tolerance, so the check is green
   today and red when the source drifts. A check reporting 0.0 where
   the profile showed dirt does not see the dirt — fix the check's SQL.
+  The docket's Quality tab is where the human sees both: what each
+  landing dropped and nulled, and every check with its band.
 - **Promote confirmed reconciliations.** A `behavior_evidence`
   convention that reconciled at ~0 residual is a standing invariant —
   make it a check.

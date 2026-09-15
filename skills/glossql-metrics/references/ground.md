@@ -86,7 +86,29 @@ cube validates the frame against it instead of trusting it: a frame
 that breaks its declared grain abstains, with the counts in the
 reason. An interval table is a stock with two event columns, `+1` at
 the start date and `-1` at the end date, unioned into one served
-date; both columns must be judged for the axis to trace.
+date; both columns must be judged for the axis to trace. Mark
+`"behavior": "stock"` — a window sum blocks the verb's trace, and an
+unmarked stock sums as a flow — and declare the grain; a GROUP BY
+keeps the date column's verdict, because group keys trace, and a date
+spine you generate has none and abstains. Both shapes written down:
+
+```glossql
+GLOSS payables_outstanding ON fin AS $${
+  "sql": "WITH daily AS (SELECT entry_date, sum(amount) AS delta FROM journal_lines GROUP BY entry_date) SELECT entry_date AS date, sum(delta) OVER (ORDER BY entry_date) AS value FROM daily",
+  "behavior": "stock",
+  "grain": ["date"]
+}$$;
+```
+
+```glossql
+GLOSS headcount ON hr AS $${
+  "sql": "WITH events AS (SELECT from_date AS date, 1 AS delta FROM stints UNION ALL SELECT to_date AS date, -1 AS delta FROM stints WHERE to_date IS NOT NULL), daily AS (SELECT date, sum(delta) AS delta FROM events GROUP BY date) SELECT date, CAST(sum(delta) OVER (ORDER BY date) AS DOUBLE) AS value FROM daily",
+  "behavior": "stock",
+  "grain": ["date"]
+}$$;
+```
+
+A flow, written down, with its judgment disclosed:
 
 ```glossql
 GLOSS throughput ON ops AS $${
@@ -119,6 +141,17 @@ cube slices on the dimension columns an extract *serves*, so a ratio
 that groups to `(date, value)` can never be sliced — a cohort
 grounded entirely that way reports "no axes admitted" on every
 metric: headline numbers nobody can cut.
+
+**Name the axes when the verdicts would get them wrong.** `"axes"` in
+the body lists the served columns the metric is sliced by, in order,
+and closes every other served column. A distinct count sliced by a
+column double-counts across members, and a ratio sliced by its own
+discriminator reads one and zero: for those two shapes say
+`"axes": []`, and the write's row says what it closed. On a flow or a
+stock the empty list does not hold — every member adds up to the
+total — so the verdicts decide, the row says `measured over
+authored`, and the axis is yours to serve. Absent, the judged
+verdicts and the `dimension` glosses decide.
 
 A ratio is never drilled from its output rows. Drilling backlog days
 by region means **re-scoping its components per the `formulas` gloss**

@@ -38,8 +38,8 @@ mod whatif;
 pub use async_trait::async_trait;
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
-pub use reads::DoorPage;
+pub use reads::{DOORS, DoorPage};
 pub use session::{
-    CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, Session, SessionError, call_shape,
-    no_model,
+    CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, Registered, Session, SessionError,
+    call_shape, detector_functions, no_model, reader_functions,
 };

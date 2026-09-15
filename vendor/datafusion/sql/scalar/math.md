@@ -198,7 +198,7 @@ atan(numeric_expression)
 #### Example
 
 ```sql
-    > SELECT atan(1);
+> SELECT atan(1);
 +-----------+
 | atan(1)   |
 +-----------+
@@ -225,11 +225,11 @@ atan2(expression_y, expression_x)
 
 ```sql
 > SELECT atan2(1, 1);
-+------------+
-| atan2(1,1) |
-+------------+
-| 0.7853982  |
-+------------+
++--------------------+
+| atan2(1,1)         |
++--------------------+
+| 0.7853981633974483 |
++--------------------+
 ```
 
 ### `atanh`
@@ -247,7 +247,7 @@ atanh(numeric_expression)
 #### Example
 
 ```sql
-    > SELECT atanh(0.5);
+> SELECT atanh(0.5);
 +-------------+
 | atanh(0.5)  |
 +-------------+
@@ -385,7 +385,7 @@ degrees(numeric_expression)
 #### Example
 
 ```sql
-    > SELECT degrees(pi());
+> SELECT degrees(pi());
 +------------+
 | degrees(0) |
 +------------+
@@ -911,12 +911,12 @@ tanh(numeric_expression)
 #### Example
 
 ```sql
-  > SELECT tanh(20);
-  +----------+
-  | tanh(20) |
-  +----------+
-  | 1.0      |
-  +----------+
+> SELECT tanh(20);
++----------+
+| tanh(20) |
++----------+
+| 1.0      |
++----------+
 ```
 
 ### `trunc`

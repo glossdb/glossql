@@ -301,16 +301,24 @@ fn one_query(sql: &str) -> Result<DFStatement, SessionError> {
 /// statement of the language, a query that is not a `SELECT` —
 /// belongs in [`Session::execute`].
 fn one_read(sql: &str) -> Result<DFStatement, SessionError> {
-    let mut statements = GlossqlParser::parse_sql(sql)?;
-    let one_query = matches!(&statements[..], [Statement::Substrate(statement)]
-        if matches!(&**statement, DFStatement::Statement(inner)
-            if matches!(inner.as_ref(), SQLStatement::Query(_))));
-    if !one_query {
-        return Err(SessionError::NotOneRead);
-    }
-    match statements.pop() {
-        Some(Statement::Substrate(statement)) => Ok(*statement),
-        _ => unreachable!("just matched"),
+    let statements = GlossqlParser::parse_sql(sql)?;
+    single_read(&statements)
+        .cloned()
+        .ok_or(SessionError::NotOneRead)
+}
+
+/// The one substrate query a call is, when it is one — a `SELECT` and
+/// nothing else; the door streams that, and runs any other call as a
+/// sequence at the plane.
+fn single_read(statements: &[Statement]) -> Option<&DFStatement> {
+    match statements {
+        [Statement::Substrate(statement)]
+            if matches!(&**statement, DFStatement::Statement(inner)
+                if matches!(inner.as_ref(), SQLStatement::Query(_))) =>
+        {
+            Some(statement)
+        }
+        _ => None,
     }
 }
 
@@ -336,6 +344,11 @@ pub struct Session {
     /// mounted — `mount_schema` re-registers when it changed.
     mounted_provider: std::sync::Mutex<Option<std::sync::Weak<IcebergCatalogProvider>>>,
 }
+
+/// The aspects whose subject is an app address, `<app>` or
+/// `<app>.<part>` — the kit's app family, the names `app_parts` and the
+/// app door read.
+const APP_PARTS: [&str; 4] = ["app", "app_page", "app_frame", "app_spec"];
 
 impl Session {
     /// Who this session writes as.
@@ -582,8 +595,11 @@ impl Session {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<Vec<Outcome>, SessionError> {
-        self.execute_statements(GlossqlParser::parse_sql(sql)?)
-            .await
+        // Boxed: the statement loop's future carries every statement
+        // kind's state, and a caller that awaits several calls in one
+        // body — a suite, a page — would hold each inline on its own
+        // stack. Boxed once here, a call is a pointer to every caller.
+        Box::pin(self.execute_statements(GlossqlParser::parse_sql(sql)?)).await
     }
 
     /// The statement loop over parsed statements — the plane's channel
@@ -1028,8 +1044,26 @@ impl Session {
     }
 
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
-        let resolved = self.subject(&gloss.subject).await?;
         let aspect = gloss.aspect.value.as_str();
+        // An app part's subject is `<app>.<part>` under the bound
+        // dataset: the head is the app, never a dataset, so an app
+        // named like its dataset keeps its parts (`app_parts`, the
+        // app door). Every other subject is a path (SPEC.md §4).
+        let resolved = match &gloss.subject {
+            Subject::Path(p) if APP_PARTS.contains(&aspect) && p.segments.len() == 2 => {
+                let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
+                Resolved {
+                    dataset,
+                    subject: p
+                        .segments
+                        .iter()
+                        .map(|i| i.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join("."),
+                }
+            }
+            _ => self.subject(&gloss.subject).await?,
+        };
         // An aspect declared ON TABLE or ON COLUMN says its subject is
         // one, so the subject must be landed — checked here, where the
         // typo is. An aspect with no grain clause claims nothing about
@@ -1458,9 +1492,8 @@ impl Session {
         sql: &str,
         params: Option<ParamValues>,
     ) -> Result<QueryStream, SessionError> {
-        // Before the span: the door tries every call as a read first,
-        // and a sequence that goes on to execute is not a read that
-        // failed — it never opens one.
+        // Before the span: a sequence is not a read that failed — it
+        // never opens one.
         let statement = one_read(sql)?;
         let span = tracing::info_span!(
             "read",
@@ -1873,6 +1906,9 @@ pub struct QueryStream {
 pub struct CallShape {
     pub reviews: bool,
     pub writes: bool,
+    /// The dataset the call's last `USE` names — where its statements
+    /// ran, and where `next` answers from after it.
+    pub dataset: Option<String>,
 }
 
 /// A call that does not parse shapes as neither — the statement router
@@ -1882,13 +1918,15 @@ pub fn call_shape(statements: &str) -> CallShape {
         return CallShape {
             reviews: false,
             writes: false,
+            dataset: None,
         };
     };
     let mut reads_record = false;
     let mut writes = false;
+    let mut dataset = None;
     for statement in &parsed {
         match statement {
-            Statement::Use(_) => {}
+            Statement::Use(u) => dataset = Some(u.dataset.value.clone()),
             Statement::Substrate(df) => {
                 if reads_only_metadata(df) {
                     reads_record = true;
@@ -1906,6 +1944,7 @@ pub fn call_shape(statements: &str) -> CallShape {
     CallShape {
         reviews: reads_record && !writes,
         writes,
+        dataset,
     }
 }
 
@@ -2053,4 +2092,42 @@ fn kind(statement: &Statement) -> &'static str {
         Statement::Probe(_) => "probe",
         Statement::Substrate(_) => "substrate",
     }
+}
+
+/// A callable the door's SQL can name: its kind, its name, and the
+/// syntax the engine documents for it, where it documents one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Registered {
+    pub kind: &'static str,
+    pub name: String,
+    pub syntax: Option<String>,
+}
+
+fn registered(list: Vec<(&'static str, String, Option<String>)>) -> Vec<Registered> {
+    list.into_iter()
+        .map(|(kind, name, syntax)| Registered { kind, name, syntax })
+        .collect()
+}
+
+impl Session {
+    /// Every function this session's planner resolves — the engine's
+    /// defaults, the JSON functions, the try-casts, the runtime's
+    /// aggregates — read from the registry itself, never a hand list.
+    pub fn registered_functions(&self) -> Vec<Registered> {
+        registered(glossql_import::registry(&self.ctx.state()))
+    }
+}
+
+/// What a recipe's or a probe's SQL can call
+/// (`glossql_import::reader_functions`).
+pub fn reader_functions() -> Vec<Registered> {
+    registered(glossql_import::reader_functions())
+}
+
+/// What a detector's query can call: the defaults of the context it
+/// plans on (`reads::detector_ctx`).
+pub fn detector_functions() -> Vec<Registered> {
+    registered(glossql_import::registry(
+        &crate::reads::detector_ctx().state(),
+    ))
 }

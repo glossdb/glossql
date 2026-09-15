@@ -16,6 +16,7 @@ use rmcp::model::{
     ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
     ServerInfo, Tool,
 };
+use rmcp::model::{ListResourceTemplatesResult, ResourceTemplate};
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServerHandler};
 
@@ -24,16 +25,16 @@ use glossql_session::Caller;
 
 use glossql_session::{Plane, Session, SessionError};
 
+use crate::window;
 use crate::wire;
 
 const INSTRUCTIONS: &str = "glossql workspace server — one SQL-shaped surface over a \
 workspace's data and its context, behind one tool, `glossql`, which runs statements and \
 plain SQL; its description is the contract for every call. Start here, in this order. \
 1. Read the two skill pages through the tool: `SELECT body FROM pages() WHERE uri IN \
-('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')`. Every page the door \
-serves is a row of `pages()` — `SELECT uri, title FROM pages()` lists them — and a client \
-with an MCP resource reader can read the same URIs as resources. Each skill page names its \
-references (`skill://<name>/references/…`) for the moment they matter. \
+('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')` — the door and the \
+language, then the seven goals; each names its references (`skill://<name>/references/…`) \
+for the moment they matter, and every page the door serves is a row of `pages()`. \
 2. `SELECT * FROM datasets`, then what the brief below names. \
 The objects: a dataset holds tables, landed by recipes from sources; an aspect is a named \
 JSON contract; a gloss speaks an aspect's value on a subject (a table, a column, the \
@@ -41,7 +42,7 @@ dataset itself), and a QUERY aspect's gloss is SQL, served back as `read.<name>(
 metric, a current fact, or a derived relation, which the metrics skill tells apart; \
 functions measure, and their measurements are the evidence; witnesses adjudicate the \
 voices on a slot; a human's ruling outranks every agent gloss. Live state is read through \
-the tool, never assumed. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
+the tool, never assumed. Every result closes with `next:`, one act per goal — structure, metrics, slices, bands, checks, app, rulings — and the work is done when every goal is done or blocked; a goal's link hands you the statement that moves it. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
 and `doc://grammar.ebnf` — rows of `pages()` too.";
 
 /// What the brief is decided on: the store's counts plus the open
@@ -876,6 +877,23 @@ impl ServerHandler for GlossqlMcp {
                         .with_size(p.body.len() as u64)
                 }),
         );
+        // The pages built at boot — the function listings — are the
+        // plane's; every other page is a constant of the binary.
+        resources.extend(
+            self.plane
+                .pages()
+                .iter()
+                .filter(|p| p.uri.starts_with("doc://functions/"))
+                .map(|p| {
+                    Resource::new(
+                        p.uri.clone(),
+                        p.uri.trim_start_matches("doc://").to_string(),
+                    )
+                    .with_description(p.title.clone())
+                    .with_mime_type("text/markdown")
+                    .with_size(p.body.len() as u64)
+                }),
+        );
         Ok(ListResourcesResult {
             resources,
             ttl_ms: Some(3_600_000),
@@ -884,14 +902,51 @@ impl ServerHandler for GlossqlMcp {
         })
     }
 
+    /// The one dynamic resource: where the record stands toward a goal
+    /// on a dataset, as a page with the statement to send.
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![
+                ResourceTemplate::new("next://{dataset}/{surface}", "next")
+                    .with_description(
+                        "Where the record stands toward one goal on a dataset — structure, \
+                         metrics, slices, bands, checks, app, rulings — and the one act that \
+                         moves it, as a statement to send. `next://{dataset}` serves every \
+                         goal; the same rows through the tool are \
+                         `SELECT * FROM next WHERE surface = '<surface>'`.",
+                    )
+                    .with_mime_type("text/markdown"),
+            ],
+            ..Default::default()
+        })
+    }
+
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
-        let (mime, body) = crate::skills::read(&request.uri).ok_or_else(|| {
-            McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
-        })?;
+        // `next://<dataset>[/<surface>]` is computed from the record for
+        // the caller, never a page of the binary.
+        if let Some(rest) = request.uri.strip_prefix("next://") {
+            return self.next_resource(rest, &request.uri, &context).await;
+        }
+        let (mime, body) = match crate::skills::read(&request.uri) {
+            Some((mime, body)) => (mime, body.to_string()),
+            None => self
+                .plane
+                .pages()
+                .iter()
+                .find(|p| p.uri == request.uri)
+                .map(|p| ("text/markdown", p.body.clone()))
+                .ok_or_else(|| {
+                    McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
+                })?,
+        };
         Ok(ReadResourceResult::new(vec![
             ResourceContents::text(body, request.uri).with_mime_type(mime),
         ])
@@ -1082,7 +1137,7 @@ impl ServerHandler for GlossqlMcp {
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
-                match self.plane.execute(actor, None, statements).await {
+                match self.plane.execute(actor.clone(), None, statements).await {
                     Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
@@ -1117,12 +1172,19 @@ impl ServerHandler for GlossqlMcp {
         } else {
             None
         };
+        // Where the call left the agent and one act per goal from there,
+        // on every call (`window`). It rides the result, never the
+        // instructions, so the stable prefix holds.
+        let window = self
+            .situation_block(&actor, shape.dataset.as_deref(), &rendered)
+            .await;
         Ok(match rendered {
             Ok(body) => {
                 let mut blocks = vec![ContentBlock::text(body.to_string())];
                 if let Some(note) = probed {
                     blocks.push(ContentBlock::text(note));
                 }
+                blocks.push(ContentBlock::text(window));
                 if let Some(brief) = brief_moved {
                     blocks.push(ContentBlock::text(brief));
                 }
@@ -1140,6 +1202,7 @@ impl ServerHandler for GlossqlMcp {
                         serde_json::json!({ "landed": landed }).to_string(),
                     ));
                 }
+                blocks.push(ContentBlock::text(window));
                 if let Some(brief) = brief_moved {
                     blocks.push(ContentBlock::text(brief));
                 }
@@ -1148,6 +1211,111 @@ impl ServerHandler for GlossqlMcp {
         }
         .into())
     }
+}
+
+impl GlossqlMcp {
+    /// The two lines every result carries: where the call left the
+    /// agent, and one act per goal from there (`window`) on the
+    /// dataset the call's last `USE` named.
+    async fn situation_block(
+        &self,
+        actor: &Actor,
+        dataset: Option<&str>,
+        rendered: &Result<serde_json::Value, String>,
+    ) -> String {
+        // The last statement's one row, where it served one — a
+        // grounding's fact row. The wire renders an outcome as
+        // `{columns, rows, …}` (`wire::outcomes_json`), so the row
+        // sits under `rows`.
+        let last_row = rendered
+            .as_ref()
+            .ok()
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.last())
+            .and_then(|o| o.get("rows"))
+            .and_then(|r| r.as_array())
+            .filter(|r| r.len() == 1)
+            .and_then(|r| r.first())
+            .cloned();
+        let refusal = rendered.as_ref().err().map(String::as_str);
+        let mut lines = vec![window::situation(refusal, last_row.as_ref())];
+        if let Some(dataset) = dataset {
+            match self.next_rows(actor, dataset, None).await {
+                Ok(rows) if !rows.is_empty() => lines.push(window::next_line(dataset, &rows)),
+                Ok(_) => {}
+                Err(e) => tracing::debug!(error = %e, "next: not served"),
+            }
+        }
+        lines.join("\n")
+    }
+
+    /// The `next` read on a channel bound to the dataset, as JSON rows.
+    async fn next_rows(
+        &self,
+        actor: &Actor,
+        dataset: &str,
+        surface: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let session = self
+            .plane
+            .channel(actor.clone(), Some(dataset))
+            .await
+            .map_err(|e| e.to_string())?;
+        let sql = match surface {
+            Some(s) => format!(
+                "SELECT * FROM next WHERE surface = '{}'",
+                s.replace('\'', "''")
+            ),
+            None => "SELECT * FROM next ORDER BY goal".to_string(),
+        };
+        self.rows(&session, &sql).await
+    }
+
+    /// The rows of one read, as the wire renders them.
+    async fn rows(&self, session: &Session, sql: &str) -> Result<Vec<serde_json::Value>, String> {
+        let outcomes = session.execute(sql).await.map_err(|e| e.to_string())?;
+        let rendered = wire::outcomes_json(&outcomes, usize::MAX)?;
+        Ok(rendered
+            .get(0)
+            .and_then(|o| o.get("rows"))
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// `next://<dataset>[/<surface>]` as a page: every answer with its
+    /// statement, for the caller the gate stamped.
+    async fn next_resource(
+        &self,
+        rest: &str,
+        uri: &str,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let actor = caller(context)?;
+        let (dataset, surface) = match rest.split_once('/') {
+            Some((d, s)) => (d, Some(s)),
+            None => (rest, None),
+        };
+        let rows = self
+            .next_rows(&actor, dataset, surface)
+            .await
+            .map_err(|e| McpError::resource_not_found(format!("`{uri}`: {e}"), None))?;
+        let body = window::next_page(dataset, &rows);
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(body, uri).with_mime_type("text/markdown"),
+        ])
+        .into())
+    }
+}
+
+/// The caller the gate stamped on the request.
+fn caller(context: &RequestContext<RoleServer>) -> Result<Actor, McpError> {
+    context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<Caller>())
+        .map(|caller| caller.0.clone())
+        .ok_or_else(|| McpError::internal_error("the door is not behind the gate: no caller", None))
 }
 
 #[cfg(test)]

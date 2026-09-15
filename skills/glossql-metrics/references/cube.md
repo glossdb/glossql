@@ -9,9 +9,9 @@ on the trajectory, past 0.95 or under 0.05 is outside what the
 metric's own history can explain. `band_breach` is the detector on
 top. Each point's fit saw only the months before it.
 
-- **The walk lands when you run it** — `SELECT metric_bands() FROM
-  <dataset>` once the series stand; `owed` lists it as never measured
-  until then, and the docket's re-measure runs it too.
+- **The walk is the `bands` goal.** `SELECT metric_bands() FROM
+  <dataset>` runs it; the `next:` line says when it is owed and when
+  it stands, and the docket's re-measure runs it too.
 - **The read is recall, you are the judge.** A business shift and a
   data defect breach identically.
 - The corridor knows only the history it is shown; under about five
@@ -20,7 +20,11 @@ top. Each point's fit saw only the months before it.
   withheld; the detector scores the month before it. A metric whose
   series the engine refuses abstains with the reason; the others walk.
 - A red `metric_bands` verdict names its metric and month through
-  `band_points()` — the recorded walk as rows, no re-run.
+  `band_points()` — the recorded walk as rows, no re-run. A defect is
+  the grounding's to fix; a shift is the human's to hear: record it as
+  an assumption under the key `band-<period>` on the metric's
+  grounding, and the docket asks. The walk re-runs when a grounding
+  changes, not for a definitions entry, a page or a declared check.
 - A declared fact (`x-kind: fact`) `fact_values()` serves whole, its
   number where the frame is one row with a value; a derived relation
   is `read.<name>()`'s alone.
@@ -34,7 +38,14 @@ and cached, never recorded. Nothing to run and nothing to land:
 `metric_series()` builds what is not built. A dimension the cube
 should slice must be a served column of the extract.
 
-The axes come from judged verdicts, not from the data's shape. A
+The axes come from judged verdicts, not from the data's shape — or
+from the grounding's own word: `"axes": ["region", "channel"]` in the
+body lists the served columns the metric is sliced by, in that order,
+and closes the rest; `"axes": []` says the metric slices by nothing,
+and holds for a distinct count and a ratio — a distinct count written
+as `count(DISTINCT …)` or as one row per distinct key with a constant
+value; on any other shape it is read as absent, and `axes_basis` says
+`measured over authored`. Absent, a
 served column enters as a dimension when a verdict admits it: its own
 `dimension_relevance`, or — for a label in a dimension table, a
 near-key there by construction — the verdict on the key column that
@@ -52,10 +63,11 @@ glossed stays out, and a frame with no judged date column abstains;
 the cube admits on are the newest landed, whatever pin they were
 judged at — served and marked, as every function voice is, and every
 write moves the pin — so after a gloss or an import the cube still
-builds on them and `metric_axes().judged_current` turns false. Re-run
-`temporal()` and `dimension_relevance()` over the served columns
-after a data change; the docket's re-measure re-runs every
-measurement standing from before the last change.
+builds on them and `metric_axes().judged_current` turns false; the
+`slices` goal then names the re-run, `temporal()` and
+`dimension_relevance()` over the served columns, and the docket's
+re-measure re-runs every measurement standing from before the last
+change.
 
 Resolution and window are the `cube` aspect's, declared by the kit on
 the dataset: a metric's cells stand at its judged cadence and never
@@ -114,7 +126,7 @@ SELECT metric, period, value FROM metric_series(grain => 'month')
 WHERE dimension = '' ORDER BY metric, period
 ```
 
-**Fold in every standing ruling, then re-measure.** The cube computes
-at the next read from the newest verdicts — so one batch of fold-ins,
-then the profilers over the served columns, and `judged_current` is
-true on the docket's next load.
+The cube computes at the next read from the newest verdicts: after a
+batch of fold-ins, the profilers once over the served columns, and
+`judged_current` is true on the docket's next load. The `rulings` and
+`slices` goals carry that order on the `next:` line.

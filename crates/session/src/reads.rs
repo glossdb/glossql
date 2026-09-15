@@ -343,6 +343,41 @@ pub(crate) async fn verdicts(
 /// typed value through the plan. Each returned row answers to the §7.2
 /// contract: `(subject, band, score)`; the engine completes the attest
 /// row with witness, aspect, and its own clock.
+/// The reads the planner answers by name — the doors over the record
+/// that no SQL file carries — each with the call that reaches it. The
+/// dispatch below answers every name here. The door's function listing
+/// and the window's vocabulary read this list, so neither can drift
+/// from the dispatch, and the suite plans each call.
+pub const DOORS: &[(&str, &str)] = &[
+    ("glossary", "GLOSSARY(<subject>[, all => true])"),
+    ("attest", "ATTEST(<dataset>)"),
+    ("metric_axes", "metric_axes()"),
+    ("metric_series", "metric_series([grain => '<grain>'])"),
+    ("fact_values", "fact_values()"),
+    ("band_points", "band_points()"),
+    ("metric_sources", "metric_sources()"),
+    ("metric_band_walk", "metric_band_walk('<dataset>')"),
+    ("grounding_collisions", "grounding_collisions('<dataset>')"),
+    ("behavior_anchors", "behavior_anchors('<subject>')"),
+    ("relationship_checks", "relationship_checks('<dataset>')"),
+    (
+        "relationship_candidates",
+        "relationship_candidates('<dataset>')",
+    ),
+    ("hierarchy_candidates", "hierarchy_candidates('<table>')"),
+    ("derivation_candidates", "derivation_candidates('<table>')"),
+    ("source_files", "source_files('<source>')"),
+    ("pages", "pages()"),
+    ("current_dataset", "current_dataset"),
+];
+
+/// The context a detector's query plans on: the engine's defaults over
+/// the witness's `slots` relation and nothing else. The door's function
+/// listing reads the same builder.
+pub fn detector_ctx() -> SessionContext {
+    SessionContext::new()
+}
+
 async fn run_detector(
     detector: &str,
     statement: datafusion::sql::parser::Statement,
@@ -351,7 +386,7 @@ async fn run_detector(
 ) -> Result<Vec<(String, String, f64)>, SessionError> {
     use datafusion::common::{ParamValues, ScalarValue};
     let fail = |e: DataFusionError| SessionError::Runtime(format!("`{detector}`: {e}"));
-    let ctx = SessionContext::new();
+    let ctx = detector_ctx();
     ctx.register_batch("slots", slots).map_err(fail)?;
     let plan = ctx
         .state()
@@ -741,13 +776,14 @@ pub(crate) fn door_reads(
             reads.all_tables = true;
             reads.relations.insert("relationships".into());
         }
-        // The slot walkers: collapsed groundings (glossary, aspects,
-        // witnesses for the collapse) run over the landed data.
+        // The slot walkers: the collapsed groundings run over the
+        // landed data. The groundings are one leg of their own —
+        // `glossql.grounding`, the digest of every QUERY writing, the
+        // QUERY aspects and their witnesses — so a definitions entry,
+        // an app page or a declared check moves none of these.
         ("grounding_collisions" | "metric_band_walk" | "metric_sources", _) => {
             reads.all_tables = true;
-            reads
-                .relations
-                .extend(["glossary".into(), "aspects".into(), "witnesses".into()]);
+            reads.relations.insert("grounding".into());
         }
         // The binding, not state: no pin leg moves it. The door's
         // pages are the binary's: nothing in the workspace moves them.

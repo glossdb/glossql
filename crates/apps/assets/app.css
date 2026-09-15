@@ -75,6 +75,10 @@ a { color: inherit; text-decoration: none; }
 
 /* ---- the workspace bar -------------------------------------------- */
 
+/* One bar, and it reads as the URL: the dataset, the app, then the
+   app's pages as tabs on the right. The two pickers are places, not
+   settings; the current tab is the one thing on the bar that spends
+   the accent. */
 .shell-nav {
   position: sticky;
   top: 0;
@@ -101,31 +105,41 @@ a { color: inherit; text-decoration: none; }
 .ws { color: var(--muted); }
 .ws b { color: var(--ink); font-weight: 600; }
 
-/* The dataset picker: a place, not a setting. It rewrites the first
-   path segment, so switching is an ordinary navigation and the back
-   button means what it says. */
-.ds-pick {
+/* A picker rewrites one path segment, so switching is an ordinary
+   navigation and the back button means what it says. */
+.pick {
   font: inherit;
   color: var(--ink);
   background: transparent;
   border: 1px solid var(--rule);
   border-radius: 3px;
   padding: 0.15rem 0.4rem;
-  max-width: 12rem;
+  max-width: 18rem;
 }
-.ds-pick:hover { border-color: var(--faint); }
-.ds-pick option { background: var(--ground); color: var(--ink); }
+.pick:hover { border-color: var(--faint); }
+.pick option { background: var(--ground); color: var(--ink); }
 
-.shell-nav nav {
+/* The app's pages. The underline sits on the bar's own rule, so the
+   current page reads as a tab cut into the bar rather than a link. */
+.tabs {
   margin-left: auto;
+  align-self: stretch;
   display: flex;
-  gap: 1.1rem;
+  flex-wrap: wrap;
   font-size: var(--step);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.shell-nav nav a { color: var(--faint); }
-.shell-nav nav a:hover, .shell-nav nav a.current { color: var(--ink); }
+.tabs a {
+  display: flex;
+  align-items: center;
+  padding: 0.8rem 0.7rem;
+  color: var(--faint);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--ink); }
+.tabs a.current { color: var(--ink); border-bottom-color: var(--open); }
 
 /* The request indicator: a hairline of amber under the bar. */
 .load-bar {
@@ -152,6 +166,18 @@ a { color: inherit; text-decoration: none; }
 
 main { max-width: 68rem; margin: 0 auto; padding: 0.25rem 1.5rem 5rem; }
 
+/* A glossed app's title, as its author wrote it: authored language,
+   so sans at reading size, and the one line the shell adds to a page. */
+.app-title {
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+  margin: 1.5rem 0 0;
+}
+
 h1 {
   font-size: var(--step);
   font-weight: 600;
@@ -163,32 +189,6 @@ h1 {
 .empty { font-family: var(--sans); color: var(--muted); max-width: 60ch; }
 
 code { font-family: var(--mono); font-size: 0.95em; }
-
-/* ---- views -------------------------------------------------------- */
-
-/* The app's own pages, as a tab row under the bar. Server-rendered
-   navigation, so the current one is marked rather than selected. */
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: 0.15rem;
-  font-size: var(--step);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--rule);
-  margin: 0 0 0.4rem;
-}
-.crumbs a, .crumbs .here {
-  padding: 0.85rem 0.7rem 0.7rem;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.crumbs a { color: var(--faint); }
-.crumbs a:hover { color: var(--ink); }
-.crumbs .here { color: var(--ink); border-bottom-color: var(--open); }
-/* The separators the old crumb line carried are structure the tabs
-   now express; a stray one stays out of the way. */
-.crumbs > span:not(.here) { display: none; }
 
 /* ---- bands -------------------------------------------------------- */
 
@@ -666,6 +666,8 @@ gl-graph svg { display: block; font-family: var(--mono); }
   flex-wrap: wrap;
 }
 .wgroup { display: inline-flex; gap: 0.25rem; }
+/* A row that serves no file carries no links. */
+.wgroup.off { display: none; }
 .wbtn {
   font-family: var(--mono);
   font-size: var(--step);

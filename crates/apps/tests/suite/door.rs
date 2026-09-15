@@ -174,22 +174,82 @@ async fn values(response: Response<Body>) -> Vec<f64> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_manifest_orders_the_tabs() {
+    let (app, plane, _dir) = workspace().await;
+    let session = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let page = r#"{% extends \"shell.html\" %}{% block main %}x{% endblock %}"#;
+    session
+        .execute(&format!(
+            r#"USE perf;
+               GLOSS app ON two AS $${{"title": "Two", "pages": [{{"name": "later", "title": "Later"}}, {{"name": "index", "title": "First"}}]}}$$;
+               GLOSS app_page ON two.index AS $${{"html": "{page}"}}$$;
+               GLOSS app_page ON two.later AS $${{"html": "{page}"}}$$;
+               GLOSS app_page ON bare.index AS $${{"html": "{page}"}}$$;
+               GLOSS app_page ON bare.zed AS $${{"html": "{page}"}}$$;
+               GLOSS app_page ON bare.alpha AS $${{"html": "{page}"}}$$;"#
+        ))
+        .await
+        .unwrap();
+
+    // The manifest's order and wording.
+    let two = text(get(&app, "/perf/app/two").await).await;
+    let later = two.find(">Later</a>").unwrap();
+    let first = two.find(">First</a>").unwrap();
+    assert!(later < first, "{two}");
+
+    // No manifest: index first, then by name, titled by file name.
+    let bare = text(get(&app, "/perf/app/bare/p/zed").await).await;
+    let index = bare.find(">index</a>").unwrap();
+    let alpha = bare.find(">alpha</a>").unwrap();
+    let zed = bare
+        .find("aria-current=\"page\" href=\"/perf/app/bare/p/zed\">zed</a>")
+        .unwrap();
+    assert!(index < alpha && alpha < zed, "{bare}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pages_render_and_frames_stream() {
     let (app, _plane, _dir) = workspace().await;
 
-    // Home lists the app.
+    // The dataset's page is the docket, and the URL says so.
     let home = get(&app, "/perf/app").await;
-    let status = home.status();
-    let home = text(home).await;
-    assert_eq!(status, StatusCode::OK, "{home}");
-    assert!(home.contains("Perf"), "home should list the app:\n{home}");
+    assert_eq!(home.status(), StatusCode::SEE_OTHER);
+    assert_eq!(home.headers()[header::LOCATION], "/perf/app/docket");
+    // The bar's picker lists the glossed app; the docket's pages are
+    // its tabs, the manifest's order, the current one marked.
+    let docket = text(get(&app, "/perf/app/docket/p/export").await).await;
+    assert!(
+        docket.contains("<option value=\"board\">Perf</option>"),
+        "the picker lists the app:\n{docket}"
+    );
+    let open = docket.find("href=\"/perf/app/docket\">Open</a>").unwrap();
+    let export = docket
+        .find(
+            "class=\"current\" aria-current=\"page\" href=\"/perf/app/docket/p/export\">Export</a>",
+        )
+        .unwrap();
+    assert!(open < export, "{docket}");
 
-    // The page renders through shell + macros, carrying the app root.
+    // The page renders through shell + macros, carrying the app root;
+    // one page, so no tabs.
     let page = get(&app, "/perf/app/board").await;
     let status = page.status();
     let page = text(page).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("data-approot=\"/perf/app/board/\""), "{page}");
+    assert!(!page.contains("class=\"tabs\""), "{page}");
+    // A glossed app opens with its title; the built-in prints none.
+    assert!(page.contains("<h1 class=\"app-title\">Perf</h1>"), "{page}");
+    assert!(!docket.contains("app-title"), "{docket}");
     assert!(
         page.contains("<gl-chart frame=\"frames/monthly\""),
         "{page}"
@@ -946,6 +1006,58 @@ async fn the_checks_face_serves_verdicts_not_the_vocabulary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_quality_page_accounts_for_each_landing() {
+    // The landing account is the import's own: what each scan held,
+    // what landed, what the casts nulled — and per column, the values
+    // a cast could not read, most frequent first.
+    let (app, plane, dir) = workspace().await;
+    std::fs::write(dir.path().join("dirty.csv"), "v\n1\nx\nx\n2\n").unwrap();
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(
+            "USE perf;\n\
+             DECLARE RECIPE dirty ON perf FROM erp AS $$\
+               SELECT try_cast(v AS DOUBLE) AS v FROM read_csv('dirty.csv')$$;",
+        )
+        .await
+        .unwrap();
+
+    let page = text(get(&app, "/perf/app/docket/p/quality").await).await;
+    assert!(page.contains("Landing account"), "{page}");
+    assert!(
+        page.contains("aria-current=\"page\" href=\"/perf/app/docket/p/quality\">Quality</a>"),
+        "{page}"
+    );
+
+    let landing = body_text(get(&app, "/perf/app/docket/frames/landing").await).await;
+    assert!(landing.contains("scanned ledger.csv 3\n"), "{landing}");
+    assert!(landing.contains("scanned dirty.csv 4\n"), "{landing}");
+    assert!(
+        landing.contains("nulled\n"),
+        "the dirty table's cells:\n{landing}"
+    );
+
+    let casts = body_text(get(&app, "/perf/app/docket/frames/casts").await).await;
+    assert!(casts.contains("dirty.v\n"), "{casts}");
+    assert!(casts.contains("x ×2\n"), "{casts}");
+    assert!(
+        !casts.contains("ledger"),
+        "every ledger cast held:\n{casts}"
+    );
+
+    let census = body_text(get(&app, "/perf/app/docket/frames/census").await).await;
+    assert!(census.starts_with("2\n"), "two tables landed:\n{census}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_metrics_faces_serve_the_cube() {
     // The business surface end to end from the cube: nothing is
     // planted — the frames read `metric_series()` and `metric_axes()`,
@@ -962,23 +1074,34 @@ async fn the_metrics_faces_serve_the_cube() {
     assert_eq!(pulse.status(), StatusCode::OK);
     assert_eq!(
         row_count(pulse).await,
-        2,
-        "two declared surfaces — the series and the fact — two rows"
+        1,
+        "two declared surfaces, the series and the fact — the pulse lists the series"
     );
 
     let latest = get(&app, "/perf/app/docket/frames/latest").await;
     assert_eq!(latest.status(), StatusCode::OK);
     assert_eq!(
         row_count(latest).await,
-        2,
-        "the newest period of the one series, and the fact's one value"
+        1,
+        "the newest period of the one series; a fact has no period"
     );
+
+    // The facts list: the fact with its one value, as of the landing
+    // of the table its grounding reads, linked with its kind.
+    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    assert_eq!(facts.status(), StatusCode::OK);
+    let facts = body_text(facts).await;
+    assert!(facts.contains("payables\n"), "{facts}");
+    assert!(facts.contains("as of 20"), "{facts}");
+    assert!(facts.contains("?metric=payables&kind=fact\n"), "{facts}");
+    assert!(!facts.contains("dso\n"), "a series is not a fact:\n{facts}");
 
     // The fact's tile frame: a row for the fact, none for the series,
     // so the tile renders only where there is a number.
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=payables").await;
     assert_eq!(fact.status(), StatusCode::OK);
-    assert_eq!(row_count(fact).await, 1, "the fact's one value");
+    let fact = body_text(fact).await;
+    assert!(fact.contains("as of 20"), "{fact}");
     let none = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
     assert_eq!(none.status(), StatusCode::OK);
     assert_eq!(row_count(none).await, 0, "a series is not a fact");
@@ -1113,10 +1236,9 @@ async fn the_metrics_faces_serve_the_cube() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_list_serves_a_workspace_without_a_fact() {
-    // `frames/latest` unions the cube's newest periods with the facts'
-    // values. A workspace that declares no fact has no fact row to
-    // add, and the frame serves the series alone: a door with nothing
-    // to say is the empty relation, not a refusal. The undated measure
+    // A workspace that declares no fact has an empty facts list, and
+    // `frames/latest` serves the series alone: a door with nothing to
+    // say is the empty relation, not a refusal. The undated measure
     // declares no kind, so it is no fact either: nothing shows its
     // number, and the list carries the cube's reason in the axes slot.
     // The series serves `cohort`, which nobody judged: the banner
@@ -1166,6 +1288,9 @@ async fn the_list_serves_a_workspace_without_a_fact() {
         1,
         "the one series' newest period, and no fact row"
     );
+    let facts = get(&app, "/perf/app/docket/frames/facts").await;
+    assert_eq!(facts.status(), StatusCode::OK);
+    assert_eq!(row_count(facts).await, 0, "no fact declared, no fact row");
     let fact = get(&app, "/perf/app/docket/frames/fact?metric=dso").await;
     assert_eq!(fact.status(), StatusCode::OK);
     assert_eq!(row_count(fact).await, 0, "a series is not a fact");
@@ -1405,44 +1530,47 @@ async fn the_root_lists_every_dataset_at_a_glance() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_dataset_page_lists_tables_and_served_metrics() {
+async fn the_export_tab_lists_tables_and_reads() {
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
-    let home = get(&app, "/perf/app").await;
-    assert_eq!(home.status(), StatusCode::OK);
-    let home = text(home).await;
-    // The landed table with its shape and its two files.
-    assert!(home.contains("ledger"), "{home}");
-    assert!(home.contains("3 columns"), "{home}");
+    // The page places the rows; its download links opt out of the
+    // shell's hx-boost, which would otherwise swap the file's text
+    // into the page, and the curl line names this dataset's door.
+    let page = text(get(&app, "/perf/app/docket/p/export").await).await;
     assert!(
-        // A download is the browser's to save: the link opts out of
-        // the shell's hx-boost, which would otherwise swap the file's
-        // text into the page.
-        home.contains("hx-boost=\"false\" download href=\"/perf/app/export/ledger.csv\""),
-        "{home}"
+        page.contains("hx-boost=\"false\" download href=\"{csv}\""),
+        "{page}"
     );
-    assert!(
-        home.contains("href=\"/perf/app/export/ledger.parquet\""),
-        "{home}"
-    );
-    // The served metrics as their relations, with the definition's
-    // meaning beside them.
-    assert!(home.contains("read.dso()"), "{home}");
-    assert!(home.contains("receivables outstanding"), "{home}");
-    assert!(
-        home.contains("href=\"/perf/app/export/read.dso.csv\""),
-        "{home}"
-    );
-    assert!(home.contains("read.payables()"), "{home}");
-    // The apps still list, and the bar's last link is the dataset.
-    assert!(home.contains("Perf"), "{home}");
-    assert!(home.contains(">perf</a>"), "{home}");
+    assert!(page.contains("/perf/query"), "{page}");
 
-    // A dataset with nothing landed says so.
-    let second = text(get(&app, "/second/app").await).await;
-    assert!(second.contains("Nothing has landed"), "{second}");
-    assert!(second.contains("No metric is served"), "{second}");
+    // The landed table with its shape and its two files.
+    let tables = body_text(get(&app, "/perf/app/docket/frames/tables").await).await;
+    assert!(tables.contains("ledger\n"), "{tables}");
+    assert!(tables.contains("3\ncolumns\n"), "{tables}");
+    assert!(tables.contains("/perf/app/export/ledger.csv\n"), "{tables}");
+    assert!(
+        tables.contains("/perf/app/export/ledger.parquet\n"),
+        "{tables}"
+    );
+
+    // The served reads as their relations, with the definition's
+    // meaning beside them, the kind as the chip, and the files.
+    let reads = body_text(get(&app, "/perf/app/docket/frames/reads").await).await;
+    assert!(reads.contains("read.dso()\n"), "{reads}");
+    assert!(reads.contains("receivables outstanding"), "{reads}");
+    assert!(reads.contains("metric\n"), "{reads}");
+    assert!(reads.contains("/perf/app/export/read.dso.csv\n"), "{reads}");
+    assert!(reads.contains("read.payables()\n"), "{reads}");
+
+    // A dataset with nothing landed serves empty frames, and the page
+    // still stands with the bar's tabs.
+    assert_eq!(
+        row_count(get(&app, "/second/app/docket/frames/tables").await).await,
+        0
+    );
+    let second = text(get(&app, "/second/app/docket/p/export").await).await;
+    assert!(second.contains(">Export</a>"), "{second}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -13,12 +13,12 @@ expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT unit WITH $${\"type\
                 },
                 schema: JsonBody {
                     value: Object {
+                        "type": String("object"),
                         "properties": Object {
                             "value": Object {
                                 "type": String("string"),
                             },
                         },
-                        "type": String("object"),
                     },
                     raw: "{\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"string\"}}}",
                 },

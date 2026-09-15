@@ -36,7 +36,7 @@
       <li>
         <span class="path"><i>/&lt;dataset&gt;/</i>app</span>
         <span class="who">the door for people</span>
-        <span class="why">The dataset's page: its tables and served metrics, each a file away, and the apps over it — the docket, where the questions the agent could not settle wait for you.</span>
+        <span class="why">The dataset's page is the docket: the questions the agent could not settle wait for you, with its metrics, its quality, its lineage, and every table and read as a file under Export. The apps written over the dataset sit in the bar's picker.</span>
       </li>
     </ul>
   </section>
@@ -56,7 +56,7 @@
         <span class="r-meta">{{ d.tables_txt }} table{% if d.tables != 1 %}s{% endif %} · {{ d.rows_txt }} row{% if d.rows != 1 %}s{% endif %}{% if d.landed_txt %} · last landed {{ d.landed_txt }}{% endif %}</span>{% endif %}</span>
       <span class="r-meta">{% if not d.error %}{{ d.served_txt }} metric{% if d.served != 1 %}s{% endif %} served{% if d.stopped %} · {{ d.stopped_txt }} stopped{% endif %}<br>
         {% if d.open %}<span class="r-gap">{{ d.open_txt }} question{% if d.open != 1 %}s{% endif %} wait{% if d.open == 1 %}s{% endif %} on you</span>{% else %}nothing open{% endif %}{% endif %}</span>
-      <span class="wgroup"><a class="wbtn{% if d.open %} on{% endif %}" href="/{{ d.name }}/app/docket">docket</a><a class="wbtn" href="/{{ d.name }}/app">tables</a></span>
+      <span class="wgroup"><a class="wbtn{% if d.open %} on{% endif %}" href="/{{ d.name }}/app/docket">docket</a><a class="wbtn" href="/{{ d.name }}/app/docket/p/export">export</a></span>
     </div>
     {% endfor %}
   </section>

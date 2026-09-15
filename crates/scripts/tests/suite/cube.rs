@@ -439,6 +439,27 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
         "the read says the same: {read}"
     );
 
+    // A re-record says what it changed against the writing it
+    // supersedes: the same frame agrees; a frame that drops a
+    // constructor loses a third of every month's points and says so.
+    // The read never carries it — it is the write's answer.
+    let row = grid(&session, &ground(FRAME)).await;
+    assert!(
+        row.contains("no gap against the writing it supersedes over 12 shared periods"),
+        "{row}"
+    );
+    let row = grid(
+        &session,
+        &ground("SELECT r.date, r.constructor_id AS cid, r.points AS value FROM results r WHERE r.constructor_id <> 'c3'"),
+    )
+    .await;
+    assert!(
+        row.contains("the total moved 50.0 % at") && row.contains("over 12 shared periods"),
+        "{row}"
+    );
+    let read = grid(&session, "SELECT superseded_divergence FROM metric_axes();").await;
+    assert!(!read.contains("shared periods"), "{read}");
+
     // A grounding the engine refuses lands too, and its row carries
     // the refusal rather than a read discovering it later.
     let row = grid(&session, &ground("SELECT nope AS value FROM results")).await;
@@ -452,7 +473,179 @@ async fn a_grounding_write_answers_with_the_metrics_fact() {
             "SELECT count(*) FROM glossary WHERE aspect = 'points';"
         )
         .await,
-        "4"
+        "6"
+    );
+}
+
+/// The grounding's own word on its axes: `axes` admits what it lists,
+/// in order, whatever was measured, closes the rest, names back what
+/// it lists and the frame does not serve, and the empty list closes
+/// them all where the shape admits it — a distinct count, a ratio.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_grounding_names_its_axes() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[
+            r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#,
+            "SELECT judge_time() FROM results.date;",
+            "SELECT judge_axis() FROM results.constructor_id;",
+        ],
+    )
+    .await;
+    const FRAME: &str = "SELECT r.date, r.constructor_id AS cid, r.venue AS venue, \
+                         r.points AS value FROM results r";
+    let ground =
+        |axes: &str| format!(r#"GLOSS points ON fin AS $${{"sql": "{FRAME}", "axes": {axes}}}$$;"#);
+    const AXES: &str =
+        "SELECT dims, admitted_by, axes_basis, unadmitted, unadmitted_act FROM metric_axes();";
+
+    // The verdict admits cid and nobody judged venue; the author says
+    // venue, and venue it is — cid is closed by the author's word.
+    session.execute(&ground(r#"["venue"]"#)).await.unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[venue]") && read.contains("[agent]") && read.contains("| authored "),
+        "{read}"
+    );
+    assert!(
+        read.contains("[cid]") && read.contains("[closed over verdict]"),
+        "{read}"
+    );
+
+    // Both, in the author's order.
+    session
+        .execute(&ground(r#"["venue", "cid"]"#))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[venue, cid]") && read.contains("[agent, agent]"),
+        "{read}"
+    );
+
+    // A name the frame does not serve as a sliceable column is named
+    // back; the value is one.
+    session
+        .execute(&ground(r#"["venue", "team", "value"]"#))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[cid, team, value]")
+            && read.contains("[closed over verdict, unserved, unserved]"),
+        "{read}"
+    );
+
+    // The empty list on a flow does not hold: every member adds up to
+    // the total, so the verdicts decide and the row says the word was
+    // measured over.
+    session.execute(&ground("[]")).await.unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[cid]") && read.contains("| measured over authored "),
+        "{read}"
+    );
+
+    // On a distinct count it holds: the row names what it closed, and
+    // what a verdict would have admitted.
+    session
+        .execute(
+            r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.constructor_id AS cid, r.venue AS venue, CAST(count(DISTINCT r.points) AS DOUBLE) AS value FROM results r GROUP BY r.date, r.constructor_id, r.venue", "axes": []}$$;"#,
+        )
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("| [] ")
+            && read.contains("| authored ")
+            && read.contains("[cid, venue]")
+            && read.contains("[closed over verdict, closed]"),
+        "{read}"
+    );
+
+    // Without the word, the verdicts decide again.
+    session
+        .execute(&format!(
+            r#"GLOSS points ON fin AS $${{"sql": "{FRAME}"}}$$;"#
+        ))
+        .await
+        .unwrap();
+    let read = grid(&session, AXES).await;
+    assert!(
+        read.contains("[cid]") && read.contains("[measurement]") && read.contains("| measured "),
+        "{read}"
+    );
+}
+
+/// A measurement that walks the groundings — the bands walk, the
+/// collision and source walkers — reads the groundings as one leg of
+/// its own: a FACT gloss, a declared function or a re-record that
+/// keeps the series does not move it, a re-record that changes the
+/// series does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slot_walkers_measurement_owes_its_re_run_to_a_grounding_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[
+            r#"DECLARE ASPECT points WITH $${"title": "Points"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.venue AS venue, r.points AS value FROM results r"}$$;"#,
+            "SELECT judge_time() FROM results.date;",
+            r#"DECLARE ASPECT sources_seen WITH $${"type": "object", "required": ["applicable"],
+                 "properties": {"applicable": {"type": "boolean"}, "n": {"type": "integer"}}}$$ AS MEASUREMENT ON DATASET;"#,
+            "DECLARE FUNCTION sources_seen FOR GLOBAL AS $$SELECT true AS applicable, CAST(count(*) AS BIGINT) AS n FROM metric_sources()$$ RETURNS sources_seen;",
+            "SELECT sources_seen() FROM fin;",
+        ],
+    )
+    .await;
+    const OWED: &str = "SELECT kind, subject FROM owed WHERE subject = 'sources_seen';";
+    assert!(!grid(&session, OWED).await.contains("re-measure"), "fresh");
+
+    // A FACT gloss and a declared check — its aspect, its detector,
+    // its witness, its function — move the glossary, the aspects, the
+    // witnesses and the functions relations, not the groundings.
+    session
+        .execute(r#"GLOSS dimension ON results.venue AS $${"value": "supporting"}$$;"#)
+        .await
+        .unwrap();
+    session
+        .execute(
+            r#"DECLARE ASPECT tie_check WITH $${"type": "object", "required": ["outcome"],
+                 "properties": {"outcome": {"type": "string"}}}$$ AS FACT ON DATASET;
+               DECLARE FUNCTION tie_detect FOR GLOBAL AS
+                 $$SELECT subject, 0.0 AS score, 'green' AS band FROM slots$$;
+               DECLARE WITNESS tie_w ON tie_check BY (AGENT, HUMAN) DETECTOR tie_detect THRESHOLD 0.0;
+               DECLARE FUNCTION tie_check_fn FOR fin AS $$SELECT 'ok' AS outcome$$ RETURNS tie_check;"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !grid(&session, OWED).await.contains("re-measure"),
+        "a gloss on a FACT aspect and a declared check owe no re-run"
+    );
+
+    // A re-record that keeps the series — the same SQL, its axes named
+    // — owes nothing: the leg is the series, not the writing.
+    session
+        .execute(r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.venue AS venue, r.points AS value FROM results r", "axes": ["venue"]}$$;"#)
+        .await
+        .unwrap();
+    assert!(
+        !grid(&session, OWED).await.contains("re-measure"),
+        "a re-record that keeps the series owes no re-run"
+    );
+
+    // A re-record that changes the series does.
+    session
+        .execute(r#"GLOSS points ON fin AS $${"sql": "SELECT r.date, r.points AS value FROM results r"}$$;"#)
+        .await
+        .unwrap();
+    assert!(
+        grid(&session, OWED).await.contains("re-measure"),
+        "a re-record that changes the series owes the walk"
     );
 }
 
@@ -887,6 +1080,8 @@ async fn the_declared_grain_gates_the_frame_one_row_per_key() {
             r#"GLOSS unserved ON fin AS $${"sql": "SELECT date, value FROM events", "grain": ["account"]}$$;"#,
             r#"DECLARE ASPECT undeclared WITH $${"title": "Undeclared"}$$ AS QUERY ON DATASET;"#,
             r#"GLOSS undeclared ON fin AS $${"sql": "SELECT date, value FROM events"}$$;"#,
+            r#"DECLARE ASPECT joined WITH $${"title": "Joined"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS joined ON fin AS $${"sql": "WITH dates AS (SELECT DISTINCT date AS as_of FROM events), snap AS (SELECT d.as_of, i.account, i.value FROM dates d JOIN events i ON i.date <= d.as_of) SELECT as_of AS date, account, sum(value) AS value FROM snap GROUP BY as_of, account", "behavior": "stock", "grain": ["date", "account"]}$$;"#,
             "SELECT judge_time() FROM events.date;",
         ],
     )
@@ -909,6 +1104,27 @@ async fn the_declared_grain_gates_the_frame_one_row_per_key() {
     )
     .await;
     assert!(total.contains("2024-01-01T00:00:00 | 300.0"), "{total}");
+
+    // Declared and held over a join whose one side is DISTINCT on the
+    // date: four keys over four rows. The engine reads two when the
+    // frame is grouped again under a count — the check is one
+    // aggregate over the frame.
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT applicable FROM metric_axes() WHERE metric = 'joined';"
+        )
+        .await,
+        "true"
+    );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(grain, ',') FROM metric_axes() WHERE metric = 'joined';"
+        )
+        .await,
+        "date,account"
+    );
 
     // Declared and broken: the metric abstains, the reason naming the
     // columns and the counts.
@@ -2399,4 +2615,106 @@ async fn a_frame_over_a_workspace_relation_rebuilds_with_the_version() {
         2,
         "a version-bound entry misses after any write"
     );
+}
+
+/// A dimension wider than the member cap is bucketed, never refused:
+/// the top members by weight are named, the rest fold into `other`,
+/// and the fact row names the bucketed axis. When the window holds no
+/// member at all — the column is NULL on every row inside it — the
+/// series serves no member cell, and the grounding still stands.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wide_dimension_is_bucketed_never_refused() {
+    let (mut dates, mut values, mut regions) = (Vec::new(), Vec::new(), Vec::new());
+    for m in 0..3 {
+        for r in 0..30 {
+            dates.push(19723 + 31 * m);
+            values.push(1.0 + r as f64);
+            regions.push(Some(format!("r{r:02}")));
+        }
+    }
+    let events = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, true),
+        ],
+        dates.clone(),
+        vec![
+            Arc::new(Float64Array::from(values.clone())),
+            Arc::new(StringArray::from(regions.clone())),
+        ],
+    );
+    // The same rows, then two years of rows with no region: the
+    // window measured from the data's edge holds only those.
+    for m in 0..24 {
+        dates.push(19723 + 31 * (36 + m));
+        values.push(1.0);
+        regions.push(None);
+    }
+    let tail = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("region", DataType::Utf8, true),
+        ],
+        dates,
+        vec![
+            Arc::new(Float64Array::from(values)),
+            Arc::new(StringArray::from(regions)),
+        ],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("events", events), ("late", tail)],
+        &[
+            r#"DECLARE ASPECT wide WITH $${"title": "Wide"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS wide ON fin AS $${"sql": "SELECT date, value, region FROM events"}$$;"#,
+            r#"GLOSS dimension ON events.region AS $${"value": "supporting"}$$;"#,
+            r#"DECLARE ASPECT emptied WITH $${"title": "Emptied"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS emptied ON fin AS $${"sql": "SELECT date, value, region FROM late"}$$;"#,
+            r#"GLOSS dimension ON late.region AS $${"value": "supporting"}$$;"#,
+            "SELECT judge_time() FROM events.date;",
+            "SELECT judge_time() FROM late.date;",
+        ],
+    )
+    .await;
+    let row = grid(
+        &session,
+        "SELECT applicable, dims, bucketed, reason FROM metric_axes() WHERE metric = 'wide'",
+    )
+    .await;
+    assert!(row.contains("true"), "{row}");
+    assert!(row.contains("[region]"), "{row}");
+    let members = grid(
+        &session,
+        "SELECT member, sum(value) AS value FROM metric_series() \
+         WHERE metric = 'wide' AND dimension = 'region' GROUP BY member ORDER BY member",
+    )
+    .await;
+    assert!(members.contains("other"), "{members}");
+    assert!(
+        !members.contains("r00"),
+        "the lightest member folds into other: {members}"
+    );
+    assert!(members.contains("r29"), "{members}");
+    // The window holds no member: applicable, the axis stands, and
+    // the member series is empty rather than refused.
+    let row = grid(
+        &session,
+        "SELECT applicable, dims, bucketed, reason FROM metric_axes() WHERE metric = 'emptied'",
+    )
+    .await;
+    assert!(row.contains("true"), "{row}");
+    assert!(row.contains("[region]"), "{row}");
+    let cells = number(
+        &session,
+        "SELECT count(*) FROM metric_series() WHERE metric = 'emptied' AND dimension = 'region'",
+    )
+    .await;
+    assert_eq!(cells, 0.0);
+    let total = number(
+        &session,
+        "SELECT count(*) FROM metric_series() WHERE metric = 'emptied' AND dimension = ''",
+    )
+    .await;
+    assert!(total > 0.0, "{total}");
 }

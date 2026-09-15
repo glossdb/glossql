@@ -98,8 +98,13 @@ Columns: `kind`, `subject`, `what`, `why`, `since`. Six kinds:
 the approval) · `formula` (a human formula answer newer than the
 metric's recorded materialization) · `contest` (a slot withheld at
 read — voices differ or a detector crossed) · `re-measure` (a function
-voice standing from before the last change — served and marked until
-the function runs again; one row per function) · `never measured` (a
+voice standing from before the last change it read — served and marked
+until the function runs again; one row per function. A measurement
+names what it read: the bands walk and the collision and source
+walkers read the groundings as one leg — of each serving grounding
+the SQL, a stop, the grain and the verb marker — so a definitions
+entry, an app page, a declared check or a re-record that names its
+axes owes them nothing, and a re-record that changes the series does) · `never measured` (a
 measurement the cube's fact rows read over a served column and no
 function has landed — `metric_axes().wanted` — or a witnessed
 measurement at dataset grain with no voice while a grounding stands,
@@ -198,7 +203,14 @@ breaks it, and the empty list is an undeclared shape, taken as
 served), `resolution`, `window`, `dims`, `basis`
 and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
-or `human` / `agent` where a `dimension` gloss did), `bucketed` (the
+or `human` / `agent` where a `dimension` gloss or the grounding's
+`axes` did), `axes_basis` (`authored` when the grounding lists its
+axes, `measured` when the verdicts and the column glosses decide,
+`measured over authored` when the grounding's empty list did not hold
+— it closes a distinct count, written as `count(DISTINCT …)` or as
+one row per distinct key with a constant value, or a ratio, and on any
+other shape the verdicts decide),
+`bucketed` (the
 dimensions wider than 24 members, served as their top 23 by weight
 plus `'other'`), `unadmitted` and `unadmitted_why` (every served
 column that is neither the value, a ratio's half nor time-typed and
@@ -207,7 +219,14 @@ back in: no verdict on its subject — run `dimension_relevance()` over
 it or gloss `dimension`; a verdict that abstained with no declared
 relationship reaching a judged key; a `dimension` gloss of `none`; an
 expression no verdict can reach; one member across the frame; a rank
-below the cap of four), `wanted` and `wanted_over` (the measurements
+below the cap of four), `unadmitted_act` (the act behind each, at the
+same index, as a tag: `verdict` — no verdict yet; `abstained`; `none`
+— closed by a gloss; `closed` — by the grounding's `axes`, `closed
+over verdict` or `closed over gloss` where a verdict or a gloss admits
+the column the author closed; `unserved`
+— listed in `axes` and not a column the cube can slice on;
+`expression`, `single`, `cap` — terminal),
+`wanted` and `wanted_over` (the measurements
 the row reads and no function has landed — the function to run, and
 at the same index the column subject to run it over: the function
 returning `temporal_profile` over each source column of a served date
@@ -219,7 +238,11 @@ measured disagreement between the metric's total and the rival's over
 their shared periods — with an authored `tolerance` on the disclosing
 assumption the count of breaching periods, otherwise the maximum
 relative gap and its period; null when no rival is served),
-`alternative_error`.
+`alternative_error`, `superseded_divergence` (at a grounding write
+only, in the row the write answers with: the gap between the serving
+frame's totals and the newest other writing on the slot over their
+shared periods, and the periods one serves and the other does not —
+what the re-record changed; null on a read and on a first grounding).
 Record-class: it says what the judged verdicts admitted.
 
 The same row is what a grounding's write answers with: `GLOSS` on a
@@ -270,14 +293,19 @@ its list read the fact's number from here. Requires a bound dataset.
 
 What feeds each grounding: one row per served field and the dataset
 table column it descends from — `metric`, `field`, `source`
-(`table.column`). A union descends from every arm's column, one row
-each. A computed field (an aggregate, an expression) descends from no
-column and has no row. A grounding its author stopped, or one the
-engine cannot plan, serves one row with `reason` and no field. The
-walk is the cube's own — the same provenance `metric_axes()` admits
-axes from — served as rows so a page can draw what a metric reads
-without building the cube; the docket's lineage tab draws it beside
-the declared relationships. Requires a bound dataset.
+(`table.column`) and its `table_name`. A union descends from every
+arm's column, one row each. A computed field (an aggregate, an
+expression) descends from no column and has no row. Beside those, one
+row per table the grounding scans, `table_name` alone and no field:
+the tables a metric reads, whether or not a served field traces to a
+column — a fact's whole frame is computed and still reads its tables.
+A grounding its author stopped, or one the engine cannot plan, serves
+one row with `reason` and no field. The walk is the cube's own — the
+same provenance `metric_axes()` admits axes from — served as rows so
+a page can draw what a metric reads without building the cube; the
+docket's lineage tab draws it beside the declared relationships, and
+the metrics done row counts the tables no grounding scans. Requires a
+bound dataset.
 
 ### band_points()
 
@@ -319,3 +347,30 @@ same pages are the door's MCP resources under the same URIs; `pages()`
 is the read for a client that has the statement tool and nothing
 else. `SELECT uri, title FROM pages()` lists them, `WHERE uri = '…'`
 reads one. Needs no `USE`.
+
+### next
+
+Where the record stands toward each goal on the bound dataset, and
+the one act that moves it. One row per goal — `structure`,
+`metrics`, `slices`, `bands`, `checks`, `app`, `rulings` — or the one
+named by `WHERE surface = '…'`: `goal` (the goal's place in that
+order, to `ORDER BY`), `surface`, `step`, `state` (`next`,
+`blocked`, `done`), `act` (the statement kind, function or read),
+`say` (the act in a clause), `why` (what on the record decided),
+`statement` (the act as a statement, filled from the record — the
+dataset, the metric, the table its value comes from, the standing
+body, the unserved columns a verdict or a `dimension` gloss admits,
+the metric and period a red band names; `<…>` marks what only the
+author can fill, and a step the record cannot fill hands none) and
+`then` (what follows it). A goal's route is its steps in order, one
+query arm each in the shipped read: an arm serves a row when its
+condition holds on the record, one row per thing the step may act
+on, and the lowest step that serves decides the goal. A route is the
+goal's preconditions and nothing more. A statement is a proposal:
+edit it, send it, or do not. A done row's why names what the record
+left unused where that is a fact the record can state: the metrics
+row lists the tables no grounding reads and the judged columns none
+serves. Needs a `USE`.
+The MCP door serves the same rows as the resource template
+`next://<dataset>/<surface>`, and carries a one-line `next:` on every
+tool result.
