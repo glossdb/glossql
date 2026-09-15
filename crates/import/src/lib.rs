@@ -822,13 +822,10 @@ impl TableFunctionImpl for ReadFiles {
             SourceKind::Json => Arc::new(JsonFormat::default()),
             SourceKind::RelationalDb => unreachable!("never registered"),
         };
-        // The session's own listing options, not the constructor's
-        // defaults. `ListingOptions::new` starts at `target_partitions: 1`
-        // and `collect_stat: false`, so a recipe scan built from it read
-        // every file on one thread and carried no statistics — silently
-        // overriding the session that is about to run it.
-        let mut options =
-            ListingOptions::new(format).with_session_config_options(args.session().config());
+        // The table reads `target_partitions` and `collect_statistics`
+        // from the session that scans it, at scan time — the options hold
+        // neither.
+        let mut options = ListingOptions::new(format);
         if rel.contains(['*', '?', '[']) {
             // the glob names the files; the extension filter would fight it
             options = options.with_file_extension("");

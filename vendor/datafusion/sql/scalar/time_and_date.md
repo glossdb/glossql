@@ -60,8 +60,6 @@ The `current_date()` return value is determined at query time and will return th
 
 ```sql
 current_date()
-    (optional) SET datafusion.execution.time_zone = '+00:00';
-    SELECT current_date();
 ```
 
 #### Example
@@ -98,8 +96,6 @@ The session time zone can be set using the statement 'SET datafusion.execution.t
 
 ```sql
 current_time()
-    (optional) SET datafusion.execution.time_zone = '+00:00';
-    SELECT current_time();
 ```
 
 #### Example
@@ -133,14 +129,14 @@ Calculates time intervals and returns the start of the interval nearest to the s
 For example, if you "bin" or "window" data into 15 minute intervals, an input timestamp of `2023-01-01T18:18:18Z` will be updated to the start time of the 15 minute bin it is in: `2023-01-01T18:15:00Z`.
 
 ```sql
-date_bin(interval, expression, origin-timestamp)
+date_bin(interval, expression[, origin_timestamp])
 ```
 
 #### Arguments
 
 - **interval**: Bin interval.
 - **expression**: Time expression to operate on. Can be a constant, column, or function.
-- **origin-timestamp**: Optional. Starting point used to determine bin boundaries. If not specified defaults 1970-01-01T00:00:00Z (the UNIX epoch in UTC). The following intervals are supported:
+- **origin_timestamp**: Optional. Starting point used to determine bin boundaries. If not specified defaults 1970-01-01T00:00:00Z (the UNIX epoch in UTC). The following intervals are supported:
 
   - nanoseconds
   - microseconds
@@ -453,7 +449,6 @@ to_char(expression, format)
 
 - **expression**: Expression to operate on. Can be a constant, column, or function that results in a date, time, timestamp or duration.
 - **format**: A [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) string to use to convert the expression.
-- **day**: Day to use when making the date. Can be a constant, column or function, and any combination of arithmetic operators.
 
 #### Example
 
@@ -483,7 +478,7 @@ Returns the corresponding date.
 Note: `to_date` returns Date32, which represents its values as the number of days since unix epoch(`1970-01-01`) stored as signed 32 bit value. The largest supported date value is `9999-12-31`.
 
 ```sql
-to_date('2017-05-31', '%Y-%m-%d')
+to_date(expression[, format1, ..., format_n])
 ```
 
 #### Arguments
@@ -491,7 +486,7 @@ to_date('2017-05-31', '%Y-%m-%d')
 - **expression**: String expression to operate on. Can be a constant, column, or function, and any combination of operators.
 - **format_n**: Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression. Formats will be tried in the order
   they appear with the first successful one being returned. If none of the formats successfully parse the expression
-  an error will be returned.
+  an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
 
 #### Example
 
@@ -584,7 +579,7 @@ Returns the corresponding time.
 Note: `to_time` returns Time64(Nanosecond), which represents the time of day in nanoseconds since midnight.
 
 ```sql
-to_time('12:30:45', '%H:%M:%S')
+to_time(expression[, format1, ..., format_n])
 ```
 
 #### Arguments
@@ -646,7 +641,8 @@ to_timestamp(expression[, ..., format_n])
 - **format_n**:
   Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression.
   Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully
-  parse the expression an error will be returned. Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
+  parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
+  Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
   only supported at the end of the string preceded by a space.
 
 #### Example
@@ -690,7 +686,8 @@ to_timestamp_micros(expression[, ..., format_n])
 - **format_n**:
   Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression.
   Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully
-  parse the expression an error will be returned. Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
+  parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
+  Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
   only supported at the end of the string preceded by a space.
 
 #### Example
@@ -734,7 +731,8 @@ to_timestamp_millis(expression[, ..., format_n])
 - **format_n**:
   Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression.
   Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully
-  parse the expression an error will be returned. Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
+  parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
+  Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
   only supported at the end of the string preceded by a space.
 
 #### Example
@@ -777,7 +775,8 @@ to_timestamp_nanos(expression[, ..., format_n])
 - **format_n**:
   Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression.
   Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully
-  parse the expression an error will be returned. Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
+  parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
+  Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
   only supported at the end of the string preceded by a space.
 
 #### Example
@@ -821,7 +820,8 @@ to_timestamp_seconds(expression[, ..., format_n])
 - **format_n**:
   Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression.
   Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully
-  parse the expression an error will be returned. Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
+  parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
+  Note: parsing of named timezones (e.g. 'America/New_York') using %Z is
   only supported at the end of the string preceded by a space.
 
 #### Example
@@ -858,7 +858,7 @@ to_unixtime(expression[, ..., format_n])
 #### Arguments
 
 - **expression**: Expression to operate on. Can be a constant, column, or function, and any combination of arithmetic operators.
-- **format_n**: Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression. Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully parse the expression an error will be returned.
+- **format_n**: Optional [Chrono format](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) strings to use to parse the expression. Formats will be tried in the order they appear with the first successful one being returned. If none of the formats successfully parse the expression an error will be returned. NULL formats are skipped. If every format is NULL the result is NULL.
 
 #### Example
 

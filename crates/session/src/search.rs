@@ -14,6 +14,7 @@ use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use datafusion::common::DataFusionError;
+use datafusion::common::config::ConfigNonZeroUsize;
 use datafusion::datasource::provider_as_source;
 use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
 use datafusion::functions::expr_fn::{abs, greatest};
@@ -1285,7 +1286,8 @@ fn detector_state(ctx: &SessionContext) -> SessionState {
     config.options_mut().execution.target_partitions = 4;
     // The first reservation of a final aggregate is one input batch of
     // state; on a wide unnest that is rows × columns.
-    config.options_mut().execution.batch_size = 1024;
+    config.options_mut().execution.batch_size =
+        ConfigNonZeroUsize::try_new(1024).expect("a literal above zero");
     SessionStateBuilder::new_from_existing(state)
         .with_config(config)
         .build()

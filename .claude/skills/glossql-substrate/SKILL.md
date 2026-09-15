@@ -172,16 +172,16 @@ the width, and a table of a hundred small-integer columns put 35 million
 of them in a `Vec` before the first exact prune — so enumerate under the
 bound the shape scan already gives, never enumerate and then prune.
 
-**What spills in DataFusion 54.1, and what does not.** Spilling is
+**What spills in DataFusion 55.1, and what does not.** Spilling is
 per-operator, not a mode — each operator that has a spill path asks the
-disk manager itself (`aggregates/row_hash.rs`, the `OutOfMemoryMode`
-match on `disk_manager.tmp_files_enabled()`).
+disk manager itself (`aggregates/grouped_hash_stream.rs`, the
+`OutOfMemoryMode` match on `disk_manager.tmp_files_enabled()`).
 
 | operator | on pool pressure |
 |---|---|
 | `SortExec`, `SortMergeJoinExec` | spill |
 | grouped aggregate, Final mode | spills |
-| grouped aggregate, Partial mode | cannot spill; emits its groups early. Separately, its probe stops aggregating when the first 100k rows of a partition reduce by under 20% (`row_hash.rs`, `SkipAggregationProbe`) — a wide group space triggers it, not memory |
+| grouped aggregate, Partial mode | cannot spill; emits its groups early. Separately, its probe stops aggregating when the first 100k rows of a partition reduce by under 20% (`aggregates/skip_partial.rs`, `SkipAggregationProbe`) — a wide group space triggers it, not memory |
 | `SortMergeJoinExec` keys | no comparator arm for a zoned timestamp or a time of day (`joins/utils.rs`, `compare_join_arrays`) — refuses at execution; join those as the integer they are stored as |
 | `HashJoinExec` build side | **refuses** — no spill path exists, only a `try_grow` that errors |
 
@@ -196,7 +196,7 @@ repartitions each arm and runs a partial aggregate per partition — which
 is why an unpivot uses one arm per table, not one per column. Partitions
 multiply it again, and both sides of a self-join plan the union again.
 A final-mode grouped aggregate reserves headroom the size of its state
-before it can spill at all (`row_hash.rs`, `update_memory_reservation`),
+before it can spill at all (`grouped_hash_stream.rs`, `update_memory_reservation`),
 and its first state is one unnested input batch — rows times the arm's
 column count — so a wide table's first reservation must fit the share.
 The detector's state runs `target_partitions = 4` with
@@ -279,7 +279,7 @@ exceeds the scoping leg's — decided by count, never by a threshold.
 
 **BINDER-style hash-range partitioning is the spilling aggregate.**
 Partition the value space by hash, process partition by partition, merge
-— that is `row_hash.rs`'s `SpillState` and the `DiskManager`. Do not
+— that is `grouped_hash_stream.rs`'s `SpillState` and the `DiskManager`. Do not
 build it.
 
 **Dynamic filters do not reach our data** (issue #46). `HashJoinExec`

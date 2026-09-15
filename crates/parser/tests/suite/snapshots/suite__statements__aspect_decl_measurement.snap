@@ -13,11 +13,11 @@ expression: "GlossqlParser ::\nparse_sql(r#\"DECLARE ASPECT min_max WITH $${\"ty
                 },
                 schema: JsonBody {
                     value: Object {
-                        "properties": Object {
-                            "max": Object {},
-                            "min": Object {},
-                        },
                         "type": String("object"),
+                        "properties": Object {
+                            "min": Object {},
+                            "max": Object {},
+                        },
                     },
                     raw: "{\"type\": \"object\", \"properties\": {\"min\": {}, \"max\": {}}}",
                 },
