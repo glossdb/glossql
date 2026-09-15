@@ -78,7 +78,7 @@ before you write it: the workspace accepts all four under the same
   with `"x-kind": "fact"` in the aspect's blob — the declaration is
   what makes it a fact. `read.<name>()` serves it, `fact_values()`
   serves every declared fact's number, and the docket lists it under
-  current facts: one number, as of the newest landing of the tables it
+  facts: one number, as of the newest landing of the tables it
   reads. The cube abstains on it, and that is the right answer. A fact
   given a date becomes a one-point series — a chart of nothing.
 - **A derived relation** — governed SQL other groundings build on: a

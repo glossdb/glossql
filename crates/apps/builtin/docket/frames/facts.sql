@@ -1,4 +1,4 @@
--- The current facts: every QUERY aspect declared `x-kind: fact` —
+-- The facts: every QUERY aspect declared `x-kind: fact` —
 -- `metric_surfaces`, the record — with the one number its grounding
 -- serves (`fact_values()`) and an as-of: the newest landing of the
 -- tables the grounding scans, from `metric_sources()` and `imports`.

@@ -45,7 +45,7 @@
   <gl-rows frame="frames/fact" empty="">
     <template>
       <section class="tile kpi">
-        <header><span class="eyebrow">Current fact · {{ metric }}</span>
+        <header><span class="eyebrow">Fact · {{ metric }}</span>
           <code class="chip" title="The grounding served whole: one row, one value, no date of its own. The as-of is the newest landing of the tables the grounding reads. No historical series is defined and none is owed; a level with an as-of definition is a stock metric instead, and charts.">fact_values()</code></header>
         <span class="kpi-num">{value}</span><span class="r-meta"> {unit}</span>
         <p class="hint">{meaning}</p>
@@ -199,7 +199,7 @@
   </section>
 
   <section class="tile">
-    <header><span class="eyebrow">Current facts</span>
+    <header><span class="eyebrow">Facts</span>
       <code class="chip" title="Every declared fact — a QUERY aspect with x-kind fact — with the one number its grounding serves and the newest landing of the tables it reads. No period and no move: a fact has no as-of definition of its own, so the data's date is the one that stands.">metric_surfaces · fact_values()</code></header>
     <gl-rows frame="frames/facts" empty="no current fact is declared — a value with no as-of definition is glossed with x-kind fact, and the cube leaves it whole">
       <template>
