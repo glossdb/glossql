@@ -22,7 +22,7 @@ next: structure: done · metrics → ground churn (next://ops/metrics) · slices
 
 A goal that is neither done nor blocked is yours to move. Read its
 link — `next://<dataset>/<goal>` as a resource, or `SELECT * FROM
-next(surface => '<goal>')` through the tool — and send the statement
+next WHERE surface = '<goal>'` through the tool — and send the statement
 it hands you, edited to your judgment. A metric list is one goal of
 seven, not the deliverable: the metrics the human names are the ones
 to ground first, and the other six goals stand whether or not anyone

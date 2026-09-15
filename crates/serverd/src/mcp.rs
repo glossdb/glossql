@@ -25,7 +25,7 @@ use glossql_session::Caller;
 
 use glossql_session::{Plane, Session, SessionError};
 
-use crate::window::{self, Act};
+use crate::window;
 use crate::wire;
 
 const INSTRUCTIONS: &str = "glossql workspace server — one SQL-shaped surface over a \
@@ -917,7 +917,7 @@ impl ServerHandler for GlossqlMcp {
                          metrics, slices, bands, checks, app, rulings — and the one act that \
                          moves it, as a statement to send. `next://{dataset}` serves every \
                          goal; the same rows through the tool are \
-                         `SELECT * FROM next(surface => '<surface>')`.",
+                         `SELECT * FROM next WHERE surface = '<surface>'`.",
                     )
                     .with_mime_type("text/markdown"),
             ],
@@ -1051,23 +1051,7 @@ impl ServerHandler for GlossqlMcp {
         // derives open items; the capability must come from the
         // request's own stamp, since the transport's peer_info is
         // synthetic when every request stands alone.
-        // Parsed once, here: the call's shape, the read or the sequence
-        // it runs as, and where it left the agent all come from these
-        // statements. The parser's refusal is the result, and it
-        // localizes nowhere — nothing ran.
-        let parsed = match glossql_parser::GlossqlParser::parse_sql(statements) {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                let e = SessionError::from(e).to_string();
-                tracing::warn!(subject = %id, error = %e, "refused");
-                return Ok(CallToolResult::error(vec![
-                    ContentBlock::text(e.clone()),
-                    ContentBlock::text(window::situation("", Some(&e), None)),
-                ])
-                .into());
-            }
-        };
-        let shape = glossql_session::call_shape(&parsed);
+        let shape = glossql_session::call_shape(statements);
         let mut probed = None;
         if let Some(responses) = &request.input_responses {
             let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
@@ -1138,53 +1122,34 @@ impl ServerHandler for GlossqlMcp {
         // What a refused sequence had already landed rides beside the
         // refusal, in the usual shape — the writes stood.
         let mut landed_json: Option<serde_json::Value> = None;
-        // How many statements ran — the window localizes to the last
-        // of them, landed or refused.
-        let mut ran: Option<usize> = None;
-        let rendered = match glossql_session::single_read(&parsed) {
-            Some(statement) => {
-                ran = Some(1);
-                match session
-                    .query_stream_parsed(statement.clone(), statements)
+        let rendered = match session.query_stream(statements).await {
+            Ok(query) => {
+                let cap = if query.metadata_only {
+                    usize::MAX
+                } else {
+                    self.doors.row_cap
+                };
+                wire::stream_json(query.stream, cap)
                     .await
-                {
-                    Ok(query) => {
-                        let cap = if query.metadata_only {
-                            usize::MAX
-                        } else {
-                            self.doors.row_cap
-                        };
-                        wire::stream_json(query.stream, cap)
-                            .await
-                            .map(|rows| serde_json::Value::Array(vec![rows]))
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
+                    .map(|rows| serde_json::Value::Array(vec![rows]))
             }
             // Statement sequences run at the plane: `USE` moves the
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
-            None => {
-                match self
-                    .plane
-                    .execute_parsed(actor.clone(), None, statements, parsed.clone())
-                    .await
-                {
-                    Ok(outcomes) => {
-                        ran = Some(outcomes.len());
-                        wire::outcomes_json(&outcomes, self.doors.row_cap)
-                    }
+            Err(SessionError::NotOneRead) => {
+                match self.plane.execute(actor.clone(), None, statements).await {
+                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
                     Err(e) => {
-                        if let SessionError::Sequence { index, landed, .. } = &e {
-                            ran = Some(*index);
-                            if !landed.is_empty() {
-                                landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
-                            }
+                        if let SessionError::Sequence { landed, .. } = &e
+                            && !landed.is_empty()
+                        {
+                            landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
                         }
                         Err(e.to_string())
                     }
                 }
             }
+            Err(e) => Err(e.to_string()),
         };
         // The brief travels on the call that moved it: initialize
         // instructions are fetched once per connection, so a
@@ -1210,16 +1175,16 @@ impl ServerHandler for GlossqlMcp {
         // Where the call left the agent and one act per goal from there,
         // on every call (`window`). It rides the result, never the
         // instructions, so the stable prefix holds.
-        let window = self.situation_block(actor, &parsed, ran, &rendered).await;
+        let window = self
+            .situation_block(&actor, shape.dataset.as_deref(), &rendered)
+            .await;
         Ok(match rendered {
             Ok(body) => {
                 let mut blocks = vec![ContentBlock::text(body.to_string())];
                 if let Some(note) = probed {
                     blocks.push(ContentBlock::text(note));
                 }
-                if let Some(window) = window {
-                    blocks.push(ContentBlock::text(window));
-                }
+                blocks.push(ContentBlock::text(window));
                 if let Some(brief) = brief_moved {
                     blocks.push(ContentBlock::text(brief));
                 }
@@ -1237,9 +1202,7 @@ impl ServerHandler for GlossqlMcp {
                         serde_json::json!({ "landed": landed }).to_string(),
                     ));
                 }
-                if let Some(window) = window {
-                    blocks.push(ContentBlock::text(window));
-                }
+                blocks.push(ContentBlock::text(window));
                 if let Some(brief) = brief_moved {
                     blocks.push(ContentBlock::text(brief));
                 }
@@ -1252,52 +1215,41 @@ impl ServerHandler for GlossqlMcp {
 
 impl GlossqlMcp {
     /// The two lines every result carries: where the call left the
-    /// agent, and one act per goal from there (`window`).
+    /// agent, and one act per goal from there (`window`) on the
+    /// dataset the call's last `USE` named.
     async fn situation_block(
         &self,
-        actor: Actor,
-        statements: &[glossql_parser::Statement],
-        ran: Option<usize>,
+        actor: &Actor,
+        dataset: Option<&str>,
         rendered: &Result<serde_json::Value, String>,
-    ) -> Option<String> {
-        let graph = glossql_session::next::graph();
-        let locus = window::locate(graph, statements, ran, rendered.is_err());
-        let node = match locus.act {
-            Act::Node(node) => node,
-            // A gloss on an aspect the graph does not name localizes
-            // by the aspect's kind, from the record — never the text.
-            Act::Gloss(aspect) => self
-                .aspect_kind(&aspect)
-                .await
-                .and_then(|kind| graph.node_named(&format!("GLOSS {kind}")))
-                .map(str::to_string)
-                .unwrap_or_else(|| "GLOSS".to_string()),
-        };
-        // The last statement's outcome, its last row — the act the
-        // situation names is the last one; a `USE` ahead of it is not.
-        // The wire renders an outcome as `{columns, rows, …}`
-        // (`wire::outcomes_json`), so the row sits under `rows`.
-        let last_outcome = rendered
+    ) -> String {
+        // The last statement's one row, where it served one — a
+        // grounding's fact row. The wire renders an outcome as
+        // `{columns, rows, …}` (`wire::outcomes_json`), so the row
+        // sits under `rows`.
+        let last_row = rendered
             .as_ref()
             .ok()
             .and_then(|v| v.as_array())
             .and_then(|a| a.last())
             .and_then(|o| o.get("rows"))
             .and_then(|r| r.as_array())
-            .and_then(|r| r.last())
+            .filter(|r| r.len() == 1)
+            .and_then(|r| r.first())
             .cloned();
         let refusal = rendered.as_ref().err().map(String::as_str);
-        let mut lines = vec![window::situation(&node, refusal, last_outcome.as_ref())];
-        if let Some(dataset) = &locus.dataset {
-            match self.next_rows(&actor, dataset, None).await {
-                Ok(rows) => lines.push(window::next_line(dataset, &rows)),
+        let mut lines = vec![window::situation(refusal, last_row.as_ref())];
+        if let Some(dataset) = dataset {
+            match self.next_rows(actor, dataset, None).await {
+                Ok(rows) if !rows.is_empty() => lines.push(window::next_line(dataset, &rows)),
+                Ok(_) => {}
                 Err(e) => tracing::debug!(error = %e, "next: not served"),
             }
         }
-        Some(lines.join("\n"))
+        lines.join("\n")
     }
 
-    /// `next()` on a channel bound to the dataset, as JSON rows.
+    /// The `next` read on a channel bound to the dataset, as JSON rows.
     async fn next_rows(
         &self,
         actor: &Actor,
@@ -1310,8 +1262,11 @@ impl GlossqlMcp {
             .await
             .map_err(|e| e.to_string())?;
         let sql = match surface {
-            Some(s) => format!("SELECT * FROM next(surface => '{}')", s.replace('\'', "''")),
-            None => "SELECT * FROM next()".to_string(),
+            Some(s) => format!(
+                "SELECT * FROM next WHERE surface = '{}'",
+                s.replace('\'', "''")
+            ),
+            None => "SELECT * FROM next ORDER BY goal".to_string(),
         };
         self.rows(&session, &sql).await
     }
@@ -1326,12 +1281,6 @@ impl GlossqlMcp {
             .and_then(|r| r.as_array())
             .cloned()
             .unwrap_or_default())
-    }
-
-    /// The kind of a declared aspect, from the record.
-    async fn aspect_kind(&self, aspect: &str) -> Option<String> {
-        let (_, kind, _) = self.plane.store().aspect(aspect).await.ok().flatten()?;
-        Some(kind)
     }
 
     /// `next://<dataset>[/<surface>]` as a page: every answer with its

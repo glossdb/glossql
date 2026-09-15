@@ -1,151 +1,22 @@
-//! Where a call left the agent, on its result: the act its last
-//! statement was (`situation:`), and one act per goal the record
+//! The two lines on every result: where the call left the agent, on
+//! its last outcome (`situation:`), and one act per goal the record
 //! affords from there (`next:`), each a link into `next://` and the
-//! `next()` read. The representation carries the links; the client
+//! `next` read. The representation carries the links; the client
 //! holds the goal. Nothing rides the instructions or the stable
 //! prefix, and nothing is an order: the skills say how, the record
 //! says what is admissible now.
-//!
-//! The localizer names the act from the statements the door parsed
-//! once and ran — a gloss by the aspect the graph names, otherwise by
-//! the aspect's kind from the record; SQL by the door or read it
-//! names, else `SQL`; a refused call by the statement that refused,
-//! and the dataset by the last `USE` that landed. A call the parser
-//! refused ran nothing and localizes nowhere. The graph's nodes are
-//! the vocabulary (`glossql_session::next`).
 
-use std::ops::ControlFlow;
-
-use datafusion::sql::parser::Statement as DFStatement;
-use datafusion::sql::sqlparser::ast::visit_relations;
-use glossql_parser::{AspectKind, Declaration, Statement};
-use glossql_session::next::Graph;
 use serde_json::Value;
 
-/// Where a call left the agent: the dataset its statements bound, and
-/// the act its last statement was.
-pub struct Locus {
-    pub dataset: Option<String>,
-    pub act: Act,
-}
-
-/// An act: a node, or a gloss whose node needs the aspect's kind from
-/// the record — the graph names some aspects (`GLOSS app`, `GLOSS
-/// formulas`) and the rest localize by kind (`GLOSS query`).
-pub enum Act {
-    Node(String),
-    Gloss(String),
-}
-
-/// The locus of a call: its statements as parsed, and how many of
-/// them ran — every one when the call landed, the refused one's place
-/// when it did not (`refused`).
-pub fn locate(graph: &Graph, statements: &[Statement], ran: Option<usize>, refused: bool) -> Locus {
-    let n = ran.unwrap_or(statements.len()).min(statements.len());
-    // A refused statement bound nothing: the dataset is the last USE
-    // that landed.
-    let landed = if refused { n.saturating_sub(1) } else { n };
-    let ran = &statements[..n];
-    let dataset = statements[..landed].iter().rev().find_map(|s| match s {
-        Statement::Use(u) => Some(u.dataset.value.clone()),
-        _ => None,
-    });
-    let act = ran
-        .iter()
-        .rev()
-        .find(|s| !matches!(s, Statement::Use(_)))
-        .map(|s| act_of(graph, s))
-        .or_else(|| ran.last().map(|_| Act::Node("USE".into())))
-        .unwrap_or(Act::Node("SQL".into()));
-    Locus { dataset, act }
-}
-
-/// The aspect kind as the graph spells it.
-pub fn kind_word(kind: &AspectKind) -> &'static str {
-    match kind {
-        AspectKind::Query => "query",
-        AspectKind::Fact => "fact",
-        AspectKind::Measurement => "measurement",
-    }
-}
-
-fn act_of(graph: &Graph, statement: &Statement) -> Act {
-    match statement {
-        Statement::Use(_) => Act::Node("USE".into()),
-        Statement::Probe(_) => Act::Node("PROBE".into()),
-        Statement::Declare(d) => Act::Node(match d.as_ref() {
-            Declaration::Aspect(a) => format!("DECLARE ASPECT {}", kind_word(&a.kind)),
-            Declaration::Source(_) => "DECLARE SOURCE".into(),
-            Declaration::Recipe(_) => "DECLARE RECIPE".into(),
-            Declaration::Dataset(_) => "DECLARE DATASET".into(),
-            Declaration::Relationship(_) => "DECLARE RELATIONSHIP".into(),
-            Declaration::Function(_) => "DECLARE FUNCTION".into(),
-            Declaration::Witness(_) => "DECLARE WITNESS".into(),
-        }),
-        Statement::Gloss(g) => gloss_act(graph, &g.aspect.value),
-        // An extraction localizes to the function it calls when the
-        // graph knows it, else to the statement kind.
-        Statement::Extract(e) => Act::Node(
-            e.calls
-                .iter()
-                .find_map(|c| graph.node_named(&c.value).map(str::to_string))
-                .unwrap_or_else(|| "EXTRACT".into()),
-        ),
-        Statement::Substrate(df) => Act::Node(substrate_node(graph, df)),
-    }
-}
-
-/// A gloss on an aspect the graph names is that node; any other waits
-/// for the aspect's kind from the record.
-fn gloss_act(graph: &Graph, aspect: &str) -> Act {
-    match graph.node_named(&format!("GLOSS {aspect}")) {
-        Some(node) => Act::Node(node.to_string()),
-        None => Act::Gloss(aspect.to_string()),
-    }
-}
-
-/// SQL localizes to the first relation it names that the graph knows —
-/// a door such as `metric_axes()`, a read such as `owed`, a family
-/// such as `read.<name>` — else to `SQL`.
-fn substrate_node(graph: &Graph, df: &DFStatement) -> String {
-    let DFStatement::Statement(inner) = df else {
-        return "SQL".into();
-    };
-    let mut found: Option<String> = None;
-    let _ = visit_relations(inner.as_ref(), |name| {
-        if found.is_none() {
-            let parts: Vec<&str> = name
-                .0
-                .iter()
-                .filter_map(|p| p.as_ident())
-                .map(|i| i.value.as_str())
-                .collect();
-            let candidate = match parts.as_slice() {
-                [one] => (*one).to_string(),
-                [family, _] => format!("{family}.<name>"),
-                _ => String::new(),
-            };
-            found = graph.node_named(&candidate).map(str::to_string);
-        }
-        ControlFlow::<()>::Continue(())
-    });
-    found.unwrap_or_else(|| "SQL".into())
-}
-
-/// The `situation:` line: the act, landed or refused — refused with
-/// no act when the call did not parse — and for a grounding what its
-/// fact row said.
-pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> String {
+/// The `situation:` line: refused, with the refusal's first line, or
+/// landed — and for a grounding what its fact row said.
+pub fn situation(refusal: Option<&str>, outcome: Option<&Value>) -> String {
     if let Some(text) = refusal {
         let first = text.lines().next().unwrap_or(text);
-        return if node.is_empty() {
-            format!("situation: refused — {first}")
-        } else {
-            format!("situation: refused at {node} — {first}")
-        };
+        return format!("situation: refused — {first}");
     }
     let Some(fact) = outcome.filter(|o| o.get("metric").is_some()) else {
-        return format!("situation: {node} landed");
+        return "situation: landed".to_string();
     };
     let list = |field: &str| -> String {
         fact.get(field)
@@ -159,7 +30,7 @@ pub fn situation(node: &str, refusal: Option<&str>, outcome: Option<&Value>) -> 
             .unwrap_or_default()
     };
     let metric = fact.get("metric").and_then(Value::as_str).unwrap_or("");
-    let mut line = format!("situation: {node} landed — {metric}: ");
+    let mut line = format!("situation: landed — {metric}: ");
     if fact.get("applicable") == Some(&Value::Bool(true)) {
         // The grounding's word on its axes, where it spoke: what the
         // list closed and what a verdict or a gloss would have

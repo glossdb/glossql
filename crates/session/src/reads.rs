@@ -367,7 +367,6 @@ pub const DOORS: &[(&str, &str)] = &[
     ("hierarchy_candidates", "hierarchy_candidates('<table>')"),
     ("derivation_candidates", "derivation_candidates('<table>')"),
     ("source_files", "source_files('<source>')"),
-    ("next", "next([surface => '<surface>'])"),
     ("pages", "pages()"),
     ("current_dataset", "current_dataset"),
 ];
@@ -735,7 +734,6 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "metric_axes"
                 | "metric_sources"
                 | "behavior_anchors"
-                | "next"
         )
     })
 }
@@ -1026,14 +1024,6 @@ pub(crate) async fn compute_batch(
         ("metric_series", Some(a)) => {
             let grain = crate::cube::grain_arg(&a.args)?;
             Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
-        }
-        // Where the record stands toward each goal, and the act that
-        // moves it — the routes in `window.json` over the reads above.
-        ("next", Some(a)) => {
-            let surface = crate::next::surface_arg(&a.args)?;
-            Ok(Some(
-                (crate::next::rows(shared, surface.as_deref()).await?).into(),
-            ))
         }
         ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {

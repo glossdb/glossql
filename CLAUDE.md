@@ -10,11 +10,10 @@ follow the corpus-first process below.
   in §9 and close by transcription verdict, never by argument.
 - `grammar.ebnf` — the machine-readable grammar; the source of truth
   for syntax.
-- `window.json` — the routes `next()` answers from: per goal, the
-  steps keyed to the reads that decide, one act per goal as a
-  statement filled from the record (`crates/session/src/next.rs`;
-  the door's two lines, `crates/serverd/src/window.rs`), and the
-  vocabulary the localizer names an act by.
+- `crates/session/reads/next.sql` — the routes the `next` read
+  answers from: per goal, its steps as query arms over the record,
+  one act per goal as a statement filled from the record; the door's
+  two lines, `crates/serverd/src/window.rs`.
 - `crates/parser/tests/corpus/` — transcriptions of real artifacts,
   the parser's acceptance suite: ` ```glossql ` must parse,
   ` ```glossql-gap ` documents a gap and must fail.

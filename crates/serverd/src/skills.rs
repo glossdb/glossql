@@ -79,7 +79,7 @@ pub struct Doc {
     pub body: &'static str,
 }
 
-pub const DOCS: [Doc; 3] = [
+pub const DOCS: [Doc; 2] = [
     Doc {
         name: "SPEC.md",
         description: "The glossql language specification — the normative prose the \
@@ -92,14 +92,6 @@ pub const DOCS: [Doc; 3] = [
         description: "The machine-readable glossql grammar.",
         mime: "text/plain",
         body: include_str!("../../../grammar.ebnf"),
-    },
-    Doc {
-        name: "window.json",
-        description: "The procedural graph: the acts the record admits after each act, \
-                      keyed to the reads that decide, and the routes `next()` answers \
-                      from — one act per goal, as a statement.",
-        mime: "application/json",
-        body: glossql_session::next::GRAPH_JSON,
     },
 ];
 

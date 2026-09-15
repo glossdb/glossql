@@ -225,17 +225,17 @@ what a build serves is what its suite tested.
   `workspace_next`; one with a dataset opens with the brief, once,
   as a read and never a gate. That opening rides initialize only.
 - **Where the call left you, and what is next.** Every tool result
-  closes with two lines. `situation:` names the act the call's last
-  statement was, landed or refused, and for a grounding what its fact
+  closes with two lines. `situation:` says whether the call's last
+  statement landed or was refused, and for a grounding what its fact
   row said. `next:` names one act per goal the record affords from
   there — structure, metrics, slices, bands, checks, app, rulings —
   with a link beside it; a blocked goal says what blocks it, a done
   goal says so. The link, `next://<dataset>/<goal>`, is a resource
-  template; `SELECT * FROM next(surface => '<goal>')` serves the same
-  rows through the tool. Its answer carries the statement to send,
-  filled from the record. The goal is the caller's, never stored: what
-  the human asked for decides which link to follow. The routes are
-  data, `doc://window.json`, and none is an order.
+  template; `SELECT * FROM next WHERE surface = '<goal>'` serves the
+  same rows through the tool. Its answer carries the statement to
+  send, filled from the record. The goal is the caller's, never
+  stored: what the human asked for decides which link to follow. The
+  routes are one shipped read, `next`, and none is an order.
 - **The function listings.** `doc://functions/door.md`,
   `doc://functions/recipe.md` and `doc://functions/detector.md` list
   every function each execution context registers, read from that

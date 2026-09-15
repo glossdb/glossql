@@ -41,6 +41,7 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
         "metric_surfaces",
         include_str!("../reads/metric_surfaces.sql"),
     ),
+    ("next", include_str!("../reads/next.sql")),
 ];
 
 /// The SQL behind a shipped read, or `None` for a name we do not ship —
@@ -61,11 +62,6 @@ pub(crate) fn read_sql(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, sql)| *sql)
-}
-
-/// The name of every shipped read, for a listing or a vocabulary.
-pub fn library_reads() -> Vec<&'static str> {
-    LIBRARY.iter().map(|(name, _)| *name).collect()
 }
 
 #[cfg(test)]

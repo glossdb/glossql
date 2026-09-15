@@ -343,32 +343,26 @@ is the read for a client that has the statement tool and nothing
 else. `SELECT uri, title FROM pages()` lists them, `WHERE uri = '…'`
 reads one. Needs no `USE`.
 
-### next() · next(surface => '…')
+### next
 
 Where the record stands toward each goal on the bound dataset, and
-the one act that moves it. One row per surface — `structure`,
+the one act that moves it. One row per goal — `structure`,
 `metrics`, `slices`, `bands`, `checks`, `app`, `rulings` — or the one
-named: `surface`, `state` (`next`, `blocked`, `done`), `act` (the
-statement kind, function or read), `say` (the act in a clause), `why`
-(the condition on the record that decided), `statement` (the act as a
-statement, filled from the record — the dataset, the metric, the table
-its value comes from, the standing body, the unserved columns a
-verdict or a `dimension` gloss admits, the metric and period a red
-band names; `<…>` marks what only the author can fill, and a step
-the record cannot fill hands none) and `then` (what follows it). A
-step's condition is a query over the record: the step holds when the
-query serves a row, and the rows it serves are the rows the step
-decides on, their columns the `{row.<column>}` slots of its text. A
-condition may name a slot as `$<slot>` — the red metric, its period —
-bound as text before it plans, and a step that needs a slot holds on
-the first row the door can fill it for. The slots are SQL in the same
-file, one read each with `$metric` bound from the step's row and the
-dataset `current_dataset`'s, a JSON object handed pretty-printed; the
-door renders two itself: the dataset, and the standing body with the
-band's question appended. A route is the goal's preconditions in
-order, in `doc://window.json`; the first whose condition holds
-decides. A statement is a proposal: edit it, send it, or do not. Needs
-a `USE`.
+named by `WHERE surface = '…'`: `goal` (the goal's place in that
+order, to `ORDER BY`), `surface`, `step`, `state` (`next`,
+`blocked`, `done`), `act` (the statement kind, function or read),
+`say` (the act in a clause), `why` (what on the record decided),
+`statement` (the act as a statement, filled from the record — the
+dataset, the metric, the table its value comes from, the standing
+body, the unserved columns a verdict or a `dimension` gloss admits,
+the metric and period a red band names; `<…>` marks what only the
+author can fill, and a step the record cannot fill hands none) and
+`then` (what follows it). A goal's route is its steps in order, one
+query arm each in the shipped read: an arm serves a row when its
+condition holds on the record, one row per thing the step may act
+on, and the lowest step that serves decides the goal. A route is the
+goal's preconditions and nothing more. A statement is a proposal:
+edit it, send it, or do not. Needs a `USE`.
 The MCP door serves the same rows as the resource template
 `next://<dataset>/<surface>`, and carries a one-line `next:` on every
 tool result.

@@ -1,9 +1,7 @@
-//! `next` and the two lines on every result. The graph's vocabulary is
-//! the server's own; every condition plans and serves the row fields
-//! its step's text names; every form names slots the door fills; the
-//! function listings are the registries; the routes answer from the
-//! record; and the door carries the `situation:` and `next:` lines,
-//! serves `next://` as a resource template.
+//! `next` and the two lines on every result: the function listings are
+//! the registries; the routes answer from the record, filtered by
+//! surface or whole; and the door carries the `situation:` and `next:`
+//! lines and serves `next://` as a resource template.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -15,17 +13,14 @@ use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch, StringArr
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_parser::GlossqlParser;
 use glossql_serverd::{Access, BOOTSTRAP, DoorConfig, Plane, bootstrap, functions, router, window};
-use glossql_session::next::{self, SLOTS, slots_in};
 use glossql_session::{DOORS, NoRuntime, Outcome, Session};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::common;
 
-/// A fresh workspace with the shipped system landed — the vocabulary
-/// the graph's `GLOSS <aspect>` and function nodes name.
+/// A fresh workspace with the shipped system landed.
 async fn scratch_plane() -> (tempfile::TempDir, Arc<Plane>) {
     let dir = tempfile::tempdir().unwrap();
     let lake = glossql_catalog::Lake::open(
@@ -87,263 +82,6 @@ async fn names(session: &Session, sql: &str, column: &str) -> BTreeSet<String> {
         .collect()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn every_node_names_a_real_thing() {
-    let (_dir, plane) = scratch_plane().await;
-    let session = plane.channel(human(), None).await.unwrap();
-    let aspects = names(&session, "SELECT name FROM aspects", "name").await;
-    let declared = names(&session, "SELECT name FROM functions", "name").await;
-    let registered: BTreeSet<String> = session
-        .registered_functions()
-        .into_iter()
-        .filter(|f| f.kind == "table")
-        .map(|f| f.name)
-        .collect();
-    let reads: BTreeSet<&str> = glossql_session::library_reads().into_iter().collect();
-    let kinds = [
-        "Start",
-        "End",
-        "USE",
-        "PROBE",
-        "EXTRACT",
-        "SQL",
-        "GLOSS",
-        "DECLARE ASPECT",
-        "DECLARE SOURCE",
-        "DECLARE RECIPE",
-        "DECLARE DATASET",
-        "DECLARE RELATIONSHIP",
-        "DECLARE FUNCTION",
-        "DECLARE WITNESS",
-    ];
-    let families = ["read.<name>", "misfit.<name>", "whatif.<name>"];
-    let graph = next::graph();
-    assert!(!graph.nodes.is_empty());
-    for node in &graph.nodes {
-        let n = node.as_str();
-        let ok = kinds.contains(&n)
-            || ["query", "fact", "measurement"]
-                .iter()
-                .any(|k| n == format!("DECLARE ASPECT {k}") || n == format!("GLOSS {k}"))
-            || n.strip_prefix("GLOSS ")
-                .is_some_and(|a| aspects.contains(a))
-            || declared.contains(n)
-            || registered.contains(n)
-            || DOORS.iter().any(|(d, _)| d.eq_ignore_ascii_case(n))
-            || reads.contains(n)
-            || glossql_glossary::relation_columns(n).is_some()
-            || families.contains(&n);
-        assert!(ok, "window.json names nothing the server has: `{node}`");
-    }
-    // every route's act is a node, every route ends in a step that
-    // always holds, and every form names slots the door fills
-    assert!(
-        graph.surfaces.len() >= 5,
-        "surfaces: {}",
-        graph.surfaces.len()
-    );
-    for s in &graph.surfaces {
-        let last = s.route.last().expect("a route has steps");
-        assert!(
-            last.when.is_none(),
-            "route {} ends on a conditioned step",
-            s.name
-        );
-        assert!(
-            last.done.is_some() || last.act.is_some(),
-            "route {} ends on nothing",
-            s.name
-        );
-        for step in &s.route {
-            if let Some(act) = &step.act {
-                assert!(
-                    graph.nodes.contains(act),
-                    "route {} names no node: {act}",
-                    s.name
-                );
-            }
-            for template in [
-                &step.say,
-                &step.why,
-                &step.form,
-                &step.then,
-                &step.blocked,
-                &step.done,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                for slot in slots_in(template) {
-                    let ok = slot == "dataset"
-                        || slot.starts_with("row.")
-                        || SLOTS.contains(&slot.as_str())
-                        || graph.slots.contains_key(&slot);
-                    assert!(
-                        ok,
-                        "route {} names a slot the door cannot fill: {{{slot}}}",
-                        s.name
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn every_condition_plans_and_serves_the_row_fields_its_step_names() {
-    let (_dir, plane) = scratch_plane().await;
-    plane
-        .execute(
-            human(),
-            None,
-            "DECLARE DATASET fin SET (purpose: 'next test')",
-        )
-        .await
-        .unwrap();
-    let session = plane.channel(human(), Some("fin")).await.unwrap();
-    use datafusion::common::{ParamValues, ScalarValue};
-    // every slot a condition may name, bound as the door binds it:
-    // text, and `$metric` from the row
-    let bound = || {
-        let mut map: std::collections::HashMap<String, ScalarValue> = next::graph()
-            .slots
-            .keys()
-            .map(|k| (k.clone(), ScalarValue::Utf8(Some("x".into()))))
-            .collect();
-        map.insert("metric".into(), ScalarValue::Utf8(Some("takings".into())));
-        ParamValues::from(map)
-    };
-    let mut checked = 0;
-    for s in &next::graph().surfaces {
-        for (i, step) in s.route.iter().enumerate() {
-            let place = format!("route {} step {i}", s.name);
-            for need in &step.needs {
-                assert!(
-                    next::graph().slots.contains_key(need),
-                    "{place}: needs a slot the file does not write: {need}"
-                );
-            }
-            let Some(sql) = &step.when else {
-                continue;
-            };
-            let wrapped = format!("SELECT * FROM ({sql}) AS condition LIMIT 0");
-            let query = session
-                .query_stream_with_params(&wrapped, Some(bound()))
-                .await
-                .unwrap_or_else(|e| panic!("{place}: the condition does not plan: {e}"));
-            let columns: BTreeSet<String> = query
-                .stream
-                .schema()
-                .fields()
-                .iter()
-                .map(|f| f.name().clone())
-                .collect();
-            for template in [
-                &step.say,
-                &step.why,
-                &step.form,
-                &step.then,
-                &step.blocked,
-                &step.done,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                for slot in slots_in(template) {
-                    if let Some(field) = slot.strip_prefix("row.") {
-                        let field = field.strip_suffix("[0]").unwrap_or(field);
-                        assert!(
-                            columns.contains(field),
-                            "{place}: the text names `{{row.{field}}}` and the condition \
-                             serves {columns:?}"
-                        );
-                    }
-                }
-            }
-            checked += 1;
-        }
-    }
-    assert!(checked >= 30, "conditions: {checked}");
-
-    // every slot written as SQL plans on the bound dataset, its
-    // `$metric` bound as the door binds it
-    for (name, sql) in &next::graph().slots {
-        let wrapped = format!("SELECT * FROM ({sql}) AS slot LIMIT 0");
-        if let Err(e) = session
-            .query_stream_with_params(&wrapped, Some(bound()))
-            .await
-        {
-            panic!("slot `{name}` does not plan: {e}");
-        }
-    }
-}
-
-#[test]
-fn the_localizer_names_the_last_act() {
-    let graph = next::graph();
-    let node = |statements: &str, ran: Option<usize>, refused: bool| {
-        let parsed = GlossqlParser::parse_sql(statements).unwrap();
-        match window::locate(graph, &parsed, ran, refused).act {
-            window::Act::Node(n) => n,
-            window::Act::Gloss(a) => format!("gloss:{a}"),
-        }
-    };
-    assert_eq!(
-        node(
-            "USE fin; SELECT * FROM metric_axes() WHERE applicable",
-            None,
-            false
-        ),
-        "metric_axes"
-    );
-    assert_eq!(
-        node("USE fin; SELECT temporal() FROM fin.orders", None, false),
-        "temporal"
-    );
-    assert_eq!(node("USE fin; SELECT * FROM owed", None, false), "owed");
-    assert_eq!(node("SELECT 1 AS one", None, false), "SQL");
-    assert_eq!(node("USE fin", None, false), "USE");
-    // the refused statement's place, not the sequence's end
-    assert_eq!(
-        node(
-            "SELECT * FROM owed; SELECT * FROM workspace_next",
-            Some(1),
-            false
-        ),
-        "owed"
-    );
-    // a gloss the graph names by aspect; another by its kind, later
-    assert_eq!(
-        node(
-            "USE fin; GLOSS formulas ON fin AS $${\"formulas\": {}}$$",
-            None,
-            false
-        ),
-        "GLOSS formulas"
-    );
-    assert_eq!(
-        node(
-            "USE fin; GLOSS churn ON fin AS $${\"sql\": \"SELECT 1\"}$$",
-            None,
-            false
-        ),
-        "gloss:churn"
-    );
-    // the parser refused the call: nothing ran, and the line says so
-    // with no act
-    assert!(GlossqlParser::parse_sql("SELEC * FROM owed").is_err());
-    assert_eq!(
-        window::situation("", Some("statement 1 of 1: no such verb\nmore"), None),
-        "situation: refused — statement 1 of 1: no such verb"
-    );
-    // a refused USE bound nothing: the act is the last that landed,
-    // the dataset the last USE that did
-    let parsed = GlossqlParser::parse_sql("USE fin; SELECT * FROM owed; USE nothing").unwrap();
-    let located = window::locate(graph, &parsed, Some(3), true);
-    assert!(matches!(&located.act, window::Act::Node(n) if n == "owed"));
-    assert_eq!(located.dataset.as_deref(), Some("fin"));
-}
-
 /// The rows of a page's table, as (function, kind).
 fn table_rows(body: &str) -> BTreeSet<(String, String)> {
     body.lines()
@@ -389,7 +127,7 @@ async fn the_function_listings_are_the_registries() {
         "{served:?}"
     );
     assert!(served.contains(&("temporal".into(), "extract".into())));
-    assert!(served.contains(&("next".into(), "door".into())));
+    assert!(served.contains(&("metric_axes".into(), "door".into())));
     let recipe = table_rows(&page("doc://functions/recipe.md").body);
     assert_eq!(
         recipe,
@@ -450,6 +188,24 @@ fn by_surface(answers: &[Value]) -> std::collections::BTreeMap<String, Value> {
         .collect()
 }
 
+/// One goal's row, by name.
+async fn goal(session: &Session, surface: &str) -> Value {
+    let sql = format!("SELECT * FROM next WHERE surface = '{surface}'");
+    let mut answers = rows(session, &sql).await;
+    assert_eq!(answers.len(), 1, "`{sql}`: {answers:?}");
+    answers.pop().unwrap()
+}
+
+const SURFACES: [&str; 7] = [
+    "structure",
+    "metrics",
+    "slices",
+    "bands",
+    "checks",
+    "app",
+    "rulings",
+];
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_routes_answer_from_the_record() {
     let (_dir, plane) = scratch_plane().await;
@@ -463,10 +219,15 @@ async fn the_routes_answer_from_the_record() {
         .unwrap();
     let session = plane.channel(human(), Some("fin")).await.unwrap();
 
-    // A fresh dataset: nothing landed, nothing grounded.
-    let fresh = by_surface(&rows(&session, "SELECT * FROM next()").await);
+    // A fresh dataset: nothing landed, nothing grounded. One row per
+    // goal, in the goals' order.
+    let all = rows(&session, "SELECT * FROM next ORDER BY goal").await;
+    let order: Vec<&str> = all.iter().map(|r| r["surface"].as_str().unwrap()).collect();
+    assert_eq!(order, SURFACES, "{all:?}");
+    let fresh = by_surface(&all);
     assert_eq!(fresh["structure"]["state"], "next", "{fresh:?}");
     assert_eq!(fresh["structure"]["act"], "DECLARE SOURCE");
+    assert_eq!(fresh["structure"]["step"], 1);
     assert_eq!(fresh["slices"]["state"], "blocked");
     assert_eq!(fresh["bands"]["state"], "blocked");
     assert_eq!(fresh["app"]["state"], "blocked");
@@ -482,6 +243,16 @@ async fn the_routes_answer_from_the_record() {
             .unwrap()
             .contains("DECLARE WITNESS"),
         "{fresh:?}"
+    );
+    // A goal named is that goal's row, the same row; a name nobody
+    // routes is no row.
+    for surface in SURFACES {
+        assert_eq!(goal(&session, surface).await, fresh[surface], "{surface}");
+    }
+    assert!(
+        rows(&session, "SELECT * FROM next WHERE surface = 'nothing'")
+            .await
+            .is_empty()
     );
 
     // A declared metric the dataset claims (its definitions entry
@@ -500,14 +271,11 @@ async fn the_routes_answer_from_the_record() {
         .execute("DECLARE ASPECT takings WITH $${\"title\": \"Takings\"}$$ AS QUERY ON DATASET")
         .await
         .unwrap();
-    let unclaimed = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
-    assert_eq!(
-        unclaimed["metrics"]["act"], "GLOSS definitions",
-        "{unclaimed:?}"
-    );
-    assert_eq!(unclaimed["metrics"]["say"], "claim takings for fin");
+    let unclaimed = goal(&session, "metrics").await;
+    assert_eq!(unclaimed["act"], "GLOSS definitions", "{unclaimed:?}");
+    assert_eq!(unclaimed["say"], "claim takings for fin");
     assert!(
-        unclaimed["metrics"]["statement"]
+        unclaimed["statement"]
             .as_str()
             .unwrap()
             .starts_with("GLOSS definitions ON fin AS $${\"definitions\": {\"takings\":"),
@@ -517,15 +285,19 @@ async fn the_routes_answer_from_the_record() {
         .execute("GLOSS definitions ON fin AS $${\"definitions\": {\"takings\": {\"unit\": \"GBP\", \"meaning\": \"gate takings per race\"}}}$$")
         .await
         .unwrap();
-    let declared = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
-    assert_eq!(declared.len(), 1);
-    assert_eq!(declared["metrics"]["act"], "GLOSS query");
+    let declared = goal(&session, "metrics").await;
+    assert_eq!(declared["act"], "GLOSS query");
+    assert_eq!(declared["say"], "ground takings, or stop it");
+    let statement = declared["statement"].as_str().unwrap();
     assert!(
-        declared["metrics"]["statement"]
-            .as_str()
-            .unwrap()
-            .starts_with("GLOSS takings ON fin AS $$"),
-        "{declared:?}"
+        statement.starts_with("GLOSS takings ON fin AS $${\n  \"sql\":"),
+        "{statement}"
+    );
+    assert!(
+        statement.contains(
+            "-- or, where no number should be served: GLOSS takings ON fin AS $${\"stopped\":"
+        ),
+        "{statement}"
     );
 
     // Grounded: the narrow frame asks for a dimension column, the
@@ -539,7 +311,7 @@ async fn the_routes_answer_from_the_record() {
     let judged = session
         .execute("SELECT temporal() FROM fin.races.race_date")
         .await;
-    let answers = by_surface(&rows(&session, "SELECT * FROM next()").await);
+    let answers = by_surface(&rows(&session, "SELECT * FROM next ORDER BY goal").await);
     match judged {
         Ok(_) => {
             // Nobody judged a column of races: the detector is the act,
@@ -547,6 +319,10 @@ async fn the_routes_answer_from_the_record() {
             let slices = &answers["slices"];
             assert_eq!(slices["state"], "next", "{answers:?}");
             assert_eq!(slices["act"], "dimension_relevance", "{answers:?}");
+            assert_eq!(
+                slices["say"], "judge the unserved columns of races, none is judged",
+                "{answers:?}"
+            );
             assert_eq!(
                 slices["statement"], "SELECT dimension_relevance() FROM fin.races.track",
                 "{answers:?}"
@@ -557,11 +333,10 @@ async fn the_routes_answer_from_the_record() {
                 .execute("GLOSS role ON fin.races.track AS $${\"value\": \"dimension\"}$$")
                 .await
                 .unwrap();
-            let roled =
-                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
-            assert_eq!(roled["slices"]["say"], "judge track of races", "{roled:?}");
+            let roled = goal(&session, "slices").await;
+            assert_eq!(roled["say"], "judge track of races", "{roled:?}");
             assert_eq!(
-                roled["slices"]["statement"], "SELECT dimension_relevance() FROM fin.races.track",
+                roled["statement"], "SELECT dimension_relevance() FROM fin.races.track",
                 "{roled:?}"
             );
             // A gloss admits track: the wider frame names it, and
@@ -570,12 +345,10 @@ async fn the_routes_answer_from_the_record() {
                 .execute("GLOSS dimension ON fin.races.track AS $${\"value\": \"supporting\"}$$")
                 .await
                 .unwrap();
-            let judged =
-                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
-            let slices = &judged["slices"];
+            let slices = goal(&session, "slices").await;
             assert_eq!(
                 slices["say"], "re-record takings serving one of track",
-                "{judged:?}"
+                "{slices:?}"
             );
             let statement = slices["statement"].as_str().unwrap();
             assert!(
@@ -596,10 +369,10 @@ async fn the_routes_answer_from_the_record() {
                 )
                 .await
                 .unwrap();
-            let held = by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
-            assert_eq!(held["slices"]["state"], "next", "{held:?}");
+            let held = goal(&session, "slices").await;
+            assert_eq!(held["state"], "next", "{held:?}");
             assert_eq!(
-                held["slices"]["say"], "re-record takings serving one of track",
+                held["say"], "re-record takings serving one of track",
                 "{held:?}"
             );
             session
@@ -608,27 +381,36 @@ async fn the_routes_answer_from_the_record() {
                 )
                 .await
                 .unwrap();
-            let closed =
-                by_surface(&rows(&session, "SELECT * FROM next(surface => 'slices')").await);
-            assert_eq!(closed["slices"]["state"], "done", "{closed:?}");
+            let closed = goal(&session, "slices").await;
+            assert_eq!(closed["state"], "done", "{closed:?}");
             assert_eq!(answers["bands"]["act"], "metric_bands", "{answers:?}");
+            assert_eq!(answers["bands"]["say"], "run the walk", "{answers:?}");
             assert_eq!(answers["app"]["state"], "next", "{answers:?}");
+            assert_eq!(
+                answers["app"]["say"], "write the first page over 1 metrics",
+                "{answers:?}"
+            );
             let app = answers["app"]["statement"].as_str().unwrap();
-            assert!(app.contains("GLOSS app ON review AS"), "{app}");
-            assert!(app.contains("'takings'"), "{app}");
+            assert!(
+                app.contains("GLOSS app ON review AS $${\"title\": \"fin review\"}$$;"),
+                "{app}"
+            );
+            assert!(app.contains("metric IN ('takings')"), "{app}");
+            assert!(app.contains("\\\"$schema\\\":"), "{app}");
             assert!(app.contains("GLOSS app_page ON review.index AS"), "{app}");
+            assert_eq!(answers["app"]["then"], "-- serves at /fin/app/review");
             // The manifest alone is not an app: the door serves
             // index.html, so the page is the act until it stands.
             session
                 .execute("GLOSS app ON review AS $${\"title\": \"fin review\"}$$")
                 .await
                 .unwrap();
-            let paged = by_surface(&rows(&session, "SELECT * FROM next(surface => 'app')").await);
-            assert_eq!(paged["app"]["state"], "next", "{paged:?}");
-            assert_eq!(paged["app"]["act"], "GLOSS app_page", "{paged:?}");
-            assert_eq!(paged["app"]["say"], "write the page of review", "{paged:?}");
+            let paged = goal(&session, "app").await;
+            assert_eq!(paged["state"], "next", "{paged:?}");
+            assert_eq!(paged["act"], "GLOSS app_page", "{paged:?}");
+            assert_eq!(paged["say"], "write the page of review", "{paged:?}");
             assert!(
-                paged["app"]["statement"]
+                paged["statement"]
                     .as_str()
                     .unwrap()
                     .starts_with("GLOSS app_page ON review.index AS $${\"html\":"),
@@ -640,10 +422,10 @@ async fn the_routes_answer_from_the_record() {
                 )
                 .await
                 .unwrap();
-            let stands = by_surface(&rows(&session, "SELECT * FROM next(surface => 'app')").await);
-            assert_eq!(stands["app"]["state"], "done", "{stands:?}");
+            let stands = goal(&session, "app").await;
+            assert_eq!(stands["state"], "done", "{stands:?}");
             assert_eq!(
-                stands["app"]["why"], "an app stands: /fin/app/review",
+                stands["why"], "an app stands: /fin/app/review",
                 "{stands:?}"
             );
         }
@@ -674,19 +456,16 @@ async fn the_routes_answer_from_the_record() {
         .execute("GLOSS entries ON fin AS $${\"sql\": \"SELECT race_date, track FROM races\"}$$")
         .await
         .unwrap();
-    let refused = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
-    assert_eq!(refused["metrics"]["state"], "next", "{refused:?}");
-    assert_eq!(refused["metrics"]["act"], "GLOSS query", "{refused:?}");
-    assert_eq!(refused["metrics"]["say"], "re-record gate", "{refused:?}");
+    let refused = goal(&session, "metrics").await;
+    assert_eq!(refused["state"], "next", "{refused:?}");
+    assert_eq!(refused["act"], "GLOSS query", "{refused:?}");
+    assert_eq!(refused["say"], "re-record gate", "{refused:?}");
     assert!(
-        refused["metrics"]["why"]
-            .as_str()
-            .unwrap()
-            .contains("no value column"),
+        refused["why"].as_str().unwrap().contains("no value column"),
         "{refused:?}"
     );
     assert!(
-        refused["metrics"]["statement"]
+        refused["statement"]
             .as_str()
             .unwrap()
             .contains("SELECT race_date, takings FROM races"),
@@ -696,16 +475,8 @@ async fn the_routes_answer_from_the_record() {
         .execute("GLOSS gate ON fin AS $${\"stopped\": \"races carry no gate count\"}$$")
         .await
         .unwrap();
-    let stopped = by_surface(&rows(&session, "SELECT * FROM next(surface => 'metrics')").await);
-    assert_eq!(stopped["metrics"]["state"], "done", "{stopped:?}");
-
-    // an unknown surface is refused by name
-    let err = session
-        .execute("SELECT * FROM next(surface => 'nothing')")
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("no such surface"), "{err}");
+    let stopped = goal(&session, "metrics").await;
+    assert_eq!(stopped["state"], "done", "{stopped:?}");
 }
 
 // ---- the door -------------------------------------------------------------
@@ -771,6 +542,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         DoorConfig::default(),
         Access::Gated(common::login()),
     );
+    // An unbound call: the situation and no next, nothing is bound.
     let body = body_of(
         mcp(
             app.clone(),
@@ -781,18 +553,15 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     .await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let block = situation_of(&body).expect("the situation rides every result");
-    assert!(
-        block.starts_with("situation: DECLARE DATASET landed"),
-        "{block}"
-    );
+    assert_eq!(block, "situation: landed", "{block}");
 
     let body = body_of(mcp(app.clone(), call(2, "USE fin; SELECT * FROM owed")).await).await;
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let block = situation_of(&body).expect("the situation rides every result");
     let mut lines = block.lines();
-    assert_eq!(lines.next(), Some("situation: owed landed"), "{block}");
+    assert_eq!(lines.next(), Some("situation: landed"), "{block}");
     let next = lines.next().expect("the next line rides a bound call");
-    assert!(next.starts_with("next: "), "{block}");
+    assert!(next.starts_with("next: structure → "), "{block}");
     assert!(
         next.contains("metrics → declare the first concept (next://fin/metrics)"),
         "{block}"
@@ -801,13 +570,14 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
         next.contains("slices → blocked: no applicable metric stands"),
         "{block}"
     );
-    assert!(next.contains("rulings: done"), "{block}");
+    assert!(next.ends_with("rulings: done"), "{block}");
 
-    // A refused call still localizes: the refused USE bound nothing.
+    // A refused call: the refusal's first line, and the next line on
+    // the dataset the call bound.
     let body = body_of(
         mcp(
             app.clone(),
-            call(3, "USE fin; SELECT * FROM owed; USE nothing"),
+            call(3, "USE fin; SELECT * FROM owed; SELECT * FROM nothing"),
         )
         .await,
     )
@@ -816,7 +586,7 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     let block =
         situation_of(&body).unwrap_or_else(|| panic!("no situation on the refusal: {body}"));
     assert!(
-        block.starts_with("situation: refused at owed — statement 3 of 3 refused"),
+        block.starts_with("situation: refused — statement 3 of 3 refused"),
         "{block}"
     );
     assert!(block.contains("next://fin/checks"), "{block}");
@@ -887,15 +657,12 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
     let block = situation_of(&body).expect("the situation rides every result");
     assert!(
-        block.starts_with(
-            "situation: GLOSS query landed — takings: not applicable — no judged time column"
-        ),
+        block.starts_with("situation: landed — takings: not applicable — no judged time column"),
         "{block}"
     );
     // The line of a re-record's row: what the author's word closed and
     // over what, and the drift against the other writing.
     let line = window::situation(
-        "GLOSS query",
         None,
         Some(&json!({
             "metric": "takings", "applicable": true, "behavior": "flow",
@@ -908,12 +675,11 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     );
     assert_eq!(
         line,
-        "situation: GLOSS query landed — takings: applicable; axes [] (the grounding's word — \
-         closes track, venue; a verdict admits track); unadmitted [track, venue]; wanted []; \
-         against the other writing: no gap over 12 shared periods"
+        "situation: landed — takings: applicable; axes [] (the grounding's word — closes track, \
+         venue; a verdict admits track); unadmitted [track, venue]; wanted []; against the \
+         other writing: no gap over 12 shared periods"
     );
     let line = window::situation(
-        "GLOSS query",
         None,
         Some(&json!({
             "metric": "takings", "applicable": true, "behavior": "flow",
@@ -923,13 +689,13 @@ async fn the_door_says_where_the_call_left_the_agent_and_what_is_next() {
     );
     assert_eq!(
         line,
-        "situation: GLOSS query landed — takings: applicable; axes [track] (measured over the \
-         authored empty list — a flow keeps its verdicts; the empty list closes a distinct count \
-         or a ratio); unadmitted []; wanted []"
+        "situation: landed — takings: applicable; axes [track] (measured over the authored \
+         empty list — a flow keeps its verdicts; the empty list closes a distinct count or a \
+         ratio); unadmitted []; wanted []"
     );
     // A call the parser refuses ran nothing: the parser's word is the
-    // result, and the line says refused with no act and no next.
-    let body = body_of(mcp(app.clone(), call(4, "USE fin; SELEC * FROM owed")).await).await;
+    // result, and the line says refused with no next.
+    let body = body_of(mcp(app.clone(), call(7, "USE fin; SELEC * FROM owed")).await).await;
     let block = situation_of(&body).unwrap_or_else(|| panic!("{body}"));
     assert!(block.starts_with("situation: refused — "), "{block}");
     assert!(!block.contains("next:"), "{block}");

@@ -327,7 +327,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
     // point sits furthest from its corridor, and that point's period —
     // read from the recorded walk, never a re-run.
     let outcomes = session
-        .execute("SELECT say, statement FROM next(surface => 'bands');")
+        .execute("SELECT say, statement FROM next WHERE surface = 'bands';")
         .await
         .unwrap();
     let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
@@ -367,7 +367,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
         .await
         .unwrap();
     let outcomes = session
-        .execute("SELECT state, why FROM next(surface => 'bands');")
+        .execute("SELECT state, why FROM next WHERE surface = 'bands';")
         .await
         .unwrap();
     let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {

@@ -35,12 +35,12 @@ per statement:
   names what was wrong and, in a sequence, its place: `statement 2 of
   7 refused: … — statement 1 landed; 3–7 not run`, with a
   `{"landed": [...]}` block for what stood. What landed stays landed.
-- two closing lines on every result. `situation:` says which act your
-  last statement was, landed or refused, and for a grounding what its
+- two closing lines on every result. `situation:` says whether your
+  last statement landed or was refused, and for a grounding what its
   fact row said. `next:` names one act per goal — structure, metrics,
   slices, bands, checks, app, rulings — each with a link. To move a
   goal, read its link — `next://<dataset>/<goal>` as a resource, or
-  `SELECT * FROM next(surface => '<goal>')` through the tool — and
+  `SELECT * FROM next WHERE surface = '<goal>'` through the tool — and
   send the statement it hands you, edited to your judgment; `<…>`
   marks what only you can fill. A blocked goal names what blocks it.
   None of it is an order: the goal is what the human asked for.
