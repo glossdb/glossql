@@ -40,7 +40,9 @@ page, frame, and spec names are flat segments — ASCII alphanumerics,
 "title": "Overview"}, {"name": "cash", "title": "Cash"}]` is the
 order and the wording of the bar's tabs; without the list every page
 shows by its file name, `index` first. An app with one page shows no
-tabs — the picker names it.
+tabs — the picker names it. Every page of a glossed app opens with
+the manifest's title, printed by the shell; the built-in's pages are
+its tabs and it prints none.
 
 ## Frames
 

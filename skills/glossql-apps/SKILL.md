@@ -76,7 +76,9 @@ in the bar. A manifest may list its pages, `"pages": [{"name":
 "index", "title": "Overview"}, {"name": "cash", "title": "Cash"}]`:
 that is the order and the wording of the bar's tabs. Without the list
 every page shows by its file name, `index` first; a one-page app shows
-no tabs. Read back what an app is made of:
+no tabs. Every page of your app opens with the manifest's title,
+printed by the shell — write no heading of your own for it. Read back
+what an app is made of:
 
 ```sql
 SELECT app, path, actor_kind FROM app_parts ORDER BY app, path

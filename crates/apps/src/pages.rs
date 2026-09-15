@@ -204,7 +204,10 @@ async fn page_response(
         .map(|(name, title)| json!({ "name": name, "title": title }))
         .collect();
     let mut ctx = tera::Context::new();
-    ctx.insert("app", &json!({ "name": def.name, "title": def.title }));
+    ctx.insert(
+        "app",
+        &json!({ "name": def.name, "title": def.title, "origin": def.origin() }),
+    );
     ctx.insert("apps", &apps_json(&glossed));
     ctx.insert("pages", &pages);
     ctx.insert("page", page);

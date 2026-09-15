@@ -247,6 +247,9 @@ async fn pages_render_and_frames_stream() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("data-approot=\"/perf/app/board/\""), "{page}");
     assert!(!page.contains("class=\"tabs\""), "{page}");
+    // A glossed app opens with its title; the built-in prints none.
+    assert!(page.contains("<h1 class=\"app-title\">Perf</h1>"), "{page}");
+    assert!(!docket.contains("app-title"), "{docket}");
     assert!(
         page.contains("<gl-chart frame=\"frames/monthly\""),
         "{page}"

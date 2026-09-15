@@ -166,6 +166,18 @@ a { color: inherit; text-decoration: none; }
 
 main { max-width: 68rem; margin: 0 auto; padding: 0.25rem 1.5rem 5rem; }
 
+/* A glossed app's title, as its author wrote it: authored language,
+   so sans at reading size, and the one line the shell adds to a page. */
+.app-title {
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+  margin: 1.5rem 0 0;
+}
+
 h1 {
   font-size: var(--step);
   font-weight: 600;

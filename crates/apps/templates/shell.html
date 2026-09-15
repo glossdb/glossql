@@ -49,6 +49,9 @@
 </header>
 <div class="load-bar"></div>
 <main>
+{# A glossed app opens with its title, in full, whatever the picker
+   could fit. The built-in's pages are its tabs, so it prints none. #}
+{% if app and app.origin == "glossed" %}<h1 class="app-title">{{ app.title }}</h1>{% endif %}
 {% block main %}{% endblock %}
 </main>
 </body>
