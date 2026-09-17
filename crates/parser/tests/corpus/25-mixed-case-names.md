@@ -37,3 +37,24 @@ GLOSS entity ON "SearchStream" AS $${"value": "one ad shown in one search"}$$;
 Unquoted, `SearchStream` folds to `searchstream` and misses. The
 quotes are the whole difference — in the declaration, the read and
 the subject alike.
+
+## 3. A column lands spelled as the export spelled it
+
+```glossql
+USE avito;
+DECLARE RECIPE location ON avito FROM export AS $$
+  SELECT * FROM read_csv('Location.tsv')$$;
+SELECT count(*) FROM location WHERE RegionID = 3;
+SELECT count(*) FROM location WHERE "RegionID" = 3;
+GLOSS role ON location.LocationID AS $${"value": "key"}$$;
+```
+
+The recipe lands the export's columns as spelled — `LocationID`,
+`RegionID` — and nobody declared them here. Unquoted, `RegionID` folds
+to `regionid`, which no column of `location` is, and exactly one
+column differs from it by case alone: both reads reach `"RegionID"`,
+and the gloss lands under `location.LocationID`. Two columns that
+differ by case alone — an `Amount` beside an `AMOUNT` — refuse the
+unquoted name and name both; there the quotes decide. Ruled: a table
+is named here and folds as declared (§1, §2); a column is named by the
+export and is reached as the export spelled it (SPEC.md §1).

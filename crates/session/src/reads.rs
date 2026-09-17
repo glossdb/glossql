@@ -1298,7 +1298,8 @@ async fn decode_scope(
                 )));
             }
         }
-        let resolved = resolve_path(store, use_dataset, &segments).await?;
+        let mut resolved = resolve_path(store, use_dataset, &segments).await?;
+        respell_column_subject(shared, &mut resolved).await?;
         return Ok(((resolved.dataset.clone(), resolved.scope()), aspect));
     }
 
@@ -1328,9 +1329,94 @@ async fn decode_scope(
         return Ok(((l.dataset, Scope::Subject(pair)), aspect));
     }
 
+    // A subject written as a string literal — the one shape a path
+    // never takes; the road names the bare forms.
+    let road = match expr {
+        SQLExpr::Value(v) if matches!(v.value, SQLValue::SingleQuotedString(_)) => {
+            " — a subject is a bare path, never a string: GLOSSARY(orders), \
+             GLOSSARY(orders.amount), ATTEST(fin::revenue)"
+        }
+        _ => "",
+    };
     Err(SessionError::BadSubject(format!(
-        "`{expr}` is not a subject"
+        "`{expr}` is not a subject{road}"
     )))
+}
+
+/// Every landed spelling that differs from `missing` only by case —
+/// the columns an unquoted name may reach (SPEC.md §1): one is the
+/// column meant, two are a refusal naming both.
+pub(crate) fn case_matches<'a>(
+    missing: &str,
+    landed: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    let mut matches: Vec<&str> = landed
+        .into_iter()
+        .filter(|name| *name != missing && name.eq_ignore_ascii_case(missing))
+        .collect();
+    matches.sort_unstable();
+    matches.dedup();
+    matches
+}
+
+/// `column` as landed in `pin` (SPEC.md §1): its own spelling, or the
+/// one spelling an unquoted name folded past. Refused with the road
+/// out — the table's columns, or the two spellings the name could
+/// mean — the way the planner's own `No field named` names the valid
+/// fields.
+pub(crate) fn landed_column(
+    pin: &glossql_catalog::PinnedTable,
+    column: &str,
+) -> Result<String, SessionError> {
+    let table = &pin.name;
+    if pin.columns.iter().any(|have| have == column) {
+        return Ok(column.to_string());
+    }
+    match case_matches(column, pin.columns.iter().map(String::as_str)).as_slice() {
+        [one] => Ok((*one).to_string()),
+        [] => Err(SessionError::BadSubject(format!(
+            "`{table}.{column}`: `{table}` has no column `{column}` — columns: {}",
+            pin.columns.join(", ")
+        ))),
+        many => Err(SessionError::AmbiguousName(format!(
+            "`{table}.{column}`: {} columns of `{table}` differ from `{column}` only by case: {} — quote the one you mean",
+            many.len(),
+            many.iter()
+                .map(|m| format!("{table}.\"{m}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+/// A `table.column` subject under a landed table, respelled to the
+/// column's landed spelling where the name folded past it (SPEC.md
+/// §1). Any other subject — a dataset, a source, a table, a pair
+/// path, a table the lake does not hold — stands as resolved; a
+/// column the table does not have is refused here, where the name
+/// is, with the table's columns.
+pub(crate) async fn respell_column_subject(
+    shared: &Shared,
+    resolved: &mut crate::subject::Resolved,
+) -> Result<(), SessionError> {
+    let Some((table, column)) = resolved.subject.split_once('.') else {
+        return Ok(());
+    };
+    if column.contains(' ')
+        || column.contains('.')
+        || !shared.store.dataset_exists(&resolved.dataset).await?
+    {
+        return Ok(());
+    }
+    let pins = shared.pinned(&resolved.dataset).await?;
+    let Some(pin) = pins.iter().find(|p| p.name == table) else {
+        return Ok(());
+    };
+    let spelling = landed_column(pin, column)?;
+    if spelling != column {
+        resolved.subject = format!("{table}.{spelling}");
+    }
+    Ok(())
 }
 
 /// The `::aspect` name: a bare custom "type" naming a declared aspect.

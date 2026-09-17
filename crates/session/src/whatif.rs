@@ -566,11 +566,11 @@ pub(crate) async fn build_plan(
     // Parsed once, under the pre-pass's one-query rule; the same
     // statement is resolved and then planned.
     let query = crate::prepass::parse(sql, "the grounding")?;
-    let statement = datafusion::sql::parser::Statement::Statement(Box::new(SQLStatement::Query(
-        Box::new(query),
-    )));
+    let mut statement = datafusion::sql::parser::Statement::Statement(Box::new(
+        SQLStatement::Query(Box::new(query)),
+    ));
     // A grounding body may name `read.<x>()`; resolve before planning.
-    let resolved = crate::prepass::resolve(shared, ctx, &statement).await?;
+    let resolved = crate::prepass::resolve(shared, ctx, &mut statement).await?;
     crate::reads::state_with(ctx, shared, resolved)
         .statement_to_plan(statement)
         .await

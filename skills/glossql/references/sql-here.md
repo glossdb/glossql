@@ -31,8 +31,9 @@ shipped reads included.
 
 Names fold: an unquoted `AdsInfo` is `adsinfo` in a glossql statement
 and in SQL alike, and a double-quoted `"AdsInfo"` keeps its case
-everywhere. A source column landed with capitals is reached only
-quoted, or aliased lowercase in the recipe.
+everywhere. A source column landed with capitals keeps that spelling
+and is reached by it, quoted or not; only two columns that differ by
+case alone need the quotes.
 
 Correlated subqueries are rewritten into joins, and the planner refuses
 the shapes it cannot rewrite (a `NOT EXISTS` over a read that extracts

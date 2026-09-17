@@ -6,10 +6,11 @@ The engine is DataFusion behind a postgres parser. Three refusals cost
 most of the lost calls:
 
 - Unquoted names fold to lowercase, in glossql statements and in SQL
-  alike: a table declared `AdsInfo` is read as `adsinfo` or `AdsInfo`.
-  A column landed with capitals from a source header is reached only
-  quoted: `"ObjectType"`. Alias it lowercase in the recipe and the
-  quotes are never needed.
+  alike: a table declared `AdsInfo` is read as `adsinfo` or `AdsInfo`,
+  and one declared `"SearchStream"` only quoted. A column landed with
+  capitals from a source header keeps that spelling and is reached by
+  it, quoted or not — `ObjectType`, `"ObjectType"`; only two columns
+  that differ by case alone need the quotes.
 - `EXISTS` and `IN (SELECT …)` plan in WHERE and HAVING only. In a
   SELECT list, a `FILTER (WHERE …)` or a CASE they are refused, and so
   is a scalar subquery inside an aggregate, `max((SELECT count(*) …))`:

@@ -74,7 +74,9 @@ qualified `dataset.table.column` reads across datasets from anywhere.
 
 There is no ordering surface: send statements in the order you need
 them. Schema-altering substrate DDL — `CREATE VIEW` included — is
-closed: tables come from recipes, and a composite edge is a tuple.
+closed: tables come from recipes, and a composite edge is a tuple. A
+body rides `$$…$$` as written — plain double quotes inside, nothing
+escaped — and closes as `}$$;`.
 
 ## Reading live state
 
@@ -100,7 +102,9 @@ back before declaring anything.
 - `GLOSSARY(subject)` — the collapsed read, `(subject, aspect, value,
   band, score, state)`, `state` in `current | stale | contested |
   unassessed`; a contested value is withheld, and absence is a visible
-  row. **`GLOSSARY(subject, all => true)` is a different shape**: the
+  row. A subject is a bare path, never a string: `GLOSSARY(orders)`,
+  `GLOSSARY(orders.amount)`, `GLOSSARY(fin::revenue)` for one aspect;
+  `ATTEST(fin::revenue)` likewise. **`GLOSSARY(subject, all => true)` is a different shape**: the
   raw slots, `(subject, aspect, kind, witness, actor, body,
   written_at, current)` — no `value`, no `state`; `current` is false
   for a function voice landed before the last write. `value` belongs
@@ -112,10 +116,18 @@ back before declaring anything.
   information_schema.columns WHERE table_name NOT LIKE '%$%'` serves
   every column the `USE` mounted; `DESCRIBE <name>` serves one name.
 - ordinary SELECT over tables for the data itself.
+- names: an unquoted name folds to lowercase, a double-quoted one keeps
+  its case. A column keeps the export's spelling and is reached by it
+  either way — `joinedAt`, `PATIENT` and `users."joinedAt"` all reach
+  the column, in a read and in a subject alike; only two columns that
+  differ by case alone need the quotes. A table is reached as declared:
+  `"SearchStream"` if it was declared quoted.
 
 **Shipped reads** — derived relations selectable like any table,
-filters riding WHERE. Every column of every one is
-`doc://docs/reference/reads.md`; open it before naming columns.
+filters riding WHERE. `DESCRIBE <read>` serves the columns of any of
+them — `DESCRIBE band_points()`, `DESCRIBE metric_series(grain =>
+'month')` — and every column's meaning is `doc://docs/reference/reads.md`;
+a guessed column costs a refusal.
 
 | read | serves |
 |---|---|
@@ -124,9 +136,11 @@ filters riding WHERE. Every column of every one is
 | `ruling_entries` | the human's standing judgments, with `folded_in` |
 | `owed` | what waits on an act: a recipe approval, a formula answer, a contested slot, a measurement stale or never made, a ruling awaiting its fold-in |
 | `agent_assumptions` | every assumption you currently disclose |
-| `metric_surfaces` | every metric of the bound dataset: unit, meaning, formula, whether grounded, the `stopped` text — the record; the numbers are `metric_series()` and `metric_axes()` |
-| `band_points()` | the recorded `metric_bands` walk, one row per metric and month with its displacement |
-| `metric_sources()` | what feeds each grounding — per served field, the table column it descends from, and every table it scans |
+| `metric_surfaces` | every metric of the bound dataset — `name`, `title`, `kind`, `unit`, `meaning`, `formula`, `grounded`, `stopped` — the record; the numbers are `metric_series()` and `metric_axes()` |
+| `metric_series(grain => 'month')` | the cube's cells — `metric`, `dimension` (`''` the total), `member`, `period`, `value`, `num`, `den`, `behavior`; the one argument is the grain, a metric is a WHERE filter — never `metric_series('name')` |
+| `metric_axes()` | one row per grounding: `metric`, `applicable`, `judged_current`, `reason`, `behavior`, `behavior_basis`, `grain`, `resolution`, `window`, `dims`, `basis`, `admitted_by`, `axes_basis`, `bucketed`, `unadmitted`, `unadmitted_why`, `unadmitted_act`, `wanted`, `wanted_over`, `alternative`, `alternative_divergence`, `alternative_error`, `superseded_divergence`; takes no argument |
+| `band_points()` | the recorded `metric_bands` walk, one row per metric and walked point — `seq`, `metric`, `applicable`, `reason`, `grain`, `aggregation`, `trained_on`, `axis`, `axis_judged`, `point_seq`, `period`, `actual`, `p05`, `p10`, `p50`, `p90`, `p95`, `pit`, `withheld`, `partial`, `displacement`, `computed_at`, `current`; no `band` and no `month` — a red is `WHERE partial = false ORDER BY displacement DESC` |
+| `metric_sources()` | what feeds each grounding — `metric`, `field`, `source` (`table.column`), `table_name`, `reason`: per served field the column it descends from, and every table it scans |
 | `source_files('erp')` | every file under a source's location — `path`, `size`, `modified`; needs no `USE` |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps`) |
 | `current_dataset` | the dataset your `USE` bound, one row — join it to narrow a workspace-wide read |

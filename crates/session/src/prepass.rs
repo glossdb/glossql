@@ -29,8 +29,8 @@ use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::resolve::resolve_table_references;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, Query, Statement as SQLStatement, TableFactor,
-    Value as SqlValue, VisitMut, VisitorMut,
+    Expr, FunctionArg, FunctionArgExpr, Ident, Query, SelectItem, SetExpr,
+    Statement as SQLStatement, TableFactor, Value as SqlValue, VisitMut, VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
@@ -480,7 +480,9 @@ async fn resolve_door(
     // Planned with everything it depends on already resolved — nested
     // doors, compute batches and pinned tables all in the map — so the
     // sync planner finds instead of fetching. The body is its own CTE
-    // scope, not the outer statement's.
+    // scope, not the outer statement's; its columns are read by the
+    // same spelling rule as the statement's.
+    respell_columns(&mut body, resolved, &shared.idents())?;
     Box::pin(compute_batches(shared, &mut body, resolved)).await?;
     let stmt = DFStatement::Statement(Box::new(SQLStatement::Query(Box::new(body))));
     let mut scoped = resolved.clone();
@@ -505,15 +507,12 @@ async fn resolve_door(
 pub(crate) async fn resolve(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
-    statement: &DFStatement,
+    statement: &mut DFStatement,
 ) -> Result<Resolved, SessionError> {
-    let DFStatement::Statement(inner) = statement else {
+    if !matches!(statement, DFStatement::Statement(inner) if matches!(inner.as_ref(), SQLStatement::Query(_)))
+    {
         return Ok(Resolved::default());
-    };
-    let SQLStatement::Query(q) = inner.as_ref() else {
-        return Ok(Resolved::default());
-    };
-    let mut q = (**q).clone();
+    }
     let idents = shared.idents();
     // The CTE names come from DataFusion, not from a visitor of ours.
     // `resolve_table_references` returns them as its second element,
@@ -531,14 +530,246 @@ pub(crate) async fn resolve(
         ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
         ..Resolved::default()
     };
-    refuse_subject_relations(&mut q, &resolved)?;
+    let DFStatement::Statement(inner) = statement else {
+        unreachable!("matched above");
+    };
+    let SQLStatement::Query(q) = inner.as_mut() else {
+        unreachable!("matched above");
+    };
+    let q: &mut Query = q.as_mut();
+    // The statement itself is what the planner reads, so a column
+    // respelled here is the column it plans.
+    respell_columns(q, &resolved, &idents)?;
+    refuse_subject_relations(q, &resolved)?;
     let mut done = HashSet::new();
     let mut path = Vec::new();
-    for door in doors_in(&idents, &mut q) {
+    for door in doors_in(&idents, q) {
         resolve_door(shared, ctx, door, &mut path, &mut done, &mut resolved).await?;
     }
-    compute_batches(shared, &mut q, &mut resolved).await?;
+    compute_batches(shared, q, &mut resolved).await?;
     Ok(resolved)
+}
+
+/// What the statement binds and reads, for [`respell_columns`]: which
+/// names qualify a pinned table's columns (the table's own name and
+/// each alias of it), which names the statement defines itself (CTEs,
+/// alias column lists, SELECT aliases), and whether every relation it
+/// reads is a pinned table or a CTE.
+#[derive(Default)]
+struct Scope {
+    qualifiers: HashMap<String, String>,
+    defined: HashSet<String>,
+    only_pins: bool,
+}
+
+/// A column reached by the export's spelling (SPEC.md §1). A table is
+/// named here, by the recipe that lands it, and folds as declared; a
+/// column arrives spelled as the export spelled it, so an unquoted
+/// name that folds to no column of the table but differs from exactly
+/// one column's spelling only by case is rewritten to that spelling,
+/// quoted, before the planner reads it. Two spellings that both match
+/// are a refusal naming them. Nothing the statement defines itself is
+/// touched, and an unqualified name is respelled only when every
+/// relation the statement reads is a pinned table or a CTE — a shipped
+/// read's `value` beside a landed `Value` stays the read's. The
+/// planner's own miss ("No field named …") still answers a name that
+/// matches nothing.
+pub(crate) fn respell_columns(
+    q: &mut Query,
+    resolved: &Resolved,
+    idents: &IdentNormalizer,
+) -> Result<(), SessionError> {
+    struct Survey<'a> {
+        scope: Scope,
+        idents: &'a IdentNormalizer,
+        resolved: &'a Resolved,
+    }
+    impl Survey<'_> {
+        fn define(&mut self, ident: &Ident) {
+            self.scope
+                .defined
+                .insert(self.idents.normalize(ident.clone()));
+        }
+        fn aliases_in(&mut self, body: &SetExpr) {
+            match body {
+                SetExpr::Select(s) => {
+                    for item in &s.projection {
+                        if let SelectItem::ExprWithAlias { alias, .. } = item {
+                            self.define(alias);
+                        }
+                    }
+                }
+                SetExpr::SetOperation { left, right, .. } => {
+                    self.aliases_in(left);
+                    self.aliases_in(right);
+                }
+                // A nested query is visited as one.
+                _ => {}
+            }
+        }
+    }
+    impl VisitorMut for Survey<'_> {
+        type Break = ();
+        fn pre_visit_query(&mut self, q: &mut Query) -> ControlFlow<()> {
+            if let Some(with) = &q.with {
+                for cte in &with.cte_tables {
+                    self.define(&cte.alias.name);
+                    for c in &cte.alias.columns {
+                        self.define(&c.name);
+                    }
+                }
+            }
+            self.aliases_in(&q.body);
+            ControlFlow::Continue(())
+        }
+        fn pre_visit_table_factor(&mut self, f: &mut TableFactor) -> ControlFlow<()> {
+            let cte = self.resolved.shadowed(self.idents, f);
+            match f {
+                TableFactor::Table {
+                    name,
+                    alias,
+                    args: None,
+                    ..
+                } => {
+                    let table = match name.0.as_slice() {
+                        [part] => part.as_ident().map(|i| self.idents.normalize(i.clone())),
+                        _ => None,
+                    };
+                    match table {
+                        Some(_) if cte => {}
+                        Some(t)
+                            if crate::library::read_sql(&t).is_none()
+                                && self.resolved.pins.contains_key(&t) =>
+                        {
+                            self.scope.qualifiers.insert(t.clone(), t.clone());
+                            if let Some(a) = alias {
+                                self.scope
+                                    .qualifiers
+                                    .insert(self.idents.normalize(a.name.clone()), t);
+                            }
+                        }
+                        _ => self.scope.only_pins = false,
+                    }
+                    if let Some(a) = alias {
+                        for c in &a.columns {
+                            self.define(&c.name);
+                        }
+                    }
+                }
+                TableFactor::Derived { alias, .. } => {
+                    if let Some(a) = alias {
+                        for c in &a.columns {
+                            self.define(&c.name);
+                        }
+                    }
+                }
+                _ => self.scope.only_pins = false,
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut survey = Survey {
+        scope: Scope {
+            only_pins: true,
+            ..Scope::default()
+        },
+        idents,
+        resolved,
+    };
+    let _ = q.visit(&mut survey);
+    let scope = survey.scope;
+    if scope.qualifiers.is_empty() {
+        return Ok(());
+    }
+
+    let columns: HashMap<String, Vec<String>> = scope
+        .qualifiers
+        .values()
+        .filter_map(|t| {
+            let pin = resolved.pins.get(t)?;
+            let names = pin
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect();
+            Some((t.clone(), names))
+        })
+        .collect();
+    let all: Vec<String> = columns.values().flatten().cloned().collect();
+
+    struct Respell<'a> {
+        scope: &'a Scope,
+        columns: &'a HashMap<String, Vec<String>>,
+        all: &'a [String],
+        idents: &'a IdentNormalizer,
+    }
+    impl Respell<'_> {
+        fn respell(&self, id: &mut Ident, table: Option<&str>) -> ControlFlow<SessionError> {
+            if id.quote_style.is_some() {
+                return ControlFlow::Continue(());
+            }
+            let folded = self.idents.normalize(id.clone());
+            let spellings: &[String] = match table {
+                Some(t) => self.columns.get(t).map(Vec::as_slice).unwrap_or(&[]),
+                None => self.all,
+            };
+            if spellings.contains(&folded)
+                || (table.is_none() && self.scope.defined.contains(&folded))
+            {
+                return ControlFlow::Continue(());
+            }
+            let mut matches: Vec<&String> = spellings
+                .iter()
+                .filter(|s| s.eq_ignore_ascii_case(&id.value))
+                .collect();
+            matches.sort();
+            matches.dedup();
+            match matches.as_slice() {
+                [] => ControlFlow::Continue(()),
+                [one] => {
+                    id.value = (*one).clone();
+                    id.quote_style = Some('"');
+                    ControlFlow::Continue(())
+                }
+                many => ControlFlow::Break(SessionError::AmbiguousName(format!(
+                    "`{}` is no landed column as written, and {} differ from it only by case: {} — quote the one you mean",
+                    id.value,
+                    many.len(),
+                    many.iter()
+                        .map(|m| format!("\"{m}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))),
+            }
+        }
+    }
+    impl VisitorMut for Respell<'_> {
+        type Break = SessionError;
+        fn pre_visit_expr(&mut self, e: &mut Expr) -> ControlFlow<SessionError> {
+            match e {
+                Expr::Identifier(id) if self.scope.only_pins => self.respell(id, None),
+                Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+                    let qualifier = self.idents.normalize(parts[0].clone());
+                    match self.scope.qualifiers.get(&qualifier).cloned() {
+                        Some(table) => self.respell(&mut parts[1], Some(&table)),
+                        None => ControlFlow::Continue(()),
+                    }
+                }
+                _ => ControlFlow::Continue(()),
+            }
+        }
+    }
+    let mut respell = Respell {
+        scope: &scope,
+        columns: &columns,
+        all: &all,
+        idents,
+    };
+    match q.visit(&mut respell) {
+        ControlFlow::Break(e) => Err(e),
+        ControlFlow::Continue(()) => Ok(()),
+    }
 }
 
 #[cfg(test)]

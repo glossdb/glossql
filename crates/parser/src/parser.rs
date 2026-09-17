@@ -1,7 +1,11 @@
 use datafusion_common::{DataFusionError, Result};
+use datafusion_sql::parser::Statement as DFStatement;
 use datafusion_sql::parser::{DFParser, DFParserBuilder};
 use datafusion_sql::planner::IdentNormalizer;
-use datafusion_sql::sqlparser::ast::Ident;
+use datafusion_sql::sqlparser::ast::{
+    DescribeAlias, Ident, ObjectName, ObjectNamePart, ObjectNamePartFunction,
+    Statement as SQLStatement,
+};
 use datafusion_sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion_sql::sqlparser::keywords::Keyword;
 use datafusion_sql::sqlparser::parser::{Parser, ParserError};
@@ -99,6 +103,13 @@ impl<'a> GlossqlParser<'a> {
                         return Ok(Statement::Extract(extract));
                     }
                 }
+                Keyword::DESCRIBE | Keyword::DESC => {
+                    if let Some(described) = self.df.parser.maybe_parse(parse_describe_call)? {
+                        return Ok(Statement::Substrate(Box::new(DFStatement::Statement(
+                            Box::new(described),
+                        ))));
+                    }
+                }
                 _ if w.value.eq_ignore_ascii_case("GLOSS") => {
                     return Ok(Statement::Gloss(parse_gloss(&mut self.df.parser)?));
                 }
@@ -114,6 +125,35 @@ impl<'a> GlossqlParser<'a> {
 
 fn expected<T>(what: &str, found: &TokenWithSpan) -> Result<T, ParserError> {
     expected_with(what, found, "")
+}
+
+/// `DESCRIBE <read>(<args>)` — a read that takes arguments, described
+/// with them: `DESCRIBE metric_series(grain => 'month')`. The host's
+/// DESCRIBE takes a name and stops at the parenthesis, so the call is
+/// read here and carried as the name's function part; the session
+/// plans `SELECT * FROM <read>(<args>) LIMIT 0` from its rendering,
+/// as it does for any described name. A plain `DESCRIBE <name>` is not
+/// matched and stays the host's.
+fn parse_describe_call(p: &mut Parser) -> Result<SQLStatement, ParserError> {
+    let describe_alias = if consume_word(p, "DESCRIBE") {
+        DescribeAlias::Describe
+    } else if consume_word(p, "DESC") {
+        DescribeAlias::Desc
+    } else {
+        return expected("DESCRIBE", &p.peek_token());
+    };
+    let name = p.parse_identifier()?;
+    p.expect_token(&Token::LParen)?;
+    let args = p.parse_optional_args()?;
+    Ok(SQLStatement::ExplainTable {
+        describe_alias,
+        hive_format: None,
+        has_table_keyword: false,
+        table_name: ObjectName(vec![ObjectNamePart::Function(ObjectNamePartFunction {
+            name,
+            args,
+        })]),
+    })
 }
 
 /// [`expected`] with a road out after the engine's own text.
@@ -415,10 +455,20 @@ fn parse_json_body(p: &mut Parser) -> Result<JsonBody, ParserError> {
             // region running past the body (`DOLLAR_ROAD`).
             let mut values =
                 serde_json::Deserializer::from_str(&s.value).into_iter::<serde_json::Value>();
+            // A body written with its quotes escaped, `\"key\"`, as if
+            // the dollar quotes were string quotes; nothing inside
+            // `$$…$$` is escaped, and the road says so.
+            let escaped = if s.value.contains("\\\"") {
+                " — inside $$…$$ nothing is escaped: write \"key\", not \\\"key\\\""
+            } else {
+                ""
+            };
             let value = values
                 .next()
                 .unwrap_or(Ok(serde_json::Value::Null))
-                .map_err(|e| ParserError::ParserError(format!("invalid JSON body{at}: {e}")))?;
+                .map_err(|e| {
+                    ParserError::ParserError(format!("invalid JSON body{at}: {e}{escaped}"))
+                })?;
             if let Some(trailing) = values.next() {
                 let what = match trailing {
                     Ok(_) => "a second value".to_string(),

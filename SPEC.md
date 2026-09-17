@@ -32,6 +32,12 @@ Ground rules:
   before it is created or matched; a double-quoted identifier keeps its
   case. This is the SQL host's rule for its own names, and every glossql
   statement follows it, so a name declared unquoted is reached unquoted.
+  A column is the one name not declared here — it lands spelled as the
+  export spelled it — so an unquoted column name that folds to no column
+  of its table and differs from exactly one column's spelling by case
+  alone reaches that column, in a read and in a subject alike; two such
+  spellings refuse the name and name both. A table is reached as
+  declared.
 - **A function's body is one SQL query.** A function with `RETURNS` is
   a measurement — its query runs over data at the read's pin; a
   detector's query runs over its witness's `slots` relation. A
@@ -97,7 +103,8 @@ table, and refuses while it holds data or glosses.
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
 name a read can plan — a landed table, a store relation, a shipped
-read; `SHOW TABLES` lists the bound dataset's tables; `EXPLAIN` only
+read, a cube read with its arguments; `SHOW TABLES` lists the bound
+dataset's tables; `EXPLAIN` only
 over a query), `DROP TABLE` routes to the rules
 above, and everything else that would alter schema or data directly is
 refused. Tables come from recipes.
@@ -565,6 +572,17 @@ relationship consumer — a declared join stops being a plain equijoin.
 And the word shifts: the aspect `WHEN` (§5.1) names a sibling
 aspect's judged value, this one names a data column's row value.
 Closes by transcription against a real polymorphic artifact, never by
+argument.
+
+Third: what a `USE` binds. Today it binds the statements after it and
+expires with the call (§3), so every call over a dataset's names opens
+with one, and a call without it is refused by name. The alternative is
+a binding the session holds — one `USE` per connection — which costs
+the other way: a connection bound to a dataset glosses a source or
+reads a second dataset only by re-binding or by the full prefix, and a
+call no longer says what it reads. Closes by counting over the agent
+record — the calls refused for want of a `USE` against the calls that
+reach a source or a second dataset under one binding — never by
 argument.
 
 PoC notes: batch visibility comes from (long-running) transactions — the

@@ -2076,6 +2076,17 @@ async fn describe_reaches_every_readable_name() {
     }
     let next = table(&session, "DESCRIBE workspace_next;").await;
     assert!(next.contains("surface") && next.contains("open"), "{next}");
+    // A read that takes arguments is described with them.
+    for read in [
+        "DESCRIBE metric_series(grain => 'month');",
+        "DESCRIBE band_points();",
+    ] {
+        let described = table(&session, read).await;
+        assert!(
+            described.contains("column_name") && described.contains("metric"),
+            "{read}: {described}"
+        );
+    }
     let e = session.execute("DESCRIBE nothing_here;").await.unwrap_err();
     assert!(e.to_string().contains("nothing_here"), "{e}");
 }
@@ -2100,12 +2111,14 @@ async fn show_tables_lists_the_bound_dataset() {
     );
 }
 
-/// A name the fold missed is refused with the spelling that reaches
-/// it: a landed table or column whose case an unquoted name folded
-/// past is quoted in the refusal (SPEC.md §1) — in the subject checks
-/// and in the planner's own `table … not found`.
+/// A column is reached by the export's spelling (SPEC.md §1): an
+/// unquoted name that folds past exactly one landed column reaches it
+/// — in a read, a gloss subject, a relationship endpoint, a GLOSSARY
+/// read — and the record carries the landed spelling. A table folds
+/// as declared, and a miss is refused with the spelling that reaches
+/// it; a column two spellings fold to is refused naming both.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_fold_miss_names_the_quoted_spelling() {
+async fn an_unquoted_column_reaches_its_landed_spelling() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
     // Landed by someone else: the names keep their case.
@@ -2130,28 +2143,117 @@ async fn a_fold_miss_names_the_quoted_spelling() {
             .await
             .unwrap();
     }
+    // Two columns that differ only by case, beside a `Name` that a
+    // store relation's own `name` must never be read as.
+    let twins = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("Amount", DataType::Float64, false),
+            Field::new("AMOUNT", DataType::Float64, false),
+            Field::new("Name", DataType::Utf8, false),
+        ])),
+        vec![
+            Arc::new(Float64Array::from(vec![1.0])),
+            Arc::new(Float64Array::from(vec![2.0])),
+            Arc::new(StringArray::from(vec!["twin"])),
+        ],
+    )
+    .unwrap();
+    let schema = twins.schema();
+    session
+        .register_table(
+            "twins",
+            Arc::new(MemTable::try_new(schema, vec![vec![twins]]).unwrap()),
+        )
+        .await
+        .unwrap();
     run(
         &session,
         r#"DECLARE ASPECT role WITH $${"type": "object"}$$ AS FACT ON COLUMN;"#,
     )
     .await;
 
+    // The read: unqualified, qualified through an alias, through a
+    // CTE's `*`; the output column carries the landed spelling.
+    let read = table(
+        &session,
+        "SELECT ParentId, count(*) AS n FROM posts GROUP BY ParentId ORDER BY n;",
+    )
+    .await;
+    assert!(read.contains("ParentId"), "{read}");
+    let read = table(
+        &session,
+        "SELECT p.Id FROM posts p JOIN posts q ON p.ParentId = q.Id;",
+    )
+    .await;
+    assert!(read.contains("| 2"), "{read}");
+    let read = table(
+        &session,
+        "WITH roots AS (SELECT * FROM posts WHERE ParentId IS NULL) SELECT count(*) FROM roots;",
+    )
+    .await;
+    assert!(read.contains("| 1"), "{read}");
+    // What the statement defines itself stands: the alias `id`.
+    let read = table(
+        &session,
+        r#"SELECT "Id" AS id FROM posts ORDER BY id DESC;"#,
+    )
+    .await;
+    assert!(read.contains("| id "), "{read}");
+    // A store relation's column beside a landed twin: `name` is the
+    // relation's, since the read is not over the landed tables alone.
+    let read = table(&session, "SELECT name FROM datasets;").await;
+    assert!(read.contains("fin"), "{read}");
+    // Two spellings that both fold to the name: refused naming both.
     let e = session
-        .execute(r#"GLOSS role ON posts.ParentId AS $${"value": "key"}$$;"#)
+        .execute("SELECT amount FROM twins;")
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains("`posts` has no column `parentid`"), "{e}");
     assert!(
-        e.contains(r#"`ParentId` is reached quoted, `posts."ParentId"`"#),
+        e.contains(r#""AMOUNT""#) && e.contains(r#""Amount""#),
         "{e}"
     );
+    // A name nothing folds to is the planner's own miss.
     let e = session
-        .execute("DECLARE RELATIONSHIP posts.ParentId -> posts.\"Id\";")
+        .execute("SELECT nope FROM posts;")
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains(r#"`posts."ParentId"`"#), "{e}");
+    assert!(e.contains("nope"), "{e}");
+
+    // The subject: a gloss lands under the landed spelling, and the
+    // GLOSSARY read reaches it by either name.
+    run(
+        &session,
+        r#"GLOSS role ON posts.ParentId AS $${"value": "key"}$$;"#,
+    )
+    .await;
+    for read in [
+        "SELECT subject FROM GLOSSARY(posts.ParentId);",
+        r#"SELECT subject FROM GLOSSARY(posts."ParentId");"#,
+    ] {
+        let glossed = table(&session, read).await;
+        assert!(glossed.contains("posts.ParentId"), "{read}: {glossed}");
+    }
+    let e = session
+        .execute(r#"GLOSS role ON twins.amount AS $${"value": "key"}$$;"#)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains(r#"twins."AMOUNT""#) && e.contains(r#"twins."Amount""#),
+        "{e}"
+    );
+    // A relationship endpoint: declared under the landed spelling.
+    run(&session, "DECLARE RELATIONSHIP posts.parentid -> posts.id;").await;
+    let declared = table(&session, "SELECT left_path, right_path FROM relationships;").await;
+    assert!(
+        declared.contains("posts.ParentId") && declared.contains("posts.Id"),
+        "{declared}"
+    );
+
+    // A table folds as declared: the miss names the quoted spelling,
+    // in the subject check and in the planner's own `table … not found`.
     let e = session
         .execute(r#"GLOSS role ON SearchInfo.Id AS $${"value": "key"}$$;"#)
         .await

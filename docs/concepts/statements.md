@@ -67,7 +67,8 @@ row.
 
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass (`DESCRIBE` over any name a read can plan: a landed
-table, a store relation, a shipped read; `SHOW TABLES` lists the bound
+table, a store relation, a shipped read, a cube read with its
+arguments; `SHOW TABLES` lists the bound
 dataset's tables), `DROP TABLE` refuses while
 the table holds data or
 glosses, and everything else that would alter schema or data directly

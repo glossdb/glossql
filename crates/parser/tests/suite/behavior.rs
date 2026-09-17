@@ -273,3 +273,50 @@ fn a_body_closed_by_mirroring_the_opener_names_the_close() {
     let e = error(r#"GLOSS entity ON encounters AS $${"value": "visit"}$$ x;"#);
     assert!(e.contains("found: x") && !e.contains("mirrors"), "{e}");
 }
+
+// -- describe ------------------------------------------------------------
+
+/// `DESCRIBE` over a read that takes arguments carries the call: the
+/// host's DESCRIBE stops at the parenthesis, so the call is read here
+/// and rendered whole for the session to plan (SPEC.md §3).
+#[test]
+fn describe_with_arguments_is_substrate_and_keeps_the_call() {
+    use datafusion_sql::parser::Statement as DFStatement;
+    use datafusion_sql::sqlparser::ast::Statement as SQLStatement;
+    for (src, rendered) in [
+        (
+            "DESCRIBE metric_series(grain => 'month');",
+            "metric_series(grain => 'month')",
+        ),
+        ("DESC band_points();", "band_points()"),
+        ("DESCRIBE source_files('erp');", "source_files('erp')"),
+    ] {
+        let Statement::Substrate(inner) = single(src) else {
+            panic!("{src}: substrate");
+        };
+        let DFStatement::Statement(inner) = *inner else {
+            panic!("{src}: a host statement");
+        };
+        let SQLStatement::ExplainTable { table_name, .. } = *inner else {
+            panic!("{src}: ExplainTable");
+        };
+        assert_eq!(table_name.to_string(), rendered, "{src}");
+    }
+    // A plain name stays the host's own DESCRIBE.
+    assert!(matches!(
+        single("DESCRIBE orders;"),
+        Statement::Substrate(_)
+    ));
+}
+
+/// A body whose quotes are escaped as if the dollar quotes were string
+/// quotes is refused with the road: nothing inside `$$…$$` is escaped.
+#[test]
+fn escaped_quotes_in_a_dollar_body_are_named() {
+    let e = error(r#"GLOSS unit ON orders.amount AS $${\"value\": \"EUR\"}$$;"#);
+    assert!(e.contains("invalid JSON body"), "{e}");
+    assert!(e.contains("nothing is escaped"), "{e}");
+    // The road is for that one omission, not every bad body.
+    let e = error(r#"GLOSS unit ON orders.amount AS $${"value": }$$;"#);
+    assert!(!e.contains("nothing is escaped"), "{e}");
+}

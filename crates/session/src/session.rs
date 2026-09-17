@@ -49,6 +49,10 @@ pub enum SessionError {
     /// have been. The engine's text is kept whole in front.
     #[error("{0}")]
     UnknownTable(String),
+    /// An unquoted column name that folds past two landed spellings
+    /// (SPEC.md §1): the refusal names both.
+    #[error("{0}")]
+    AmbiguousName(String),
     #[error("unknown function `{0}` — DECLARE it (or check its FOR scope)")]
     UnknownFunction(String),
     #[error("output of `{function}` violates the schema of the aspect it RETURNS: {detail}")]
@@ -765,15 +769,29 @@ impl Session {
             Declaration::Relationship(d) => {
                 let (left, op, right) = self.pair(&d.left, d.op, &d.right).await?;
                 // An endpoint is a key column of a landed table (SPEC.md
-                // §4). A column that is not there is refused here, where
-                // the typo is, instead of reading later as an orphan rate
-                // in `relationship_coherence`.
-                for side in [&d.left, &d.right] {
+                // §4), reached by its landed spelling (§1). A column that
+                // is not there is refused here, where the typo is,
+                // instead of reading later as an orphan rate in
+                // `relationship_coherence`.
+                let mut sides = [d.left.clone(), d.right.clone()];
+                let mut respelled = false;
+                for side in &mut sides {
                     let (table, columns) = endpoint_parts(side);
                     let table = table.last().expect("an endpoint names its table");
                     let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
-                    self.check_landed(&left.dataset, table, &columns).await?;
+                    let landed = self.landed_spelling(&left.dataset, table, &columns).await?;
+                    for (ident, spelling) in side.columns.iter_mut().zip(landed) {
+                        if ident.value != spelling {
+                            ident.value = spelling;
+                            respelled = true;
+                        }
+                    }
                 }
+                let (left, op, right) = if respelled {
+                    self.pair(&sides[0], d.op, &sides[1]).await?
+                } else {
+                    (left, op, right)
+                };
                 store
                     .declare_relationship(&left.dataset, &left.subject, op, &right.subject)
                     .await?;
@@ -975,7 +993,7 @@ impl Session {
     /// relationship's, checked at its declaration.
     async fn check_glossed_subject(
         &self,
-        resolved: &Resolved,
+        resolved: &mut Resolved,
         grains: &str,
     ) -> Result<(), SessionError> {
         let grain = glossql_glossary::rules::grain_of(&resolved.dataset, &resolved.subject);
@@ -992,25 +1010,34 @@ impl Session {
             return Ok(());
         }
         let (table, column) = match resolved.subject.split_once('.') {
-            Some((table, column)) => (table, Some(column)),
-            None => (resolved.subject.as_str(), None),
+            Some((table, column)) => (table.to_string(), Some(column.to_string())),
+            None => (resolved.subject.clone(), None),
         };
-        let columns: Vec<&str> = column.into_iter().collect();
-        self.check_landed(&resolved.dataset, table, &columns).await
+        let columns: Vec<&str> = column.iter().map(String::as_str).collect();
+        let landed = self
+            .landed_spelling(&resolved.dataset, &table, &columns)
+            .await?;
+        if let (Some(column), Some(spelling)) = (column, landed.first())
+            && *spelling != column
+        {
+            resolved.subject = format!("{table}.{spelling}");
+        }
+        Ok(())
     }
 
-    /// A subject that claims a landed table or column must find it.
-    /// Refused with the road out — the dataset's tables, or the table's
-    /// columns, and the quoted spelling where an unquoted name folded
-    /// past a landed one — the way the planner's own `No field named`
+    /// A subject that claims a landed table or column must find it —
+    /// each column as landed: its own spelling, or the one spelling an
+    /// unquoted name folded past (SPEC.md §1). Refused with the road out
+    /// — the dataset's tables, the table's columns, or the two spellings
+    /// a name could mean — the way the planner's own `No field named`
     /// names the valid fields. Reads the statement's catalog walk, so a
     /// check costs no extra round trip.
-    async fn check_landed(
+    async fn landed_spelling(
         &self,
         dataset: &str,
         table: &str,
         columns: &[&str],
-    ) -> Result<(), SessionError> {
+    ) -> Result<Vec<String>, SessionError> {
         let pins = self.shared.pinned(dataset).await?;
         let idents = self.shared.idents();
         let Some(pin) = pins.iter().find(|p| p.name == table) else {
@@ -1028,19 +1055,10 @@ impl Session {
                 "`{table}` is not a landed table in `{dataset}`{fold} — tables: {tables}"
             )));
         };
-        if let Some(missing) = columns
+        columns
             .iter()
-            .find(|c| !pin.columns.iter().any(|have| have == *c))
-        {
-            let fold = folded_past(&idents, missing, pin.columns.iter().map(String::as_str))
-                .map(|spelled| fold_road(spelled, &format!("{table}.")))
-                .unwrap_or_default();
-            return Err(SessionError::BadSubject(format!(
-                "`{table}.{missing}`: `{table}` has no column `{missing}`{fold} — columns: {}",
-                pin.columns.join(", ")
-            )));
-        }
-        Ok(())
+            .map(|column| crate::reads::landed_column(pin, column))
+            .collect()
     }
 
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
@@ -1049,7 +1067,7 @@ impl Session {
         // dataset: the head is the app, never a dataset, so an app
         // named like its dataset keeps its parts (`app_parts`, the
         // app door). Every other subject is a path (SPEC.md §4).
-        let resolved = match &gloss.subject {
+        let mut resolved = match &gloss.subject {
             Subject::Path(p) if APP_PARTS.contains(&aspect) && p.segments.len() == 2 => {
                 let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
                 Resolved {
@@ -1071,7 +1089,7 @@ impl Session {
         // rides the column shape), and stands unchecked. An unknown
         // aspect is the store's refusal, below.
         if let Some((_, _, Some(grains))) = self.shared.store.aspect(aspect).await? {
-            self.check_glossed_subject(&resolved, &grains).await?;
+            self.check_glossed_subject(&mut resolved, &grains).await?;
         }
         let snapshot = self.stamp(&resolved).await?;
         let written = self
@@ -1194,13 +1212,15 @@ impl Session {
     /// record's next point.
     async fn extract(&self, extract: Extract) -> Result<Outcome, SessionError> {
         let store = self.shared.store.clone();
-        let resolved = self.subject(&extract.subject).await?;
+        let mut resolved = self.subject(&extract.subject).await?;
         // The context is the subject's dataset's — named by the path
         // or by the binding — because a landing records that dataset's
         // pin: `SELECT detect_relationships() FROM fin` before any USE
         // measures `fin` and lands under its pin, not the empty
-        // binding's. A source subject keeps the binding's context.
+        // binding's. A source subject keeps the binding's context. A
+        // column subject is measured under its landed spelling.
         let ctx = if store.dataset_exists(&resolved.dataset).await? {
+            crate::reads::respell_column_subject(&self.shared, &mut resolved).await?;
             self.shared.read_context_for(&resolved.dataset).await?
         } else {
             self.shared.read_context().await?
@@ -1392,7 +1412,7 @@ impl Session {
     /// The planning, under its span.
     async fn plan_classed(
         &self,
-        statement: datafusion::sql::parser::Statement,
+        mut statement: datafusion::sql::parser::Statement,
     ) -> Result<
         (
             datafusion::logical_expr::LogicalPlan,
@@ -1401,7 +1421,7 @@ impl Session {
         ),
         SessionError,
     > {
-        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &statement).await?;
+        let resolved = crate::prepass::resolve(&self.shared, &self.ctx, &mut statement).await?;
         let record = resolved.touches_record();
         let reads = resolved.reads.clone();
         let tables = resolved.tables();
