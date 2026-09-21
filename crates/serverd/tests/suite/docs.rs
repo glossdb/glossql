@@ -284,6 +284,7 @@ fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
         "the served guide is the files under vendor/"
     );
     assert_eq!(served, on_disk, "a served page is the file as it stands");
+    let pages = glossql_serverd::skills::door_pages();
     for p in glossql_serverd::skills::VENDORED {
         assert!(
             p.uri().starts_with("doc://vendor/") && p.title() != p.path,
@@ -291,7 +292,7 @@ fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
             p.path
         );
         assert!(
-            glossql_serverd::skills::read(&p.uri()).is_some_and(|(_, body)| body == p.body),
+            pages.iter().any(|d| d.uri == p.uri() && d.body == p.body),
             "{} is not readable at its own URI",
             p.path
         );

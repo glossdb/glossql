@@ -93,7 +93,10 @@ fn page(name: &str, title: &str, intro: &str, list: &[Registered]) -> DoorPage {
     }
     DoorPage {
         uri: format!("doc://functions/{name}.md"),
+        name: format!("functions/{name}.md"),
         title: title.to_string(),
+        description: title.to_string(),
+        mime: "text/markdown",
         body,
     }
 }

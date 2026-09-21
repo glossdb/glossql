@@ -74,12 +74,17 @@ pub(crate) struct Shared {
     pub pages: RwLock<Arc<[DoorPage]>>,
 }
 
-/// One page the door serves, as `pages()` serves it: the resource URI,
-/// the page's first heading, and the body verbatim.
+/// One page the door serves. `pages()` serves the resource URI, the
+/// title and the body verbatim; a resource listing serves the URI
+/// under `name`, with `description` saying when the page is worth
+/// reading, and `mime` with the body.
 #[derive(Debug, Clone)]
 pub struct DoorPage {
     pub uri: String,
+    pub name: String,
     pub title: String,
+    pub description: String,
+    pub mime: &'static str,
     pub body: String,
 }
 

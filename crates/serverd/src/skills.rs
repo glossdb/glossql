@@ -9,9 +9,10 @@
 //! the engine's SQL guide under `vendor/` ride along as `doc://`
 //! resources, because a connected agent has no checkout to read them
 //! from — what an agent in this repository reads is what the door
-//! serves. The same pages are the rows of the `pages()` read
-//! ([`door_pages`]), for a client that has the statement tool and no
-//! resource reader.
+//! serves. [`door_pages`] is the one list of them: the plane holds it,
+//! the MCP door lists and reads its resources from it, and the
+//! `pages()` read serves the same rows to a client that has the
+//! statement tool and no resource reader.
 
 /// One product skill: its directory name and its `SKILL.md`, verbatim
 /// — frontmatter included, as an Agent Plugins host would read it.
@@ -140,23 +141,30 @@ fn first_heading(body: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Every page the door serves, as the rows of `pages()` — the same
-/// list `resources/list` serves, in the same order, under the same
-/// URIs: a client with the statement tool and no resource reader
-/// reads them through the tool.
+/// Every page of the binary, in the order every surface serves them:
+/// the skills, the two normative artifacts, then the trees — a skill's
+/// references after its SKILL.md, the docs pages, the engine's SQL
+/// guide. A tree page is described by its first heading, which is what
+/// tells a reader when the page is worth its tokens.
 pub fn door_pages() -> std::sync::Arc<[glossql_session::DoorPage]> {
     use glossql_session::DoorPage;
     let mut out: Vec<DoorPage> = SKILLS
         .iter()
         .map(|s| DoorPage {
             uri: s.uri(),
+            name: s.name.to_string(),
             title: first_heading(s.body).unwrap_or(s.name).to_string(),
+            description: s.description().to_string(),
+            mime: "text/markdown",
             body: s.body.to_string(),
         })
         .collect();
     out.extend(DOCS.iter().map(|d| DoorPage {
         uri: d.uri(),
+        name: d.name.to_string(),
         title: d.description.to_string(),
+        description: d.description.to_string(),
+        mime: d.mime,
         body: d.body.to_string(),
     }));
     out.extend(
@@ -166,7 +174,10 @@ pub fn door_pages() -> std::sync::Arc<[glossql_session::DoorPage]> {
             .chain(VENDORED.iter())
             .map(|p| DoorPage {
                 uri: p.uri(),
+                name: p.path.to_string(),
                 title: p.title().to_string(),
+                description: p.title().to_string(),
+                mime: "text/markdown",
                 body: p.body.to_string(),
             }),
     );
@@ -181,26 +192,4 @@ pub fn door_pages_with(
     let mut out: Vec<glossql_session::DoorPage> = door_pages().to_vec();
     out.extend(extra);
     out.into()
-}
-
-/// The body behind a resource URI, with its MIME type. The URI is the
-/// key, exactly as listed.
-pub fn read(uri: &str) -> Option<(&'static str, &'static str)> {
-    SKILLS
-        .iter()
-        .find(|s| s.uri() == uri)
-        .map(|s| ("text/markdown", s.body))
-        .or_else(|| {
-            DOCS.iter()
-                .find(|d| d.uri() == uri)
-                .map(|d| (d.mime, d.body))
-        })
-        .or_else(|| {
-            REFERENCES
-                .iter()
-                .chain(PAGES.iter())
-                .chain(VENDORED.iter())
-                .find(|p| p.uri() == uri)
-                .map(|p| ("text/markdown", p.body))
-        })
 }

@@ -838,62 +838,25 @@ impl ServerHandler for GlossqlMcp {
         })
     }
 
-    /// The teaching resources: the skills and the two normative
-    /// artifacts they cite. Embedded at compile time, so static per
-    /// process and cacheable like the tool list.
+    /// The teaching resources: the plane's pages, which are constants
+    /// of the binary plus the function listings built at boot — static
+    /// per process, so cacheable like the tool list.
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        let mut resources: Vec<Resource> = crate::skills::SKILLS
+        let resources = self
+            .plane
+            .pages()
             .iter()
-            .map(|s| {
-                Resource::new(s.uri(), s.name)
-                    .with_description(s.description())
-                    .with_mime_type("text/markdown")
-                    .with_size(s.body.len() as u64)
+            .map(|p| {
+                Resource::new(p.uri.clone(), p.name.clone())
+                    .with_description(p.description.clone())
+                    .with_mime_type(p.mime)
+                    .with_size(p.body.len() as u64)
             })
             .collect();
-        resources.extend(crate::skills::DOCS.iter().map(|d| {
-            Resource::new(d.uri(), d.name)
-                .with_description(d.description)
-                .with_mime_type(d.mime)
-                .with_size(d.body.len() as u64)
-        }));
-        // The trees: a skill's references after its SKILL.md, then the
-        // docs pages, then the engine's SQL guide — each listed by its
-        // first heading, which is what tells a reader when the page is
-        // worth its tokens.
-        resources.extend(
-            crate::skills::REFERENCES
-                .iter()
-                .chain(crate::skills::PAGES.iter())
-                .chain(crate::skills::VENDORED.iter())
-                .map(|p| {
-                    Resource::new(p.uri(), p.path)
-                        .with_description(p.title())
-                        .with_mime_type("text/markdown")
-                        .with_size(p.body.len() as u64)
-                }),
-        );
-        // The pages built at boot — the function listings — are the
-        // plane's; every other page is a constant of the binary.
-        resources.extend(
-            self.plane
-                .pages()
-                .iter()
-                .filter(|p| p.uri.starts_with("doc://functions/"))
-                .map(|p| {
-                    Resource::new(
-                        p.uri.clone(),
-                        p.uri.trim_start_matches("doc://").to_string(),
-                    )
-                    .with_description(p.title.clone())
-                    .with_mime_type("text/markdown")
-                    .with_size(p.body.len() as u64)
-                }),
-        );
         Ok(ListResourcesResult {
             resources,
             ttl_ms: Some(3_600_000),
@@ -935,18 +898,15 @@ impl ServerHandler for GlossqlMcp {
         if let Some(rest) = request.uri.strip_prefix("next://") {
             return self.next_resource(rest, &request.uri, &context).await;
         }
-        let (mime, body) = match crate::skills::read(&request.uri) {
-            Some((mime, body)) => (mime, body.to_string()),
-            None => self
-                .plane
-                .pages()
-                .iter()
-                .find(|p| p.uri == request.uri)
-                .map(|p| ("text/markdown", p.body.clone()))
-                .ok_or_else(|| {
-                    McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
-                })?,
-        };
+        let (mime, body) = self
+            .plane
+            .pages()
+            .iter()
+            .find(|p| p.uri == request.uri)
+            .map(|p| (p.mime, p.body.clone()))
+            .ok_or_else(|| {
+                McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
+            })?;
         Ok(ReadResourceResult::new(vec![
             ResourceContents::text(body, request.uri).with_mime_type(mime),
         ])
