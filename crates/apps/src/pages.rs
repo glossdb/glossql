@@ -6,6 +6,8 @@
 //! dataset the URL bound, the server's own address, and the URL's
 //! query params as `state` — the URL is the only state there is.
 
+use std::sync::LazyLock;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -20,14 +22,21 @@ const SHELL: &str = include_str!("../templates/shell.html");
 const DATASETS: &str = include_str!("../templates/datasets.html");
 const TILES: &str = include_str!("../templates/modules/tiles.html");
 
-fn base_tera() -> Result<Tera, tera::Error> {
-    let mut tera = Tera::default();
-    tera.add_raw_templates(vec![
-        ("shell.html", SHELL),
-        ("datasets.html", DATASETS),
-        ("modules/tiles.html", TILES),
-    ])?;
-    Ok(tera)
+/// The embedded templates, parsed once for the process. A request
+/// takes a copy, since an app's own pages join it per request — they
+/// are glossed data and change with the record.
+fn base_tera() -> Tera {
+    static BASE: LazyLock<Tera> = LazyLock::new(|| {
+        let mut tera = Tera::default();
+        tera.add_raw_templates(vec![
+            ("shell.html", SHELL),
+            ("datasets.html", DATASETS),
+            ("modules/tiles.html", TILES),
+        ])
+        .expect("the embedded templates parse; the apps suite renders each");
+        tera
+    });
+    BASE.clone()
 }
 
 fn state_map(params: Vec<(String, String)>) -> Value {
@@ -123,7 +132,7 @@ pub async fn datasets(State(door): State<AppDoor>) -> Response {
     ctx.insert("error", &error);
     ctx.insert("apps", &apps);
     ctx.insert("origin", &*door.origin);
-    render("datasets.html", ctx, base_tera())
+    render("datasets.html", ctx, Ok(base_tera()))
 }
 
 /// The dataset's page is the built-in: `/<dataset>/app` opens the
@@ -174,13 +183,13 @@ async fn page_response(
             format!("no page `{page}` in `{app}`"),
         );
     }
-    let tera = base_tera().and_then(|mut tera| {
-        // Every page of the app loads, so pages can include each other.
-        for (name, text) in def.html_pages() {
-            tera.add_raw_template(&format!("pages/{name}"), &text)?;
-        }
-        Ok(tera)
-    });
+    // Every page of the app loads, so pages can include each other.
+    let mut tera = base_tera();
+    let tera = def
+        .html_pages()
+        .into_iter()
+        .try_for_each(|(name, text)| tera.add_raw_template(&format!("pages/{name}"), &text))
+        .map(|()| tera);
     let pages: Vec<Value> = def
         .pages
         .iter()
