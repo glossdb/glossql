@@ -54,6 +54,19 @@ pub const COOKIE: &str = "glossql_token";
 /// of requests at the issuer.
 const REFRESH_FLOOR: Duration = Duration::from_secs(10);
 
+/// How long the issuer has to answer. Discovery and the key set are two
+/// small documents; an issuer that holds the connection open without
+/// answering must not hold the request that is waiting on its keys.
+const ISSUER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The client the issuer is read with, at boot and at a key refresh.
+fn issuer_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(ISSUER_TIMEOUT)
+        .build()
+        .expect("the TLS backend the tree is built with initializes")
+}
+
 /// The issuer's two user-facing endpoints, read from its discovery
 /// document: where a browser is sent to sign in, and where a code is
 /// exchanged for a token (`crate::login`).
@@ -137,7 +150,7 @@ impl Gate {
     /// serve.
     pub async fn discover(issuer: &str, resource: &str, client_id: &str) -> Result<Gate, String> {
         let issuer = issuer.trim_end_matches('/');
-        let http = reqwest::Client::new();
+        let http = issuer_client();
         let url = format!("{issuer}/.well-known/openid-configuration");
         let doc: Discovery = fetch(&http, &url).await?;
         if doc.issuer.trim_end_matches('/') != issuer {
@@ -178,7 +191,7 @@ impl Gate {
             keys: RwLock::new(keys),
             jwks_uri: None,
             refreshed: Mutex::new(Instant::now()),
-            http: reqwest::Client::new(),
+            http: issuer_client(),
         }
     }
 
