@@ -1,4 +1,4 @@
-# 21 · Grounding grain / stock serving shape — TRANSCRIBES (grain key, standard grounding schema)
+# 26 · Grounding grain / stock serving shape — TRANSCRIBES (grain key, standard grounding schema)
 
 Source: the 2026-08 finance integration-run harvest — an agent's
 `ar_balance` grounding, a running balance of signed events marked

@@ -16,7 +16,7 @@ instead of following a staged arc.
 - **The four flows, end to end through the MCP door.** Add-source,
   relationships, dimensions, metrics — each exercised end to end
   against a live door by the server's own suite
-  (`crates/serverd/tests/doors.rs`), file and relational (ADBC)
+  (`crates/serverd/tests/suite/doors.rs`), file and relational (ADBC)
   sources alike.
 - **Recipes as the cure surface.** Probe-first, authored typing,
   casts-clean accounting on file sources, supersede-and-reland for

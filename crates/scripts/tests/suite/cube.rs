@@ -1044,7 +1044,7 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
     );
 }
 
-/// The declared grain (SPEC §5.2, corpus fixture 21) is validated
+/// The declared grain (SPEC §5.2, corpus fixture 26) is validated
 /// where the frame is built: one row per key or the metric abstains,
 /// because a frame that breaks its declared identity multiplies every
 /// aggregating reader and nothing downstream can tell duplication from

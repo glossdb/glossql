@@ -5,7 +5,7 @@
 //! the surface by refusal. Each page lists what its context registers,
 //! read from that context's own registry at boot (after the shipped
 //! system landed), so a page cannot drift from the registration; the
-//! suite compares them (`tests/suite/window.rs`).
+//! suite compares them (`tests/suite/next.rs`).
 
 use std::fmt::Write as _;
 

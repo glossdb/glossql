@@ -546,29 +546,6 @@ details.contest[open] summary { color: var(--muted); }
   margin-top: 0.9rem;
 }
 
-/* ---- the apps index ----------------------------------------------- */
-
-.cards {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
-  gap: 1px;
-  background: var(--rule-soft);
-  border: 1px solid var(--rule-soft);
-}
-.cards a {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 1.1rem 1.2rem;
-  background: var(--ground);
-}
-.cards a:hover { background: var(--panel); }
-.cards strong { font-weight: 600; }
-.cards span { color: var(--faint); font-size: var(--step); }
-
 /* ---- the workspace root: the doors ------------------------------- */
 
 /* The three addresses as an address block: the path in ink at reading

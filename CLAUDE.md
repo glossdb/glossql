@@ -37,8 +37,8 @@ follow the corpus-first process below.
 - `skills/` — the product skills, a `SKILL.md` and its `references/`
   each, where a door-connected agent learns the language; embedded in
   serverd and served on the MCP door as resources and prompts, gated
-  by the test suite. `.claude/skills/` keeps the substrate skill for
-  building the server.
+  by the test suite. `.claude/skills/` keeps the skills for building
+  the server: the substrate, the prose and the release.
 - `vendor/` — DataFusion's SQL user guide at the tag the lock
   resolves, served on the door as `doc://vendor/datafusion/sql/…`.
   `vendor/datafusion/refresh.sh <tag>` at every pin move; the serverd

@@ -208,12 +208,6 @@ impl Plane {
         self
     }
 
-    /// The cache itself — for the doors' instruments and the tests that
-    /// count builds.
-    pub fn cube_cache(&self) -> &CubeCache {
-        &self.cube
-    }
-
     /// The workspace's declared datasets — for doors that bind by
     /// convention: an app without a pinned dataset binds to the sole one.
     pub async fn datasets(&self) -> Result<Vec<String>, SessionError> {

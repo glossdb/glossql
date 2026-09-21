@@ -47,3 +47,4 @@ simplified language.
 | 23 | conditional relevance (medium run) | RULED: `WHEN` narrows what a subject owes — the backlog counts what is real, not columns × vocabulary |
 | 24 | functions in a table (run 4) | RULED: a function's body is data — `AS $$…$$` replaces `FROM 'path'`, the `functions/` directory retires, and the shipped library reads back as examples · body-in-a-file INFORMATION LOST |
 | 25 | mixed-case names (avito run) | RULED: an unquoted name folds to lowercase at the declaration and at the read; a double-quoted name keeps its case |
+| 26 | grounding grain / stock serving shape (finance integration run) | TRANSCRIBES (grain key, standard grounding schema) |

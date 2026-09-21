@@ -17,8 +17,8 @@
    so this holds — no custom lexing anywhere.
 
    Substrate SQL is opaque to this grammar: glossql adds statements and table
-   functions to a SQL host (views, SELECT bodies, DELETE FROM glossary and
-   the cache are host SQL), it does not re-specify SQL. The actor
+   functions to a SQL host (views, SELECT bodies and DELETE FROM glossary
+   are host SQL), it does not re-specify SQL. The actor
    (agent_id | human_id) rides the connection — there is no BY-actor clause
    anywhere; the engine stamps writer and actor kind on every statement. *)
 
@@ -31,7 +31,7 @@ statement         = declaration
                   | probe_stmt
                   | substrate_sql ;          (* allowlisted: SELECT,
                                                 DROP TABLE, DELETE FROM
-                                                glossary|cache — the rest of
+                                                glossary — the rest of
                                                 DDL/DML is refused *)
 
 declaration       = "DECLARE", ( source_decl
