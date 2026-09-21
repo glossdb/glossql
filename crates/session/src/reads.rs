@@ -15,6 +15,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result as DFResult};
 use datafusion::datasource::{MemTable, provider_as_source};
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::logical_expr::planner::{
     PlannedRelation, RelationPlanner, RelationPlannerContext, RelationPlanning,
@@ -167,6 +168,14 @@ impl Shared {
 
     pub fn cube(&self) -> crate::cube::CubeCache {
         self.cube.read().expect("cube lock").clone()
+    }
+
+    /// The process's engine runtime — the one the session's own context
+    /// is built on, handed to the scratch context a recipe or a probe
+    /// runs in so its plan answers to the same memory pool and spill
+    /// space.
+    pub fn env(&self) -> Arc<RuntimeEnv> {
+        self.session_ctx().runtime_env()
     }
 
     /// The session's own context — set right after construction, so

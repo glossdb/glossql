@@ -40,8 +40,10 @@ use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
 use datafusion::error::DataFusionError;
+use datafusion::execution::object_store::DefaultObjectStoreRegistry;
+use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion::logical_expr::Expr;
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::scalar::ScalarValue;
 use futures::StreamExt as _;
 
@@ -253,7 +255,7 @@ impl Landed {
 /// a type. Typing is authored: an uncast csv/json
 /// column is Utf8 because the read side is, never because the import
 /// refolds it.
-pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
+pub async fn run_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Landed> {
     if spec.kind == SourceKind::RelationalDb {
         // The source computed the SQL itself, so its result set is both
         // what was read and what lands — dropped is structurally zero
@@ -271,7 +273,7 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
         });
     }
     let seen: Scanned = Arc::default();
-    let ctx = reader_ctx(spec, Some(Arc::clone(&seen)))?;
+    let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)))?;
 
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
@@ -509,9 +511,22 @@ pub fn reader_functions() -> Vec<(&'static str, String, Option<String>)> {
 /// three read functions, path resolution rooted at the source. One
 /// builder serves the recipe (which counts scans) and the probe (which
 /// does not).
-fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext> {
+///
+/// It runs on the process's runtime — `env`'s memory pool, disk manager
+/// and caches — so a recipe's plan answers to the same bounds as every
+/// other plan. The object-store registry is the context's own: a
+/// source's store is reachable from the context that reads it and from
+/// no other.
+fn reader_ctx(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    seen: Option<Scanned>,
+) -> Result<SessionContext> {
     let root = Root::of(spec)?;
-    let ctx = SessionContext::new();
+    let runtime = RuntimeEnvBuilder::from_runtime_env(env)
+        .with_object_store_registry(Arc::new(DefaultObjectStoreRegistry::new()))
+        .build()?;
+    let ctx = SessionContext::new_with_config_rt(SessionConfig::new(), Arc::new(runtime));
     root.register(&ctx);
     casts::register_try_functions(&ctx);
     for (fn_name, kind) in READERS {
@@ -614,7 +629,12 @@ async fn account_casts(
 /// SQL surface, the same path resolution, landing nothing. The result
 /// carries the schema the recipe would land, so `LIMIT 0` rehearses the
 /// identity a `DECLARE RECIPE` would stamp.
-pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<Vec<RecordBatch>> {
+pub async fn run_probe(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    row_cap: usize,
+) -> Result<Vec<RecordBatch>> {
     if spec.kind == SourceKind::RelationalDb {
         let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, row_cap))?;
         let mut batches = read.batches;
@@ -623,7 +643,7 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
         }
         return Ok(batches);
     }
-    let ctx = reader_ctx(spec, None)?;
+    let ctx = reader_ctx(env, spec, None)?;
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "probe", Error::Probe, e).await),

@@ -488,10 +488,7 @@ mod tests {
         let env = |name: &str| {
             (name == "GLOSSQL_AUDIENCE").then(|| "https://glossql.example".to_string())
         };
-        assert_eq!(
-            audience(&env, "0.0.0.0:8080"),
-            "https://glossql.example"
-        );
+        assert_eq!(audience(&env, "0.0.0.0:8080"), "https://glossql.example");
         assert_eq!(
             audience(&|_| None, "127.0.0.1:8080"),
             "http://127.0.0.1:8080"

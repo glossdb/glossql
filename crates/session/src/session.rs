@@ -742,6 +742,7 @@ impl Session {
                     let replaced = admission == RecipeAdmission::Replaced
                         && lake.table_exists(dataset, table).await?;
                     let landed = glossql_import::run_recipe(
+                        &self.shared.env(),
                         &self.source_spec(&d.source.value).await?,
                         &d.sql,
                     )
@@ -903,7 +904,7 @@ impl Session {
     async fn probe(&self, probe: Probe) -> Result<Outcome, SessionError> {
         let spec = self.source_spec(&probe.source.value).await?;
         Ok(Outcome::Rows(
-            glossql_import::run_probe(&spec, &probe.sql, self.row_cap).await?,
+            glossql_import::run_probe(&self.shared.env(), &spec, &probe.sql, self.row_cap).await?,
         ))
     }
 
