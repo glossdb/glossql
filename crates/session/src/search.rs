@@ -1979,9 +1979,7 @@ async fn series_fingerprint(
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql))
-        .await
-        .ok()?;
+    let probe = crate::whatif::build_plan(shared, ctx, sql).await.ok()?;
     let fields = probe.schema();
     let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
     // The same verb rule every monthly reader applies: a ratio serves
@@ -2012,9 +2010,7 @@ async fn series_fingerprint(
     )
     .verb;
     let q = monthly_sql(sql, &tcol, verb);
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q))
-        .await
-        .ok()?;
+    let plan = crate::whatif::build_plan(shared, ctx, &q).await.ok()?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -2494,7 +2490,7 @@ async fn run_grain(
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
     let q = grain_sql(sql, tcol, verb, grain, halves);
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
+    let plan = crate::whatif::build_plan(shared, ctx, &q).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -2586,7 +2582,7 @@ async fn extract_shape(
                 count(DISTINCT date_trunc('month', \"{tcol}\")) AS months \
          FROM ({sql})"
     );
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, &q)).await?;
+    let plan = crate::whatif::build_plan(shared, ctx, &q).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -2696,7 +2692,7 @@ pub(crate) async fn metric_band_walk(
         // `value` column; the time column by dtype, as any reader finds
         // it. A grounding that does not plan fails the walk whole, as
         // the script it replaces did.
-        let probe = Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await?;
+        let probe = crate::whatif::build_plan(shared, &ctx, sql).await?;
         let fields = probe.schema();
         let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
         if !has("value") {
@@ -3051,7 +3047,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         let serve = |row: &mut serde_json::Map<String, Value>, reason: String| {
             row.insert("reason".into(), json!(reason));
         };
-        let plan = match Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await {
+        let plan = match crate::whatif::build_plan(shared, &ctx, sql).await {
             Ok(plan) => plan,
             Err(e) => {
                 serve(&mut row, format!("not served: {e}"));
@@ -3070,7 +3066,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         }
         let q = format!("SELECT value FROM ({sql}) LIMIT 2");
         let served = async {
-            let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
+            let plan = crate::whatif::build_plan(shared, &ctx, &q).await?;
             ctx.execute_logical_plan(plan)
                 .await
                 .map_err(SessionError::not_served)?
@@ -3164,7 +3160,7 @@ pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, 
         let Some(sql) = body.get("sql").and_then(Value::as_str) else {
             continue;
         };
-        let plan = match Box::pin(crate::whatif::build_plan(shared, &ctx, sql)).await {
+        let plan = match crate::whatif::build_plan(shared, &ctx, sql).await {
             Ok(plan) => plan,
             Err(e) => {
                 out.push(reason(format!("not served: {e}")));

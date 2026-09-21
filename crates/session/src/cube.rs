@@ -1276,7 +1276,7 @@ async fn plan(
         .get("sql")
         .and_then(Value::as_str)
         .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
     // Planned through to the physical plan as well: the engine admits
     // at the logical stage what it refuses at the physical one — a
     // scalar subquery inside an aggregate's argument arrives there as
@@ -2051,7 +2051,7 @@ async fn rival_series(
     resolution: Resolution,
     since: Option<&str>,
 ) -> Result<(Vec<SeriesRow>, &'static str, bool), Abstain> {
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
@@ -2193,7 +2193,7 @@ async fn run(
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<Vec<RecordBatch>, Abstain> {
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let plan = crate::whatif::build_plan(shared, ctx, sql).await?;
     ctx.execute_logical_plan(plan)
         .await
         .map_err(|e| Abstain(format!("not served: {e}")))?

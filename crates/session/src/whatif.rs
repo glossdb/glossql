@@ -560,23 +560,27 @@ async fn concept_rows(
 /// Plan a query through the session's own pipeline, so a nested `read.`
 /// re-enters the relation planner. The `misfit.` door plans its frame
 /// through the same gate.
-pub(crate) async fn build_plan(
-    shared: &Arc<Shared>,
-    ctx: &SessionContext,
-    sql: &str,
-) -> Result<LogicalPlan, SessionError> {
-    // Parsed once, under the pre-pass's one-query rule; the same
-    // statement is resolved and then planned.
-    let query = crate::prepass::parse(sql, "the grounding")?;
-    let mut statement = datafusion::sql::parser::Statement::Statement(Box::new(
-        SQLStatement::Query(Box::new(query)),
-    ));
-    // A grounding body may name `read.<x>()`; resolve before planning.
-    let resolved = crate::prepass::resolve(shared, ctx, &mut statement).await?;
-    crate::reads::state_with(ctx, shared, resolved)
-        .statement_to_plan(statement)
-        .await
-        .map_err(SessionError::not_served)
+pub(crate) fn build_plan<'a>(
+    shared: &'a Arc<Shared>,
+    ctx: &'a SessionContext,
+    sql: &'a str,
+) -> futures::future::BoxFuture<'a, Result<LogicalPlan, SessionError>> {
+    // Boxed here, once: the pre-pass under it makes this a large
+    // future, and every door that plans a grounding awaits it.
+    Box::pin(async move {
+        // Parsed once, under the pre-pass's one-query rule; the same
+        // statement is resolved and then planned.
+        let query = crate::prepass::parse(sql, "the grounding")?;
+        let mut statement = datafusion::sql::parser::Statement::Statement(Box::new(
+            SQLStatement::Query(Box::new(query)),
+        ));
+        // A grounding body may name `read.<x>()`; resolve before planning.
+        let resolved = crate::prepass::resolve(shared, ctx, &mut statement).await?;
+        crate::reads::state_with(ctx, shared, resolved)
+            .statement_to_plan(statement)
+            .await
+            .map_err(SessionError::not_served)
+    })
 }
 
 /// A monthly series: Vec<(period "YYYY-MM", value)>, optionally with

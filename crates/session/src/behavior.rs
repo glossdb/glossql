@@ -267,7 +267,7 @@ pub(crate) async fn behavior_anchors(
         let shared = Arc::clone(shared);
         let ctx = ctx.clone();
         async move {
-            let plan = Box::pin(crate::whatif::build_plan(&shared, &ctx, &q)).await?;
+            let plan = crate::whatif::build_plan(&shared, &ctx, &q).await?;
             ctx.execute_logical_plan(plan)
                 .await
                 .map_err(SessionError::not_served)?
@@ -283,7 +283,7 @@ pub(crate) async fn behavior_anchors(
         let shared = Arc::clone(shared);
         let ctx = ctx.clone();
         async move {
-            let plan = Box::pin(crate::whatif::build_plan(&shared, &ctx, &q)).await?;
+            let plan = crate::whatif::build_plan(&shared, &ctx, &q).await?;
             let served = ctx
                 .execute_logical_plan(plan)
                 .await
@@ -857,7 +857,7 @@ pub(crate) async fn behavior_anchors(
                                         format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c))
                                     })
                                     .collect();
-                                let mp = Box::pin(crate::whatif::build_plan(
+                                let mp = crate::whatif::build_plan(
                                     shared,
                                     &ctx,
                                     &format!(
@@ -867,7 +867,7 @@ pub(crate) async fn behavior_anchors(
                                      WHERE {e_guard} AND {e_texpr} IS NOT NULL \
                                      GROUP BY 1, 2"
                                     ),
-                                ))
+                                )
                                 .await?;
                                 let mut project = vec![
                                     col("y.e").alias("e"),
