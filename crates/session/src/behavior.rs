@@ -357,45 +357,7 @@ pub(crate) async fn behavior_anchors(
         .iter()
         .any(|p| p.src_t == table && p.dst_t != table && !documents.contains(p.dst_t.as_str()));
 
-    // Time axes of a table: its OWN date columns; only a table with
-    // none borrows one declared hop away.
-    let mut all_axes: HashMap<&str, Vec<Axis>> = HashMap::new();
-    for t in &tables {
-        let mut axes: Vec<Axis> = Vec::new();
-        for (name, dtype) in &schemas[t.as_str()] {
-            if temporal_dtype(dtype) {
-                axes.push(Axis {
-                    label: format!("{t}.{name}"),
-                    time_col: name.clone(),
-                    borrowed: None,
-                });
-            }
-        }
-        if axes.is_empty() {
-            for p in &pointers {
-                if p.src_t != *t || p.dst_t == *t {
-                    continue;
-                }
-                for (name, dtype) in &schemas[p.dst_t.as_str()] {
-                    if temporal_dtype(dtype) {
-                        let label = format!("{}.{name} via {}", p.dst_t, cols_label(&p.src_cols));
-                        if !axes.iter().any(|a| a.label == label) {
-                            axes.push(Axis {
-                                label,
-                                time_col: name.clone(),
-                                borrowed: Some((
-                                    p.dst_t.clone(),
-                                    p.src_cols.clone(),
-                                    p.dst_cols.clone(),
-                                )),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        all_axes.insert(t, axes);
-    }
+    let all_axes = time_axes(&tables, &schemas, &pointers);
 
     let m_axes = all_axes[table].clone();
     if m_axes.is_empty() {
@@ -457,142 +419,7 @@ pub(crate) async fn behavior_anchors(
                 continue;
             }
 
-            // Entity alignments: a declared edge between the two tables
-            // directly, or two edges meeting at the same dimension key.
-            let mut aligns: Vec<Align> = Vec::new();
-            for p in &pointers {
-                if p.src_t == table && p.dst_t == *ev {
-                    aligns.push(Align {
-                        m_cols: p.src_cols.clone(),
-                        e_cols: p.dst_cols.clone(),
-                        via: None,
-                        e_via: None,
-                    });
-                }
-                if p.src_t == *ev && p.dst_t == table {
-                    aligns.push(Align {
-                        m_cols: p.dst_cols.clone(),
-                        e_cols: p.src_cols.clone(),
-                        via: None,
-                        e_via: None,
-                    });
-                }
-            }
-            for p in &pointers {
-                if p.src_t != table {
-                    continue;
-                }
-                for q in &pointers {
-                    if q.src_t == *ev
-                        && q.dst_t == p.dst_t
-                        && q.dst_cols == p.dst_cols
-                        && p.dst_t != table
-                        && p.dst_t != *ev
-                    {
-                        aligns.push(Align {
-                            m_cols: p.src_cols.clone(),
-                            e_cols: q.src_cols.clone(),
-                            via: None,
-                            e_via: None,
-                        });
-                    }
-                }
-            }
-            // Borrowed entity — only for a measure table whose every
-            // edge lands on a document (`owns_entity` above): the
-            // measure side joins the document table and keys on ITS
-            // dimension column; the event side must carry the key on a
-            // direct edge of its own. The via table may BE the event
-            // table.
-            if !owns_entity {
-                for p1 in &pointers {
-                    if p1.src_t != table || p1.dst_t == table {
-                        continue;
-                    }
-                    for p2 in &pointers {
-                        if p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == *ev {
-                            continue;
-                        }
-                        for q in &pointers {
-                            if q.src_t == *ev && q.dst_t == p2.dst_t && q.dst_cols == p2.dst_cols {
-                                aligns.push(Align {
-                                    m_cols: p2.src_cols.clone(),
-                                    e_cols: q.src_cols.clone(),
-                                    via: Some((
-                                        p1.dst_t.clone(),
-                                        p1.src_cols.clone(),
-                                        p1.dst_cols.clone(),
-                                    )),
-                                    e_via: None,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            // Borrowed entity, event side — only when the event table
-            // aligned no other way (borrow when starving, like the
-            // time-axis borrow): a document-keyed event table's one
-            // path to the measure runs through its document master.
-            // event → master (q1), and the master either carries the
-            // measure's dimension key (q2 meeting p) or points at the
-            // measure directly (q2). The event side joins the master
-            // `ee` and keys on ITS columns; cost is that one m:1 join
-            // ahead of the aggregate, and the HAVING probe still gates
-            // the alignment before either side is scanned wide.
-            if aligns.is_empty() {
-                for q1 in &pointers {
-                    if q1.src_t != *ev || q1.dst_t == *ev || q1.dst_t == table {
-                        continue;
-                    }
-                    for q2 in &pointers {
-                        if q2.src_t != q1.dst_t || q2.dst_t == *ev {
-                            continue;
-                        }
-                        let e_via =
-                            Some((q1.dst_t.clone(), q1.src_cols.clone(), q1.dst_cols.clone()));
-                        if q2.dst_t == table {
-                            aligns.push(Align {
-                                m_cols: q2.dst_cols.clone(),
-                                e_cols: q2.src_cols.clone(),
-                                via: None,
-                                e_via,
-                            });
-                            continue;
-                        }
-                        for p in &pointers {
-                            if p.src_t == table && p.dst_t == q2.dst_t && p.dst_cols == q2.dst_cols
-                            {
-                                aligns.push(Align {
-                                    m_cols: p.src_cols.clone(),
-                                    e_cols: q2.src_cols.clone(),
-                                    via: None,
-                                    e_via: e_via.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            let mut seen: Vec<String> = Vec::new();
-            let mut deduped: Vec<Align> = Vec::new();
-            for a in aligns {
-                let via = a
-                    .via
-                    .as_ref()
-                    .map(|(t, _, _)| format!("{t}>"))
-                    .unwrap_or_default();
-                let e_via = a
-                    .e_via
-                    .as_ref()
-                    .map(|(t, _, _)| format!(">{t}"))
-                    .unwrap_or_default();
-                let k = format!("{via}{e_via}{}={}", a.m_cols.join(","), a.e_cols.join(","));
-                if !seen.contains(&k) {
-                    seen.push(k);
-                    deduped.push(a);
-                }
-            }
+            let deduped = alignments(table, ev, &pointers, owns_entity);
             if deduped.is_empty() {
                 continue;
             }
@@ -1078,15 +905,201 @@ pub(crate) async fn behavior_anchors(
         }));
     }
 
-    // The verdict, in the shape a reader actually needs. Extraction
-    // serves the summary alone (run 4 spent 60KB of an agent's context
-    // — 102 anchors — to learn the word "flow"); every anchor still
-    // reads back via GLOSSARY when the judge wants the losers.
-    // One tie rule, layered: support first inside SUPPORT_EPS — the
-    // per-anchor rule's own epsilon — then a reconciliation over the
-    // monotone shape (the movement explains the level), the wider
-    // vote, the anchor's name. On a support tie `s_tiebreak` names
-    // the layer that decided, so the record can explain the winner.
+    rows_batch(elect(&anchors), behavior_shape())
+}
+
+/// Time axes of every table: its OWN date columns; only a table with
+/// none borrows one declared hop away.
+fn time_axes<'a>(
+    tables: &'a [String],
+    schemas: &HashMap<&str, Vec<(String, String)>>,
+    pointers: &[Pointer],
+) -> HashMap<&'a str, Vec<Axis>> {
+    let mut all_axes: HashMap<&str, Vec<Axis>> = HashMap::new();
+    for t in tables {
+        let mut axes: Vec<Axis> = Vec::new();
+        for (name, dtype) in &schemas[t.as_str()] {
+            if temporal_dtype(dtype) {
+                axes.push(Axis {
+                    label: format!("{t}.{name}"),
+                    time_col: name.clone(),
+                    borrowed: None,
+                });
+            }
+        }
+        if axes.is_empty() {
+            for p in pointers {
+                if p.src_t != *t || p.dst_t == *t {
+                    continue;
+                }
+                for (name, dtype) in &schemas[p.dst_t.as_str()] {
+                    if temporal_dtype(dtype) {
+                        let label = format!("{}.{name} via {}", p.dst_t, cols_label(&p.src_cols));
+                        if !axes.iter().any(|a| a.label == label) {
+                            axes.push(Axis {
+                                label,
+                                time_col: name.clone(),
+                                borrowed: Some((
+                                    p.dst_t.clone(),
+                                    p.src_cols.clone(),
+                                    p.dst_cols.clone(),
+                                )),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        all_axes.insert(t, axes);
+    }
+    all_axes
+}
+
+/// Entity alignments between the measure table and one event table: a
+/// declared edge between the two directly, or two edges meeting at the
+/// same dimension key; then the two borrowed shapes, each under its own
+/// gate. Deduplicated by what the alignment joins on.
+fn alignments(table: &str, ev: &str, pointers: &[Pointer], owns_entity: bool) -> Vec<Align> {
+    let mut aligns: Vec<Align> = Vec::new();
+    for p in pointers {
+        if p.src_t == table && p.dst_t == *ev {
+            aligns.push(Align {
+                m_cols: p.src_cols.clone(),
+                e_cols: p.dst_cols.clone(),
+                via: None,
+                e_via: None,
+            });
+        }
+        if p.src_t == *ev && p.dst_t == table {
+            aligns.push(Align {
+                m_cols: p.dst_cols.clone(),
+                e_cols: p.src_cols.clone(),
+                via: None,
+                e_via: None,
+            });
+        }
+    }
+    for p in pointers {
+        if p.src_t != table {
+            continue;
+        }
+        for q in pointers {
+            if q.src_t == *ev
+                && q.dst_t == p.dst_t
+                && q.dst_cols == p.dst_cols
+                && p.dst_t != table
+                && p.dst_t != *ev
+            {
+                aligns.push(Align {
+                    m_cols: p.src_cols.clone(),
+                    e_cols: q.src_cols.clone(),
+                    via: None,
+                    e_via: None,
+                });
+            }
+        }
+    }
+    // Borrowed entity — only for a measure table whose every
+    // edge lands on a document (`owns_entity` above): the
+    // measure side joins the document table and keys on ITS
+    // dimension column; the event side must carry the key on a
+    // direct edge of its own. The via table may BE the event
+    // table.
+    if !owns_entity {
+        for p1 in pointers {
+            if p1.src_t != table || p1.dst_t == table {
+                continue;
+            }
+            for p2 in pointers {
+                if p2.src_t != p1.dst_t || p2.dst_t == table || p2.dst_t == *ev {
+                    continue;
+                }
+                for q in pointers {
+                    if q.src_t == *ev && q.dst_t == p2.dst_t && q.dst_cols == p2.dst_cols {
+                        aligns.push(Align {
+                            m_cols: p2.src_cols.clone(),
+                            e_cols: q.src_cols.clone(),
+                            via: Some((p1.dst_t.clone(), p1.src_cols.clone(), p1.dst_cols.clone())),
+                            e_via: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Borrowed entity, event side — only when the event table
+    // aligned no other way (borrow when starving, like the
+    // time-axis borrow): a document-keyed event table's one
+    // path to the measure runs through its document master.
+    // event → master (q1), and the master either carries the
+    // measure's dimension key (q2 meeting p) or points at the
+    // measure directly (q2). The event side joins the master
+    // `ee` and keys on ITS columns; cost is that one m:1 join
+    // ahead of the aggregate, and the HAVING probe still gates
+    // the alignment before either side is scanned wide.
+    if aligns.is_empty() {
+        for q1 in pointers {
+            if q1.src_t != *ev || q1.dst_t == *ev || q1.dst_t == table {
+                continue;
+            }
+            for q2 in pointers {
+                if q2.src_t != q1.dst_t || q2.dst_t == *ev {
+                    continue;
+                }
+                let e_via = Some((q1.dst_t.clone(), q1.src_cols.clone(), q1.dst_cols.clone()));
+                if q2.dst_t == table {
+                    aligns.push(Align {
+                        m_cols: q2.dst_cols.clone(),
+                        e_cols: q2.src_cols.clone(),
+                        via: None,
+                        e_via,
+                    });
+                    continue;
+                }
+                for p in pointers {
+                    if p.src_t == table && p.dst_t == q2.dst_t && p.dst_cols == q2.dst_cols {
+                        aligns.push(Align {
+                            m_cols: p.src_cols.clone(),
+                            e_cols: q2.src_cols.clone(),
+                            via: None,
+                            e_via: e_via.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let mut seen: Vec<String> = Vec::new();
+    let mut deduped: Vec<Align> = Vec::new();
+    for a in aligns {
+        let via = a
+            .via
+            .as_ref()
+            .map(|(t, _, _)| format!("{t}>"))
+            .unwrap_or_default();
+        let e_via = a
+            .e_via
+            .as_ref()
+            .map(|(t, _, _)| format!(">{t}"))
+            .unwrap_or_default();
+        let k = format!("{via}{e_via}{}={}", a.m_cols.join(","), a.e_cols.join(","));
+        if !seen.contains(&k) {
+            seen.push(k);
+            deduped.push(a);
+        }
+    }
+    deduped
+}
+
+/// The verdict, in the shape a reader needs: every anchor as a row,
+/// then one fact row carrying the elected anchor under `s_` names, so
+/// a reader takes the summary alone and the losers still read back.
+/// One tie rule, layered: support first inside SUPPORT_EPS — the
+/// per-anchor rule's own epsilon — then a reconciliation over the
+/// monotone shape (the movement explains the level), the wider vote,
+/// the anchor's name. On a support tie `s_tiebreak` names the layer
+/// that decided, so the record can explain the winner.
+fn elect(anchors: &[Value]) -> Vec<Value> {
     let sup = |v: &Value| v["support"].as_f64().unwrap_or(0.0);
     let monotone = |v: &Value| v["convention"] == json!("monotone");
     let voted = |v: &Value| v["voted"].as_i64().unwrap_or(0);
@@ -1187,7 +1200,7 @@ pub(crate) async fn behavior_anchors(
         out.push(Value::Object(row));
     }
     out.push(Value::Object(fact));
-    rows_batch(out, behavior_shape())
+    out
 }
 
 /// Two supports within this are a tie — the one epsilon both election
