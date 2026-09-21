@@ -153,6 +153,7 @@ impl Config {
         let audience = var("GLOSSQL_AUDIENCE").unwrap_or_else(|| format!("http://{addr}"));
         let mut doors = DoorConfig {
             allowed_hosts: allowed_hosts(&audience),
+            own_uri: audience.clone(),
             ..DoorConfig::default()
         };
         if let Some(row_cap) = match flags.row_cap {

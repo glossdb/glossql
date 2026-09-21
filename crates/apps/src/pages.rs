@@ -7,7 +7,7 @@
 //! query params as `state` — the URL is the only state there is.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde_json::{Map, Value, json};
 use tera::Tera;
@@ -66,7 +66,7 @@ async fn admit(door: &AppDoor, dataset: &str) -> Result<Vec<String>, Response> {
 /// each, the apps, the doors, and how an agent connects. Read from
 /// the record at each visit — one workspace read for the datasets,
 /// one bound read per dataset for its counts.
-pub async fn datasets(State(door): State<AppDoor>, headers: HeaderMap) -> Response {
+pub async fn datasets(State(door): State<AppDoor>) -> Response {
     let (mut datasets, error) = match overview::rows(&door, None, overview::DATASETS, &[]).await {
         Ok(rows) => (rows, String::new()),
         Err(e) => (Vec::new(), e),
@@ -122,22 +122,8 @@ pub async fn datasets(State(door): State<AppDoor>, headers: HeaderMap) -> Respon
     ctx.insert("datasets", &datasets);
     ctx.insert("error", &error);
     ctx.insert("apps", &apps);
-    ctx.insert("origin", &origin(&headers));
+    ctx.insert("origin", &*door.origin);
     render("datasets.html", ctx, base_tera())
-}
-
-/// The server's own address as the browser reached it, for the
-/// connect snippet — the scheme a proxy forwarded, else the plain one.
-fn origin(headers: &HeaderMap) -> String {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("<this server>");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-    format!("{scheme}://{host}")
 }
 
 /// The dataset's page is the built-in: `/<dataset>/app` opens the
@@ -153,18 +139,16 @@ pub async fn index(
     State(door): State<AppDoor>,
     Path((dataset, app)): Path<(String, String)>,
     Query(params): Query<Vec<(String, String)>>,
-    headers: HeaderMap,
 ) -> Response {
-    page_response(&door, &dataset, &app, "index", params, &headers).await
+    page_response(&door, &dataset, &app, "index", params).await
 }
 
 pub async fn page(
     State(door): State<AppDoor>,
     Path((dataset, app, page)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
-    headers: HeaderMap,
 ) -> Response {
-    page_response(&door, &dataset, &app, &page, params, &headers).await
+    page_response(&door, &dataset, &app, &page, params).await
 }
 
 async fn page_response(
@@ -173,7 +157,6 @@ async fn page_response(
     app: &str,
     page: &str,
     params: Vec<(String, String)>,
-    headers: &HeaderMap,
 ) -> Response {
     let datasets = match admit(door, dataset).await {
         Ok(names) => names,
@@ -214,7 +197,7 @@ async fn page_response(
     ctx.insert("dataset", dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
-    ctx.insert("origin", &origin(headers));
+    ctx.insert("origin", &*door.origin);
     render(&format!("pages/{page}.html"), ctx, tera)
 }
 

@@ -92,6 +92,10 @@ pub struct DoorConfig {
     /// the DNS-rebinding guard of a server on a laptop; a deployment
     /// names the host the world uses (`main.rs`, `allowed_hosts`).
     pub allowed_hosts: Vec<String>,
+    /// This server's own URI, as the world reaches it — the audience a
+    /// token names, and what a page prints in a snippet a reader
+    /// copies.
+    pub own_uri: String,
 }
 
 impl Default for DoorConfig {
@@ -99,6 +103,7 @@ impl Default for DoorConfig {
         DoorConfig {
             row_cap: DEFAULT_ROW_CAP,
             allowed_hosts: StreamableHttpServerConfig::default().allowed_hosts,
+            own_uri: "http://127.0.0.1:8080".into(),
         }
     }
 }
@@ -172,7 +177,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     // door; only the kind differs, and it is the door's to say
     // (SPEC.md §1, the actor rides the transport).
     let human = Router::new()
-        .merge(glossql_apps::root_router(root_plane))
+        .merge(glossql_apps::root_router(root_plane, &doors.own_uri))
         .route(
             "/{dataset}/query",
             post(query::query).with_state(AppState {
@@ -180,7 +185,10 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
                 row_cap: doors.row_cap,
             }),
         )
-        .nest("/{dataset}/app", glossql_apps::router(app_plane));
+        .nest(
+            "/{dataset}/app",
+            glossql_apps::router(app_plane, &doors.own_uri),
+        );
     let agent = Router::new().nest_service("/mcp", mcp);
     let routes = match access {
         Access::Gated(login) => {

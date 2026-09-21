@@ -43,6 +43,10 @@ use glossql_session::Plane;
 #[derive(Clone)]
 pub struct AppDoor {
     pub plane: Arc<Plane>,
+    /// The server's own URI, as the world reaches it — what a page
+    /// prints in a snippet a reader copies. The server is told it; a
+    /// request's `Host` header is the caller's claim, never the source.
+    pub origin: Arc<str>,
 }
 
 /// The workspace's datasets, for the doors that must refuse a name it
@@ -94,7 +98,7 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// static segment beside the apps: a relation as a file, no app in
 /// the way. An app named `export` still serves — only its two POST
 /// paths would share the prefix, and they are the docket's.
-pub fn router(plane: Arc<Plane>) -> Router {
+pub fn router(plane: Arc<Plane>, origin: &str) -> Router {
     Router::new()
         .route("/", get(pages::home))
         .route("/export/{file}", get(export::export))
@@ -107,7 +111,10 @@ pub fn router(plane: Arc<Plane>) -> Router {
             "/{app}/remeasure",
             axum::routing::post(remeasure::remeasure),
         )
-        .with_state(AppDoor { plane })
+        .with_state(AppDoor {
+            plane,
+            origin: origin.into(),
+        })
 }
 
 /// The embedded static assets, mounted at the workspace root: one copy
@@ -119,8 +126,11 @@ pub fn assets_router() -> Router {
 /// The workspace root: which datasets there are, and the way into each.
 /// It is the one page that is not about a dataset, so it is where a
 /// visitor who has just swapped a startup token for a cookie lands.
-pub fn root_router(plane: Arc<Plane>) -> Router {
+pub fn root_router(plane: Arc<Plane>, origin: &str) -> Router {
     Router::new()
         .route("/", get(pages::datasets))
-        .with_state(AppDoor { plane })
+        .with_state(AppDoor {
+            plane,
+            origin: origin.into(),
+        })
 }

@@ -15,6 +15,9 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{Caller, NoRuntime, Plane};
 use tower::ServiceExt;
 
+/// The server's own URI the pages are told.
+const ORIGIN: &str = "https://glossql.example";
+
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -79,8 +82,11 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     // verified caller in the request; here the layer stands in for it,
     // with human standing, as the gate stamps on a human door.
     let router = Router::new()
-        .merge(glossql_apps::root_router(Arc::clone(&plane)))
-        .nest("/{dataset}/app", glossql_apps::router(Arc::clone(&plane)))
+        .merge(glossql_apps::root_router(Arc::clone(&plane), ORIGIN))
+        .nest(
+            "/{dataset}/app",
+            glossql_apps::router(Arc::clone(&plane), ORIGIN),
+        )
         .layer(axum::Extension(Caller(Actor {
             kind: ActorKind::Human,
             id: "ada".into(),
@@ -1535,7 +1541,11 @@ async fn the_root_lists_every_dataset_at_a_glance() {
     assert!(root.contains("built in"), "{root}");
     // The doors and the connect line.
     assert!(root.contains("the agent door"), "{root}");
+    // The connect line names the server as it was told it is reached,
+    // whatever host the request claimed. The template escapes the
+    // scheme's slashes, so the host is the tell.
     assert!(root.contains("claude mcp add"), "{root}");
+    assert!(root.contains("glossql.example/mcp"), "{root}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
