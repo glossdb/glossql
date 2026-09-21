@@ -12,6 +12,10 @@ land through recipes, and every import takes a snapshot, so a table's
 history is the format's own snapshot history — nothing else records
 versions.
 
+Three names are not dataset names: `glossql` is the record's own
+namespace, and `mcp` and `assets` are paths the server answers beside
+the datasets' pages. `DECLARE DATASET` refuses each by name.
+
 The record lives in the same lake: every relation the language
 declares — the glossary, aspects, functions, witnesses, sources,
 relationships, measurements, imports — is an Iceberg table. The

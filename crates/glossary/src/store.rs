@@ -385,6 +385,11 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
 /// namespace-level grants, the pairing returns then, by re-bootstrap.
 const STORE_NAMESPACE: &str = "glossql";
 
+/// The names a dataset cannot take: the store's own namespace, and the
+/// two path segments the server answers beside `/{dataset}/…` — a
+/// dataset under either would have no page on the human doors.
+const RESERVED_DATASETS: [&str; 3] = [STORE_NAMESPACE, "mcp", "assets"];
+
 /// Facts ride what they describe: a dataset's settings on its namespace,
 /// a recipe on its table, a landing's source-side facts on its snapshot.
 const SETTINGS_PROP: &str = "glossql.settings";
@@ -650,8 +655,8 @@ impl Store {
     /// set at create and not changed afterwards.
     pub async fn declare_dataset(&self, decl: &DatasetDecl) -> Result<()> {
         let name = decl.name.value.as_str();
-        if name == STORE_NAMESPACE {
-            return Err(Error::ReservedTableName(name.into()));
+        if RESERVED_DATASETS.contains(&name) {
+            return Err(Error::ReservedDatasetName(name.into()));
         }
         self.lake
             .ensure_namespace(

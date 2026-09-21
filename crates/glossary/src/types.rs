@@ -63,6 +63,10 @@ pub enum Error {
         "`{0}` is a store relation — a table cannot take its name, it would shadow the relation"
     )]
     ReservedTableName(String),
+    #[error(
+        "`{0}` is not a dataset name — the store's namespace and the server's paths `mcp` and `assets` are reserved"
+    )]
+    ReservedDatasetName(String),
     #[error("stored JSON is corrupt: {0}")]
     Corrupt(String),
 }

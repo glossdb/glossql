@@ -849,6 +849,20 @@ async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
 }
 
 #[tokio::test]
+async fn a_dataset_cannot_take_a_reserved_name() {
+    let (_dir, s) = store().await;
+    for name in ["glossql", "mcp", "assets"] {
+        let Declaration::Dataset(ds) =
+            decl(&format!("DECLARE DATASET {name} SET (purpose: 'test');"))
+        else {
+            unreachable!()
+        };
+        let e = s.declare_dataset(&ds).await.unwrap_err();
+        assert!(matches!(e, Error::ReservedDatasetName(_)), "{e}");
+    }
+}
+
+#[tokio::test]
 async fn a_table_cannot_take_a_store_relation_name() {
     let (_dir, s) = store().await;
     let Declaration::Dataset(ds) = decl("DECLARE DATASET fin SET (purpose: 'test');") else {
