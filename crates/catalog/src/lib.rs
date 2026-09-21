@@ -582,23 +582,41 @@ impl Lake {
 
     /// Single-part namespaces with their properties.
     pub async fn namespaces(&self) -> Result<Vec<(String, HashMap<String, String>)>> {
-        let mut out = Vec::new();
-        for ns in self.catalog.list_namespaces(None).await? {
-            let parts: &Vec<String> = ns.as_ref();
-            let [name] = parts.as_slice() else { continue };
-            let got = self.catalog.get_namespace(&ns).await?;
-            out.push((name.clone(), got.properties().clone()));
-        }
-        Ok(out)
+        let listed = self.catalog.list_namespaces(None).await?;
+        let single: Vec<(&NamespaceIdent, &String)> = listed
+            .iter()
+            .filter_map(|ns| {
+                let parts: &Vec<String> = ns.as_ref();
+                match parts.as_slice() {
+                    [name] => Some((ns, name)),
+                    _ => None,
+                }
+            })
+            .collect();
+        // The reads in flight at once, as [`Lake::pin_dataset`] drives
+        // its loads: over a remote catalog the round trips are the cost.
+        let got = futures::future::try_join_all(
+            single.iter().map(|(ns, _)| self.catalog.get_namespace(ns)),
+        )
+        .await?;
+        Ok(single
+            .iter()
+            .zip(got)
+            .map(|((_, name), got)| ((*name).clone(), got.properties().clone()))
+            .collect())
     }
 
     /// Every landing on the dataset's tables: one entry per append
     /// snapshot, its facts read back from the snapshot it rode.
     pub async fn landings(&self, dataset: &str) -> Result<Vec<Landing>> {
         let ns = NamespaceIdent::new(dataset.to_string());
+        let idents = self.catalog.list_tables(&ns).await?;
+        let tables = futures::future::try_join_all(
+            idents.iter().map(|ident| self.catalog.load_table(ident)),
+        )
+        .await?;
         let mut out = Vec::new();
-        for ident in self.catalog.list_tables(&ns).await? {
-            let table = self.catalog.load_table(&ident).await?;
+        for (ident, table) in idents.iter().zip(&tables) {
             for snapshot in table.metadata().snapshots() {
                 let summary = snapshot.summary();
                 if summary.operation != iceberg::spec::Operation::Append {

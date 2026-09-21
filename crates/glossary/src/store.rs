@@ -1710,16 +1710,32 @@ impl Store {
             ctx.pin = with_grounding(parts, ctx.grounding);
             return Ok(ctx);
         }
-        let glossary = std::sync::Arc::new(self.glossary_history().await?);
-        let witnesses = std::sync::Arc::new(self.witnesses_all().await?);
-        let aspects = std::sync::Arc::new(self.aspects_all().await?);
+        // Six relations, none reading another: their scans go out
+        // together, since over a remote warehouse the round trips are
+        // what a version miss costs. Boxed here, once: six scans held
+        // at the same time are a large future, and every caller would
+        // otherwise carry it.
+        let (glossary, witnesses, aspects, measurements, functions, sources) = Box::pin(async {
+            futures::try_join!(
+                self.glossary_history(),
+                self.witnesses_all(),
+                self.aspects_all(),
+                self.measurements_newest(dataset),
+                self.functions_all(),
+                self.sources_all(),
+            )
+        })
+        .await?;
+        let glossary = std::sync::Arc::new(glossary);
+        let witnesses = std::sync::Arc::new(witnesses);
+        let aspects = std::sync::Arc::new(aspects);
         let grounding = grounding_digest(dataset, &glossary, &aspects, &witnesses);
         let ctx = ReadContext {
             glossary,
-            measurements: std::sync::Arc::new(self.measurements_newest(dataset).await?),
-            functions: std::sync::Arc::new(self.functions_all().await?),
+            measurements: std::sync::Arc::new(measurements),
+            functions: std::sync::Arc::new(functions),
             witnesses,
-            sources: std::sync::Arc::new(self.sources_all().await?),
+            sources: std::sync::Arc::new(sources),
             aspects,
             universe,
             snapshots,
