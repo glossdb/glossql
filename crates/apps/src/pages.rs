@@ -143,8 +143,8 @@ fn origin(headers: &HeaderMap) -> String {
 /// The dataset's page is the built-in: `/<dataset>/app` opens the
 /// docket, and the URL says so.
 pub async fn home(State(door): State<AppDoor>, Path(dataset): Path<String>) -> Response {
-    if let Err(response) = admit(&door, &dataset).await {
-        return response;
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return plain(StatusCode::NOT_FOUND, missing);
     }
     Redirect::to(&format!("/{dataset}/app/{}", crate::builtin::DATASET_PAGE)).into_response()
 }

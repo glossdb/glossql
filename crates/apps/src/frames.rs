@@ -31,12 +31,8 @@ pub async fn frame(
     Path((dataset, app, frame)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let known = crate::known(&door).await;
-    if !known.contains(&dataset) {
-        return fail(
-            StatusCode::NOT_FOUND,
-            crate::no_such_dataset(&dataset, &known),
-        );
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return fail(StatusCode::NOT_FOUND, missing);
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
     let def = match AppDef::load(&app, &glossed) {

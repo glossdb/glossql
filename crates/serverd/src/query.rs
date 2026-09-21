@@ -33,8 +33,8 @@ pub async fn query(
     Extension(Caller(actor)): Extension<Caller>,
     body: String,
 ) -> Response {
-    let known = state.plane.datasets().await.unwrap_or_default();
-    if !known.contains(&dataset) {
+    if !state.plane.dataset_exists(&dataset).await.unwrap_or(false) {
+        let known = state.plane.datasets().await.unwrap_or_default();
         return fail(
             StatusCode::NOT_FOUND,
             format!(

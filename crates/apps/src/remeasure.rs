@@ -35,12 +35,8 @@ pub async fn remeasure(
     Path((dataset, app)): Path<(String, String)>,
     Extension(Caller(actor)): Extension<Caller>,
 ) -> Response {
-    let known = crate::known(&door).await;
-    if !known.contains(&dataset) {
-        return plain(
-            StatusCode::NOT_FOUND,
-            crate::no_such_dataset(&dataset, &known),
-        );
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return plain(StatusCode::NOT_FOUND, missing);
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
     match AppDef::load(&app, &glossed) {

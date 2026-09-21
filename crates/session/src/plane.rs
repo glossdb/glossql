@@ -224,6 +224,12 @@ impl Plane {
             .collect())
     }
 
+    /// Whether the workspace holds `name` — one existence question at
+    /// the catalog, for a door that was told a dataset by its URL.
+    pub async fn dataset_exists(&self, name: &str) -> Result<bool, SessionError> {
+        Ok(self.store.dataset_exists(name).await?)
+    }
+
     /// A channel onto a dataset, built for this call and dropped with
     /// it. Every door comes here with the dataset it was told;
     /// binding validates it, so an unknown one fails the channel rather

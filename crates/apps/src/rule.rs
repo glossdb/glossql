@@ -65,12 +65,8 @@ pub async fn rule(
     Form(answer): Form<Answer>,
 ) -> Response {
     let stance = answer.stance.as_str();
-    let known = crate::known(&door).await;
-    if !known.contains(&dataset) {
-        return plain(
-            StatusCode::NOT_FOUND,
-            crate::no_such_dataset(&dataset, &known),
-        );
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return plain(StatusCode::NOT_FOUND, missing);
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
     match AppDef::load(&app, &glossed) {

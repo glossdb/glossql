@@ -52,6 +52,16 @@ pub(crate) async fn known(door: &AppDoor) -> Vec<String> {
     door.plane.datasets().await.unwrap_or_default()
 }
 
+/// The 404 for a dataset the workspace does not hold, none where it
+/// holds it. The way in is one existence question; the listing is read
+/// on the miss alone, where the answer names what there is.
+pub(crate) async fn missing(door: &AppDoor, dataset: &str) -> Option<String> {
+    if door.plane.dataset_exists(dataset).await.unwrap_or(false) {
+        return None;
+    }
+    Some(no_such_dataset(dataset, &known(door).await))
+}
+
 pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
     if known.is_empty() {
         format!("no dataset `{dataset}` — this workspace holds none yet")
