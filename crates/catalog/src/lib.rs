@@ -281,7 +281,7 @@ impl Lake {
     /// for the workspace file, `postgres://` (or `postgresql://`) for a
     /// server — over the warehouse `warehouse` names: a directory on
     /// this machine (a path, or `file://`), or a location in an object
-    /// store (`s3://bucket/prefix`,
+    /// store (`s3://bucket/prefix`, `gs://bucket/prefix`,
     /// `abfss://container@account.dfs.core.windows.net/prefix`), reached
     /// through [`storage`] with the credentials the environment
     /// carries. The bind style follows the catalog scheme: Postgres

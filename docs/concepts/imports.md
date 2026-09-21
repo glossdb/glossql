@@ -17,6 +17,7 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 is refused at the declaration. For file sources, `location` is the
 root recipe paths resolve under: a directory on the server's machine,
 or a location in an object store — `s3://bucket/prefix`,
+`gs://bucket/prefix`,
 `abfss://container@account.dfs.core.windows.net/prefix` — read with
 the rights the server process has (its environment's conventions, or
 the platform's managed identity), never a credential in the location

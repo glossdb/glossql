@@ -78,10 +78,12 @@ iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "5c
 # SQL with a remote warehouse — is our own `Storage` over object_store,
 # the crate DataFusion already runs on, so the binary carries one
 # storage stack: `aws` is the S3 family, `azure` the ADLS/Blob family
-# (Container Apps' managed identity is read by that client). typetag is
+# (Container Apps' managed identity is read by that client), `gcp`
+# Google Cloud Storage (the attached service account's token is read
+# from the metadata server by that client). typetag is
 # iceberg's registration mechanism for storage implementations.
 iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
-object_store = { version = "0.13", features = ["aws", "azure"] }
+object_store = { version = "0.13", features = ["aws", "azure", "gcp"] }
 # The engine's own glob crate, for the glob a remote source path carries.
 glob = "0.3"
 # Whole-location parsing for the storage seam; in the tree under object_store.

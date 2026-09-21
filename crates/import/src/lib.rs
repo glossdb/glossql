@@ -329,7 +329,7 @@ pub async fn run_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Resul
 /// failed.
 /// A file source's root, as `location` spells it: a directory on this
 /// machine (a path, or `file://`), or a location in an object store the
-/// storage seam reaches — `s3://bucket/prefix`,
+/// storage seam reaches — `s3://bucket/prefix`, `gs://bucket/prefix`,
 /// `abfss://container@account.dfs.core.windows.net/prefix` — read with
 /// the rights this process has: the environment's conventions, or the
 /// platform's managed identity. The location itself carries no

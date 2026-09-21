@@ -20,7 +20,7 @@ pub const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 --workspace is the laptop's shape: the directory holding the catalog \
 and the warehouse. GLOSSQL_CATALOG_SQL names the catalog on a Postgres server \
 (postgres://…), GLOSSQL_WAREHOUSE the warehouse in an object store \
-(s3://…, abfss://…), GLOSSQL_CATALOG_URI a REST catalog with both \
+(s3://…, gs://…, abfss://…), GLOSSQL_CATALOG_URI a REST catalog with both \
 behind it; a deployment names them and runs without a directory.\n\
 every other flag has a variable named after it, the flag winning: \
 GLOSSQL_ADDR, GLOSSQL_ROW_CAP, GLOSSQL_CUBE_CACHE, GLOSSQL_MEMORY_LIMIT, \
