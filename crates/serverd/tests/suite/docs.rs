@@ -19,7 +19,9 @@
 
 use std::sync::Arc;
 
-use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_glossary::{Actor, ActorKind};
+
+use crate::common;
 use glossql_serverd::{Plane, bootstrap};
 use glossql_session::NoRuntime;
 
@@ -178,7 +180,7 @@ async fn every_doc_function_body_compiles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_doc_read_names_columns_that_exist() {
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&plane, human()).await.unwrap();
 
@@ -229,19 +231,6 @@ async fn every_doc_read_names_columns_that_exist() {
         "doc examples naming something the reads do not serve:\n{}",
         broken.join("\n")
     );
-}
-
-/// A store over its own throwaway lake; hold the dir for the test's life.
-async fn scratch_store() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
-    (dir, store)
 }
 
 /// The engine's SQL guide under `vendor/` is served as it stands on

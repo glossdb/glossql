@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_glossary::{Actor, ActorKind};
 use glossql_scripts::KernelRuntime;
 use glossql_serverd::{Access, BOOTSTRAP, DoorConfig, Plane, bootstrap, router};
 
@@ -20,14 +20,7 @@ use tower::ServiceExt;
 /// A bootstrapped workspace behind both doors: the reference scripts on
 /// disk, the measurement library declared, `slot_entropy` ready to band.
 async fn app() -> (Router, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
+    let (dir, store) = common::scratch_store().await;
     let runtime = Arc::new(KernelRuntime::native());
     let plane = Arc::new(Plane::new(store.clone(), runtime));
     bootstrap(

@@ -142,3 +142,16 @@ pub fn bearer(sub: &str) -> String {
 pub fn far_future() -> u64 {
     9_999_999_999
 }
+
+/// A store over its own throwaway lake; hold the dir for the test's life.
+pub async fn scratch_store() -> (tempfile::TempDir, glossql_glossary::Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let store = glossql_glossary::Store::open(lake).await.unwrap();
+    (dir, store)
+}

@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
-    let (dir, store) = scratch_store().await;
+    let (dir, store) = common::scratch_store().await;
     let plane = Arc::new(
         Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages()),
     );
@@ -314,7 +314,7 @@ async fn the_token_names_the_subject_and_the_door_names_the_standing() {
 /// with no 401 to answer, a client is never sent to authenticate.
 #[tokio::test(flavor = "multi_thread")]
 async fn open_doors_ask_no_token_and_stamp_the_dev_actor() {
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let app = router(plane, DoorConfig::default(), Access::Open);
 
@@ -784,7 +784,7 @@ async fn the_discovery_document_and_the_assets_answer_without_a_token() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_probe_answers_without_a_token_in_both_arrangements() {
     let (gated, _dir) = app().await;
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let open = router(
         Arc::new(Plane::new(store, Arc::new(NoRuntime))),
         DoorConfig::default(),
@@ -2545,19 +2545,6 @@ async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
         .filter_map(|r| r["surface"].as_str())
         .collect();
     assert_eq!(surfaces, vec!["sources", "tables"], "{some_rows:?}");
-}
-
-/// A store over its own throwaway lake; hold the dir for the test's life.
-async fn scratch_store() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
-    (dir, store)
 }
 
 /// The opening names where to begin, from what stands: a workspace

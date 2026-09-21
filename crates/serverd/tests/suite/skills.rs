@@ -22,7 +22,9 @@
 
 use std::sync::Arc;
 
-use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_glossary::{Actor, ActorKind};
+
+use crate::common;
 use glossql_serverd::{Plane, bootstrap};
 
 fn human() -> Actor {
@@ -238,7 +240,7 @@ impl glossql_session::FunctionRuntime for ModelStub {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_skill_read_names_columns_that_exist() {
-    let (dir, store) = scratch_store().await;
+    let (dir, store) = common::scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(ModelStub)));
     bootstrap(&plane, human()).await.unwrap();
 
@@ -386,19 +388,6 @@ fn the_served_skills_are_the_skills_directory() {
             p.path
         );
     }
-}
-
-/// A store over its own throwaway lake; hold the dir for the test's life.
-async fn scratch_store() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
-    (dir, store)
 }
 
 /// The first quoted `x.y.z` literal in `s` — how a minified bundle
