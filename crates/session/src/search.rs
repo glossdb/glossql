@@ -1775,9 +1775,7 @@ pub(crate) async fn grounding_collisions(
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
-    let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
-    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
-    let glossed_behavior = current_fact_values(&rctx, dataset, "behavior").await?;
+    let anchors = crate::cube::Anchors::at(&rctx, dataset).await?;
     let slots = current_query_slots(&rctx, dataset).await?;
 
     // Bucket by canonical SQL.
@@ -1840,16 +1838,7 @@ pub(crate) async fn grounding_collisions(
     let mut series_buckets: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for (slot, body, canon) in &grounded {
         let sql = body["sql"].as_str().expect("filtered above");
-        let Some(fp) = series_fingerprint(
-            shared,
-            &ctx,
-            dataset,
-            (&judged_temporal, &judged_behavior, &glossed_behavior),
-            sql,
-            body,
-        )
-        .await
-        else {
+        let Some(fp) = series_fingerprint(shared, &ctx, dataset, &anchors, sql, body).await else {
             continue;
         };
         series_buckets.entry(fp).or_default().push((
@@ -1959,21 +1948,12 @@ pub(crate) async fn current_query_slots(
 
 /// One grounding's monthly fingerprint, `None` when it cannot serve a
 /// number: no `value` column, no time column, or any planning or
-/// The judged surface a fingerprint reads: temporal verdicts, behavior
-/// verdicts, and the `behavior` glosses with their speaker rank, each
-/// by column subject.
-type Judged<'a> = (
-    &'a std::collections::HashMap<String, crate::cube::Verdict>,
-    &'a std::collections::HashMap<String, crate::cube::Verdict>,
-    &'a std::collections::HashMap<String, (Value, u8)>,
-);
-
 /// execution failure — the script's try/catch, spelled out.
 async fn series_fingerprint(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
-    (judged_temporal, judged_behavior, glossed_behavior): Judged<'_>,
+    anchors: &crate::cube::Anchors,
     sql: &str,
     body: &Value,
 ) -> Option<String> {
@@ -1998,7 +1978,7 @@ async fn series_fingerprint(
     // it out of the collision pass entirely, shrinking the check
     // instead of failing it.
     let sources = crate::provenance::served_sources(&probe, dataset);
-    let tcol = crate::cube::judged_time_column(fields, &sources, judged_temporal)
+    let tcol = crate::cube::judged_time_column(fields, &sources, &anchors.temporal)
         .map(|(column, ..)| column)
         .or_else(|| crate::whatif::date_column(fields.fields()))?;
     let verb = crate::cube::verb_of(
@@ -2006,8 +1986,8 @@ async fn series_fingerprint(
         is_ratio,
         &probe,
         dataset,
-        judged_behavior,
-        glossed_behavior,
+        &anchors.behavior,
+        &anchors.behavior_gloss,
     )
     .verb;
     let q = monthly_sql(sql, &tcol, verb);
@@ -2659,9 +2639,7 @@ pub(crate) async fn metric_band_walk(
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
-    let judged_temporal = crate::cube::judged_bodies(&rctx, dataset, "temporal_profile");
-    let judged_behavior = crate::cube::judged_bodies(&rctx, dataset, "behavior_evidence");
-    let glossed_behavior = current_fact_values(&rctx, dataset, "behavior").await?;
+    let anchors = crate::cube::Anchors::at(&rctx, dataset).await?;
     let runtime = shared.runtime();
     if !runtime.carries_model() {
         return Err(crate::session::no_model("metric_bands()"));
@@ -2711,7 +2689,7 @@ pub(crate) async fn metric_band_walk(
         // measurement names the axis it took, so a walk anchored on an
         // unjudged column says so rather than reading like the cube's.
         let sources = crate::provenance::served_sources(&probe, dataset);
-        let judged = crate::cube::judged_time_column(fields, &sources, &judged_temporal);
+        let judged = crate::cube::judged_time_column(fields, &sources, &anchors.temporal);
         let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
         let Some(tcol) = judged_axis
             .clone()
@@ -2726,8 +2704,8 @@ pub(crate) async fn metric_band_walk(
             is_ratio,
             &probe,
             dataset,
-            &judged_behavior,
-            &glossed_behavior,
+            &anchors.behavior,
+            &anchors.behavior_gloss,
         )
         .verb;
         // What one period's value is, named as the arithmetic: a flow

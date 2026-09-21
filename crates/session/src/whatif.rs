@@ -204,13 +204,16 @@ async fn compute(
             }
         }
     }
-    let declared: Vec<f64> = overrides.iter().map(|o| o.factor).collect();
-    let from_month = overrides
-        .iter()
-        .map(|o| o.from.as_str())
-        .min()
-        .expect("overrides checked non-empty")
-        .to_string();
+    let replay = Replay {
+        overrides,
+        worlds: &worlds,
+        declared: &overrides.iter().map(|o| o.factor).collect::<Vec<f64>>(),
+        from_month: overrides
+            .iter()
+            .map(|o| o.from.as_str())
+            .min()
+            .expect("overrides checked non-empty"),
+    };
 
     // Latest current QUERY grounding per concept, judgment included.
     let scope = Scope::Subject(dataset.to_string());
@@ -222,16 +225,10 @@ async fn compute(
         .filter_map(|r| Some((r[0].clone()?, r[1].clone()?)))
         .collect();
     let read_ctx = shared.read_context().await?;
-    // The judged time axis, read once for every concept in the replay:
-    // what-if is charted beside the cube's own series, so it anchors
-    // where the cube anchors wherever a verdict stands.
-    let judged_temporal = crate::cube::judged_bodies(&read_ctx, dataset, "temporal_profile");
-    // The verb, read where the cube and the bands read it: a verdict
-    // that decided, else the grounding's own word. One function, so a
-    // replay never folds a metric by a different word than its cube.
-    let judged_behavior = crate::cube::judged_bodies(&read_ctx, dataset, "behavior_evidence");
-    let glossed_behavior =
-        crate::search::current_fact_values(&read_ctx, dataset, "behavior").await?;
+    // Read once for every concept in the replay: what-if is charted
+    // beside the cube's own series, so it anchors where the cube
+    // anchors wherever a verdict stands, and folds by the cube's verb.
+    let anchors = crate::cube::Anchors::at(&read_ctx, dataset).await?;
     let all_verdicts = verdicts(&read_ctx, dataset, &scope, None).await?;
     let collapsed =
         glossql_glossary::Store::collapsed_read(dataset, &scope, None, &read_ctx, &all_verdicts);
@@ -260,27 +257,7 @@ async fn compute(
             out.push(refusal("not served: the grounding body is not JSON".into()));
             continue;
         };
-        let Some(sql) = body["sql"].as_str().map(str::to_string) else {
-            out.push(refusal("not served: the grounding carries no `sql`".into()));
-            continue;
-        };
-        match concept_rows(
-            shared,
-            &ctx,
-            dataset,
-            &judged_temporal,
-            &judged_behavior,
-            &glossed_behavior,
-            &c.aspect,
-            &sql,
-            &body,
-            overrides,
-            &worlds,
-            &declared,
-            &from_month,
-        )
-        .await
-        {
+        match concept_rows(shared, &ctx, dataset, &anchors, &replay, &c.aspect, &body).await {
             Ok(rows) => out.extend(rows),
             Err(e) => match e.abstention() {
                 Some(detail) => out.push(refusal(detail)),
@@ -296,26 +273,40 @@ async fn compute(
     Ok(out)
 }
 
+/// The scenario as the replay runs it, the same for every concept:
+/// the declared overrides, the support worlds bracketing them, the
+/// declared factors in override order, and the first month any
+/// override starts.
+#[derive(Clone, Copy)]
+struct Replay<'a> {
+    overrides: &'a [Override],
+    worlds: &'a [Vec<f64>],
+    declared: &'a [f64],
+    from_month: &'a str,
+}
+
 /// One concept through the pipeline: monthly series per world, the
 /// unmoved check, the frame, the kernel. `BadSubject` here means a
 /// refusal row, not a failed read.
-#[allow(clippy::too_many_arguments)]
 async fn concept_rows(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
     dataset: &str,
-    judged_temporal: &std::collections::HashMap<String, crate::cube::Verdict>,
-    judged_behavior: &std::collections::HashMap<String, crate::cube::Verdict>,
-    glossed_behavior: &std::collections::HashMap<String, (Value, u8)>,
+    anchors: &crate::cube::Anchors,
+    replay: &Replay<'_>,
     concept: &str,
-    sql: &str,
     body: &Value,
-    overrides: &[Override],
-    worlds: &[Vec<f64>],
-    declared: &[f64],
-    from_month: &str,
 ) -> Result<Vec<Row>, SessionError> {
     let refuse = |detail: String| SessionError::BadSubject(detail);
+    let Replay {
+        overrides,
+        worlds,
+        declared,
+        from_month,
+    } = *replay;
+    let Some(sql) = body["sql"].as_str() else {
+        return Err(refuse("not served: the grounding carries no `sql`".into()));
+    };
 
     // The grounding's shape: a `value` column and a time axis, found by
     // dtype exactly as any reader finds them (the metric_bands probe) —
@@ -335,7 +326,7 @@ async fn concept_rows(
     // cube series that anchor on the judged one.
     let sources = crate::provenance::served_sources(&probe, dataset);
     let (tcol, axis_note) =
-        match crate::cube::judged_time_column(probe.schema(), &sources, judged_temporal) {
+        match crate::cube::judged_time_column(probe.schema(), &sources, &anchors.temporal) {
             Some((column, ..)) => {
                 let note = format!("time axis `{column}`, judged");
                 (column, note)
@@ -375,8 +366,8 @@ async fn concept_rows(
         is_ratio,
         &probe,
         dataset,
-        judged_behavior,
-        glossed_behavior,
+        &anchors.behavior,
+        &anchors.behavior_gloss,
     )
     .verb;
     let series_sql = crate::search::monthly_sql(sql, &tcol, verb);

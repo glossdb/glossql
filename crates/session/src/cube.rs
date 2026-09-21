@@ -710,6 +710,30 @@ pub(crate) fn judged_bodies(
     out.into_iter().map(|(s, (_, v))| (s, v)).collect()
 }
 
+/// The judged surface a monthly reader anchors on, each by column
+/// subject: temporal verdicts for the time axis, behavior verdicts and
+/// the `behavior` glosses with their speaker rank for the verb. Read
+/// once per door call, so a replay or a fingerprint never folds a
+/// metric by a different word than its cube.
+pub(crate) struct Anchors {
+    pub(crate) temporal: HashMap<String, Verdict>,
+    pub(crate) behavior: HashMap<String, Verdict>,
+    pub(crate) behavior_gloss: HashMap<String, (Value, u8)>,
+}
+
+impl Anchors {
+    pub(crate) async fn at(
+        rctx: &glossql_glossary::ReadContext,
+        dataset: &str,
+    ) -> Result<Self, SessionError> {
+        Ok(Self {
+            temporal: judged_bodies(rctx, dataset, "temporal_profile"),
+            behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
+            behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior").await?,
+        })
+    }
+}
+
 /// The declared function that returns a measurement aspect from this
 /// dataset — the first by name where several do; none where none is
 /// declared.
@@ -1623,14 +1647,7 @@ async fn build(
     slot: &QuerySlot,
     asked: Option<Resolution>,
 ) -> Result<Cube, Abstain> {
-    let Surface {
-        ctx,
-        dataset,
-        judged,
-        version,
-        ..
-    } = surface;
-    let dataset = dataset.as_str();
+    let Surface { ctx, version, .. } = surface;
     let metric = slot.aspect.as_str();
     // Boxed: the plan stage's future is most of the build's, and a
     // build constructed on the stack under a write's depth must fit.
@@ -1902,18 +1919,7 @@ async fn build(
                 .get("alternative")
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
-            match rival_series(
-                shared,
-                ctx,
-                alt_sql,
-                dataset,
-                judged,
-                verb,
-                resolution,
-                since.as_deref(),
-            )
-            .await
-            {
+            match rival_series(shared, surface, alt_sql, verb, resolution, since.as_deref()).await {
                 Ok((rows, rival_verb, rival_foreign)) => {
                     foreign |= rival_foreign;
                     alternative_divergence = Some(divergence(
@@ -2036,17 +2042,20 @@ fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> St
 /// where several stand unjudged — a rival is a comparison cell, and an
 /// anchor guessed among several beside a judged series compares
 /// nothing. Every refusal carries its own reason for the fact row.
-#[allow(clippy::too_many_arguments)]
 async fn rival_series(
     shared: &Arc<Shared>,
-    ctx: &SessionContext,
+    surface: &Surface,
     sql: &str,
-    dataset: &str,
-    judged: &Judged,
     chosen_verb: &str,
     resolution: Resolution,
     since: Option<&str>,
 ) -> Result<(Vec<SeriesRow>, &'static str, bool), Abstain> {
+    let Surface {
+        ctx,
+        dataset,
+        judged,
+        ..
+    } = surface;
     let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
