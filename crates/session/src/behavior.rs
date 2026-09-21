@@ -604,7 +604,7 @@ pub(crate) async fn behavior_anchors(
 
             // Key-shaped integers, one probe per event table: distinct
             // over filled at or above 0.9 (the relationship detector's
-            // `key_like`, `search.rs`), approximate so the probe holds
+            // `key_like`, `search/relationships.rs`), approximate so the probe holds
             // fixed memory whatever the table's width.
             if !keyish_cache.contains_key(ev.as_str()) {
                 let ints: Vec<&String> = schemas[ev.as_str()]

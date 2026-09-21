@@ -17,7 +17,7 @@ derivation body's `match_rate >= 0.95 AND support >= 20`), while the
 doors beneath prune only on cost and algebra: the derivation door
 skips triples whose operand magnitudes cannot land within 30× of the
 target, and the discovery door's 0.5 containment floor bounds output,
-not judgment (`crates/session/src/search.rs`).
+not judgment (`crates/session/src/search/`).
 
 The division is load-bearing in both directions: a reader with
 context declares edges no value statistic can see, and refuses
