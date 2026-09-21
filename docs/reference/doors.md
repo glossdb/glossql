@@ -25,32 +25,16 @@ the dataset arrives in the statements.
 ```
 glossql [--workspace <dir>] [--addr <ip:port>] [--row-cap <n>]
         [--cube-cache <megabytes>] [--memory-limit <megabytes>]
-        [--spill-limit <megabytes>] [--tls-cert <pem> --tls-key <pem>]
+        [--spill-limit <megabytes>]
 ```
 
 The authorization arrangement — `GLOSSQL_ISSUER`, `GLOSSQL_AUDIENCE`,
 `GLOSSQL_CLIENT_ID`, `GLOSSQL_CLIENT_SECRET` — is read from `.env` or
 the environment, never from flags ([install](../start/install.md)).
 
-With `--tls-cert` and `--tls-key` (both or neither) the doors serve
-https — what a desktop MCP client requires of a remote server. The
-repo's `certs/` holds a self-signed pair for `localhost` and the
-loopback addresses, and the test suite checks it against the server;
-regenerate it with
-
-```
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-  -keyout certs/localhost-key.pem -out certs/localhost.pem \
-  -days 3650 -nodes -subj "/CN=glossql dev" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" \
-  -addext "basicConstraints=critical,CA:FALSE" \
-  -addext "keyUsage=digitalSignature" -addext "extendedKeyUsage=serverAuth"
-```
-
-(`CA:FALSE` matters: a client's webpki refuses a CA certificate
-serving as the endpoint's own). A deployment that terminates TLS at
-its edge does not pass the flags. The default `GLOSSQL_AUDIENCE`
-follows the served scheme.
+The doors serve plain http. A deployment terminates TLS at its edge
+and names its https URL in `GLOSSQL_AUDIENCE`; unset, the audience is
+the bind address under http.
 
 Defaults: `127.0.0.1:8080`, row cap 200, cube cache 2048 MB, memory
 limit 4096 MB. The cube cache and the memory limit are two budgets, not
@@ -306,8 +290,9 @@ assets are not dataset-scoped and serve at `/assets/{file}`.
   to override.
 - **Frames only read.** They run as the Human actor `app:<name>` on the
   plane's channel for that dataset, fixed at channel construction.
-- **The writes are human acts.** A token carrying agent standing is
-  refused (403) rather than downgraded. A ruling is accepted only while
+- **The writes are human acts.** The door decides the kind: every
+  caller here writes with human standing, as the token's subject. A
+  ruling is accepted only while
   `open_questions` still derives that exact (subject, aspect, key) in
   the bound dataset — a stale tab is refused (409), a dead question
   cannot be re-ruled, another dataset's open question on a same-named

@@ -12,9 +12,9 @@
 //! and the ruling lands exactly where the round's would — the human's
 //! own slot, on the human's own channel, witnessed by this server.
 //!
-//! Who that human is comes from the token the request carries. A token
-//! with agent standing is refused here rather than downgraded: the one
-//! write this door takes is the one thing only a person can supply.
+//! Who that human is comes from the token the request carries; that
+//! the caller is human comes from the door, which stamps the kind on
+//! every request it admits.
 //!
 //! The response is an event, not a navigation (not a 303 back to
 //! the Referer — PRG bent out of shape, since
