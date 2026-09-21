@@ -63,12 +63,16 @@ where
     K: std::hash::Hash + Eq,
     S: PartialOrd,
 {
+    use std::collections::hash_map::Entry;
     let mut winners: std::collections::HashMap<K, T> = std::collections::HashMap::new();
     for row in rows {
-        match winners.get(&key(&row)) {
-            Some(held) if seq(held) >= seq(&row) => {}
-            _ => {
-                winners.insert(key(&row), row);
+        match winners.entry(key(&row)) {
+            Entry::Occupied(held) if seq(held.get()) >= seq(&row) => {}
+            Entry::Occupied(mut held) => {
+                held.insert(row);
+            }
+            Entry::Vacant(free) => {
+                free.insert(row);
             }
         }
     }

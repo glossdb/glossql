@@ -1575,7 +1575,7 @@ impl Store {
     /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
     /// and `ORDER BY` used to do.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
-        let history = (*self.history(relation.name).await?).clone();
+        let history = self.history(relation.name).await?;
         let key: Vec<usize> = relation
             .key
             .iter()
@@ -1587,19 +1587,21 @@ impl Store {
                     .expect("a key names one of its relation's columns")
             })
             .collect();
+        // Supersession runs over the held history by reference; only
+        // the rows that stand are copied out of it.
         let mut rows: Vec<_> = rules::latest_by(
-            history,
-            |r| {
+            history.iter().collect::<Vec<&glossql_catalog::Row>>(),
+            |r| -> Vec<&Option<String>> {
                 if key.is_empty() {
-                    r.cells.clone()
+                    r.cells.iter().collect()
                 } else {
-                    key.iter().map(|&i| r.cells[i].clone()).collect()
+                    key.iter().map(|&i| &r.cells[i]).collect()
                 }
             },
             |r| r.seq,
         )
         .into_iter()
-        .map(|r| r.cells)
+        .map(|r| r.cells.clone())
         .collect();
         rows.sort();
         Ok(rows)
