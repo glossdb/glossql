@@ -257,9 +257,7 @@ impl Lake {
     }
 
     /// Open (creating on first use) the workspace data plane on the
-    /// workspace directory's own SQLite file. Must be called inside a
-    /// multi-thread tokio runtime — the catalog and the providers built
-    /// on it block in place for their async work.
+    /// workspace directory's own SQLite file.
     #[cfg(feature = "sql")]
     pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
         if let Some(parent) = catalog_db.parent()

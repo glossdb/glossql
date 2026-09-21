@@ -812,11 +812,11 @@ impl ServerHandler for GlossqlMcp {
         info
     }
 
-    /// One revision. An older client is refused with the list it could
-    /// have used (`UnsupportedProtocolVersionError`) rather than served
-    /// under semantics this door no longer implements — there is no
-    /// session for it to be given, and no server-initiated request for
-    /// it to receive.
+    /// The one revision the door advertises and validates a request's
+    /// own version marker against. An older client's `initialize` is
+    /// still answered: the library falls back to the newest revision
+    /// it carries with an initialize handshake, and the door serves
+    /// that caller statelessly like every other ([`crate::router`]).
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
         std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
     }
