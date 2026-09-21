@@ -32,7 +32,7 @@ const CEILING: [(&str, usize); 4] = [
     ("block_in_place", 3),
     ("block_on", 1),
     ("thread_local!", 0),
-    ("tokio::spawn", 4),
+    ("tokio::spawn", 3),
 ];
 
 fn crates_dir() -> PathBuf {

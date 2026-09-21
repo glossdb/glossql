@@ -22,6 +22,7 @@ mod builtin;
 mod export;
 mod frames;
 pub mod glossed;
+pub mod ipc;
 mod overview;
 mod pages;
 mod remeasure;

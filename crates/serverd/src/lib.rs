@@ -49,10 +49,10 @@ mod wire;
 
 pub use auth::{Endpoints, Gate};
 pub use bootstrap::bootstrap;
+pub use glossql_apps::ipc::ARROW_STREAM;
 pub use glossql_session::Plane;
 pub use login::Login;
 pub use mcp::GlossqlMcp;
-pub use query::ARROW_STREAM;
 pub use wire::DEFAULT_ROW_CAP;
 
 use std::sync::Arc;

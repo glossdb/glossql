@@ -67,6 +67,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
                GLOSS app_page ON board.index AS $${{"html": "{{% extends \"shell.html\" %}}\n{{% import \"modules/tiles.html\" as tiles %}}\n{{% block main %}}\n<div class=\"tiles\">\n{{{{ tiles::chart(frame=\"frames/monthly\", spec=\"specs/monthly.vl.json\", title=\"Monthly\") }}}}\n</div>\n{{% endblock %}}\n"}}$$;
                GLOSS app_frame ON board.monthly AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger GROUP BY month ORDER BY month"}}$$;
                GLOSS app_frame ON board.by_cohort AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger WHERE cohort = $cohort GROUP BY month ORDER BY month"}}$$;
+               GLOSS app_frame ON board.uncastable AS $${{"sql": "SELECT CAST(cohort AS BIGINT) AS n FROM ledger"}}$$;
                GLOSS app_frame ON board.evil AS $${{"sql": "DROP TABLE ledger"}}$$;
                GLOSS app_spec ON board.monthly AS $${{"spec": "{{\"mark\": \"bar\", \"encoding\": {{}}}}"}}$$;"#,
             aspects = shipped_app_declarations()
@@ -270,6 +271,14 @@ async fn pages_render_and_frames_stream() {
     assert_eq!(unbound.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let unbound = text(unbound).await;
     assert!(unbound.contains("cohort"), "{unbound}");
+
+    // A frame that plans and then fails on its first batch is refused
+    // with the engine's reason, as the JSON its tile renders — never a
+    // 200 over a stream that breaks.
+    let uncastable = get(&app, "/perf/app/board/frames/uncastable").await;
+    assert_eq!(uncastable.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let uncastable = text(uncastable).await;
+    assert!(uncastable.contains("\"error\""), "{uncastable}");
 
     // The spec serves as authored.
     let spec = get(&app, "/perf/app/board/specs/monthly.vl.json").await;
