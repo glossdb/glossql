@@ -89,6 +89,7 @@ use serde_json::{Value, json};
 use crate::reads::Shared;
 use crate::search::rows_batch;
 use crate::session::SessionError;
+use crate::subject::qi;
 
 /// Wilson score lower bound (Wilson 1927): the parameter-free way to
 /// rank a vote rate under small n. n MUST be the pairing's COMMON
@@ -119,11 +120,6 @@ fn grain_rank(g: &str) -> i32 {
 
 fn coarser<'a>(a: &'a str, b: &'a str) -> &'a str {
     if grain_rank(a) >= grain_rank(b) { a } else { b }
-}
-
-/// A quoted identifier; embedded quotes double, as SQL wants them.
-fn qi(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// One endpoint of a declared relationship: `t.c` or the tuple

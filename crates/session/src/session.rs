@@ -1812,7 +1812,9 @@ impl Session {
         let count = async {
             let plan = self
                 .plan_statement(one_query(&format!(
-                    "SELECT count(*) FROM \"{dataset}\".\"{table}\""
+                    "SELECT count(*) FROM {}.{}",
+                    crate::subject::qi(&dataset),
+                    crate::subject::qi(table)
                 ))?)
                 .await?;
             let batches = self.ctx.execute_logical_plan(plan).await?.collect().await?;

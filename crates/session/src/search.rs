@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 
 use crate::reads::Shared;
 use crate::session::{Matrix, SessionError};
+use crate::subject::qi;
 
 /// `derivation_candidates('table')` — row-grain arithmetic identities
 /// among the table's numeric columns (`a = b * c` and `a = b + c`) with
@@ -2442,23 +2443,26 @@ pub(crate) fn grain_sql(sql: &str, tcol: &str, verb: &str, grain: &str, halves: 
                 ""
             };
             format!(
-                "SELECT date_trunc('{grain}', \"{tcol}\") AS period, \
+                "SELECT date_trunc('{grain}', {tcol_q}) AS period, \
                         sum(num) / nullif(sum(den), 0) AS value{h} \
-                 FROM ({sql}) GROUP BY 1 ORDER BY 1"
+                 FROM ({sql}) GROUP BY 1 ORDER BY 1",
+                tcol_q = qi(tcol)
             )
         }
         "stock" => format!(
             "SELECT period, sum(value) AS value FROM (\
-                SELECT date_trunc('{grain}', \"{tcol}\") AS period, value, \
+                SELECT date_trunc('{grain}', {tcol_q}) AS period, value, \
                        rank() OVER (\
-                           PARTITION BY date_trunc('{grain}', \"{tcol}\") \
-                           ORDER BY \"{tcol}\" DESC) AS rk \
+                           PARTITION BY date_trunc('{grain}', {tcol_q}) \
+                           ORDER BY {tcol_q} DESC) AS rk \
                 FROM ({sql})\
-             ) WHERE rk = 1 GROUP BY period ORDER BY period"
+             ) WHERE rk = 1 GROUP BY period ORDER BY period",
+            tcol_q = qi(tcol)
         ),
         _ => format!(
-            "SELECT date_trunc('{grain}', \"{tcol}\") AS period, sum(value) AS value \
-             FROM ({sql}) GROUP BY 1 ORDER BY 1"
+            "SELECT date_trunc('{grain}', {tcol_q}) AS period, sum(value) AS value \
+             FROM ({sql}) GROUP BY 1 ORDER BY 1",
+            tcol_q = qi(tcol)
         ),
     }
 }
@@ -2577,10 +2581,11 @@ async fn extract_shape(
 ) -> Result<(Option<String>, bool), SessionError> {
     use datafusion::arrow::array::ArrayRef;
     let q = format!(
-        "SELECT max(\"{tcol}\") AS horizon, \
-                count(DISTINCT date_trunc('day', \"{tcol}\")) AS days, \
-                count(DISTINCT date_trunc('month', \"{tcol}\")) AS months \
-         FROM ({sql})"
+        "SELECT max({tcol_q}) AS horizon, \
+                count(DISTINCT date_trunc('day', {tcol_q})) AS days, \
+                count(DISTINCT date_trunc('month', {tcol_q})) AS months \
+         FROM ({sql})",
+        tcol_q = qi(tcol)
     );
     let plan = crate::whatif::build_plan(shared, ctx, &q).await?;
     let batches = ctx
