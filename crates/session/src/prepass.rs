@@ -524,9 +524,15 @@ pub(crate) async fn resolve(
     // everywhere. That is the standing limit, not a regression — the
     // seam runs before DataFusion's own CTE lookup and has no scope to
     // ask about.
-    let (_, ctes) = resolve_table_references(statement, shared.normalize_idents)?;
+    let (relations, ctes) = resolve_table_references(statement, shared.normalize_idents)?;
+    // A statement that names only its dataset's own tables loads those;
+    // any other reads the dataset whole.
+    let pins = match shared.named_pins(&relations).await? {
+        Some(named) => named,
+        None => shared.statement_pins().await?,
+    };
     let mut resolved = Resolved {
-        pins: shared.statement_pins().await?,
+        pins,
         ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
         ..Resolved::default()
     };

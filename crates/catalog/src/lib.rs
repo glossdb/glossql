@@ -537,34 +537,67 @@ impl Lake {
         .await?;
         let mut out = Vec::with_capacity(tables.len());
         for (ident, table) in idents.into_iter().zip(tables) {
-            let snapshot_id = table.metadata().current_snapshot_id();
-            let columns = table
-                .metadata()
-                .current_schema()
-                .as_struct()
-                .fields()
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
-            // One constructor for both: the provider holds the table it is
-            // given and never refreshes it, so a scan with no snapshot named
-            // resolves the current snapshot of *this* clone — the same one
-            // `snapshot_id` above records (iceberg-rust table/mod.rs:245-261,
-            // scan/mod.rs:216-231). A table with no snapshot yet scans empty
-            // through the same call (scan/mod.rs:218-229).
-            // Behind [`PrimitivePushdown`]: a filter over a nested column
-            // stays with the engine instead of failing the scan.
-            let provider = PrimitivePushdown::wrap(Arc::new(
-                iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table).await?,
-            ));
-            out.push(PinnedTable {
-                name: ident.name,
-                snapshot_id,
-                columns,
-                provider,
-            });
+            out.push(Self::pinned(ident.name, table).await?);
         }
         Ok(out)
+    }
+
+    /// The named tables of `dataset`, each pinned at its current
+    /// snapshot — what a statement that names its tables needs, without
+    /// the rest of the dataset loaded beside them. `None` when a name is
+    /// not a table there: the caller then wants the whole walk, which
+    /// is where a misspelling gets its hint.
+    pub async fn pin_tables(
+        &self,
+        dataset: &str,
+        names: &[String],
+    ) -> Result<Option<Vec<PinnedTable>>> {
+        let ns = NamespaceIdent::new(dataset.to_string());
+        let idents: Vec<TableIdent> = names
+            .iter()
+            .map(|name| TableIdent::new(ns.clone(), name.clone()))
+            .collect();
+        let tables =
+            futures::future::try_join_all(idents.iter().map(|ident| self.load_if_present(ident)))
+                .await?;
+        let mut out = Vec::with_capacity(tables.len());
+        for (ident, table) in idents.into_iter().zip(tables) {
+            let Some(table) = table else {
+                return Ok(None);
+            };
+            out.push(Self::pinned(ident.name, table).await?);
+        }
+        Ok(Some(out))
+    }
+
+    /// One loaded table as a statement holds it.
+    async fn pinned(name: String, table: iceberg::table::Table) -> Result<PinnedTable> {
+        let snapshot_id = table.metadata().current_snapshot_id();
+        let columns = table
+            .metadata()
+            .current_schema()
+            .as_struct()
+            .fields()
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
+        // One constructor for both: the provider holds the table it is
+        // given and never refreshes it, so a scan with no snapshot named
+        // resolves the current snapshot of *this* clone — the same one
+        // `snapshot_id` above records (iceberg-rust table/mod.rs:245-261,
+        // scan/mod.rs:216-231). A table with no snapshot yet scans empty
+        // through the same call (scan/mod.rs:218-229).
+        // Behind [`PrimitivePushdown`]: a filter over a nested column
+        // stays with the engine instead of failing the scan.
+        let provider = PrimitivePushdown::wrap(Arc::new(
+            iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table).await?,
+        ));
+        Ok(PinnedTable {
+            name,
+            snapshot_id,
+            columns,
+            provider,
+        })
     }
 
     /// Catalog walks so far — one per `pin_dataset`, which loads and

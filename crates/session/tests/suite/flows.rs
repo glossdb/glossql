@@ -1598,9 +1598,10 @@ async fn one_statement_walks_the_catalog_once_however_many_plans_it_builds() {
         .await
         .unwrap();
 
-    // One statement that reads a door and scans a table: the pre-pass
-    // pins the tables, the door derives its context, and before the
-    // walk was held both of those went to the catalog on their own.
+    // A statement that names only its dataset's tables loads those by
+    // name and walks nothing. One that reads a door walks the dataset
+    // once: the pre-pass pins the tables and the door derives its
+    // context from the same held walk.
     let before = lake.walk_count();
     run(
         &session,
@@ -1610,8 +1611,8 @@ async fn one_statement_walks_the_catalog_once_however_many_plans_it_builds() {
     let after = lake.walk_count();
     assert_eq!(
         after - before,
-        2,
-        "two statements, one walk each — got {} walks",
+        1,
+        "the scan names its table and loads it alone, the door walks once — got {} walks",
         after - before
     );
 

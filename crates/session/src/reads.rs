@@ -162,6 +162,53 @@ impl Shared {
             .collect())
     }
 
+    /// The pins of a statement whose every relation is a plain table
+    /// of the bound dataset: those tables, loaded by name, and nothing
+    /// else of the dataset. `None` for any other statement — one that
+    /// names another dataset's table, a read, a door, a store relation,
+    /// or a name the dataset does not hold — and the caller takes
+    /// [`Shared::statement_pins`], the whole walk, which is what those
+    /// read and where a misspelt name finds its hint.
+    pub(crate) async fn named_pins(
+        &self,
+        relations: &[datafusion::common::TableReference],
+    ) -> Result<
+        Option<std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>>,
+        SessionError,
+    > {
+        use datafusion::common::TableReference;
+        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+            return Ok(None);
+        };
+        let mut names = Vec::with_capacity(relations.len());
+        for relation in relations {
+            match relation {
+                TableReference::Bare { table } => names.push(table.to_string()),
+                TableReference::Partial { schema, table } if schema.as_ref() == dataset => {
+                    names.push(table.to_string());
+                }
+                _ => return Ok(None),
+            }
+        }
+        // A name this server claims is never asked of the catalog: it
+        // would answer absent, one round trip later.
+        let claimed = |name: &str| {
+            glossql_glossary::RELATIONS.iter().any(|r| r.name == name)
+                || crate::library::LIBRARY.iter().any(|(n, _)| *n == name)
+                || DOORS.iter().any(|(n, _)| *n == name)
+        };
+        if names.is_empty() || names.iter().any(|n| claimed(n)) {
+            return Ok(None);
+        }
+        names.sort();
+        names.dedup();
+        Ok(self
+            .lake()
+            .pin_tables(&dataset, &names)
+            .await?
+            .map(|pins| pins.into_iter().map(|p| (p.name, p.provider)).collect()))
+    }
+
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
