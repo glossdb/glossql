@@ -532,8 +532,7 @@ impl GlossqlMcp {
                  Every call opens unbound: begin any call that names a dataset's tables or \
                  columns with `USE <dataset>;` — a call without one is workspace-scoped. \
                  Outcomes: a read is `{{columns, rows, row_count, truncated}}`, rows capped at \
-                 {} (GLOSSARY(), ATTEST() and the store relations sent as their own single \
-                 statement are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
+                 {} (GLOSSARY(), ATTEST() and the store relations are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
                  QUERY aspect — a metric's grounding — answers with the metric's fact row in \
                  the `metric_axes()` shape: whether the SQL plans, its behavior verb and where \
                  that came from, the axes admitted, and every served column not admitted with \
@@ -1071,36 +1070,30 @@ impl ServerHandler for GlossqlMcp {
             }
         }
 
-        // A single query streams from the engine and stops at the cap —
-        // what the agent won't see is never computed. Metadata reads
-        // (GLOSSARY(), ATTEST(), the store relations) are exempt from
-        // the cap: the map must be whole,
-        // and the store bounds it. Everything else runs through execute.
+        // A single query streams from the engine; everything else runs
+        // through execute. Either way the session pages a data read —
+        // its plan carries the cap, so what the agent won't see is
+        // never computed — and serves a metadata read (GLOSSARY(),
+        // ATTEST(), the store relations) whole: the map must be whole,
+        // and the store bounds it.
         // What a refused sequence had already landed rides beside the
         // refusal, in the usual shape — the writes stood.
         let mut landed_json: Option<serde_json::Value> = None;
-        let rendered = match session.query_stream(statements).await {
-            Ok(query) => {
-                let cap = if query.metadata_only {
-                    usize::MAX
-                } else {
-                    self.plane.row_cap()
-                };
-                wire::stream_json(query.stream, cap)
-                    .await
-                    .map(|rows| serde_json::Value::Array(vec![rows]))
-            }
+        let rendered = match session.query_page(statements).await {
+            Ok(query) => wire::stream_json(query.stream, query.cap)
+                .await
+                .map(|rows| serde_json::Value::Array(vec![rows])),
             // Statement sequences run at the plane: `USE` moves the
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
                 match self.plane.execute(actor.clone(), None, statements).await {
-                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.plane.row_cap()),
+                    Ok(outcomes) => wire::outcomes_json(&outcomes),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
                             && !landed.is_empty()
                         {
-                            landed_json = wire::outcomes_json(landed, self.plane.row_cap()).ok();
+                            landed_json = wire::outcomes_json(landed).ok();
                         }
                         Err(e.to_string())
                     }
@@ -1225,19 +1218,7 @@ impl GlossqlMcp {
             ),
             None => "SELECT * FROM next ORDER BY goal".to_string(),
         };
-        self.rows(&session, &sql).await
-    }
-
-    /// The rows of one read, as the wire renders them.
-    async fn rows(&self, session: &Session, sql: &str) -> Result<Vec<serde_json::Value>, String> {
-        let outcomes = session.execute(sql).await.map_err(|e| e.to_string())?;
-        let rendered = wire::outcomes_json(&outcomes, usize::MAX)?;
-        Ok(rendered
-            .get(0)
-            .and_then(|o| o.get("rows"))
-            .and_then(|r| r.as_array())
-            .cloned()
-            .unwrap_or_default())
+        read_rows(&session, &sql).await
     }
 
     /// `next://<dataset>[/<surface>]` as a page: every answer with its

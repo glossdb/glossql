@@ -75,7 +75,7 @@ async fn land_orders_and_customers(session: &Session) {
 
 async fn table(session: &Session, sql: &str) -> String {
     let outcomes = run(session, sql).await;
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("`{sql}` produced no rows");
     };
     pretty_format_batches(&batches).unwrap().to_string()
@@ -1897,7 +1897,7 @@ async fn a_json_arrow_read_leaves_the_engine_as_text() {
         r#"SELECT '{"a": 1, "b": "x"}' -> 'a' AS a, '{"a": 1, "b": "x"}' -> 'b' AS b;"#,
     )
     .await;
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("no rows");
     };
     // The union the JSON functions return never reaches a consumer:

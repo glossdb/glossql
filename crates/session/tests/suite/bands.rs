@@ -137,7 +137,7 @@ async fn a_corridor_below_the_series_resolution_withholds_the_pit() {
         )
         .await
         .expect("the walk serves");
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("the walk produced no rows");
     };
     let walked = pretty_format_batches(&batches)
@@ -199,7 +199,7 @@ async fn session_over(name: &str, schema: Arc<Schema>, batch: RecordBatch, setup
 
 async fn walked(session: &Session, sql: &str) -> String {
     let outcomes = session.execute(sql).await.expect("the walk serves");
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("the walk produced no rows");
     };
     pretty_format_batches(&batches)

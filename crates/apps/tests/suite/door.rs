@@ -515,7 +515,7 @@ async fn a_ruling_is_signed_with_the_callers_own_name() {
         .execute("SELECT actor_id FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human';")
         .await
         .unwrap();
-    let glossql_session::Outcome::Rows(batches) = signed.last().unwrap() else {
+    let glossql_session::Outcome::Rows { batches, .. } = signed.last().unwrap() else {
         panic!("expected rows");
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();

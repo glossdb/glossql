@@ -184,11 +184,13 @@ what a build serves is what its suite tested.
   not used: a caller names itself on every request, so the string
   proves nothing, and the record's actor column is where it says who
   spoke.
-- **The row cap bounds engine work.** A tool result ships at most
-  `--row-cap` rows and declares `truncated`; the stream terminates
-  early, so what the agent won't see is never computed. Metadata reads
-  — `GLOSSARY()`, `ATTEST()`, the store relations — are exempt: the
-  map must be whole, and the store bounds it.
+- **The row cap bounds engine work.** A data read ships at most
+  `--row-cap` rows and declares `truncated`. The cap rides the read's
+  plan as a limit, alone or inside a sequence, so the engine carries
+  it into the scans and a sort keeps the cap's rows and never its
+  whole input: what the agent won't see is never computed. Metadata
+  reads — `GLOSSARY()`, `ATTEST()`, the store relations — are exempt
+  in every position: the map must be whole, and the store bounds it.
 - **A grounding's write answers with its fact.** `GLOSS` on a QUERY
   aspect returns the metric's row in the `metric_axes()` shape at the
   pin the write moved to — whether the SQL plans, the verb and its

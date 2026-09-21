@@ -27,7 +27,7 @@ per statement:
   zero rows — a `LIMIT 0` rehearsal returns the schema. `truncated:
   true` means the result held more than the cap: refine, never read a
   capped result as complete. `GLOSSARY()`, `ATTEST()` and the store
-  relations sent as their own statement are uncapped.
+  relations are uncapped.
 - a write — `{"affected": n}` or `{"done": "…"}`. One write answers
   with rows: a `GLOSS` on a QUERY aspect returns the metric's fact row
   in the `metric_axes()` shape — read it before the next write.

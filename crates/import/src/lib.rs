@@ -649,19 +649,18 @@ pub async fn run_probe(
         Err(e) => return Err(planning_error(spec, "probe", Error::Probe, e).await),
     };
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
-    // A rehearsal is read at the door like any other answer, so it stops at
-    // the door's cap: a probe without a LIMIT never pulls the whole
-    // source into memory to show the first rows of it.
+    // A rehearsal is read at the door like any other answer, so its plan
+    // carries the door's cap as a limit, one row past it so the caller
+    // can tell a cut answer: a probe without a LIMIT never pulls the
+    // whole source into memory to show the first rows of it.
+    let df = match row_cap {
+        usize::MAX => df,
+        cap => df.limit(0, Some(cap + 1)).map_err(Error::Probe)?,
+    };
     let mut stream = df.execute_stream().await.map_err(Error::Probe)?;
     let mut batches = Vec::new();
-    let mut rows = 0usize;
     while let Some(batch) = stream.next().await {
-        let batch = batch.map_err(Error::Probe)?;
-        rows += batch.num_rows();
-        batches.push(batch);
-        if rows > row_cap {
-            break;
-        }
+        batches.push(batch.map_err(Error::Probe)?);
     }
     if batches.is_empty() {
         // An empty result still carries the shape — the whole point of a

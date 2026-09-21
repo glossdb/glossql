@@ -47,7 +47,7 @@ pub async fn query(
     };
     match session.query_stream(&body).await {
         // The Arrow door never caps — metadata or data, the client
-        // drains a stream; `metadata_only` is the MCP door's concern.
+        // drains a stream; paging is the MCP door's concern.
         // The first poll runs the plan: a read the engine cannot start
         // — a scan it refuses, an expression that fails on the first
         // row — is a refusal with its text, not a 200 and a truncated
@@ -66,7 +66,7 @@ pub async fn query(
         // and answer in JSON.
         Err(SessionError::NotOneRead) => {
             match plane.execute(actor, Some(&dataset), &body).await {
-                Ok(outcomes) => match wire::outcomes_json(&outcomes, plane.row_cap()) {
+                Ok(outcomes) => match wire::outcomes_json(&outcomes) {
                     Ok(rendered) => Json(rendered).into_response(),
                     Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),
                 },
@@ -75,7 +75,7 @@ pub async fn query(
                 Err(e) => {
                     let landed = match &e {
                         SessionError::Sequence { landed, .. } if !landed.is_empty() => {
-                            wire::outcomes_json(landed, plane.row_cap()).ok()
+                            wire::outcomes_json(landed).ok()
                         }
                         _ => None,
                     };

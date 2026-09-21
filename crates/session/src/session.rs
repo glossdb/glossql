@@ -210,7 +210,13 @@ pub(crate) fn sequence_context(index: usize, total: usize) -> String {
 #[derive(Debug)]
 pub enum Outcome {
     Done(String),
-    Rows(Vec<RecordBatch>),
+    /// A read's rows. `truncated` says the read held more than the
+    /// session's row cap and `batches` stops there — said by the session
+    /// that cut, so no door infers it from a count.
+    Rows {
+        batches: Vec<RecordBatch>,
+        truncated: bool,
+    },
     Affected(u64),
 }
 
@@ -385,9 +391,10 @@ pub struct Session {
     ctx: SessionContext,
     shared: Arc<Shared>,
     actor: Actor,
-    /// How many rows the reader will actually be shown. It bounds what the
-    /// non-streaming paths ask the engine for; `usize::MAX` (the default)
-    /// means the caller drains everything itself.
+    /// How many rows of a data read a paging caller is shown: the bound
+    /// rides the plan as a limit ([`paged`]), so the engine is asked for
+    /// no more. Metadata reads are whole ([`reads_only_metadata`]);
+    /// `usize::MAX` (the default) bounds nothing.
     row_cap: usize,
     /// Which generation of the lake's shared provider this session
     /// mounted — `mount_schema` re-registers when it changed.
@@ -948,9 +955,10 @@ impl Session {
     /// landing nothing.
     async fn probe(&self, probe: Probe) -> Result<Outcome, SessionError> {
         let spec = self.source_spec(&probe.source.value).await?;
-        Ok(Outcome::Rows(
-            glossql_import::run_probe(&self.shared.env(), &spec, &probe.sql, self.row_cap).await?,
-        ))
+        let read =
+            glossql_import::run_probe(&self.shared.env(), &spec, &probe.sql, self.row_cap).await?;
+        let (batches, truncated) = cut(read, self.row_cap);
+        Ok(Outcome::Rows { batches, truncated })
     }
 
     async fn source_spec(&self, source: &str) -> Result<SourceSpec, SessionError> {
@@ -1244,7 +1252,10 @@ impl Session {
                     crate::cube::fact_at_write(&self.shared, &dataset, &resolved.subject, aspect)
                         .await?;
             }
-            return Ok(Outcome::Rows(vec![crate::cube::fact_batch(&[&fact])?]));
+            return Ok(Outcome::Rows {
+                batches: vec![crate::cube::fact_batch(&[&fact])?],
+                truncated: false,
+            });
         }
         Ok(Outcome::Done(format!(
             "GLOSS {aspect} ON {}",
@@ -1372,7 +1383,10 @@ impl Session {
             };
             results.push((row, computed));
         }
-        Ok(Outcome::Rows(vec![crate::reads::extraction_batch(results)]))
+        Ok(Outcome::Rows {
+            batches: vec![crate::reads::extraction_batch(results)],
+            truncated: false,
+        })
     }
 
     /// A SQL measurement body: the subject bound into the AST, planned
@@ -1548,6 +1562,13 @@ impl Session {
         self.query_stream_with_params(sql, None).await
     }
 
+    /// [`Session::query_stream`] for a caller that pages: a data read
+    /// is planned under the row cap and the stream says where to cut
+    /// ([`QueryStream::cap`]); a metadata read is whole.
+    pub async fn query_page(&self, sql: &str) -> Result<QueryStream, SessionError> {
+        self.stream(sql, None, true).await
+    }
+
     /// [`Session::query_stream`] with placeholder values: `$name` in the
     /// query binds from the map — typed values through the plan, never
     /// text spliced into SQL. The app door's frames ride this; a
@@ -1557,6 +1578,15 @@ impl Session {
         &self,
         sql: &str,
         params: Option<ParamValues>,
+    ) -> Result<QueryStream, SessionError> {
+        self.stream(sql, params, false).await
+    }
+
+    async fn stream(
+        &self,
+        sql: &str,
+        params: Option<ParamValues>,
+        paging: bool,
     ) -> Result<QueryStream, SessionError> {
         // Before the span: a sequence is not a read that failed — it
         // never opens one.
@@ -1573,8 +1603,11 @@ impl Session {
         // it plans and the cube builds behind them. Held by value under
         // the span's wrapper, a debug build copies it onto the stack once
         // more at construction — the ceiling the cube suite runs at.
-        tracing::Instrument::instrument(Box::pin(self.read_stream(statement, sql, params)), span)
-            .await
+        tracing::Instrument::instrument(
+            Box::pin(self.read_stream(statement, sql, params, paging)),
+            span,
+        )
+        .await
     }
 
     /// The read, under its span.
@@ -1583,6 +1616,7 @@ impl Session {
         mut statement: DFStatement,
         sql: &str,
         params: Option<ParamValues>,
+        paging: bool,
     ) -> Result<QueryStream, SessionError> {
         tracing::debug!(text = %sql, "the read's text");
         // Named string params bind into the AST before the pre-pass, so
@@ -1592,11 +1626,16 @@ impl Session {
             crate::measure::bind_params(&mut statement, map);
         }
         self.refresh_mount().await?;
-        let metadata_only = reads_only_metadata(&statement);
+        let cap = if paging && !reads_only_metadata(&statement) {
+            self.row_cap
+        } else {
+            usize::MAX
+        };
         let (mut plan, record) = self.plan_statement_classed(statement).await?;
         if let Some(params) = params {
             plan = plan.with_param_values(params)?;
         }
+        let plan = paged(plan, cap)?;
         // The engine's own path, in two steps instead of
         // `DataFrame::execute_stream`, so the physical plan stays in
         // hand: its operators' counts are read when the stream ends.
@@ -1614,7 +1653,7 @@ impl Session {
                 physical,
                 tracing::Span::current(),
             )),
-            metadata_only,
+            cap,
             record,
         })
     }
@@ -1687,7 +1726,15 @@ impl Session {
                 other => return Err(SessionError::SubstrateClosed(verb_of(other))),
             }
         }
-        let plan = self.plan_statement(statement).await?;
+        // A query's rows are paged; an EXPLAIN's are the plan, whole.
+        let is_query = matches!(&statement, DFStatement::Statement(inner)
+            if matches!(inner.as_ref(), SQLStatement::Query(_)));
+        let cap = if is_query && !reads_only_metadata(&statement) {
+            self.row_cap
+        } else {
+            usize::MAX
+        };
+        let plan = paged(self.plan_statement(statement).await?, cap)?;
         let frame = self.ctx.execute_logical_plan(plan).await?;
         // The same two-step path as a streaming read, so the operators'
         // counts close the statement's span when the stream is done —
@@ -1701,27 +1748,19 @@ impl Session {
             physical,
             tracing::Span::current(),
         ));
-        // Bounded like the streaming door, for the same reason: the reader
-        // sees at most its cap, so the engine should not be asked for more
-        // than that. One row past the cap is kept, which is how the door
-        // knows the answer was truncated; collecting the whole result
-        // and trimming at render would defeat the cap.
+        // Collected, because a sequence answers with every outcome at
+        // its end; the plan's limit is what keeps a data read small.
         let mut batches = Vec::new();
-        let mut rows = 0usize;
         while let Some(batch) = stream.next().await {
-            let batch = batch?;
-            rows += batch.num_rows();
-            batches.push(batch);
-            if rows > self.row_cap {
-                break;
-            }
+            batches.push(batch?);
         }
+        let (mut batches, truncated) = cut(batches, cap);
         if batches.is_empty() {
             // An empty result still carries the shape — the door serves
             // (name, type) columns from it, the LIMIT 0 rehearsal's point.
             batches.push(RecordBatch::new_empty(schema));
         }
-        Ok(Outcome::Rows(batches))
+        Ok(Outcome::Rows { batches, truncated })
     }
 
     /// `DESCRIBE <name>` for every name a read can plan — a landed
@@ -1757,7 +1796,10 @@ impl Session {
             ],
         )
         .map_err(DataFusionError::from)?;
-        Ok(Outcome::Rows(vec![batch]))
+        Ok(Outcome::Rows {
+            batches: vec![batch],
+            truncated: false,
+        })
     }
 
     /// `SHOW TABLES`: the bound dataset's landed tables as
@@ -1785,7 +1827,10 @@ impl Session {
             ],
         )
         .map_err(DataFusionError::from)?;
-        Ok(Outcome::Rows(vec![batch]))
+        Ok(Outcome::Rows {
+            batches: vec![batch],
+            truncated: false,
+        })
     }
 
     /// `DROP TABLE` (PoC rules): refused while the
@@ -1940,29 +1985,25 @@ fn endpoint_parts(side: &glossql_parser::RelSide) -> (Vec<String>, Vec<String>) 
     (table, columns)
 }
 
-/// A single query's batch stream, plus what it reads: `metadata_only`
-/// marks a query whose every relation is the store's — `GLOSSARY()`,
-/// `ATTEST()`, and the plain store relations. The doors' row-cap policy
-/// exempts these: metadata is the agent's
-/// map; the cap guards data reads.
+/// A single query's batch stream, plus what a door needs to serve it.
 pub struct QueryStream {
     pub stream: SendableRecordBatchStream,
-    pub metadata_only: bool,
+    /// Rows a paging caller ships before declaring the answer cut. The
+    /// row cap on a data read through [`Session::query_page`], whose
+    /// plan yields one row past it; `usize::MAX` on a metadata read —
+    /// `GLOSSARY()`, `ATTEST()`, the plain store relations, the agent's
+    /// map, which must be whole — and on every read that does not page.
+    pub cap: usize,
     /// Whether the statement reads the glossary anywhere in its
     /// expansion — derived by the pre-pass, not curated. The app door
     /// serves it as the frame class (`record`/`data`): a record frame
     /// can change under a glossary write, a data frame cannot, so the
     /// browser's frame store evicts only record entries on a ruling.
-    /// Distinct from `metadata_only`, which is
+    /// Distinct from the metadata test behind `cap`, which is
     /// syntactic and cannot see through shipped reads.
     pub record: bool,
 }
 
-/// Every relation the query touches is a store read — and there is at
-/// least one, so constant selects and VALUES stay on the capped path.
-/// The store's RELATIONS table names the plain relations; `attest` is
-/// the one read construct beside them (`glossary()` shares its name
-/// with the relation).
 /// The shape of a whole tool call, classified without executing — the
 /// door's question-round cadence reads it.
 /// `reviews` marks a call that reads the record: at least one metadata
@@ -2016,6 +2057,45 @@ pub fn call_shape(statements: &str) -> CallShape {
     }
 }
 
+/// A data read under a paging caller's cap: one row past it, so the cut
+/// can be told from a whole answer. A limit on the logical plan is the
+/// engine's own bound — the optimizer carries it into the scans and
+/// turns a sort under it into a fetch (datafusion-optimizer
+/// `push_down_limit.rs`), which a stream dropped at the door cannot
+/// do. `usize::MAX` bounds nothing.
+fn paged(plan: LogicalPlan, cap: usize) -> Result<LogicalPlan, DataFusionError> {
+    if cap == usize::MAX {
+        return Ok(plan);
+    }
+    LogicalPlanBuilder::from(plan)
+        .limit(0, Some(cap + 1))?
+        .build()
+}
+
+/// The rows a read ships under `cap`, and whether it held more.
+fn cut(batches: Vec<RecordBatch>, cap: usize) -> (Vec<RecordBatch>, bool) {
+    let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+    if total <= cap {
+        return (batches, false);
+    }
+    let mut left = cap;
+    let mut kept = Vec::new();
+    for batch in batches {
+        if left == 0 {
+            break;
+        }
+        let take = batch.num_rows().min(left);
+        left -= take;
+        kept.push(batch.slice(0, take));
+    }
+    (kept, true)
+}
+
+/// Every relation the query touches is a store read — and there is at
+/// least one, so constant selects and VALUES stay on the capped path.
+/// The store's RELATIONS table names the plain relations; `attest` is
+/// the one read construct beside them (`glossary()` shares its name
+/// with the relation).
 fn reads_only_metadata(statement: &DFStatement) -> bool {
     let DFStatement::Statement(inner) = statement else {
         return false;
@@ -2198,4 +2278,43 @@ pub fn detector_functions() -> Vec<Registered> {
     registered(glossql_import::registry(
         &crate::reads::detector_ctx().state(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reason the cap is a limit on the plan and not a stream
+    /// dropped at the door: the optimizer hands it to the sort, which
+    /// then keeps the cap's rows and never the whole input.
+    #[tokio::test]
+    async fn a_paged_sort_fetches_the_cap_and_no_more() {
+        let ctx = SessionContext::new();
+        let plan = ctx
+            .state()
+            .create_logical_plan("SELECT * FROM (VALUES (1), (2), (3)) AS t(v) ORDER BY v")
+            .await
+            .unwrap();
+        let optimized = ctx.state().optimize(&paged(plan, 2).unwrap()).unwrap();
+        let text = optimized.display_indent().to_string();
+        assert!(text.contains("Sort: t.v ASC NULLS LAST, fetch=3"), "{text}");
+    }
+
+    #[test]
+    fn a_cut_keeps_the_cap_and_says_it_held_more() {
+        let batch = |values: Vec<i64>| {
+            RecordBatch::try_from_iter([(
+                "v",
+                Arc::new(datafusion::arrow::array::Int64Array::from(values))
+                    as datafusion::arrow::array::ArrayRef,
+            )])
+            .unwrap()
+        };
+        let (kept, truncated) = cut(vec![batch(vec![1, 2]), batch(vec![3, 4])], 3);
+        assert_eq!(kept.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
+        assert!(truncated);
+        let (kept, truncated) = cut(vec![batch(vec![1, 2, 3])], 3);
+        assert_eq!(kept[0].num_rows(), 3);
+        assert!(!truncated);
+    }
 }

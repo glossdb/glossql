@@ -1848,6 +1848,21 @@ async fn metadata_reads_pass_the_cap_uncapped() {
     assert_eq!(outcomes[0]["row_count"], json!(5), "{outcomes}");
     assert_eq!(outcomes[0]["truncated"], json!(false));
 
+    // The same sweep behind a `USE` — the agent's usual call — runs as
+    // a sequence and arrives whole all the same.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call(10, "USE fin; SELECT subject FROM glossary;"),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[1]["row_count"], json!(5), "{outcomes}");
+    assert_eq!(outcomes[1]["truncated"], json!(false));
+
     let body = expect_ok(
         mcp(
             app,
@@ -1870,7 +1885,7 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
     let (app, _dir) = app_capped(3, DoorConfig::default(), common::login()).await;
     let body = expect_ok(
         mcp(
-            app,
+            app.clone(),
             json!({
                 "jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {
@@ -1890,6 +1905,36 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
     assert_eq!(outcomes[0]["rows"].as_array().unwrap().len(), 3);
     assert_eq!(outcomes[0]["row_count"], json!(3));
     assert_eq!(outcomes[0]["truncated"], json!(true));
+
+    // A data read inside a sequence is cut at the same row and says so:
+    // the session that collected it carried the cap in the read's plan.
+    let body = expect_ok(
+        mcp(
+            app,
+            json!({
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": {
+                    "_meta": meta(),
+                    "name": "glossql",
+                    "arguments": {"statements":
+                        "SELECT 1 AS one; \
+                         SELECT * FROM (VALUES (1), (2), (3), (4), (5)) AS t(v) ORDER BY v DESC"}
+                }
+            }),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["truncated"], json!(false), "{outcomes}");
+    assert_eq!(
+        outcomes[1]["rows"],
+        json!([{"v": 5}, {"v": 4}, {"v": 3}]),
+        "{outcomes}"
+    );
+    assert_eq!(outcomes[1]["row_count"], json!(3));
+    assert_eq!(outcomes[1]["truncated"], json!(true));
 }
 
 #[tokio::test(flavor = "multi_thread")]

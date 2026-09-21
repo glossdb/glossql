@@ -74,7 +74,7 @@ pub fn ident_path(s: &str, max_segments: usize) -> bool {
 /// The first row's `body` column, if the read returned one.
 fn first_body(outcomes: &[Outcome]) -> Option<String> {
     for outcome in outcomes {
-        let Outcome::Rows(batches) = outcome else {
+        let Outcome::Rows { batches, .. } = outcome else {
             continue;
         };
         for batch in batches {

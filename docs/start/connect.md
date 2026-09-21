@@ -24,7 +24,7 @@ JSON array, one outcome per statement:
   schema, which is its point). Data rows cap at `--row-cap`;
   `truncated: true` means refine the query, not that the result is
   complete. Metadata reads — `GLOSSARY()`, `ATTEST()`, the store
-  relations — sent as their own single statement arrive whole.
+  relations — arrive whole, alone or inside a sequence.
 - a write — `{"affected": n}` or `{"done": true}`.
 - a refusal — a tool error whose text names what was wrong and, in a
   sequence, its place: what landed stayed landed, the rest was never

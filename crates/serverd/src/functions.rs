@@ -33,7 +33,7 @@ pub async fn pages(plane: &Plane) -> Result<Vec<DoorPage>, SessionError> {
     let declared = session
         .execute("SELECT name FROM functions ORDER BY name")
         .await?;
-    if let Ok(rendered) = wire::outcomes_json(&declared, usize::MAX)
+    if let Ok(rendered) = wire::outcomes_json(&declared)
         && let Some(rows) = rendered
             .get(0)
             .and_then(|o| o.get("rows"))

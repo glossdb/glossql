@@ -52,7 +52,7 @@ async fn rows(session: &Session, sql: &str) -> Vec<Value> {
         .unwrap_or_else(|e| panic!("`{sql}` failed: {e}"));
     let mut out = Vec::new();
     for outcome in outcomes {
-        if let Outcome::Rows(batches) = outcome
+        if let Outcome::Rows { batches, .. } = outcome
             && !batches.is_empty()
         {
             let mut writer = arrow_json::ArrayWriter::new(Vec::new());

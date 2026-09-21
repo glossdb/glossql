@@ -18,7 +18,7 @@ fn human() -> Actor {
 async fn count(plane: &Plane, sql: &str) -> String {
     let session = plane.channel(human(), None).await.unwrap();
     let outcomes = session.execute(sql).await.unwrap();
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("`{sql}` produced no rows");
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -243,7 +243,7 @@ async fn live_sql_catalog_bootstrap() {
             .execute("SELECT count(*) AS n FROM functions;")
             .await
             .unwrap();
-        let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
             panic!("a count")
         };
         let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
@@ -305,7 +305,7 @@ async fn live_sql_catalog_bootstrap() {
             .execute("SELECT count(*) AS n FROM landed;")
             .await
             .unwrap();
-        let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+        let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
             panic!("a count")
         };
         let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");

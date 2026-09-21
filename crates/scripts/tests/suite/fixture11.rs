@@ -73,7 +73,7 @@ fn session_for(kind: ActorKind, id: &str, store: &Store) -> Session {
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
+        Outcome::Rows { batches, .. } => {
             let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(rows, 1, "expected one row");
             let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -201,7 +201,7 @@ async fn fixture_11_with_real_scripts() {
         )
         .await
         .unwrap();
-    let Outcome::Rows(batches) = shape.last().unwrap() else {
+    let Outcome::Rows { batches, .. } = shape.last().unwrap() else {
         panic!("expected Rows");
     };
     let schema = batches[0].schema();
@@ -257,7 +257,7 @@ async fn fixture_11_with_real_scripts() {
         .execute("SELECT outliers() FROM orders.amount;")
         .await
         .unwrap();
-    let Some(Outcome::Rows(batches)) = early.last() else {
+    let Some(Outcome::Rows { batches, .. }) = early.last() else {
         panic!("extraction serves rows")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -360,7 +360,7 @@ async fn fixture_11_with_real_scripts() {
         .await
         .unwrap();
     let row = match contested.last().unwrap() {
-        Outcome::Rows(batches) => {
+        Outcome::Rows { batches, .. } => {
             let b = batches.iter().find(|b| b.num_rows() > 0).unwrap();
             (
                 b.column(0).is_null(0),

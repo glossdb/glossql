@@ -79,7 +79,7 @@ async fn parquet_fixture(root: &std::path::Path) {
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
+        Outcome::Rows { batches, .. } => {
             let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(rows, 1, "expected one row");
             let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
