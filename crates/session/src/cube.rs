@@ -2656,7 +2656,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             text(|f| f.superseded_divergence.as_deref()),
         ],
     )
-    .map_err(|e| SessionError::Runtime(e.to_string()))
+    .map_err(SessionError::from)
 }
 
 #[cfg(test)]

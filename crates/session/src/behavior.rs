@@ -270,10 +270,10 @@ pub(crate) async fn behavior_anchors(
             let plan = Box::pin(crate::whatif::build_plan(&shared, &ctx, &q)).await?;
             ctx.execute_logical_plan(plan)
                 .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                .map_err(SessionError::not_served)?
                 .collect()
                 .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+                .map_err(SessionError::not_served)
         }
     };
     // The same, held as a table: the plan's schema first, so an
@@ -287,15 +287,12 @@ pub(crate) async fn behavior_anchors(
             let served = ctx
                 .execute_logical_plan(plan)
                 .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+                .map_err(SessionError::not_served)?;
             let schema = Arc::new(served.schema().as_arrow().clone());
-            let batches = served
-                .collect()
-                .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+            let batches = served.collect().await.map_err(SessionError::not_served)?;
             MemTable::try_new(schema, vec![batches])
                 .map(|t| Arc::new(t) as Arc<dyn TableProvider>)
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+                .map_err(SessionError::not_served)
         }
     };
     let bare = |value: Value| rows_batch(vec![value], behavior_shape());
@@ -915,9 +912,7 @@ pub(crate) async fn behavior_anchors(
                                             ])
                                         })
                                         .and_then(|b| b.build())
-                                        .map_err(|e| {
-                                            SessionError::BadSubject(format!("not served: {e}"))
-                                        })?;
+                                        .map_err(SessionError::not_served)?;
                                 // The plan's schema, kept: a join with no
                                 // pair in common collects no batch at all,
                                 // and the kernel still reads its columns —
@@ -927,14 +922,10 @@ pub(crate) async fn behavior_anchors(
                                 let mut aligned = ctx
                                     .execute_logical_plan(aligned)
                                     .await
-                                    .map_err(|e| {
-                                        SessionError::BadSubject(format!("not served: {e}"))
-                                    })?
+                                    .map_err(SessionError::not_served)?
                                     .collect()
                                     .await
-                                    .map_err(|e| {
-                                        SessionError::BadSubject(format!("not served: {e}"))
-                                    })?;
+                                    .map_err(SessionError::not_served)?;
                                 if aligned.is_empty() {
                                     aligned.push(RecordBatch::new_empty(schema));
                                 }

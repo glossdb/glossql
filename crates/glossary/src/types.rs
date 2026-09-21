@@ -7,7 +7,7 @@ pub enum Error {
     /// A backend could not serve or accept rows. The store's rules never
     /// produce this — only the IO behind the metadata seam does.
     #[error("store backend: {0}")]
-    Backend(String),
+    Backend(#[from] glossql_catalog::Error),
     #[error("unknown {what} `{name}` — declare it first")]
     Unknown { what: &'static str, name: String },
     #[error("aspect `{0}` is MEASUREMENT — measurements are computed by functions, never glossed")]
@@ -65,12 +65,6 @@ pub enum Error {
     ReservedTableName(String),
     #[error("stored JSON is corrupt: {0}")]
     Corrupt(String),
-}
-
-impl From<glossql_catalog::Error> for Error {
-    fn from(e: glossql_catalog::Error) -> Self {
-        Error::Backend(e.to_string())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

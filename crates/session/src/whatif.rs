@@ -282,8 +282,10 @@ async fn compute(
         .await
         {
             Ok(rows) => out.extend(rows),
-            Err(SessionError::BadSubject(detail)) => out.push(refusal(detail)),
-            Err(e) => return Err(e),
+            Err(e) => match e.abstention() {
+                Some(detail) => out.push(refusal(detail)),
+                None => return Err(e),
+            },
         }
     }
     if out.is_empty() {
@@ -574,7 +576,7 @@ pub(crate) async fn build_plan(
     crate::reads::state_with(ctx, shared, resolved)
         .statement_to_plan(statement)
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+        .map_err(SessionError::not_served)
 }
 
 /// A monthly series: Vec<(period "YYYY-MM", value)>, optionally with
@@ -593,10 +595,10 @@ async fn run_series(
     let batches = ctx
         .execute_logical_plan(plan)
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .map_err(SessionError::not_served)?
         .collect()
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+        .map_err(SessionError::not_served)?;
     let mut out = Vec::new();
     for b in &batches {
         let period = b.column(0);
@@ -611,8 +613,7 @@ async fn run_series(
             if value.is_null(i) {
                 continue;
             }
-            let p = array_value_to_string(period, i)
-                .map_err(|e| SessionError::Runtime(e.to_string()))?;
+            let p = array_value_to_string(period, i).map_err(SessionError::from)?;
             // The YYYY-MM head — periods arrive in the column's
             // display form, as every monthly reader cuts them.
             let p = p.get(..7).map(str::to_string).unwrap_or(p);

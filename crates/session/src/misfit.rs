@@ -105,8 +105,7 @@ pub(crate) async fn misfit_batch(
         .first()
         .map(|b| b.schema())
         .ok_or_else(|| bad("the frame serves no rows — nothing to rank".into()))?;
-    let frame_batch =
-        concat_batches(&schema, &batches).map_err(|e| SessionError::Runtime(e.to_string()))?;
+    let frame_batch = concat_batches(&schema, &batches).map_err(SessionError::from)?;
     let rows = frame_batch.num_rows();
     if rows == 0 {
         return Err(bad("the frame serves no rows — nothing to rank".into()));
@@ -225,8 +224,7 @@ pub(crate) async fn misfit_batch(
     columns.push(Arc::new(StringArray::from_iter_values(
         (0..rows).map(|_| basis.as_str()),
     )));
-    RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
-        .map_err(|e| SessionError::Runtime(e.to_string()))
+    RecordBatch::try_new(Arc::new(Schema::new(fields)), columns).map_err(SessionError::from)
 }
 
 /// A column read as f64s (nulls as NaN), or None where the type carries

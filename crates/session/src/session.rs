@@ -63,6 +63,19 @@ pub enum SessionError {
     DetectorNotExtractable(String),
     #[error("function runtime: {0}")]
     Runtime(String),
+    /// Arrow refused an array operation inside a door — a cast, a
+    /// concatenation, a cell's rendering.
+    #[error("function runtime: {0}")]
+    Arrow(#[from] datafusion::arrow::error::ArrowError),
+    /// The engine refused a door's own plan. `context` is what the
+    /// refusal reads as in front of the engine's text — the door's
+    /// name, or `not served` — and the engine's error stays the source,
+    /// so a pool refusal carries its road out here too.
+    #[error("not a subject: {context}{}", memory_road(.source))]
+    Engine {
+        context: String,
+        source: DataFusionError,
+    },
     #[error("not an aspect name: `{0}`")]
     BadAspectName(String),
     #[error("the standing ruling slot is not a ruling body")]
@@ -111,6 +124,38 @@ pub enum SessionError {
 /// partition, and neither the no-GROUP-BY aggregate nor a distinct
 /// count's state can spill — the sketch or the two-step count can.
 /// Every other engine error passes as it came.
+impl SessionError {
+    /// The engine refused a plan a door could not be served without.
+    pub(crate) fn not_served(source: DataFusionError) -> Self {
+        SessionError::Engine {
+            context: "not served: ".into(),
+            source,
+        }
+    }
+
+    /// What a door that abstains per subject says in place of a row:
+    /// the refusal's own text, for the two refusals that are about one
+    /// subject rather than about the statement. Anything else is the
+    /// statement's failure and has none.
+    pub(crate) fn abstention(&self) -> Option<String> {
+        match self {
+            SessionError::BadSubject(reason) => Some(reason.clone()),
+            SessionError::Engine { context, source } => {
+                Some(format!("{context}{}", memory_road(source)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The engine refused `door`'s own plan.
+    pub(crate) fn door(door: &str, source: DataFusionError) -> Self {
+        SessionError::Engine {
+            context: format!("{door}: "),
+            source,
+        }
+    }
+}
+
 fn memory_road(e: &DataFusionError) -> String {
     match e.find_root() {
         DataFusionError::ResourcesExhausted(_) => format!(

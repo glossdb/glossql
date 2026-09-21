@@ -313,7 +313,11 @@ pub(crate) async fn hierarchy_candidates(
         .ok_or_else(|| bad("no such table in the bound dataset".into()))?;
     let ctx = shared.session_ctx();
     let state = detector_state(&ctx);
-    let run = |plan| async { run_plan(&state, plan).await.map_err(bad) };
+    let run = |plan| async {
+        run_plan(&state, plan)
+            .await
+            .map_err(|e| SessionError::door(&format!("hierarchy_candidates('{table}')"), e))
+    };
     let abstain = |reason: &str| {
         rows_batch(
             vec![json!({"applicable": false, "reason": reason})],
@@ -710,15 +714,13 @@ pub(crate) fn rows_batch(
     let schema = Arc::new(Schema::new(fields));
     let mut decoder = arrow_json::ReaderBuilder::new(Arc::clone(&schema))
         .build_decoder()
-        .map_err(|e| SessionError::Runtime(e.to_string()))?;
-    decoder
-        .serialize(&rows)
-        .map_err(|e| SessionError::Runtime(e.to_string()))?;
+        .map_err(SessionError::from)?;
+    decoder.serialize(&rows).map_err(SessionError::from)?;
     // The decoder flushes nothing for no rows; a door with nothing to
     // say serves the empty relation in its own shape.
     Ok(decoder
         .flush()
-        .map_err(|e| SessionError::Runtime(e.to_string()))?
+        .map_err(SessionError::from)?
         .unwrap_or_else(|| RecordBatch::new_empty(schema)))
 }
 
@@ -823,7 +825,9 @@ pub(crate) async fn relationship_candidates(
             .and_then(|b| b.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|b| b.build())
             .map_err(|e| bad(e.to_string()))?;
-        let batches = run_plan(&scans, plan).await.map_err(bad)?;
+        let batches = run_plan(&scans, plan)
+            .await
+            .map_err(|e| SessionError::door(&door, e))?;
         let one = batches
             .iter()
             .find(|b| b.num_rows() > 0)
@@ -1295,15 +1299,14 @@ fn detector_state(ctx: &SessionContext) -> SessionState {
 
 /// A plan through the given state: planned, optimized and collected
 /// under that state's configuration and the process's one pool.
-async fn run_plan(state: &SessionState, plan: LogicalPlan) -> Result<Vec<RecordBatch>, String> {
-    let physical = state
-        .create_physical_plan(&plan)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn run_plan(
+    state: &SessionState,
+    plan: LogicalPlan,
+) -> Result<Vec<RecordBatch>, DataFusionError> {
+    let physical = state.create_physical_plan(&plan).await?;
     let started = std::time::Instant::now();
-    let batches = datafusion::physical_plan::collect(Arc::clone(&physical), state.task_ctx())
-        .await
-        .map_err(|e| e.to_string())?;
+    let batches =
+        datafusion::physical_plan::collect(Arc::clone(&physical), state.task_ctx()).await?;
     // The plan with its operators' metrics — rows, compute, spills —
     // for a door's own passes, which the statement's `executed` line
     // does not see.
@@ -1560,7 +1563,7 @@ async fn pair_counts(
         )?;
         for b in run_plan(state, plan)
             .await
-            .map_err(bad)?
+            .map_err(|e| SessionError::door(door, e))?
             .iter()
             .filter(|b| b.num_rows() > 0)
         {
@@ -1603,7 +1606,7 @@ async fn arm_distinct(
                 .map_err(|e| bad(e.to_string()))?;
         for b in run_plan(state, plan)
             .await
-            .map_err(bad)?
+            .map_err(|e| SessionError::door(door, e))?
             .iter()
             .filter(|b| b.num_rows() > 0)
         {
@@ -1654,7 +1657,7 @@ async fn cross_counts(
         )?;
         for b in run_plan(state, plan)
             .await
-            .map_err(bad)?
+            .map_err(|e| SessionError::door(door, e))?
             .iter()
             .filter(|b| b.num_rows() > 0)
         {
@@ -1707,7 +1710,9 @@ async fn combo_filled(
             .and_then(|p| p.aggregate(Vec::<Expr>::new(), aggs))
             .and_then(|p| p.build())
             .map_err(|e| bad(e.to_string()))?;
-        let batches = run_plan(state, plan).await.map_err(bad)?;
+        let batches = run_plan(state, plan)
+            .await
+            .map_err(|e| SessionError::door(door, e))?;
         let one = batches.iter().find(|b| b.num_rows() > 0).ok_or_else(|| {
             bad(format!(
                 "the combination scan of `{table}` returned nothing"
@@ -2493,17 +2498,13 @@ async fn run_grain(
     let batches = ctx
         .execute_logical_plan(plan)
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .map_err(SessionError::not_served)?
         .collect()
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+        .map_err(SessionError::not_served)?;
     let mut out = Vec::new();
     for b in batches.iter().filter(|b| b.num_rows() > 0) {
-        let period = b.column(
-            b.schema()
-                .index_of("period")
-                .map_err(|e| SessionError::Runtime(e.to_string()))?,
-        );
+        let period = b.column(b.schema().index_of("period").map_err(SessionError::from)?);
         let float_col = |name: &str| -> Result<Option<Float64Array>, SessionError> {
             let Ok(i) = b.schema().index_of(name) else {
                 return Ok(None);
@@ -2516,7 +2517,7 @@ async fn run_grain(
                     ..Default::default()
                 },
             )
-            .map_err(|e| SessionError::Runtime(e.to_string()))?;
+            .map_err(SessionError::from)?;
             floats
                 .as_any()
                 .downcast_ref::<Float64Array>()
@@ -2536,8 +2537,7 @@ async fn run_grain(
                 continue;
             }
             out.push((
-                array_value_to_string(period, i)
-                    .map_err(|e| SessionError::Runtime(e.to_string()))?,
+                array_value_to_string(period, i).map_err(SessionError::from)?,
                 (!value.is_null(i)).then(|| value.value(i)),
                 at(&num, i),
                 at(&den, i),
@@ -2590,10 +2590,10 @@ async fn extract_shape(
     let batches = ctx
         .execute_logical_plan(plan)
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+        .map_err(SessionError::not_served)?
         .collect()
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?;
+        .map_err(SessionError::not_served)?;
     let Some(b) = batches.iter().find(|b| b.num_rows() > 0) else {
         return Ok((None, false));
     };
@@ -2614,7 +2614,7 @@ async fn extract_shape(
     if col.is_null(0) {
         return Ok((None, sub_monthly));
     }
-    let shown = array_value_to_string(col, 0).map_err(|e| SessionError::Runtime(e.to_string()))?;
+    let shown = array_value_to_string(col, 0).map_err(SessionError::from)?;
     Ok((Some(shown.chars().take(10).collect()), sub_monthly))
 }
 
@@ -2751,7 +2751,10 @@ pub(crate) async fn metric_band_walk(
         .await;
         let (series, horizon, sub_monthly) = match served {
             Ok(served) => served,
-            Err(SessionError::BadSubject(reason)) => {
+            Err(e) => {
+                let Some(reason) = e.abstention() else {
+                    return Err(e);
+                };
                 out.push(json!({
                     "seq": seq, "metric": slot.aspect, "applicable": false,
                     "reason": reason,
@@ -2759,7 +2762,6 @@ pub(crate) async fn metric_band_walk(
                 seq += 1;
                 continue;
             }
-            Err(e) => return Err(e),
         };
         // Rows landing through the month stop mid-month when the
         // extract does; a monthly-dated series is whole at its one
@@ -3071,10 +3073,10 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
             let plan = Box::pin(crate::whatif::build_plan(shared, &ctx, &q)).await?;
             ctx.execute_logical_plan(plan)
                 .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))?
+                .map_err(SessionError::not_served)?
                 .collect()
                 .await
-                .map_err(|e| SessionError::BadSubject(format!("not served: {e}")))
+                .map_err(SessionError::not_served)
         }
         .await;
         let batches = match served {
