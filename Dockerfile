@@ -28,7 +28,11 @@ EXPOSE 8080
 # two numbers set from two facts: the engine's pool and the cube cache
 # at their defaults, 6 GiB tracked, the rest of the memory to the
 # process and what the pool does not track; the spill bound 6 GiB of
-# the disk, the rest to the writable layer. A different box overrides
-# the command.
-CMD ["/usr/local/bin/glossql", "--addr", "0.0.0.0:8080", \
-     "--memory-limit", "4096", "--cube-cache", "2048", "--spill-limit", "6144"]
+# the disk, the rest to the writable layer. They are variables, so a
+# different box injects its own numbers beside the rest of its
+# environment.
+ENV GLOSSQL_ADDR=0.0.0.0:8080 \
+    GLOSSQL_MEMORY_LIMIT=4096 \
+    GLOSSQL_CUBE_CACHE=2048 \
+    GLOSSQL_SPILL_LIMIT=6144
+CMD ["/usr/local/bin/glossql"]

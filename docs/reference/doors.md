@@ -28,7 +28,9 @@ glossql [--workspace <dir>] [--addr <ip:port>] [--row-cap <n>]
         [--spill-limit <megabytes>]
 ```
 
-The authorization arrangement — `GLOSSQL_ISSUER`, `GLOSSQL_AUDIENCE`,
+Every flag but `--workspace` has a variable named after it
+(`--memory-limit` is `GLOSSQL_MEMORY_LIMIT`), the flag winning. The
+authorization arrangement — `GLOSSQL_ISSUER`, `GLOSSQL_AUDIENCE`,
 `GLOSSQL_CLIENT_ID`, `GLOSSQL_CLIENT_SECRET` — is read from `.env` or
 the environment, never from flags ([install](../start/install.md)).
 

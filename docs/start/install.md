@@ -67,23 +67,27 @@ docker run --rm -p 8080:8080 \
   ghcr.io/glossdb/glossql:0.1.5
 ```
 
-The image's command sizes the server for a box with 8 GiB of memory
-and an 8 GiB ephemeral disk, two numbers from two facts: the engine's
-ceiling and the cube cache at their defaults, 6 GiB tracked and the
-rest of the memory to the process and what the engine does not track;
-`--spill-limit 6144` for the disk, the rest to the writable layer. A
-different box overrides the command with its own numbers.
+The image sizes the server for a box with 8 GiB of memory and an
+8 GiB ephemeral disk, two numbers from two facts: the engine's ceiling
+and the cube cache at their defaults, 6 GiB tracked and the rest of
+the memory to the process and what the engine does not track;
+`GLOSSQL_SPILL_LIMIT=6144` for the disk, the rest to the writable
+layer. It listens on `0.0.0.0:8080`. A different box injects its own
+numbers as variables, beside the rest of its environment.
 
 ## Flags
 
-| flag | default | meaning |
-|---|---|---|
-| `--workspace <dir>` | required when the catalog or the warehouse lives in it | the laptop's shape: the directory holding the catalog and the warehouse. A deployment names both in the environment (or a REST catalog) and runs without a directory |
-| `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
-| `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
-| `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
-| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
-| `--spill-limit <megabytes>` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
+Every flag but `--workspace` has a variable named after it, and the
+flag wins where both are set.
+
+| flag | variable | default | meaning |
+|---|---|---|---|
+| `--workspace <dir>` | — | required when the catalog or the warehouse lives in it | the laptop's shape: the directory holding the catalog and the warehouse. A deployment names both in the environment (or a REST catalog) and runs without a directory |
+| `--addr <ip:port>` | `GLOSSQL_ADDR` | `127.0.0.1:8080` | where the doors listen |
+| `--row-cap <n>` | `GLOSSQL_ROW_CAP` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
+| `--cube-cache <megabytes>` | `GLOSSQL_CUBE_CACHE` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
+| `--memory-limit <megabytes>` | `GLOSSQL_MEMORY_LIMIT` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
+| `--spill-limit <megabytes>` | `GLOSSQL_SPILL_LIMIT` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
 
 Authorization is not a flag. A run with a workspace reads `.env` in
 the working directory, and the environment on top of it (a set
