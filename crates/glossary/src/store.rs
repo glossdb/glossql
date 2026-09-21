@@ -398,6 +398,8 @@ const RECIPE_SQL_PROP: &str = "glossql.recipe.sql";
 pub const LANDING_SCANS_PROP: &str = "glossql.source-scans";
 pub const LANDING_DROPPED_PROP: &str = "glossql.dropped-rows";
 pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
+/// The source files a landing read — what a later import leaves out.
+pub const LANDING_FILES_PROP: &str = "glossql.source-files";
 
 /// The seam over a workspace's lake, carrying every store relation. The
 /// shapes come from [`RELATIONS`], so a relation added there is a table

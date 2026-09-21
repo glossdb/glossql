@@ -29,6 +29,7 @@ statement         = declaration
                   | gloss
                   | extract
                   | probe_stmt
+                  | import_stmt
                   | substrate_sql ;          (* allowlisted: SELECT,
                                                 DROP TABLE, DELETE FROM
                                                 glossary — the rest of
@@ -48,6 +49,14 @@ probe_stmt        = "PROBE", name, "AS", dollar ;
                        resolution, executed at the source, landing nothing.
                        The result always carries its schema; LIMIT 0
                        rehearses the identity a DECLARE RECIPE would stamp *)
+
+import_stmt       = "IMPORT", [ name, "." ], name ;
+                    (* IMPORT [dataset.]table — a data update: the
+                       table's recipe runs over what its source holds
+                       new, and the rows join the table as one more
+                       snapshot. The schema is the table's or the
+                       import errors; an import the lake cannot commit
+                       as an append is refused by name *)
 
 (* -- sources ------------------------------------------------------------ *)
 

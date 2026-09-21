@@ -711,6 +711,7 @@ impl Session {
                     Statement::Gloss(g) => self.gloss(g).await,
                     Statement::Extract(e) => self.extract(e).await,
                     Statement::Probe(p) => self.probe(p).await,
+                    Statement::Import(i) => self.import(i).await,
                     Statement::Substrate(s) => self.substrate(*s).await,
                 }
             };
@@ -981,8 +982,110 @@ impl Session {
             glossql_glossary::LANDING_CASTS_PROP.to_string(),
             landed.casts.to_json().to_string(),
         );
+        facts.insert(
+            glossql_glossary::LANDING_FILES_PROP.to_string(),
+            serde_json::Value::Array(
+                landed
+                    .files
+                    .iter()
+                    .map(|f| serde_json::json!([f.path, f.size, f.modified]))
+                    .collect(),
+            )
+            .to_string(),
+        );
         lake.commit_written(written, facts).await?;
         Ok((landed.row_summary(), cast_summary(&landed.casts)))
+    }
+
+    /// `IMPORT [dataset.]table` (SPEC.md §3): a data update. The
+    /// table's recipe opens over the files its source holds that no
+    /// landing of the table has read, and their rows join the table as
+    /// one more snapshot — the table, its history and its glosses
+    /// stand. The schema is the table's or the import is refused.
+    async fn import(&self, import: glossql_parser::Import) -> Result<Outcome, SessionError> {
+        let dataset = match &import.dataset {
+            Some(dataset) => dataset.value.clone(),
+            None => self.dataset().ok_or(SessionError::NoDataset)?,
+        };
+        let table = import.table.value.as_str();
+        let recipe =
+            self.shared
+                .store
+                .recipe(&dataset, table)
+                .await?
+                .ok_or(SessionError::Store(glossql_glossary::Error::Unknown {
+                    what: "recipe",
+                    name: table.into(),
+                }))?;
+        let lake = self.lake();
+        let mut landed = Vec::new();
+        for landing in lake.landings(&dataset).await? {
+            if landing.table != table {
+                continue;
+            }
+            // A landing that recorded no files read none a later import
+            // could leave out, so there is nothing to append beside.
+            let files = landing
+                .properties
+                .get(glossql_glossary::LANDING_FILES_PROP)
+                .and_then(|json| serde_json::from_str::<Vec<(String, u64, String)>>(json).ok())
+                .ok_or_else(|| {
+                    SessionError::Import(glossql_import::Error::Import(format!(
+                        "a landing of `{table}` recorded no source files"
+                    )))
+                })?;
+            landed.extend(files.into_iter().map(|(path, size, modified)| {
+                glossql_import::SourceFile {
+                    path,
+                    size,
+                    modified,
+                }
+            }));
+        }
+        let update = glossql_import::open_import(
+            &self.shared.env(),
+            &self.source_spec(&recipe.source).await?,
+            &recipe.sql,
+            &landed,
+        )
+        .await?;
+        let glossql_import::Update::Rows(new) = update else {
+            return Ok(Outcome::Done(format!(
+                "IMPORT {table} ON {dataset} (unchanged: the source holds no new file)"
+            )));
+        };
+        // A data update reproduces the schema or errors (SPEC.md §3).
+        let standing = self
+            .plan_statement(one_query(&format!(
+                "SELECT * FROM {}.{} LIMIT 0",
+                crate::subject::qi(&dataset),
+                crate::subject::qi(table)
+            ))?)
+            .await?;
+        let shape = |schema: &datafusion::arrow::datatypes::Schema| -> Vec<(String, String)> {
+            schema
+                .fields()
+                .iter()
+                .map(|f| (f.name().clone(), f.data_type().to_string()))
+                .collect()
+        };
+        if shape(standing.schema().as_arrow()) != shape(&new.schema) {
+            return Err(SessionError::Import(glossql_import::Error::Import(
+                format!(
+                    "the new files give `{table}` another schema — {} against the table's {}",
+                    describe(&shape(&new.schema)),
+                    describe(&shape(standing.schema().as_arrow())),
+                ),
+            )));
+        }
+        let files = new.account.files_read();
+        let (summary, casts) = self
+            .stream_into(&lake, &dataset, table, new.rows, new.account)
+            .await?;
+        let noun = if files == 1 { "file" } else { "files" };
+        Ok(Outcome::Done(format!(
+            "IMPORT {table} ON {dataset} ({summary}{casts}; from {files} new {noun})"
+        )))
     }
 
     /// A probe (SPEC.md §3): the recipe rehearsal, executed at its source,
@@ -2272,6 +2375,7 @@ fn kind(statement: &Statement) -> &'static str {
         Statement::Gloss(_) => "gloss",
         Statement::Extract(_) => "extract",
         Statement::Probe(_) => "probe",
+        Statement::Import(_) => "import",
         Statement::Substrate(_) => "substrate",
     }
 }
@@ -2312,6 +2416,15 @@ pub fn detector_functions() -> Vec<Registered> {
     registered(glossql_import::registry(
         &crate::reads::detector_ctx().state(),
     ))
+}
+
+/// A schema as a refusal spells it: `name type, …`.
+fn describe(shape: &[(String, String)]) -> String {
+    shape
+        .iter()
+        .map(|(name, kind)| format!("{name} {kind}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

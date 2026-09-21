@@ -100,6 +100,18 @@ the recipe it carries, the landings it holds — starts over with it.
 Glosses stay — no machinery deletes knowledge; their snapshot ids
 disclose their age against the fresh landing. `DROP TABLE` drops the
 table, and refuses while it holds data or glosses.
+
+```sql
+IMPORT segments;
+```
+
+`IMPORT` is the data update: the table's recipe runs again over its
+source, and the result joins the table as one more snapshot — the
+table, the landings it holds and its glosses stand. It reproduces the
+table's schema or it errors. It is sent from outside, by a schedule or
+an agent; nothing watches a source. The table is named as a read names
+it, under the `USE`'d dataset or with its dataset in front.
+
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
 name a read can plan — a landed table, a store relation, a shipped

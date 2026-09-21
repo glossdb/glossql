@@ -256,3 +256,78 @@ fn try_sites(expr: &Expr) -> Vec<Site> {
     }
     sites
 }
+
+/// The path or glob of every `read_*` call in `sql`, in the order the
+/// statement names them — what a recipe scans, read from its text before
+/// anything plans. A recipe that does not parse names none; the planner
+/// refuses it in its own words.
+pub(crate) fn file_scans(sql: &str) -> Vec<String> {
+    use datafusion::sql::sqlparser::ast::{
+        Expr, FunctionArg, FunctionArgExpr, TableFactor, Value, Visit, Visitor,
+    };
+    struct Scans(Vec<String>);
+    impl Visitor for Scans {
+        type Break = ();
+        fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<()> {
+            if let TableFactor::Table {
+                name,
+                args: Some(args),
+                ..
+            } = factor
+                && crate::READERS
+                    .iter()
+                    .any(|(reader, _)| name.to_string().eq_ignore_ascii_case(reader))
+                && let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(value)))] =
+                    args.args.as_slice()
+                && let Value::SingleQuotedString(path) = &value.value
+            {
+                self.0.push(path.clone());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let Ok(statements) = Parser::parse_sql(&GenericDialect {}, sql) else {
+        return Vec::new();
+    };
+    let mut scans = Scans(Vec::new());
+    let _ = statements.visit(&mut scans);
+    scans.0
+}
+
+/// Whether appending the rows of new files alone yields the recipe's
+/// result over all of them. It does when every landed row comes from one
+/// source row of one scan and no row's value or presence depends on
+/// another row — read from the engine's own plan, where an aggregate, a
+/// window, a join, a limit or a set operation is a node and not a
+/// spelling: only scans, projections, filters, aliases and sorts pass,
+/// over exactly one scan.
+pub(crate) fn appendable(plan: &datafusion::logical_expr::LogicalPlan) -> Result<(), String> {
+    use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion::logical_expr::LogicalPlan;
+    let mut scans = 0usize;
+    let mut other: Option<String> = None;
+    let _ = plan.apply(|node| {
+        match node {
+            LogicalPlan::TableScan(_) => scans += 1,
+            LogicalPlan::Projection(_) | LogicalPlan::Filter(_) | LogicalPlan::SubqueryAlias(_) => {
+            }
+            LogicalPlan::Sort(sort) if sort.fetch.is_none() => {}
+            node => {
+                other = Some(node.display().to_string());
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        Ok(TreeNodeRecursion::Continue)
+    });
+    let cannot = |what: String| {
+        Err(format!(
+            "the recipe {what}, so its result is not its rows file by file, and the lake \
+             cannot yet replace a table's rows in one commit"
+        ))
+    };
+    match (other, scans) {
+        (Some(node), _) => cannot(format!("plans a `{node}`")),
+        (None, 1) => Ok(()),
+        (None, n) => cannot(format!("reads {n} relations")),
+    }
+}

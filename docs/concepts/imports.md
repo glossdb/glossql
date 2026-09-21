@@ -94,6 +94,27 @@ re-declaring the recipe, never by editing data.
 glosses. Substrate DDL that would alter schema or data directly is
 closed — tables come from recipes.
 
+## Data updates
+
+`IMPORT <table>` is how a table takes in what its source holds new.
+The recipe runs again, and the result joins the table as one more
+snapshot: the table, its landings in `imports` and its glosses stand,
+and a gloss written before the update reads as `stale` against it. The
+update reproduces the table's schema or it errors. Nothing in the
+server watches a source — a schedule or an agent sends the statement,
+and with nothing new at the source it answers `unchanged`.
+
+An update's meaning is the recipe's result as the source stands now.
+The lake commits appends, so the server lands the update when
+appending is that result: the recipe maps rows one for one over a
+single file scan — no aggregate, window, join, limit or set operation
+— and every file the table has landed still stands as it landed. Each
+landing records the files it read, by path, size and modification
+time, and the update reads the files no landing has. A recipe of
+another shape, a landed file that changed or is gone, and a relational
+source are refused by name; replacing a table's rows in one commit is
+planned, on the lake's overwrite.
+
 ## The source deposit
 
 What an onboarding learns about a source *system* — date formats, sign

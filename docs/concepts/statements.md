@@ -15,6 +15,8 @@ normative definition; this page is the working map.
   not detected.
 - `PROBE` — the recipe rehearsal: the same SQL surface, executed at
   the source, landing nothing, always returning its schema.
+- `IMPORT` — the data update: a table's recipe over what its source
+  holds new, landed as one more snapshot of the same table.
 - `DECLARE DATASET` / `USE` — the working unit and the resolution
   context: unprefixed `table.column` paths resolve against the `USE`'d
   dataset.

@@ -23,6 +23,7 @@ pub enum Statement {
     Gloss(Gloss),
     Extract(Extract),
     Probe(Probe),
+    Import(Import),
     /// Host SQL, parsed by `DFParser` — includes `GLOSSARY()` / `ATTEST()`
     /// reads and glossary/cache DELETEs.
     Substrate(Box<DFStatement>),
@@ -36,6 +37,16 @@ pub enum Statement {
 pub struct Probe {
     pub source: Ident,
     pub sql: String,
+}
+
+/// `IMPORT [dataset.]table` — a data update: the table's recipe runs
+/// again over its source and what the source holds new joins the table
+/// as a snapshot. The dataset is the `USE`'d one unless the name
+/// carries it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub dataset: Option<Ident>,
+    pub table: Ident,
 }
 
 #[derive(Debug, Clone, PartialEq)]

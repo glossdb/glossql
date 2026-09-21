@@ -84,6 +84,8 @@ pub enum Error {
     List(DataFusionError),
     #[error("recipe result: {0}")]
     Batches(String),
+    #[error("import refused: {0}")]
+    Import(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +183,9 @@ pub struct Landed {
     pub schema: SchemaRef,
     /// The rows the landing holds, counted as they were written.
     pub rows: u64,
+    /// The source files the landing read, listed before it ran — what
+    /// a later import leaves out. A relational source has none.
+    pub files: Vec<SourceFile>,
     /// Each scan the recipe made, in scan order: the `read_*` path it
     /// named and the rows that relation held. Relational sources scan
     /// nothing here — the source computed the SQL itself. There is
@@ -272,6 +277,7 @@ pub struct Account {
     /// A file source's reader and what its recipe scanned; a relational
     /// source computed its own SQL and scanned nothing here.
     files: Option<(SessionContext, Scanned, String)>,
+    read: Vec<SourceFile>,
 }
 
 /// Open a recipe against its source. A recipe the source cannot plan is
@@ -287,15 +293,65 @@ pub async fn open_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Resu
             account: Account {
                 schema,
                 files: None,
+                read: Vec::new(),
             },
         });
     }
+    let pinned = pin(env, spec, sql).await?;
+    open_pinned(env, spec, sql, pinned).await
+}
+
+/// The files each `read_*` path of `sql` stands for, listed now — before
+/// planning, where waiting on a store is free, and so that the scan reads
+/// the list and the landing records it, one list for both.
+async fn pin(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Pinned> {
+    let root = Root::of(spec)?;
+    let ctx = reader_ctx(env, spec, None, Pinned::new())?;
+    let mut pinned = Pinned::new();
+    for rel in accounting::file_scans(sql) {
+        // A path the root refuses is refused where the recipe plans,
+        // with the planner's words.
+        let Ok(url) = root.resolve(&rel) else {
+            continue;
+        };
+        let extension = listing_options(spec.kind, &rel).file_extension;
+        let files = list_under(&ctx, &root, &url, &extension).await?;
+        // A path that reaches nothing is left to the scan, which says so.
+        if !files.is_empty() {
+            pinned.insert(rel, files);
+        }
+    }
+    Ok(pinned)
+}
+
+async fn open_pinned(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    pinned: Pinned,
+) -> Result<Recipe> {
+    open_checked(env, spec, sql, pinned, false).await
+}
+
+/// [`open_pinned`], refusing a recipe whose plan an append cannot stand
+/// for when `appending` — checked on the plan, before a row is read.
+async fn open_checked(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    pinned: Pinned,
+    appending: bool,
+) -> Result<Recipe> {
+    let read: Vec<SourceFile> = pinned.values().flatten().cloned().collect();
     let seen: Scanned = Arc::default();
-    let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)))?;
+    let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)), pinned)?;
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "recipe", Error::Recipe, e).await),
     };
+    if appending {
+        accounting::appendable(df.logical_plan()).map_err(Error::Import)?;
+    }
     let schema = normalize::compat_schema(df.schema().as_arrow());
     let shape = Arc::clone(&schema);
     let rows = df.execute_stream().await?;
@@ -305,11 +361,82 @@ pub async fn open_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Resu
         account: Account {
             schema,
             files: Some((ctx, seen, sql.to_string())),
+            read,
         },
     })
 }
 
+/// What an import found at the source.
+pub enum Update {
+    /// The source holds no file the table has not landed.
+    Unchanged,
+    /// The recipe opened over the new files alone.
+    Rows(Recipe),
+}
+
+/// Open a data update: the recipe over the files its source holds that
+/// `landed` does not. An import's meaning is the recipe's result as the
+/// source stands now; appending the new files' rows *is* that result
+/// exactly when the recipe maps rows one for one over a single scan and
+/// every landed file still stands as it landed — anything else is
+/// refused by name, because the lake cannot yet replace a table's rows
+/// in one commit.
+pub async fn open_import(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    landed: &[SourceFile],
+) -> Result<Update> {
+    if spec.kind == SourceKind::RelationalDb {
+        return Err(Error::Import(
+            "a relational source computes the whole result again, and the lake cannot yet \
+             replace a table's rows in one commit"
+                .into(),
+        ));
+    }
+    let mut pinned = pin(env, spec, sql).await?;
+    let scans = accounting::file_scans(sql);
+    let [rel] = scans.as_slice() else {
+        return Err(Error::Import(format!(
+            "the recipe reads {} file scans, so its result is not its rows file by file, \
+             and the lake cannot yet replace a table's rows in one commit",
+            scans.len()
+        )));
+    };
+    let listed = pinned.remove(rel).unwrap_or_default();
+    for file in landed {
+        match listed.iter().find(|f| f.path == file.path) {
+            Some(now) if now == file => {}
+            Some(_) => {
+                return Err(Error::Import(format!(
+                    "`{}` changed since it landed, and the lake cannot yet replace a \
+                     table's rows in one commit",
+                    file.path
+                )));
+            }
+            None => {
+                return Err(Error::Import(format!(
+                    "`{}` landed and is gone from the source, and the lake cannot yet \
+                     replace a table's rows in one commit",
+                    file.path
+                )));
+            }
+        }
+    }
+    let new: Vec<SourceFile> = listed.into_iter().filter(|f| !landed.contains(f)).collect();
+    if new.is_empty() {
+        return Ok(Update::Unchanged);
+    }
+    let recipe = open_checked(env, spec, sql, Pinned::from([(rel.clone(), new)]), true).await?;
+    Ok(Update::Rows(recipe))
+}
+
 impl Account {
+    /// How many source files the rows are read from.
+    pub fn files_read(&self) -> usize {
+        self.read.len()
+    }
+
     /// The landing's account, once its `rows` rows have been written.
     pub async fn landed(self, rows: u64) -> Result<Landed> {
         let Some((ctx, seen, sql)) = self.files else {
@@ -320,6 +447,7 @@ impl Account {
             return Ok(Landed {
                 schema: self.schema,
                 rows,
+                files: Vec::new(),
                 source_scans: Vec::new(),
                 row_preserving: true,
                 casts: CastAccounting::Unchecked(
@@ -364,6 +492,7 @@ impl Account {
         Ok(Landed {
             schema: self.schema,
             rows,
+            files: self.read,
             source_scans,
             row_preserving,
             casts,
@@ -582,10 +711,16 @@ fn reader_ctx(
     env: &RuntimeEnv,
     spec: &SourceSpec,
     seen: Option<Scanned>,
+    pinned: Pinned,
 ) -> Result<SessionContext> {
     let root = Root::of(spec)?;
+    let pinned = Arc::new(pinned);
+    // A source moves under the server — an export arrives, a file is
+    // rewritten — so its listing is asked of the store at every read and
+    // never held, whatever the runtime handed in holds.
     let runtime = RuntimeEnvBuilder::from_runtime_env(env)
         .with_object_store_registry(Arc::new(DefaultObjectStoreRegistry::new()))
+        .with_object_list_cache_limit(0)
         .build()?;
     let ctx = SessionContext::new_with_config_rt(SessionConfig::new(), Arc::new(runtime));
     root.register(&ctx);
@@ -597,6 +732,7 @@ fn reader_ctx(
                 root: root.clone(),
                 kind,
                 seen: seen.clone(),
+                pinned: Arc::clone(&pinned),
             }),
         );
     }
@@ -715,7 +851,7 @@ pub async fn run_probe(
         }
         return Ok(batches);
     }
-    let ctx = reader_ctx(env, spec, None)?;
+    let ctx = reader_ctx(env, spec, None, Pinned::new())?;
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "probe", Error::Probe, e).await),
@@ -793,8 +929,10 @@ fn read_only() -> datafusion::prelude::SQLOptions {
         .with_allow_statements(false)
 }
 
-/// One file under a source's location, as the listing serves it.
-#[derive(Debug, Clone)]
+/// One file under a source's location, as the listing serves it — and
+/// as a landing records it: a file is the same file while its path,
+/// size and modification time stand.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     /// Relative to the source's location, `/`-separated — the path a
     /// `read_*` call names.
@@ -826,15 +964,31 @@ pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
     );
     let ctx = SessionContext::new_with_config(config);
     root.register(&ctx);
-    let state = ctx.state();
     let url = root.listing().map_err(Error::List)?;
+    list_under(&ctx, &root, &url, "").await
+}
+
+/// The files `url` reaches, as paths under the root — the engine's own
+/// listing, the walk a `read_*` scan resolves through.
+async fn list_under(
+    ctx: &SessionContext,
+    root: &Root,
+    url: &ListingTableUrl,
+    extension: &str,
+) -> Result<Vec<SourceFile>> {
+    let state = ctx.state();
     let store = state
         .runtime_env()
         .object_store(url.object_store())
         .map_err(Error::List)?;
-    let prefix = url.prefix().as_ref().to_string();
+    let prefix = root
+        .listing()
+        .map_err(Error::List)?
+        .prefix()
+        .as_ref()
+        .to_string();
     let mut listed = url
-        .list_all_files(&state, store.as_ref(), "")
+        .list_all_files(&state, store.as_ref(), extension)
         .await
         .map_err(Error::List)?;
     let mut files = Vec::new();
@@ -871,6 +1025,44 @@ struct ReadFiles {
     root: Root,
     kind: SourceKind,
     seen: Option<Scanned>,
+    /// The files each `read_*` path stands for, listed before planning:
+    /// a scan named here reads exactly these, so what a landing records
+    /// as read is what it read. A path not named lists for itself.
+    pinned: Arc<Pinned>,
+}
+
+/// A recipe's `read_*` paths and the files each one reads.
+type Pinned = std::collections::HashMap<String, Vec<SourceFile>>;
+
+/// The format a `read_*` of this kind reads, and the listing a path or
+/// glob gets under it.
+fn listing_options(kind: SourceKind, rel: &str) -> ListingOptions {
+    let format: Arc<dyn FileFormat> = match kind {
+        SourceKind::Parquet => Arc::new(ParquetFormat::default()),
+        // Raw text survives byte-exact because inference is switched
+        // off, not because its result is thrown away afterwards: a
+        // record cap of zero is how the format is told to call every
+        // field Utf8 whatever the content
+        // (datafusion-datasource-csv file_format.rs, the
+        // `schema_infer_max_rec` doc). Rebuilding the fields by hand
+        // ran full type inference first to discard it.
+        SourceKind::Csv => Arc::new(
+            CsvFormat::default()
+                .with_has_header(true)
+                .with_schema_infer_max_rec(0),
+        ),
+        SourceKind::Json => Arc::new(JsonFormat::default()),
+        SourceKind::RelationalDb => unreachable!("never registered"),
+    };
+    // The table reads `target_partitions` and `collect_statistics`
+    // from the session that scans it, at scan time — the options hold
+    // neither.
+    let options = ListingOptions::new(format);
+    if rel.contains(['*', '?', '[']) {
+        // the glob names the files; the extension filter would fight it
+        return options.with_file_extension("");
+    }
+    options
 }
 
 impl TableFunctionImpl for ReadFiles {
@@ -894,33 +1086,19 @@ impl TableFunctionImpl for ReadFiles {
                 ));
             }
         };
-        let url = self.root.resolve(&rel)?;
-
-        let format: Arc<dyn FileFormat> = match self.kind {
-            SourceKind::Parquet => Arc::new(ParquetFormat::default()),
-            // Raw text survives byte-exact because inference is switched
-            // off, not because its result is thrown away afterwards: a
-            // record cap of zero is how the format is told to call every
-            // field Utf8 whatever the content
-            // (datafusion-datasource-csv file_format.rs, the
-            // `schema_infer_max_rec` doc). Rebuilding the fields by hand
-            // ran full type inference first to discard it.
-            SourceKind::Csv => Arc::new(
-                CsvFormat::default()
-                    .with_has_header(true)
-                    .with_schema_infer_max_rec(0),
+        let (urls, options) = match self.pinned.get(&rel) {
+            Some(files) => (
+                files
+                    .iter()
+                    .map(|f| self.root.resolve(&f.path))
+                    .collect::<datafusion::error::Result<Vec<_>>>()?,
+                listing_options(self.kind, &rel).with_file_extension(""),
             ),
-            SourceKind::Json => Arc::new(JsonFormat::default()),
-            SourceKind::RelationalDb => unreachable!("never registered"),
+            None => (
+                vec![self.root.resolve(&rel)?],
+                listing_options(self.kind, &rel),
+            ),
         };
-        // The table reads `target_partitions` and `collect_statistics`
-        // from the session that scans it, at scan time — the options hold
-        // neither.
-        let mut options = ListingOptions::new(format);
-        if rel.contains(['*', '?', '[']) {
-            // the glob names the files; the extension filter would fight it
-            options = options.with_file_extension("");
-        }
         // Blocking, because `call_with_args` is synchronous and schema
         // inference is not — the one place in this crate where that is
         // forced by a trait rather than by a blocking driver. Against the
@@ -931,7 +1109,7 @@ impl TableFunctionImpl for ReadFiles {
         // statistics cache, a schema *inferred* keeps it
         // (datafusion-catalog-listing table.rs, `SchemaSource`).
         let session = args.session();
-        let config = ListingTableConfig::new(url).with_listing_options(options);
+        let config = ListingTableConfig::new_with_multi_paths(urls).with_listing_options(options);
         let config = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(config.infer_schema(session))
         })?;
