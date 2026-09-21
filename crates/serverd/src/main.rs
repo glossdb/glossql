@@ -300,9 +300,24 @@ async fn doors(mut args: Args) -> Result<(), Box<dyn std::error::Error + Send + 
         addr = %args.addr,
         "glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
     );
+    // The first stop signal closes the listener and the idle
+    // connections and lets what is in flight finish — a write mid-commit
+    // lands rather than being cut. A second one ends the wait; a
+    // platform's own bound is the kill that follows its grace period.
+    let stopping = Arc::new(tokio::sync::Notify::new());
+    let drain = {
+        let stopping = Arc::clone(&stopping);
+        async move {
+            stop().await;
+            tracing::info!("stopping: what is in flight finishes first");
+            stopping.notify_one();
+        }
+    };
     tokio::select! {
-        served = axum::serve(listener, app).into_future() => served?,
-        () = stop() => tracing::info!("stopping"),
+        served = axum::serve(listener, app).with_graceful_shutdown(drain).into_future() => served?,
+        () = async { stopping.notified().await; stop().await } => {
+            tracing::info!("stopped before the drain finished");
+        }
     }
     Ok(())
 }
