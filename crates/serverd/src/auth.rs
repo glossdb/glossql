@@ -337,14 +337,18 @@ fn algorithm_of(jwk: &Jwk) -> Option<Algorithm> {
 ///
 /// Every door is behind one of these, so identity is read the same way
 /// for all of them and no handler can forget to. The kind is the
-/// door's: `/mcp` says agent, the others say human.
+/// door's: `/mcp` says agent, the others say human. The cookie is a
+/// browser's, so only a human door reads it: at the agent door it
+/// would give a person's session an agent's standing.
 pub async fn gate(
     State((gate, kind)): State<(std::sync::Arc<Gate>, ActorKind)>,
     mut req: Request,
     next: Next,
 ) -> Response {
     let at = format!("{} {}", req.method(), req.uri().path());
-    let Some(token) = bearer(&req).or_else(|| cookie(&req)) else {
+    let carried =
+        bearer(&req).or_else(|| (kind == ActorKind::Human).then(|| cookie(&req)).flatten());
+    let Some(token) = carried else {
         return refused(&gate, &req, &at, "no bearer token");
     };
     match gate.verify(&token).await {

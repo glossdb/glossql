@@ -704,6 +704,24 @@ async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
 
     // The cookie opens a human door.
     let cookie = token_cookie.split(';').next().unwrap().to_string();
+    // And no agent door: a browser's session never speaks as an agent.
+    let as_agent = app
+        .clone()
+        .oneshot(
+            Request::post("/mcp")
+                .header(header::HOST, "127.0.0.1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header(header::COOKIE, &cookie)
+                .body(Body::from(
+                    json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(as_agent.status(), StatusCode::UNAUTHORIZED);
     let docket = app
         .clone()
         .oneshot(

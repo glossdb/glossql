@@ -72,7 +72,8 @@ DATASET` is what creates the name.
 
 Every door is behind one gate. A request carries a bearer token —
 `Authorization: Bearer <jwt>` from a machine, the same string in a
-`glossql_token` cookie (`HttpOnly; SameSite=Lax`) from a browser —
+`glossql_token` cookie (`HttpOnly; SameSite=Lax`) from a browser at
+the human doors; the agent door reads the header alone —
 verified against the keys its issuer publishes. glossql is an OAuth 2.1
 **resource server** (MCP authorization, revision 2026-07-28) and never
 an authorization server: it verifies, it does not issue, and there is
