@@ -455,6 +455,12 @@ pub struct Store {
     /// costs a lake walk only for a relation a write has moved — on the
     /// same single-writer ground as the head itself.
     histories: Histories,
+    /// Each dataset's newest measurements at the `measurements`
+    /// snapshot they were scanned at — the same arrangement as
+    /// [`Store::histories`], kept apart because this scan is pruned to
+    /// one dataset where a history is the whole relation. A write to any
+    /// other relation moves the version and leaves this standing.
+    newest: Histories,
     /// Writes held instead of committed, `None` outside a batch. Every
     /// statement sequence runs batched — begun before its first
     /// statement, flushed after its last — and [`Store::batch_flush`]
@@ -502,6 +508,7 @@ impl Store {
             lake,
             head: Arc::new(std::sync::RwLock::new(None)),
             histories: Arc::new(std::sync::RwLock::new(Default::default())),
+            newest: Arc::new(std::sync::RwLock::new(Default::default())),
             batch: Arc::new(std::sync::Mutex::new(None)),
             channel: 0,
             contexts: Arc::new(std::sync::RwLock::new(Default::default())),
@@ -1732,7 +1739,7 @@ impl Store {
         let grounding = grounding_digest(dataset, &glossary, &aspects, &witnesses);
         let ctx = ReadContext {
             glossary,
-            measurements: std::sync::Arc::new(measurements),
+            measurements,
             functions: std::sync::Arc::new(functions),
             witnesses,
             sources: std::sync::Arc::new(sources),
@@ -1865,16 +1872,40 @@ impl Store {
     /// Every (function, subject)'s newest landing in the dataset,
     /// whatever its pin — what a read context serves from. One scan of
     /// the relation by dataset; older rows stay as the drift record.
-    async fn measurements_newest(&self, dataset: &str) -> Result<Vec<glossql_catalog::Row>> {
+    ///
+    /// Held per dataset at the relation's snapshot: a version moved by a
+    /// gloss or a declaration finds the measurements where they were.
+    async fn measurements_newest(&self, dataset: &str) -> Result<History> {
+        let snapshot = self
+            .store_snapshots()
+            .await?
+            .iter()
+            .find(|(table, _)| table == "measurements")
+            .and_then(|(_, snapshot)| *snapshot);
+        let held = self
+            .newest
+            .read()
+            .expect("newest lock")
+            .get(dataset)
+            .filter(|(at, _)| *at == snapshot)
+            .map(|(_, rows)| Arc::clone(rows));
+        if let Some(rows) = held {
+            return Ok(rows);
+        }
         let rows = self
             .metadata
             .scan_where("measurements", "dataset", dataset)
             .await?;
-        Ok(rules::latest_by(
+        let rows = Arc::new(rules::latest_by(
             rows,
             |r| (r.get(1).map(str::to_string), r.get(2).map(str::to_string)),
             |r| r.seq,
-        ))
+        ));
+        self.newest
+            .write()
+            .expect("newest lock")
+            .insert(dataset.to_string(), (snapshot, Arc::clone(&rows)));
+        Ok(rows)
     }
 
     /// The measurement that still stands, newest write winning — its
