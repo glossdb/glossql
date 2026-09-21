@@ -5,11 +5,11 @@
 //! the store; everything else is substrate SQL handed to DataFusion — with
 //! `GLOSSARY()` / `ATTEST()` and the store's relations planned
 //! by a registered [`RelationPlanner`], DataFusion's seam for custom FROM
-//! elements (`datafusion-expr-53.1.0/src/planner.rs:379`). That seam sees the
+//! elements (datafusion-expr `planner.rs`). That seam sees the
 //! raw `TableFactor` before default planning, which is what makes
 //! `GLOSSARY(subject, all => true)` plannable at all: the default table
 //! function path rejects named arguments
-//! (`datafusion-sql-53.1.0/src/relation/mod.rs:163`).
+//! (datafusion-sql `relation/mod.rs`, `create_relation`).
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
 

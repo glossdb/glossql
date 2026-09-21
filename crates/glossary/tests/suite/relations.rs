@@ -1,4 +1,4 @@
-//! Relations that have crossed to the lake, read back through the store.
+//! The store relations in the lake, read back through the store.
 //!
 //! The catalog's own suite proves the seam (rows round-trip, `(seq, pos)`
 //! orders writes, a scan returns history). This proves the half that is

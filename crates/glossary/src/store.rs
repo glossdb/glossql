@@ -72,10 +72,8 @@ pub struct ReadContext {
 }
 
 /// The sorted (input → version) list of everything a computation can
-/// read: data tables and declaration relations at their snapshots, and
-/// the glossary at its write head while it still rides sqlite (its
-/// component becomes a snapshot like the rest when it crosses). Under a
-/// complete key there is no invalidation, only a miss.
+/// read: data tables and the store's relations, each at its snapshot.
+/// Under a complete key there is no invalidation, only a miss.
 ///
 /// The text is the whole pin. There is no hash beside it: every
 /// comparison in this crate is over the text, and the one caller that
@@ -353,7 +351,7 @@ pub const RELATIONS: &[Relation] = &[
     },
     // What extraction lands, keyed by the pin: under a complete key
     // there is no invalidation, only a miss, and old pins' rows are the
-    // drift record rather than garbage (stage 4).
+    // drift record rather than garbage.
     Relation {
         name: "measurements",
         columns: &[
@@ -377,7 +375,7 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
     RELATIONS.iter().find(|r| r.name == name).map(|r| r.columns)
 }
 
-/// Where every crossed relation lives: one namespace, one table per
+/// Where every store relation lives: one namespace, one table per
 /// relation. A workspace holds many datasets — that scopes rows by a
 /// `dataset` KEY column, with the physical per-dataset split supplied by
 /// the format (identity partition), not by a namespace layout of ours.
@@ -396,9 +394,9 @@ pub const LANDING_SCANS_PROP: &str = "glossql.source-scans";
 pub const LANDING_DROPPED_PROP: &str = "glossql.dropped-rows";
 pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
 
-/// The seam over a workspace's lake, carrying every relation that has
-/// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
-/// setting its `sql` to `None` and nothing else.
+/// The seam over a workspace's lake, carrying every store relation. The
+/// shapes come from [`RELATIONS`], so a relation added there is a table
+/// here and nothing else.
 async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadata>> {
     // `datasets` and `imports` are the lake's own record, composed at
     // read — no table of ours carries them.
@@ -1392,9 +1390,9 @@ impl Store {
     // -- SQL forwarded from the session ----------------------------------
 
     /// `DELETE FROM glossary …` — the strike (SPEC.md §5.2). Parked:
-    /// the substrate cannot commit a row removal
-    /// until iceberg-rust 0.11 lands the delete write path, so the
-    /// refusal names the item instead of pretending.
+    /// iceberg-rust has no delete write path, so the substrate cannot
+    /// commit a row removal and the refusal names the item instead of
+    /// pretending.
     pub async fn forward_delete(&self, target: &str) -> Result<u64> {
         if target != "glossary" {
             return Err(Error::ForwardRejected(target.into()));
@@ -1413,7 +1411,7 @@ impl Store {
         self.put(name, cells).await
     }
 
-    /// One appended row into a crossed relation — this and
+    /// One appended row into a store relation — this and
     /// [`Store::batch_flush`] are the only places a store relation
     /// moves, and therefore the only places the head has to be dropped.
     ///
@@ -1498,7 +1496,7 @@ impl Store {
         landed
     }
 
-    /// Walk every crossed relation into `Store::histories` at once —
+    /// Walk every store relation into `Store::histories` at once —
     /// a boot pays the slowest walk instead of one walk per
     /// first-touching statement. The two composed relations have no
     /// table to walk.
@@ -1571,9 +1569,8 @@ impl Store {
         })
     }
 
-    /// A crossed relation's current rows: latest per [`Relation`] key in
-    /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
-    /// and `ORDER BY` used to do.
+    /// A store relation's current rows: latest per [`Relation`] key in
+    /// `(seq, pos)` order, sorted by cells.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
         let history = self.history(relation.name).await?;
         let key: Vec<usize> = relation
@@ -1792,7 +1789,7 @@ impl Store {
     /// walk both the version and the pin derive from, enumerated rather
     /// than curated so a relation added later can never be missed. A
     /// fresh workspace has no store namespace until the first write
-    /// crosses; its enumeration is empty, not an error.
+    /// lands; its enumeration is empty, not an error.
     ///
     /// Served from [`Store::head`] once walked. Two readers racing an
     /// empty head both walk and both store the same answer, which is
@@ -2020,7 +2017,7 @@ impl Store {
             .collect())
     }
 
-    // -- the crossed declarations, read whole (each is a handful of rows)
+    // -- the declarations, read whole (each is a handful of rows)
 
     async fn sources_all(&self) -> Result<Vec<(String, String)>> {
         Ok(self

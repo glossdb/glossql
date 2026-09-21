@@ -141,5 +141,5 @@ your old one, and converged voices turn the band green. If the evidence
 still says you were right, leave the slot contested — a human closes
 it by conceding in their own slot. (Closure by striking a slot —
 `DELETE FROM glossary WHERE …` — is parked until the substrate can
-remove rows, iceberg-rust 0.11; the statement refuses and names this.)
+remove rows; the statement refuses and names this.)
 Never change a gloss just to end a contest.

@@ -57,9 +57,9 @@ pub enum Error {
     Relational { name: String, detail: String },
     #[error("recipe failed: {0}")]
     Recipe(#[from] DataFusionError),
-    /// The same engine failure, named for the statement that caused it.
-    /// A refused PROBE used to answer "recipe failed", which sends the
-    /// author looking at a recipe they have not written yet (run 4).
+    /// The same engine failure, named for the statement that caused it:
+    /// a refused PROBE answering "recipe failed" would send the author
+    /// looking at a recipe they have not written yet.
     #[error("probe failed: {0}")]
     Probe(DataFusionError),
     /// The engine's `table '…' not found` from a recipe or probe at a
@@ -650,8 +650,8 @@ pub async fn run_probe(
     };
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
     // A rehearsal is read at the door like any other answer, so it stops at
-    // the door's cap — a probe without a LIMIT used to pull the whole
-    // source into memory to show 200 rows of it.
+    // the door's cap: a probe without a LIMIT never pulls the whole
+    // source into memory to show the first rows of it.
     let mut stream = df.execute_stream().await.map_err(Error::Probe)?;
     let mut batches = Vec::new();
     let mut rows = 0usize;
@@ -676,7 +676,7 @@ pub async fn run_probe(
 /// default options let a body `COPY` to any path the process can write
 /// — the statement allowlist never sees this SQL.
 /// A planning error at a file source. The engine's `table '…' not found`
-/// (datafusion-53.1.0 session_state.rs:1824) leaves the author facing a
+/// (datafusion `session_state.rs`, `get_table_source`) leaves the author facing a
 /// name the recipe surface never had: here a table is a file, named
 /// through `read_*`. That one error carries the road out — the files
 /// under the source — and every other error passes as it came, under
@@ -804,7 +804,7 @@ struct ReadFiles {
 
 impl TableFunctionImpl for ReadFiles {
     /// `call_with_args` rather than `call`: the older one is deprecated
-    /// (datafusion-catalog table.rs, since 53.0.0) and its default body
+    /// (datafusion-session `table.rs`, `TableFunctionImpl`) and its default body
     /// is an internal error, so an implementation that only had `call`
     /// would still be reached through this. The arguments carry the
     /// calling session as well as the expressions; this reader needs

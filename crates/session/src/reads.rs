@@ -646,9 +646,8 @@ impl RelationPlanner for GlossqlReads {
         // QUERY grounding expanded as a derived relation through the
         // full planner pipeline, so WHERE/GROUP BY compose around it and
         // a nested `read.` inside a recorded evaluation re-enters this
-        // planner. v0.3's formula composer substituted each operand as a
-        // scalar subquery; here the engine is the composer — the
-        // substitution is this expansion. No script, no cache, no
+        // planner. The engine is the composer — the substitution is
+        // this expansion. No script, no cache, no
         // parameters.
         if name.0.len() == 2
             && name.0[0]
@@ -675,7 +674,7 @@ impl RelationPlanner for GlossqlReads {
         }
         // A name the statement binds as a CTE is not ours to plan. This
         // seam runs *before* DataFusion's own CTE lookup (datafusion-sql
-        // 54.1, src/relation/mod.rs:190) and RelationPlannerContext
+        // `relation/mod.rs`, `create_relation`) and RelationPlannerContext
         // cannot ask about CTE scope, so declining here is what keeps a
         // CTE shadowing a same-named table — SQL's precedence, which the
         // pin and batch arms below would otherwise silently invert.
@@ -940,7 +939,7 @@ pub(crate) async fn compute_batch(
     match (fname.as_str(), args) {
         // The search doors: candidate enumeration over a table's own
         // columns, computed here because a static SQL body cannot spell
-        // a schema it does not know (§7e).
+        // a schema it does not know.
         ("derivation_candidates", Some(a)) => {
             let table = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(

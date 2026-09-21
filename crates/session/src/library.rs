@@ -4,10 +4,10 @@
 //! A library read is a bare relation — `FROM open_questions` — so it
 //! composes in SQL like any table, filters ride WHERE, and one file
 //! serves every consumer: the MCP door reads it, an app frame renders
-//! it, a skill names it. The alternative it replaces is what the code
-//! did before: the same derivation written once as a Rust string
-//! constant in the door, once as a `.sql` frame in the app, and once as
-//! prose in a skill, so every correction cost three edits or drifted.
+//! it, a skill names it. The alternative is the same derivation
+//! written once as a Rust string constant in the door, once as a `.sql`
+//! frame in the app, and once as prose in a skill, where every
+//! correction costs three edits or drifts.
 //!
 //! Shipped reads are system knowledge and live here, in the binary.
 //! Reads a workspace authors are QUERY glosses served by
@@ -51,10 +51,9 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
 /// shadows a workspace table of the same name, as the store's relations
 /// already do, and it also shadows a CTE an author declares in their own
 /// query. The planner seam sees the raw `TableFactor` before default
-/// planning and `RelationPlannerContext` (datafusion-expr-53.1.0
-/// planner.rs:400) exposes no CTE scope, so there is nothing to defer
-/// to — found the first time a shipped name met a frame's own
-/// `WITH owed AS (…)`. Keep the shipped set small and its names
+/// planning and `RelationPlannerContext` (datafusion-expr
+/// `planner.rs`) exposes no CTE scope, so there is nothing to defer
+/// to: a shipped name shadows a frame's own `WITH owed AS (…)`. Keep the shipped set small and its names
 /// specific; a plain word like `owed` or `claims` is a name authors
 /// reach for.
 pub(crate) fn read_sql(name: &str) -> Option<&'static str> {

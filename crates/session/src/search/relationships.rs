@@ -44,9 +44,9 @@ use super::{dataset_pins, detector_state, int_column, rows_batch, run_plan};
 /// dtype gate lives.
 ///
 /// Nothing prunes what is looked at. The 0.5 acceptance bar implies
-/// the prune this door used to carry — matched ≤ to_distinct, so a to
-/// side under half the from side's distinct count cannot reach it —
-/// and a pair costs nothing once the matrix exists.
+/// the one exact prune there is — matched ≤ to_distinct, so a to side
+/// under half the from side's distinct count cannot reach it — and a
+/// pair costs nothing once the matrix exists.
 ///
 /// The composite rescue: a to side that is no key alone can be one
 /// inside a scope — the multi-tenant shape, (businessID, name). For

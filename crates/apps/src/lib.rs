@@ -78,14 +78,14 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// a human door, so the gate stamps human standing on every caller
 /// that reaches it (`glossql_serverd::auth`).
 ///
-/// Every other affordance retired with the pins, and the reason holds:
-/// a page that can change the record invites a second way to say
-/// everything the language already says. A ruling is the exception
-/// because it is the one thing only a person can supply, its shape is
-/// fixed (a stance on a claim the workspace already derived), and the
-/// alternative is worse — run 4 found that a human who steps away has
-/// no way back into the record at all, since the MCP round can only
-/// ask while they are watching and an agent may never speak for them.
+/// The page holds no other write, and the reason is standing: a page
+/// that can change the record invites a second way to say everything
+/// the language already says. A ruling is the exception because it is
+/// the one thing only a person can supply, its shape is fixed (a
+/// stance on a claim the workspace already derived), and without it a
+/// human who steps away has no way back into the record at all, since
+/// the MCP round can only ask while they are watching and an agent may
+/// never speak for them.
 /// The docket is already the page of open questions; answering there
 /// is the gesture the page was drawn for.
 ///

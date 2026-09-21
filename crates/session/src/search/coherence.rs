@@ -34,12 +34,9 @@ use super::{dataset_pins, int_column, rows_batch};
 ///             EXISTS is the trace a wrong pairing leaves. The judge
 ///             reads the pair names.
 ///
-/// The composite fix rides this door (the foundation report §7a): a
-/// tuple endpoint — `t.(a, b)`, the key since fixture 14 — joins on
-/// every leg, where the script it replaces dropped any endpoint
-/// containing `(` as a crash guard and was blind to booksql's entire
-/// declared graph. Endpoints whose sides disagree in width cannot join
-/// and are skipped, like the malformed paths the script skipped.
+/// A tuple endpoint — `t.(a, b)`, fixture 14's key — joins on every
+/// leg. Endpoints whose sides disagree in width cannot join and are
+/// skipped, like malformed paths.
 ///
 /// A relationship within one table is one of two things, and the
 /// to-side tells them apart. When the to-side is unique over the table

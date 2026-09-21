@@ -3,9 +3,9 @@
 //!
 //! iceberg-rust evaluates a pushed predicate by binding each column
 //! reference to a field accessor, and accessors exist for primitive
-//! fields alone (iceberg-0.10.1 `spec/schema/mod.rs:189`,
+//! fields alone (iceberg `spec/schema/mod.rs`,
 //! `build_accessors`): `WHERE tags IS NULL` on a list column binds to
-//! nothing and the scan fails at its first poll (`expr/term.rs:329`,
+//! nothing and the scan fails at its first poll (`expr/term.rs`,
 //! "Accessor for Field … not found"). iceberg-datafusion pushes every
 //! filter as `Inexact` and leaves the dropping to the scanner
 //! (`table/mod.rs:334`), which is too late for this one. A filter

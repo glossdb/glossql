@@ -1,6 +1,6 @@
 //! Batch normalization before a recipe result lands as an Iceberg table.
 //!
-//! One map: `compat` folds Arrow types Iceberg 0.10.1 rejects or would
+//! One map: `compat` folds Arrow types iceberg-rust rejects or would
 //! promote to format-v3 types onto their v2 equivalents (ns timestamps →
 //! µs, `UInt64` → `Int64`, …). Nothing else touches the schema — the
 //! recipe's authored casts are the landed types (a `force_utf8`

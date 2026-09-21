@@ -16,27 +16,24 @@ use crate::session::SessionError;
 use super::{detector_state, int_column, rows_batch, run_plan};
 
 /// `hierarchy_candidates('table')` — pairwise functional-dependency
-/// screens at high recall over one table's dimension-like columns: the
-/// cheap SQL core of v0.3's dimension-identity stack
-/// (analysis/hierarchies), one row per screened
-/// direction.
+/// screens at high recall over one table's dimension-like columns, one
+/// row per screened direction.
 ///
-/// v0.3's decision layer, dispositioned by the recall ruling (the
-/// measurement's job is recall; the judge removes false positives):
-/// - Null policy PORTED: NULL is a category — a null-coded binary
+/// The measurement's job is recall; the judge removes false positives:
+/// - NULL is a category — a null-coded binary
 ///   {1, NULL} is a lane, not a silent constant-drop. Grouping keeps
 ///   the NULL group, and distinct counts here include it.
 /// - g3 and Goodman–Kruskal λ are SERVED per direction, never gated
 ///   here — the ship line (g3 ≤ 0.05), the alias line (both directions
 ///   ≤ 0.01) and λ's vacuous-skew reading live in the measurement body
 ///   and the judge.
-/// - Permutation nulls + false-discovery control NOT ported: precision
-///   apparatus compensating for judge-less operation.
+/// - No permutation nulls and no false-discovery control: precision
+///   apparatus that compensates for judge-less operation.
 /// - Measures stay out by dtype (Float/Decimal): the additivity lane
-///   floods FD discovery. v0.3 excluded by semantic role; dtype is the
-///   proxy a measurement can see.
-/// - Guards are FULL-scan (the rel-hm fold-key lesson: a row sample
-///   makes fold keys look near-key; never sample the guards).
+///   floods FD discovery. Dtype is the proxy for semantic role that a
+///   measurement can see.
+/// - Guards are FULL-scan: a row sample makes fold keys look near-key,
+///   so the guards are never sampled.
 /// - Only EXACT uniqueness excludes: a unique column determines
 ///   everything trivially, but a
 ///   near-unique one is legitimate hierarchy material; `rows_per_value`

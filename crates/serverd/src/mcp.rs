@@ -465,14 +465,13 @@ impl GlossqlMcp {
             stance,
             note,
         } = ruling;
-        // ONE KEY IS STILL RULED PER ASPECT, deliberately. Run 4 asked
-        // about `days-in-period` three times (dso, dpo, dio) and
-        // `goods-only` twice, and fanning one answer across every
-        // aspect that discloses the key is the obvious cure — but it is
-        // the wrong one: run 2's human confirmed `goods-only` on
-        // `purchases` in the same session where they corrected it on
-        // `dpo`, on purpose. A fan-out would have silently denied them
-        // that. The key pairs the claims so the form can SAY what was
+        // ONE KEY IS STILL RULED PER ASPECT, deliberately. The same key
+        // recurs across aspects (`days-in-period` on dso, dpo and dio),
+        // and fanning one answer across every aspect that discloses the
+        // key is the obvious cure — but it is the wrong one: a human may
+        // confirm `goods-only` on `purchases` and correct it on `dpo`
+        // in the same session, on purpose, and a fan-out would silently
+        // deny them that. The key pairs the claims so the form can SAY what was
         // already ruled next door; it does not make them one claim.
         // The cheap answer (`params` below) is how the repeat stops
         // costing a re-read.

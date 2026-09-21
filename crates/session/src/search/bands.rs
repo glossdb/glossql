@@ -16,11 +16,10 @@ use super::{current_query_slots, rows_batch};
 
 /// The three verbs at any calendar grain, shared by the metric doors:
 /// flows sum per period; a marked stock sums the rows standing at the
-/// period's LATEST observed date — one arbitrary last row read a
-/// 480-row inventory as 94k against a true 12.4M; a ratio serves `num`
-/// and `den` and the period reads as sum(num)/sum(den), because a walk
-/// or a slice over a summed ratio bands an artefact (DSO at
-/// 928.3 days against a true 75.6). With `halves` a ratio also serves
+/// period's LATEST observed date — one arbitrary last row is one item
+/// of an inventory, never its total; a ratio serves `num` and `den`
+/// and the period reads as sum(num)/sum(den), because a walk or a
+/// slice over a summed ratio bands an artefact. With `halves` a ratio also serves
 /// its summed num and den — the only material a coarser window can
 /// re-derive the division from.
 pub(crate) fn grain_sql(sql: &str, tcol: &str, verb: &str, grain: &str, halves: bool) -> String {
@@ -282,8 +281,7 @@ pub(crate) async fn metric_band_walk(
 
         // The grounding is a grain-free extract with a time axis and a
         // `value` column; the time column by dtype, as any reader finds
-        // it. A grounding that does not plan fails the walk whole, as
-        // the script it replaces did.
+        // it. A grounding that does not plan fails the walk whole.
         let probe = crate::whatif::build_plan(shared, &ctx, sql).await?;
         let fields = probe.schema();
         let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);

@@ -289,8 +289,8 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Err("this runtime carries no misfit kernel".into())
     }
 
-    /// The stock/flow discriminator behind the behavior-evidence door
-    /// (stage 5): conventions — each term and every ordered pair
+    /// The stock/flow discriminator behind the behavior-evidence door:
+    /// conventions — each term and every ordered pair
     /// difference — as one matrix product over the stacked entity
     /// series, residuals and gates per entity. The door aligns the two
     /// sides in the plan and hands one batch of `(e, b, yv,
@@ -310,7 +310,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Err("this runtime carries no reconcile kernel".into())
     }
 
-    /// One TabICL fit and read, behind the metric-bands walk (stage 5):
+    /// One TabICL fit and read, behind the metric-bands walk:
     /// train on `train`, predict the one test row `test_x` (its width),
     /// return the band value per alpha in order and the PIT — the
     /// quantile at which `actual` lands in the predicted distribution.
@@ -877,8 +877,8 @@ impl Session {
     /// share this. With a lake, the dataset's schema mounts from the
     /// lake's shared provider and becomes the session's default schema:
     /// bare names then resolve through the substrate's own resolution
-    /// (datafusion-53.1.0 session_state.rs:295 reads the config per
-    /// statement), so there is no per-table alias machinery and no
+    /// (datafusion `session_state.rs`, `resolve_table_ref` reads the
+    /// config per statement), so there is no per-table alias machinery and no
     /// per-session provider build.
     pub async fn bind(&self, name: &str) -> Result<(), SessionError> {
         if !self.shared.store.dataset_exists(name).await? {
@@ -1494,8 +1494,8 @@ impl Session {
         Ok((json_unions_as_text(plan)?, record, reads))
     }
 
-    /// The planner's `table '…' not found` (datafusion-54.1.0
-    /// session_state.rs:1961) with the road out: what the name could
+    /// The planner's `table '…' not found` (datafusion
+    /// `session_state.rs`, `get_table_source`) with the road out: what the name could
     /// have been — the bound dataset's tables and the store's relations
     /// — and, where a landed table folds to the missing name, the
     /// quoted spelling that reaches it. The engine's text stays in
@@ -1638,7 +1638,7 @@ impl Session {
         // DESCRIBE and EXPLAIN are reads — about a table's schema and a
         // plan — not manipulation, so they pass. EXPLAIN is the
         // substrate parser's own variant wrapping the statement it
-        // explains (datafusion-sql-53.1.0 parser.rs:293); only a plain
+        // explains (datafusion-sql `parser.rs`, `Statement::Explain`); only a plain
         // query may ride it, so the allowlist repeats inside it instead
         // of being walked around. DESCRIBE arrives through sqlparser as
         // ExplainTable, below.
@@ -1729,7 +1729,7 @@ impl Session {
     /// is planned as `SELECT * FROM <name> LIMIT 0` through the same
     /// pre-pass a read takes, and the plan's schema is served in the
     /// engine's own DESCRIBE shape (`column_name`, `data_type`,
-    /// `is_nullable`; datafusion-54.1.0 physical_planner.rs:2893). The
+    /// `is_nullable`; datafusion `physical_planner.rs`, `plan_describe`). The
     /// engine's DESCRIBE sees only the mounted tables, which is why the
     /// statement does not reach it: the store's relations and the
     /// reads resolve in the pre-pass and are registered nowhere.

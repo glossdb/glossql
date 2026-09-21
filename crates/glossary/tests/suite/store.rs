@@ -597,8 +597,8 @@ async fn a_measurement_stands_while_what_it_read_is_unchanged() {
 
 #[tokio::test]
 async fn the_strike_is_parked_and_says_so() {
-    // The substrate cannot commit a row removal until
-    // iceberg-rust 0.11, so `DELETE FROM glossary` refuses by name —
+    // The substrate cannot commit a row removal while iceberg-rust has
+    // no delete write path, so `DELETE FROM glossary` refuses by name —
     // and anything but the glossary refuses as ever.
     let (_dir, s) = store().await;
     let e = s.forward_delete("glossary").await.unwrap_err();

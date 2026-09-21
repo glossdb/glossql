@@ -1,11 +1,8 @@
 //! `behavior_anchors('table.column')` — the stock/flow discriminator
-//! from v0.3's lineage reconcile (analysis/lineage/reconcile.py),
-//! reshaped as an evidence door — the judge
-//! reads it before glossing `behavior`; it is never a voice in the
-//! behavior slots.
+//! as an evidence door: the judge reads it before glossing `behavior`;
+//! it is never a voice in the behavior slots.
 //!
-//! The falsification that shaped it (v0.3's own record): a column's OWN
-//! trajectory cannot decide stock vs flow — a trending flow and a
+//! Why the evidence is cross-table: a column's OWN trajectory cannot decide stock vs flow — a trending flow and a
 //! mean-reverting stock look alike. The evidence must be cross-table:
 //! an INDEPENDENT per-period movement m aggregated from a related event
 //! table, scored against two hypotheses with scale-free residuals
@@ -15,10 +12,8 @@
 //! Anchors come from DECLARED relationships only:
 //! the plane order is relationships first, and the wrong-anchor gate
 //! then guards misdeclared edges rather than a combinatorial sweep.
-//! Since the port, a composite (tuple) endpoint takes part like any
-//! other — every leg is an identifier, the entity key is the tuple —
-//! where the script it replaces skipped them and was blind to the
-//! composite corpus's whole declared graph (the foundation report §7a).
+//! A composite (tuple) endpoint takes part like any other: every leg
+//! is an identifier, the entity key is the tuple.
 //!
 //! The division of labor (interpreter-bound loops are the
 //! alternative): this door discovers anchors and holds POLICY — axes,
@@ -93,8 +88,9 @@ use crate::subject::qi;
 
 /// Wilson score lower bound (Wilson 1927): the parameter-free way to
 /// rank a vote rate under small n. n MUST be the pairing's COMMON
-/// entity denominator, never a convention's own aligned subset —
-/// v0.3's recorded support-gameability trap.
+/// entity denominator, never a convention's own aligned subset: a
+/// convention that aligns few entities would otherwise buy support by
+/// shrinking its own denominator.
 fn wilson_lcb(successes: f64, n: i64) -> f64 {
     if n <= 0 {
         return 0.0;
@@ -1222,10 +1218,10 @@ const MAX_TERMS: usize = 64;
 const MAJORITY: f64 = 0.5;
 
 /// The winner, the runner-up field, and the anchor's own record — the
-/// policy half the script held: support-first among the conventions
+/// policy half: support-first among the conventions
 /// over the majority floor; on a support tie the fewer-term
 /// convention wins unless the higher-arity fit is decisive, ΔBIC > 10
-/// (Kass–Raftery), v0.3's tiebreak.
+/// (Kass–Raftery).
 fn judge_anchor(base: Value, n_common: i64, summaries: &[Value]) -> Value {
     let sup = |s: &Value| s["support"].as_f64().unwrap_or(0.0);
     let winners = |s: &Value| s["winners"].as_f64().unwrap_or(0.0);

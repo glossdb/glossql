@@ -352,13 +352,12 @@ async fn concept_rows(
     //
     // A RATIO declares itself by serving `num` and `den` beside `value`,
     // and reads as sum(num)/sum(den). Summing it instead adds member
-    // ratios together: DSO replayed at 957 days against a true 76, its
-    // grounding serving segment x region.
+    // ratios together, one per member the grounding serves.
     //
     // A STOCK sums the rows standing at the month's LATEST observed
-    // date. `row_number() = 1` kept ONE arbitrary row — a receivables
-    // grounding emitting one row per open invoice replayed as 4,325
-    // against a true 42M, and inventory as 12k against 12.4M.
+    // date. One last row by `row_number() = 1` is ONE arbitrary row of
+    // a grounding that emits many per date — one per open invoice, one
+    // per stocked item.
     let is_ratio =
         fields.iter().any(|f| f.name() == "num") && fields.iter().any(|f| f.name() == "den");
     let verb = crate::cube::verb_of(

@@ -91,7 +91,7 @@ pub struct RelationSpec {
 const SEQ: &str = "_last_updated_sequence_number";
 const ROW_ID: &str = "_row_id";
 
-/// The relations seam over a workspace's lake: every crossed relation is
+/// The relations seam over a workspace's lake: every store relation is
 /// one table in the store's namespace.
 pub struct IcebergMetadata {
     lake: Lake,
