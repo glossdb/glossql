@@ -1849,3 +1849,39 @@ async fn the_lineage_page_draws_the_record() {
         "{edges:?}"
     );
 }
+
+/// An asset revalidates by its tag: the first load carries the bytes
+/// and a validator, and a load that sends the validator back is
+/// answered with no body. A tag the server does not hold is a full
+/// answer again.
+#[tokio::test]
+async fn an_unchanged_asset_revalidates_without_its_body() {
+    let assets = glossql_apps::assets_router();
+    let first = get(&assets, "/app.css").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
+    let tag = first.headers()[header::ETAG].clone();
+    assert!(!text(first).await.is_empty());
+
+    let conditional = |sent: axum::http::HeaderValue| {
+        let assets = assets.clone();
+        async move {
+            assets
+                .oneshot(
+                    Request::get("/app.css")
+                        .header(header::IF_NONE_MATCH, sent)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let again = conditional(tag.clone()).await;
+    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(again.headers()[header::ETAG], tag);
+    assert!(text(again).await.is_empty());
+
+    let stale = conditional("\"0000000000000000\"".parse().unwrap()).await;
+    assert_eq!(stale.status(), StatusCode::OK);
+}
