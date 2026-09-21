@@ -11,8 +11,9 @@ What differs here, which the guide cannot say:
 - The parser runs the postgres dialect. Syntax the guide shows from
   the generic dialect does not parse. `SELECT * EXCLUDE (…)` and
   `SELECT * EXCEPT (…)` are two.
-- `information_schema` is off. DDL, DML and COPY are closed: tables
-  come from recipes. Those pages are not vendored.
+- DDL, DML and COPY are closed: tables come from recipes. Those pages
+  are not vendored. `information_schema` serves its tables and columns
+  over what the call mounted; its page is not vendored either.
 - `=>` names an argument only in the door's own table functions
   (`metric_series(grain => 'month')`). The engine's functions take
   positional arguments.

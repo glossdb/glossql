@@ -5,9 +5,10 @@
 #
 #   vendor/datafusion/refresh.sh 54.1.0
 #
-# DDL, DML, COPY options, information_schema, prepared statements and
-# EXPLAIN are not fetched: the door closes the first four and serves
-# nothing the last two describe.
+# DDL, DML, COPY options, prepared statements and EXPLAIN are not
+# fetched: the door closes the first three and serves nothing the last
+# two describe. The information_schema page is not fetched either: the
+# glossql skill's sql-here reference says what the door serves of it.
 set -eu
 tag="${1:?usage: refresh.sh <datafusion tag, e.g. 54.1.0>}"
 here="$(cd "$(dirname "$0")" && pwd)"
