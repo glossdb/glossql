@@ -1,6 +1,6 @@
 # The build context is what the binary compiles and embeds: the
 # workspace, the skills, the docs and the vendored guide it serves, the
-# language artifacts. Nothing else — no target/, no certs, no notes.
+# language artifacts. Nothing else — no target/, no notes.
 *
 !Cargo.toml
 !Cargo.lock

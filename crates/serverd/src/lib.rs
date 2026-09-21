@@ -44,7 +44,6 @@ mod mcp;
 mod query;
 pub mod skills;
 pub mod telemetry;
-pub mod tls;
 pub mod window;
 mod wire;
 
