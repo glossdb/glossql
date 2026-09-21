@@ -1171,7 +1171,7 @@ fn first_anchor<'a>(evidence: &'a serde_json::Value, event: &str) -> &'a serde_j
 
 #[tokio::test(flavor = "multi_thread")]
 async fn positive_only_movements_meet_the_null_model() {
-    // The null the finance oracle never posed: every movement is
+    // The null model's case: every movement is
     // positive, so an unrelated column of the movements' size sits
     // near 0.4 on the flow residual and near 1.0 on the delta
     // residual. Under a gate of 0.5 that was a flow vote; under 0.05

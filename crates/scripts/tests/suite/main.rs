@@ -7,11 +7,9 @@
 mod bands;
 mod behavior_document_hop;
 mod behavior_evidence;
-mod behavior_oracle;
 mod collisions;
 mod cube;
 mod dimensions;
-mod dimensions_oracle;
 mod extract_subquery;
 mod fixture11;
 mod quality;

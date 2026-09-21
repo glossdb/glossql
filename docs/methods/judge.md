@@ -30,8 +30,9 @@ candidates, never conclusions.
   its output names the absent inputs (`missing_aspects`) instead of
   guessing. A failed judgment means the statistics stand.
 - **No statistic ports without its oracle.** The ported statistics
-  carry ground-truthed acceptance tests
-  (`crates/scripts/tests/behavior_oracle.rs`, `dimensions_oracle.rs`);
+  carry acceptance tests over data whose truth is known by
+  construction (`crates/scripts/tests/suite/`), and the glossval repo
+  grades them on corpora with declared truth;
   an instrument whose accuracy cannot be measured does not ship.
 - **Every output has a consumer.** No aspect is declared that
   nothing reads.
