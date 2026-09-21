@@ -1072,7 +1072,11 @@ impl ServerHandler for GlossqlMcp {
             } else {
                 "question-round: the retry carries no answer".into()
             };
-            tracing::info!(subject = %id, note = %note, "question-round");
+            // The account can carry the human's typed words and a
+            // rival's prose, so it is a `debug` event like a call's
+            // text; `info` says only that a round was digested.
+            tracing::info!(subject = %id, "question-round: digested");
+            tracing::debug!(subject = %id, note = %note, "question-round");
             probed = Some(note);
         } else if shape.reviews
             && context
