@@ -14,20 +14,21 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 
-use futures::StreamExt;
-use glossql_session::{Caller, SessionError};
+use std::sync::Arc;
 
-use crate::AppState;
+use futures::StreamExt;
+use glossql_session::{Caller, Plane, SessionError};
+
 use crate::wire;
 
 pub async fn query(
-    State(state): State<AppState>,
+    State(plane): State<Arc<Plane>>,
     Path(dataset): Path<String>,
     Extension(Caller(actor)): Extension<Caller>,
     body: String,
 ) -> Response {
-    if !state.plane.dataset_exists(&dataset).await.unwrap_or(false) {
-        let known = state.plane.datasets().await.unwrap_or_default();
+    if !plane.dataset_exists(&dataset).await.unwrap_or(false) {
+        let known = plane.datasets().await.unwrap_or_default();
         return fail(
             StatusCode::NOT_FOUND,
             format!(
@@ -40,7 +41,7 @@ pub async fn query(
             ),
         );
     }
-    let session = match state.plane.channel(actor.clone(), Some(&dataset)).await {
+    let session = match plane.channel(actor.clone(), Some(&dataset)).await {
         Ok(session) => session,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
@@ -64,8 +65,8 @@ pub async fn query(
         // run at the plane (`USE` selects the actor's channel there)
         // and answer in JSON.
         Err(SessionError::NotOneRead) => {
-            match state.plane.execute(actor, Some(&dataset), &body).await {
-                Ok(outcomes) => match wire::outcomes_json(&outcomes, state.row_cap) {
+            match plane.execute(actor, Some(&dataset), &body).await {
+                Ok(outcomes) => match wire::outcomes_json(&outcomes, plane.row_cap()) {
                     Ok(rendered) => Json(rendered).into_response(),
                     Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e),
                 },
@@ -74,7 +75,7 @@ pub async fn query(
                 Err(e) => {
                     let landed = match &e {
                         SessionError::Sequence { landed, .. } if !landed.is_empty() => {
-                            wire::outcomes_json(landed, state.row_cap).ok()
+                            wire::outcomes_json(landed, plane.row_cap()).ok()
                         }
                         _ => None,
                     };

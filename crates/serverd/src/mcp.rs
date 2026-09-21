@@ -85,8 +85,6 @@ impl Brief {
 #[derive(Clone)]
 pub struct GlossqlMcp {
     plane: Arc<Plane>,
-    /// The door's knobs: the row cap.
-    doors: crate::DoorConfig,
     /// The brief: one composed line over live counts, appended to
     /// the instructions every initialize/discover serves — and, since
     /// a client fetches those once per connection, ALSO appended as a
@@ -97,12 +95,8 @@ pub struct GlossqlMcp {
 }
 
 impl GlossqlMcp {
-    pub fn new(plane: Arc<Plane>, doors: crate::DoorConfig, brief: Arc<Brief>) -> Self {
-        GlossqlMcp {
-            plane,
-            doors,
-            brief,
-        }
+    pub fn new(plane: Arc<Plane>, brief: Arc<Brief>) -> Self {
+        GlossqlMcp { plane, brief }
     }
 
     /// Recompose the brief from the store and the question derivation.
@@ -548,7 +542,7 @@ impl GlossqlMcp {
                  While the workspace holds open questions, a call that only reads the record \
                  (glossary, GLOSSARY(), ATTEST(), the store relations) carries the human's \
                  question forms; landings and data reads never do.",
-                self.doors.row_cap
+                self.plane.row_cap()
             ),
             schema,
         )
@@ -1090,7 +1084,7 @@ impl ServerHandler for GlossqlMcp {
                 let cap = if query.metadata_only {
                     usize::MAX
                 } else {
-                    self.doors.row_cap
+                    self.plane.row_cap()
                 };
                 wire::stream_json(query.stream, cap)
                     .await
@@ -1101,12 +1095,12 @@ impl ServerHandler for GlossqlMcp {
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
                 match self.plane.execute(actor.clone(), None, statements).await {
-                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
+                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.plane.row_cap()),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
                             && !landed.is_empty()
                         {
-                            landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
+                            landed_json = wire::outcomes_json(landed, self.plane.row_cap()).ok();
                         }
                         Err(e.to_string())
                     }

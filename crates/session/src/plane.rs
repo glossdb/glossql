@@ -180,6 +180,11 @@ impl Plane {
         self
     }
 
+    /// Rows a data read ships before a door declares `truncated`.
+    pub fn row_cap(&self) -> usize {
+        self.row_cap
+    }
+
     /// The process-wide byte budget for cubes, in megabytes (serverd's
     /// `--cube-cache`). The `cube` aspect bounds one cube; this bounds
     /// them all. Set before the first channel is built.

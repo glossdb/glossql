@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use glossql_serverd::DoorConfig;
+use glossql_serverd::{DEFAULT_ROW_CAP, DoorConfig};
 
 pub const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 [--row-cap <n>] [--cube-cache <megabytes>] [--memory-limit <megabytes>] \
@@ -82,6 +82,8 @@ fn number<T: std::str::FromStr<Err: std::fmt::Display>>(
 pub struct Config {
     pub addr: String,
     pub doors: DoorConfig,
+    /// Rows a data read ships before a door declares `truncated`.
+    pub row_cap: usize,
     /// The process-wide byte budget for cubes, in megabytes.
     pub cube_cache_mb: u64,
     /// The engine's memory ceiling for the whole process, in megabytes.
@@ -151,19 +153,17 @@ impl Config {
             .or_else(|| var("GLOSSQL_ADDR"))
             .unwrap_or_else(|| "127.0.0.1:8080".to_string());
         let audience = var("GLOSSQL_AUDIENCE").unwrap_or_else(|| format!("http://{addr}"));
-        let mut doors = DoorConfig {
+        let doors = DoorConfig {
             allowed_hosts: allowed_hosts(&audience),
             own_uri: audience.clone(),
-            ..DoorConfig::default()
         };
-        if let Some(row_cap) = match flags.row_cap {
-            Some(n) => Some(n),
+        let row_cap = match flags.row_cap {
+            Some(n) => n,
             None => var("GLOSSQL_ROW_CAP")
                 .map(|v| number("GLOSSQL_ROW_CAP", &v))
-                .transpose()?,
-        } {
-            doors.row_cap = row_cap;
-        }
+                .transpose()?
+                .unwrap_or(DEFAULT_ROW_CAP),
+        };
         // The open switch is read where the arrangement would be: a run
         // is one or the other, and a misconfigured arrangement still
         // refuses rather than falling open.
@@ -195,6 +195,7 @@ impl Config {
             catalog: Catalog::from(&var, flags.workspace.as_deref())?,
             addr,
             doors,
+            row_cap,
             audience,
             auth,
         })
@@ -581,7 +582,7 @@ mod tests {
         .expect("readable");
         assert_eq!(named.addr, "0.0.0.0:8080");
         assert_eq!(named.audience, "http://0.0.0.0:8080");
-        assert_eq!(named.doors.row_cap, 50);
+        assert_eq!(named.row_cap, 50);
         assert_eq!(
             (
                 named.cube_cache_mb,

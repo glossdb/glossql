@@ -23,9 +23,19 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
+    app_capped(glossql_serverd::DEFAULT_ROW_CAP, doors, login).await
+}
+
+async fn app_capped(
+    row_cap: usize,
+    doors: DoorConfig,
+    login: Arc<Login>,
+) -> (Router, tempfile::TempDir) {
     let (dir, store) = common::scratch_store().await;
     let plane = Arc::new(
-        Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages()),
+        Plane::new(store, Arc::new(NoRuntime))
+            .with_row_cap(row_cap)
+            .with_pages(glossql_serverd::skills::door_pages()),
     );
     (router(plane, doors, Access::Gated(login)), dir)
 }
@@ -1802,14 +1812,7 @@ async fn the_clients_own_name_never_reaches_the_record() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..DoorConfig::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_capped(3, DoorConfig::default(), common::login()).await;
     let call = |id: u64, statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1864,14 +1867,7 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..DoorConfig::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_capped(3, DoorConfig::default(), common::login()).await;
     let body = expect_ok(
         mcp(
             app,

@@ -81,12 +81,10 @@ pub const BOOTSTRAP: &str = "bootstrap";
 /// says on the record that nobody was verified.
 pub const INSECURE_DEV_MODE: &str = "insecure_dev_mode";
 
-/// How much an agent sees at once, and whose `Host` header the agent
-/// door answers.
+/// Whose `Host` header the agent door answers, and the URI the server
+/// is reached at.
 #[derive(Clone)]
 pub struct DoorConfig {
-    /// Rows an MCP tool result ships before declaring `truncated`.
-    pub row_cap: usize,
     /// Hostnames the agent door accepts in the `Host` header; empty
     /// is every host. The transport's default — loopback only — is
     /// the DNS-rebinding guard of a server on a laptop; a deployment
@@ -101,17 +99,10 @@ pub struct DoorConfig {
 impl Default for DoorConfig {
     fn default() -> Self {
         DoorConfig {
-            row_cap: DEFAULT_ROW_CAP,
             allowed_hosts: StreamableHttpServerConfig::default().allowed_hosts,
             own_uri: "http://127.0.0.1:8080".into(),
         }
     }
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub plane: Arc<Plane>,
-    pub row_cap: usize,
 }
 
 /// Who may speak at the doors: verified by the gate the login carries,
@@ -131,7 +122,6 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
-    let mcp_doors = doors.clone();
     // The door speaks 2026-07-28 first and serves every revision the
     // library carries beneath it (2025-11-25 today) by negotiation —
     // statelessly for all of them: `legacy_session_mode: false` means
@@ -151,7 +141,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     config.json_response = true;
     config.legacy_session_mode = false;
     config.stateless_protocol_metadata_required = false;
-    config.allowed_hosts = mcp_doors.allowed_hosts.clone();
+    config.allowed_hosts = doors.allowed_hosts.clone();
     // The connect-time brief: shared across handler instances, boot-
     // filled, refreshed after every writing call (see
     // mcp::refresh_brief). One shared baseline, no per-actor state.
@@ -162,13 +152,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
         tokio::spawn(async move { GlossqlMcp::refresh_brief(&plane, &brief).await });
     }
     let mcp = StreamableHttpService::new(
-        move || {
-            Ok(GlossqlMcp::new(
-                Arc::clone(&mcp_plane),
-                mcp_doors.clone(),
-                Arc::clone(&brief),
-            ))
-        },
+        move || Ok(GlossqlMcp::new(Arc::clone(&mcp_plane), Arc::clone(&brief))),
         Arc::new(NeverSessionManager::default()),
         config,
     );
@@ -178,13 +162,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     // (SPEC.md §1, the actor rides the transport).
     let human = Router::new()
         .merge(glossql_apps::root_router(root_plane, &doors.own_uri))
-        .route(
-            "/{dataset}/query",
-            post(query::query).with_state(AppState {
-                plane,
-                row_cap: doors.row_cap,
-            }),
-        )
+        .route("/{dataset}/query", post(query::query).with_state(plane))
         .nest(
             "/{dataset}/app",
             glossql_apps::router(app_plane, &doors.own_uri),

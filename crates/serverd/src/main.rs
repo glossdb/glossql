@@ -95,7 +95,7 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
     let store = Store::open(open_lake(config.catalog).await?).await?;
 
     let plane = Plane::new(store.clone(), runtime)
-        .with_row_cap(config.doors.row_cap)
+        .with_row_cap(config.row_cap)
         .with_cube_cache(config.cube_cache_mb)
         .with_memory_limit(config.memory_limit_mb)
         .with_spill_limit(config.spill_limit_mb);
