@@ -114,7 +114,26 @@ fn is_commit_conflict(error: &iceberg::Error) -> bool {
     error.kind() == iceberg::ErrorKind::CatalogCommitConflicts
 }
 
-/// The data files one append writes, before any of them is committed.
+/// The writer chain a landing's rows go through: Parquet files rolled
+/// at the table's target size, named and placed by the table's own
+/// generators.
+type FileBuilder =
+    DataFileWriterBuilder<ParquetWriterBuilder, DefaultLocationGenerator, DefaultFileNameGenerator>;
+
+/// Boxed: a writer chain is kilobytes of generic state, and the writer
+/// is held across awaits several frames below a door.
+enum Rows {
+    Flat(Box<UnpartitionedWriter<FileBuilder>>),
+    Split(
+        Box<RecordBatchPartitionSplitter>,
+        Box<FanoutWriter<FileBuilder>>,
+    ),
+}
+
+/// A table's data files as they are written, a batch at a time, before
+/// any of them is committed — so a caller holding a stream lands it with
+/// one batch in memory, and what it read, wrote and failed on keeps its
+/// own error type.
 ///
 /// A data file belongs to exactly one partition, so a partitioned table
 /// needs the rows split by their partition value before anything is
@@ -125,48 +144,93 @@ fn is_commit_conflict(error: &iceberg::Error) -> bool {
 /// writer emits files carrying an empty partition struct and the commit
 /// refuses them: `SnapshotProducer::validate_added_data_files` checks the
 /// struct's arity against the table's partition type.
-///
-/// Free-standing rather than a method, so the generic writer chain it
-/// builds is one state machine a caller can box away rather than carry.
-async fn write_files(
-    table: &iceberg::table::Table,
-    batches: &[RecordBatch],
-) -> Result<Vec<DataFile>> {
-    let table_props = table.metadata().table_properties();
-    let schema = table.metadata().current_schema().clone();
-    // Landed batches carry no field-id metadata; match by name, as
-    // iceberg-datafusion's own write path does.
-    let parquet = ParquetWriterBuilder::from_table_properties(&table_props, schema.clone())?
-        .with_match_mode(FieldMatchMode::Name);
-    let rolling = RollingFileWriterBuilder::new(
-        parquet,
-        table_props.write_target_file_size_bytes()?,
-        table.file_io().clone(),
-        DefaultLocationGenerator::new(table.metadata())?,
-        DefaultFileNameGenerator::new(
-            uuid::Uuid::now_v7().to_string(),
-            None,
-            DataFileFormat::Parquet,
-        ),
-    );
-    let builder = DataFileWriterBuilder::new(rolling);
-    let spec = Arc::clone(table.metadata().default_partition_spec());
-    if spec.is_unpartitioned() {
-        let mut writer = UnpartitionedWriter::new(builder);
-        for batch in batches {
-            writer.write(batch.clone()).await?;
-        }
-        Ok(writer.close().await?)
-    } else {
-        let splitter = RecordBatchPartitionSplitter::try_new_with_computed_values(schema, spec)?;
-        let mut writer = FanoutWriter::new(builder);
-        for batch in batches {
-            for (key, part) in splitter.split(batch)? {
-                writer.write(key, part).await?;
+pub struct TableWriter {
+    table: iceberg::table::Table,
+    rows: Rows,
+    written: u64,
+}
+
+/// What a [`TableWriter`] wrote: the files a commit adds
+/// ([`Lake::commit_written`]) and the rows they hold.
+pub struct Written {
+    table: iceberg::table::Table,
+    files: Vec<DataFile>,
+    pub rows: u64,
+}
+
+impl TableWriter {
+    fn open(table: iceberg::table::Table) -> Result<Self> {
+        let table_props = table.metadata().table_properties();
+        let schema = table.metadata().current_schema().clone();
+        // Landed batches carry no field-id metadata; match by name, as
+        // iceberg-datafusion's own write path does.
+        let parquet = ParquetWriterBuilder::from_table_properties(&table_props, schema.clone())?
+            .with_match_mode(FieldMatchMode::Name);
+        let rolling = RollingFileWriterBuilder::new(
+            parquet,
+            table_props.write_target_file_size_bytes()?,
+            table.file_io().clone(),
+            DefaultLocationGenerator::new(table.metadata())?,
+            DefaultFileNameGenerator::new(
+                uuid::Uuid::now_v7().to_string(),
+                None,
+                DataFileFormat::Parquet,
+            ),
+        );
+        let builder = DataFileWriterBuilder::new(rolling);
+        let spec = Arc::clone(table.metadata().default_partition_spec());
+        let rows = if spec.is_unpartitioned() {
+            Rows::Flat(Box::new(UnpartitionedWriter::new(builder)))
+        } else {
+            Rows::Split(
+                Box::new(RecordBatchPartitionSplitter::try_new_with_computed_values(
+                    schema, spec,
+                )?),
+                Box::new(FanoutWriter::new(builder)),
+            )
+        };
+        Ok(TableWriter {
+            table,
+            rows,
+            written: 0,
+        })
+    }
+
+    pub async fn write(&mut self, batch: RecordBatch) -> Result<()> {
+        self.written += batch.num_rows() as u64;
+        match &mut self.rows {
+            Rows::Flat(writer) => writer.write(batch).await?,
+            Rows::Split(splitter, writer) => {
+                for (key, part) in splitter.split(&batch)? {
+                    writer.write(key, part).await?;
+                }
             }
         }
-        Ok(writer.close().await?)
+        Ok(())
     }
+
+    pub async fn close(self) -> Result<Written> {
+        let files = match self.rows {
+            Rows::Flat(writer) => writer.close().await?,
+            Rows::Split(_, writer) => writer.close().await?,
+        };
+        Ok(Written {
+            table: self.table,
+            files,
+            rows: self.written,
+        })
+    }
+}
+
+/// The data files one append writes. Free-standing rather than a method,
+/// so the generic writer chain it builds is one state machine a caller
+/// can box away rather than carry.
+async fn write_files(table: iceberg::table::Table, batches: &[RecordBatch]) -> Result<Written> {
+    let mut writer = TableWriter::open(table)?;
+    for batch in batches {
+        writer.write(batch.clone()).await?;
+    }
+    writer.close().await
 }
 
 /// One table pinned at its current snapshot: every scan reads that
@@ -436,7 +500,26 @@ impl Lake {
         // Boxed: the writer stack is a deep chain of generic futures, and
         // this sits several awaits below a door. Inlined it grows every
         // caller's frame for a state machine that lives for one call.
-        let files = Box::pin(write_files(&table, batches)).await?;
+        let written = Box::pin(write_files(table, batches)).await?;
+        self.commit_written(written, properties).await
+    }
+
+    /// A writer onto `dataset.table` for a caller that holds its rows
+    /// as a stream: it writes a batch at a time and commits nothing
+    /// until [`Lake::commit_written`].
+    pub async fn writer(&self, dataset: &str, table: &str) -> Result<TableWriter> {
+        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
+        TableWriter::open(self.catalog.load_table(&ident).await?)
+    }
+
+    /// The commit behind every append: the written files join their
+    /// table as one snapshot, the given facts riding it as snapshot
+    /// properties.
+    pub async fn commit_written(
+        &self,
+        written: Written,
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
         // One commit, with no retry of ours around it. `Transaction::commit`
         // already retries a conflict at iceberg's own seam: `do_commit`
         // reloads the table, re-bases on the refreshed metadata and
@@ -448,10 +531,10 @@ impl Lake {
         // One transaction: the action is built from it and applied to it.
         // `Transaction::new` clones the table (iceberg transaction/mod.rs),
         // so a second one is a second copy of the metadata for nothing.
-        let tx = Transaction::new(&table);
+        let tx = Transaction::new(&written.table);
         let append = tx
             .fast_append()
-            .add_data_files(files)
+            .add_data_files(written.files)
             .set_snapshot_properties(properties);
         match append.apply(tx)?.commit(self.catalog.as_ref()).await {
             Ok(_) => Ok(()),

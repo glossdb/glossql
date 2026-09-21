@@ -38,33 +38,30 @@ fn compat_type(t: &DataType) -> DataType {
     }
 }
 
-/// Fold types Iceberg v2 cannot hold onto their nearest v2 shape.
-pub fn compat(
-    schema: SchemaRef,
-    batches: Vec<RecordBatch>,
-) -> Result<(SchemaRef, Vec<RecordBatch>)> {
+/// The schema a landing holds: types Iceberg v2 cannot hold folded onto
+/// their nearest v2 shape. Decided by the schema alone, so it is known
+/// before the first row.
+pub fn compat_schema(schema: &Schema) -> SchemaRef {
     let fields: Vec<Field> = schema
         .fields()
         .iter()
         .map(|f| Field::new(f.name(), compat_type(f.data_type()), f.is_nullable()))
         .collect();
-    let out_schema = Arc::new(Schema::new(fields));
-    if out_schema.fields() == schema.fields() {
-        return Ok((out_schema, batches));
+    Arc::new(Schema::new(fields))
+}
+
+/// One batch folded onto [`compat_schema`]'s shape — a batch already in
+/// it passes as it is.
+pub fn compat_batch(batch: RecordBatch, out_schema: &SchemaRef) -> Result<RecordBatch> {
+    if batch.schema().fields() == out_schema.fields() {
+        return Ok(batch);
     }
-    let out_batches = batches
-        .into_iter()
-        .map(|batch| {
-            let columns = batch
-                .columns()
-                .iter()
-                .zip(out_schema.fields())
-                .map(|(col, field)| cast(col, field.data_type()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| Error::Batches(e.to_string()))?;
-            RecordBatch::try_new(Arc::clone(&out_schema), columns)
-                .map_err(|e| Error::Batches(e.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok((out_schema, out_batches))
+    let columns = batch
+        .columns()
+        .iter()
+        .zip(out_schema.fields())
+        .map(|(col, field)| cast(col, field.data_type()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Batches(e.to_string()))?;
+    RecordBatch::try_new(Arc::clone(out_schema), columns).map_err(|e| Error::Batches(e.to_string()))
 }

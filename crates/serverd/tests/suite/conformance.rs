@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 /// Today's counts, and what owns them.
 ///
 /// `block_in_place` / `block_on` — sync code bridging to async. One
-/// named owner: `glossql-import` bridges a genuinely sync ADBC driver,
-/// argued in place.
+/// named owner: `glossql-import`'s file reader infers a schema inside
+/// the engine's synchronous table-function call, argued in place.
 ///
 /// `thread_local` — at zero, and it stays there. Nothing re-plans
 /// through the same context, so there is no door-expansion stack to
@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 /// or metric as a CSV or Parquet download) — not engine-work
 /// scheduling.
 const CEILING: [(&str, usize); 4] = [
-    ("block_in_place", 3),
+    ("block_in_place", 1),
     ("block_on", 1),
     ("thread_local!", 0),
     ("tokio::spawn", 3),

@@ -66,8 +66,11 @@ its own cycle stack, one stack for the whole nesting.
 - **The zero-greps.** `block_in_place`, `block_on`, `thread_local!`,
   and bare `tokio::spawn` stay at zero in the crates the server owns —
   a hit means something is being built around the framework instead of
-  on it. The one named owner is the ADBC seam, whose Rust API is
-  synchronous today; its exact count is pinned by a conformance test.
+  on it. The one named owner is the file reader, which infers a
+  schema inside the engine's synchronous table-function call; its
+  exact count is pinned by a conformance test. The ADBC driver, whose
+  Rust API is synchronous, runs on the runtime's blocking pool and
+  hands its batches over a bounded channel.
 
 ## Iceberg
 

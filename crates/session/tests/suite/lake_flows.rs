@@ -351,3 +351,50 @@ async fn a_landing_discloses_its_cast_nulled_cells() {
     assert_eq!(json["checked"][0]["failed"], 2);
     assert_eq!(json["checked"][0]["tokens"][0][0], "\\N");
 }
+
+/// A landing's rows run while they are written, so a recipe can fail
+/// with its table already created. The table goes with the failure:
+/// the dataset holds nothing under the name, and the corrected recipe
+/// lands where a leftover table would have refused its create.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recipe_that_fails_while_landing_leaves_no_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("t.csv"), "id,amount\n1,10\n2,n/a\n3,30\n").unwrap();
+    let session = workspace(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a failing landing');\n\
+             USE fin;\n\
+             DECLARE SOURCE export SET (type: csv, location: '{}');",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    // The plan is sound — the cast fails on a row, at execution.
+    let refused = session
+        .execute(
+            "DECLARE RECIPE t ON fin FROM export AS $$\
+               SELECT id, CAST(amount AS BIGINT) AS amount FROM read_csv('t.csv')$$;",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("recipe failed"), "{refused}");
+    let tables = session.execute("SHOW TABLES;").await.unwrap();
+    let Outcome::Rows { batches, .. } = &tables[0] else {
+        panic!("SHOW TABLES answers rows")
+    };
+    assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+
+    let outcomes = session
+        .execute(
+            "DECLARE RECIPE t ON fin FROM export AS $$\
+               SELECT id, try_cast(amount AS BIGINT) AS amount FROM read_csv('t.csv')$$;",
+        )
+        .await
+        .unwrap();
+    assert!(done(&outcomes[0]).contains("3 rows landed"), "{outcomes:?}");
+}

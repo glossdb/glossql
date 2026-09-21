@@ -15,7 +15,7 @@ use datafusion::sql::sqlparser::ast::Statement as SQLStatement;
 use datafusion::sql::sqlparser::dialect::GenericDialect;
 use datafusion::sql::sqlparser::parser::Parser;
 
-use crate::{Error, Result, SourceSpec};
+use crate::{Error, Result, Rows, SourceSpec};
 
 /// The loadable drivers, hardcoded from the ADBC driver index
 /// (arrow.apache.org/adbc). A source's `driver`
@@ -43,61 +43,80 @@ const KNOWN_DRIVERS: &[&str] = &[
     "trino",
 ];
 
-/// What one statement returned from the source, cut at `row_cap` (one
-/// row past it, so the caller can tell a truncated answer from a
-/// complete one — the doors' convention).
-pub(crate) struct SourceRead {
-    pub schema: SchemaRef,
-    pub batches: Vec<RecordBatch>,
-}
-
-/// Execute one SQL statement at the source and pull its result. Blocking
-/// (the ADBC surface is synchronous FFI) — callers wrap it in
-/// `block_in_place`.
-pub(crate) fn run_at_source(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<SourceRead> {
+/// Execute one SQL statement at the source and stream its result. The
+/// ADBC surface is synchronous FFI, so the driver runs on the runtime's
+/// blocking pool and hands its batches over a bounded channel: the
+/// source is read as fast as the consumer takes, two batches ahead at
+/// most, and a consumer that drops the stream ends the read at the
+/// driver's next batch. The schema arrives first, before any row.
+pub(crate) async fn stream_at_source(spec: &SourceSpec, sql: &str) -> Result<(SchemaRef, Rows)> {
     refuse_non_query(spec, sql)?;
-    // `SourceSpec::from_settings` is the one constructor and refuses a
-    // relational source without a driver.
-    let driver = spec
-        .driver
-        .as_deref()
-        .expect("relational specs carry a driver");
-    let adbc = |e: adbc_core::error::Error| Error::Relational {
-        name: spec.name.clone(),
-        detail: e.to_string(),
-    };
-    let mut driver =
-        ManagedDriver::load_from_name(driver, None, AdbcVersion::V100, LOAD_FLAG_DEFAULT, None)
+    let (shape, shaped) = tokio::sync::oneshot::channel::<Result<SchemaRef>>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<RecordBatch>>(2);
+    let name = spec.name.clone();
+    let (spec, sql) = (spec.clone(), sql.to_string());
+    tokio::task::spawn_blocking(move || {
+        // `SourceSpec::from_settings` is the one constructor and refuses a
+        // relational source without a driver.
+        let driver = spec
+            .driver
+            .as_deref()
+            .expect("relational specs carry a driver");
+        let adbc = |e: adbc_core::error::Error| Error::Relational {
+            name: spec.name.clone(),
+            detail: e.to_string(),
+        };
+        let opened = (|| {
+            let mut driver = ManagedDriver::load_from_name(
+                driver,
+                None,
+                AdbcVersion::V100,
+                LOAD_FLAG_DEFAULT,
+                None,
+            )
             .map_err(|e| Error::Relational {
                 name: spec.name.clone(),
                 detail: format!(
                     "{e} — `driver` is the ADBC index slug the operator installed \
-             ({}) or a path to the driver library",
+                     ({}) or a path to the driver library",
                     KNOWN_DRIVERS.join(", ")
                 ),
             })?;
-    // The source's location IS its URI — one setting names where a
-    // source lives, whatever kind it is.
-    let uri = spec.location.as_str();
-    let database = driver
-        .new_database_with_opts([(OptionDatabase::Uri, uri.into())])
-        .map_err(adbc)?;
-    let mut connection = database.new_connection().map_err(adbc)?;
-    let mut statement = connection.new_statement().map_err(adbc)?;
-    statement.set_sql_query(sql).map_err(adbc)?;
-    let reader = statement.execute().map_err(adbc)?;
-    let schema = reader.schema();
-    let mut batches = Vec::new();
-    let mut rows = 0usize;
-    for batch in reader {
-        let batch = batch.map_err(|e| Error::Batches(e.to_string()))?;
-        rows += batch.num_rows();
-        batches.push(batch);
-        if rows > row_cap {
-            break;
+            // The source's location IS its URI — one setting names where a
+            // source lives, whatever kind it is.
+            let database = driver
+                .new_database_with_opts([(OptionDatabase::Uri, spec.location.as_str().into())])
+                .map_err(adbc)?;
+            let mut connection = database.new_connection().map_err(adbc)?;
+            let mut statement = connection.new_statement().map_err(adbc)?;
+            statement.set_sql_query(&sql).map_err(adbc)?;
+            let reader = statement.execute().map_err(adbc)?;
+            Ok((reader, statement, connection, database, driver))
+        })();
+        // The reader is read while what it came from still stands.
+        let (reader, _statement, _connection, _database, _driver) = match opened {
+            Ok(opened) => opened,
+            Err(e) => {
+                let _ = shape.send(Err(e));
+                return;
+            }
+        };
+        if shape.send(Ok(reader.schema())).is_err() {
+            return;
         }
-    }
-    Ok(SourceRead { schema, batches })
+        for batch in reader {
+            let batch = batch.map_err(|e| Error::Batches(e.to_string()));
+            if tx.blocking_send(batch).is_err() {
+                break;
+            }
+        }
+    });
+    let schema = shaped.await.map_err(|_| Error::Relational {
+        name,
+        detail: "the driver's thread ended before it answered".into(),
+    })??;
+    let rows = futures::stream::unfold(rx, |mut rx| async { rx.recv().await.map(|b| (b, rx)) });
+    Ok((schema, Box::pin(rows)))
 }
 
 /// Best effort, honestly so: the backend speaks its own dialect, which

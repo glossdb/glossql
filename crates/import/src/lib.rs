@@ -11,6 +11,11 @@
 //! relational source runs its SQL **at the source** over ADBC (`adbc`
 //! module): the driver returns Arrow batches, so what the source computed
 //! is what lands.
+//!
+//! Either way a recipe opens as a stream ([`open_recipe`]): its schema
+//! is known before the first row, its rows pass one batch at a time, and
+//! its account is taken once they have ([`Account::landed`]) — so what a
+//! landing holds in memory does not grow with what it lands.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -174,7 +179,8 @@ impl SourceSpec {
 #[derive(Debug)]
 pub struct Landed {
     pub schema: SchemaRef,
-    pub batches: Vec<RecordBatch>,
+    /// The rows the landing holds, counted as they were written.
+    pub rows: u64,
     /// Each scan the recipe made, in scan order: the `read_*` path it
     /// named and the rows that relation held. Relational sources scan
     /// nothing here — the source computed the SQL itself. There is
@@ -220,19 +226,13 @@ impl Landed {
         if !self.row_preserving {
             return None;
         }
-        scanned.checked_sub(self.landed_rows() as u64)
-    }
-
-    /// What this landing holds — the one count every summary derives
-    /// from.
-    pub fn landed_rows(&self) -> usize {
-        self.batches.iter().map(|b| b.num_rows()).sum()
+        scanned.checked_sub(self.rows)
     }
 
     /// The outcome's row accounting, sized to what the counts can
     /// honestly say.
     pub fn row_summary(&self) -> String {
-        let landed_rows = self.landed_rows();
+        let landed_rows = self.rows;
         if let Some(dropped) = self.dropped_rows() {
             return format!("{landed_rows} rows landed, {dropped} dropped");
         }
@@ -249,78 +249,139 @@ impl Landed {
     }
 }
 
-/// Run a recipe against its source and return the batches that will land
-/// as the table — exactly the schema the recipe's SQL produced (the
-/// probe's rehearsed identity), folded only where Iceberg v2 cannot hold
-/// a type. Typing is authored: an uncast csv/json
-/// column is Utf8 because the read side is, never because the import
-/// refolds it.
-pub async fn run_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Landed> {
+/// A recipe's rows as they arrive, one batch in memory at a time.
+pub type Rows = futures::stream::BoxStream<'static, Result<RecordBatch>>;
+
+/// A recipe opened against its source: the schema it lands — exactly the
+/// schema the recipe's SQL produced (the probe's rehearsed identity),
+/// folded only where Iceberg v2 cannot hold a type — known before the
+/// first row, and the rows as a stream. Typing is authored: an uncast
+/// csv/json column is Utf8 because the read side is, never because the
+/// import refolds it.
+pub struct Recipe {
+    pub schema: SchemaRef,
+    pub rows: Rows,
+    /// What accounts for the landing once its rows have passed.
+    pub account: Account,
+}
+
+/// What a landing's accounting reads, held until the rows have passed:
+/// the counts are taken against what landed, so they come last.
+pub struct Account {
+    schema: SchemaRef,
+    /// A file source's reader and what its recipe scanned; a relational
+    /// source computed its own SQL and scanned nothing here.
+    files: Option<(SessionContext, Scanned, String)>,
+}
+
+/// Open a recipe against its source. A recipe the source cannot plan is
+/// refused here, before anything is read.
+pub async fn open_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Recipe> {
     if spec.kind == SourceKind::RelationalDb {
-        // The source computed the SQL itself, so its result set is both
-        // what was read and what lands — dropped is structurally zero
-        // here; which rows a WHERE excluded is the source's own answer.
-        let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, usize::MAX))?;
-        let (schema, batches) = normalize::compat(read.schema, read.batches)?;
-        return Ok(Landed {
-            schema,
-            batches,
-            source_scans: Vec::new(),
-            row_preserving: true,
-            casts: CastAccounting::Unchecked(
-                "the recipe ran at the source — its dialect owns the casts".into(),
-            ),
+        let (schema, rows) = adbc::stream_at_source(spec, sql).await?;
+        let schema = normalize::compat_schema(&schema);
+        let shape = Arc::clone(&schema);
+        return Ok(Recipe {
+            schema: Arc::clone(&schema),
+            rows: Box::pin(rows.map(move |b| normalize::compat_batch(b?, &shape))),
+            account: Account {
+                schema,
+                files: None,
+            },
         });
     }
     let seen: Scanned = Arc::default();
     let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)))?;
-
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "recipe", Error::Recipe, e).await),
     };
-    let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
-    let batches = df.collect().await?;
-
-    let mut source_scans = Vec::new();
-    let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
-    for (name, provider) in scanned {
-        let rows = ctx.read_table(provider)?.count().await? as u64;
-        source_scans.push((name, rows));
-    }
-
-    // One shape analysis, two readers. A `Checked` plan means the recipe
-    // is a flat SELECT — the fact the row counts need — and that fact
-    // must survive a companion query failing below, which only makes the
-    // casts unchecked.
-    let plan = accounting::plan(sql);
-    let row_preserving = matches!(plan, accounting::Plan::Checked { .. });
-
-    // The landing succeeded; the accounting is best effort on top of it —
-    // a companion that errors becomes a disclosed note, never a failure.
-    let casts = match plan {
-        accounting::Plan::Unchecked(note) => CastAccounting::Unchecked(note),
-        accounting::Plan::Checked { targets, .. } if targets.is_empty() => {
-            CastAccounting::Checked(Vec::new())
-        }
-        accounting::Plan::Checked {
-            counts_sql,
-            targets,
-            select,
-        } => match account_casts(&ctx, &counts_sql, &targets, &select).await {
-            Ok(checks) => CastAccounting::Checked(checks),
-            Err(e) => CastAccounting::Unchecked(format!("companion query failed: {e}")),
+    let schema = normalize::compat_schema(df.schema().as_arrow());
+    let shape = Arc::clone(&schema);
+    let rows = df.execute_stream().await?;
+    Ok(Recipe {
+        schema: Arc::clone(&schema),
+        rows: Box::pin(rows.map(move |b| normalize::compat_batch(b?, &shape))),
+        account: Account {
+            schema,
+            files: Some((ctx, seen, sql.to_string())),
         },
-    };
-
-    let (schema, batches) = normalize::compat(schema, batches)?;
-    Ok(Landed {
-        schema,
-        batches,
-        source_scans,
-        row_preserving,
-        casts,
     })
+}
+
+impl Account {
+    /// The landing's account, once its `rows` rows have been written.
+    pub async fn landed(self, rows: u64) -> Result<Landed> {
+        let Some((ctx, seen, sql)) = self.files else {
+            // The source computed the SQL itself, so its result set is
+            // both what was read and what lands — dropped is
+            // structurally zero here; which rows a WHERE excluded is the
+            // source's own answer.
+            return Ok(Landed {
+                schema: self.schema,
+                rows,
+                source_scans: Vec::new(),
+                row_preserving: true,
+                casts: CastAccounting::Unchecked(
+                    "the recipe ran at the source — its dialect owns the casts".into(),
+                ),
+            });
+        };
+        // What each scanned relation holds — the relation's own count,
+        // never the rows its scan emitted: a scan under a LIMIT or
+        // pruned by a filter emits fewer than the relation holds, and
+        // the difference against the landing is what was dropped.
+        let mut source_scans = Vec::new();
+        let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
+        for (name, provider) in scanned {
+            let held = ctx.read_table(provider)?.count().await? as u64;
+            source_scans.push((name, held));
+        }
+
+        // One shape analysis, two readers. A `Checked` plan means the recipe
+        // is a flat SELECT — the fact the row counts need — and that fact
+        // must survive a companion query failing below, which only makes the
+        // casts unchecked.
+        let plan = accounting::plan(&sql);
+        let row_preserving = matches!(plan, accounting::Plan::Checked { .. });
+
+        // The landing succeeded; the accounting is best effort on top of it —
+        // a companion that errors becomes a disclosed note, never a failure.
+        let casts = match plan {
+            accounting::Plan::Unchecked(note) => CastAccounting::Unchecked(note),
+            accounting::Plan::Checked { targets, .. } if targets.is_empty() => {
+                CastAccounting::Checked(Vec::new())
+            }
+            accounting::Plan::Checked {
+                counts_sql,
+                targets,
+                select,
+            } => match account_casts(&ctx, &counts_sql, &targets, &select).await {
+                Ok(checks) => CastAccounting::Checked(checks),
+                Err(e) => CastAccounting::Unchecked(format!("companion query failed: {e}")),
+            },
+        };
+        Ok(Landed {
+            schema: self.schema,
+            rows,
+            source_scans,
+            row_preserving,
+            casts,
+        })
+    }
+}
+
+/// A recipe run whole: its rows collected, then its account — for a
+/// caller that wants the result in hand and lands nothing.
+pub async fn run_recipe(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+) -> Result<(Landed, Vec<RecordBatch>)> {
+    let recipe = open_recipe(env, spec, sql).await?;
+    let batches: Vec<RecordBatch> = futures::TryStreamExt::try_collect(recipe.rows).await?;
+    let rows = batches.iter().map(|b| b.num_rows() as u64).sum();
+    Ok((recipe.account.landed(rows).await?, batches))
 }
 
 /// Run the companion queries: one aggregate for every cast column's
@@ -636,10 +697,21 @@ pub async fn run_probe(
     row_cap: usize,
 ) -> Result<Vec<RecordBatch>> {
     if spec.kind == SourceKind::RelationalDb {
-        let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, row_cap))?;
-        let mut batches = read.batches;
+        // No plan of ours to carry a limit: the read stops one batch
+        // past the cap, and dropping the stream ends it at the driver.
+        let (schema, mut rows) = adbc::stream_at_source(spec, sql).await?;
+        let mut batches = Vec::new();
+        let mut held = 0usize;
+        while let Some(batch) = rows.next().await {
+            let batch = batch?;
+            held += batch.num_rows();
+            batches.push(batch);
+            if held > row_cap {
+                break;
+            }
+        }
         if batches.is_empty() {
-            batches.push(RecordBatch::new_empty(read.schema));
+            batches.push(RecordBatch::new_empty(schema));
         }
         return Ok(batches);
     }

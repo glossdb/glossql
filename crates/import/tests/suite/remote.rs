@@ -42,14 +42,14 @@ async fn live_source_in_an_object_store() {
         "the listing names the file: {files:?}"
     );
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec,
         "SELECT id, amount FROM read_csv('2026/ledger.csv')",
     )
     .await
     .expect("a landing");
-    let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
+    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(rows, 2);
     assert_eq!(
         landed.source_scans,

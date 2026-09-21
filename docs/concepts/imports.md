@@ -66,6 +66,13 @@ its own dialect; at a file source the server runs it, with
 location and `try_to_date` / `try_to_timestamp` registered. The
 default recipe is `SELECT *`.
 
+**A landing streams.** The recipe's rows are written as they arrive,
+one batch in memory, and join the table as one commit — so the size of
+a first landing is bounded by the store, not by the server's memory. A
+recipe that fails part-way leaves no table. A changed recipe runs
+whole before the landing it replaces is dropped, so that one is held
+in memory.
+
 **Cast accounting.** The engine keeps one number per import —
 `dropped_rows_count`, source rows minus landed rows — in the
 statement's outcome and in the `imports` relation for history. Which

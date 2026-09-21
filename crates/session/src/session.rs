@@ -18,7 +18,7 @@ use datafusion::sql::sqlparser::ast::{
     FromTable, Ident, ObjectType, Statement as SQLStatement, TableFactor, visit_relations,
 };
 use datafusion::sql::sqlparser::parser::ParserError;
-use futures::StreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
 
 use glossql_catalog::{IcebergCatalogProvider, Lake};
@@ -786,23 +786,29 @@ impl Session {
                     // recipe drops the old landing and its
                     // evidence, then lands fresh. Glosses stay — the
                     // snapshot id discloses their age.
-                    //
-                    // The new recipe runs *first*: until its SQL has
-                    // produced batches there is nothing to replace the
-                    // old landing with, and a recipe that errors must
-                    // not have destroyed the table it was replacing.
                     let replaced = admission == RecipeAdmission::Replaced
                         && lake.table_exists(dataset, table).await?;
-                    let landed = glossql_import::run_recipe(
+                    let recipe = glossql_import::open_recipe(
                         &self.shared.env(),
                         &self.source_spec(&d.source.value).await?,
                         &d.sql,
                     )
                     .await?;
-                    if replaced {
+                    let rows = if replaced {
+                        // The new recipe runs *first*, whole: until its
+                        // SQL has produced its rows there is nothing to
+                        // replace the old landing with, and a recipe
+                        // that errors must not have destroyed the table
+                        // it was replacing.
+                        let held: Vec<RecordBatch> = recipe.rows.try_collect().await?;
                         lake.drop_table(dataset, table).await?;
-                    }
-                    let (summary, casts) = self.materialize(dataset, table, landed).await?;
+                        futures::stream::iter(held.into_iter().map(Ok)).boxed()
+                    } else {
+                        recipe.rows
+                    };
+                    let (summary, casts) = self
+                        .materialize(dataset, table, recipe.schema, rows, recipe.account)
+                        .await?;
                     store.put_recipe(d).await?;
                     // The counts arrive at the decision moment: whether
                     // the dropped rows — and the cells the casts nulled
@@ -916,9 +922,44 @@ impl Session {
         &self,
         dataset: &str,
         table: &str,
-        landed: glossql_import::Landed,
+        schema: Arc<datafusion::arrow::datatypes::Schema>,
+        rows: glossql_import::Rows,
+        account: glossql_import::Account,
     ) -> Result<(String, String), SessionError> {
-        let summary = landed.row_summary();
+        let lake = self.lake();
+        lake.ensure_namespace(dataset, Default::default()).await?;
+        lake.create_table(dataset, table, &schema).await?;
+        // The rows run while they are written, so a recipe can fail
+        // with its table already created. A table this call created and
+        // could not fill goes with the failure: left standing it would
+        // refuse the retry's create. Files it had written stay in the
+        // store, referenced by nothing.
+        match self.stream_into(&lake, dataset, table, rows, account).await {
+            Ok(landed) => Ok(landed),
+            Err(e) => {
+                lake.drop_table(dataset, table).await?;
+                Err(e)
+            }
+        }
+    }
+
+    /// The landing itself: rows written as they arrive, one batch in
+    /// memory, then the account taken against what was written, then
+    /// one commit the account rides as snapshot properties.
+    async fn stream_into(
+        &self,
+        lake: &Lake,
+        dataset: &str,
+        table: &str,
+        mut rows: glossql_import::Rows,
+        account: glossql_import::Account,
+    ) -> Result<(String, String), SessionError> {
+        let mut writer = lake.writer(dataset, table).await?;
+        while let Some(batch) = rows.next().await {
+            writer.write(batch?).await?;
+        }
+        let written = writer.close().await?;
+        let landed = account.landed(written.rows).await?;
         let mut facts = std::collections::HashMap::from([(
             glossql_glossary::LANDING_SCANS_PROP.to_string(),
             serde_json::Value::Array(
@@ -940,15 +981,8 @@ impl Session {
             glossql_glossary::LANDING_CASTS_PROP.to_string(),
             landed.casts.to_json().to_string(),
         );
-        self.land(
-            dataset,
-            table,
-            Arc::clone(&landed.schema),
-            &landed.batches,
-            facts,
-        )
-        .await?;
-        Ok((summary, cast_summary(&landed.casts)))
+        lake.commit_written(written, facts).await?;
+        Ok((landed.row_summary(), cast_summary(&landed.casts)))
     }
 
     /// A probe (SPEC.md §3): the recipe rehearsal, executed at its source,

@@ -64,7 +64,7 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     let dir = tempfile::tempdir().unwrap();
     write_parquet_fixture(dir.path()).await;
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("parquet", dir.path()),
         "SELECT * FROM read_parquet('orders/*.parquet')",
@@ -76,7 +76,7 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
         vec![("orders/*.parquet".to_string(), 2)]
     );
     assert_eq!(landed.dropped_rows(), Some(0), "SELECT * drops nothing");
-    let (schema, batches) = (landed.schema, landed.batches);
+    let (schema, batches) = (landed.schema, batches);
 
     assert_eq!(schema.field(0).data_type(), &DataType::Int64);
     assert_eq!(
@@ -119,7 +119,7 @@ async fn parquet_recipe_folds_a_zoned_timestamp_onto_the_lake_zone() {
         .await
         .unwrap();
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("parquet", dir.path()),
         "SELECT * FROM read_parquet('payments/*.parquet')",
@@ -130,7 +130,7 @@ async fn parquet_recipe_folds_a_zoned_timestamp_onto_the_lake_zone() {
         landed.schema.field(0).data_type(),
         &DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()))
     );
-    let landed_at = landed.batches[0]
+    let landed_at = batches[0]
         .column(0)
         .as_any()
         .downcast_ref::<TimestampMicrosecondArray>()
@@ -149,7 +149,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
 
     // No casts authored: the read side is all-Utf8, so raw text lands
     // byte-exact — the author's default, not an import refold.
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT * FROM read_csv('accounts.csv')",
@@ -164,7 +164,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
             .all(|f| f.data_type() == &DataType::Utf8),
         "an uncast csv column is a string"
     );
-    let col = landed.batches[0]
+    let col = batches[0]
         .column(0)
         .as_any()
         .downcast_ref::<StringArray>()
@@ -178,7 +178,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
     // Authored casts land typed: the landed table is the typed table
     // — the schema the probe rehearsed, not a refold
     // (a force_utf8 refold would discard these casts).
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT account_no, try_cast(balance AS DOUBLE) AS balance \
@@ -192,7 +192,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
         &DataType::Float64,
         "the authored cast is the landed type"
     );
-    let balances = landed.batches[0]
+    let balances = batches[0]
         .column(1)
         .as_any()
         .downcast_ref::<datafusion::arrow::array::Float64Array>()
@@ -254,7 +254,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     )
     .unwrap();
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT o.id, c.region \
@@ -263,10 +263,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        3
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 3);
     // The bug this whole shape exists to prevent: 3 + 2 = 5 scanned
     // against 3 landed reads as "2 dropped", and nothing was dropped.
     assert_eq!(
@@ -287,7 +284,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     );
 
     // One provider keeps the difference: it really is the dropped count.
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id FROM read_csv('orders.csv') WHERE id > 1",
@@ -316,7 +313,7 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
          5,1.25,06.01.2026\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT order_id, \
@@ -326,10 +323,7 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        5
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 5);
 
     let glossql_import::CastAccounting::Checked(checks) = &landed.casts else {
         panic!("accounted: {:?}", landed.casts);
@@ -362,7 +356,7 @@ async fn a_composite_expression_samples_the_column_that_failed() {
          5,07.01.2026,07.01.2026 10:00\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id, \
@@ -411,7 +405,7 @@ async fn one_try_to_date_reads_a_column_of_mixed_formats() {
          5,05/06/2026\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id, try_to_date(paid, '%d/%m/%Y', '%m/%d/%Y', '%d-%b-%y') AS paid \
@@ -420,8 +414,7 @@ async fn one_try_to_date_reads_a_column_of_mixed_formats() {
     .await
     .unwrap();
 
-    let dates: Vec<Option<i32>> = landed
-        .batches
+    let dates: Vec<Option<i32>> = batches
         .iter()
         .flat_map(|b| {
             use datafusion::arrow::array::Array;
@@ -467,7 +460,7 @@ async fn accounting_discloses_what_it_cannot_account() {
     let s = spec("csv", dir.path());
 
     // An aggregating recipe has no per-row cast to account.
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
         &RuntimeEnv::default(),
         &s,
         "SELECT a, count(*) AS n FROM read_csv('t.csv') GROUP BY a",
@@ -486,7 +479,7 @@ async fn accounting_discloses_what_it_cannot_account() {
     assert_eq!(landed.dropped_rows(), None, "a GROUP BY drops no rows");
 
     // No casts: the account is complete and empty.
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
         &RuntimeEnv::default(),
         &s,
         "SELECT * FROM read_csv('t.csv')",
@@ -637,17 +630,14 @@ async fn a_relational_recipe_lands_from_sqlite() {
     }
 
     let s = relational_spec(&driver, &db.display().to_string());
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
         &RuntimeEnv::default(),
         &s,
         "SELECT order_id, amount FROM orders WHERE order_id > 1",
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        2
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
     assert!(
         landed.source_scans.is_empty(),
         "the source computed the SQL — this side scanned nothing"
@@ -725,15 +715,12 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     assert!(!escape.exists(), "nothing was written");
 
     // Reading is untouched.
-    let landed = run_recipe(
+    let (_, batches) = run_recipe(
         &RuntimeEnv::default(),
         &spec,
         "SELECT * FROM read_parquet('orders/*.parquet')",
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        2
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
 }
