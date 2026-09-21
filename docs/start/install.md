@@ -53,7 +53,10 @@ the server's identity may read — since there is no directory for
 files. The configuration is the environment the platform injects,
 secrets included — nothing is read from a file, and the image holds no
 value of its own. `GET /healthz` answers `ok` outside the gate, for a
-platform's probe, and stays off the record.
+platform's probe, and stays off the record. One server owns a
+workspace: it holds the store's head in memory, so a deployment runs
+one replica per catalog and warehouse
+([the store](../architecture/store.md)).
 
 ```bash
 docker run --rm -p 8080:8080 \
