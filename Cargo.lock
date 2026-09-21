@@ -2879,6 +2879,7 @@ dependencies = [
  "iceberg-catalog-rest",
  "iceberg-catalog-sql",
  "iceberg-datafusion",
+ "moka",
  "object_store",
  "serde",
  "serde_json",

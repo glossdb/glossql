@@ -36,7 +36,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -138,10 +138,34 @@ fn location(path: &str) -> Result<Location> {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ObjectStorageFactory;
 
+/// How many distinct property sets keep their storage. A warehouse
+/// answers one set for all its tables, so a handful covers a process; a
+/// catalog that vends fresh credentials with every load answers a new
+/// set each time, and the bound is what keeps those from accumulating.
+const HELD_STORAGES: u64 = 64;
+
+/// A property set in one order — the key a storage is held under.
+type Properties = Vec<(String, String)>;
+
+/// The storages built so far, by the properties they were built from.
+/// A REST catalog builds its FileIO anew at every table load, and a
+/// storage built anew starts with no client — a connection pool and a
+/// credential fetch per scanned table. Properties are compared whole,
+/// credentials included, so a load that carries new ones gets a client
+/// of its own.
+static STORAGES: LazyLock<moka::sync::Cache<Properties, Arc<ObjectStorage>>> =
+    LazyLock::new(|| moka::sync::Cache::new(HELD_STORAGES));
+
 #[typetag::serde(name = "GlossqlObjectStorageFactory")]
 impl StorageFactory for ObjectStorageFactory {
     fn build(&self, config: &StorageConfig) -> Result<Arc<dyn Storage>> {
-        Ok(Arc::new(ObjectStorage::new(config.props().clone())))
+        let mut key: Properties = config
+            .props()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        key.sort();
+        Ok(STORAGES.get_with(key, || Arc::new(ObjectStorage::new(config.props().clone()))))
     }
 }
 
@@ -541,6 +565,22 @@ mod tests {
     /// The split: family, the client's key, and the object key, over
     /// both families' spellings; a location without a bucket or
     /// container, or off the two families, is refused by name.
+    /// A table load with the properties of the last one gets the
+    /// storage — and so the clients — the last one built; new
+    /// properties get their own.
+    #[test]
+    fn a_repeated_load_reuses_its_storage() {
+        let thin = |s: &Arc<dyn Storage>| Arc::as_ptr(s).cast::<()>();
+        let config = |region: &str| {
+            StorageConfig::new().with_prop(iceberg::io::S3_REGION, region.to_string())
+        };
+        let first = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
+        let again = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
+        let other = ObjectStorageFactory.build(&config("eu-west-1")).unwrap();
+        assert_eq!(thin(&first), thin(&again));
+        assert_ne!(thin(&first), thin(&other));
+    }
+
     #[test]
     fn a_location_splits_into_its_store_and_its_key() {
         let at = location("s3://lake/ns/t/data/x.parquet").unwrap();
