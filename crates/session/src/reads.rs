@@ -995,7 +995,12 @@ pub(crate) async fn compute_batch(
                         name: source.clone(),
                     }))?;
             let spec = glossql_import::SourceSpec::from_settings(&source, &settings)?;
-            let files = glossql_import::list_source(&spec).await?;
+            let span =
+                tracing::info_span!("listing", source = %source, files = tracing::field::Empty);
+            let files =
+                tracing::Instrument::instrument(glossql_import::list_source(&spec), span.clone())
+                    .await?;
+            span.record("files", files.len());
             Ok(Some(source_files_batch(files).into()))
         }
         // The groundings the cube does not chart — facts and relations

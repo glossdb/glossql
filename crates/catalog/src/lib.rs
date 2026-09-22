@@ -456,7 +456,7 @@ impl Lake {
         properties: HashMap<String, String>,
     ) -> Result<()> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        let table = self.catalog.load_table(&ident).await?;
+        let table = self.load(&ident).await?;
         // Boxed: the writer stack is a deep chain of generic futures, and
         // this sits several awaits below a door. Inlined it grows every
         // caller's frame for a state machine that lives for one call.
@@ -469,7 +469,7 @@ impl Lake {
     /// until [`Lake::commit_written`].
     pub async fn writer(&self, dataset: &str, table: &str) -> Result<TableWriter> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        TableWriter::open(self.catalog.load_table(&ident).await?)
+        TableWriter::open(self.load(&ident).await?)
     }
 
     /// The commit behind every append: the written files join their
@@ -523,7 +523,13 @@ impl Lake {
                 return Ok(Arc::clone(shared));
             }
             let began = self.generation.load(Ordering::Acquire);
-            let built = Arc::new(IcebergCatalogProvider::try_new(self.catalog()).await?);
+            let built = Arc::new(
+                tracing::Instrument::instrument(
+                    IcebergCatalogProvider::try_new(self.catalog()),
+                    tracing::info_span!("mount"),
+                )
+                .await?,
+            );
             let mut slot = self.provider.write().expect("provider lock");
             if self.generation.load(Ordering::Acquire) == began {
                 *slot = Some(Arc::clone(&built));
@@ -564,18 +570,23 @@ impl Lake {
     /// it fails the read. Nothing in the language rules on that race, so
     /// the catalog's own answer is the answer.
     pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
+        let span = tracing::info_span!("pin", dataset, tables = tracing::field::Empty);
+        tracing::Instrument::instrument(self.walk(dataset), span).await
+    }
+
+    /// The walk, under its span.
+    async fn walk(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
         use std::sync::atomic::Ordering;
         self.walks.fetch_add(1, Ordering::Relaxed);
         let ns = NamespaceIdent::new(dataset.to_string());
         let idents = self.catalog.list_tables(&ns).await?;
+        tracing::Span::current().record("tables", idents.len());
         // Every table's load in flight at once, as the substrate's own
         // schema provider drives them (iceberg-datafusion schema.rs,
         // `try_join_all`): a load is catalog round trips plus a metadata
         // parse, and over a remote catalog the trips are the cost.
-        let tables = futures::future::try_join_all(
-            idents.iter().map(|ident| self.catalog.load_table(ident)),
-        )
-        .await?;
+        let tables =
+            futures::future::try_join_all(idents.iter().map(|ident| self.load(ident))).await?;
         let mut out = Vec::with_capacity(tables.len());
         for (ident, table) in idents.into_iter().zip(tables) {
             out.push(Self::pinned(ident.name, table).await?);
@@ -683,12 +694,17 @@ impl Lake {
     /// Every landing on the dataset's tables: one entry per append
     /// snapshot, its facts read back from the snapshot it rode.
     pub async fn landings(&self, dataset: &str) -> Result<Vec<Landing>> {
+        let span = tracing::info_span!("landings", dataset, tables = tracing::field::Empty);
+        tracing::Instrument::instrument(self.landings_walk(dataset), span).await
+    }
+
+    /// The walk behind [`Lake::landings`], under its span.
+    async fn landings_walk(&self, dataset: &str) -> Result<Vec<Landing>> {
         let ns = NamespaceIdent::new(dataset.to_string());
         let idents = self.catalog.list_tables(&ns).await?;
-        let tables = futures::future::try_join_all(
-            idents.iter().map(|ident| self.catalog.load_table(ident)),
-        )
-        .await?;
+        tracing::Span::current().record("tables", idents.len());
+        let tables =
+            futures::future::try_join_all(idents.iter().map(|ident| self.load(ident))).await?;
         let mut out = Vec::new();
         for (ident, table) in idents.iter().zip(&tables) {
             for snapshot in table.metadata().snapshots() {
@@ -735,7 +751,7 @@ impl Lake {
         properties: HashMap<String, String>,
     ) -> Result<()> {
         let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        let table = self.catalog.load_table(&ident).await?;
+        let table = self.load(&ident).await?;
         let tx = Transaction::new(&table);
         let mut action = tx.update_table_properties();
         for (k, v) in properties {
@@ -755,11 +771,19 @@ impl Lake {
         &self,
         ident: &TableIdent,
     ) -> Result<Option<iceberg::table::Table>> {
-        match self.catalog.load_table(ident).await {
+        match self.load(ident).await {
             Ok(table) => Ok(Some(table)),
             Err(e) if e.kind() == iceberg::ErrorKind::TableNotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// One table loaded from the catalog, under its span: the round
+    /// trips and the metadata parse every walk above is made of, so a
+    /// trace shows how many a walk ran and how long each took.
+    async fn load(&self, ident: &TableIdent) -> iceberg::Result<iceberg::table::Table> {
+        let span = tracing::info_span!("load", table = %ident.name);
+        tracing::Instrument::instrument(self.catalog.load_table(ident), span).await
     }
 
     /// Current snapshot id of `dataset.table`; `None` when the table does

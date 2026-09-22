@@ -16,6 +16,21 @@ use datafusion::physical_plan::display::DisplayableExecutionPlan;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanVisitor, visit_execution_plan};
 use futures::Stream;
 
+/// The engine's own planning between a logical plan and its first
+/// poll, under its span: the logical optimizer runs inside
+/// `create_physical_plan` (datafusion `session_state.rs`,
+/// `create_physical_plan`), then the physical planner and its
+/// optimizers. Sized by the operators it left — the span's time grows
+/// with the plan, which is what a big read pays before any row.
+pub(crate) async fn physical(
+    frame: datafusion::prelude::DataFrame,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let span = tracing::info_span!("physical", operators = tracing::field::Empty);
+    let plan = tracing::Instrument::instrument(frame.create_physical_plan(), span.clone()).await?;
+    span.record("operators", summary(plan.as_ref()).operators);
+    Ok(plan)
+}
+
 /// What the operators counted, summed over the plan.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Summary {

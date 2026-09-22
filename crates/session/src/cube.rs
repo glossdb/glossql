@@ -1011,12 +1011,25 @@ impl Surface {
             .inner
             .get_with(key, async {
                 self.cache.builds.fetch_add(1, Ordering::Relaxed);
+                let span = tracing::info_span!(
+                    "cube",
+                    dataset = %self.dataset,
+                    metric = %slot.aspect,
+                    grain = grain.map(Resolution::as_str).unwrap_or(""),
+                    rows = tracing::field::Empty,
+                );
                 // Boxed: the build's future carries the whole frame —
                 // schema, subjects, cells, the fact — and it is awaited
                 // inside moka's own, inside the read's. Left on the
                 // stack it overflows a test thread's 2 MB, which is the
                 // same reason every `build_plan` call below is pinned.
-                Arc::new(Box::pin(build_metric(shared, self, slot, grain)).await)
+                let cube = tracing::Instrument::instrument(
+                    Box::pin(build_metric(shared, self, slot, grain)),
+                    span.clone(),
+                )
+                .await;
+                span.record("rows", cube.cells.num_rows());
+                Arc::new(cube)
             })
             .await
     }
