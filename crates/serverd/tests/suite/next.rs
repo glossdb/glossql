@@ -12,7 +12,7 @@ use axum::http::{Request, Response, StatusCode, header};
 use datafusion::arrow::array::{Date32Array, Float64Array, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
-use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_glossary::{Actor, ActorKind};
 use glossql_serverd::{Access, BOOTSTRAP, DoorConfig, Plane, bootstrap, functions, router, window};
 use glossql_session::{DOORS, NoRuntime, Outcome, Session};
 use serde_json::{Value, json};
@@ -22,14 +22,7 @@ use crate::common;
 
 /// A fresh workspace with the shipped system landed.
 async fn scratch_plane() -> (tempfile::TempDir, Arc<Plane>) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
+    let (dir, store) = common::scratch_store().await;
     let plane =
         Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages());
     bootstrap(
@@ -59,7 +52,7 @@ async fn rows(session: &Session, sql: &str) -> Vec<Value> {
         .unwrap_or_else(|e| panic!("`{sql}` failed: {e}"));
     let mut out = Vec::new();
     for outcome in outcomes {
-        if let Outcome::Rows(batches) = outcome
+        if let Outcome::Rows { batches, .. } = outcome
             && !batches.is_empty()
         {
             let mut writer = arrow_json::ArrayWriter::new(Vec::new());

@@ -1,6 +1,6 @@
 //! Batch normalization before a recipe result lands as an Iceberg table.
 //!
-//! One map: `compat` folds Arrow types Iceberg 0.10.1 rejects or would
+//! One map: `compat` folds Arrow types iceberg-rust rejects or would
 //! promote to format-v3 types onto their v2 equivalents (ns timestamps →
 //! µs, `UInt64` → `Int64`, …). Nothing else touches the schema — the
 //! recipe's authored casts are the landed types (a `force_utf8`
@@ -38,33 +38,30 @@ fn compat_type(t: &DataType) -> DataType {
     }
 }
 
-/// Fold types Iceberg v2 cannot hold onto their nearest v2 shape.
-pub fn compat(
-    schema: SchemaRef,
-    batches: Vec<RecordBatch>,
-) -> Result<(SchemaRef, Vec<RecordBatch>)> {
+/// The schema a landing holds: types Iceberg v2 cannot hold folded onto
+/// their nearest v2 shape. Decided by the schema alone, so it is known
+/// before the first row.
+pub fn compat_schema(schema: &Schema) -> SchemaRef {
     let fields: Vec<Field> = schema
         .fields()
         .iter()
         .map(|f| Field::new(f.name(), compat_type(f.data_type()), f.is_nullable()))
         .collect();
-    let out_schema = Arc::new(Schema::new(fields));
-    if out_schema.fields() == schema.fields() {
-        return Ok((out_schema, batches));
+    Arc::new(Schema::new(fields))
+}
+
+/// One batch folded onto [`compat_schema`]'s shape — a batch already in
+/// it passes as it is.
+pub fn compat_batch(batch: RecordBatch, out_schema: &SchemaRef) -> Result<RecordBatch> {
+    if batch.schema().fields() == out_schema.fields() {
+        return Ok(batch);
     }
-    let out_batches = batches
-        .into_iter()
-        .map(|batch| {
-            let columns = batch
-                .columns()
-                .iter()
-                .zip(out_schema.fields())
-                .map(|(col, field)| cast(col, field.data_type()))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| Error::Batches(e.to_string()))?;
-            RecordBatch::try_new(Arc::clone(&out_schema), columns)
-                .map_err(|e| Error::Batches(e.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok((out_schema, out_batches))
+    let columns = batch
+        .columns()
+        .iter()
+        .zip(out_schema.fields())
+        .map(|(col, field)| cast(col, field.data_type()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Batches(e.to_string()))?;
+    RecordBatch::try_new(Arc::clone(out_schema), columns).map_err(|e| Error::Batches(e.to_string()))
 }

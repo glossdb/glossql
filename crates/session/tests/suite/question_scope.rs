@@ -39,7 +39,7 @@ fn human() -> Actor {
 /// Every row as `dataset|subject|aspect|key`, sorted — the identity of
 /// a question, and nothing else.
 fn keys(outcomes: &[Outcome]) -> Vec<String> {
-    let Outcome::Rows(batches) = outcomes.last().unwrap() else {
+    let Outcome::Rows { batches, .. } = outcomes.last().unwrap() else {
         panic!("expected rows")
     };
     let mut out: Vec<String> = batches

@@ -24,9 +24,14 @@
     <header><span class="eyebrow">The doors</span></header>
     <ul class="doors">
       <li>
+        <span class="path"><i>/&lt;dataset&gt;/</i>mcp</span>
+        <span class="who">the dataset's agent door</span>
+        <span class="why">One tool, <code>glossql</code>, taking statements. An agent lands, glosses and reads the dataset here; every call opens on it, and the skills are served as resources.</span>
+      </li>
+      <li>
         <span class="path"><i>/</i>mcp</span>
-        <span class="who">the agent door</span>
-        <span class="why">One tool, <code>glossql</code>, taking statements. An agent declares, glosses and reads here; <code>USE</code> picks the dataset on every call, and the skills are served as resources.</span>
+        <span class="who">the workspace's agent door</span>
+        <span class="why">The same tool over the whole workspace: sources are declared and datasets brought into being here, and <code>USE</code> picks the dataset on every call.</span>
       </li>
       <li>
         <span class="path"><i>/&lt;dataset&gt;/</i>query</span>
@@ -75,8 +80,8 @@
 
   <section class="tile">
     <header><span class="eyebrow">Connect an agent</span></header>
-    <p class="hint">One entry serves the whole workspace; the agent picks its dataset with <code>USE</code>. A workspace with no dataset yet starts here — <code>DECLARE DATASET</code> over the agent door is what creates one.</p>
-<pre class="statement">claude mcp add --transport http glossql {{ origin }}/mcp
+    <p class="hint">One entry per dataset the agent works on. A workspace with no dataset yet starts at the workspace door — <code>DECLARE DATASET</code> over <code>{{ origin }}/mcp</code> is what creates one.</p>
+<pre class="statement">claude mcp add --transport http glossql {{ origin }}/&lt;dataset&gt;/mcp
 claude mcp login glossql</pre>
   </section>
 

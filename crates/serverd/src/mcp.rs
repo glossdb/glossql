@@ -10,11 +10,11 @@ use std::sync::Arc;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
     ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema,
-    GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation, InputRequest,
-    InputRequests, InputRequiredResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, Prompt, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
-    ServerInfo, Tool,
+    GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
+    InitializeRequestParams, InitializeResult, InputRequest, InputRequests, InputRequiredResult,
+    ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt,
+    PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::model::{ListResourceTemplatesResult, ResourceTemplate};
 use rmcp::service::{RequestContext, RoleServer};
@@ -85,8 +85,6 @@ impl Brief {
 #[derive(Clone)]
 pub struct GlossqlMcp {
     plane: Arc<Plane>,
-    /// The door's knobs: the row cap.
-    doors: crate::DoorConfig,
     /// The brief: one composed line over live counts, appended to
     /// the instructions every initialize/discover serves — and, since
     /// a client fetches those once per connection, ALSO appended as a
@@ -97,12 +95,8 @@ pub struct GlossqlMcp {
 }
 
 impl GlossqlMcp {
-    pub fn new(plane: Arc<Plane>, doors: crate::DoorConfig, brief: Arc<Brief>) -> Self {
-        GlossqlMcp {
-            plane,
-            doors,
-            brief,
-        }
+    pub fn new(plane: Arc<Plane>, brief: Arc<Brief>) -> Self {
+        GlossqlMcp { plane, brief }
     }
 
     /// Recompose the brief from the store and the question derivation.
@@ -119,6 +113,23 @@ impl GlossqlMcp {
         if let Ok(mut slot) = brief.opening.write() {
             *slot = opening;
         }
+    }
+
+    /// What the handshake serves: the standing instructions, the
+    /// brief's line, and how to begin at this door. The workspace
+    /// door's opening is composed with the brief; a bound door's
+    /// caller already stands on its dataset, so the opening is the
+    /// brief on it.
+    fn instructions(&self, bound: Option<&str>) -> String {
+        let opening = match bound {
+            Some(dataset) => format!(
+                "Open with the brief the glossql skill teaches — human slots, contested, red \
+                 bands, `owed` on `{dataset}` — once, before the first write. It is a read, \
+                 not a gate: what it counts waits for the human while the work goes on."
+            ),
+            None => self.brief.opening(),
+        };
+        format!("{INSTRUCTIONS}\n\n{} {opening}", self.brief.line())
     }
 
     /// The facts, their rendering, and the opening, in one read pass.
@@ -465,14 +476,13 @@ impl GlossqlMcp {
             stance,
             note,
         } = ruling;
-        // ONE KEY IS STILL RULED PER ASPECT, deliberately. Run 4 asked
-        // about `days-in-period` three times (dso, dpo, dio) and
-        // `goods-only` twice, and fanning one answer across every
-        // aspect that discloses the key is the obvious cure — but it is
-        // the wrong one: run 2's human confirmed `goods-only` on
-        // `purchases` in the same session where they corrected it on
-        // `dpo`, on purpose. A fan-out would have silently denied them
-        // that. The key pairs the claims so the form can SAY what was
+        // ONE KEY IS STILL RULED PER ASPECT, deliberately. The same key
+        // recurs across aspects (`days-in-period` on dso, dpo and dio),
+        // and fanning one answer across every aspect that discloses the
+        // key is the obvious cure — but it is the wrong one: a human may
+        // confirm `goods-only` on `purchases` and correct it on `dpo`
+        // in the same session, on purpose, and a fan-out would silently
+        // deny them that. The key pairs the claims so the form can SAY what was
         // already ruled next door; it does not make them one claim.
         // The cheap answer (`params` below) is how the repeat stops
         // costing a re-read.
@@ -516,7 +526,18 @@ impl GlossqlMcp {
         }
     }
 
-    fn tool(&self) -> Tool {
+    /// The one tool, described for the door it is listed on: how a
+    /// call opens is the one thing the two agent doors say differently.
+    fn tool(&self, bound: Option<&str>) -> Tool {
+        let opens = match bound {
+            Some(dataset) => format!(
+                "Every call opens on `{dataset}`: its tables and columns resolve unprefixed, \
+                 another dataset's with the dataset's name in front."
+            ),
+            None => "Every call opens unbound: begin any call that names a dataset's tables or \
+                     columns with `USE <dataset>;` — a call without one is workspace-scoped."
+                .to_string(),
+        };
         let serde_json::Value::Object(schema) = serde_json::json!({
             "type": "object",
             "properties": {
@@ -536,11 +557,9 @@ impl GlossqlMcp {
                  Statements only: the skill and doc pages are rows of `pages()` — `SELECT \
                  body FROM pages() WHERE uri = 'skill://glossql/SKILL.md'` — and resources \
                  for a client that reads those. \
-                 Every call opens unbound: begin any call that names a dataset's tables or \
-                 columns with `USE <dataset>;` — a call without one is workspace-scoped. \
+                 {opens} \
                  Outcomes: a read is `{{columns, rows, row_count, truncated}}`, rows capped at \
-                 {} (GLOSSARY(), ATTEST() and the store relations sent as their own single \
-                 statement are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
+                 {} (GLOSSARY(), ATTEST() and the store relations are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
                  QUERY aspect — a metric's grounding — answers with the metric's fact row in \
                  the `metric_axes()` shape: whether the SQL plans, its behavior verb and where \
                  that came from, the axes admitted, and every served column not admitted with \
@@ -549,7 +568,7 @@ impl GlossqlMcp {
                  While the workspace holds open questions, a call that only reads the record \
                  (glossary, GLOSSARY(), ATTEST(), the store relations) carries the human's \
                  question forms; landings and data reads never do.",
-                self.doors.row_cap
+                self.plane.row_cap()
             ),
             schema,
         )
@@ -805,19 +824,31 @@ impl ServerHandler for GlossqlMcp {
                 .build(),
         );
         info.server_info = Implementation::new("glossql-serverd", env!("CARGO_PKG_VERSION"));
-        info.instructions = Some(format!(
-            "{INSTRUCTIONS}\n\n{} {}",
-            self.brief.line(),
-            self.brief.opening()
-        ));
+        info.instructions = Some(self.instructions(None));
         info
     }
 
-    /// One revision. An older client is refused with the list it could
-    /// have used (`UnsupportedProtocolVersionError`) rather than served
-    /// under semantics this door no longer implements — there is no
-    /// session for it to be given, and no server-initiated request for
-    /// it to receive.
+    /// The handshake, with the opening said for the door it came
+    /// through: a bound door's caller has its dataset already, so the
+    /// opening names the brief alone.
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        context.peer.set_peer_info(request.clone());
+        let mut result = self.negotiate_initialize(&request)?;
+        if let Some(dataset) = bound(&context) {
+            result.instructions = Some(self.instructions(Some(&dataset)));
+        }
+        Ok(result)
+    }
+
+    /// The one revision the door advertises and validates a request's
+    /// own version marker against. An older client's `initialize` is
+    /// still answered: the library falls back to the newest revision
+    /// it carries with an initialize handshake, and the door serves
+    /// that caller statelessly like every other ([`crate::router`]).
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
         std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
     }
@@ -828,72 +859,35 @@ impl ServerHandler for GlossqlMcp {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
-            tools: vec![self.tool()],
+            tools: vec![self.tool(bound(&context).as_deref())],
             ttl_ms: Some(3_600_000),
             cache_scope: Some(rmcp::model::CacheScope::Private),
             ..Default::default()
         })
     }
 
-    /// The teaching resources: the skills and the two normative
-    /// artifacts they cite. Embedded at compile time, so static per
-    /// process and cacheable like the tool list.
+    /// The teaching resources: the plane's pages, which are constants
+    /// of the binary plus the function listings built at boot — static
+    /// per process, so cacheable like the tool list.
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        let mut resources: Vec<Resource> = crate::skills::SKILLS
+        let resources = self
+            .plane
+            .pages()
             .iter()
-            .map(|s| {
-                Resource::new(s.uri(), s.name)
-                    .with_description(s.description())
-                    .with_mime_type("text/markdown")
-                    .with_size(s.body.len() as u64)
+            .map(|p| {
+                Resource::new(p.uri.clone(), p.name.clone())
+                    .with_description(p.description.clone())
+                    .with_mime_type(p.mime)
+                    .with_size(p.body.len() as u64)
             })
             .collect();
-        resources.extend(crate::skills::DOCS.iter().map(|d| {
-            Resource::new(d.uri(), d.name)
-                .with_description(d.description)
-                .with_mime_type(d.mime)
-                .with_size(d.body.len() as u64)
-        }));
-        // The trees: a skill's references after its SKILL.md, then the
-        // docs pages, then the engine's SQL guide — each listed by its
-        // first heading, which is what tells a reader when the page is
-        // worth its tokens.
-        resources.extend(
-            crate::skills::REFERENCES
-                .iter()
-                .chain(crate::skills::PAGES.iter())
-                .chain(crate::skills::VENDORED.iter())
-                .map(|p| {
-                    Resource::new(p.uri(), p.path)
-                        .with_description(p.title())
-                        .with_mime_type("text/markdown")
-                        .with_size(p.body.len() as u64)
-                }),
-        );
-        // The pages built at boot — the function listings — are the
-        // plane's; every other page is a constant of the binary.
-        resources.extend(
-            self.plane
-                .pages()
-                .iter()
-                .filter(|p| p.uri.starts_with("doc://functions/"))
-                .map(|p| {
-                    Resource::new(
-                        p.uri.clone(),
-                        p.uri.trim_start_matches("doc://").to_string(),
-                    )
-                    .with_description(p.title.clone())
-                    .with_mime_type("text/markdown")
-                    .with_size(p.body.len() as u64)
-                }),
-        );
         Ok(ListResourcesResult {
             resources,
             ttl_ms: Some(3_600_000),
@@ -935,18 +929,15 @@ impl ServerHandler for GlossqlMcp {
         if let Some(rest) = request.uri.strip_prefix("next://") {
             return self.next_resource(rest, &request.uri, &context).await;
         }
-        let (mime, body) = match crate::skills::read(&request.uri) {
-            Some((mime, body)) => (mime, body.to_string()),
-            None => self
-                .plane
-                .pages()
-                .iter()
-                .find(|p| p.uri == request.uri)
-                .map(|p| ("text/markdown", p.body.clone()))
-                .ok_or_else(|| {
-                    McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
-                })?,
-        };
+        let (mime, body) = self
+            .plane
+            .pages()
+            .iter()
+            .find(|p| p.uri == request.uri)
+            .map(|p| (p.mime, p.body.clone()))
+            .ok_or_else(|| {
+                McpError::resource_not_found(format!("no resource at `{}`", request.uri), None)
+            })?;
         Ok(ReadResourceResult::new(vec![
             ResourceContents::text(body, request.uri).with_mime_type(mime),
         ])
@@ -1016,23 +1007,19 @@ impl ServerHandler for GlossqlMcp {
         // client's own `clientInfo` name is not used: it is a string the
         // caller picks for itself on each request, so recording it would
         // put an unproven name in the actor column of the record.
-        let actor = context
-            .extensions
-            .get::<axum::http::request::Parts>()
-            .and_then(|parts| parts.extensions.get::<Caller>())
-            .map(|caller| caller.0.clone())
-            .ok_or_else(|| {
-                McpError::internal_error("the door is not behind the gate: no caller", None)
-            })?;
+        let actor = caller(&context)?;
         let id = actor.id.clone();
-        // The call opens unbound. There is no session to hold a dataset
-        // and no path segment to carry one: the statements say where
-        // they are, as `USE`, and `execute` moves with them. A call that
-        // names none is workspace-scoped, which is what reading
-        // `datasets` and writing a source-grain gloss both want.
+        // The call opens where the door says: on the dataset a bound
+        // door's URL names, or unbound at the workspace door. There is
+        // no session to hold a dataset between calls; within one, the
+        // statements say where they are, as `USE`, and `execute` moves
+        // with them. An unbound call that names none is
+        // workspace-scoped, which is what reading `datasets` and
+        // writing a source-grain gloss both want.
+        let bound = bound(&context);
         let session = self
             .plane
-            .channel(actor.clone(), None)
+            .channel(actor.clone(), bound.as_deref())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -1072,7 +1059,11 @@ impl ServerHandler for GlossqlMcp {
             } else {
                 "question-round: the retry carries no answer".into()
             };
-            tracing::info!(subject = %id, note = %note, "question-round");
+            // The account can carry the human's typed words and a
+            // rival's prose, so it is a `debug` event like a call's
+            // text; `info` says only that a round was digested.
+            tracing::info!(subject = %id, "question-round: digested");
+            tracing::debug!(subject = %id, note = %note, "question-round");
             probed = Some(note);
         } else if shape.reviews
             && context
@@ -1114,36 +1105,34 @@ impl ServerHandler for GlossqlMcp {
             }
         }
 
-        // A single query streams from the engine and stops at the cap —
-        // what the agent won't see is never computed. Metadata reads
-        // (GLOSSARY(), ATTEST(), the store relations) are exempt from
-        // the cap: the map must be whole,
-        // and the store bounds it. Everything else runs through execute.
+        // A single query streams from the engine; everything else runs
+        // through execute. Either way the session pages a data read —
+        // its plan carries the cap, so what the agent won't see is
+        // never computed — and serves a metadata read (GLOSSARY(),
+        // ATTEST(), the store relations) whole: the map must be whole,
+        // and the store bounds it.
         // What a refused sequence had already landed rides beside the
         // refusal, in the usual shape — the writes stood.
         let mut landed_json: Option<serde_json::Value> = None;
-        let rendered = match session.query_stream(statements).await {
-            Ok(query) => {
-                let cap = if query.metadata_only {
-                    usize::MAX
-                } else {
-                    self.doors.row_cap
-                };
-                wire::stream_json(query.stream, cap)
-                    .await
-                    .map(|rows| serde_json::Value::Array(vec![rows]))
-            }
+        let rendered = match session.query_page(statements).await {
+            Ok(query) => wire::stream_json(query.stream, query.cap)
+                .await
+                .map(|rows| serde_json::Value::Array(vec![rows])),
             // Statement sequences run at the plane: `USE` moves the
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
-                match self.plane.execute(actor.clone(), None, statements).await {
-                    Ok(outcomes) => wire::outcomes_json(&outcomes, self.doors.row_cap),
+                match self
+                    .plane
+                    .execute(actor.clone(), bound.as_deref(), statements)
+                    .await
+                {
+                    Ok(outcomes) => wire::outcomes_json(&outcomes),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
                             && !landed.is_empty()
                         {
-                            landed_json = wire::outcomes_json(landed, self.doors.row_cap).ok();
+                            landed_json = wire::outcomes_json(landed).ok();
                         }
                         Err(e.to_string())
                     }
@@ -1176,7 +1165,11 @@ impl ServerHandler for GlossqlMcp {
         // on every call (`window`). It rides the result, never the
         // instructions, so the stable prefix holds.
         let window = self
-            .situation_block(&actor, shape.dataset.as_deref(), &rendered)
+            .situation_block(
+                &actor,
+                shape.dataset.as_deref().or(bound.as_deref()),
+                &rendered,
+            )
             .await;
         Ok(match rendered {
             Ok(body) => {
@@ -1216,7 +1209,7 @@ impl ServerHandler for GlossqlMcp {
 impl GlossqlMcp {
     /// The two lines every result carries: where the call left the
     /// agent, and one act per goal from there (`window`) on the
-    /// dataset the call's last `USE` named.
+    /// dataset the call's last `USE` named, else the door's own.
     async fn situation_block(
         &self,
         actor: &Actor,
@@ -1268,19 +1261,7 @@ impl GlossqlMcp {
             ),
             None => "SELECT * FROM next ORDER BY goal".to_string(),
         };
-        self.rows(&session, &sql).await
-    }
-
-    /// The rows of one read, as the wire renders them.
-    async fn rows(&self, session: &Session, sql: &str) -> Result<Vec<serde_json::Value>, String> {
-        let outcomes = session.execute(sql).await.map_err(|e| e.to_string())?;
-        let rendered = wire::outcomes_json(&outcomes, usize::MAX)?;
-        Ok(rendered
-            .get(0)
-            .and_then(|o| o.get("rows"))
-            .and_then(|r| r.as_array())
-            .cloned()
-            .unwrap_or_default())
+        read_rows(&session, &sql).await
     }
 
     /// `next://<dataset>[/<surface>]` as a page: every answer with its
@@ -1316,6 +1297,44 @@ fn caller(context: &RequestContext<RoleServer>) -> Result<Actor, McpError> {
         .and_then(|parts| parts.extensions.get::<Caller>())
         .map(|caller| caller.0.clone())
         .ok_or_else(|| McpError::internal_error("the door is not behind the gate: no caller", None))
+}
+
+/// The dataset a bound agent door was opened on — `/{dataset}/mcp`,
+/// stamped onto the request by [`bind`] the way the gate stamps the
+/// caller. The workspace door (`/mcp`) carries none.
+#[derive(Clone)]
+pub struct Bound(pub String);
+
+/// The binding the request arrived with, if the door is a bound one.
+fn bound(context: &RequestContext<RoleServer>) -> Option<String> {
+    context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<Bound>())
+        .map(|bound| bound.0.clone())
+}
+
+/// The bound door's way in: the URL's first segment names the dataset,
+/// and one the workspace does not hold is a 404 that names what it
+/// does hold — the same answer the human doors give. This door reads
+/// and writes on the dataset; bringing one into being is the
+/// workspace door's.
+pub async fn bind(
+    axum::extract::State(plane): axum::extract::State<Arc<Plane>>,
+    axum::extract::Path(dataset): axum::extract::Path<String>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(missing) = crate::missing_dataset(&plane, &dataset).await {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error": missing })),
+        )
+            .into_response();
+    }
+    request.extensions_mut().insert(Bound(dataset));
+    next.run(request).await
 }
 
 #[cfg(test)]

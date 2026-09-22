@@ -5,7 +5,7 @@
 //! the surface by refusal. Each page lists what its context registers,
 //! read from that context's own registry at boot (after the shipped
 //! system landed), so a page cannot drift from the registration; the
-//! suite compares them (`tests/suite/window.rs`).
+//! suite compares them (`tests/suite/next.rs`).
 
 use std::fmt::Write as _;
 
@@ -33,7 +33,7 @@ pub async fn pages(plane: &Plane) -> Result<Vec<DoorPage>, SessionError> {
     let declared = session
         .execute("SELECT name FROM functions ORDER BY name")
         .await?;
-    if let Ok(rendered) = wire::outcomes_json(&declared, usize::MAX)
+    if let Ok(rendered) = wire::outcomes_json(&declared)
         && let Some(rows) = rendered
             .get(0)
             .and_then(|o| o.get("rows"))
@@ -93,7 +93,10 @@ fn page(name: &str, title: &str, intro: &str, list: &[Registered]) -> DoorPage {
     }
     DoorPage {
         uri: format!("doc://functions/{name}.md"),
+        name: format!("functions/{name}.md"),
         title: title.to_string(),
+        description: title.to_string(),
+        mime: "text/markdown",
         body,
     }
 }

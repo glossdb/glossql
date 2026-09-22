@@ -160,7 +160,7 @@ async fn fixture(root: &std::path::Path) {
 
 fn one(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
+        Outcome::Rows { batches, .. } => {
             let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
             datafusion::arrow::util::display::array_value_to_string(batch.column(0), 0).unwrap()
         }

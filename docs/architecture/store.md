@@ -78,9 +78,9 @@ planning itself is synchronous with nothing left to fetch.
 
 Reads stream end to end, one batch in memory at a time. The Arrow
 door never caps — the client drains the stream, and hanging up
-cancels the work upstream. The MCP door's row cap pulls batches until
-the cap is met, then drops the stream: what the reader won't see, the
-engine stops computing.
+cancels the work upstream. The MCP door's row cap is a limit on the
+read's plan: what the reader won't see, the engine is never asked
+for.
 
 ## Invalidation and disclosure
 

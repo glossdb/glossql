@@ -99,7 +99,7 @@ async fn run(session: &Session, sql: &str) -> Vec<Outcome> {
 
 async fn table(session: &Session, sql: &str) -> String {
     let outcomes = run(session, sql).await;
-    let Some(Outcome::Rows(batches)) = outcomes.into_iter().next_back() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
         panic!("`{sql}` produced no rows");
     };
     pretty_format_batches(&batches).unwrap().to_string()

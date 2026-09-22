@@ -597,8 +597,8 @@ async fn a_measurement_stands_while_what_it_read_is_unchanged() {
 
 #[tokio::test]
 async fn the_strike_is_parked_and_says_so() {
-    // The substrate cannot commit a row removal until
-    // iceberg-rust 0.11, so `DELETE FROM glossary` refuses by name —
+    // The substrate cannot commit a row removal while iceberg-rust has
+    // no delete write path, so `DELETE FROM glossary` refuses by name —
     // and anything but the glossary refuses as ever.
     let (_dir, s) = store().await;
     let e = s.forward_delete("glossary").await.unwrap_err();
@@ -846,6 +846,20 @@ async fn a_subject_is_data_in_the_scope_predicate_not_a_pattern() {
         !scope.admits("orderxitems.qty"),
         "the in-memory twin holds the same line"
     );
+}
+
+#[tokio::test]
+async fn a_dataset_cannot_take_a_reserved_name() {
+    let (_dir, s) = store().await;
+    for name in ["glossql", "mcp", "assets"] {
+        let Declaration::Dataset(ds) =
+            decl(&format!("DECLARE DATASET {name} SET (purpose: 'test');"))
+        else {
+            unreachable!()
+        };
+        let e = s.declare_dataset(&ds).await.unwrap_err();
+        assert!(matches!(e, Error::ReservedDatasetName(_)), "{e}");
+    }
 }
 
 #[tokio::test]

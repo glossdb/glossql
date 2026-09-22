@@ -652,7 +652,7 @@ async fn a_slot_walkers_measurement_owes_its_re_run_to_a_grounding_alone() {
 /// One read, rendered as text — for asserts over served relations.
 async fn grid(session: &Session, sql: &str) -> String {
     let outcomes = session.execute(sql).await.unwrap();
-    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("rows")
     };
     datafusion::arrow::util::pretty::pretty_format_batches(batches)
@@ -666,7 +666,7 @@ async fn cell(session: &Session, sql: &str) -> String {
         .execute(sql)
         .await
         .unwrap_or_else(|e| panic!("`{sql}`: {e}"));
-    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("rows")
     };
     let batch = batches
@@ -1044,7 +1044,7 @@ async fn the_stock_total_sums_the_months_latest_snapshot() {
     );
 }
 
-/// The declared grain (SPEC §5.2, corpus fixture 21) is validated
+/// The declared grain (SPEC §5.2, corpus fixture 26) is validated
 /// where the frame is built: one row per key or the metric abstains,
 /// because a frame that breaks its declared identity multiplies every
 /// aggregating reader and nothing downstream can tell duplication from

@@ -8,6 +8,17 @@ use glossql_session::Matrix;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+/// How long the service has to accept a connection.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long one call may take, whole: the bound the kernel service
+/// puts on a request of its own, so the client gives up where the
+/// service would have.
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The interval of the TCP keepalive on a call in flight.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A kernel service: where, and the bearer it expects.
 pub struct Remote {
     client: reqwest::Client,
@@ -33,7 +44,14 @@ impl Remote {
                 "GLOSSQL_TABICL_URL is `{url}` — the kernel service's http(s) address"
             ));
         }
+        // A kernel's answer takes as long as its model does, up to the
+        // service's own bound; reaching the service is bounded apart,
+        // and a peer that has gone away is noticed by the keepalive
+        // rather than waited out.
         let client = reqwest::Client::builder()
+            .timeout(CALL_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .tcp_keepalive(KEEPALIVE)
             .build()
             .map_err(|e| format!("the kernel service client does not build: {e}"))?;
         Ok(Remote {

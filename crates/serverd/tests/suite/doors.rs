@@ -23,9 +23,19 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 async fn app_with(doors: DoorConfig, login: Arc<Login>) -> (Router, tempfile::TempDir) {
-    let (dir, store) = scratch_store().await;
+    app_capped(glossql_serverd::DEFAULT_ROW_CAP, doors, login).await
+}
+
+async fn app_capped(
+    row_cap: usize,
+    doors: DoorConfig,
+    login: Arc<Login>,
+) -> (Router, tempfile::TempDir) {
+    let (dir, store) = common::scratch_store().await;
     let plane = Arc::new(
-        Plane::new(store, Arc::new(NoRuntime)).with_pages(glossql_serverd::skills::door_pages()),
+        Plane::new(store, Arc::new(NoRuntime))
+            .with_row_cap(row_cap)
+            .with_pages(glossql_serverd::skills::door_pages()),
     );
     (router(plane, doors, Access::Gated(login)), dir)
 }
@@ -314,7 +324,7 @@ async fn the_token_names_the_subject_and_the_door_names_the_standing() {
 /// with no 401 to answer, a client is never sent to authenticate.
 #[tokio::test(flavor = "multi_thread")]
 async fn open_doors_ask_no_token_and_stamp_the_dev_actor() {
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let plane = Arc::new(Plane::new(store, Arc::new(NoRuntime)));
     let app = router(plane, DoorConfig::default(), Access::Open);
 
@@ -704,6 +714,24 @@ async fn a_browser_signs_in_at_the_issuer_and_comes_back_with_a_cookie() {
 
     // The cookie opens a human door.
     let cookie = token_cookie.split(';').next().unwrap().to_string();
+    // And no agent door: a browser's session never speaks as an agent.
+    let as_agent = app
+        .clone()
+        .oneshot(
+            Request::post("/mcp")
+                .header(header::HOST, "127.0.0.1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header(header::COOKIE, &cookie)
+                .body(Body::from(
+                    json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(as_agent.status(), StatusCode::UNAUTHORIZED);
     let docket = app
         .clone()
         .oneshot(
@@ -784,7 +812,7 @@ async fn the_discovery_document_and_the_assets_answer_without_a_token() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_probe_answers_without_a_token_in_both_arrangements() {
     let (gated, _dir) = app().await;
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let open = router(
         Arc::new(Plane::new(store, Arc::new(NoRuntime))),
         DoorConfig::default(),
@@ -809,8 +837,13 @@ async fn mcp(app: Router, payload: Value) -> Response<Body> {
 
 /// The same call under the `Host` a client would send.
 async fn mcp_at(app: Router, host: &str, payload: Value) -> Response<Body> {
+    mcp_on(app, "/mcp", host, payload).await
+}
+
+/// The call at `path` — the workspace door or a dataset's bound door.
+async fn mcp_on(app: Router, path: &str, host: &str, payload: Value) -> Response<Body> {
     let method = payload["method"].as_str().unwrap().to_string();
-    let mut request = Request::post("/mcp")
+    let mut request = Request::post(path)
         // oneshot skips what every real client sends; the transport's
         // rebinding guard (allowed_hosts) rightly insists on it.
         .header(header::HOST, host)
@@ -1172,6 +1205,71 @@ async fn the_mcp_door_executes_and_reports_refusals_as_tool_errors() {
     let body = expect_ok(mcp(app, initialize()).await).await;
     let instructions = body["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("Live now:"), "{instructions}");
+}
+
+/// The bound agent door: `/{dataset}/mcp` opens every call on the
+/// dataset its URL names, the way `/{dataset}/query` does, so a call
+/// needs no `USE` to read the dataset's relations and gets the
+/// dataset's `next` line on every result. The workspace door keeps
+/// opening unbound, and a dataset the workspace does not hold is the
+/// same 404 the human doors answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_bound_agent_door_opens_every_call_on_its_dataset() {
+    let (app, _dir) = app_on_fin().await;
+    let read = |id| call_with(meta(), id, "SELECT dataset FROM current_dataset", None);
+
+    let body = expect_ok(mcp_on(app.clone(), "/fin/mcp", "127.0.0.1", read(1)).await).await;
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(
+        outcomes[0]["rows"][0]["dataset"],
+        json!("fin"),
+        "{outcomes}"
+    );
+    let window = body["result"]["content"][1]["text"].as_str().unwrap();
+    assert!(window.contains("next:"), "{window}");
+
+    // `USE` inside a call still moves the statements after it.
+    let body = expect_ok(
+        mcp_on(
+            app.clone(),
+            "/fin/mcp",
+            "127.0.0.1",
+            call_with(meta(), 2, "USE nothing; SELECT 1", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["result"]["isError"], json!(true), "{body}");
+
+    // The workspace door opens unbound: the relation serves no row and
+    // no `next` line rides the result.
+    let body = expect_ok(mcp(app.clone(), read(3)).await).await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["row_count"], json!(0), "{outcomes}");
+    let window = body["result"]["content"][1]["text"].as_str().unwrap();
+    assert!(!window.contains("next:"), "{window}");
+
+    // Each door describes its own opening on the one tool, and the
+    // handshake's opening says the same.
+    let list = |id| json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {"_meta": meta()}});
+    let body = expect_ok(mcp_on(app.clone(), "/fin/mcp", "127.0.0.1", list(4)).await).await;
+    let description = body["result"]["tools"][0]["description"].as_str().unwrap();
+    assert!(description.contains("opens on `fin`"), "{description}");
+    let body = expect_ok(mcp(app.clone(), list(5)).await).await;
+    let description = body["result"]["tools"][0]["description"].as_str().unwrap();
+    assert!(description.contains("opens unbound"), "{description}");
+    let body = expect_ok(mcp_on(app.clone(), "/fin/mcp", "127.0.0.1", initialize()).await).await;
+    let instructions = body["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("`owed` on `fin`"), "{instructions}");
+    assert!(!instructions.contains("`USE` a dataset"), "{instructions}");
+
+    let response = mcp_on(app, "/nope/mcp", "127.0.0.1", read(6)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = body_json(response).await;
+    assert!(body["error"].as_str().unwrap().contains("fin"), "{body}");
 }
 
 fn call_with(meta_value: Value, id: u64, statements: &str, retry: Option<(&str, Value)>) -> Value {
@@ -1784,14 +1882,7 @@ async fn the_clients_own_name_never_reaches_the_record() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_reads_pass_the_cap_uncapped() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..DoorConfig::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_capped(3, DoorConfig::default(), common::login()).await;
     let call = |id: u64, statements: &str| {
         json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1827,6 +1918,21 @@ async fn metadata_reads_pass_the_cap_uncapped() {
     assert_eq!(outcomes[0]["row_count"], json!(5), "{outcomes}");
     assert_eq!(outcomes[0]["truncated"], json!(false));
 
+    // The same sweep behind a `USE` — the agent's usual call — runs as
+    // a sequence and arrives whole all the same.
+    let body = expect_ok(
+        mcp(
+            app.clone(),
+            call(10, "USE fin; SELECT subject FROM glossary;"),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[1]["row_count"], json!(5), "{outcomes}");
+    assert_eq!(outcomes[1]["truncated"], json!(false));
+
     let body = expect_ok(
         mcp(
             app,
@@ -1846,17 +1952,10 @@ async fn metadata_reads_pass_the_cap_uncapped() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mcp_door_caps_rows_and_declares_it() {
-    let (app, _dir) = app_with(
-        DoorConfig {
-            row_cap: 3,
-            ..DoorConfig::default()
-        },
-        common::login(),
-    )
-    .await;
+    let (app, _dir) = app_capped(3, DoorConfig::default(), common::login()).await;
     let body = expect_ok(
         mcp(
-            app,
+            app.clone(),
             json!({
                 "jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {
@@ -1876,6 +1975,36 @@ async fn the_mcp_door_caps_rows_and_declares_it() {
     assert_eq!(outcomes[0]["rows"].as_array().unwrap().len(), 3);
     assert_eq!(outcomes[0]["row_count"], json!(3));
     assert_eq!(outcomes[0]["truncated"], json!(true));
+
+    // A data read inside a sequence is cut at the same row and says so:
+    // the session that collected it carried the cap in the read's plan.
+    let body = expect_ok(
+        mcp(
+            app,
+            json!({
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": {
+                    "_meta": meta(),
+                    "name": "glossql",
+                    "arguments": {"statements":
+                        "SELECT 1 AS one; \
+                         SELECT * FROM (VALUES (1), (2), (3), (4), (5)) AS t(v) ORDER BY v DESC"}
+                }
+            }),
+        )
+        .await,
+    )
+    .await;
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let outcomes: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(outcomes[0]["truncated"], json!(false), "{outcomes}");
+    assert_eq!(
+        outcomes[1]["rows"],
+        json!([{"v": 5}, {"v": 4}, {"v": 3}]),
+        "{outcomes}"
+    );
+    assert_eq!(outcomes[1]["row_count"], json!(3));
+    assert_eq!(outcomes[1]["truncated"], json!(true));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2545,19 +2674,6 @@ async fn a_filter_on_the_affordance_map_neither_widens_nor_zeroes_it() {
         .filter_map(|r| r["surface"].as_str())
         .collect();
     assert_eq!(surfaces, vec!["sources", "tables"], "{some_rows:?}");
-}
-
-/// A store over its own throwaway lake; hold the dir for the test's life.
-async fn scratch_store() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
-    (dir, store)
 }
 
 /// The opening names where to begin, from what stands: a workspace

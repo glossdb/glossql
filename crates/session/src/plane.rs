@@ -180,6 +180,11 @@ impl Plane {
         self
     }
 
+    /// Rows a data read ships before a door declares `truncated`.
+    pub fn row_cap(&self) -> usize {
+        self.row_cap
+    }
+
     /// The process-wide byte budget for cubes, in megabytes (serverd's
     /// `--cube-cache`). The `cube` aspect bounds one cube; this bounds
     /// them all. Set before the first channel is built.
@@ -208,12 +213,6 @@ impl Plane {
         self
     }
 
-    /// The cache itself — for the doors' instruments and the tests that
-    /// count builds.
-    pub fn cube_cache(&self) -> &CubeCache {
-        &self.cube
-    }
-
     /// The workspace's declared datasets — for doors that bind by
     /// convention: an app without a pinned dataset binds to the sole one.
     pub async fn datasets(&self) -> Result<Vec<String>, SessionError> {
@@ -222,6 +221,12 @@ impl Plane {
             .into_iter()
             .filter_map(|row| row.into_iter().next().flatten())
             .collect())
+    }
+
+    /// Whether the workspace holds `name` — one existence question at
+    /// the catalog, for a door that was told a dataset by its URL.
+    pub async fn dataset_exists(&self, name: &str) -> Result<bool, SessionError> {
+        Ok(self.store.dataset_exists(name).await?)
     }
 
     /// A channel onto a dataset, built for this call and dropped with

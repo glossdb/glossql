@@ -11,6 +11,11 @@
 //! relational source runs its SQL **at the source** over ADBC (`adbc`
 //! module): the driver returns Arrow batches, so what the source computed
 //! is what lands.
+//!
+//! Either way a recipe opens as a stream ([`open_recipe`]): its schema
+//! is known before the first row, its rows pass one batch at a time, and
+//! its account is taken once they have ([`Account::landed`]) — so what a
+//! landing holds in memory does not grow with what it lands.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -40,8 +45,10 @@ use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
 use datafusion::error::DataFusionError;
+use datafusion::execution::object_store::DefaultObjectStoreRegistry;
+use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion::logical_expr::Expr;
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::scalar::ScalarValue;
 use futures::StreamExt as _;
 
@@ -55,9 +62,9 @@ pub enum Error {
     Relational { name: String, detail: String },
     #[error("recipe failed: {0}")]
     Recipe(#[from] DataFusionError),
-    /// The same engine failure, named for the statement that caused it.
-    /// A refused PROBE used to answer "recipe failed", which sends the
-    /// author looking at a recipe they have not written yet (run 4).
+    /// The same engine failure, named for the statement that caused it:
+    /// a refused PROBE answering "recipe failed" would send the author
+    /// looking at a recipe they have not written yet.
     #[error("probe failed: {0}")]
     Probe(DataFusionError),
     /// The engine's `table '…' not found` from a recipe or probe at a
@@ -77,6 +84,8 @@ pub enum Error {
     List(DataFusionError),
     #[error("recipe result: {0}")]
     Batches(String),
+    #[error("import refused: {0}")]
+    Import(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +181,11 @@ impl SourceSpec {
 #[derive(Debug)]
 pub struct Landed {
     pub schema: SchemaRef,
-    pub batches: Vec<RecordBatch>,
+    /// The rows the landing holds, counted as they were written.
+    pub rows: u64,
+    /// The source files the landing read, listed before it ran — what
+    /// a later import leaves out. A relational source has none.
+    pub files: Vec<SourceFile>,
     /// Each scan the recipe made, in scan order: the `read_*` path it
     /// named and the rows that relation held. Relational sources scan
     /// nothing here — the source computed the SQL itself. There is
@@ -218,19 +231,13 @@ impl Landed {
         if !self.row_preserving {
             return None;
         }
-        scanned.checked_sub(self.landed_rows() as u64)
-    }
-
-    /// What this landing holds — the one count every summary derives
-    /// from.
-    pub fn landed_rows(&self) -> usize {
-        self.batches.iter().map(|b| b.num_rows()).sum()
+        scanned.checked_sub(self.rows)
     }
 
     /// The outcome's row accounting, sized to what the counts can
     /// honestly say.
     pub fn row_summary(&self) -> String {
-        let landed_rows = self.landed_rows();
+        let landed_rows = self.rows;
         if let Some(dropped) = self.dropped_rows() {
             return format!("{landed_rows} rows landed, {dropped} dropped");
         }
@@ -247,78 +254,263 @@ impl Landed {
     }
 }
 
-/// Run a recipe against its source and return the batches that will land
-/// as the table — exactly the schema the recipe's SQL produced (the
-/// probe's rehearsed identity), folded only where Iceberg v2 cannot hold
-/// a type. Typing is authored: an uncast csv/json
-/// column is Utf8 because the read side is, never because the import
-/// refolds it.
-pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
+/// A recipe's rows as they arrive, one batch in memory at a time.
+pub type Rows = futures::stream::BoxStream<'static, Result<RecordBatch>>;
+
+/// A recipe opened against its source: the schema it lands — exactly the
+/// schema the recipe's SQL produced (the probe's rehearsed identity),
+/// folded only where Iceberg v2 cannot hold a type — known before the
+/// first row, and the rows as a stream. Typing is authored: an uncast
+/// csv/json column is Utf8 because the read side is, never because the
+/// import refolds it.
+pub struct Recipe {
+    pub schema: SchemaRef,
+    pub rows: Rows,
+    /// What accounts for the landing once its rows have passed.
+    pub account: Account,
+}
+
+/// What a landing's accounting reads, held until the rows have passed:
+/// the counts are taken against what landed, so they come last.
+pub struct Account {
+    schema: SchemaRef,
+    /// A file source's reader and what its recipe scanned; a relational
+    /// source computed its own SQL and scanned nothing here.
+    files: Option<(SessionContext, Scanned, String)>,
+    read: Vec<SourceFile>,
+}
+
+/// Open a recipe against its source. A recipe the source cannot plan is
+/// refused here, before anything is read.
+pub async fn open_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Recipe> {
     if spec.kind == SourceKind::RelationalDb {
-        // The source computed the SQL itself, so its result set is both
-        // what was read and what lands — dropped is structurally zero
-        // here; which rows a WHERE excluded is the source's own answer.
-        let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, usize::MAX))?;
-        let (schema, batches) = normalize::compat(read.schema, read.batches)?;
-        return Ok(Landed {
-            schema,
-            batches,
-            source_scans: Vec::new(),
-            row_preserving: true,
-            casts: CastAccounting::Unchecked(
-                "the recipe ran at the source — its dialect owns the casts".into(),
-            ),
+        let (schema, rows) = adbc::stream_at_source(spec, sql).await?;
+        let schema = normalize::compat_schema(&schema);
+        let shape = Arc::clone(&schema);
+        return Ok(Recipe {
+            schema: Arc::clone(&schema),
+            rows: Box::pin(rows.map(move |b| normalize::compat_batch(b?, &shape))),
+            account: Account {
+                schema,
+                files: None,
+                read: Vec::new(),
+            },
         });
     }
-    let seen: Scanned = Arc::default();
-    let ctx = reader_ctx(spec, Some(Arc::clone(&seen)))?;
+    let pinned = pin(env, spec, sql).await?;
+    open_pinned(env, spec, sql, pinned).await
+}
 
+/// The files each `read_*` path of `sql` stands for, listed now — before
+/// planning, where waiting on a store is free, and so that the scan reads
+/// the list and the landing records it, one list for both.
+async fn pin(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Result<Pinned> {
+    let root = Root::of(spec)?;
+    let ctx = reader_ctx(env, spec, None, Pinned::new())?;
+    let mut pinned = Pinned::new();
+    for rel in accounting::file_scans(sql) {
+        // A path the root refuses is refused where the recipe plans,
+        // with the planner's words.
+        let Ok(url) = root.resolve(&rel) else {
+            continue;
+        };
+        let extension = listing_options(spec.kind, &rel).file_extension;
+        let files = list_under(&ctx, &root, &url, &extension).await?;
+        // A path that reaches nothing is left to the scan, which says so.
+        if !files.is_empty() {
+            pinned.insert(rel, files);
+        }
+    }
+    Ok(pinned)
+}
+
+async fn open_pinned(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    pinned: Pinned,
+) -> Result<Recipe> {
+    open_checked(env, spec, sql, pinned, false).await
+}
+
+/// [`open_pinned`], refusing a recipe whose plan an append cannot stand
+/// for when `appending` — checked on the plan, before a row is read.
+async fn open_checked(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    pinned: Pinned,
+    appending: bool,
+) -> Result<Recipe> {
+    let read: Vec<SourceFile> = pinned.values().flatten().cloned().collect();
+    let seen: Scanned = Arc::default();
+    let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)), pinned)?;
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "recipe", Error::Recipe, e).await),
     };
-    let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
-    let batches = df.collect().await?;
+    if appending {
+        accounting::appendable(df.logical_plan()).map_err(Error::Import)?;
+    }
+    let schema = normalize::compat_schema(df.schema().as_arrow());
+    let shape = Arc::clone(&schema);
+    let rows = df.execute_stream().await?;
+    Ok(Recipe {
+        schema: Arc::clone(&schema),
+        rows: Box::pin(rows.map(move |b| normalize::compat_batch(b?, &shape))),
+        account: Account {
+            schema,
+            files: Some((ctx, seen, sql.to_string())),
+            read,
+        },
+    })
+}
 
-    let mut source_scans = Vec::new();
-    let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
-    for (name, provider) in scanned {
-        let rows = ctx.read_table(provider)?.count().await? as u64;
-        source_scans.push((name, rows));
+/// What an import found at the source.
+pub enum Update {
+    /// The source holds no file the table has not landed.
+    Unchanged,
+    /// The recipe opened over the new files alone.
+    Rows(Recipe),
+}
+
+/// Open a data update: the recipe over the files its source holds that
+/// `landed` does not. An import's meaning is the recipe's result as the
+/// source stands now; appending the new files' rows *is* that result
+/// exactly when the recipe maps rows one for one over a single scan and
+/// every landed file still stands as it landed — anything else is
+/// refused by name, because the lake cannot yet replace a table's rows
+/// in one commit.
+pub async fn open_import(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    landed: &[SourceFile],
+) -> Result<Update> {
+    if spec.kind == SourceKind::RelationalDb {
+        return Err(Error::Import(
+            "a relational source computes the whole result again, and the lake cannot yet \
+             replace a table's rows in one commit"
+                .into(),
+        ));
+    }
+    let mut pinned = pin(env, spec, sql).await?;
+    let scans = accounting::file_scans(sql);
+    let [rel] = scans.as_slice() else {
+        return Err(Error::Import(format!(
+            "the recipe reads {} file scans, so its result is not its rows file by file, \
+             and the lake cannot yet replace a table's rows in one commit",
+            scans.len()
+        )));
+    };
+    let listed = pinned.remove(rel).unwrap_or_default();
+    for file in landed {
+        match listed.iter().find(|f| f.path == file.path) {
+            Some(now) if now == file => {}
+            Some(_) => {
+                return Err(Error::Import(format!(
+                    "`{}` changed since it landed, and the lake cannot yet replace a \
+                     table's rows in one commit",
+                    file.path
+                )));
+            }
+            None => {
+                return Err(Error::Import(format!(
+                    "`{}` landed and is gone from the source, and the lake cannot yet \
+                     replace a table's rows in one commit",
+                    file.path
+                )));
+            }
+        }
+    }
+    let new: Vec<SourceFile> = listed.into_iter().filter(|f| !landed.contains(f)).collect();
+    if new.is_empty() {
+        return Ok(Update::Unchanged);
+    }
+    let recipe = open_checked(env, spec, sql, Pinned::from([(rel.clone(), new)]), true).await?;
+    Ok(Update::Rows(recipe))
+}
+
+impl Account {
+    /// How many source files the rows are read from.
+    pub fn files_read(&self) -> usize {
+        self.read.len()
     }
 
-    // One shape analysis, two readers. A `Checked` plan means the recipe
-    // is a flat SELECT — the fact the row counts need — and that fact
-    // must survive a companion query failing below, which only makes the
-    // casts unchecked.
-    let plan = accounting::plan(sql);
-    let row_preserving = matches!(plan, accounting::Plan::Checked { .. });
-
-    // The landing succeeded; the accounting is best effort on top of it —
-    // a companion that errors becomes a disclosed note, never a failure.
-    let casts = match plan {
-        accounting::Plan::Unchecked(note) => CastAccounting::Unchecked(note),
-        accounting::Plan::Checked { targets, .. } if targets.is_empty() => {
-            CastAccounting::Checked(Vec::new())
+    /// The landing's account, once its `rows` rows have been written.
+    pub async fn landed(self, rows: u64) -> Result<Landed> {
+        let Some((ctx, seen, sql)) = self.files else {
+            // The source computed the SQL itself, so its result set is
+            // both what was read and what lands — dropped is
+            // structurally zero here; which rows a WHERE excluded is the
+            // source's own answer.
+            return Ok(Landed {
+                schema: self.schema,
+                rows,
+                files: Vec::new(),
+                source_scans: Vec::new(),
+                row_preserving: true,
+                casts: CastAccounting::Unchecked(
+                    "the recipe ran at the source — its dialect owns the casts".into(),
+                ),
+            });
+        };
+        // What each scanned relation holds — the relation's own count,
+        // never the rows its scan emitted: a scan under a LIMIT or
+        // pruned by a filter emits fewer than the relation holds, and
+        // the difference against the landing is what was dropped.
+        let mut source_scans = Vec::new();
+        let scanned = std::mem::take(&mut *seen.lock().expect("seen"));
+        for (name, provider) in scanned {
+            let held = ctx.read_table(provider)?.count().await? as u64;
+            source_scans.push((name, held));
         }
-        accounting::Plan::Checked {
-            counts_sql,
-            targets,
-            select,
-        } => match account_casts(&ctx, &counts_sql, &targets, &select).await {
-            Ok(checks) => CastAccounting::Checked(checks),
-            Err(e) => CastAccounting::Unchecked(format!("companion query failed: {e}")),
-        },
-    };
 
-    let (schema, batches) = normalize::compat(schema, batches)?;
-    Ok(Landed {
-        schema,
-        batches,
-        source_scans,
-        row_preserving,
-        casts,
-    })
+        // One shape analysis, two readers. A `Checked` plan means the recipe
+        // is a flat SELECT — the fact the row counts need — and that fact
+        // must survive a companion query failing below, which only makes the
+        // casts unchecked.
+        let plan = accounting::plan(&sql);
+        let row_preserving = matches!(plan, accounting::Plan::Checked { .. });
+
+        // The landing succeeded; the accounting is best effort on top of it —
+        // a companion that errors becomes a disclosed note, never a failure.
+        let casts = match plan {
+            accounting::Plan::Unchecked(note) => CastAccounting::Unchecked(note),
+            accounting::Plan::Checked { targets, .. } if targets.is_empty() => {
+                CastAccounting::Checked(Vec::new())
+            }
+            accounting::Plan::Checked {
+                counts_sql,
+                targets,
+                select,
+            } => match account_casts(&ctx, &counts_sql, &targets, &select).await {
+                Ok(checks) => CastAccounting::Checked(checks),
+                Err(e) => CastAccounting::Unchecked(format!("companion query failed: {e}")),
+            },
+        };
+        Ok(Landed {
+            schema: self.schema,
+            rows,
+            files: self.read,
+            source_scans,
+            row_preserving,
+            casts,
+        })
+    }
+}
+
+/// A recipe run whole: its rows collected, then its account — for a
+/// caller that wants the result in hand and lands nothing.
+pub async fn run_recipe(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+) -> Result<(Landed, Vec<RecordBatch>)> {
+    let recipe = open_recipe(env, spec, sql).await?;
+    let batches: Vec<RecordBatch> = futures::TryStreamExt::try_collect(recipe.rows).await?;
+    let rows = batches.iter().map(|b| b.num_rows() as u64).sum();
+    Ok((recipe.account.landed(rows).await?, batches))
 }
 
 /// Run the companion queries: one aggregate for every cast column's
@@ -327,7 +519,7 @@ pub async fn run_recipe(spec: &SourceSpec, sql: &str) -> Result<Landed> {
 /// failed.
 /// A file source's root, as `location` spells it: a directory on this
 /// machine (a path, or `file://`), or a location in an object store the
-/// storage seam reaches — `s3://bucket/prefix`,
+/// storage seam reaches — `s3://bucket/prefix`, `gs://bucket/prefix`,
 /// `abfss://container@account.dfs.core.windows.net/prefix` — read with
 /// the rights this process has: the environment's conventions, or the
 /// platform's managed identity. The location itself carries no
@@ -509,9 +701,28 @@ pub fn reader_functions() -> Vec<(&'static str, String, Option<String>)> {
 /// three read functions, path resolution rooted at the source. One
 /// builder serves the recipe (which counts scans) and the probe (which
 /// does not).
-fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext> {
+///
+/// It runs on the process's runtime — `env`'s memory pool, disk manager
+/// and caches — so a recipe's plan answers to the same bounds as every
+/// other plan. The object-store registry is the context's own: a
+/// source's store is reachable from the context that reads it and from
+/// no other.
+fn reader_ctx(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    seen: Option<Scanned>,
+    pinned: Pinned,
+) -> Result<SessionContext> {
     let root = Root::of(spec)?;
-    let ctx = SessionContext::new();
+    let pinned = Arc::new(pinned);
+    // A source moves under the server — an export arrives, a file is
+    // rewritten — so its listing is asked of the store at every read and
+    // never held, whatever the runtime handed in holds.
+    let runtime = RuntimeEnvBuilder::from_runtime_env(env)
+        .with_object_store_registry(Arc::new(DefaultObjectStoreRegistry::new()))
+        .with_object_list_cache_limit(0)
+        .build()?;
+    let ctx = SessionContext::new_with_config_rt(SessionConfig::new(), Arc::new(runtime));
     root.register(&ctx);
     casts::register_try_functions(&ctx);
     for (fn_name, kind) in READERS {
@@ -521,6 +732,7 @@ fn reader_ctx(spec: &SourceSpec, seen: Option<Scanned>) -> Result<SessionContext
                 root: root.clone(),
                 kind,
                 seen: seen.clone(),
+                pinned: Arc::clone(&pinned),
             }),
         );
     }
@@ -614,34 +826,49 @@ async fn account_casts(
 /// SQL surface, the same path resolution, landing nothing. The result
 /// carries the schema the recipe would land, so `LIMIT 0` rehearses the
 /// identity a `DECLARE RECIPE` would stamp.
-pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<Vec<RecordBatch>> {
+pub async fn run_probe(
+    env: &RuntimeEnv,
+    spec: &SourceSpec,
+    sql: &str,
+    row_cap: usize,
+) -> Result<Vec<RecordBatch>> {
     if spec.kind == SourceKind::RelationalDb {
-        let read = tokio::task::block_in_place(|| adbc::run_at_source(spec, sql, row_cap))?;
-        let mut batches = read.batches;
+        // No plan of ours to carry a limit: the read stops one batch
+        // past the cap, and dropping the stream ends it at the driver.
+        let (schema, mut rows) = adbc::stream_at_source(spec, sql).await?;
+        let mut batches = Vec::new();
+        let mut held = 0usize;
+        while let Some(batch) = rows.next().await {
+            let batch = batch?;
+            held += batch.num_rows();
+            batches.push(batch);
+            if held > row_cap {
+                break;
+            }
+        }
         if batches.is_empty() {
-            batches.push(RecordBatch::new_empty(read.schema));
+            batches.push(RecordBatch::new_empty(schema));
         }
         return Ok(batches);
     }
-    let ctx = reader_ctx(spec, None)?;
+    let ctx = reader_ctx(env, spec, None, Pinned::new())?;
     let df = match ctx.sql_with_options(sql, read_only()).await {
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "probe", Error::Probe, e).await),
     };
     let schema: SchemaRef = Arc::new(df.schema().as_arrow().clone());
-    // A rehearsal is read at the door like any other answer, so it stops at
-    // the door's cap — a probe without a LIMIT used to pull the whole
-    // source into memory to show 200 rows of it.
+    // A rehearsal is read at the door like any other answer, so its plan
+    // carries the door's cap as a limit, one row past it so the caller
+    // can tell a cut answer: a probe without a LIMIT never pulls the
+    // whole source into memory to show the first rows of it.
+    let df = match row_cap {
+        usize::MAX => df,
+        cap => df.limit(0, Some(cap + 1)).map_err(Error::Probe)?,
+    };
     let mut stream = df.execute_stream().await.map_err(Error::Probe)?;
     let mut batches = Vec::new();
-    let mut rows = 0usize;
     while let Some(batch) = stream.next().await {
-        let batch = batch.map_err(Error::Probe)?;
-        rows += batch.num_rows();
-        batches.push(batch);
-        if rows > row_cap {
-            break;
-        }
+        batches.push(batch.map_err(Error::Probe)?);
     }
     if batches.is_empty() {
         // An empty result still carries the shape — the whole point of a
@@ -656,7 +883,7 @@ pub async fn run_probe(spec: &SourceSpec, sql: &str, row_cap: usize) -> Result<V
 /// default options let a body `COPY` to any path the process can write
 /// — the statement allowlist never sees this SQL.
 /// A planning error at a file source. The engine's `table '…' not found`
-/// (datafusion-53.1.0 session_state.rs:1824) leaves the author facing a
+/// (datafusion `session_state.rs`, `get_table_source`) leaves the author facing a
 /// name the recipe surface never had: here a table is a file, named
 /// through `read_*`. That one error carries the road out — the files
 /// under the source — and every other error passes as it came, under
@@ -702,8 +929,10 @@ fn read_only() -> datafusion::prelude::SQLOptions {
         .with_allow_statements(false)
 }
 
-/// One file under a source's location, as the listing serves it.
-#[derive(Debug, Clone)]
+/// One file under a source's location, as the listing serves it — and
+/// as a landing records it: a file is the same file while its path,
+/// size and modification time stand.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     /// Relative to the source's location, `/`-separated — the path a
     /// `read_*` call names.
@@ -735,15 +964,31 @@ pub async fn list_source(spec: &SourceSpec) -> Result<Vec<SourceFile>> {
     );
     let ctx = SessionContext::new_with_config(config);
     root.register(&ctx);
-    let state = ctx.state();
     let url = root.listing().map_err(Error::List)?;
+    list_under(&ctx, &root, &url, "").await
+}
+
+/// The files `url` reaches, as paths under the root — the engine's own
+/// listing, the walk a `read_*` scan resolves through.
+async fn list_under(
+    ctx: &SessionContext,
+    root: &Root,
+    url: &ListingTableUrl,
+    extension: &str,
+) -> Result<Vec<SourceFile>> {
+    let state = ctx.state();
     let store = state
         .runtime_env()
         .object_store(url.object_store())
         .map_err(Error::List)?;
-    let prefix = url.prefix().as_ref().to_string();
+    let prefix = root
+        .listing()
+        .map_err(Error::List)?
+        .prefix()
+        .as_ref()
+        .to_string();
     let mut listed = url
-        .list_all_files(&state, store.as_ref(), "")
+        .list_all_files(&state, store.as_ref(), extension)
         .await
         .map_err(Error::List)?;
     let mut files = Vec::new();
@@ -780,11 +1025,49 @@ struct ReadFiles {
     root: Root,
     kind: SourceKind,
     seen: Option<Scanned>,
+    /// The files each `read_*` path stands for, listed before planning:
+    /// a scan named here reads exactly these, so what a landing records
+    /// as read is what it read. A path not named lists for itself.
+    pinned: Arc<Pinned>,
+}
+
+/// A recipe's `read_*` paths and the files each one reads.
+type Pinned = std::collections::HashMap<String, Vec<SourceFile>>;
+
+/// The format a `read_*` of this kind reads, and the listing a path or
+/// glob gets under it.
+fn listing_options(kind: SourceKind, rel: &str) -> ListingOptions {
+    let format: Arc<dyn FileFormat> = match kind {
+        SourceKind::Parquet => Arc::new(ParquetFormat::default()),
+        // Raw text survives byte-exact because inference is switched
+        // off, not because its result is thrown away afterwards: a
+        // record cap of zero is how the format is told to call every
+        // field Utf8 whatever the content
+        // (datafusion-datasource-csv file_format.rs, the
+        // `schema_infer_max_rec` doc). Rebuilding the fields by hand
+        // ran full type inference first to discard it.
+        SourceKind::Csv => Arc::new(
+            CsvFormat::default()
+                .with_has_header(true)
+                .with_schema_infer_max_rec(0),
+        ),
+        SourceKind::Json => Arc::new(JsonFormat::default()),
+        SourceKind::RelationalDb => unreachable!("never registered"),
+    };
+    // The table reads `target_partitions` and `collect_statistics`
+    // from the session that scans it, at scan time — the options hold
+    // neither.
+    let options = ListingOptions::new(format);
+    if rel.contains(['*', '?', '[']) {
+        // the glob names the files; the extension filter would fight it
+        return options.with_file_extension("");
+    }
+    options
 }
 
 impl TableFunctionImpl for ReadFiles {
     /// `call_with_args` rather than `call`: the older one is deprecated
-    /// (datafusion-catalog table.rs, since 53.0.0) and its default body
+    /// (datafusion-session `table.rs`, `TableFunctionImpl`) and its default body
     /// is an internal error, so an implementation that only had `call`
     /// would still be reached through this. The arguments carry the
     /// calling session as well as the expressions; this reader needs
@@ -803,33 +1086,19 @@ impl TableFunctionImpl for ReadFiles {
                 ));
             }
         };
-        let url = self.root.resolve(&rel)?;
-
-        let format: Arc<dyn FileFormat> = match self.kind {
-            SourceKind::Parquet => Arc::new(ParquetFormat::default()),
-            // Raw text survives byte-exact because inference is switched
-            // off, not because its result is thrown away afterwards: a
-            // record cap of zero is how the format is told to call every
-            // field Utf8 whatever the content
-            // (datafusion-datasource-csv file_format.rs, the
-            // `schema_infer_max_rec` doc). Rebuilding the fields by hand
-            // ran full type inference first to discard it.
-            SourceKind::Csv => Arc::new(
-                CsvFormat::default()
-                    .with_has_header(true)
-                    .with_schema_infer_max_rec(0),
+        let (urls, options) = match self.pinned.get(&rel) {
+            Some(files) => (
+                files
+                    .iter()
+                    .map(|f| self.root.resolve(&f.path))
+                    .collect::<datafusion::error::Result<Vec<_>>>()?,
+                listing_options(self.kind, &rel).with_file_extension(""),
             ),
-            SourceKind::Json => Arc::new(JsonFormat::default()),
-            SourceKind::RelationalDb => unreachable!("never registered"),
+            None => (
+                vec![self.root.resolve(&rel)?],
+                listing_options(self.kind, &rel),
+            ),
         };
-        // The table reads `target_partitions` and `collect_statistics`
-        // from the session that scans it, at scan time — the options hold
-        // neither.
-        let mut options = ListingOptions::new(format);
-        if rel.contains(['*', '?', '[']) {
-            // the glob names the files; the extension filter would fight it
-            options = options.with_file_extension("");
-        }
         // Blocking, because `call_with_args` is synchronous and schema
         // inference is not — the one place in this crate where that is
         // forced by a trait rather than by a blocking driver. Against the
@@ -840,7 +1109,7 @@ impl TableFunctionImpl for ReadFiles {
         // statistics cache, a schema *inferred* keeps it
         // (datafusion-catalog-listing table.rs, `SchemaSource`).
         let session = args.session();
-        let config = ListingTableConfig::new(url).with_listing_options(options);
+        let config = ListingTableConfig::new_with_multi_paths(urls).with_listing_options(options);
         let config = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(config.infer_schema(session))
         })?;

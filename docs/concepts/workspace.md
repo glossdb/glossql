@@ -12,6 +12,10 @@ land through recipes, and every import takes a snapshot, so a table's
 history is the format's own snapshot history — nothing else records
 versions.
 
+Three names are not dataset names: `glossql` is the record's own
+namespace, and `mcp` and `assets` are paths the server answers beside
+the datasets' pages. `DECLARE DATASET` refuses each by name.
+
 The record lives in the same lake: every relation the language
 declares — the glossary, aspects, functions, witnesses, sources,
 relationships, measurements, imports — is an Iceberg table. The
@@ -39,8 +43,11 @@ DECLARE DATASET fin SET (purpose: 'working-capital analysis over ERP and CRM exp
 USE fin;
 ```
 
-`USE` sets the resolution context and persists between calls.
-Unprefixed `table.column` paths resolve against the `USE`'d dataset;
+`USE` sets the resolution context for the statements after it in the
+call; a dataset's own doors (`/<dataset>/mcp`, `/<dataset>/query`,
+`/<dataset>/app`) open the call on the dataset, so a caller there needs
+no `USE`. Unprefixed `table.column` paths resolve against the bound
+dataset;
 the full `dataset.table.column` spelling is always allowed. A head
 that names both a dataset and a landed table of the `USE`'d dataset is
 the table: the nearer scope wins, and the other dataset's names are

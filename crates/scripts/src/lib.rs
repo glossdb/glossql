@@ -88,7 +88,7 @@ impl FunctionRuntime for KernelRuntime {
     /// The shipped statistics (`profile`; `mad` and `entropy` ride
     /// inside its struct), registered when the runtime attaches — a
     /// measurement body and an agent's own SQL name the same
-    /// aggregates (stage 5, §7e).
+    /// aggregates.
     fn udafs(&self) -> Vec<datafusion::logical_expr::AggregateUDF> {
         statistics::udafs()
     }
@@ -129,7 +129,7 @@ impl FunctionRuntime for KernelRuntime {
         self.model()?.band_grid(train, train_y, test, alphas).await
     }
 
-    /// The behavior-evidence door's kernel (stage 5): the stock/flow
+    /// The behavior-evidence door's kernel: the stock/flow
     /// discriminator, over batches — native, never remote.
     fn reconcile(
         &self,
@@ -140,7 +140,7 @@ impl FunctionRuntime for KernelRuntime {
         reconcile_kernel(aligned, n_common, terms.to_vec())
     }
 
-    /// The metric-bands walk's kernel (stage 5): one fit and one read.
+    /// The metric-bands walk's kernel: one fit and one read.
     async fn band_point(
         &self,
         train: Matrix<'_>,
@@ -183,8 +183,7 @@ impl FunctionRuntime for KernelRuntime {
 
 /// What the float kernels may read as numbers: numeric types themselves,
 /// booleans, and strings (the safe-cast reading on a raw column). Temporal
-/// columns are deliberately out — a date has an order but no mean, exactly
-/// v0.3's gate (numeric stats behind `is_numeric(resolved_type)`).
+/// columns are deliberately out — a date has an order but no mean.
 fn numeric_like(dt: &DataType) -> bool {
     dt.is_numeric()
         || matches!(
@@ -391,8 +390,8 @@ fn as_floats(array: &ArrayRef) -> ScriptResult<Float64Array> {
 //   (Papenbrock et al., VLDB 2015) and bottom-k/KMV sketches (Bar-Yossef
 //   et al. 2002; Beyer et al. 2007) — not built until a dataset needs
 //   them.
-// - `reconcile`: v0.3's stock/flow discriminator (its constants and
-//   provenance move here with the arithmetic they govern) — convention
+// - `reconcile`: the stock/flow discriminator (its constants sit
+//   with the arithmetic they govern) — convention
 //   evaluation as one matrix product over stacked entity series, then
 //   segmented L1 residual reductions.
 
@@ -536,7 +535,7 @@ fn column_of(t: &[RecordBatch], name: &str) -> ScriptResult<ArrayRef> {
     datafusion::arrow::compute::concat(&arrays).map_err(|e| e.to_string())
 }
 
-// ---- the reconcile kernel: v0.3's stock/flow discriminator ----------
+// ---- the reconcile kernel: the stock/flow discriminator -------------
 //
 // The gates. An entity votes when the winning residual is under
 // FIRE_RESIDUAL_MAX and the loser stands far enough from it to make
@@ -546,8 +545,7 @@ fn column_of(t: &[RecordBatch], name: &str) -> ScriptResult<ArrayRef> {
 // same pair near 1.0, so a gate above 0.4 hands `flow` to any positive
 // column of the movement's size. A true reconciliation sits under
 // 0.01; 0.05 leaves room for dirt. The separation gate is
-// (loser − winner) / (loser + winner) at one third, the value the
-// port carried.
+// (loser − winner) / (loser + winner) at one third.
 const MIN_PERIODS: usize = 4;
 const FIRE_RESIDUAL_MAX: f64 = 0.05;
 const MIN_SEPARATION: f64 = 1.0 / 3.0;
@@ -629,7 +627,7 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 /// Alignment is a hash join on typed cell keys; conventions (each term,
 /// and every ordered pair difference) evaluate as one matrix product
 /// over the stacked entity series; residuals reduce per (entity,
-/// convention) under the ported gates. Returns per-convention
+/// convention) under the gates above. Returns per-convention
 /// summaries; support policy (Wilson, winner, alternatives) stays in
 /// the door.
 fn reconcile_kernel(
@@ -692,8 +690,8 @@ fn reconcile_kernel(
     }
     let ncells = yvec.len();
 
-    // Conventions: each term, then every ordered pair difference —
-    // v0.3's enumeration, unchanged. Evaluated as M · W in one product.
+    // Conventions: each term, then every ordered pair difference,
+    // evaluated as M · W in one product.
     let mut conv_terms: Vec<(usize, Option<usize>)> = Vec::new();
     let mut conv_names: Vec<String> = Vec::new();
     for (i, t) in terms.iter().enumerate() {
@@ -835,8 +833,8 @@ fn reconcile_kernel(
             s.insert("sign_primary".into(), json!(primary));
             s.insert("sign_mirror".into(), json!(mirror));
             s.insert("sign_both".into(), json!(both));
-            // BIC over the winning voters' best residuals (v0.3's
-            // formula): n·ln(RSS/n) + arity·ln(n), RSS floored so an
+            // BIC over the winning voters' best residuals:
+            // n·ln(RSS/n) + arity·ln(n), RSS floored so an
             // exact fit stays finite. The ΔBIC>10 arity tiebreak in the
             // script reads this.
             if voters > 0 {

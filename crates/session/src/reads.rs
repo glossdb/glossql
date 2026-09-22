@@ -15,6 +15,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result as DFResult};
 use datafusion::datasource::{MemTable, provider_as_source};
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::logical_expr::planner::{
     PlannedRelation, RelationPlanner, RelationPlannerContext, RelationPlanning,
@@ -73,12 +74,17 @@ pub(crate) struct Shared {
     pub pages: RwLock<Arc<[DoorPage]>>,
 }
 
-/// One page the door serves, as `pages()` serves it: the resource URI,
-/// the page's first heading, and the body verbatim.
+/// One page the door serves. `pages()` serves the resource URI, the
+/// title and the body verbatim; a resource listing serves the URI
+/// under `name`, with `description` saying when the page is worth
+/// reading, and `mime` with the body.
 #[derive(Debug, Clone)]
 pub struct DoorPage {
     pub uri: String,
+    pub name: String,
     pub title: String,
+    pub description: String,
+    pub mime: &'static str,
     pub body: String,
 }
 
@@ -161,12 +167,67 @@ impl Shared {
             .collect())
     }
 
+    /// The pins of a statement whose every relation is a plain table
+    /// of the bound dataset: those tables, loaded by name, and nothing
+    /// else of the dataset. `None` for any other statement — one that
+    /// names another dataset's table, a read, a door, a store relation,
+    /// or a name the dataset does not hold — and the caller takes
+    /// [`Shared::statement_pins`], the whole walk, which is what those
+    /// read and where a misspelt name finds its hint.
+    pub(crate) async fn named_pins(
+        &self,
+        relations: &[datafusion::common::TableReference],
+    ) -> Result<
+        Option<std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>>,
+        SessionError,
+    > {
+        use datafusion::common::TableReference;
+        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+            return Ok(None);
+        };
+        let mut names = Vec::with_capacity(relations.len());
+        for relation in relations {
+            match relation {
+                TableReference::Bare { table } => names.push(table.to_string()),
+                TableReference::Partial { schema, table } if schema.as_ref() == dataset => {
+                    names.push(table.to_string());
+                }
+                _ => return Ok(None),
+            }
+        }
+        // A name this server claims is never asked of the catalog: it
+        // would answer absent, one round trip later.
+        let claimed = |name: &str| {
+            glossql_glossary::RELATIONS.iter().any(|r| r.name == name)
+                || crate::library::LIBRARY.iter().any(|(n, _)| *n == name)
+                || DOORS.iter().any(|(n, _)| *n == name)
+        };
+        if names.is_empty() || names.iter().any(|n| claimed(n)) {
+            return Ok(None);
+        }
+        names.sort();
+        names.dedup();
+        Ok(self
+            .lake()
+            .pin_tables(&dataset, &names)
+            .await?
+            .map(|pins| pins.into_iter().map(|p| (p.name, p.provider)).collect()))
+    }
+
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
         Arc::clone(&self.runtime.read().expect("runtime lock"))
     }
 
     pub fn cube(&self) -> crate::cube::CubeCache {
         self.cube.read().expect("cube lock").clone()
+    }
+
+    /// The process's engine runtime — the one the session's own context
+    /// is built on, handed to the scratch context a recipe or a probe
+    /// runs in so its plan answers to the same memory pool and spill
+    /// space.
+    pub fn env(&self) -> Arc<RuntimeEnv> {
+        self.session_ctx().runtime_env()
     }
 
     /// The session's own context — set right after construction, so
@@ -585,9 +646,8 @@ impl RelationPlanner for GlossqlReads {
         // QUERY grounding expanded as a derived relation through the
         // full planner pipeline, so WHERE/GROUP BY compose around it and
         // a nested `read.` inside a recorded evaluation re-enters this
-        // planner. v0.3's formula composer substituted each operand as a
-        // scalar subquery; here the engine is the composer — the
-        // substitution is this expansion. No script, no cache, no
+        // planner. The engine is the composer — the substitution is
+        // this expansion. No script, no cache, no
         // parameters.
         if name.0.len() == 2
             && name.0[0]
@@ -614,7 +674,7 @@ impl RelationPlanner for GlossqlReads {
         }
         // A name the statement binds as a CTE is not ours to plan. This
         // seam runs *before* DataFusion's own CTE lookup (datafusion-sql
-        // 54.1, src/relation/mod.rs:190) and RelationPlannerContext
+        // `relation/mod.rs`, `create_relation`) and RelationPlannerContext
         // cannot ask about CTE scope, so declining here is what keeps a
         // CTE shadowing a same-named table — SQL's precedence, which the
         // pin and batch arms below would otherwise silently invert.
@@ -879,7 +939,7 @@ pub(crate) async fn compute_batch(
     match (fname.as_str(), args) {
         // The search doors: candidate enumeration over a table's own
         // columns, computed here because a static SQL body cannot spell
-        // a schema it does not know (§7e).
+        // a schema it does not know.
         ("derivation_candidates", Some(a)) => {
             let table = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(

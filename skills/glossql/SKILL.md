@@ -27,7 +27,7 @@ per statement:
   zero rows — a `LIMIT 0` rehearsal returns the schema. `truncated:
   true` means the result held more than the cap: refine, never read a
   capped result as complete. `GLOSSARY()`, `ATTEST()` and the store
-  relations sent as their own statement are uncapped.
+  relations are uncapped.
 - a write — `{"affected": n}` or `{"done": "…"}`. One write answers
   with rows: a `GLOSS` on a QUERY aspect returns the metric's fact row
   in the `metric_axes()` shape — read it before the next write.
@@ -46,21 +46,25 @@ per statement:
   None of it is an order: the goal is what the human asked for.
 
 Who you are — agent or human — rides the connection; there is no BY
-clause. The dataset does not ride it: **open every call that touches
-a dataset's names with `USE <dataset>;`** — it moves the statements
-after it and expires with the call. A call naming none is
-workspace-scoped, which is what `SELECT * FROM datasets` wants; a
-qualified `dataset.table.column` reads across datasets from anywhere.
+clause. The dataset rides the door: at a dataset's door
+(`/<dataset>/mcp`) every call opens on it, and its tables and columns
+resolve unprefixed. At the workspace door (`/mcp`) a call opens
+unbound — **there, open every call that touches a dataset's names
+with `USE <dataset>;`** — it moves the statements after it and
+expires with the call. A call naming none is workspace-scoped, which
+is what `SELECT * FROM datasets` wants; a qualified
+`dataset.table.column` reads across datasets from anywhere.
 
 ## The statement set
 
 | statement | does |
 |---|---|
-| `USE ops;` | bind the statements after it in this call to a dataset |
+| `USE ops;` | bind the statements after it in this call to a dataset — the workspace door's way in; a dataset's door opens bound |
 | `DECLARE DATASET ops SET (…);` | create a dataset |
 | `DECLARE SOURCE erp SET (type: parquet, location: 'root');` | register a source; the location is a root — a directory on the server's machine, or an object-store URL it may read — and globs belong in recipe SQL; `type` describes the export, the recipe's `read_parquet`/`read_csv`/`read_json` picks the reader |
 | `PROBE erp AS $$sql$$;` | run recipe-shaped SQL at the source, landing nothing |
 | `DECLARE RECIPE work_orders ON ops FROM erp AS $$sql$$;` | land the table the SQL produces — the landed table is the typed table |
+| `IMPORT work_orders;` | a data update: land the files the source holds new, as one more snapshot of the table; `unchanged` when there are none |
 | `DROP TABLE work_orders;` | remove a table — refused while it holds data |
 | `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple, `a.(x, y) -> b.(x, y)`; both endpoints must be landed columns |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the validated contract; `ON` is the grain — the subject classes it speaks to, absent = all; `WHEN` narrows relevance to subjects whose sibling aspect carries the value |
@@ -97,8 +101,8 @@ back before declaring anything.
   landed_rows, dropped_rows_count, cast_failures, imported_at)` ·
   `relationships (dataset, left_path, op, right_path)` · `sources
   (name, settings)` · `datasets (name, settings)`. The ones with a
-  `dataset` column serve the whole workspace — `USE` does not narrow
-  them, so say which dataset you mean.
+  `dataset` column serve the whole workspace — the binding does not
+  narrow them, so say which dataset you mean.
 - `GLOSSARY(subject)` — the collapsed read, `(subject, aspect, value,
   band, score, state)`, `state` in `current | stale | contested |
   unassessed`; a contested value is withheld, and absence is a visible
@@ -114,7 +118,8 @@ back before declaring anything.
   a detector's own failure, nothing withheld.
 - the landed schema: `SELECT table_name, column_name, data_type FROM
   information_schema.columns WHERE table_name NOT LIKE '%$%'` serves
-  every column the `USE` mounted; `DESCRIBE <name>` serves one name.
+  every column the bound dataset mounted; `DESCRIBE <name>` serves
+  one name.
 - ordinary SELECT over tables for the data itself.
 - names: an unquoted name folds to lowercase, a double-quoted one keeps
   its case. A column keeps the export's spelling and is reached by it
@@ -141,10 +146,10 @@ a guessed column costs a refusal.
 | `metric_axes()` | one row per grounding: `metric`, `applicable`, `judged_current`, `reason`, `behavior`, `behavior_basis`, `grain`, `resolution`, `window`, `dims`, `basis`, `admitted_by`, `axes_basis`, `bucketed`, `unadmitted`, `unadmitted_why`, `unadmitted_act`, `wanted`, `wanted_over`, `alternative`, `alternative_divergence`, `alternative_error`, `superseded_divergence`; takes no argument |
 | `band_points()` | the recorded `metric_bands` walk, one row per metric and walked point — `seq`, `metric`, `applicable`, `reason`, `grain`, `aggregation`, `trained_on`, `axis`, `axis_judged`, `point_seq`, `period`, `actual`, `p05`, `p10`, `p50`, `p90`, `p95`, `pit`, `withheld`, `partial`, `displacement`, `computed_at`, `current`; no `band` and no `month` — a red is `WHERE partial = false ORDER BY displacement DESC` |
 | `metric_sources()` | what feeds each grounding — `metric`, `field`, `source` (`table.column`), `table_name`, `reason`: per served field the column it descends from, and every table it scans |
-| `source_files('erp')` | every file under a source's location — `path`, `size`, `modified`; needs no `USE` |
+| `source_files('erp')` | every file under a source's location — `path`, `size`, `modified`; needs no dataset |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps`) |
-| `current_dataset` | the dataset your `USE` bound, one row — join it to narrow a workspace-wide read |
-| `pages()` | every page the door serves — `uri`, `title`, `body`; needs no `USE` |
+| `current_dataset` | the dataset the call is bound to, one row — join it to narrow a workspace-wide read |
+| `pages()` | every page the door serves — `uri`, `title`, `body`; needs no dataset |
 
 A shipped name is reserved: it shadows a table and a CTE of the same
 name. `open_questions`, `ruling_entries` and `agent_assumptions` carry

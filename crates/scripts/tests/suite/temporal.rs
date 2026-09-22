@@ -64,7 +64,7 @@ async fn temporal(values_sql: &str, subject: &str) -> Value {
         .execute(&format!("SELECT temporal() FROM {subject};"))
         .await
         .unwrap();
-    let Some(Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("extraction serves rows")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();

@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 /// Today's counts, and what owns them.
 ///
 /// `block_in_place` / `block_on` — sync code bridging to async. One
-/// named owner: `glossql-import` bridges a genuinely sync ADBC driver,
-/// argued in place.
+/// named owner: `glossql-import`'s file reader infers a schema inside
+/// the engine's synchronous table-function call, argued in place.
 ///
 /// `thread_local` — at zero, and it stays there. Nothing re-plans
 /// through the same context, so there is no door-expansion stack to
@@ -24,17 +24,15 @@ use std::path::{Path, PathBuf};
 ///
 /// `tokio::spawn` — hand-scheduled work. The engine schedules by
 /// partition; what remains is fire-and-forget serving work in the doors
-/// crate (the brief refresh, the response stream driver, the TLS door's
-/// task per connection — the shape of axum's own low-level-rustls
-/// example, keeping the handshake off the accept path) and the apps
+/// crate (the brief refresh, the response stream driver) and the apps
 /// crate's two response-stream drivers (a frame as Arrow IPC, a table
 /// or metric as a CSV or Parquet download) — not engine-work
 /// scheduling.
 const CEILING: [(&str, usize); 4] = [
-    ("block_in_place", 3),
+    ("block_in_place", 1),
     ("block_on", 1),
     ("thread_local!", 0),
-    ("tokio::spawn", 5),
+    ("tokio::spawn", 3),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -26,7 +26,7 @@ changed" answer differently to it.
 ## Mechanism
 
 The search door (`derivation_candidates`,
-`crates/session/src/search.rs`) is generous by design: it counts every
+`crates/session/src/search/derivations.rs`) is generous by design: it counts every
 triple that passes a structural prune, and the prune is cost, not
 judgment — a product or sum whose operand magnitudes cannot land
 within 30× of the target is skipped, with no recall lost at the body's

@@ -1,14 +1,12 @@
-//! The shipped statistics as engine aggregates (stage 5, the foundation
-//! report §7e): `profile`, `mad` and `entropy` over the same kernels the
-//! scripts compose — one implementation behind both doors. `mad` and
+//! The shipped statistics as engine aggregates: `profile`, `mad` and
+//! `entropy` over the same kernels the scripts compose — one implementation behind both doors. `mad` and
 //! `entropy` are the two statistics DataFusion lacks; `profile` is the
 //! column profile as one value, so a measurement body is
 //! `SELECT profile(v) FROM subject_column($subject)` and an agent's own
 //! SQL can ask the same question of anything.
 //!
-//! Each accumulator collects its column and evaluates once at the end —
-//! the same cost the door paid when a script pulled the column through
-//! `db.query`, now bounded by the engine's own memory accounting.
+//! Each accumulator collects its column and evaluates once at the end,
+//! bounded by the engine's own memory accounting.
 
 use std::sync::Arc;
 
@@ -237,9 +235,8 @@ fn profile_fields(dt: &DataType) -> Fields {
     ])
 }
 
-/// The profile itself — the exact mirror of what the profile script computed
-/// until stage 5, kernel for kernel, so the crossing gates byte-identical
-/// against the goldens. `summary` is what extraction serves (full
+/// The profile itself, kernel for kernel, held byte-identical to the
+/// suite's goldens. `summary` is what extraction serves (full
 /// bodies through the door are the fan-out tax); the
 /// full body reads back via `GLOSSARY`.
 fn profile_value(a: &ArrayRef) -> ScriptResult<Value> {

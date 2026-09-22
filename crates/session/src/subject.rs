@@ -156,3 +156,21 @@ pub async fn resolve_column_endpoint(
 pub fn pair_subject(left: &Resolved, op: &str, right: &Resolved) -> String {
     format!("{} {op} {}", left.subject, right.subject)
 }
+
+/// A name as a quoted identifier, embedded quotes doubled as SQL wants
+/// them — how every door spells a landed name inside the SQL it builds.
+/// A landed column is whatever its export called it, a quote included.
+pub(crate) fn qi(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::qi;
+
+    #[test]
+    fn a_quote_inside_a_name_doubles() {
+        assert_eq!(qi("amount"), "\"amount\"");
+        assert_eq!(qi("net \"adj\""), "\"net \"\"adj\"\"\"");
+    }
+}

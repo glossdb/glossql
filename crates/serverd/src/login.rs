@@ -119,8 +119,8 @@ async fn start(State(login): State<Arc<Login>>, Query(q): Query<Next>) -> Respon
         .client
         .authorize_url(CsrfToken::new_random)
         // RFC 8707: the token is asked for this resource. An issuer
-        // that does not read the parameter mints `aud: []`, and the gate
-        // binds that token by the application instead.
+        // that does not read the parameter mints a token naming no
+        // audience, and the gate refuses it.
         .add_extra_param("resource", login.gate.resource())
         .set_pkce_challenge(challenge)
         .url();

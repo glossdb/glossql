@@ -116,6 +116,9 @@ impl<'a> GlossqlParser<'a> {
                 _ if w.value.eq_ignore_ascii_case("PROBE") => {
                     return Ok(Statement::Probe(parse_probe(&mut self.df.parser)?));
                 }
+                _ if w.value.eq_ignore_ascii_case("IMPORT") => {
+                    return Ok(Statement::Import(parse_import(&mut self.df.parser)?));
+                }
                 _ => {}
             }
         }
@@ -193,6 +196,22 @@ fn parse_probe(p: &mut Parser) -> Result<Probe, ParserError> {
     expect_word(p, "AS")?;
     let sql = parse_dollar(p, "dollar-quoted probe SQL — AS $$ SELECT … $$")?;
     Ok(Probe { source, sql })
+}
+
+fn parse_import(p: &mut Parser) -> Result<Import, ParserError> {
+    expect_word(p, "IMPORT")?;
+    let head = folded_ident(p)?;
+    if p.consume_token(&Token::Period) {
+        let table = folded_ident(p)?;
+        return Ok(Import {
+            dataset: Some(head),
+            table,
+        });
+    }
+    Ok(Import {
+        dataset: None,
+        table: head,
+    })
 }
 
 fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {

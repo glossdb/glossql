@@ -10,6 +10,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::dataframe::DataFrameWriteOptions;
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::SessionContext;
 use glossql_import::{SourceSpec, run_recipe};
 use serde_json::json;
@@ -63,7 +64,8 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
     let dir = tempfile::tempdir().unwrap();
     write_parquet_fixture(dir.path()).await;
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("parquet", dir.path()),
         "SELECT * FROM read_parquet('orders/*.parquet')",
     )
@@ -74,7 +76,7 @@ async fn parquet_recipe_keeps_types_and_folds_ns_to_us() {
         vec![("orders/*.parquet".to_string(), 2)]
     );
     assert_eq!(landed.dropped_rows(), Some(0), "SELECT * drops nothing");
-    let (schema, batches) = (landed.schema, landed.batches);
+    let (schema, batches) = (landed.schema, batches);
 
     assert_eq!(schema.field(0).data_type(), &DataType::Int64);
     assert_eq!(
@@ -117,7 +119,8 @@ async fn parquet_recipe_folds_a_zoned_timestamp_onto_the_lake_zone() {
         .await
         .unwrap();
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("parquet", dir.path()),
         "SELECT * FROM read_parquet('payments/*.parquet')",
     )
@@ -127,7 +130,7 @@ async fn parquet_recipe_folds_a_zoned_timestamp_onto_the_lake_zone() {
         landed.schema.field(0).data_type(),
         &DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()))
     );
-    let landed_at = landed.batches[0]
+    let landed_at = batches[0]
         .column(0)
         .as_any()
         .downcast_ref::<TimestampMicrosecondArray>()
@@ -146,7 +149,8 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
 
     // No casts authored: the read side is all-Utf8, so raw text lands
     // byte-exact — the author's default, not an import refold.
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT * FROM read_csv('accounts.csv')",
     )
@@ -160,7 +164,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
             .all(|f| f.data_type() == &DataType::Utf8),
         "an uncast csv column is a string"
     );
-    let col = landed.batches[0]
+    let col = batches[0]
         .column(0)
         .as_any()
         .downcast_ref::<StringArray>()
@@ -174,7 +178,8 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
     // Authored casts land typed: the landed table is the typed table
     // — the schema the probe rehearsed, not a refold
     // (a force_utf8 refold would discard these casts).
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT account_no, try_cast(balance AS DOUBLE) AS balance \
          FROM read_csv('accounts.csv')",
@@ -187,7 +192,7 @@ async fn csv_typing_is_authored_uncast_stays_byte_exact() {
         &DataType::Float64,
         "the authored cast is the landed type"
     );
-    let balances = landed.batches[0]
+    let balances = batches[0]
         .column(1)
         .as_any()
         .downcast_ref::<datafusion::arrow::array::Float64Array>()
@@ -201,6 +206,7 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     std::fs::write(dir.path().join("a.csv"), "x\n1\n").unwrap();
 
     let err = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT * FROM read_csv('../a.csv')",
     )
@@ -217,6 +223,7 @@ async fn recipe_paths_cannot_escape_the_source_root() {
     std::fs::write(outside.path().join("secret.csv"), "x\n9\n").unwrap();
     std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
     let err = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT * FROM read_csv('link/secret.csv')",
     )
@@ -247,7 +254,8 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     )
     .unwrap();
 
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT o.id, c.region \
          FROM read_csv('orders.csv') o \
@@ -255,10 +263,7 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        3
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 3);
     // The bug this whole shape exists to prevent: 3 + 2 = 5 scanned
     // against 3 landed reads as "2 dropped", and nothing was dropped.
     assert_eq!(
@@ -279,7 +284,8 @@ async fn a_multi_provider_recipe_accounts_each_source() {
     );
 
     // One provider keeps the difference: it really is the dropped count.
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id FROM read_csv('orders.csv') WHERE id > 1",
     )
@@ -307,7 +313,8 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
          5,1.25,06.01.2026\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT order_id, \
                 try_cast(amount AS DOUBLE) AS amount, \
@@ -316,10 +323,7 @@ async fn a_landing_accounts_its_cast_nulled_cells() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        5
-    );
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 5);
 
     let glossql_import::CastAccounting::Checked(checks) = &landed.casts else {
         panic!("accounted: {:?}", landed.casts);
@@ -352,7 +356,8 @@ async fn a_composite_expression_samples_the_column_that_failed() {
          5,07.01.2026,07.01.2026 10:00\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id, \
                 try_to_date(tag_datum, '%d.%m.%Y') AS tag_datum, \
@@ -400,7 +405,8 @@ async fn one_try_to_date_reads_a_column_of_mixed_formats() {
          5,05/06/2026\n",
     )
     .unwrap();
-    let landed = run_recipe(
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
         &spec("csv", dir.path()),
         "SELECT id, try_to_date(paid, '%d/%m/%Y', '%m/%d/%Y', '%d-%b-%y') AS paid \
          FROM read_csv('pay.csv')",
@@ -408,8 +414,7 @@ async fn one_try_to_date_reads_a_column_of_mixed_formats() {
     .await
     .unwrap();
 
-    let dates: Vec<Option<i32>> = landed
-        .batches
+    let dates: Vec<Option<i32>> = batches
         .iter()
         .flat_map(|b| {
             use datafusion::arrow::array::Array;
@@ -455,7 +460,8 @@ async fn accounting_discloses_what_it_cannot_account() {
     let s = spec("csv", dir.path());
 
     // An aggregating recipe has no per-row cast to account.
-    let landed = run_recipe(
+    let (landed, _) = run_recipe(
+        &RuntimeEnv::default(),
         &s,
         "SELECT a, count(*) AS n FROM read_csv('t.csv') GROUP BY a",
     )
@@ -473,14 +479,41 @@ async fn accounting_discloses_what_it_cannot_account() {
     assert_eq!(landed.dropped_rows(), None, "a GROUP BY drops no rows");
 
     // No casts: the account is complete and empty.
-    let landed = run_recipe(&s, "SELECT * FROM read_csv('t.csv')")
-        .await
-        .unwrap();
+    let (landed, _) = run_recipe(
+        &RuntimeEnv::default(),
+        &s,
+        "SELECT * FROM read_csv('t.csv')",
+    )
+    .await
+    .unwrap();
     assert!(
         matches!(&landed.casts, glossql_import::CastAccounting::Checked(c) if c.is_empty()),
         "{:?}",
         landed.casts
     );
+}
+
+/// A recipe's plan runs on the runtime it is handed: under a pool too
+/// small for a sort it is refused by that pool, where a context on a
+/// runtime of its own would answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_recipe_answers_to_the_runtime_it_is_handed() {
+    use datafusion::execution::memory_pool::GreedyMemoryPool;
+    use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("t.csv"), "a,b\n2,x\n1,y\n").unwrap();
+    let s = spec("csv", dir.path());
+    let sql = "SELECT a, b FROM read_csv('t.csv') ORDER BY a";
+
+    run_recipe(&RuntimeEnv::default(), &s, sql).await.unwrap();
+
+    let tight = RuntimeEnvBuilder::new()
+        .with_memory_pool(Arc::new(GreedyMemoryPool::new(1)))
+        .build()
+        .unwrap();
+    let refused = run_recipe(&tight, &s, sql).await.unwrap_err().to_string();
+    assert!(refused.contains("Resources exhausted"), "{refused}");
 }
 
 // -- relational sources (the ADBC executor) --------------------------------
@@ -514,13 +547,17 @@ async fn a_relational_recipe_is_one_query_and_never_a_write() {
         "SELECT 1; SELECT 2",
         "UPDATE t SET a = 1",
     ] {
-        let e = run_recipe(&s, sql).await.unwrap_err();
+        let e = run_recipe(&RuntimeEnv::default(), &s, sql)
+            .await
+            .unwrap_err();
         assert!(e.to_string().contains("one SELECT"), "`{sql}`: {e}");
     }
     // A plain query passes the fence and fails only at driver load —
     // where the error teaches the installable slugs (a bare NotFound
     // teaches nothing to whoever guessed `adbc_driver_sqlite`).
-    let e = run_recipe(&s, "SELECT 1").await.unwrap_err();
+    let e = run_recipe(&RuntimeEnv::default(), &s, "SELECT 1")
+        .await
+        .unwrap_err();
     assert!(!e.to_string().contains("one SELECT"), "{e}");
     assert!(
         e.to_string().contains("index slug") && e.to_string().contains("postgresql"),
@@ -593,13 +630,14 @@ async fn a_relational_recipe_lands_from_sqlite() {
     }
 
     let s = relational_spec(&driver, &db.display().to_string());
-    let landed = run_recipe(&s, "SELECT order_id, amount FROM orders WHERE order_id > 1")
-        .await
-        .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        2
-    );
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
+        &s,
+        "SELECT order_id, amount FROM orders WHERE order_id > 1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
     assert!(
         landed.source_scans.is_empty(),
         "the source computed the SQL — this side scanned nothing"
@@ -612,7 +650,7 @@ async fn a_relational_recipe_lands_from_sqlite() {
     assert_eq!(landed.schema.field(0).name(), "order_id");
 
     // A probe stops at the cap: one row past it marks truncation.
-    let probed = glossql_import::run_probe(&s, "SELECT * FROM orders", 1)
+    let probed = glossql_import::run_probe(&RuntimeEnv::default(), &s, "SELECT * FROM orders", 1)
         .await
         .unwrap();
     let probed_rows: usize = probed.iter().map(|b| b.num_rows()).sum();
@@ -624,9 +662,14 @@ async fn a_relational_recipe_lands_from_sqlite() {
     // The source's own catalog answers a key-harvest probe — the skill
     // teaches this spelling; declared keys are judge evidence, never
     // declared relationships (recipes reshape what lands).
-    let keys = glossql_import::run_probe(&s, "SELECT * FROM pragma_table_info('orders')", 200)
-        .await
-        .unwrap();
+    let keys = glossql_import::run_probe(
+        &RuntimeEnv::default(),
+        &s,
+        "SELECT * FROM pragma_table_info('orders')",
+        200,
+    )
+    .await
+    .unwrap();
     assert!(
         keys.iter().map(|b| b.num_rows()).sum::<usize>() >= 2,
         "pragma rows"
@@ -645,6 +688,7 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     let escape = dir.path().join("escaped.parquet");
 
     let e = run_recipe(
+        &RuntimeEnv::default(),
         &spec,
         &format!(
             "COPY (SELECT 1 AS a) TO '{}' STORED AS PARQUET",
@@ -657,6 +701,7 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     assert!(!escape.exists(), "nothing was written");
 
     let e = glossql_import::run_probe(
+        &RuntimeEnv::default(),
         &spec,
         &format!(
             "COPY (SELECT 1 AS a) TO '{}' STORED AS PARQUET",
@@ -670,11 +715,12 @@ async fn a_recipe_body_cannot_write_outside_its_read() {
     assert!(!escape.exists(), "nothing was written");
 
     // Reading is untouched.
-    let landed = run_recipe(&spec, "SELECT * FROM read_parquet('orders/*.parquet')")
-        .await
-        .unwrap();
-    assert_eq!(
-        landed.batches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        2
-    );
+    let (_, batches) = run_recipe(
+        &RuntimeEnv::default(),
+        &spec,
+        "SELECT * FROM read_parquet('orders/*.parquet')",
+    )
+    .await
+    .unwrap();
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
 }

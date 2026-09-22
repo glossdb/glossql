@@ -6,6 +6,7 @@
 //!     AZURE_STORAGE_USE_EMULATOR=true \
 //!       cargo test -p glossql-import live_source -- --ignored --nocapture
 
+use datafusion::execution::runtime_env::RuntimeEnv;
 use glossql_import::{SourceSpec, list_source, run_probe, run_recipe};
 use object_store::ObjectStoreExt;
 use serde_json::json;
@@ -41,10 +42,14 @@ async fn live_source_in_an_object_store() {
         "the listing names the file: {files:?}"
     );
 
-    let landed = run_recipe(&spec, "SELECT id, amount FROM read_csv('2026/ledger.csv')")
-        .await
-        .expect("a landing");
-    let rows: usize = landed.batches.iter().map(|b| b.num_rows()).sum();
+    let (landed, batches) = run_recipe(
+        &RuntimeEnv::default(),
+        &spec,
+        "SELECT id, amount FROM read_csv('2026/ledger.csv')",
+    )
+    .await
+    .expect("a landing");
+    let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(rows, 2);
     assert_eq!(
         landed.source_scans,
@@ -52,6 +57,7 @@ async fn live_source_in_an_object_store() {
     );
 
     let batches = run_probe(
+        &RuntimeEnv::default(),
         &spec,
         "SELECT count(*) AS n FROM read_csv('2026/*.csv')",
         200,
@@ -63,9 +69,14 @@ async fn live_source_in_an_object_store() {
     assert_eq!(n, "2");
 
     for out in ["../x.csv", "abfss://other@acme.dfs.core.windows.net/x.csv"] {
-        let e = run_probe(&spec, &format!("SELECT * FROM read_csv('{out}')"), 200)
-            .await
-            .unwrap_err();
+        let e = run_probe(
+            &RuntimeEnv::default(),
+            &spec,
+            &format!("SELECT * FROM read_csv('{out}')"),
+            200,
+        )
+        .await
+        .unwrap_err();
         assert!(
             e.to_string()
                 .contains("must stay under the source's location"),

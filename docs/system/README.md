@@ -23,8 +23,9 @@ The server: one binary, one workspace, three doors. How it is built is
   in-context model, served by the kernel service `GLOSSQL_TABICL_URL`
   names ([functions](../reference/functions.md),
   [methods](../methods/README.md)).
-- **The doors** — `/mcp` (one `glossql` tool, stateless, row
-  cap), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`
+- **The doors** — `/<dataset>/mcp` and `/mcp` (one `glossql` tool,
+  stateless, row cap; the dataset's door opens every call on it, the
+  workspace's opens unbound), `/<dataset>/query` (streaming Arrow IPC), `/<dataset>/app`
   (the docket as the dataset's page: what waits on a person and the
   ruling form, the metrics, the quality of the data, the lineage,
   every table and read as CSV or Parquet; the glossed apps beside it)
@@ -32,7 +33,7 @@ The server: one binary, one workspace, three doors. How it is built is
   doors are protocols over it: a call arrives already bound, no door
   keeps a cursor. The actor is the bearer token's subject, verified
   against the issuer's published keys; the actor kind is the door's
-  (`/mcp` agent, the rest human); what a kind may *do* beyond that is
+  (the `mcp` doors agent, the rest human); what a kind may *do* beyond that is
   governance, still held open.
 - **Skills** — one skill per `skills/*/SKILL.md`, where a
   door-connected agent learns the language. The MCP door serves each

@@ -6,15 +6,17 @@
 //! (`io/storage/mod.rs` invites third-party implementations). This one
 //! is built on `object_store` — the Apache crate DataFusion itself
 //! runs on, already in the binary — so the process carries one storage
-//! stack, not two. Two families answer: S3 (`s3://`, `s3a://`,
-//! `s3n://`) and Azure (`abfss://container@account.dfs.core.windows.net/…`,
-//! `abfs://`, `az://`, `azure://`, `adl://`, `wasbs://`). A client is
+//! stack, not two. Three families answer: S3 (`s3://`, `s3a://`,
+//! `s3n://`), Azure (`abfss://container@account.dfs.core.windows.net/…`,
+//! `abfs://`, `az://`, `azure://`, `adl://`, `wasbs://`) and Google
+//! Cloud Storage (`gs://`, `gcs://`). A client is
 //! scoped to one bucket or container, so clients are built lazily per
 //! authority and shared; in practice a table's FileIO sees one.
 //!
-//! Configuration is layered by concern, between the `s3.*` / `adls.*`
-//! properties a table load answers with and object_store's own
-//! environment conventions (`AWS_*`, `AZURE_*`): the catalog says where
+//! Configuration is layered by concern, between the `s3.*` / `adls.*` /
+//! `gcs.*` properties a table load answers with and object_store's own
+//! environment conventions (`AWS_*`, `AZURE_*`, `GOOGLE_*`): the catalog
+//! says where
 //! the store is and, vending, whom it lets in; the environment says how
 //! this process reaches it and supplies credentials only where the
 //! catalog vends none — a static key must never shadow a vended one.
@@ -26,7 +28,10 @@
 //! `IDENTITY_HEADER` itself at token time. Without the endpoint the
 //! client would ask the virtual machine's metadata address, which
 //! Container Apps does not offer. A user-assigned identity is named by
-//! `AZURE_STORAGE_CLIENT_ID`. No surface of ours either way.
+//! `AZURE_STORAGE_CLIENT_ID`. On Google Cloud with no credential set,
+//! the client asks the metadata server for the attached service
+//! account's token — the Cloud Run arrangement, the same shape. No
+//! surface of ours either way.
 //!
 //! The same clients serve a file source whose location is in a store
 //! ([`environment_store`]): there no catalog vends, the environment
@@ -36,7 +41,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -49,6 +54,7 @@ use iceberg::io::{
 use iceberg::{Error, ErrorKind, Result};
 use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
 use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
+use object_store::gcp::{GcpCredential, GoogleCloudStorageBuilder, GoogleConfigKey};
 use object_store::{ObjectStore, ObjectStoreExt, WriteMultipart};
 use url::Url;
 
@@ -61,8 +67,8 @@ pub enum Warehouse {
 }
 
 impl Warehouse {
-    /// A path, `file://<path>`, or a remote location in one of the two
-    /// families. Anything else is refused by its scheme.
+    /// A path, `file://<path>`, or a remote location in one of the
+    /// three families. Anything else is refused by its scheme.
     pub fn parse(warehouse: &str) -> crate::Result<Self> {
         let w = warehouse.trim();
         let Some((scheme, rest)) = w.split_once("://") else {
@@ -73,23 +79,25 @@ impl Warehouse {
             s if family(s).is_some() => Ok(Warehouse::Remote(w.trim_end_matches('/').to_string())),
             other => Err(crate::Error::Workspace(format!(
                 "the warehouse scheme `{other}` is not one this binary reaches — a directory, \
-                 file://, s3://, or abfss://container@account.dfs.core.windows.net/"
+                 file://, s3://, gs://, or abfss://container@account.dfs.core.windows.net/"
             ))),
         }
     }
 }
 
-/// The two families of stores, by scheme.
+/// The three families of stores, by scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Family {
     S3,
     Azure,
+    Gcs,
 }
 
 fn family(scheme: &str) -> Option<Family> {
     match scheme {
         "s3" | "s3a" | "s3n" => Some(Family::S3),
         "abfs" | "abfss" | "az" | "azure" | "adl" | "wasb" | "wasbs" => Some(Family::Azure),
+        "gs" | "gcs" => Some(Family::Gcs),
         _ => None,
     }
 }
@@ -109,7 +117,8 @@ fn location(path: &str) -> Result<Location> {
     let url =
         Url::parse(path).map_err(|e| invalid("not a location this seam reaches").with_source(e))?;
     let scheme = url.scheme().to_ascii_lowercase();
-    let family = family(&scheme).ok_or_else(|| invalid("not an S3 or Azure location"))?;
+    let family = family(&scheme)
+        .ok_or_else(|| invalid("not an S3, Azure or Google Cloud Storage location"))?;
     let host = url
         .host_str()
         .ok_or_else(|| invalid("a location names a bucket or a container"))?;
@@ -119,9 +128,11 @@ fn location(path: &str) -> Result<Location> {
         format!("{}@{host}", url.username())
     };
     // The Hadoop `wasb(s)` spelling is the `abfss` layout under another
-    // scheme; object_store's builder parses the latter.
+    // scheme, and `gcs` is `gs` under another; object_store's builders
+    // parse the latter of each.
     let root_scheme = match scheme.as_str() {
         "wasb" | "wasbs" => "abfss",
+        "gcs" => "gs",
         s => s,
     };
     Ok(Location {
@@ -138,10 +149,34 @@ fn location(path: &str) -> Result<Location> {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ObjectStorageFactory;
 
+/// How many distinct property sets keep their storage. A warehouse
+/// answers one set for all its tables, so a handful covers a process; a
+/// catalog that vends fresh credentials with every load answers a new
+/// set each time, and the bound is what keeps those from accumulating.
+const HELD_STORAGES: u64 = 64;
+
+/// A property set in one order — the key a storage is held under.
+type Properties = Vec<(String, String)>;
+
+/// The storages built so far, by the properties they were built from.
+/// A REST catalog builds its FileIO anew at every table load, and a
+/// storage built anew starts with no client — a connection pool and a
+/// credential fetch per scanned table. Properties are compared whole,
+/// credentials included, so a load that carries new ones gets a client
+/// of its own.
+static STORAGES: LazyLock<moka::sync::Cache<Properties, Arc<ObjectStorage>>> =
+    LazyLock::new(|| moka::sync::Cache::new(HELD_STORAGES));
+
 #[typetag::serde(name = "GlossqlObjectStorageFactory")]
 impl StorageFactory for ObjectStorageFactory {
     fn build(&self, config: &StorageConfig) -> Result<Arc<dyn Storage>> {
-        Ok(Arc::new(ObjectStorage::new(config.props().clone())))
+        let mut key: Properties = config
+            .props()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        key.sort();
+        Ok(STORAGES.get_with(key, || Arc::new(ObjectStorage::new(config.props().clone()))))
     }
 }
 
@@ -159,6 +194,7 @@ impl std::fmt::Debug for ObjectStorage {
         f.debug_struct("ObjectStorage")
             .field("s3.endpoint", &self.props.get(iceberg::io::S3_ENDPOINT))
             .field("adls.account-name", &self.props.get(ADLS_ACCOUNT_NAME))
+            .field("gcs.service.host", &self.props.get(GCS_SERVICE_HOST))
             .finish_non_exhaustive()
     }
 }
@@ -173,6 +209,13 @@ const ADLS_TENANT_ID: &str = "adls.tenant-id";
 const ADLS_CLIENT_ID: &str = "adls.client-id";
 const ADLS_CLIENT_SECRET: &str = "adls.client-secret";
 const ADLS_AUTHORITY_HOST: &str = "adls.authority-host";
+
+// iceberg's `gcs.*` property names (`io/storage/config/gcs.rs` in the
+// pin), the same for the Google family.
+const GCS_SERVICE_HOST: &str = "gcs.service.host";
+const GCS_CREDENTIALS_JSON: &str = "gcs.credentials-json";
+const GCS_TOKEN: &str = "gcs.oauth2.token";
+const GCS_NO_AUTH: &str = "gcs.no-auth";
 
 /// An `object_store` failure as the engine's error; a missing object
 /// keeps its kind readable for [`ObjectStorage::exists`].
@@ -342,6 +385,77 @@ impl ObjectStorage {
         builder
     }
 
+    /// The bucket's client, the same layering over the Google family:
+    /// the catalog's `gcs.*` properties, then the environment's
+    /// `GOOGLE_*` conventions minus credentials the catalog vended. With
+    /// no credential from either side, object_store's client asks the
+    /// metadata server for the attached service account's token
+    /// (object_store `gcp/builder.rs`, `InstanceCredentialProvider`).
+    fn gcs(&self, root: &str, authority: &str) -> Result<Arc<dyn ObjectStore>> {
+        Ok(Arc::new(
+            self.gcs_builder(root, std::env::vars())
+                .build()
+                .map_err(|e| does_not_build("Google Cloud Storage", authority, e))?,
+        ))
+    }
+
+    /// The builder behind [`Self::gcs`], the environment passed in so
+    /// the pass is testable without touching the process's own.
+    fn gcs_builder(
+        &self,
+        root: &str,
+        env: impl IntoIterator<Item = (String, String)>,
+    ) -> GoogleCloudStorageBuilder {
+        let mut builder = GoogleCloudStorageBuilder::new().with_url(root);
+        let p = &self.props;
+        let mut base_url = p.get(GCS_SERVICE_HOST).cloned();
+        if let Some(v) = p.get(GCS_CREDENTIALS_JSON) {
+            builder = builder.with_service_account_key(v);
+        }
+        // A vended token is the whole credential: the client sends it
+        // as given and asks nobody for another.
+        if let Some(v) = p.get(GCS_TOKEN) {
+            builder = builder.with_credentials(Arc::new(
+                object_store::StaticCredentialProvider::new(GcpCredential { bearer: v.clone() }),
+            ));
+        }
+        if p.get(GCS_NO_AUTH).is_some_and(|v| v == "true") {
+            builder = builder.with_skip_signature(true);
+        }
+        let vended = p.contains_key(GCS_CREDENTIALS_JSON) || p.contains_key(GCS_TOKEN);
+        for (name, value) in env {
+            if !name.starts_with("GOOGLE_") {
+                continue;
+            }
+            let Ok(key) = name.to_ascii_lowercase().parse::<GoogleConfigKey>() else {
+                continue;
+            };
+            let credential = matches!(
+                key,
+                GoogleConfigKey::ServiceAccount
+                    | GoogleConfigKey::ServiceAccountKey
+                    | GoogleConfigKey::ApplicationCredentials
+            );
+            if credential && vended {
+                continue;
+            }
+            if key == GoogleConfigKey::BaseUrl {
+                base_url = Some(value.clone());
+            }
+            builder = builder.with_config(key, value);
+        }
+        if let Some(url) = &base_url {
+            builder = builder.with_base_url(url);
+            // A plain-http host is a dev rig (an emulator); saying the
+            // scheme is saying it on purpose.
+            if url.starts_with("http://") {
+                builder = builder
+                    .with_client_options(object_store::ClientOptions::new().with_allow_http(true));
+            }
+        }
+        builder
+    }
+
     fn store(&self, at: &Location) -> Result<Arc<dyn ObjectStore>> {
         if let Some(store) = self.stores.lock().expect("stores lock").get(&at.authority) {
             return Ok(Arc::clone(store));
@@ -349,6 +463,7 @@ impl ObjectStorage {
         let store = match at.family {
             Family::S3 => self.s3(at.authority.rsplit("://").next().unwrap_or_default())?,
             Family::Azure => self.azure(&at.root, &at.authority)?,
+            Family::Gcs => self.gcs(&at.root, &at.authority)?,
         };
         self.stores
             .lock()
@@ -540,7 +655,23 @@ mod tests {
 
     /// The split: family, the client's key, and the object key, over
     /// both families' spellings; a location without a bucket or
-    /// container, or off the two families, is refused by name.
+    /// container, or off the three families, is refused by name.
+    /// A table load with the properties of the last one gets the
+    /// storage — and so the clients — the last one built; new
+    /// properties get their own.
+    #[test]
+    fn a_repeated_load_reuses_its_storage() {
+        let thin = |s: &Arc<dyn Storage>| Arc::as_ptr(s).cast::<()>();
+        let config = |region: &str| {
+            StorageConfig::new().with_prop(iceberg::io::S3_REGION, region.to_string())
+        };
+        let first = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
+        let again = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
+        let other = ObjectStorageFactory.build(&config("eu-west-1")).unwrap();
+        assert_eq!(thin(&first), thin(&again));
+        assert_ne!(thin(&first), thin(&other));
+    }
+
     #[test]
     fn a_location_splits_into_its_store_and_its_key() {
         let at = location("s3://lake/ns/t/data/x.parquet").unwrap();
@@ -561,8 +692,16 @@ mod tests {
         let at = location("az://lake/p").unwrap();
         assert_eq!(at.authority, "az://lake");
 
+        let at = location("gs://lake/warehouse/ns/t/m.json").unwrap();
+        assert_eq!(at.family, Family::Gcs);
+        assert_eq!(at.authority, "gs://lake");
+        assert_eq!(at.key.as_ref(), "warehouse/ns/t/m.json");
+        let at = location("gcs://lake/p").unwrap();
+        assert_eq!(at.authority, "gcs://lake");
+        assert_eq!(at.root, "gs://lake");
+
         assert!(location("file:///tmp/x").is_err());
-        assert!(location("gs://lake/x").is_err());
+        assert!(location("oss://lake/x").is_err());
         assert!(location("s3://bucketonly").unwrap().key.as_ref().is_empty());
     }
 
@@ -607,8 +746,47 @@ mod tests {
         assert_eq!(bare.get_config_value(&AzureConfigKey::MsiEndpoint), None);
     }
 
+    /// The Google family's pass: the environment configures, a
+    /// credential the catalog vended keeps the environment's own out,
+    /// and a name outside the convention passes by.
+    #[test]
+    fn a_vended_gcs_token_keeps_the_environments_credential_out() {
+        let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let pairs = [
+            ("GOOGLE_SERVICE_ACCOUNT_PATH", "/secrets/sa.json"),
+            ("GOOGLE_BASE_URL", "http://localhost:4443"),
+            ("HOME", "/home/glossql"),
+        ];
+        let bare = ObjectStorage::new(HashMap::new()).gcs_builder("gs://lake", env(&pairs));
+        assert_eq!(
+            bare.get_config_value(&GoogleConfigKey::ServiceAccount)
+                .as_deref(),
+            Some("/secrets/sa.json")
+        );
+        assert_eq!(
+            bare.get_config_value(&GoogleConfigKey::BaseUrl).as_deref(),
+            Some("http://localhost:4443")
+        );
+        assert_eq!(
+            bare.get_config_value(&GoogleConfigKey::Bucket).as_deref(),
+            None,
+            "the bucket is read from the URL at build"
+        );
+        let vended = ObjectStorage::new(HashMap::from([(GCS_TOKEN.into(), "ya29.token".into())]))
+            .gcs_builder("gs://lake", env(&pairs));
+        assert_eq!(
+            vended.get_config_value(&GoogleConfigKey::ServiceAccount),
+            None
+        );
+    }
+
     /// A file source's root builds its client from the environment alone
-    /// and registers under the location's authority; off the two
+    /// and registers under the location's authority; off the three
     /// families it is refused by name.
     #[test]
     fn a_source_root_registers_under_its_authority() {
@@ -617,7 +795,7 @@ mod tests {
         assert_eq!(key.as_str(), "abfss://lake@acme.dfs.core.windows.net/");
         let (_, key) = environment_store("wasbs://lake@acme.blob.core.windows.net/p").unwrap();
         assert_eq!(key.as_str(), "wasbs://lake@acme.blob.core.windows.net/");
-        assert!(environment_store("gs://lake/sources").is_err());
+        assert!(environment_store("oss://lake/sources").is_err());
         assert!(environment_store("/tmp/sources").is_err());
     }
 
@@ -641,6 +819,10 @@ mod tests {
             Warehouse::parse("abfss://lake@acme.dfs.core.windows.net/warehouse").unwrap(),
             Warehouse::Remote("abfss://lake@acme.dfs.core.windows.net/warehouse".into())
         );
-        assert!(Warehouse::parse("gs://lake/warehouse").is_err());
+        assert_eq!(
+            Warehouse::parse("gs://lake/warehouse").unwrap(),
+            Warehouse::Remote("gs://lake/warehouse".into())
+        );
+        assert!(Warehouse::parse("oss://lake/warehouse").is_err());
     }
 }

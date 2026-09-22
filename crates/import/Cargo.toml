@@ -16,7 +16,8 @@ serde_json = { workspace = true }
 # try_to_date/try_to_timestamp parse with the same chrono arrow already uses.
 chrono = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+# `sync`: the channel a relational source's blocking driver feeds.
+tokio = { workspace = true, features = ["sync"] }
 adbc_core = { workspace = true }
 adbc_driver_manager = { workspace = true }
 # A file source's root in an object store: the storage seam's clients.

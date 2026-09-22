@@ -19,7 +19,9 @@
 
 use std::sync::Arc;
 
-use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_glossary::{Actor, ActorKind};
+
+use crate::common;
 use glossql_serverd::{Plane, bootstrap};
 use glossql_session::NoRuntime;
 
@@ -178,7 +180,7 @@ async fn every_doc_function_body_compiles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_doc_read_names_columns_that_exist() {
-    let (_dir, store) = scratch_store().await;
+    let (_dir, store) = common::scratch_store().await;
     let plane = Arc::new(Plane::new(store.clone(), Arc::new(NoRuntime)));
     bootstrap(&plane, human()).await.unwrap();
 
@@ -231,19 +233,6 @@ async fn every_doc_read_names_columns_that_exist() {
     );
 }
 
-/// A store over its own throwaway lake; hold the dir for the test's life.
-async fn scratch_store() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = glossql_catalog::Lake::open(
-        &dir.path().join("catalog.sqlite"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    let store = Store::open(lake).await.unwrap();
-    (dir, store)
-}
-
 /// The engine's SQL guide under `vendor/` is served as it stands on
 /// disk, at the version the lock resolves: `vendor/datafusion/VERSION`
 /// against Cargo.lock's `datafusion` package. A pin move that skips
@@ -284,6 +273,7 @@ fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
         "the served guide is the files under vendor/"
     );
     assert_eq!(served, on_disk, "a served page is the file as it stands");
+    let pages = glossql_serverd::skills::door_pages();
     for p in glossql_serverd::skills::VENDORED {
         assert!(
             p.uri().starts_with("doc://vendor/") && p.title() != p.path,
@@ -291,7 +281,7 @@ fn the_served_substrate_guide_is_the_vendor_directory_at_the_pin() {
             p.path
         );
         assert!(
-            glossql_serverd::skills::read(&p.uri()).is_some_and(|(_, body)| body == p.body),
+            pages.iter().any(|d| d.uri == p.uri() && d.body == p.body),
             "{} is not readable at its own URI",
             p.path
         );

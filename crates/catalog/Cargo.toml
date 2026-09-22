@@ -32,6 +32,9 @@ sqlx = { workspace = true, optional = true }
 iceberg-catalog-rest = { workspace = true, optional = true }
 object_store = { workspace = true }
 typetag = { workspace = true }
+# The storages a REST catalog's table loads would otherwise rebuild;
+# moka is in the tree for the cube cache.
+moka = { workspace = true, features = ["sync"] }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

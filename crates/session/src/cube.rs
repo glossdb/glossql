@@ -72,6 +72,7 @@ use serde_json::Value;
 use crate::reads::{Served, Shared};
 use crate::search::{QuerySlot, current_query_slots, int_column};
 use crate::session::SessionError;
+use crate::subject::qi;
 
 /// The process-wide byte cap when serverd is started without
 /// `--cube-cache`, and what a session built without a Plane carries.
@@ -709,6 +710,30 @@ pub(crate) fn judged_bodies(
     out.into_iter().map(|(s, (_, v))| (s, v)).collect()
 }
 
+/// The judged surface a monthly reader anchors on, each by column
+/// subject: temporal verdicts for the time axis, behavior verdicts and
+/// the `behavior` glosses with their speaker rank for the verb. Read
+/// once per door call, so a replay or a fingerprint never folds a
+/// metric by a different word than its cube.
+pub(crate) struct Anchors {
+    pub(crate) temporal: HashMap<String, Verdict>,
+    pub(crate) behavior: HashMap<String, Verdict>,
+    pub(crate) behavior_gloss: HashMap<String, (Value, u8)>,
+}
+
+impl Anchors {
+    pub(crate) async fn at(
+        rctx: &glossql_glossary::ReadContext,
+        dataset: &str,
+    ) -> Result<Self, SessionError> {
+        Ok(Self {
+            temporal: judged_bodies(rctx, dataset, "temporal_profile"),
+            behavior: judged_bodies(rctx, dataset, "behavior_evidence"),
+            behavior_gloss: crate::search::current_fact_values(rctx, dataset, "behavior").await?,
+        })
+    }
+}
+
 /// The declared function that returns a measurement aspect from this
 /// dataset — the first by name where several do; none where none is
 /// declared.
@@ -1276,7 +1301,7 @@ async fn plan(
         .get("sql")
         .and_then(Value::as_str)
         .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
     // Planned through to the physical plan as well: the engine admits
     // at the logical stage what it refuses at the physical one — a
     // scalar subquery inside an aggregate's argument arrives there as
@@ -1622,14 +1647,7 @@ async fn build(
     slot: &QuerySlot,
     asked: Option<Resolution>,
 ) -> Result<Cube, Abstain> {
-    let Surface {
-        ctx,
-        dataset,
-        judged,
-        version,
-        ..
-    } = surface;
-    let dataset = dataset.as_str();
+    let Surface { ctx, version, .. } = surface;
     let metric = slot.aspect.as_str();
     // Boxed: the plan stage's future is most of the build's, and a
     // build constructed on the stack under a write's depth must fit.
@@ -1675,11 +1693,7 @@ async fn build(
     // false — the grouped shape then counts one side's keys. At this
     // pin and on upstream main.
     if !grain.is_empty() {
-        let keys = grain
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let keys = grain.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
         let q = format!(
             "SELECT count(*) AS total, count(DISTINCT struct({keys})) AS keys FROM ({sql})"
         );
@@ -1710,7 +1724,7 @@ async fn build(
         let parts: Vec<String> = cand
             .iter()
             .enumerate()
-            .map(|(i, c)| format!("count(DISTINCT \"{}\") AS \"n_{i}\"", c.column))
+            .map(|(i, c)| format!("count(DISTINCT {}) AS \"n_{i}\"", qi(&c.column)))
             .collect();
         let batches = run(
             shared,
@@ -1767,7 +1781,7 @@ async fn build(
         Some(w) => {
             let q = format!(
                 "SELECT {} - INTERVAL '{}' AS since FROM ({sql})",
-                period_expr(&format!("max(\"{tcol}\")"), resolution),
+                period_expr(&format!("max({tcol_q})", tcol_q = qi(tcol)), resolution),
                 w.replace('\'', "''")
             );
             let batches = run(shared, ctx, &q).await?;
@@ -1827,16 +1841,14 @@ async fn build(
                     "sum(value)"
                 };
                 let clause = since.map_or(String::new(), |s| {
-                    format!(
-                        " AND {} > {s}",
-                        period_expr(&format!("\"{tcol}\""), resolution)
-                    )
+                    format!(" AND {} > {s}", period_expr(&qi(tcol), resolution))
                 });
                 let q = format!(
-                    "SELECT CAST(\"{dcol}\" AS VARCHAR) AS mc_member FROM ({sql}) \
-                     WHERE \"{dcol}\" IS NOT NULL{clause} GROUP BY 1 \
+                    "SELECT CAST({dcol_q} AS VARCHAR) AS mc_member FROM ({sql}) \
+                     WHERE {dcol_q} IS NOT NULL{clause} GROUP BY 1 \
                      ORDER BY {weight} DESC NULLS LAST, mc_member LIMIT {}",
-                    MEMBERS_CAP - 1
+                    MEMBERS_CAP - 1,
+                    dcol_q = qi(dcol)
                 );
                 let mut named = Vec::new();
                 for b in run(shared, ctx, &q)
@@ -1859,16 +1871,17 @@ async fn build(
                     // nothing to name and no cell to serve; the plain
                     // cast, never an empty IN list, which is not a
                     // query.
-                    format!("CAST(\"{dcol}\" AS VARCHAR)")
+                    format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
                 } else {
                     format!(
-                        "CASE WHEN CAST(\"{dcol}\" AS VARCHAR) IN ({}) \
-                         THEN CAST(\"{dcol}\" AS VARCHAR) ELSE 'other' END",
-                        named.join(", ")
+                        "CASE WHEN CAST({dcol_q} AS VARCHAR) IN ({}) \
+                         THEN CAST({dcol_q} AS VARCHAR) ELSE 'other' END",
+                        named.join(", "),
+                        dcol_q = qi(dcol)
                     )
                 }
             } else {
-                format!("CAST(\"{dcol}\" AS VARCHAR)")
+                format!("CAST({dcol_q} AS VARCHAR)", dcol_q = qi(dcol))
             };
             let rows = series(
                 shared,
@@ -1906,18 +1919,7 @@ async fn build(
                 .get("alternative")
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
-            match rival_series(
-                shared,
-                ctx,
-                alt_sql,
-                dataset,
-                judged,
-                verb,
-                resolution,
-                since.as_deref(),
-            )
-            .await
-            {
+            match rival_series(shared, surface, alt_sql, verb, resolution, since.as_deref()).await {
                 Ok((rows, rival_verb, rival_foreign)) => {
                     foreign |= rival_foreign;
                     alternative_divergence = Some(divergence(
@@ -2040,18 +2042,21 @@ fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> St
 /// where several stand unjudged — a rival is a comparison cell, and an
 /// anchor guessed among several beside a judged series compares
 /// nothing. Every refusal carries its own reason for the fact row.
-#[allow(clippy::too_many_arguments)]
 async fn rival_series(
     shared: &Arc<Shared>,
-    ctx: &SessionContext,
+    surface: &Surface,
     sql: &str,
-    dataset: &str,
-    judged: &Judged,
     chosen_verb: &str,
     resolution: Resolution,
     since: Option<&str>,
 ) -> Result<(Vec<SeriesRow>, &'static str, bool), Abstain> {
-    let probe = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let Surface {
+        ctx,
+        dataset,
+        judged,
+        ..
+    } = surface;
+    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
@@ -2123,7 +2128,7 @@ fn total_sql(
     resolution: Resolution,
     since: Option<&str>,
 ) -> String {
-    let p = period_expr(&format!("\"{tcol}\""), resolution);
+    let p = period_expr(&qi(tcol), resolution);
     let w = since.map_or(String::new(), |s| format!(" WHERE {p} > {s}"));
     match verb {
         "ratio" => format!(
@@ -2134,9 +2139,10 @@ fn total_sql(
         "stock" => format!(
             "SELECT period, sum(value) AS value FROM (\
                 SELECT {p} AS period, value, \
-                       rank() OVER (PARTITION BY {p} ORDER BY \"{tcol}\" DESC) AS rk \
+                       rank() OVER (PARTITION BY {p} ORDER BY {tcol_q} DESC) AS rk \
                 FROM ({sql}){w}\
-             ) WHERE rk = 1 GROUP BY period ORDER BY period"
+             ) WHERE rk = 1 GROUP BY period ORDER BY period",
+            tcol_q = qi(tcol)
         ),
         _ => format!(
             "SELECT {p} AS period, sum(value) AS value \
@@ -2160,28 +2166,32 @@ fn member_sql(
     resolution: Resolution,
     since: Option<&str>,
 ) -> String {
-    let p = period_expr(&format!("\"{tcol}\""), resolution);
+    let p = period_expr(&qi(tcol), resolution);
     let w = since.map_or(String::new(), |s| format!(" AND {p} > {s}"));
     match verb {
         "ratio" => format!(
             "SELECT {p} AS period, {member} AS member, \
                     sum(num) / nullif(sum(den), 0) AS value, \
                     sum(num) AS num, sum(den) AS den \
-             FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL{w} \
-             GROUP BY 1, 2 ORDER BY 1, 2"
+             FROM ({sql}) WHERE {dcol_q} IS NOT NULL{w} \
+             GROUP BY 1, 2 ORDER BY 1, 2",
+            dcol_q = qi(dcol)
         ),
         "stock" => format!(
             "SELECT period, member, sum(value) AS value FROM (\
                 SELECT {p} AS period, {member} AS member, value, \
-                       rank() OVER (PARTITION BY {p}, \"{dcol}\" \
-                                    ORDER BY \"{tcol}\" DESC) AS rk \
-                FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL{w}\
-             ) WHERE rk = 1 GROUP BY period, member ORDER BY period, member"
+                       rank() OVER (PARTITION BY {p}, {dcol_q} \
+                                    ORDER BY {tcol_q} DESC) AS rk \
+                FROM ({sql}) WHERE {dcol_q} IS NOT NULL{w}\
+             ) WHERE rk = 1 GROUP BY period, member ORDER BY period, member",
+            dcol_q = qi(dcol),
+            tcol_q = qi(tcol)
         ),
         _ => format!(
             "SELECT {p} AS period, {member} AS member, sum(value) AS value \
-             FROM ({sql}) WHERE \"{dcol}\" IS NOT NULL{w} \
-             GROUP BY 1, 2 ORDER BY 1, 2"
+             FROM ({sql}) WHERE {dcol_q} IS NOT NULL{w} \
+             GROUP BY 1, 2 ORDER BY 1, 2",
+            dcol_q = qi(dcol)
         ),
     }
 }
@@ -2193,7 +2203,7 @@ async fn run(
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<Vec<RecordBatch>, Abstain> {
-    let plan = Box::pin(crate::whatif::build_plan(shared, ctx, sql)).await?;
+    let plan = crate::whatif::build_plan(shared, ctx, sql).await?;
     ctx.execute_logical_plan(plan)
         .await
         .map_err(|e| Abstain(format!("not served: {e}")))?
@@ -2656,7 +2666,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             text(|f| f.superseded_divergence.as_deref()),
         ],
     )
-    .map_err(|e| SessionError::Runtime(e.to_string()))
+    .map_err(SessionError::from)
 }
 
 #[cfg(test)]

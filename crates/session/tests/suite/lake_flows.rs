@@ -66,7 +66,7 @@ fn done(outcome: &Outcome) -> &str {
 
 fn single_value(outcomes: &[Outcome]) -> String {
     match outcomes.last().unwrap() {
-        Outcome::Rows(batches) => {
+        Outcome::Rows { batches, .. } => {
             let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(rows, 1, "expected one row");
             let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -350,4 +350,134 @@ async fn a_landing_discloses_its_cast_nulled_cells() {
     assert_eq!(json["checked"][0]["column"], "balance");
     assert_eq!(json["checked"][0]["failed"], 2);
     assert_eq!(json["checked"][0]["tokens"][0][0], "\\N");
+}
+
+/// A landing's rows run while they are written, so a recipe can fail
+/// with its table already created. The table goes with the failure:
+/// the dataset holds nothing under the name, and the corrected recipe
+/// lands where a leftover table would have refused its create.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recipe_that_fails_while_landing_leaves_no_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("t.csv"), "id,amount\n1,10\n2,n/a\n3,30\n").unwrap();
+    let session = workspace(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a failing landing');\n\
+             USE fin;\n\
+             DECLARE SOURCE export SET (type: csv, location: '{}');",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    // The plan is sound — the cast fails on a row, at execution.
+    let refused = session
+        .execute(
+            "DECLARE RECIPE t ON fin FROM export AS $$\
+               SELECT id, CAST(amount AS BIGINT) AS amount FROM read_csv('t.csv')$$;",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("recipe failed"), "{refused}");
+    let tables = session.execute("SHOW TABLES;").await.unwrap();
+    let Outcome::Rows { batches, .. } = &tables[0] else {
+        panic!("SHOW TABLES answers rows")
+    };
+    assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+
+    let outcomes = session
+        .execute(
+            "DECLARE RECIPE t ON fin FROM export AS $$\
+               SELECT id, try_cast(amount AS BIGINT) AS amount FROM read_csv('t.csv')$$;",
+        )
+        .await
+        .unwrap();
+    assert!(done(&outcomes[0]).contains("3 rows landed"), "{outcomes:?}");
+}
+
+/// A data update (SPEC.md §3): `IMPORT` lands what the source holds
+/// new as one more snapshot of the same table — the first landing's
+/// rows, its history and its glosses stand — and refuses by name what
+/// an append cannot express.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_import_appends_the_new_files_as_a_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(root.join("orders")).unwrap();
+    std::fs::write(root.join("orders/2026-01.csv"), "id,amount\n1,10\n2,n/a\n").unwrap();
+    let session = workspace(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a data update');\n\
+             USE fin;\n\
+             DECLARE SOURCE export SET (type: csv, location: '{}');\n\
+             DECLARE RECIPE orders ON fin FROM export AS $$\
+               SELECT id, try_cast(amount AS BIGINT) AS amount \
+               FROM read_csv('orders/*.csv') WHERE try_cast(amount AS BIGINT) IS NOT NULL$$;\n\
+             DECLARE RECIPE totals ON fin FROM export AS $$\
+               SELECT count(*) AS n FROM read_csv('orders/*.csv')$$;",
+            root.display()
+        ))
+        .await
+        .unwrap();
+
+    // Nothing new at the source: the statement says so and lands nothing.
+    let same = session.execute("IMPORT orders;").await.unwrap();
+    assert!(done(&same[0]).contains("unchanged"), "{same:?}");
+
+    // A second export arrives beside the first.
+    std::fs::write(
+        root.join("orders/2026-02.csv"),
+        "id,amount\n3,30\n4,40\n5,x\n",
+    )
+    .unwrap();
+    let imported = session.execute("IMPORT fin.orders;").await.unwrap();
+    assert_eq!(
+        done(&imported[0]),
+        "IMPORT orders ON fin (2 rows landed, 1 dropped; casts clean; from 1 new file)",
+    );
+    let total = session
+        .execute("SELECT count(*), sum(amount) FROM orders;")
+        .await
+        .unwrap();
+    let Outcome::Rows { batches, .. } = &total[0] else {
+        panic!("a read answers rows")
+    };
+    let cell = |i: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0).unwrap()
+    };
+    assert_eq!((cell(0), cell(1)), ("3".to_string(), "80".to_string()));
+
+    // The same table, one more landing on its record.
+    let history = session
+        .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
+        .await
+        .unwrap();
+    assert_eq!(single_value(&history), "2");
+    let again = session.execute("IMPORT orders;").await.unwrap();
+    assert!(done(&again[0]).contains("unchanged"), "{again:?}");
+
+    // What an append cannot express is refused by name: a recipe whose
+    // result is not its rows file by file, and a landed file that moved.
+    let aggregate = session
+        .execute("IMPORT totals;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(aggregate.contains("import refused"), "{aggregate}");
+    assert!(aggregate.contains("plans a `Aggregate"), "{aggregate}");
+    std::fs::write(root.join("orders/2026-01.csv"), "id,amount\n1,11\n").unwrap();
+    let moved = session
+        .execute("IMPORT orders;")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        moved.contains("`orders/2026-01.csv` changed since it landed"),
+        "{moved}"
+    );
 }

@@ -17,6 +17,7 @@ DECLARE SOURCE crm SET (type: relational_db, location: 'postgres://crm.internal/
 is refused at the declaration. For file sources, `location` is the
 root recipe paths resolve under: a directory on the server's machine,
 or a location in an object store — `s3://bucket/prefix`,
+`gs://bucket/prefix`,
 `abfss://container@account.dfs.core.windows.net/prefix` — read with
 the rights the server process has (its environment's conventions, or
 the platform's managed identity), never a credential in the location
@@ -65,6 +66,13 @@ its own dialect; at a file source the server runs it, with
 location and `try_to_date` / `try_to_timestamp` registered. The
 default recipe is `SELECT *`.
 
+**A landing streams.** The recipe's rows are written as they arrive,
+one batch in memory, and join the table as one commit — so the size of
+a first landing is bounded by the store, not by the server's memory. A
+recipe that fails part-way leaves no table. A changed recipe runs
+whole before the landing it replaces is dropped, so that one is held
+in memory.
+
 **Cast accounting.** The engine keeps one number per import —
 `dropped_rows_count`, source rows minus landed rows — in the
 statement's outcome and in the `imports` relation for history. Which
@@ -85,6 +93,27 @@ re-declaring the recipe, never by editing data.
 `DROP TABLE` removes a table and refuses while it holds data or
 glosses. Substrate DDL that would alter schema or data directly is
 closed — tables come from recipes.
+
+## Data updates
+
+`IMPORT <table>` is how a table takes in what its source holds new.
+The recipe runs again, and the result joins the table as one more
+snapshot: the table, its landings in `imports` and its glosses stand,
+and a gloss written before the update reads as `stale` against it. The
+update reproduces the table's schema or it errors. Nothing in the
+server watches a source — a schedule or an agent sends the statement,
+and with nothing new at the source it answers `unchanged`.
+
+An update's meaning is the recipe's result as the source stands now.
+The lake commits appends, so the server lands the update when
+appending is that result: the recipe maps rows one for one over a
+single file scan — no aggregate, window, join, limit or set operation
+— and every file the table has landed still stands as it landed. Each
+landing records the files it read, by path, size and modification
+time, and the update reads the files no landing has. A recipe of
+another shape, a landed file that changed or is gone, and a relational
+source are refused by name; replacing a table's rows in one commit is
+planned, on the lake's overwrite.
 
 ## The source deposit
 

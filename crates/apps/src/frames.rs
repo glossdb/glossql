@@ -10,33 +10,24 @@
 use std::collections::HashMap;
 
 use axum::Json;
-use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-use arrow_ipc::writer::StreamWriter;
 use datafusion::common::{ParamValues, ScalarValue};
-use datafusion::execution::SendableRecordBatchStream;
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::StreamExt;
 use glossql_glossary::{Actor, ActorKind};
 
 use crate::AppDoor;
 use crate::app::AppDef;
-
-pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 
 pub async fn frame(
     State(door): State<AppDoor>,
     Path((dataset, app, frame)): Path<(String, String, String)>,
     Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let known = crate::known(&door).await;
-    if !known.contains(&dataset) {
-        return fail(
-            StatusCode::NOT_FOUND,
-            crate::no_such_dataset(&dataset, &known),
-        );
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return fail(StatusCode::NOT_FOUND, missing);
     }
     let glossed = crate::glossed::parts(&door, &dataset).await;
     let def = match AppDef::load(&app, &glossed) {
@@ -79,12 +70,26 @@ pub async fn frame(
     // something to override. Frames must still never scan the
     // `datasets` relation for it: in a multi-dataset workspace that
     // fans every joined row out.
-    match session
+    let mut query = match session
         .query_stream_with_params(&sql, Some(ParamValues::from(values)))
         .await
     {
-        Ok(query) => stream(query.stream, query.record),
-        Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+        Ok(query) => query,
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+    };
+    // The first poll runs the plan. A frame the engine refuses answers
+    // as the JSON its tile renders; nothing is on the wire yet, so the
+    // status is still ours to set.
+    match query.stream.next().await {
+        Some(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+        first => (
+            [
+                (header::CONTENT_TYPE.as_str(), crate::ipc::ARROW_STREAM),
+                (FRAME_CLASS, if query.record { "record" } else { "data" }),
+            ],
+            crate::ipc::body(query.stream, first),
+        )
+            .into_response(),
     }
 }
 
@@ -162,63 +167,6 @@ pub(crate) async fn one_open_question(
 /// store evicts record entries on a ruling and keeps data entries —
 /// the cube survives every glossary write.
 pub const FRAME_CLASS: &str = "glossql-frame-class";
-
-/// Encode into a chunked body as batches arrive — the same shape as
-/// serverd's `/query` door (crates/serverd/src/query.rs): the channel
-/// capacity is the backpressure, an error after bytes flowed truncates
-/// the stream, and a client hanging up cancels the engine's work.
-fn stream(mut batches: SendableRecordBatchStream, record: bool) -> Response {
-    let schema = batches.schema();
-    let (mut tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(2);
-    tokio::spawn(async move {
-        let mut writer = match StreamWriter::try_new(Vec::new(), schema.as_ref()) {
-            Ok(writer) => writer,
-            Err(e) => {
-                let _ = tx.send(Err(std::io::Error::other(e))).await;
-                return;
-            }
-        };
-        if ship(&mut writer, &mut tx).await.is_err() {
-            return;
-        }
-        while let Some(batch) = batches.next().await {
-            let written = batch
-                .map_err(std::io::Error::other)
-                .and_then(|b| writer.write(&b).map_err(std::io::Error::other));
-            if let Err(e) = written {
-                let _ = tx.send(Err(e)).await;
-                return;
-            }
-            if ship(&mut writer, &mut tx).await.is_err() {
-                return;
-            }
-        }
-        if let Err(e) = writer.finish() {
-            let _ = tx.send(Err(std::io::Error::other(e))).await;
-            return;
-        }
-        let _ = ship(&mut writer, &mut tx).await;
-    });
-    (
-        [
-            (header::CONTENT_TYPE.as_str(), ARROW_STREAM),
-            (FRAME_CLASS, if record { "record" } else { "data" }),
-        ],
-        Body::from_stream(rx),
-    )
-        .into_response()
-}
-
-async fn ship(
-    writer: &mut StreamWriter<Vec<u8>>,
-    tx: &mut mpsc::Sender<Result<Bytes, std::io::Error>>,
-) -> Result<(), ()> {
-    let chunk = std::mem::take(writer.get_mut());
-    if chunk.is_empty() {
-        return Ok(());
-    }
-    tx.send(Ok(Bytes::from(chunk))).await.map_err(|_| ())
-}
 
 /// Frame errors answer as JSON — the browser components render the
 /// message inside the tile, which is the error-at-read posture on a

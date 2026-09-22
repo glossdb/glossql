@@ -134,7 +134,7 @@ async fn walked(session: &glossql_session::Session) -> Value {
         .execute("SELECT value FROM GLOSSARY(fin::metric_bands) WHERE state = 'current';")
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("a value row")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -260,7 +260,8 @@ async fn metric_bands_walks_and_reads_the_breach() {
         )
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = points.into_iter().next_back() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = points.into_iter().next_back()
+    else {
         panic!("no rows");
     };
     let shown = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
@@ -300,7 +301,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
         .execute("SELECT band, score FROM ATTEST(fin::metric_bands);")
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("attest rows")
     };
     let batch = batches
@@ -330,7 +331,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
         .execute("SELECT say, statement FROM next WHERE surface = 'bands';")
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("next rows")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
@@ -370,7 +371,7 @@ async fn metric_bands_walks_and_reads_the_breach() {
         .execute("SELECT state, why FROM next WHERE surface = 'bands';")
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = outcomes.last() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
         panic!("next rows")
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).expect("a row");
@@ -623,7 +624,8 @@ async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
         .execute("SELECT band, score FROM ATTEST(fin::metric_bands);")
         .await
         .unwrap();
-    let Some(glossql_session::Outcome::Rows(batches)) = verdict.into_iter().next_back() else {
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = verdict.into_iter().next_back()
+    else {
         panic!("no verdict");
     };
     let shown = datafusion::arrow::util::pretty::pretty_format_batches(&batches)

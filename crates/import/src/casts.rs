@@ -100,9 +100,9 @@ impl ScalarUDFImpl for TryParse {
         }
         let formats: Vec<&StringArray> = formats.iter().map(|f| f.as_string::<i32>()).collect();
         // The column at whichever width the engine carries it. A parquet
-        // scan under DataFusion 54 yields Utf8View, and a downcast to
-        // `StringArray` alone made the planner coerce the whole column
-        // first — a copy per row — before a single value was read. Three
+        // scan yields Utf8View, and a downcast to `StringArray` alone
+        // makes the planner coerce the whole column first — a copy per
+        // row — before a single value is read. Three
         // arms, as datafusion-functions' own datetime dispatch has them.
         let values = &arrays[0];
         let out = match values.data_type() {

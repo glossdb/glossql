@@ -15,6 +15,9 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{Caller, NoRuntime, Plane};
 use tower::ServiceExt;
 
+/// The server's own URI the pages are told.
+const ORIGIN: &str = "https://glossql.example";
+
 async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -67,6 +70,7 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
                GLOSS app_page ON board.index AS $${{"html": "{{% extends \"shell.html\" %}}\n{{% import \"modules/tiles.html\" as tiles %}}\n{{% block main %}}\n<div class=\"tiles\">\n{{{{ tiles::chart(frame=\"frames/monthly\", spec=\"specs/monthly.vl.json\", title=\"Monthly\") }}}}\n</div>\n{{% endblock %}}\n"}}$$;
                GLOSS app_frame ON board.monthly AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger GROUP BY month ORDER BY month"}}$$;
                GLOSS app_frame ON board.by_cohort AS $${{"sql": "SELECT month, sum(value) AS value FROM ledger WHERE cohort = $cohort GROUP BY month ORDER BY month"}}$$;
+               GLOSS app_frame ON board.uncastable AS $${{"sql": "SELECT CAST(cohort AS BIGINT) AS n FROM ledger"}}$$;
                GLOSS app_frame ON board.evil AS $${{"sql": "DROP TABLE ledger"}}$$;
                GLOSS app_spec ON board.monthly AS $${{"spec": "{{\"mark\": \"bar\", \"encoding\": {{}}}}"}}$$;"#,
             aspects = shipped_app_declarations()
@@ -78,8 +82,11 @@ async fn workspace() -> (Router, Arc<Plane>, tempfile::TempDir) {
     // verified caller in the request; here the layer stands in for it,
     // with human standing, as the gate stamps on a human door.
     let router = Router::new()
-        .merge(glossql_apps::root_router(Arc::clone(&plane)))
-        .nest("/{dataset}/app", glossql_apps::router(Arc::clone(&plane)))
+        .merge(glossql_apps::root_router(Arc::clone(&plane), ORIGIN))
+        .nest(
+            "/{dataset}/app",
+            glossql_apps::router(Arc::clone(&plane), ORIGIN),
+        )
         .layer(axum::Extension(Caller(Actor {
             kind: ActorKind::Human,
             id: "ada".into(),
@@ -270,6 +277,14 @@ async fn pages_render_and_frames_stream() {
     assert_eq!(unbound.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let unbound = text(unbound).await;
     assert!(unbound.contains("cohort"), "{unbound}");
+
+    // A frame that plans and then fails on its first batch is refused
+    // with the engine's reason, as the JSON its tile renders — never a
+    // 200 over a stream that breaks.
+    let uncastable = get(&app, "/perf/app/board/frames/uncastable").await;
+    assert_eq!(uncastable.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let uncastable = text(uncastable).await;
+    assert!(uncastable.contains("\"error\""), "{uncastable}");
 
     // The spec serves as authored.
     let spec = get(&app, "/perf/app/board/specs/monthly.vl.json").await;
@@ -500,7 +515,7 @@ async fn a_ruling_is_signed_with_the_callers_own_name() {
         .execute("SELECT actor_id FROM glossary WHERE aspect = 'ruling' AND actor_kind = 'human';")
         .await
         .unwrap();
-    let glossql_session::Outcome::Rows(batches) = signed.last().unwrap() else {
+    let glossql_session::Outcome::Rows { batches, .. } = signed.last().unwrap() else {
         panic!("expected rows");
     };
     let batch = batches.iter().find(|b| b.num_rows() > 0).unwrap();
@@ -1524,9 +1539,19 @@ async fn the_root_lists_every_dataset_at_a_glance() {
     assert!(!root.contains("href=\"/second/app/board\""), "{root}");
     assert!(root.contains("glossed"), "{root}");
     assert!(root.contains("built in"), "{root}");
-    // The doors and the connect line.
-    assert!(root.contains("the agent door"), "{root}");
+    // The doors and the connect line: an agent connects to a
+    // dataset's door, and the workspace door is named for what only it
+    // does.
+    assert!(root.contains("the dataset's agent door"), "{root}");
+    assert!(root.contains("the workspace's agent door"), "{root}");
+    // The connect line names the server as it was told it is reached,
+    // whatever host the request claimed. The template escapes the
+    // scheme's slashes, so the host is the tell.
     assert!(root.contains("claude mcp add"), "{root}");
+    assert!(
+        root.contains("glossql.example/&lt;dataset&gt;/mcp"),
+        "{root}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1829,4 +1854,40 @@ async fn the_lineage_page_draws_the_record() {
         3,
         "{edges:?}"
     );
+}
+
+/// An asset revalidates by its tag: the first load carries the bytes
+/// and a validator, and a load that sends the validator back is
+/// answered with no body. A tag the server does not hold is a full
+/// answer again.
+#[tokio::test]
+async fn an_unchanged_asset_revalidates_without_its_body() {
+    let assets = glossql_apps::assets_router();
+    let first = get(&assets, "/app.css").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
+    let tag = first.headers()[header::ETAG].clone();
+    assert!(!text(first).await.is_empty());
+
+    let conditional = |sent: axum::http::HeaderValue| {
+        let assets = assets.clone();
+        async move {
+            assets
+                .oneshot(
+                    Request::get("/app.css")
+                        .header(header::IF_NONE_MATCH, sent)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let again = conditional(tag.clone()).await;
+    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(again.headers()[header::ETAG], tag);
+    assert!(text(again).await.is_empty());
+
+    let stale = conditional("\"0000000000000000\"".parse().unwrap()).await;
+    assert_eq!(stale.status(), StatusCode::OK);
 }

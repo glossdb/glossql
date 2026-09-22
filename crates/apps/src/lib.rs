@@ -22,6 +22,7 @@ mod builtin;
 mod export;
 mod frames;
 pub mod glossed;
+pub mod ipc;
 mod overview;
 mod pages;
 mod remeasure;
@@ -42,6 +43,10 @@ use glossql_session::Plane;
 #[derive(Clone)]
 pub struct AppDoor {
     pub plane: Arc<Plane>,
+    /// The server's own URI, as the world reaches it — what a page
+    /// prints in a snippet a reader copies. The server is told it; a
+    /// request's `Host` header is the caller's claim, never the source.
+    pub origin: Arc<str>,
 }
 
 /// The workspace's datasets, for the doors that must refuse a name it
@@ -52,7 +57,19 @@ pub(crate) async fn known(door: &AppDoor) -> Vec<String> {
     door.plane.datasets().await.unwrap_or_default()
 }
 
-pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
+/// The 404 for a dataset the workspace does not hold, none where it
+/// holds it. The way in is one existence question; the listing is read
+/// on the miss alone, where the answer names what there is.
+pub(crate) async fn missing(door: &AppDoor, dataset: &str) -> Option<String> {
+    if door.plane.dataset_exists(dataset).await.unwrap_or(false) {
+        return None;
+    }
+    Some(no_such_dataset(dataset, &known(door).await))
+}
+
+/// The 404 body every dataset-scoped door answers with: the name that
+/// was asked and the names the workspace holds.
+pub fn no_such_dataset(dataset: &str, known: &[String]) -> String {
     if known.is_empty() {
         format!("no dataset `{dataset}` — this workspace holds none yet")
     } else {
@@ -67,14 +84,14 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// a human door, so the gate stamps human standing on every caller
 /// that reaches it (`glossql_serverd::auth`).
 ///
-/// Every other affordance retired with the pins, and the reason holds:
-/// a page that can change the record invites a second way to say
-/// everything the language already says. A ruling is the exception
-/// because it is the one thing only a person can supply, its shape is
-/// fixed (a stance on a claim the workspace already derived), and the
-/// alternative is worse — run 4 found that a human who steps away has
-/// no way back into the record at all, since the MCP round can only
-/// ask while they are watching and an agent may never speak for them.
+/// The page holds no other write, and the reason is standing: a page
+/// that can change the record invites a second way to say everything
+/// the language already says. A ruling is the exception because it is
+/// the one thing only a person can supply, its shape is fixed (a
+/// stance on a claim the workspace already derived), and without it a
+/// human who steps away has no way back into the record at all, since
+/// the MCP round can only ask while they are watching and an agent may
+/// never speak for them.
 /// The docket is already the page of open questions; answering there
 /// is the gesture the page was drawn for.
 ///
@@ -83,7 +100,7 @@ pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
 /// static segment beside the apps: a relation as a file, no app in
 /// the way. An app named `export` still serves — only its two POST
 /// paths would share the prefix, and they are the docket's.
-pub fn router(plane: Arc<Plane>) -> Router {
+pub fn router(plane: Arc<Plane>, origin: &str) -> Router {
     Router::new()
         .route("/", get(pages::home))
         .route("/export/{file}", get(export::export))
@@ -96,7 +113,10 @@ pub fn router(plane: Arc<Plane>) -> Router {
             "/{app}/remeasure",
             axum::routing::post(remeasure::remeasure),
         )
-        .with_state(AppDoor { plane })
+        .with_state(AppDoor {
+            plane,
+            origin: origin.into(),
+        })
 }
 
 /// The embedded static assets, mounted at the workspace root: one copy
@@ -108,8 +128,11 @@ pub fn assets_router() -> Router {
 /// The workspace root: which datasets there are, and the way into each.
 /// It is the one page that is not about a dataset, so it is where a
 /// visitor who has just swapped a startup token for a cookie lands.
-pub fn root_router(plane: Arc<Plane>) -> Router {
+pub fn root_router(plane: Arc<Plane>, origin: &str) -> Router {
     Router::new()
         .route("/", get(pages::datasets))
-        .with_state(AppDoor { plane })
+        .with_state(AppDoor {
+            plane,
+            origin: origin.into(),
+        })
 }

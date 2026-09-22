@@ -72,10 +72,8 @@ pub struct ReadContext {
 }
 
 /// The sorted (input → version) list of everything a computation can
-/// read: data tables and declaration relations at their snapshots, and
-/// the glossary at its write head while it still rides sqlite (its
-/// component becomes a snapshot like the rest when it crosses). Under a
-/// complete key there is no invalidation, only a miss.
+/// read: data tables and the store's relations, each at its snapshot.
+/// Under a complete key there is no invalidation, only a miss.
 ///
 /// The text is the whole pin. There is no hash beside it: every
 /// comparison in this crate is over the text, and the one caller that
@@ -353,7 +351,7 @@ pub const RELATIONS: &[Relation] = &[
     },
     // What extraction lands, keyed by the pin: under a complete key
     // there is no invalidation, only a miss, and old pins' rows are the
-    // drift record rather than garbage (stage 4).
+    // drift record rather than garbage.
     Relation {
         name: "measurements",
         columns: &[
@@ -377,7 +375,7 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
     RELATIONS.iter().find(|r| r.name == name).map(|r| r.columns)
 }
 
-/// Where every crossed relation lives: one namespace, one table per
+/// Where every store relation lives: one namespace, one table per
 /// relation. A workspace holds many datasets — that scopes rows by a
 /// `dataset` KEY column, with the physical per-dataset split supplied by
 /// the format (identity partition), not by a namespace layout of ours.
@@ -387,6 +385,11 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
 /// namespace-level grants, the pairing returns then, by re-bootstrap.
 const STORE_NAMESPACE: &str = "glossql";
 
+/// The names a dataset cannot take: the store's own namespace, and the
+/// two path segments the server answers beside `/{dataset}/…` — a
+/// dataset under either would have no page on the human doors.
+const RESERVED_DATASETS: [&str; 3] = [STORE_NAMESPACE, "mcp", "assets"];
+
 /// Facts ride what they describe: a dataset's settings on its namespace,
 /// a recipe on its table, a landing's source-side facts on its snapshot.
 const SETTINGS_PROP: &str = "glossql.settings";
@@ -395,10 +398,12 @@ const RECIPE_SQL_PROP: &str = "glossql.recipe.sql";
 pub const LANDING_SCANS_PROP: &str = "glossql.source-scans";
 pub const LANDING_DROPPED_PROP: &str = "glossql.dropped-rows";
 pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
+/// The source files a landing read — what a later import leaves out.
+pub const LANDING_FILES_PROP: &str = "glossql.source-files";
 
-/// The seam over a workspace's lake, carrying every relation that has
-/// crossed. The shapes come from [`RELATIONS`], so a relation crosses by
-/// setting its `sql` to `None` and nothing else.
+/// The seam over a workspace's lake, carrying every store relation. The
+/// shapes come from [`RELATIONS`], so a relation added there is a table
+/// here and nothing else.
 async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadata>> {
     // `datasets` and `imports` are the lake's own record, composed at
     // read — no table of ours carries them.
@@ -455,6 +460,12 @@ pub struct Store {
     /// costs a lake walk only for a relation a write has moved — on the
     /// same single-writer ground as the head itself.
     histories: Histories,
+    /// Each dataset's newest measurements at the `measurements`
+    /// snapshot they were scanned at — the same arrangement as
+    /// [`Store::histories`], kept apart because this scan is pruned to
+    /// one dataset where a history is the whole relation. A write to any
+    /// other relation moves the version and leaves this standing.
+    newest: Histories,
     /// Writes held instead of committed, `None` outside a batch. Every
     /// statement sequence runs batched — begun before its first
     /// statement, flushed after its last — and [`Store::batch_flush`]
@@ -502,6 +513,7 @@ impl Store {
             lake,
             head: Arc::new(std::sync::RwLock::new(None)),
             histories: Arc::new(std::sync::RwLock::new(Default::default())),
+            newest: Arc::new(std::sync::RwLock::new(Default::default())),
             batch: Arc::new(std::sync::Mutex::new(None)),
             channel: 0,
             contexts: Arc::new(std::sync::RwLock::new(Default::default())),
@@ -645,8 +657,8 @@ impl Store {
     /// set at create and not changed afterwards.
     pub async fn declare_dataset(&self, decl: &DatasetDecl) -> Result<()> {
         let name = decl.name.value.as_str();
-        if name == STORE_NAMESPACE {
-            return Err(Error::ReservedTableName(name.into()));
+        if RESERVED_DATASETS.contains(&name) {
+            return Err(Error::ReservedDatasetName(name.into()));
         }
         self.lake
             .ensure_namespace(
@@ -1385,9 +1397,9 @@ impl Store {
     // -- SQL forwarded from the session ----------------------------------
 
     /// `DELETE FROM glossary …` — the strike (SPEC.md §5.2). Parked:
-    /// the substrate cannot commit a row removal
-    /// until iceberg-rust 0.11 lands the delete write path, so the
-    /// refusal names the item instead of pretending.
+    /// iceberg-rust has no delete write path, so the substrate cannot
+    /// commit a row removal and the refusal names the item instead of
+    /// pretending.
     pub async fn forward_delete(&self, target: &str) -> Result<u64> {
         if target != "glossary" {
             return Err(Error::ForwardRejected(target.into()));
@@ -1406,7 +1418,7 @@ impl Store {
         self.put(name, cells).await
     }
 
-    /// One appended row into a crossed relation — this and
+    /// One appended row into a store relation — this and
     /// [`Store::batch_flush`] are the only places a store relation
     /// moves, and therefore the only places the head has to be dropped.
     ///
@@ -1491,7 +1503,7 @@ impl Store {
         landed
     }
 
-    /// Walk every crossed relation into `Store::histories` at once —
+    /// Walk every store relation into `Store::histories` at once —
     /// a boot pays the slowest walk instead of one walk per
     /// first-touching statement. The two composed relations have no
     /// table to walk.
@@ -1564,11 +1576,10 @@ impl Store {
         })
     }
 
-    /// A crossed relation's current rows: latest per [`Relation`] key in
-    /// `(seq, pos)` order, sorted by cells — what the sqlite primary key
-    /// and `ORDER BY` used to do.
+    /// A store relation's current rows: latest per [`Relation`] key in
+    /// `(seq, pos)` order, sorted by cells.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
-        let history = (*self.history(relation.name).await?).clone();
+        let history = self.history(relation.name).await?;
         let key: Vec<usize> = relation
             .key
             .iter()
@@ -1580,19 +1591,21 @@ impl Store {
                     .expect("a key names one of its relation's columns")
             })
             .collect();
+        // Supersession runs over the held history by reference; only
+        // the rows that stand are copied out of it.
         let mut rows: Vec<_> = rules::latest_by(
-            history,
-            |r| {
+            history.iter().collect::<Vec<&glossql_catalog::Row>>(),
+            |r| -> Vec<&Option<String>> {
                 if key.is_empty() {
-                    r.cells.clone()
+                    r.cells.iter().collect()
                 } else {
-                    key.iter().map(|&i| r.cells[i].clone()).collect()
+                    key.iter().map(|&i| &r.cells[i]).collect()
                 }
             },
             |r| r.seq,
         )
         .into_iter()
-        .map(|r| r.cells)
+        .map(|r| r.cells.clone())
         .collect();
         rows.sort();
         Ok(rows)
@@ -1710,16 +1723,32 @@ impl Store {
             ctx.pin = with_grounding(parts, ctx.grounding);
             return Ok(ctx);
         }
-        let glossary = std::sync::Arc::new(self.glossary_history().await?);
-        let witnesses = std::sync::Arc::new(self.witnesses_all().await?);
-        let aspects = std::sync::Arc::new(self.aspects_all().await?);
+        // Six relations, none reading another: their scans go out
+        // together, since over a remote warehouse the round trips are
+        // what a version miss costs. Boxed here, once: six scans held
+        // at the same time are a large future, and every caller would
+        // otherwise carry it.
+        let (glossary, witnesses, aspects, measurements, functions, sources) = Box::pin(async {
+            futures::try_join!(
+                self.glossary_history(),
+                self.witnesses_all(),
+                self.aspects_all(),
+                self.measurements_newest(dataset),
+                self.functions_all(),
+                self.sources_all(),
+            )
+        })
+        .await?;
+        let glossary = std::sync::Arc::new(glossary);
+        let witnesses = std::sync::Arc::new(witnesses);
+        let aspects = std::sync::Arc::new(aspects);
         let grounding = grounding_digest(dataset, &glossary, &aspects, &witnesses);
         let ctx = ReadContext {
             glossary,
-            measurements: std::sync::Arc::new(self.measurements_newest(dataset).await?),
-            functions: std::sync::Arc::new(self.functions_all().await?),
+            measurements,
+            functions: std::sync::Arc::new(functions),
             witnesses,
-            sources: std::sync::Arc::new(self.sources_all().await?),
+            sources: std::sync::Arc::new(sources),
             aspects,
             universe,
             snapshots,
@@ -1767,7 +1796,7 @@ impl Store {
     /// walk both the version and the pin derive from, enumerated rather
     /// than curated so a relation added later can never be missed. A
     /// fresh workspace has no store namespace until the first write
-    /// crosses; its enumeration is empty, not an error.
+    /// lands; its enumeration is empty, not an error.
     ///
     /// Served from [`Store::head`] once walked. Two readers racing an
     /// empty head both walk and both store the same answer, which is
@@ -1849,16 +1878,40 @@ impl Store {
     /// Every (function, subject)'s newest landing in the dataset,
     /// whatever its pin — what a read context serves from. One scan of
     /// the relation by dataset; older rows stay as the drift record.
-    async fn measurements_newest(&self, dataset: &str) -> Result<Vec<glossql_catalog::Row>> {
+    ///
+    /// Held per dataset at the relation's snapshot: a version moved by a
+    /// gloss or a declaration finds the measurements where they were.
+    async fn measurements_newest(&self, dataset: &str) -> Result<History> {
+        let snapshot = self
+            .store_snapshots()
+            .await?
+            .iter()
+            .find(|(table, _)| table == "measurements")
+            .and_then(|(_, snapshot)| *snapshot);
+        let held = self
+            .newest
+            .read()
+            .expect("newest lock")
+            .get(dataset)
+            .filter(|(at, _)| *at == snapshot)
+            .map(|(_, rows)| Arc::clone(rows));
+        if let Some(rows) = held {
+            return Ok(rows);
+        }
         let rows = self
             .metadata
             .scan_where("measurements", "dataset", dataset)
             .await?;
-        Ok(rules::latest_by(
+        let rows = Arc::new(rules::latest_by(
             rows,
             |r| (r.get(1).map(str::to_string), r.get(2).map(str::to_string)),
             |r| r.seq,
-        ))
+        ));
+        self.newest
+            .write()
+            .expect("newest lock")
+            .insert(dataset.to_string(), (snapshot, Arc::clone(&rows)));
+        Ok(rows)
     }
 
     /// The measurement that still stands, newest write winning — its
@@ -1971,7 +2024,7 @@ impl Store {
             .collect())
     }
 
-    // -- the crossed declarations, read whole (each is a handful of rows)
+    // -- the declarations, read whole (each is a handful of rows)
 
     async fn sources_all(&self) -> Result<Vec<(String, String)>> {
         Ok(self

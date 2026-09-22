@@ -4,9 +4,10 @@ The quality layer checks the soundness of the numbers; the performance
 layer reads them. Ordinary growth, seasonality, and business change
 belong to performance monitoring — the quality layer's job is to
 ignore them and to report when the pipeline, not the business,
-moved. The instruments ship with ground-truthed oracle tests
-(`crates/scripts/tests/`); not yet validated on a design partner's
-data.
+moved. The instruments ship with acceptance tests over data whose
+truth is known by construction (`crates/scripts/tests/suite/`) and are
+graded on corpora with declared truth in the glossval repo; not yet
+validated on a design partner's data.
 
 ## The discipline
 
@@ -16,8 +17,7 @@ data.
   stand. The judge pattern: measurements optimize recall, the agent
   judge removes false positives.
 - **No statistic ports without its oracle.** Every shipped statistic
-  has a ground-truthed acceptance test
-  (`behavior_oracle.rs`, `dimensions_oracle.rs`);
+  has an acceptance test against known truth;
   every output has a consumer — no aspect is declared that
   nothing reads.
 - **Red exists only where a detector computes it.** Humans do not

@@ -33,12 +33,8 @@ pub async fn export(
     State(door): State<AppDoor>,
     Path((dataset, file)): Path<(String, String)>,
 ) -> Response {
-    let known = crate::known(&door).await;
-    if !known.contains(&dataset) {
-        return plain(
-            StatusCode::NOT_FOUND,
-            crate::no_such_dataset(&dataset, &known),
-        );
+    if let Some(missing) = crate::missing(&door, &dataset).await {
+        return plain(StatusCode::NOT_FOUND, missing);
     }
     let Some((name, ext)) = file.rsplit_once('.') else {
         return plain(

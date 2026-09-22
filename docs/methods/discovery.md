@@ -24,7 +24,7 @@ per column type: each table's same-typed columns unpivoted to
 `(column, value)` rows, the distinct of those joined to itself on the
 value, and the count per column pair — the containment numerator, and
 on the diagonal each column's distinct count
-(`crates/session/src/search.rs`). Values compare as stored; nothing is
+(`crates/session/src/search/relationships.rs`). Values compare as stored; nothing is
 cast. Pairs below 0.5 containment are not served — the one floor in
 the door, placed to bound output, not to judge. Composite keys are
 tried where the multi-tenant shape suggests them — for each

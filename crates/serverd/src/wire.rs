@@ -1,7 +1,7 @@
 //! Outcomes on the wire. The MCP door and the summary path of `/query`
 //! share one JSON shape. A tool result lands verbatim in the agent's
-//! context window, so rows are capped — and the cap bounds the engine's
-//! work when the source is a stream, not just the rendering.
+//! context window, so a data read's rows are capped — by the session,
+//! as a limit on the read's plan; this module renders what it is told.
 //! `row_count` counts the rows shipped; a declared `truncated` says the
 //! result held more, so the agent refines (aggregate, LIMIT, WHERE)
 //! instead of reading a capped result as complete.
@@ -14,34 +14,25 @@ use serde_json::{Value, json};
 
 pub const DEFAULT_ROW_CAP: usize = 200;
 
-pub fn outcomes_json(outcomes: &[Outcome], cap: usize) -> Result<Value, String> {
+pub fn outcomes_json(outcomes: &[Outcome]) -> Result<Value, String> {
     let mut rendered = Vec::with_capacity(outcomes.len());
     for outcome in outcomes {
         rendered.push(match outcome {
             Outcome::Done(done) => json!({ "done": done }),
             Outcome::Affected(n) => json!({ "affected": n }),
-            Outcome::Rows(batches) => rows_json(batches, cap)?,
+            // The session that ran the read cut it and says so.
+            Outcome::Rows { batches, truncated } => {
+                let shipped = batches.iter().map(|b| b.num_rows()).sum();
+                render(
+                    batches.first().map(|b| b.schema()),
+                    batches,
+                    shipped,
+                    *truncated,
+                )?
+            }
         });
     }
     Ok(Value::Array(rendered))
-}
-
-fn rows_json(batches: &[RecordBatch], cap: usize) -> Result<Value, String> {
-    let total: usize = batches.iter().map(|b| b.num_rows()).sum();
-    let mut kept = Vec::new();
-    let mut remaining = cap;
-    for batch in batches {
-        if remaining == 0 {
-            break;
-        }
-        let take = batch.num_rows().min(remaining);
-        remaining -= take;
-        if take > 0 {
-            kept.push(batch.slice(0, take));
-        }
-    }
-    let schema = batches.first().map(|b| b.schema());
-    render(schema, &kept, total.min(cap), total > cap)
 }
 
 /// Pull batches until the cap is met, then drop the stream — what the

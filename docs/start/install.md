@@ -34,7 +34,7 @@ listens:
 
 ```
 2026-09-03T08:04:42.103275Z  INFO verifying tokens issuer=https://issuer.example audience=http://127.0.0.1:8080 application=a1b2c3…
-2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
+2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
 ```
 
 ## The container
@@ -53,7 +53,10 @@ the server's identity may read — since there is no directory for
 files. The configuration is the environment the platform injects,
 secrets included — nothing is read from a file, and the image holds no
 value of its own. `GET /healthz` answers `ok` outside the gate, for a
-platform's probe, and stays off the record.
+platform's probe, and stays off the record. One server owns a
+workspace: it holds the store's head in memory, so a deployment runs
+one replica per catalog and warehouse
+([the store](../architecture/store.md)).
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -67,23 +70,27 @@ docker run --rm -p 8080:8080 \
   ghcr.io/glossdb/glossql:0.1.5
 ```
 
-The image's command sizes the server for a box with 8 GiB of memory
-and an 8 GiB ephemeral disk, two numbers from two facts: the engine's
-ceiling and the cube cache at their defaults, 6 GiB tracked and the
-rest of the memory to the process and what the engine does not track;
-`--spill-limit 6144` for the disk, the rest to the writable layer. A
-different box overrides the command with its own numbers.
+The image sizes the server for a box with 8 GiB of memory and an
+8 GiB ephemeral disk, two numbers from two facts: the engine's ceiling
+and the cube cache at their defaults, 6 GiB tracked and the rest of
+the memory to the process and what the engine does not track;
+`GLOSSQL_SPILL_LIMIT=6144` for the disk, the rest to the writable
+layer. It listens on `0.0.0.0:8080`. A different box injects its own
+numbers as variables, beside the rest of its environment.
 
 ## Flags
 
-| flag | default | meaning |
-|---|---|---|
-| `--workspace <dir>` | required when the catalog or the warehouse lives in it | the laptop's shape: the directory holding the catalog and the warehouse. A deployment names both in the environment (or a REST catalog) and runs without a directory |
-| `--addr <ip:port>` | `127.0.0.1:8080` | where the doors listen |
-| `--row-cap <n>` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
-| `--cube-cache <megabytes>` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
-| `--memory-limit <megabytes>` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
-| `--spill-limit <megabytes>` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
+Every flag but `--workspace` has a variable named after it, and the
+flag wins where both are set.
+
+| flag | variable | default | meaning |
+|---|---|---|---|
+| `--workspace <dir>` | — | required when the catalog or the warehouse lives in it | the laptop's shape: the directory holding the catalog and the warehouse. A deployment names both in the environment (or a REST catalog) and runs without a directory |
+| `--addr <ip:port>` | `GLOSSQL_ADDR` | `127.0.0.1:8080` | where the doors listen |
+| `--row-cap <n>` | `GLOSSQL_ROW_CAP` | `200` | rows an MCP tool result ships before declaring `truncated` (data reads only; metadata reads arrive whole) |
+| `--cube-cache <megabytes>` | `GLOSSQL_CUBE_CACHE` | `2048` | the byte budget for the cube cache — every metric's cells held in memory, evicted least-recently-used past it; the `cube` aspect bounds one cube, this bounds them all |
+| `--memory-limit <megabytes>` | `GLOSSQL_MEMORY_LIMIT` | `4096` | the engine's memory ceiling for the whole process. A sort or a hash aggregate that outgrows it spills to the OS temp directory, up to `--spill-limit`. Past that bound, or for a shape that cannot spill (a `count(DISTINCT …)` held whole per partition), the plan is refused by name with the shape that fits. Separate from `--cube-cache`, whose bytes sit outside the engine — size a deployment's memory for the sum |
+| `--spill-limit <megabytes>` | `GLOSSQL_SPILL_LIMIT` | twice `--memory-limit` | how much of the disk the engine may spill onto, at its temp directory. The disk's own number, set from the box: a container's ephemeral disk, or a disk mounted at the temp directory. Unset, it follows the memory ceiling |
 
 Authorization is not a flag. A run with a workspace reads `.env` in
 the working directory, and the environment on top of it (a set
@@ -98,7 +105,7 @@ platform injects the variables, secrets included:
 | `GLOSSQL_CLIENT_SECRET` | that application's secret, used by the browser login on `/app` |
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
 | `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace` unless `GLOSSQL_WAREHOUSE` moves it. Unset, `catalog.sqlite` in the workspace serves |
-| `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named the server needs no workspace directory |
+| `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix`, `gs://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set; `GOOGLE_SERVICE_ACCOUNT_PATH`, or the attached service account the client reads on Cloud Run with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named the server needs no workspace directory |
 | `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
 | `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
 | `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
@@ -141,7 +148,7 @@ latencies from the spans.
 ## Tokens
 
 The token's subject says who is speaking. The door sets the standing:
-`/mcp` writes as an agent, the other doors as a human. glossql
+the `mcp` doors write as an agent, the other doors as a human. glossql
 is an OAuth 2.1 resource server and never an authorization server — it
 verifies against the keys the issuer publishes, it does not issue, and
 there is no login flow, client registration or user table inside a

@@ -11,7 +11,7 @@
 //! - a blocked planner thread, which the guide names as the pitfall;
 //! - re-entrancy, since expansion re-plans through the same context,
 //!   which needs a `thread_local` stack to notice a cycle;
-//! - one stack for the whole nesting, which datafusion 54 overflows.
+//! - one stack for the whole nesting, which a deep nesting overflows.
 //!
 //! Resolution is depth-first and carries its path, so the cycle check is
 //! the traversal rather than a mechanism. A door reached twice on
@@ -143,7 +143,7 @@ fn shadowed(idents: &IdentNormalizer, ctes: &HashSet<String>, f: &TableFactor) -
 
 /// A door reference this pass knows how to resolve ahead of planning:
 /// something whose body is SQL. Compute doors build batches and are
-/// stage 4's business.
+/// the compute pass's ([`crate::reads::compute_batch`]).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Door {
     /// `read.<aspect>()` — a QUERY grounding, fetched from the store.
@@ -156,11 +156,11 @@ enum Door {
     /// extraction, so the body cannot name the column itself.
     /// No SQL behind it — the plan is built here.
     Column(String),
-    /// `misfit.<frame>()` / `whatif.<scenario>()`. These still build their
-    /// batch inside the planner (stage 4 moves them), so the pre-pass does
-    /// not plan them — it walks the body they replay, for the path. That
-    /// is the whole cycle guard: a frame whose SQL names its own door is a
-    /// repeat on the path, where it used to be a stack overflow.
+    /// `misfit.<frame>()` / `whatif.<scenario>()`. The compute pass
+    /// builds their batch, so this pass does not plan them — it walks
+    /// the body they replay, for the path. That is the whole cycle
+    /// guard: a frame whose SQL names its own door is a repeat on the
+    /// path, never a stack overflow.
     Replay(&'static str, String),
 }
 
@@ -524,9 +524,15 @@ pub(crate) async fn resolve(
     // everywhere. That is the standing limit, not a regression — the
     // seam runs before DataFusion's own CTE lookup and has no scope to
     // ask about.
-    let (_, ctes) = resolve_table_references(statement, shared.normalize_idents)?;
+    let (relations, ctes) = resolve_table_references(statement, shared.normalize_idents)?;
+    // A statement that names only its dataset's own tables loads those;
+    // any other reads the dataset whole.
+    let pins = match shared.named_pins(&relations).await? {
+        Some(named) => named,
+        None => shared.statement_pins().await?,
+    };
     let mut resolved = Resolved {
-        pins: shared.statement_pins().await?,
+        pins,
         ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
         ..Resolved::default()
     };
