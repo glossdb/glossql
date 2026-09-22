@@ -136,19 +136,18 @@ impl Remote {
         reads: Vec<Value>,
         alphas: &[f64],
         members: u32,
+        pit_history: Option<&[f64]>,
     ) -> Result<Vec<Value>, String> {
         #[derive(serde::Deserialize)]
         struct Answer {
             reads: Vec<Value>,
         }
         let asked = reads.len();
-        let answer: Answer = decode(
-            self.post(
-                "bands",
-                json!({ "reads": reads, "alphas": alphas, "members": members }),
-            )
-            .await?,
-        )?;
+        let mut body = json!({ "reads": reads, "alphas": alphas, "members": members });
+        if let Some(history) = pit_history {
+            body["pit_history"] = json!(history);
+        }
+        let answer: Answer = decode(self.post("bands", body).await?)?;
         if answer.reads.len() != asked {
             return Err(format!(
                 "the kernel service answered {} reads for {asked}",
@@ -158,33 +157,16 @@ impl Remote {
         Ok(answer.reads)
     }
 
-    pub async fn band_point(
-        &self,
-        train: Matrix<'_>,
-        train_y: &[f64],
-        test_x: &[f64],
-        alphas: &[f64],
-        actual: f64,
-    ) -> Result<(Vec<f64>, f64), String> {
-        let read = BandRead {
-            train_x: train.data.to_vec(),
-            train_y: train_y.to_vec(),
-            test_x: test_x.to_vec(),
-            actual,
-        };
-        let mut answered = self
-            .band_points(std::slice::from_ref(&read), alphas)
-            .await?;
-        Ok(answered.remove(0))
-    }
-
     /// Walk points, `READS_PER_REQUEST` to a request: each read one
     /// test row with its actual, the pinned member (`members` 1), the
-    /// PIT read by the service against its raw grid.
+    /// PIT read by the service against its raw grid. With a
+    /// `pit_history` the service reads the bands through it and its
+    /// default record (the raw bands ride back beside them, unread here).
     pub async fn band_points(
         &self,
         reads: &[BandRead],
         alphas: &[f64],
+        pit_history: Option<&[f64]>,
     ) -> Result<Vec<(Vec<f64>, f64)>, String> {
         #[derive(serde::Deserialize)]
         struct Answer {
@@ -209,7 +191,7 @@ impl Remote {
                     })
                 })
                 .collect();
-            for answered in self.bands(bodies, alphas, 1).await? {
+            for answered in self.bands(bodies, alphas, 1, pit_history).await? {
                 let mut answer: Answer = decode(answered)?;
                 if answer.quantiles.len() != 1 || answer.quantiles[0].len() != alphas.len() {
                     return Err(format!(
@@ -246,7 +228,7 @@ impl Remote {
             "train_y": vector(train_y),
             "test_x": rows(test),
         });
-        let mut answered = self.bands(vec![read], alphas, GRID_MEMBERS).await?;
+        let mut answered = self.bands(vec![read], alphas, GRID_MEMBERS, None).await?;
         let answer: Answer = decode(answered.remove(0))?;
         if answer.quantiles.len() != test.rows
             || answer.quantiles.iter().any(|r| r.len() != alphas.len())

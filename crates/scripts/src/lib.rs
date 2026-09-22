@@ -26,7 +26,7 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options, partition};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_session::{BandRead, FunctionRuntime, Matrix};
+use glossql_session::{BandRead, FunctionRuntime, Matrix, PIT_BINS};
 use serde_json::{Value, json};
 
 pub use remote::Remote;
@@ -140,39 +140,22 @@ impl FunctionRuntime for KernelRuntime {
         reconcile_kernel(aligned, n_common, terms.to_vec())
     }
 
-    /// The metric-bands walk's kernel: one fit and one read.
-    async fn band_point(
-        &self,
-        train: Matrix<'_>,
-        train_y: &[f64],
-        test_x: &[f64],
-        alphas: &[f64],
-        actual: f64,
-    ) -> Result<(Vec<f64>, f64), String> {
-        let Matrix {
-            data: x,
-            rows,
-            cols,
-        } = train;
-        if rows < 2 || x.len() != rows * cols || train_y.len() != rows || test_x.len() != cols {
-            return Err(format!(
-                "band_point: {rows} rows x {cols} features against {} values and {} test features",
-                train_y.len(),
-                test_x.len()
-            ));
-        }
-        self.model()?
-            .band_point(train, train_y, test_x, alphas, actual)
-            .await
-    }
-
     /// The walk's points together: shapes checked here, one request
     /// to the service per chunk of them.
     async fn band_points(
         &self,
         reads: &[BandRead],
         alphas: &[f64],
+        pit_history: Option<&[f64]>,
     ) -> Result<Vec<(Vec<f64>, f64)>, String> {
+        if let Some(history) = pit_history
+            && (history.len() != PIT_BINS || history.iter().any(|c| c.is_nan() || *c < 0.0))
+        {
+            return Err(format!(
+                "band_points: a PIT history is {PIT_BINS} non-negative counts, got {}",
+                history.len()
+            ));
+        }
         for (i, read) in reads.iter().enumerate() {
             let (rows, cols) = (read.train_y.len(), read.test_x.len());
             if rows < 2 || read.train_x.len() != rows * cols {
@@ -182,7 +165,7 @@ impl FunctionRuntime for KernelRuntime {
                 ));
             }
         }
-        self.model()?.band_points(reads, alphas).await
+        self.model()?.band_points(reads, alphas, pit_history).await
     }
 
     /// The `misfit.` door's kernel (fixture 20): the chain-rule density

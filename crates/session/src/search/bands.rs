@@ -1,6 +1,7 @@
 //! The metric-bands walk and its points, and the period SQL every
 //! monthly reader shares.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
@@ -9,7 +10,7 @@ use datafusion::arrow::util::display::array_value_to_string;
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::{BandRead, SessionError};
+use crate::session::{BandRead, PIT_BINS, SessionError};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -493,26 +494,51 @@ pub(crate) async fn metric_band_walk(
         seq += 1;
     }
 
-    let reads: Vec<BandRead> = out
-        .iter()
-        .filter_map(|row| match row {
-            Row::Walked(w) => Some(w.points.iter().map(|p| p.read.clone())),
-            Row::Ready(_) => None,
-        })
-        .flatten()
-        .collect();
-    let mut answers = if reads.is_empty() {
-        Vec::new()
-    } else {
-        runtime
-            .band_points(&reads, &ALPHAS)
-            .await
-            .map_err(SessionError::Runtime)?
+    // The points are read through the record: every past walk's PITs,
+    // one per metric and month (the newest landing's), counted per
+    // hundredth. Point in time: a month's points, every metric's
+    // together, read through the PITs of months before it only — so
+    // the months called are grouped, one request each, the record's
+    // count growing along the walk. Sent even when empty: the kernel
+    // then weighs in its own default record, and a workspace is read
+    // honestly on its first walk.
+    let record = pit_record(shared, dataset).await?;
+    let mut by_month: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
+    for (i, row) in out.iter().enumerate() {
+        if let Row::Walked(w) = row {
+            for (j, p) in w.points.iter().enumerate() {
+                by_month
+                    .entry(w.periods[p.t].clone())
+                    .or_default()
+                    .push((i, j));
+            }
+        }
     }
-    .into_iter();
+    let mut answered: HashMap<(usize, usize), (Vec<f64>, f64)> = HashMap::new();
+    for (month, at) in &by_month {
+        let mut history = vec![0.0f64; PIT_BINS];
+        for ((_, period), pit) in &record {
+            if period < month {
+                let bin = ((pit * PIT_BINS as f64) as usize).min(PIT_BINS - 1);
+                history[bin] += 1.0;
+            }
+        }
+        let reads: Vec<BandRead> = at
+            .iter()
+            .map(|&(i, j)| match &out[i] {
+                Row::Walked(w) => w.points[j].read.clone(),
+                Row::Ready(_) => unreachable!("only walked rows are indexed"),
+            })
+            .collect();
+        let answers = runtime
+            .band_points(&reads, &ALPHAS, Some(&history))
+            .await
+            .map_err(SessionError::Runtime)?;
+        answered.extend(at.iter().copied().zip(answers));
+    }
 
     let mut rows = Vec::new();
-    for row in out {
+    for (i, row) in out.into_iter().enumerate() {
         let walked = match row {
             Row::Ready(value) => {
                 rows.push(value);
@@ -531,8 +557,8 @@ pub(crate) async fn metric_band_walk(
             points,
         } = walked;
         let mut served: Vec<Value> = Vec::new();
-        for Pending { t, read, partial } in points {
-            let (q, pit) = answers.next().expect("one answer per read");
+        for (j, Pending { t, read, partial }) in points.into_iter().enumerate() {
+            let (q, pit) = answered.remove(&(i, j)).expect("one answer per read");
             let (train_y, actual) = (read.train_y, read.actual);
             // A series that repeats values moves on a grid (a ratio over
             // a fixed field, a count). A corridor narrower than the
@@ -598,6 +624,39 @@ pub(crate) async fn metric_band_walk(
         rows.push(json!({}));
     }
     rows_batch(rows, band_shape())
+}
+
+/// The record's PITs, one per metric and month: every landing of the
+/// walk on this dataset, the newest landing of a month winning, a
+/// withheld point carrying none. Read off the drift record, since a
+/// month walked at an earlier pin is that month's PIT still.
+async fn pit_record(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<HashMap<(String, String), f64>, SessionError> {
+    let mut out = HashMap::new();
+    for landing in shared
+        .store
+        .measurement_landings(dataset, dataset, "metric_bands")
+        .await?
+    {
+        let Ok(body) = serde_json::from_str::<Value>(&landing.body) else {
+            continue;
+        };
+        for metric in body["metrics"].as_array().into_iter().flatten() {
+            let Some(name) = metric["metric"].as_str() else {
+                continue;
+            };
+            for point in metric["points"].as_array().into_iter().flatten() {
+                if let (Some(period), Some(pit)) = (point["period"].as_str(), point["pit"].as_f64())
+                {
+                    out.entry((name.to_string(), period.to_string()))
+                        .or_insert(pit);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `band_points()` — the recorded walk, one row per metric per walked

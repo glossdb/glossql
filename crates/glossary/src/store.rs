@@ -1914,6 +1914,33 @@ impl Store {
         Ok(rows)
     }
 
+    /// Every landing of `function` on `subject` in the dataset, newest
+    /// first, whatever its pin — the drift record read whole, which no
+    /// read serving today does (`measurements_newest` serves that). What
+    /// a record over time is: the bands walk's past PITs.
+    pub async fn measurement_landings(
+        &self,
+        dataset: &str,
+        subject: &str,
+        function: &str,
+    ) -> Result<Vec<MeasurementRow>> {
+        let mut rows = self
+            .metadata
+            .scan_where("measurements", "dataset", dataset)
+            .await?;
+        rows.retain(|r| r.get(1) == Some(function) && r.get(2) == Some(subject));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.seq));
+        Ok(rows
+            .iter()
+            .map(|r| MeasurementRow {
+                subject: subject.to_string(),
+                function: function.to_string(),
+                body: text(&r.cells, 5),
+                computed_at: text(&r.cells, 6),
+            })
+            .collect())
+    }
+
     /// The measurement that still stands, newest write winning — its
     /// recorded reads are unchanged, so a recomputation would produce
     /// the same value. Pure over the context: the statement already

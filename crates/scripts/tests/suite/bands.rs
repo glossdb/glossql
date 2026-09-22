@@ -32,14 +32,14 @@ fn live() -> Option<Arc<KernelRuntime>> {
 
 /// Date32 day offsets for each month's first day, 2024-01 through
 /// 2025-06 (2024 is a leap year); 19723 = 2024-01-01.
-const FIRSTS: [i32; 18] = [
+pub(super) const FIRSTS: [i32; 18] = [
     0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366, 397, 425, 456, 486, 517,
 ];
 
 /// A session over a lake in `dir`, the walk declared from the shipped
 /// body, `lines` and `levels` landed from the given rows; the temporal
 /// verdict `judge_time` serves names a month cadence.
-async fn walk_session(
+pub(super) async fn walk_session(
     dir: &Path,
     rt: Arc<KernelRuntime>,
     tables: Vec<(&str, Vec<i32>, Vec<f64>)>,
@@ -141,7 +141,7 @@ async fn walk_session_judged(
     session
 }
 
-async fn walked(session: &glossql_session::Session) -> Value {
+pub(super) async fn walked(session: &glossql_session::Session) -> Value {
     let outcomes = session
         .execute("SELECT value FROM GLOSSARY(fin::metric_bands) WHERE state = 'current';")
         .await

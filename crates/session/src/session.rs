@@ -328,48 +328,31 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Err("this runtime carries no reconcile kernel".into())
     }
 
-    /// One TabICL fit and read, behind the metric-bands walk:
-    /// train on `train`, predict the one test row `test_x` (its width),
-    /// return the band value per alpha in order and the PIT — the
-    /// quantile at which `actual` lands in the predicted distribution.
-    /// The runtime that carries the model overrides this; the default
-    /// refuses, and the door reports why.
-    async fn band_point(
-        &self,
-        _train: Matrix<'_>,
-        _train_y: &[f64],
-        _test_x: &[f64],
-        _alphas: &[f64],
-        _actual: f64,
-    ) -> Result<(Vec<f64>, f64), String> {
-        Err("this runtime carries no band kernel".into())
-    }
-
-    /// Many walk points at once, in order — every metric's walk in one
-    /// call, which is what lets the kernel answer them in one pass. The
-    /// runtime that carries the model overrides this; by default the
-    /// points go one at a time through `band_point`.
+    /// The metric-bands walk's kernel: the walk's points together, in
+    /// order — every metric's, which is what lets the kernel answer them
+    /// in one pass. Per point, one fit on its training rows and one
+    /// read of its test row: the band value per alpha, and the PIT —
+    /// the quantile at which `actual` lands in the raw predicted
+    /// distribution. `pit_history` is the record's past PITs, counted
+    /// per hundredth (`PIT_BINS` counts): the bands come back read at
+    /// the levels those PITs put the alphas at, weighed with the
+    /// kernel's own default record; the PIT is always against the raw
+    /// read. `None` asks for the raw bands. The runtime that carries
+    /// the model overrides this; the default refuses, and the door
+    /// reports why.
     async fn band_points(
         &self,
-        reads: &[BandRead],
-        alphas: &[f64],
+        _reads: &[BandRead],
+        _alphas: &[f64],
+        _pit_history: Option<&[f64]>,
     ) -> Result<Vec<(Vec<f64>, f64)>, String> {
-        let mut out = Vec::with_capacity(reads.len());
-        for read in reads {
-            let cols = read.test_x.len();
-            let train = Matrix {
-                data: &read.train_x,
-                rows: read.train_y.len(),
-                cols,
-            };
-            out.push(
-                self.band_point(train, &read.train_y, &read.test_x, alphas, read.actual)
-                    .await?,
-            );
-        }
-        Ok(out)
+        Err("this runtime carries no band kernel".into())
     }
 }
+
+/// How a PIT history is counted: per hundredth of 0..1, as the kernel
+/// takes it.
+pub const PIT_BINS: usize = 100;
 
 #[derive(Debug)]
 pub struct NoRuntime;
