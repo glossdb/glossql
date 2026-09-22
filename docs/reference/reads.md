@@ -332,7 +332,7 @@ subdirectories included: `path` (relative to the location — what a
 `read_*` call names), `size`, `modified`. Listed through the engine's
 object store, the same walk a `read_*` glob resolves through, so what
 it serves is what a recipe path reaches. Workspace-scoped: sources are
-workspace rows, and the read needs no `USE`. A relational source has
+workspace rows, and the read needs no dataset. A relational source has
 no files and refuses the read by name.
 
 ## The door's read
@@ -346,7 +346,7 @@ Every page the door serves, as rows: `uri` (`skill://<skill>/SKILL.md`,
 same pages are the door's MCP resources under the same URIs; `pages()`
 is the read for a client that has the statement tool and nothing
 else. `SELECT uri, title FROM pages()` lists them, `WHERE uri = '…'`
-reads one. Needs no `USE`.
+reads one. Needs no dataset.
 
 ### next
 
@@ -370,7 +370,7 @@ goal's preconditions and nothing more. A statement is a proposal:
 edit it, send it, or do not. A done row's why names what the record
 left unused where that is a fact the record can state: the metrics
 row lists the tables no grounding reads and the judged columns none
-serves. Needs a `USE`.
+serves. Needs a bound dataset.
 The MCP door serves the same rows as the resource template
 `next://<dataset>/<surface>`, and carries a one-line `next:` on every
 tool result.

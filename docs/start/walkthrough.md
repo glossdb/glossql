@@ -28,6 +28,11 @@ DECLARE DATASET ops SET (purpose: 'service delivery — what gets done, how fast
 USE ops;
 ```
 
+This is the workspace door's work: `/mcp` brings the dataset into
+being, and `USE` binds the statements after it for the length of the
+call. From here on the dataset has its own door, `/ops/mcp`, where
+every call opens on it and nothing below needs the `USE`.
+
 ## Register the source, bank its conventions
 
 A source names a root directory; globs belong to recipe SQL. What you
