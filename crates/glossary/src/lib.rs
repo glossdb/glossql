@@ -22,8 +22,8 @@ mod types;
 pub use glossql_catalog::{Lake, Row};
 pub use rules::admit_grain;
 pub use store::{
-    BriefCounts, Pin, RELATIONS, ReadContext, Relation, Scope, Store, data_legs,
-    measurement_stands, relation_columns,
+    BriefCounts, Pin, RELATIONS, ReadContext, Relation, Scope, Store, measurement_stands,
+    relation_columns, table_legs, version_view,
 };
 pub use types::{
     Actor, ActorKind, AttestRow, CollapsedRow, Error, FunctionRow, GlossRow, MeasurementRow,

@@ -117,12 +117,18 @@ pub fn measurement_stands(
     read_view(row_pin, dataset, reads) == read_view(pin_text, dataset, reads)
 }
 
-/// The pin's parts for one dataset's own tables — the data legs
-/// alone, without the workspace relations' legs, which every write
-/// moves. What a cube key carries beside the metric surface's digest:
-/// an import moves it, a gloss does not.
-pub fn data_legs(pin_text: &str, dataset: &str) -> String {
-    read_view(pin_text, dataset, "*")
+/// The pin's parts for the named tables of one dataset alone — the
+/// data legs, without the workspace relations' legs, which every
+/// write moves. What a cube key carries beside its digest: a landing
+/// on a table the metric's frame scans moves it, a landing on any
+/// other table and a gloss do not.
+pub fn table_legs(pin_text: &str, dataset: &str, tables: &[String]) -> String {
+    let names = tables
+        .iter()
+        .map(|t| format!("{dataset}.{t}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    read_view(pin_text, dataset, &names)
 }
 
 /// The dataset's grounding surface as one number: the serving writing
@@ -250,6 +256,23 @@ fn version_of(versions: &[(String, Option<i64>)]) -> String {
         .collect();
     parts.sort();
     parts.join(",")
+}
+
+/// The store's version restricted to the named relations, in the
+/// version's own order — what binds a cube whose frame scans them.
+/// `*` among the names is the whole version.
+pub fn version_view(version: &str, relations: &[String]) -> String {
+    if relations.iter().any(|r| r == "*") {
+        return version.to_string();
+    }
+    version
+        .split(',')
+        .filter(|part| {
+            part.rsplit_once(':')
+                .is_some_and(|(name, _)| relations.iter().any(|r| r == name))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The pin from its parts and the grounding leg — the one part no
