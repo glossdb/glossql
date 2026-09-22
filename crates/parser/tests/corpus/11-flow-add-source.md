@@ -48,7 +48,7 @@ Typing is authored, not decided (ruled 2026-08-04): the recipe carries the
 casts. The agent writes it from the probes and the taught patterns
 (fixture 13 — still FACT glosses, now read by the author instead of
 consumed by machinery); the human approves. The default is `SELECT *`;
-the landed table is the typed table, snapshotted by Iceberg on every
+the landed table is the typed table, versioned on every
 import:
 
 ```glossql

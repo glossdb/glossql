@@ -12,10 +12,10 @@ contracts, measurement functions, detectors
 ([aspects](concepts/aspects.md), [functions](concepts/functions.md)) —
 and fills it against landed data; questions the data cannot answer go
 to a human, and the answer becomes part of the record
-([questions](concepts/questions.md)); everything — data, glosses,
-rulings, app parts — is stored as Iceberg tables, one statement per
-commit ([workspace](concepts/workspace.md)); reads are served as Arrow
-over plain HTTP ([connect](start/connect.md)).
+([questions](concepts/questions.md)); everything — glosses, rulings,
+app parts, the landings — is rows of one record, and the data is
+parquet under the warehouse ([workspace](concepts/workspace.md));
+reads are served as Arrow over plain HTTP ([connect](start/connect.md)).
 
 - [`start/`](start/README.md) — install, connect, and the walkthrough:
   a company's exports to served metrics in one session.

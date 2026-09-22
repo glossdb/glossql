@@ -7,21 +7,20 @@ itself holds as many as its sources warrant.
 
 ## Datasets and the lake
 
-A dataset is an Iceberg namespace in the workspace's lake. Its tables
-land through recipes, and every import takes a snapshot, so a table's
-history is the format's own snapshot history — nothing else records
-versions.
+A dataset is a schema in the workspace's catalog. Its tables land
+through recipes as parquet files under the warehouse, and every
+landing, replace and import is one commit that gives the table a new
+version; the record's `imports` relation keeps one row per landing.
 
 Three names are not dataset names: `glossql` is the record's own
 namespace, and `mcp` and `assets` are paths the server answers beside
 the datasets' pages. `DECLARE DATASET` refuses each by name.
 
-The record lives in the same lake: every relation the language
-declares — the glossary, aspects, functions, witnesses, sources,
-relationships, measurements, imports — is an Iceberg table. The
-catalog keeps its own small backend file; nothing of the record lives
-outside the lake. Writes are appends; a call's writes land as one
-commit per relation; no machinery deletes knowledge.
+The record lives in the same database as the catalog: every relation
+the language declares — the glossary, aspects, functions, witnesses,
+sources, datasets, recipes, relationships, measurements, imports — is
+a table of rows there. Writes are appends, one row per statement; no
+machinery deletes knowledge.
 
 **Supersession is a read, not an update.** The current value of a slot
 is the latest row per (subject, aspect, actor kind). Re-speaking a

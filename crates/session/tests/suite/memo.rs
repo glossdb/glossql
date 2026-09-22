@@ -157,10 +157,10 @@ async fn a_landing_in_the_same_call_is_seen_by_the_read_after_it() {
 }
 
 /// A statement that walks the dataset and then plans by name under
-/// that walk — a cube build plans one query per series — loads from
-/// the catalog what the walk loaded and nothing more.
+/// that walk — a cube build plans one query per series — walks once
+/// and takes every named table from that walk.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_plan_by_name_loads_nothing_the_walk_holds() {
+async fn a_plan_by_name_takes_the_walk() {
     let (_dir, session, lake) = workspace().await;
     run(
         &session,
@@ -173,12 +173,6 @@ async fn a_plan_by_name_loads_nothing_the_walk_holds() {
     )
     .await;
     let walks = lake.walk_count();
-    let loads = lake.load_count();
     run(&session, "SELECT * FROM metric_axes();").await;
     assert_eq!(lake.walk_count() - walks, 1, "the statement walks once");
-    assert_eq!(
-        lake.load_count() - loads,
-        1,
-        "the walk loaded the one table; the grounding's plan took it from the walk"
-    );
 }

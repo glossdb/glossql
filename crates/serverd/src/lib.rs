@@ -1,6 +1,6 @@
 // The MCP handler's futures reach through the session into the store
-// and from there into iceberg's own internals; proving them `Send`
-// descends further than the default limit allows.
+// and the engine; proving them `Send` descends further than the
+// default limit allows.
 #![recursion_limit = "256"]
 
 //! serverd — the workspace's doors (M5): one axum listener carrying the

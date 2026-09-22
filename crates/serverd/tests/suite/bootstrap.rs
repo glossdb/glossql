@@ -239,11 +239,10 @@ async fn live_sql_catalog_bootstrap() {
     let declared = functions(Arc::clone(&plane)).await;
     assert!(declared >= 14, "the library stands: {declared} functions");
 
-    // A landing over the live lake — the table created through the
-    // catalog, its rows committed to the warehouse — from the session's
-    // own fixture road, `register_table`. This path stalled the whole
-    // runtime while the create went through iceberg-datafusion's
-    // blocking door, which only a networked catalog and warehouse reveal.
+    // A landing over the live lake — the rows written to the warehouse,
+    // the table committed on the catalog — from the session's own
+    // fixture road, `register_table`; what only a networked catalog and
+    // warehouse reveal.
     {
         use datafusion::arrow::array::{Int64Array, StringArray};
         use datafusion::arrow::datatypes::{DataType, Field, Schema};

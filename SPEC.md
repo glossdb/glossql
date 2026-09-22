@@ -87,7 +87,7 @@ rehearsal: the same SQL surface and path resolution, executed at the
 source, landing nothing, its result always carrying its schema (a
 `LIMIT 0` probe of the final SQL rehearses exactly the identity the
 recipe will stamp). Then the recipe lands as table `segments` — the typed
-table, snapshotted by Iceberg on every import. The default recipe is
+table, versioned on every import. The default recipe is
 `SELECT *`. The engine keeps one number per import — `dropped_rows_count`,
 source rows minus landed rows — in the declaration's outcome at the
 decision moment and in the `imports` relation for history; which rows
@@ -95,11 +95,11 @@ were dropped is the author's question, answered at the source.
 
 Statement identity is content: the recipe SQL and the schema it produces.
 An unchanged re-declaration is a no-op; a changed one supersedes and
-re-lands: the table lands fresh, and its record —
-the recipe it carries, the landings it holds — starts over with it.
-Glosses stay — no machinery deletes knowledge; their snapshot ids
-disclose their age against the fresh landing. `DROP TABLE` drops the
-table, and refuses while it holds data or glosses.
+re-lands: the table is replaced whole, in one commit, and the recipe
+it carries is superseded. The landings it holds stay on the record,
+as every landing does. Glosses stay — no machinery deletes knowledge;
+their snapshot ids disclose their age against the fresh landing. `DROP
+TABLE` drops the table, and refuses while it holds data or glosses.
 
 ```sql
 IMPORT segments;

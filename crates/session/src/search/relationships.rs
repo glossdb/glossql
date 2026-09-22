@@ -564,7 +564,7 @@ impl Counts {
 
 /// A key the merge join can compare. Its comparator has no arm for a
 /// zoned timestamp or a time of day (datafusion-physical-plan
-/// `joins/utils.rs`, `compare_join_arrays`), which is how Iceberg lands
+/// `joins/utils.rs`, `compare_join_arrays`), which is how a landing holds
 /// `timestamptz` and `time`; those join as the integer they are stored
 /// as. A pass is scoped to one stored type, so the reinterpretation
 /// meets only its own kind, and it is one-to-one, so every count is

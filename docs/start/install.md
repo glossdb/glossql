@@ -193,22 +193,24 @@ it. The server writes nothing outside the workspace directory.
 
 ```
 acme/
-  catalog.sqlite     the Iceberg catalog and the record — every
-                     declared relation is a table here (absent with
-                     GLOSSQL_CATALOG_SQL: both are then on the Postgres
-                     server it names)
+  catalog.sqlite     the catalog and the record — every declared
+                     relation is a table here, and so are the landed
+                     tables' versions and files, in the shapes the
+                     DuckLake specification names (absent with
+                     GLOSSQL_CATALOG_SQL: all of it is then on the
+                     Postgres server it names)
   warehouse/         the lake — every landed table lives here as
-                     Iceberg data
+                     parquet files, one directory per table
 ```
 
 The workspace directory is the complete, copyable state of the
 system: the catalog and the record in one database file, the landed
-tables beside it.
+tables' files beside it.
 
 With `GLOSSQL_CATALOG_SQL` and `GLOSSQL_WAREHOUSE` set, `catalog.sqlite`
 and `warehouse/` move to the Postgres server and the object store they
 name: the state of the system is then that database and that
 warehouse, and a deployment runs without a directory. Everything else
-is the same lake — datasets are namespaces, every landed table an
-Iceberg table, every declared relation a table in the catalog's
-database.
+is the same lake — every landed table parquet under its dataset's
+directory, every declared relation and every version a table in the
+catalog's database.

@@ -597,13 +597,13 @@ async fn a_measurement_stands_while_what_it_read_is_unchanged() {
 
 #[tokio::test]
 async fn the_strike_is_parked_and_says_so() {
-    // The substrate cannot commit a row removal while iceberg-rust has
-    // no delete write path, so `DELETE FROM glossary` refuses by name —
-    // and anything but the glossary refuses as ever.
+    // Removal on an append-only record waits on its ruling, so `DELETE
+    // FROM glossary` refuses by name — and anything but the glossary
+    // refuses as ever.
     let (_dir, s) = store().await;
     let e = s.forward_delete("glossary").await.unwrap_err();
     assert!(matches!(e, Error::StrikeParked), "{e}");
-    assert!(e.to_string().contains("delete write path"), "{e}");
+    assert!(e.to_string().contains("ruling"), "{e}");
     let e = s.forward_delete("aspects").await.unwrap_err();
     assert!(matches!(e, Error::ForwardRejected(_)), "{e}");
 }

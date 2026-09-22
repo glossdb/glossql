@@ -1,9 +1,10 @@
 # The substrate
 
-glossql is a database built inside two frameworks: DataFusion is the
-query engine, Iceberg v3 is the table format. They are not libraries
-the server calls — every mechanism goes through one of their extension
-points, and where a shape once worked around them the cost was
+glossql is a database built inside a framework: DataFusion is the
+query engine, and the data plane is its own parquet scan over files a
+catalog of rows names ([storage](storage.md)). It is not a library the
+server calls — every mechanism goes through one of its extension
+points, and where a shape once worked around it the cost was
 concrete: a blocked planner thread, re-entrant planning that needed
 its own cycle stack, one stack for the whole nesting.
 
@@ -35,14 +36,13 @@ its own cycle stack, one stack for the whole nesting.
   state, which no `.sql` file can
   reach, so it is a compute door the pre-pass evaluates into a batch.
 - **The catalog hierarchy as-is** — `CatalogProviderList` →
-  `CatalogProvider` → `SchemaProvider` → `TableProvider`. Table names,
-  columns, and snapshot ids are answered by the provider chain; there
-  is no parallel catalog API. Tables are created through the
-  catalog's own async call (`Lake::create_table`), with the table
-  description iceberg-datafusion's `SchemaProvider::register_table`
-  builds and without that door's blocking wait, and written through
-  one path of the workspace's own, `Lake::append_batches`, which is
-  what lets a landing's facts ride the snapshot they describe.
+  `CatalogProvider` → `SchemaProvider` → `TableProvider`. The mounted
+  catalog is a `CatalogProvider` of the workspace's own over the data
+  plane's rows, each landed table a `TableProvider` over its files
+  whose scan is the engine's `DataSourceExec` over a `FileScanConfig`;
+  there is no parallel catalog API. Tables are written through one
+  path, `Lake::write` then `Lake::commit`, one transaction per
+  landing.
 - **One `RuntimeEnv` for the process** — the memory pool, the disk
   manager and the file caches every plan answers to. DataFusion builds
   one per session state when it is handed none, and a channel is built
@@ -72,19 +72,19 @@ its own cycle stack, one stack for the whole nesting.
   Rust API is synchronous, runs on the runtime's blocking pool and
   hands its batches over a bounded channel.
 
-## Iceberg
+## The data plane
 
 - **The snapshot is the version.** A statement's reads pin it — every
-  scan reads the pinned snapshot whatever lands after — and a snapshot
-  stays addressable after later commits, which makes it a durable key.
-  The catalog-backed provider always reads current, so an unpinned
-  pair of scans could straddle a landing.
-- **Landed tables only.** The lake holds what recipes land. The
-  record — the store's relations — is not Iceberg: it lives in the
-  catalog's database ([store](store.md)), where a row is one insert
-  and a read one query, and its order is the database's identity
-  column.
-- **Facts about a write ride the write** (snapshot properties and
-  summary); claims about a subject are rows in the record.
-- **Landings read back from snapshot summaries** — one entry per
-  append snapshot, its facts taken from the summary it rode.
+  scan reads the file list of the pinned version whatever lands after
+  — and a version stays a durable key: a gloss row stores it, and the
+  staleness rule compares it with the table's current one.
+- **Landed tables only.** The lake holds what recipes land, as parquet
+  files. The record — the store's relations — lives in the same
+  database ([store](store.md)), where a row is one insert and a read
+  one query, and its order is the database's identity column.
+- **Facts about a write are rows too**: a landing's are its `imports`
+  row, written beside the commit; claims about a subject are rows of
+  the record.
+- **A commit is one transaction** on the catalog's rows, and the files
+  it ends outlive it by a grace, so a reader that pinned them
+  finishes its scan.

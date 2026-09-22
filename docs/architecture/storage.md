@@ -1,61 +1,68 @@
 # Storage
 
-The lake is the store. A workspace is a warehouse directory plus a
-catalog file; every relation the language declares crosses the lake as
-an Iceberg table, and the tables recipes land live beside them under
-the same catalog.
+A workspace is a catalog and a warehouse. The catalog is one SQL
+database — the workspace directory's SQLite file on a laptop, the
+Postgres server `GLOSSQL_CATALOG_SQL` names in a deployment — and it
+holds two things side by side: the record, every relation the
+language declares as a table of rows ([store](store.md)), and the
+data plane's own tables — every landed table, its versions, and each
+version's files. The warehouse is where the files are: a directory,
+or the object-store location `GLOSSQL_WAREHOUSE` names.
 
-## Layout
+## The data plane's tables
 
-- **Datasets are namespaces.** Each dataset the workspace lands is an
-  Iceberg namespace holding its tables. A dataset's settings ride its
-  namespace as a property.
-- **The store's own relations live in one namespace** — `glossql`, one
-  table per relation (glosses, functions, aspects, witnesses,
-  measurements, relationships). A workspace holds many datasets, so a
-  dataset-scoped relation carries a `dataset` column declared as its
-  identity-partition key: separate files per dataset and pruning on a
-  dataset filter are the format's own feature, not a namespace layout.
-- **Two relations are the lake's own record, composed at read** —
-  `datasets` from the namespace list, `imports` from the append
-  snapshots. No table of the store's carries them.
-- **Facts ride what they describe.** A dataset's settings on its
-  namespace; a recipe's source and SQL on its table; a landing's
-  source-side facts — scans, dropped rows, cast failures — on the
-  snapshot that rode it.
-- **Writes are appends.** Supersession stays a read rule; replacement
-  is a later row, never an update, and a scan of an unwritten relation
-  is empty, never an act — tables are created by the first append
-  alone. The appended rows are themselves the event record: who said
-  what, as which kind, when.
-- **The one in-memory hold is the mounted catalog provider**, shared
-  by every session and rebuilt when a namespace is created or a table
-  is created or dropped — it freezes the namespace list and each
-  namespace's table map at build; a table lookup inside a namespace
-  reads that map, never the catalog, so a recipe's new table is seen
-  by the rebuild its create causes. Nothing held in memory is ever the
-  record.
+The data plane's tables have the names and columns the DuckLake 1.0
+specification gives them (`ducklake_snapshot`, `ducklake_schema`,
+`ducklake_table`, `ducklake_column`, `ducklake_data_file`, …), so any
+DuckLake reader attaches to the same database and reads the same
+files. All twenty-eight exist; the server writes the ones a landing,
+a replace, an append and a drop touch.
 
-## The catalog
+- **A dataset is a schema row.** `DECLARE DATASET` writes it; its
+  settings are a row of the record's `datasets` relation.
+- **A landed table is a table row, its column rows and its file
+  rows.** A column row spells its type in the specification's
+  vocabulary, and the type set a landing holds is what
+  `glossql-import` folds every source type into, so the two agree by
+  construction. A file row names a parquet file under the table's
+  directory in the warehouse, with its size, its row count and the
+  size of its footer.
+- **A version is a snapshot.** Every write is one transaction that
+  appends a snapshot row; a file row carries the snapshot it began at
+  and, once replaced or dropped, the snapshot it ended at. A table's
+  version is the snapshot that last changed it, and that is the
+  number a gloss row stores as `snapshot_id` and the pin carries.
+- **A replace is one commit.** The new rows are written beside the
+  old files first; the commit ends the old file rows and begins the
+  new ones. A reader that pinned the table before the commit reads
+  the old files, one after it the new; there is no moment without a
+  table. The ended files are scheduled for deletion and deleted by a
+  later commit once a grace has passed, longer than any statement
+  runs. The data keeps no history.
+- **A landing's facts are the record's.** What it read, what it
+  dropped, the casts, the files and the version it made are one row
+  of the `imports` relation, written beside the commit and outliving
+  the files. The recipe behind a table is a row of `recipes`.
 
-The catalog sits behind the `Catalog` trait, built at one site:
-iceberg-rust's SqlCatalog, in process, on the workspace's own SQLite
-file or on the Postgres server `GLOSSQL_CATALOG_SQL` names — one
-implementation, the bind style following the URI's scheme
-([install](../start/install.md)). The same database holds the record
-([store](store.md)), opened on the same URI. The catalog tier is
-relied on, never copied: table names, schemas, and snapshot ids are answered
-by the provider chain, not mirrored into a structure of the server's
-own.
+## Reads
 
-The bytes, whichever catalog answers, move through one seam: iceberg's
-`Storage` trait, implemented once over the `object_store` crate the
-engine already runs on, for the S3 family and the Azure family. A REST
-catalog's table loads deliver the store's properties and, vending, its
-credentials; a SQL catalog's warehouse in a bucket (`GLOSSQL_WAREHOUSE`)
-delivers none, and the store's own environment conventions configure
-the client — on Azure with nothing set, the managed identity. The
-local filesystem stays the dev shape.
+A statement pins its dataset with one query over the tables, columns
+and live files, whatever the table count, and each table becomes a
+provider over its file list at that version — nothing is listed or
+fetched from the warehouse at plan time. The scan is the engine's own
+parquet scan, so the engine's pruning and its dynamic filters apply to
+every landed table.
 
-Landings read back from the format's own record: one entry per append
-snapshot, its facts taken from the snapshot summary it rode.
+The mounted catalog — what `information_schema` and a
+dataset-qualified name resolve through — is built from the same
+query, once, and shared by every session until a commit rebuilds it.
+
+## The warehouse
+
+Files are written by the engine's parquet writer under
+`<warehouse>/<dataset>/<table>/`, one file per landing. The object
+store behind a remote warehouse is the crate the engine already runs
+on, one client per bucket or container, configured by the
+environment: on Azure with nothing set, the managed identity; on
+Google Cloud, the attached service account. The local filesystem stays
+the laptop's shape.

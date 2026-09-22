@@ -234,9 +234,9 @@ async fn closure_by_concession_while_the_strike_is_parked() {
         "{glossary}"
     );
 
-    // Closure by authority is parked: the substrate cannot remove rows
-    // until iceberg-rust lands the delete write path, and the refusal
-    // says so by name instead of pretending.
+    // Closure by authority is parked: removal on an append-only record
+    // waits on its ruling, and the refusal says so by name instead of
+    // pretending.
     let refusal = human_refused(
         &app,
         "USE fin; DELETE FROM glossary \
@@ -244,7 +244,7 @@ async fn closure_by_concession_while_the_strike_is_parked() {
          AND aspect = 'behavior' AND actor_kind = 'agent';",
     )
     .await;
-    assert!(refusal.contains("delete write path"), "{refusal}");
+    assert!(refusal.contains("ruling"), "{refusal}");
     assert!(refusal.contains("parked"), "{refusal}");
 
     // Closure by concession — the other taught path: the agent

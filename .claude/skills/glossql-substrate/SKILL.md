@@ -1,15 +1,16 @@
 ---
 name: glossql-substrate
-description: How to build ON DataFusion and iceberg-rust rather than around them — the extension points, the rules that come with them, and where each was verified. Use before writing or reviewing any server code that plans, executes, reads the catalog, or runs a function.
+description: How to build ON DataFusion rather than around it — the extension points, the rules that come with them, and where each was verified. Use before writing or reviewing any server code that plans, executes, reads the catalog, or runs a function.
 ---
 
 # The substrate
 
-glossql is a database. **DataFusion is the query engine and Iceberg v3 is
-the catalog standard** — they are not libraries we call, they are the
-frameworks we build inside. Every mechanism we wrote that duplicates one
-of theirs has cost us: thread contention, blocked planner threads,
-copied instead of passed memory, stale caches.
+glossql is a database. **DataFusion is the query engine, and the data
+plane is its own parquet scan over files a catalog of rows names** —
+it is not a library we call, it is the framework we build inside.
+Every mechanism we wrote that duplicates one of its has cost us:
+thread contention, blocked planner threads, copied instead of passed
+memory, stale caches.
 
 The rule this skill exists to enforce: **either use the extension point,
 or write down why it is wrong for us.** "We didn't know" is the failure
@@ -282,13 +283,13 @@ Partition the value space by hash, process partition by partition, merge
 — that is `grouped_hash_stream.rs`'s `SpillState` and the `DiskManager`. Do not
 build it.
 
-**Dynamic filters do not reach our data** (issue #46). `HashJoinExec`
-builds one in the Post pushdown phase and offers it to the probe child;
-the `FilterPushdown` rule inserts no node, `FilterExec` refuses to
-absorb outside the `Pre` phase, and the only Post-phase absorber is
-`DataSourceExec` over a `FileScanConfig`. Every read here is an
-`IcebergTableScan` or a `MemTable`, and neither participates. Plan as if
-the feature were off, because for us it is.
+**Dynamic filters reach the landed tables and nothing else.**
+`HashJoinExec` builds one in the Post pushdown phase and offers it to
+the probe child; the one Post-phase absorber is `DataSourceExec` over
+a `FileScanConfig`, which is what every landed table's scan is
+(`crates/catalog/src/scan.rs`). A `MemTable` — a door's batch, a
+store relation — takes none; plan a join over those as if the feature
+were off.
 
 **The kernels' seam stays.** A statistical kernel receives a matrix, so
 the last step before one is a hand-off, not a plan. What moves into the
@@ -311,44 +312,48 @@ groundings in 13 ms with zero rows executed.
 (`INSERT INTO`) goes through `TableProvider`.
 
 Do not wrap a `CatalogProvider` in a parallel API of your own. If you
-need table names, columns, or a snapshot id, the provider chain already
-answers — and iceberg-datafusion's `IcebergCatalogProvider` *is* a
-`CatalogProvider`.
+need table names or columns, the provider chain already answers — the
+mounted catalog (`crates/catalog/src/scan.rs`, `Mount`) *is* a
+`CatalogProvider`; a version is a row of the catalog's own tables.
 
-## Iceberg
+## The data plane
 
-- **The snapshot is the version.** Pin it per statement with
-  `IcebergStaticTableProvider::try_new_from_table_snapshot`; the
-  catalog-backed provider always reads current
-  (`iceberg-datafusion/src/table/mod.rs`), so two scans in one query can
-  straddle a landing. A pin stays addressable after later commits, so it
-  is a durable key. Verified: spike 3.
-- **The record is not Iceberg.** The store's relations live in the
-  catalog's database (`crates/catalog/src/record.rs`): a row is one
-  insert, a read one query, the order the identity column. Iceberg
-  holds the landed tables. Measured before the move, on a remote
-  object store: a one-row append cost 5–9 s (a data file, a manifest,
-  a manifest list, a metadata file, a catalog update) and a read
-  opened one file per row ever written.
-- `format-version` is a **reserved** property — rejected at create. Get
-  to v3 with `Transaction::upgrade_table_version().set_format_version(V3)`.
-- Metadata columns are readable through **iceberg-rust's own scan**, not
-  through iceberg-datafusion's SQL surface.
-- **A commit is a transaction, and a landing is one commit.** One
-  row per commit costs ~16.5 ms on a local disk and seconds on a
-  remote store; the record's rows never commit through Iceberg for
-  that reason.
-- Facts about a write ride the write (snapshot properties/summary);
-  claims about a subject are rows.
-- Read landings through `Table::inspect()`, not SQL over
-  `table$snapshots` — that path has a projection-pushdown bug
-  (`count(*)` fails, `SELECT *` works).
+- **A version is a snapshot row.** Every commit — a landing, a
+  replace, an append, a drop — is one transaction on the catalog's
+  tables (`crates/catalog/src/tables.rs`), in the shapes the DuckLake
+  1.0 specification names, and it appends a snapshot row; a file row
+  carries the snapshot it began at and the one it ended at. A table's
+  version is the snapshot that last changed it, and the pin, the gloss
+  row's `snapshot_id` and the staleness rule all speak that number.
+- **The pin is a query, never a fetch.** A dataset's walk is three
+  queries on the catalog whatever the table count; a table's provider
+  (`FilesTable`, `crates/catalog/src/scan.rs`) holds paths and sizes
+  from the rows and builds a `FileScanConfig` at scan time. Nothing
+  lists or opens a file at plan time.
+- **A replace is one commit and never an empty table.** The new file
+  is written beside the old; the commit ends the old file rows and
+  begins the new. Ended files are deleted by a later commit's sweep
+  once the grace has passed (`Lake::sweep`), so a reader that pinned
+  them finishes its scan.
+- **The record is rows in the same database** (`record.rs`): a row is
+  one insert, a read one query, the order the identity column. A
+  landing's facts are its `imports` row, written beside the commit.
+- **The writer is the parquet crate's own** (`AsyncArrowWriter` over
+  the object store's `BufWriter`), one file per landing under
+  `<dataset>/<table>/`; the type set a landing holds is the one
+  `glossql-import` folds every source type into, spelled in the
+  column rows in the specification's vocabulary.
+- **The `any` driver reads no booleans on SQLite.** A boolean column
+  is read as `CAST(CAST(… AS INTEGER) AS BIGINT)` — Postgres casts a
+  boolean to an integer, never straight to a bigint; a timestamp or a uuid is written as
+  a literal, never bound, so the prepared statement's parameter types
+  agree on both dialects.
 
 ## Before you write a mechanism
 
 Ask, in order:
 
-1. Does DataFusion or Iceberg already do this? Check the guide above.
+1. Does DataFusion already do this? Check the guide above.
 2. If it does and we are not using it, is there a written reason?
 3. If we still build it, does it go through an extension point
    (`TableProvider`, `ExecutionPlan`, `ScalarUDF`, `AggregateUDF`,

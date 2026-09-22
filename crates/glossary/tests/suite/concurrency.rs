@@ -1,12 +1,7 @@
-//! Concurrent writers against one store relation.
-//!
-//! Every gloss appends to the same Iceberg table, and an Iceberg commit
-//! is optimistic: the catalog's conditional update refuses whichever of
-//! two writers read the same metadata second. That refusal is the format
-//! working — the loser has lost nothing but its turn — so a writer that
-//! reports it to the caller is reporting contention as failure. These
-//! tests hold the line that concurrent writers all land, and that what
-//! they wrote is all readable afterwards.
+//! Concurrent writers against one store relation: every gloss is one
+//! row appended to the same table, and the database serializes them.
+//! These tests hold the line that concurrent writers all land, and
+//! that what they wrote is all readable afterwards.
 
 use std::sync::Arc;
 
@@ -61,8 +56,7 @@ fn body(value: &str) -> glossql_parser::JsonBody {
 }
 
 /// Distinct subjects, so nothing supersedes anything: every write must
-/// be readable at the end. They contend all the same, because a store
-/// relation is one Iceberg table and a gloss is one commit to it.
+/// be readable at the end.
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_writers_all_land() {
     const WRITERS: usize = 24;
@@ -70,7 +64,6 @@ async fn concurrent_writers_all_land() {
     let store = Arc::new(store);
 
     let started = std::time::Instant::now();
-    let conflicts_before = store.lake().conflict_count();
     let mut writing = Vec::with_capacity(WRITERS);
     for n in 0..WRITERS {
         let store = Arc::clone(&store);
@@ -98,18 +91,9 @@ async fn concurrent_writers_all_land() {
         }
     }
     let elapsed = started.elapsed();
-    // Writers contend here — created without the retry arrangement the
-    // store relations carry, seventeen of these twenty-four are refused.
-    // The exhausted count is in the message rather than an assertion of
-    // its own: a writer that runs out of retries is a refusal, so this
-    // fires first either way, and what it needs to say is which of the
-    // two it was.
-    let exhausted = store.lake().conflict_count() - conflicts_before;
     assert!(
         refused.is_empty(),
-        "{} of {WRITERS} concurrent writers were refused, {exhausted} of them for \
-         running out of retries — if that is most of them, the commit properties the \
-         relations are created with are too small for this contention:\n{}",
+        "{} of {WRITERS} concurrent writers were refused:\n{}",
         refused.len(),
         refused.join("\n")
     );

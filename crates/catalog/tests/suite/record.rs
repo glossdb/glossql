@@ -24,7 +24,7 @@ async fn open(dir: &std::path::Path) -> Record {
     let lake = Lake::open(&dir.join("catalog.db"), &dir.join("warehouse"))
         .await
         .unwrap();
-    Record::open(lake.database(), &[RELATIONSHIPS, GLOSSARY])
+    Record::open(&lake.db(), &[RELATIONSHIPS, GLOSSARY])
         .await
         .unwrap()
 }

@@ -96,31 +96,24 @@ impl Bind {
 }
 
 /// The store's relations, each one table in the catalog's database.
-pub struct Record {
+/// The database the catalog tables and the record share: one pool,
+/// one bind style — `?` for SQLite, `$n` for Postgres — behind sqlx's
+/// `any` driver.
+#[derive(Clone)]
+pub struct Db {
     pool: AnyPool,
     bind: Bind,
-    specs: HashMap<String, RelationSpec>,
 }
 
-impl std::fmt::Debug for Record {
+impl std::fmt::Debug for Db {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Record").finish_non_exhaustive()
+        f.debug_struct("Db").field("bind", &self.bind).finish()
     }
 }
 
-/// The table a relation lives in. Prefixed so the store's tables sit
-/// beside the catalog's own (`iceberg_tables`,
-/// `iceberg_namespace_properties`) without a name of ours colliding
-/// with one of theirs.
-fn table(relation: &str) -> String {
-    format!("\"glossql_{relation}\"")
-}
-
-impl Record {
-    /// Open the record on the catalog's database — the URI the catalog
-    /// itself was opened on — and create every relation's table that
-    /// is not there yet.
-    pub async fn open(uri: &str, relations: &[RelationSpec]) -> crate::Result<Self> {
+impl Db {
+    /// One pool on the URI (`sqlite:<file>` or `postgres://…`).
+    pub async fn connect(uri: &str) -> crate::Result<Self> {
         let (scheme, _) = uri
             .split_once(':')
             .ok_or_else(|| crate::Error::Workspace("the catalog URI names no scheme".into()))?;
@@ -135,9 +128,72 @@ impl Record {
         };
         sqlx::any::install_default_drivers();
         let pool = AnyPoolOptions::new().connect(uri).await?;
+        Ok(Db { pool, bind })
+    }
+
+    pub(crate) fn pool(&self) -> &AnyPool {
+        &self.pool
+    }
+
+    /// Whether the database is SQLite — the dialect that has no
+    /// boolean, timestamp or uuid type of its own.
+    pub(crate) fn is_sqlite(&self) -> bool {
+        matches!(self.bind, Bind::QMark)
+    }
+
+    /// A statement written with `?` placeholders, in this database's
+    /// bind style. No literal in the statements written here holds a
+    /// question mark.
+    pub(crate) fn sql(&self, text: &str) -> String {
+        match self.bind {
+            Bind::QMark => text.to_string(),
+            Bind::Dollar => {
+                let mut out = String::with_capacity(text.len() + 8);
+                let mut n = 0;
+                for c in text.chars() {
+                    if c == '?' {
+                        n += 1;
+                        out.push('$');
+                        out.push_str(&n.to_string());
+                    } else {
+                        out.push(c);
+                    }
+                }
+                out
+            }
+        }
+    }
+}
+
+pub struct Record {
+    pool: AnyPool,
+    bind: Bind,
+    specs: HashMap<String, RelationSpec>,
+}
+
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Record").finish_non_exhaustive()
+    }
+}
+
+/// The table a relation lives in. Prefixed so the store's tables sit
+/// beside the catalog's own (`ducklake_*`) without a name of ours
+/// colliding with one of theirs.
+fn table(relation: &str) -> String {
+    format!("\"glossql_{relation}\"")
+}
+
+impl Record {
+    /// Open the record on the catalog's database — the URI the catalog
+    /// itself was opened on — and create every relation's table that
+    /// is not there yet.
+    /// The relations on the database the lake opened, each created if
+    /// absent.
+    pub async fn open(db: &Db, relations: &[RelationSpec]) -> crate::Result<Self> {
         let record = Record {
-            pool,
-            bind,
+            pool: db.pool.clone(),
+            bind: db.bind,
             specs: relations
                 .iter()
                 .map(|s| (s.name.to_string(), s.clone()))

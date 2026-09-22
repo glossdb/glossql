@@ -7,26 +7,15 @@ repository.workspace = true
 
 [dependencies]
 datafusion = { workspace = true }
-iceberg = { workspace = true }
-iceberg-catalog-sql = { workspace = true }
-# The record's own queries on the catalog's database, over the `any`
-# driver both dialects sit behind; also what switches on sqlx's tokio
-# runtime and its drivers for iceberg-catalog-sql, which names neither.
+# The catalog tables and the record's own queries, over the `any`
+# driver both dialects sit behind.
 sqlx = { workspace = true }
 object_store = { workspace = true }
-typetag = { workspace = true }
-# The storages table loads would otherwise rebuild; moka is in the
-# tree for the cube cache.
-moka = { workspace = true, features = ["sync"] }
-bytes = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-async-trait = { workspace = true }
-http = { workspace = true }
 url = { workspace = true }
-iceberg-datafusion = { workspace = true }
-futures.workspace = true
 uuid.workspace = true
+chrono.workspace = true
+futures.workspace = true
+async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
