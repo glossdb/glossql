@@ -67,7 +67,9 @@ pub(crate) async fn missing(door: &AppDoor, dataset: &str) -> Option<String> {
     Some(no_such_dataset(dataset, &known(door).await))
 }
 
-pub(crate) fn no_such_dataset(dataset: &str, known: &[String]) -> String {
+/// The 404 body every dataset-scoped door answers with: the name that
+/// was asked and the names the workspace holds.
+pub fn no_such_dataset(dataset: &str, known: &[String]) -> String {
     if known.is_empty() {
         format!("no dataset `{dataset}` — this workspace holds none yet")
     } else {

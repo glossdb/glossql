@@ -1539,13 +1539,19 @@ async fn the_root_lists_every_dataset_at_a_glance() {
     assert!(!root.contains("href=\"/second/app/board\""), "{root}");
     assert!(root.contains("glossed"), "{root}");
     assert!(root.contains("built in"), "{root}");
-    // The doors and the connect line.
-    assert!(root.contains("the agent door"), "{root}");
+    // The doors and the connect line: an agent connects to a
+    // dataset's door, and the workspace door is named for what only it
+    // does.
+    assert!(root.contains("the dataset's agent door"), "{root}");
+    assert!(root.contains("the workspace's agent door"), "{root}");
     // The connect line names the server as it was told it is reached,
     // whatever host the request claimed. The template escapes the
     // scheme's slashes, so the host is the tell.
     assert!(root.contains("claude mcp add"), "{root}");
-    assert!(root.contains("glossql.example/mcp"), "{root}");
+    assert!(
+        root.contains("glossql.example/&lt;dataset&gt;/mcp"),
+        "{root}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

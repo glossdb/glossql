@@ -10,11 +10,11 @@ use std::sync::Arc;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ElicitRequest,
     ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationSchema,
-    GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation, InputRequest,
-    InputRequests, InputRequiredResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, Prompt, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
-    ServerInfo, Tool,
+    GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
+    InitializeRequestParams, InitializeResult, InputRequest, InputRequests, InputRequiredResult,
+    ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt,
+    PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::model::{ListResourceTemplatesResult, ResourceTemplate};
 use rmcp::service::{RequestContext, RoleServer};
@@ -113,6 +113,23 @@ impl GlossqlMcp {
         if let Ok(mut slot) = brief.opening.write() {
             *slot = opening;
         }
+    }
+
+    /// What the handshake serves: the standing instructions, the
+    /// brief's line, and how to begin at this door. The workspace
+    /// door's opening is composed with the brief; a bound door's
+    /// caller already stands on its dataset, so the opening is the
+    /// brief on it.
+    fn instructions(&self, bound: Option<&str>) -> String {
+        let opening = match bound {
+            Some(dataset) => format!(
+                "Open with the brief the glossql skill teaches — human slots, contested, red \
+                 bands, `owed` on `{dataset}` — once, before the first write. It is a read, \
+                 not a gate: what it counts waits for the human while the work goes on."
+            ),
+            None => self.brief.opening(),
+        };
+        format!("{INSTRUCTIONS}\n\n{} {opening}", self.brief.line())
     }
 
     /// The facts, their rendering, and the opening, in one read pass.
@@ -509,7 +526,18 @@ impl GlossqlMcp {
         }
     }
 
-    fn tool(&self) -> Tool {
+    /// The one tool, described for the door it is listed on: how a
+    /// call opens is the one thing the two agent doors say differently.
+    fn tool(&self, bound: Option<&str>) -> Tool {
+        let opens = match bound {
+            Some(dataset) => format!(
+                "Every call opens on `{dataset}`: its tables and columns resolve unprefixed, \
+                 another dataset's with the dataset's name in front."
+            ),
+            None => "Every call opens unbound: begin any call that names a dataset's tables or \
+                     columns with `USE <dataset>;` — a call without one is workspace-scoped."
+                .to_string(),
+        };
         let serde_json::Value::Object(schema) = serde_json::json!({
             "type": "object",
             "properties": {
@@ -529,8 +557,7 @@ impl GlossqlMcp {
                  Statements only: the skill and doc pages are rows of `pages()` — `SELECT \
                  body FROM pages() WHERE uri = 'skill://glossql/SKILL.md'` — and resources \
                  for a client that reads those. \
-                 Every call opens unbound: begin any call that names a dataset's tables or \
-                 columns with `USE <dataset>;` — a call without one is workspace-scoped. \
+                 {opens} \
                  Outcomes: a read is `{{columns, rows, row_count, truncated}}`, rows capped at \
                  {} (GLOSSARY(), ATTEST() and the store relations are uncapped); a write is `{{done}}` or `{{affected}}`; a GLOSS on a \
                  QUERY aspect — a metric's grounding — answers with the metric's fact row in \
@@ -797,12 +824,24 @@ impl ServerHandler for GlossqlMcp {
                 .build(),
         );
         info.server_info = Implementation::new("glossql-serverd", env!("CARGO_PKG_VERSION"));
-        info.instructions = Some(format!(
-            "{INSTRUCTIONS}\n\n{} {}",
-            self.brief.line(),
-            self.brief.opening()
-        ));
+        info.instructions = Some(self.instructions(None));
         info
+    }
+
+    /// The handshake, with the opening said for the door it came
+    /// through: a bound door's caller has its dataset already, so the
+    /// opening names the brief alone.
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        context.peer.set_peer_info(request.clone());
+        let mut result = self.negotiate_initialize(&request)?;
+        if let Some(dataset) = bound(&context) {
+            result.instructions = Some(self.instructions(Some(&dataset)));
+        }
+        Ok(result)
     }
 
     /// The one revision the door advertises and validates a request's
@@ -820,10 +859,10 @@ impl ServerHandler for GlossqlMcp {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
-            tools: vec![self.tool()],
+            tools: vec![self.tool(bound(&context).as_deref())],
             ttl_ms: Some(3_600_000),
             cache_scope: Some(rmcp::model::CacheScope::Private),
             ..Default::default()
@@ -968,23 +1007,19 @@ impl ServerHandler for GlossqlMcp {
         // client's own `clientInfo` name is not used: it is a string the
         // caller picks for itself on each request, so recording it would
         // put an unproven name in the actor column of the record.
-        let actor = context
-            .extensions
-            .get::<axum::http::request::Parts>()
-            .and_then(|parts| parts.extensions.get::<Caller>())
-            .map(|caller| caller.0.clone())
-            .ok_or_else(|| {
-                McpError::internal_error("the door is not behind the gate: no caller", None)
-            })?;
+        let actor = caller(&context)?;
         let id = actor.id.clone();
-        // The call opens unbound. There is no session to hold a dataset
-        // and no path segment to carry one: the statements say where
-        // they are, as `USE`, and `execute` moves with them. A call that
-        // names none is workspace-scoped, which is what reading
-        // `datasets` and writing a source-grain gloss both want.
+        // The call opens where the door says: on the dataset a bound
+        // door's URL names, or unbound at the workspace door. There is
+        // no session to hold a dataset between calls; within one, the
+        // statements say where they are, as `USE`, and `execute` moves
+        // with them. An unbound call that names none is
+        // workspace-scoped, which is what reading `datasets` and
+        // writing a source-grain gloss both want.
+        let bound = bound(&context);
         let session = self
             .plane
-            .channel(actor.clone(), None)
+            .channel(actor.clone(), bound.as_deref())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -1087,7 +1122,11 @@ impl ServerHandler for GlossqlMcp {
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
-                match self.plane.execute(actor.clone(), None, statements).await {
+                match self
+                    .plane
+                    .execute(actor.clone(), bound.as_deref(), statements)
+                    .await
+                {
                     Ok(outcomes) => wire::outcomes_json(&outcomes),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
@@ -1126,7 +1165,11 @@ impl ServerHandler for GlossqlMcp {
         // on every call (`window`). It rides the result, never the
         // instructions, so the stable prefix holds.
         let window = self
-            .situation_block(&actor, shape.dataset.as_deref(), &rendered)
+            .situation_block(
+                &actor,
+                shape.dataset.as_deref().or(bound.as_deref()),
+                &rendered,
+            )
             .await;
         Ok(match rendered {
             Ok(body) => {
@@ -1166,7 +1209,7 @@ impl ServerHandler for GlossqlMcp {
 impl GlossqlMcp {
     /// The two lines every result carries: where the call left the
     /// agent, and one act per goal from there (`window`) on the
-    /// dataset the call's last `USE` named.
+    /// dataset the call's last `USE` named, else the door's own.
     async fn situation_block(
         &self,
         actor: &Actor,
@@ -1254,6 +1297,44 @@ fn caller(context: &RequestContext<RoleServer>) -> Result<Actor, McpError> {
         .and_then(|parts| parts.extensions.get::<Caller>())
         .map(|caller| caller.0.clone())
         .ok_or_else(|| McpError::internal_error("the door is not behind the gate: no caller", None))
+}
+
+/// The dataset a bound agent door was opened on — `/{dataset}/mcp`,
+/// stamped onto the request by [`bind`] the way the gate stamps the
+/// caller. The workspace door (`/mcp`) carries none.
+#[derive(Clone)]
+pub struct Bound(pub String);
+
+/// The binding the request arrived with, if the door is a bound one.
+fn bound(context: &RequestContext<RoleServer>) -> Option<String> {
+    context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<Bound>())
+        .map(|bound| bound.0.clone())
+}
+
+/// The bound door's way in: the URL's first segment names the dataset,
+/// and one the workspace does not hold is a 404 that names what it
+/// does hold — the same answer the human doors give. This door reads
+/// and writes on the dataset; bringing one into being is the
+/// workspace door's.
+pub async fn bind(
+    axum::extract::State(plane): axum::extract::State<Arc<Plane>>,
+    axum::extract::Path(dataset): axum::extract::Path<String>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(missing) = crate::missing_dataset(&plane, &dataset).await {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error": missing })),
+        )
+            .into_response();
+    }
+    request.extensions_mut().insert(Bound(dataset));
+    next.run(request).await
 }
 
 #[cfg(test)]

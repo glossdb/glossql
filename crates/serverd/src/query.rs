@@ -27,19 +27,8 @@ pub async fn query(
     Extension(Caller(actor)): Extension<Caller>,
     body: String,
 ) -> Response {
-    if !plane.dataset_exists(&dataset).await.unwrap_or(false) {
-        let known = plane.datasets().await.unwrap_or_default();
-        return fail(
-            StatusCode::NOT_FOUND,
-            format!(
-                "no dataset `{dataset}` — this workspace holds {}",
-                if known.is_empty() {
-                    "none yet".to_string()
-                } else {
-                    known.join(", ")
-                }
-            ),
-        );
+    if let Some(missing) = crate::missing_dataset(&plane, &dataset).await {
+        return fail(StatusCode::NOT_FOUND, missing);
     }
     let session = match plane.channel(actor.clone(), Some(&dataset)).await {
         Ok(session) => session,

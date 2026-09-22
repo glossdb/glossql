@@ -1,17 +1,18 @@
 # Connect
 
-Three doors, one listener. `/query` and `/app` carry the dataset in the
-path — `/<dataset>/query`, `/<dataset>/app` — because a browser is
-pointed at one and stays there. `/mcp` is a single endpoint, because an
-agent is pointed at a workspace and moves between its datasets. `/` is
-the workspace itself: which datasets there are, and the way into each.
+Four doors, one listener. `/query`, `/app` and `/mcp` carry the
+dataset in the path — `/<dataset>/query`, `/<dataset>/app`,
+`/<dataset>/mcp` — so a caller is pointed at one dataset and stays
+there. `/mcp` without a dataset is the workspace's agent door, for the
+agent that declares sources and brings datasets into being. `/` is the
+workspace itself: which datasets there are, and the way into each.
 
 The actor rides a bearer token from the workspace's issuer: the
-token's subject is the actor id. The door sets the standing — `/mcp`
-is the agent door, the others are human doors — see
+token's subject is the actor id. The door sets the standing — the two
+`mcp` doors are agent doors, the others are human doors — see
 [`install.md`](install.md#tokens).
 
-## `/mcp` — the agent door
+## `/<dataset>/mcp` and `/mcp` — the agent doors
 
 Streamable-HTTP MCP at revision `2026-07-28` — stateless, no sessions
 of any kind. One tool: `glossql`. Its `statements` argument
@@ -35,14 +36,19 @@ gives itself in the handshake — a name a caller picks for itself proves
 nothing. A call without a token gets a 401 with the discovery
 pointer an OAuth-capable client follows.
 
-**`USE <dataset>;` opens every call that touches dataset-scoped
-names.** MCP has no session to hold a binding, so the statements carry
-it: `USE` moves the statements after it and expires with the call.
-Nothing on the server remembers where you were. A call that names no
-dataset is workspace-scoped — which is what `SELECT * FROM datasets`
-and a source-grain gloss both want — and a dataset the workspace does
-not hold yet is not an error here: `DECLARE DATASET` creates the
-name.
+**A dataset's door opens every call on that dataset.** Its tables and
+columns resolve unprefixed, another dataset's with the dataset's name
+in front, and the result closes with the dataset's `next` line. A
+dataset the workspace does not hold is a 404 naming what it does hold.
+
+**At the workspace door, `USE <dataset>;` opens every call that
+touches dataset-scoped names.** MCP has no session to hold a binding,
+so the statements carry it: `USE` moves the statements after it and
+expires with the call. Nothing on the server remembers where you were.
+A call that names no dataset is workspace-scoped — which is what
+`SELECT * FROM datasets` and a source-grain gloss both want — and a
+dataset the workspace does not hold yet is not an error here:
+`DECLARE DATASET` creates the name.
 
 The door also asks. While human-judgment questions are open, a call
 that reads the record carries a round of forms (MCP elicitation); the
@@ -56,7 +62,7 @@ With Claude Code:
 set -a; source .env; set +a      # the same application the server is registered as
 MCP_CLIENT_SECRET=$GLOSSQL_CLIENT_SECRET claude mcp add --transport http \
   --client-id $GLOSSQL_CLIENT_ID --client-secret --callback-port 3118 \
-  glossql http://127.0.0.1:8080/mcp
+  glossql http://127.0.0.1:8080/fin/mcp
 claude mcp login glossql
 ```
 
@@ -65,8 +71,8 @@ must list (`http://localhost:3118/callback`) — any port but the
 server's own. `login` opens the issuer's sign-in in a browser and
 stores the token; Claude Code refreshes it on its own.
 
-One entry serves the whole workspace; the agent picks its dataset with
-`USE`.
+One entry per dataset the agent works on. An entry at `/mcp` serves
+the whole workspace, and there the agent picks its dataset with `USE`.
 
 Agent knowledge — the grammar, the flows, the judgment — ships as the
 agent skills in this repository (`glossql`, `glossql-metrics`,

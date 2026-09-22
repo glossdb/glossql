@@ -4,26 +4,25 @@
 #![recursion_limit = "256"]
 
 //! serverd — the workspace's doors (M5): one axum listener carrying the
-//! MCP shim at `/mcp` (rmcp streamable HTTP, 2026-07-28 and nothing
-//! behind it) and the cockpit's Arrow IPC query door at
-//! `/<dataset>/query`. Flight SQL is a future door: pyarrow reads the
-//! same HTTP stream.
+//! MCP shim at `/mcp` and `/<dataset>/mcp` (rmcp streamable HTTP,
+//! 2026-07-28 and nothing behind it) and the cockpit's Arrow IPC query
+//! door at `/<dataset>/query`. Flight SQL is a future door: pyarrow
+//! reads the same HTTP stream.
 //!
-//! **The two door kinds scope differently, because their callers do.**
-//! A browser is pointed at a dataset and stays there, so `/query` and
-//! `/app` carry it in the path — a link someone can share. An agent is
-//! pointed at a workspace, so `/mcp` is one endpoint and the dataset
-//! arrives in the statements, as `USE`. That is the shape every
-//! database MCP server converges on, because the protocol has no
-//! session to hold it: ClickHouse names the database in the SQL,
-//! Snowflake locks it at configuration time, and the spec's own
-//! example takes it as a tool argument.
+//! **A door is bound to a dataset or to the workspace.** `/query`,
+//! `/app` and `/<dataset>/mcp` carry the dataset in the path — a link
+//! someone can share, a call that opens on it. `/mcp` is the
+//! workspace's door: an agent there moves between datasets, and the
+//! dataset arrives in the statements, as `USE`, because the protocol
+//! has no session to hold it. Sources are declared and datasets
+//! brought into being at the workspace door; an agent working one
+//! dataset connects to that dataset's door.
 //!
 //! No door keeps a cursor, so a restart cannot lose one and two callers
 //! on two datasets cannot steer each other. `USE` moves the statements
 //! after it and expires with the call. A dataset that does not exist
-//! 404s on `/query` and `/app`; over `/mcp` it is where an agent
-//! declares it.
+//! 404s on the bound doors; over `/mcp` it is where an agent declares
+//! it.
 //!
 //! Every door is behind one gate (`auth`): a bearer token, verified
 //! against the issuer's published keys, says who is speaking; the door
@@ -116,12 +115,25 @@ pub enum Access {
     Open,
 }
 
+/// Why a door told a dataset by its URL cannot open on it: the
+/// workspace does not hold the name. One existence question at the
+/// catalog; the listing is read on the miss alone, where the answer
+/// names what there is.
+pub(crate) async fn missing_dataset(plane: &Plane, dataset: &str) -> Option<String> {
+    if plane.dataset_exists(dataset).await.unwrap_or(false) {
+        return None;
+    }
+    let known = plane.datasets().await.unwrap_or_default();
+    Some(glossql_apps::no_such_dataset(dataset, &known))
+}
+
 /// The doors. `/` is the workspace — which datasets there are;
 /// everything else hangs off one of them.
 pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
     let mcp_plane = Arc::clone(&plane);
     let app_plane = Arc::clone(&plane);
     let root_plane = Arc::clone(&plane);
+    let bind_plane = Arc::clone(&plane);
     // The door speaks 2026-07-28 first and serves every revision the
     // library carries beneath it (2025-11-25 today) by negotiation —
     // statelessly for all of them: `legacy_session_mode: false` means
@@ -156,7 +168,7 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
         Arc::new(NeverSessionManager::default()),
         config,
     );
-    // The doors, standing by kind: the agent door stamps agent, the
+    // The doors, standing by kind: the agent doors stamp agent, the
     // human doors stamp human. Identity is read the same way at every
     // door; only the kind differs, and it is the door's to say
     // (SPEC.md §1, the actor rides the transport).
@@ -167,7 +179,14 @@ pub fn router(plane: Arc<Plane>, doors: DoorConfig, access: Access) -> Router {
             "/{dataset}/app",
             glossql_apps::router(app_plane, &doors.own_uri),
         );
-    let agent = Router::new().nest_service("/mcp", mcp);
+    // Two agent doors over the one service: the workspace door opens
+    // every call unbound, and the bound door opens it on the dataset
+    // its URL names (`mcp::bind`), the way `/{dataset}/query` does.
+    let agent = Router::new().nest_service("/mcp", mcp.clone()).merge(
+        Router::new()
+            .nest_service("/{dataset}/mcp", mcp)
+            .route_layer(axum::middleware::from_fn_with_state(bind_plane, mcp::bind)),
+    );
     let routes = match access {
         Access::Gated(login) => {
             // One gate, instantiated per door with that door's standing.

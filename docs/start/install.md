@@ -34,7 +34,7 @@ listens:
 
 ```
 2026-09-03T08:04:42.103275Z  INFO verifying tokens issuer=https://issuer.example audience=http://127.0.0.1:8080 application=a1b2c3…
-2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
+2026-09-03T08:04:42.104551Z  INFO glossql listening — / (datasets), /mcp, /<dataset>/mcp, /<dataset>/query, /<dataset>/app addr=127.0.0.1:8080 scheme="http"
 ```
 
 ## The container
@@ -148,7 +148,7 @@ latencies from the spans.
 ## Tokens
 
 The token's subject says who is speaking. The door sets the standing:
-`/mcp` writes as an agent, the other doors as a human. glossql
+the `mcp` doors write as an agent, the other doors as a human. glossql
 is an OAuth 2.1 resource server and never an authorization server — it
 verifies against the keys the issuer publishes, it does not issue, and
 there is no login flow, client registration or user table inside a

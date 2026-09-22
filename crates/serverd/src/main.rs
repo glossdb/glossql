@@ -142,7 +142,7 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
     let listener = tokio::net::TcpListener::bind(&config.addr).await?;
     tracing::info!(
         addr = %config.addr,
-        "glossql listening — / (datasets), /mcp, /<dataset>/query, /<dataset>/app"
+        "glossql listening — / (datasets), /mcp, /<dataset>/mcp, /<dataset>/query, /<dataset>/app"
     );
     // The first stop signal closes the listener and the idle
     // connections and lets what is in flight finish — a write mid-commit

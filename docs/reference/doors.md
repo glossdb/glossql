@@ -4,7 +4,8 @@ One binary, one listener.
 
 ```
 /                          the workspace — which datasets there are
-/mcp                       the agent door
+/mcp                       the workspace's agent door
+/<dataset>/mcp             a dataset's agent door
 /<dataset>/query           the Arrow door
 /<dataset>/app             the app door
 /<dataset>/app/export/<name>.csv | .parquet
@@ -16,11 +17,13 @@ One binary, one listener.
 /healthz                   a platform's probe: 200, outside the gate, off the record
 ```
 
-**The two door kinds scope differently because their callers do.** A
-browser is pointed at a dataset and stays there, so `/query` and `/app`
-carry it in the path and a link is shareable. An agent is pointed at a
-workspace and moves between its datasets, so `/mcp` is one endpoint and
-the dataset arrives in the statements.
+**A door is bound to a dataset or to the workspace.** `/query`, `/app`
+and `/<dataset>/mcp` carry the dataset in the path, so a link is
+shareable and a call opens on it. `/mcp` is the workspace's door: an
+agent there moves between datasets, and the dataset arrives in the
+statements. An agent working one dataset connects to that dataset's
+door; the workspace door is where sources are declared and datasets
+brought into being.
 
 ```
 glossql [--workspace <dir>] [--addr <ip:port>] [--row-cap <n>]
@@ -49,24 +52,26 @@ door opens.
 
 ## The dataset arrives with the call
 
-No door keeps a cursor. `/query` and `/app` are bound by their URL;
-`/mcp` opens unbound and `USE` binds it. Either way the binding lives
-as long as the call and no longer, so a restart cannot lose it and two
-callers working two datasets cannot steer each other. Full
-`dataset.table.column` paths still resolve across datasets; the binding
-decides what an unprefixed name means.
+No door keeps a cursor. `/query`, `/app` and `/<dataset>/mcp` are
+bound by their URL; `/mcp` opens unbound and `USE` binds it. Either way
+the binding lives as long as the call and no longer, so a restart
+cannot lose it and two callers working two datasets cannot steer each
+other. Full `dataset.table.column` paths still resolve across datasets;
+the binding decides what an unprefixed name means, and `USE` inside a
+call moves the statements after it whichever door it came through.
 
 **Over `/mcp`, every call that touches dataset-scoped names begins with
 `USE`.** MCP has no session to hold it — the 2026-07-28 revision removed
 protocol-level sessions outright, and requires that anything spanning
 requests "be referenced by an explicit identifier the client passes on
-each request". `USE` is that identifier. A call that names no dataset is
+each request". `USE` is that identifier at the workspace door, and the
+URL is it at a dataset's. A call that names no dataset is
 workspace-scoped, which is what reading `datasets` and writing a
 source-grain gloss both want.
 
-A name the workspace does not hold is a 404 on `/query` and `/app`,
-naming what it does hold. Over `/mcp` it is not an error: `DECLARE
-DATASET` is what creates the name.
+A name the workspace does not hold is a 404 on the bound doors, naming
+what it does hold. Over `/mcp` it is not an error: `DECLARE DATASET` is
+what creates the name.
 
 ## Who is speaking
 
@@ -82,8 +87,8 @@ workspace. Those are the issuer's.
 
 **Identity is the token's; standing is the door's.** The token's `sub`
 is the actor id. The actor kind is which door the request came
-through: `/mcp` is the agent door, `/`, `/query` and `/app` are human
-doors — the actor rides the transport (SPEC.md §1). Nobody signs a
+through: `/mcp` and `/<dataset>/mcp` are agent doors, `/`, `/query` and
+`/app` are human doors — the actor rides the transport (SPEC.md §1). Nobody signs a
 standing; the supersession key's third leg, (subject, aspect, actor
 kind), is settled by where the request arrived.
 
@@ -140,9 +145,11 @@ because it holds no token; the discovery document, which is
 where a client learns how to authenticate; and `/assets`, the app
 door's own script and styles, which hold no data.
 
-## `/mcp` — the agent door
+## `/mcp` and `/<dataset>/mcp` — the agent doors
 
-MCP streamable HTTP. The door speaks protocol revision `2026-07-28`
+MCP streamable HTTP, one service at two paths: the workspace door
+opens every call unbound, a dataset's door opens it on that dataset.
+The door speaks protocol revision `2026-07-28`
 first and negotiates down to the library's floor (`2025-11-25` today)
 for older clients — served statelessly whatever the revision: no
 sessions, no `Mcp-Session-Id`, no GET stream, no resumability. A
@@ -154,7 +161,8 @@ responses.
 
 One tool: `glossql`, taking `statements` (string) — declarations,
 `USE`, `GLOSS`, extraction, probes, and plain SQL. Its description is
-the contract for every call — the `USE` rule, the outcome shapes, the
+the contract for every call — how a call opens at this door, the
+outcome shapes, the
 refusal shape and the round's cadence — because a client carries the
 tool list on every turn and fetches a resource once, if at all. Live
 state (datasets, functions, aspects, witnesses, sources, glossary,
