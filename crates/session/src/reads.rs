@@ -63,6 +63,20 @@ pub(crate) struct Shared {
     /// Keyed by dataset because a read can name one the session is not
     /// bound to (`GLOSSARY(fin, …)`).
     pub pins: RwLock<std::collections::HashMap<String, Arc<Vec<PinnedTable>>>>,
+    /// The tables a statement loaded by name, beside the walk. A plan
+    /// that names its tables takes them from the walk when one stands,
+    /// from here otherwise, and loads from the catalog only what
+    /// neither holds — a cube build plans one query per series, and
+    /// each used to load its tables again. Dropped with the walk.
+    pub named: RwLock<std::collections::HashMap<String, Named>>,
+    /// The read context per dataset, held for the statement: built once
+    /// and served to every arm and every cube build under it. Beside it
+    /// the store's write count it was built at — a write of this store
+    /// moves the count, and the entry is rebuilt. Dropped with the walk.
+    pub contexts: RwLock<std::collections::HashMap<String, (u64, ReadContext)>>,
+    /// The shipped reads served from memory — the Plane's, shared by
+    /// every channel, or the session's own when built without one.
+    pub shipped: RwLock<crate::memo::ShippedCache>,
     /// Whether this session's planner folds unquoted identifiers —
     /// `datafusion.sql_parser.enable_ident_normalization`, read off the
     /// config the session was built with. See [`Shared::idents`].
@@ -73,6 +87,10 @@ pub(crate) struct Shared {
     /// session built without one serves none.
     pub pages: RwLock<Arc<[DoorPage]>>,
 }
+
+/// One dataset's tables loaded by name, each as its pinned provider.
+pub(crate) type Named =
+    std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>;
 
 /// One page the door serves. `pages()` serves the resource URI, the
 /// title and the body verbatim; a resource listing serves the URI
@@ -145,6 +163,8 @@ impl Shared {
     /// next, which is the whole of what this has to guarantee.
     pub fn forget_pins(&self) {
         self.pins.write().expect("pins lock").clear();
+        self.named.write().expect("named lock").clear();
+        self.contexts.write().expect("contexts lock").clear();
     }
 
     /// The bound dataset's tables, each pinned at its current snapshot —
@@ -207,11 +227,55 @@ impl Shared {
         }
         names.sort();
         names.dedup();
-        Ok(self
-            .lake()
-            .pin_tables(&dataset, &names)
-            .await?
-            .map(|pins| pins.into_iter().map(|p| (p.name, p.provider)).collect()))
+        // The statement's walk, when it stands, holds every table of the
+        // dataset: a name it lacks is no table, and the caller wants the
+        // walk's hint for it.
+        let walk = self.pins.read().expect("pins lock").get(&dataset).cloned();
+        if let Some(walk) = walk {
+            let mut out = std::collections::HashMap::with_capacity(names.len());
+            for name in &names {
+                match walk.iter().find(|p| &p.name == name) {
+                    Some(p) => {
+                        out.insert(name.clone(), Arc::clone(&p.provider));
+                    }
+                    None => return Ok(None),
+                }
+            }
+            return Ok(Some(out));
+        }
+        let held = self
+            .named
+            .read()
+            .expect("named lock")
+            .get(&dataset)
+            .cloned()
+            .unwrap_or_default();
+        let mut out: std::collections::HashMap<_, _> = names
+            .iter()
+            .filter_map(|n| held.get(n).map(|p| (n.clone(), Arc::clone(p))))
+            .collect();
+        let missing: Vec<String> = names
+            .iter()
+            .filter(|n| !held.contains_key(*n))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            let Some(loaded) = self.lake().pin_tables(&dataset, &missing).await? else {
+                return Ok(None);
+            };
+            let mut named = self.named.write().expect("named lock");
+            let slot = named.entry(dataset).or_default();
+            for p in loaded {
+                slot.insert(p.name.clone(), Arc::clone(&p.provider));
+                out.insert(p.name, p.provider);
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// The shipped-read cache this session serves from.
+    pub fn shipped(&self) -> crate::memo::ShippedCache {
+        self.shipped.read().expect("shipped lock").clone()
     }
 
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
@@ -261,6 +325,30 @@ impl Shared {
     /// binding decides what an *unqualified* name means; a qualified one
     /// decides for itself.
     pub async fn read_context_for(&self, dataset: &str) -> Result<ReadContext, SessionError> {
+        // Held for the statement at the store's write count: a write of
+        // this store moves the count and the next ask rebuilds.
+        let writes = self.store.writes();
+        let held = self
+            .contexts
+            .read()
+            .expect("contexts lock")
+            .get(dataset)
+            .filter(|(at, _)| *at == writes)
+            .map(|(_, ctx)| ctx.clone());
+        if let Some(ctx) = held {
+            return Ok(ctx);
+        }
+        let ctx = self.build_context(dataset).await?;
+        self.contexts
+            .write()
+            .expect("contexts lock")
+            .insert(dataset.to_string(), (writes, ctx.clone()));
+        Ok(ctx)
+    }
+
+    /// The context, built: the walk's subjects and snapshots, then the
+    /// store's relations at their version.
+    async fn build_context(&self, dataset: &str) -> Result<ReadContext, SessionError> {
         // Through the pin walk, which is the one walk over a dataset's
         // catalog: the snapshot and the columns are two fields of the
         // metadata it already loads. Asked separately they cost two more

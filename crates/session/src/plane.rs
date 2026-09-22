@@ -125,6 +125,9 @@ pub struct Plane {
     /// entries for the process, bounded by `with_cube_cache`. Not the
     /// Store's: the Store is the record, and the cube is not.
     cube: CubeCache,
+    /// The shipped reads served from memory, one set of entries for the
+    /// process (`crate::memo`).
+    shipped: crate::memo::ShippedCache,
     /// The engine runtime every channel is built on — one memory pool,
     /// one disk manager, one set of file caches for the process. It is
     /// held here and not built per channel because a channel is built
@@ -152,6 +155,7 @@ impl Plane {
             store,
             runtime,
             cube: CubeCache::new(DEFAULT_CUBE_CACHE_MB),
+            shipped: crate::memo::ShippedCache::new(),
             env: runtime_env(DEFAULT_MEMORY_LIMIT_MB, None),
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
             spill_limit_mb: None,
@@ -250,6 +254,7 @@ impl Plane {
             .with_row_cap(self.row_cap)
             .with_runtime(Arc::clone(&self.runtime))
             .with_cube_cache(self.cube.clone())
+            .with_shipped_cache(self.shipped.clone())
             .with_pages(Arc::clone(&self.pages));
         if let Some(dataset) = dataset {
             session.bind(dataset).await?;

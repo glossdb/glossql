@@ -374,3 +374,6 @@ serves. Needs a bound dataset.
 The MCP door serves the same rows as the resource template
 `next://<dataset>/<surface>`, and carries a one-line `next:` on every
 tool result.
+The read runs once per version of the record and pin of the dataset
+and is served from memory until either moves: a write of the record
+or a landing runs it again, a read never does.

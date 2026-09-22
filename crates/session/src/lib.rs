@@ -22,6 +22,7 @@ mod cube;
 mod execution;
 mod library;
 mod measure;
+mod memo;
 mod misfit;
 mod plane;
 mod prepass;
@@ -37,6 +38,7 @@ mod whatif;
 /// model reads are async trait methods.
 pub use async_trait::async_trait;
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
+pub use memo::ShippedCache;
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
 pub use reads::{DOORS, DoorPage};
 pub use session::{

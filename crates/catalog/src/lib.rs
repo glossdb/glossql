@@ -251,6 +251,11 @@ pub struct Lake {
     /// Shared for the reason the generation is: a counter copied per
     /// clone counts nothing.
     walks: Arc<std::sync::atomic::AtomicU64>,
+    /// How many tables [`Lake::load`] has loaded from the catalog, walks
+    /// included — a load is the catalog round trips and the metadata
+    /// parse, and over a remote warehouse the parse is a fetch. What a
+    /// statement pays beyond its walk is this counter's rise.
+    loads: Arc<std::sync::atomic::AtomicU64>,
     /// How many commits reached a caller as a conflict — after iceberg
     /// had already retried them to the end of its own budget.
     ///
@@ -277,6 +282,7 @@ impl Lake {
             provider: Arc::new(std::sync::RwLock::new(None)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            loads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             database,
         }
@@ -658,6 +664,11 @@ impl Lake {
         self.walks.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Tables loaded from the catalog so far, walks included.
+    pub fn load_count(&self) -> u64 {
+        self.loads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Commits that reached a caller as a conflict, after iceberg had
     /// already retried them to the end of its own budget. A lost race
     /// the format's backoff recovered is not one of these.
@@ -782,6 +793,8 @@ impl Lake {
     /// trips and the metadata parse every walk above is made of, so a
     /// trace shows how many a walk ran and how long each took.
     async fn load(&self, ident: &TableIdent) -> iceberg::Result<iceberg::table::Table> {
+        self.loads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let span = tracing::info_span!("load", table = %ident.name);
         tracing::Instrument::instrument(self.catalog.load_table(ident), span).await
     }
