@@ -34,11 +34,30 @@ k, so the power keeps the edges' base rate at any metric count. The
 score is banded green/yellow/orange with the witness threshold as
 the red line (default 0.98).
 
+## Reading through the record
+
+The bands a point serves are read through the record: the PITs of every
+past walk on the dataset, one per metric and month, sent with the read
+as a hundred counts. The kernel reads each alpha at the level the past
+PITs put it — a voice whose 10% line held 84% of the time is read lower
+there — weighed in with a default record the kernel ships, built from
+public panels, so the first walk of a workspace is read honestly too
+(on twelve monthly series, the default widens the 80% band by 8–20%,
+the median 12%). The record takes over from the default as it grows.
+
+Point in time, as the fills are: the months walked go to the kernel
+one request each, and a month's request carries the PITs of months
+before it only — never a month's own, never a later one. The PIT a
+point records is against the raw read, never the calibrated band; a
+record of corrected answers would chase its own correction. The bands
+served are the calibrated ones, and the `withheld` rule reads them.
+
 ## Serving the model
 
 The server carries no model. The walk's fits go to the kernel service,
-`glosskernels`, over HTTP — the reference TabICL package behind three
-routes, hosted or run beside the server, named by `GLOSSQL_TABICL_URL`
+`glosskernels`, over HTTP — the reference TabICL package behind two
+routes (`/bands`, a walk in one request; `/misfit`), hosted or run beside
+the server, named by `GLOSSQL_TABICL_URL`
 ([install](../start/install.md)). Without it the walk refuses by
 name. Raw densities never leave the kernel, and the walk's feature
 recipe and point-in-time fill match the graded protocol it was
@@ -60,6 +79,10 @@ evaluated against before it shipped.
 - The walk covers the six most recent months, and a walked point
   conditions on at least five preceding ones — a metric with too
   short a history is served inapplicable with the reason.
+- The record is the dataset's, every metric's PITs together: a
+  metric's own six months say too little alone, and the default record
+  carries the first hundred. A record older than a re-grounding still
+  counts; the drift it carries is what the detector reads.
 - A month the extract stops inside is partial, and its short sum
   against a corridor fitted on whole months reflects the calendar, not
   a move. Where the extract lands finer than monthly — some month

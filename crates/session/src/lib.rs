@@ -40,6 +40,6 @@ pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
 pub use reads::{DOORS, DoorPage};
 pub use session::{
-    CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, Registered, Session, SessionError,
-    call_shape, detector_functions, no_model, reader_functions,
+    BandRead, CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, PIT_BINS, Registered,
+    Session, SessionError, call_shape, detector_functions, no_model, reader_functions,
 };

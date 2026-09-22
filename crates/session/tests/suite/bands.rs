@@ -11,7 +11,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{FunctionRuntime, Matrix, Outcome, Session};
+use glossql_session::{BandRead, FunctionRuntime, Outcome, Session};
 
 /// A kernel whose corridor is a hair around the training median, and
 /// whose PIT is 0.5 inside it, 0.01 below, 0.99 above — the mechanics
@@ -25,26 +25,28 @@ impl FunctionRuntime for ThinKernel {
         true
     }
 
-    async fn band_point(
+    async fn band_points(
         &self,
-        _train: Matrix<'_>,
-        train_y: &[f64],
-        _test_x: &[f64],
+        reads: &[BandRead],
         alphas: &[f64],
-        actual: f64,
-    ) -> Result<(Vec<f64>, f64), String> {
-        let mut sorted = train_y.to_vec();
-        sorted.sort_by(f64::total_cmp);
-        let p50 = sorted[sorted.len() / 2];
-        let q: Vec<f64> = alphas.iter().map(|a| p50 + (a - 0.5) * 2.0e-6).collect();
-        let pit = if actual < q[0] {
-            0.01
-        } else if actual > q[4] {
-            0.99
-        } else {
-            0.5
-        };
-        Ok((q, pit))
+        _pit_history: Option<&[f64]>,
+    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
+        let mut out = Vec::new();
+        for read in reads {
+            let mut sorted = read.train_y.clone();
+            sorted.sort_by(f64::total_cmp);
+            let p50 = sorted[sorted.len() / 2];
+            let q: Vec<f64> = alphas.iter().map(|a| p50 + (a - 0.5) * 2.0e-6).collect();
+            let pit = if read.actual < q[0] {
+                0.01
+            } else if read.actual > q[4] {
+                0.99
+            } else {
+                0.5
+            };
+            out.push((q, pit));
+        }
+        Ok(out)
     }
 }
 
