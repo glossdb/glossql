@@ -1423,3 +1423,29 @@ async fn the_later_row_to_a_key_is_the_current_one() {
     let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
     assert_eq!(schema["properties"]["value"]["type"], "number", "{schema}");
 }
+
+/// The cube key's two cuts of the pin and the version: the legs of
+/// the named tables alone, and the versions of the named relations
+/// alone — `*` the whole.
+#[test]
+fn a_cube_key_cuts_the_pin_and_the_version_to_what_it_reads() {
+    let pin = "fin.orders:3,fin.races:7,glossql.glossary:12,glossql.checks:2";
+    assert_eq!(
+        glossql_glossary::table_legs(pin, "fin", &["races".to_string()]),
+        "fin.races:7"
+    );
+    assert_eq!(
+        glossql_glossary::table_legs(pin, "fin", &["orders".to_string(), "races".to_string()]),
+        "fin.orders:3,fin.races:7"
+    );
+    assert_eq!(glossql_glossary::table_legs(pin, "fin", &[]), "");
+    let version = "aspects:4,checks:2,glossary:12";
+    assert_eq!(
+        glossql_glossary::version_view(version, &["glossary".to_string()]),
+        "glossary:12"
+    );
+    assert_eq!(
+        glossql_glossary::version_view(version, &["*".to_string()]),
+        version
+    );
+}

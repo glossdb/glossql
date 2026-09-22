@@ -11,15 +11,17 @@
 //! never recorded.** Nothing here writes.
 //!
 //! One table per metric and grain, one cache entry per (dataset,
-//! metric, grain, data legs, surface digest): the pin's parts for the dataset's own
-//! tables, and everything else a build reads — the current groundings,
-//! the judged surface, the cube settings — folded to one number
-//! ([`surface_digest`]). A write that cannot reach any build — a
-//! ruling, a note, a check's landing — changes neither, and every
-//! entry stays a hit; a moved input is a miss, never an invalidation.
-//! The one exception is a frame that itself scans a workspace
-//! relation: its entry binds to the read context's version on top
-//! ([`reads_the_workspace`]). The fill is lazy and single-flight
+//! metric, grain, data legs, digest): the pin's parts for the tables
+//! the metric's frame scans, and everything else its build reads —
+//! the grounding, the frame as planned, the verdicts and glosses on
+//! the columns it serves, the edges on the tables it scans, the cube
+//! settings — folded to one number ([`metric_digest`]). A write that
+//! cannot reach the build — a ruling, a note, a check's landing, a
+//! gloss on another metric's column, a landing on another table —
+//! changes neither, and the entry stays a hit; a moved input is a
+//! miss, never an invalidation. The one exception is a frame that
+//! itself scans a workspace relation: its entry binds to those
+//! relations' versions on top ([`workspace_reads`]). The fill is lazy and single-flight
 //! (moka's `get_with`): concurrent readers of one key share one
 //! build, nothing recomputes eagerly, and the build runs where the
 //! triggering read runs. The cache is the Plane's, handed to each
@@ -355,10 +357,9 @@ struct Planned {
     axes_basis: &'static str,
     /// What the row reads and nobody measured — `(function, subject)`.
     wanted: Vec<(String, String)>,
-    /// Whether the frame scans a workspace relation
-    /// ([`reads_the_workspace`]) — the build binds such an entry to
-    /// the read context's version.
-    foreign: bool,
+    /// The workspace relations the frame scans ([`workspace_reads`])
+    /// — the build binds such an entry to their versions.
+    foreign: Vec<String>,
 }
 
 /// The candidate order the cube ranks by, less the member counts a
@@ -493,12 +494,13 @@ fn through_edge(
 pub(crate) struct Cube {
     pub fact: Fact,
     pub cells: RecordBatch,
-    /// The read context's version at build, where the frame (or its
-    /// rival) scans a workspace relation — such a frame reads what
-    /// writes move without touching the metric surface, so the entry
-    /// serves only at the version it was built at. None for the
-    /// ordinary frame over the dataset's own tables.
-    pub version_bound: Option<String>,
+    /// Where the frame (or its rival) scans workspace relations —
+    /// such a frame reads what writes move without touching the
+    /// metric surface — the relations it scans and their versions at
+    /// build ([`glossql_glossary::version_view`]): the entry serves
+    /// while those stand. None for the ordinary frame over the
+    /// dataset's own tables.
+    pub version_bound: Option<(Vec<String>, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -508,62 +510,117 @@ struct CubeKey {
     /// `None` for the metric's own cells at its resolution; `Some` for
     /// the cells built at a coarser grain a read asked for.
     grain: Option<Resolution>,
-    /// The dataset's own table legs of the pin — the data. The
-    /// workspace relations' legs stay out: every write moves those,
-    /// and what of them a build reads is the digest's business.
+    /// The pin's legs for the tables the frame scans — the data. The
+    /// other tables' legs and the workspace relations' stay out: a
+    /// landing elsewhere and every write move those, and what of the
+    /// relations a build reads is the digest's business.
     pin: String,
-    /// Everything else the build reads, folded — [`surface_digest`].
+    /// Everything else the build reads, folded — [`metric_digest`].
     digest: u64,
 }
 
-/// Everything a build reads besides the dataset's data, folded to one
-/// number: every current QUERY grounding (a metric's own frame, its
-/// disclosed rival, any `read.` a frame expands — and the list
-/// itself, since a slot leaving it contested changes what serves),
-/// the judged surface, and the cube settings. Two contexts digesting
-/// alike build alike, so a write that cannot reach any build — a
-/// ruling, a note gloss, a reconciliation check's landing — keeps
-/// every entry a hit. In-process only: the hash owes no stability
-/// across runs. Completeness is checkable in one file: `plan` and
-/// `build` read nothing of the store beyond (slot, judged, settings)
-/// — the frame's own scans are [`reads_the_workspace`]'s to catch.
-fn surface_digest(slots: &[QuerySlot], judged: &Judged, settings: &Settings) -> u64 {
-    use std::hash::{Hash, Hasher};
-    fn verdicts(h: &mut impl Hasher, m: &HashMap<String, Verdict>) {
-        let mut rows: Vec<_> = m.iter().collect();
-        rows.sort_by_key(|(k, _)| k.as_str());
-        for (k, v) in rows {
-            k.hash(h);
-            v.body.to_string().hash(h);
-            v.current.hash(h);
+/// What one metric's build reads of the dataset: the tables its frame
+/// scans and the column subjects it judges — every source column of a
+/// served field, the column the value sums, and the key columns of
+/// the declared edges on a scanned table, through which a label
+/// borrows a key's verdict. Empty for a frame that does not plan.
+#[derive(Default)]
+struct Reads {
+    tables: Vec<String>,
+    subjects: Vec<String>,
+}
+
+fn reads_of(
+    plan: &datafusion::logical_expr::LogicalPlan,
+    dataset: &str,
+    pointers: &[crate::behavior::Pointer],
+) -> Reads {
+    let scanned = crate::provenance::scanned_tables(plan, dataset);
+    let mut subjects: std::collections::BTreeSet<String> =
+        crate::provenance::served_sources(plan, dataset)
+            .into_values()
+            .flatten()
+            .collect();
+    subjects.extend(crate::provenance::summed_source(plan, "value", dataset));
+    for p in pointers {
+        for (table, cols) in [(&p.src_t, &p.src_cols), (&p.dst_t, &p.dst_cols)] {
+            if scanned.contains(table) {
+                subjects.extend(cols.iter().map(|c| format!("{table}.{c}")));
+            }
         }
     }
-    fn glosses(h: &mut impl Hasher, m: &HashMap<String, (Value, u8)>) {
-        let mut rows: Vec<_> = m.iter().collect();
-        rows.sort_by_key(|(k, _)| k.as_str());
-        for (k, (v, rank)) in rows {
-            k.hash(h);
+    let mut tables: Vec<String> = scanned.into_iter().collect();
+    tables.sort();
+    Reads {
+        tables,
+        subjects: subjects.into_iter().collect(),
+    }
+}
+
+/// Everything one metric's build reads besides the data, folded to
+/// one number: its own grounding (the frame, its markers, its
+/// disclosed rival), the frame as planned — which carries every
+/// `read.` it expands — the verdicts and glosses on the subjects it
+/// reads, the declared edges on the tables it scans, the functions
+/// that return the verdicts, and the cube settings. Two contexts
+/// digesting alike build alike, so a write that cannot reach this
+/// build — a ruling, a note gloss, a check's landing, a gloss on a
+/// column no served field descends from — keeps the entry a hit.
+/// In-process only: the hash owes no stability across runs.
+/// Completeness is checkable in one file: `plan` and `build` read
+/// nothing of the store beyond (slot, judged, settings) — the frame's
+/// own scans are [`workspace_reads`]'s to catch.
+fn metric_digest(
+    slot: &QuerySlot,
+    probe: Option<&datafusion::logical_expr::LogicalPlan>,
+    reads: &Reads,
+    judged: &Judged,
+    settings: &Settings,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn verdict(h: &mut impl Hasher, m: &HashMap<String, Verdict>, subject: &str) {
+        if let Some(v) = m.get(subject) {
+            v.body.to_string().hash(h);
+            v.current.hash(h);
+        } else {
+            0u8.hash(h);
+        }
+    }
+    fn gloss(h: &mut impl Hasher, m: &HashMap<String, (Value, u8)>, subject: &str) {
+        if let Some((v, rank)) = m.get(subject) {
             v.to_string().hash(h);
             rank.hash(h);
+        } else {
+            0u8.hash(h);
         }
     }
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    for s in slots {
-        s.subject.hash(&mut h);
-        s.aspect.hash(&mut h);
-        s.body.hash(&mut h);
+    slot.subject.hash(&mut h);
+    slot.aspect.hash(&mut h);
+    slot.body.hash(&mut h);
+    if let Some(plan) = probe {
+        plan.display_indent_schema().to_string().hash(&mut h);
     }
-    verdicts(&mut h, &judged.temporal);
-    verdicts(&mut h, &judged.relevance);
-    verdicts(&mut h, &judged.behavior);
-    glosses(&mut h, &judged.behavior_gloss);
-    glosses(&mut h, &judged.dimension);
+    for s in &reads.subjects {
+        s.hash(&mut h);
+        verdict(&mut h, &judged.temporal, s);
+        verdict(&mut h, &judged.relevance, s);
+        verdict(&mut h, &judged.behavior, s);
+        gloss(&mut h, &judged.behavior_gloss, s);
+        gloss(&mut h, &judged.dimension, s);
+    }
     for p in &judged.pointers {
+        if !reads.tables.contains(&p.src_t) && !reads.tables.contains(&p.dst_t) {
+            continue;
+        }
         p.src_t.hash(&mut h);
         p.src_cols.hash(&mut h);
         p.dst_t.hash(&mut h);
         p.dst_cols.hash(&mut h);
     }
+    judged.temporal_fn.hash(&mut h);
+    judged.relevance_fn.hash(&mut h);
+    judged.behavior_fn.hash(&mut h);
     settings.floor.as_str().hash(&mut h);
     let mut windows: Vec<_> = settings.windows.iter().collect();
     windows.sort_by_key(|(r, _)| **r);
@@ -574,34 +631,34 @@ fn surface_digest(slots: &[QuerySlot], judged: &Judged, settings: &Settings) -> 
     h.finish()
 }
 
-/// Whether a frame's plan scans any workspace relation — a store
-/// relation or a shipped read, by name. The reserved-name rule is
-/// what makes a name check sound: no dataset table can bear one of
-/// these names, so a match is never a false positive. The reads'
-/// compute doors (`GLOSSARY()`, the cube's own functions) do not
-/// serve a grounding's plan — such a frame abstains with the engine's
+/// The workspace relations a frame's plan scans, by name, sorted;
+/// `*` where it scans a shipped read or `current_dataset`, whose own
+/// reads are not enumerated here. The reserved-name rule is what
+/// makes a name check sound: no dataset table can bear one of these
+/// names, so a match is never a false positive. The reads' compute
+/// doors (`GLOSSARY()`, the cube's own functions) do not serve a
+/// grounding's plan — such a frame abstains with the engine's
 /// refusal, which no write can flip — so scans are the whole surface
 /// to catch.
-fn reads_the_workspace(plan: &datafusion::logical_expr::LogicalPlan) -> bool {
+fn workspace_reads(plan: &datafusion::logical_expr::LogicalPlan) -> Vec<String> {
     use datafusion::common::tree_node::TreeNodeRecursion;
     use datafusion::logical_expr::LogicalPlan;
-    let reserved = |name: &str| {
-        glossql_glossary::RELATIONS.iter().any(|r| r.name == name)
-            || crate::library::LIBRARY.iter().any(|(n, _)| *n == name)
-            || name == "current_dataset"
-    };
-    let mut found = false;
+    let mut found = std::collections::BTreeSet::new();
     plan.apply_with_subqueries(|node| {
-        if let LogicalPlan::TableScan(t) = node
-            && reserved(t.table_name.table())
-        {
-            found = true;
-            return Ok(TreeNodeRecursion::Stop);
+        if let LogicalPlan::TableScan(t) = node {
+            let name = t.table_name.table();
+            if glossql_glossary::RELATIONS.iter().any(|r| r.name == name) {
+                found.insert(name.to_string());
+            } else if crate::library::LIBRARY.iter().any(|(n, _)| *n == name)
+                || name == "current_dataset"
+            {
+                found.insert("*".to_string());
+            }
         }
         Ok(TreeNodeRecursion::Continue)
     })
     .expect("the visitor never errs");
-    found
+    found.into_iter().collect()
 }
 
 /// The cache: LRU by bytes (generational keys want recency, not
@@ -930,19 +987,18 @@ pub(crate) fn verb_of(
 /// the enumeration itself costs no build; the judged surface is read
 /// only when some metric misses.
 /// What one cube read loads once: the bound dataset's current
-/// groundings, the judged surface and the settings folded to the
-/// digest every key carries, and the cache the entries live in.
-/// Loaded before any key, not on a miss — in-memory work over a
-/// context already in hand, which is what buys the hit on every write
-/// that cannot reach a build.
+/// groundings, the judged surface and the settings every key digests
+/// its own reads of, the pin the data legs are cut from, and the
+/// cache the entries live in. Loaded before any key, not on a miss —
+/// in-memory work over a context already in hand, which is what buys
+/// the hit on every write that cannot reach a build.
 struct Surface {
     dataset: String,
     version: String,
     slots: Vec<QuerySlot>,
     judged: Judged,
     settings: Settings,
-    digest: u64,
-    pin: String,
+    pin_text: String,
     cache: CubeCache,
     ctx: SessionContext,
 }
@@ -964,16 +1020,13 @@ impl Surface {
             return Ok(None);
         }
         let (judged, settings) = judged_surface(shared, &rctx, &dataset).await?;
-        let digest = surface_digest(&slots, &judged, &settings);
-        let pin = glossql_glossary::data_legs(&rctx.pin.text, &dataset);
         Ok(Some(Surface {
             dataset,
             version: rctx.version.clone(),
             slots,
             judged,
             settings,
-            digest,
-            pin,
+            pin_text: rctx.pin.text.clone(),
             cache: shared.cube(),
             ctx: shared.session_ctx(),
         }))
@@ -981,28 +1034,40 @@ impl Surface {
 
     /// One metric's entry: its own cells (`None`), or the cells built
     /// at a coarser grain over that grain's rung. A hit, or one
-    /// single-flight build shared by every reader of the key.
+    /// single-flight build shared by every reader of the key. The key
+    /// is cut from the frame as planned — planning scans nothing, and
+    /// the build takes the plan along rather than planning twice; a
+    /// frame that does not plan keys on the grounding alone, and its
+    /// build abstains with the planner's reason.
     async fn entry(
         &self,
         shared: &Arc<Shared>,
         slot: &QuerySlot,
         grain: Option<Resolution>,
     ) -> Arc<Cube> {
+        let probe = match frame_sql(&slot.body) {
+            Some(sql) => crate::whatif::build_plan(shared, &self.ctx, &sql)
+                .await
+                .ok(),
+            None => None,
+        };
+        let reads = probe
+            .as_ref()
+            .map(|p| reads_of(p, &self.dataset, &self.judged.pointers))
+            .unwrap_or_default();
         let key = CubeKey {
             dataset: self.dataset.clone(),
             metric: slot.aspect.clone(),
             grain,
-            pin: self.pin.clone(),
-            digest: self.digest,
+            pin: glossql_glossary::table_legs(&self.pin_text, &self.dataset, &reads.tables),
+            digest: metric_digest(slot, probe.as_ref(), &reads, &self.judged, &self.settings),
         };
         if let Some(cube) = self.cache.inner.get(&key).await {
-            // A version-bound entry — its frame scans a workspace
-            // relation — serves only at the version it was built at.
-            if cube
-                .version_bound
-                .as_ref()
-                .is_none_or(|v| *v == self.version)
-            {
+            // A version-bound entry — its frame scans workspace
+            // relations — serves while their versions stand.
+            if cube.version_bound.as_ref().is_none_or(|(relations, at)| {
+                *at == glossql_glossary::version_view(&self.version, relations)
+            }) {
                 return cube;
             }
             self.cache.inner.invalidate(&key).await;
@@ -1024,7 +1089,7 @@ impl Surface {
                 // stack it overflows a test thread's 2 MB, which is the
                 // same reason every `build_plan` call below is pinned.
                 let cube = tracing::Instrument::instrument(
-                    Box::pin(build_metric(shared, self, slot, grain)),
+                    Box::pin(build_metric(shared, self, slot, grain, probe)),
                     span.clone(),
                 )
                 .await;
@@ -1119,7 +1184,7 @@ async fn write_fact(
         .iter()
         .find(|s| s.subject == subject && s.aspect == aspect)
         .ok_or_else(withheld)?;
-    let planned = Box::pin(plan(shared, &surface, slot, None)).await?;
+    let planned = Box::pin(plan(shared, &surface, slot, None, None)).await?;
     let mut fact = planned.fact(aspect);
     // Beside the serving frame, the newest other writing on the slot:
     // the one this write superseded, or the standing human grounding
@@ -1152,8 +1217,8 @@ async fn write_fact(
             body: other.body.clone(),
             rank: if other.actor_kind == "human" { 0 } else { 1 },
         };
-        let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
-        let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
+        let now = Box::pin(build_metric(shared, &surface, slot, None, None)).await;
+        let before = Box::pin(build_metric(shared, &surface, &before, None, None)).await;
         // Like against like: a ratio's monthly value and a flow's
         // total are different numbers, and the row says so instead.
         fact.superseded_divergence = Some(if !before.fact.applicable {
@@ -1242,13 +1307,25 @@ fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
 /// the engine refuses — abstains with the reason, and the abstention
 /// is the entry: the same pin gives the same answer. A grounding the
 /// author stopped abstains with the author's own reason.
+/// The frame a grounding serves, where the body is JSON carrying
+/// `sql` and no author's stop — what the key plans; anything else
+/// abstains at the plan stage with its own reason.
+fn frame_sql(body: &str) -> Option<String> {
+    let body: Value = serde_json::from_str(body).ok()?;
+    if body.get("stopped").is_some() {
+        return None;
+    }
+    body.get("sql").and_then(Value::as_str).map(str::to_string)
+}
+
 async fn build_metric(
     shared: &Arc<Shared>,
     surface: &Surface,
     slot: &QuerySlot,
     asked: Option<Resolution>,
+    probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Cube {
-    match build(shared, surface, slot, asked).await {
+    match build(shared, surface, slot, asked, probe).await {
         Ok(cube) => cube,
         // An abstention binds to no version: its reasons derive from
         // the plan over the digest-covered surface, so no write flips
@@ -1288,12 +1365,14 @@ type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
 /// The plan stage — see [`Planned`]. Everything here is decided by
 /// the plan's schema, its provenance and the judged surface; nothing
 /// scans. `asked` is the coarser grain a read asked for, or none for
-/// the metric's own resolution.
+/// the metric's own resolution; `probe` the frame's plan where the
+/// caller built it for the key.
 async fn plan(
     shared: &Arc<Shared>,
     surface: &Surface,
     slot: &QuerySlot,
     asked: Option<Resolution>,
+    probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Result<Planned, Abstain> {
     let Surface {
         ctx,
@@ -1314,7 +1393,10 @@ async fn plan(
         .get("sql")
         .and_then(Value::as_str)
         .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
-    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
+    let probe = match probe {
+        Some(p) => p,
+        None => crate::whatif::build_plan(shared, ctx, sql).await?,
+    };
     // Planned through to the physical plan as well: the engine admits
     // at the logical stage what it refuses at the physical one — a
     // scalar subquery inside an aggregate's argument arrives there as
@@ -1650,7 +1732,7 @@ async fn plan(
         unadmitted,
         axes_basis,
         wanted,
-        foreign: reads_the_workspace(&probe),
+        foreign: workspace_reads(&probe),
     })
 }
 
@@ -1659,12 +1741,22 @@ async fn build(
     surface: &Surface,
     slot: &QuerySlot,
     asked: Option<Resolution>,
+    probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Result<Cube, Abstain> {
     let Surface { ctx, version, .. } = surface;
     let metric = slot.aspect.as_str();
     // Boxed: the plan stage's future is most of the build's, and a
     // build constructed on the stack under a write's depth must fit.
-    let planned = Box::pin(plan(shared, surface, slot, asked)).await?;
+    let planned = Box::pin(plan(shared, surface, slot, asked, probe)).await?;
+    // What binds the entry, where the frame scans workspace relations.
+    let bound = |foreign: &[String]| {
+        (!foreign.is_empty()).then(|| {
+            (
+                foreign.to_vec(),
+                glossql_glossary::version_view(version, foreign),
+            )
+        })
+    };
     // No judged time axis: the entry is the plan stage's abstention,
     // carrying what the row wants — an abstention binds to no version.
     let Some(tcol) = planned.tcol.clone() else {
@@ -1728,7 +1820,7 @@ async fn build(
                     ),
                 ),
                 cells: RecordBatch::new_empty(series_schema()),
-                version_bound: foreign.then(|| version.to_string()),
+                version_bound: bound(&foreign),
             });
         }
     }
@@ -1934,7 +2026,9 @@ async fn build(
                 .unwrap_or("(rival)");
             match rival_series(shared, surface, alt_sql, verb, resolution, since.as_deref()).await {
                 Ok((rows, rival_verb, rival_foreign)) => {
-                    foreign |= rival_foreign;
+                    foreign.extend(rival_foreign);
+                    foreign.sort();
+                    foreign.dedup();
                     alternative_divergence = Some(divergence(
                         &cells,
                         &rows,
@@ -1991,7 +2085,7 @@ async fn build(
             superseded_divergence: None,
         },
         cells: cells_batch(&slot.aspect, &cells),
-        version_bound: foreign.then(|| version.to_string()),
+        version_bound: bound(&foreign),
     })
 }
 
@@ -2062,7 +2156,7 @@ async fn rival_series(
     chosen_verb: &str,
     resolution: Resolution,
     since: Option<&str>,
-) -> Result<(Vec<SeriesRow>, &'static str, bool), Abstain> {
+) -> Result<(Vec<SeriesRow>, &'static str, Vec<String>), Abstain> {
     let Surface {
         ctx,
         dataset,
@@ -2116,7 +2210,7 @@ async fn rival_series(
         false,
     )
     .await?;
-    Ok((rows, verb, reads_the_workspace(&probe)))
+    Ok((rows, verb, workspace_reads(&probe)))
 }
 
 /// The bucket start of a time expression at a resolution, as a plain

@@ -1867,8 +1867,9 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
         r#"DECLARE ASPECT a WITH $${"title": "A"}$$ AS QUERY ON DATASET;"#,
         r#"DECLARE ASPECT b WITH $${"title": "B"}$$ AS QUERY ON DATASET;"#,
         r#"GLOSS a ON fin AS $${"sql": "SELECT date, value FROM t"}$$;"#,
-        r#"GLOSS b ON fin AS $${"sql": "SELECT date, value * 2 AS value FROM t"}$$;"#,
+        r#"GLOSS b ON fin AS $${"sql": "SELECT date, value * 2 AS value FROM u"}$$;"#,
         "SELECT judge_time() FROM t.date;",
+        "SELECT judge_time() FROM u.date;",
     ];
 
     // Two concurrent reads of one key share one build: the series and
@@ -1878,7 +1879,7 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     let cache = CubeCache::new(64);
     let session = cube_session_with(
         dir.path(),
-        vec![("t", batch())],
+        vec![("t", batch()), ("u", batch())],
         &glosses,
         Some(cache.clone()),
     )
@@ -1937,11 +1938,11 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
         "true"
     );
 
-    // A grounding write IS the surface: the digest moves and every
-    // metric misses at the next read. No dump, no invalidation — a
-    // complete key.
+    // A grounding write moves its own metric's digest and no other's:
+    // the re-grounded metric misses at the next read, the one over the
+    // other table is a hit. No dump, no invalidation — a complete key.
     session
-        .execute(r#"GLOSS a ON fin AS $${"sql": "SELECT date, value * 3 AS value FROM t"}$$;"#)
+        .execute(r#"GLOSS a ON fin AS $${"sql": "SELECT date, value FROM t WHERE value >= 0"}$$;"#)
         .await
         .unwrap();
     near(
@@ -1951,8 +1952,26 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     );
     assert_eq!(
         cache.builds(),
+        3,
+        "a re-grounded metric is a miss for itself alone"
+    );
+    // A gloss on a column one frame serves reaches that frame's build
+    // and no other's — `t.value` is served as it stands by `a` alone;
+    // `b` serves an expression over `u.value`, which descends from no
+    // column and is nobody's subject.
+    session
+        .execute(r#"GLOSS dimension ON t.value AS $${"value": "none"}$$;"#)
+        .await
+        .unwrap();
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "cells after a column gloss",
+    );
+    assert_eq!(
+        cache.builds(),
         4,
-        "a moved surface is a miss for every metric"
+        "a gloss on a served column is a miss for the metric serving it alone"
     );
     assert_eq!(
         cell(
@@ -2573,10 +2592,10 @@ async fn an_interval_stock_traces_through_the_union_of_its_judged_columns() {
     }
 }
 
-/// A frame that scans a workspace relation binds its entry to the
-/// version: the surface digest cannot see what such a frame reads, so
-/// the entry serves only at the version it was built at, and any
-/// write is a miss for it — and for it alone.
+/// A frame that scans a workspace relation binds its entry to that
+/// relation's version: the digest cannot see what such a frame reads,
+/// so the entry serves while the relations it scans stand, and a
+/// write to one of them is a miss for it — and for it alone.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_frame_over_a_workspace_relation_rebuilds_with_the_version() {
     let batch = dated(
@@ -2603,17 +2622,28 @@ async fn a_frame_over_a_workspace_relation_rebuilds_with_the_version() {
     number(&session, "SELECT count(*) FROM metric_series();").await;
     assert_eq!(cache.builds(), 1, "a repeat at the same version is a hit");
 
-    // An unrelated gloss moves the version. The digest holds — but
-    // this frame reads the glossary, and the glossary moved.
+    // A declaration moves the aspects relation, which this frame does
+    // not scan: the entry stands. A note gloss moves the glossary,
+    // which it does scan: the digest holds, the binding does not.
     session
-        .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET; GLOSS note ON fin AS $${"t": 1}$$;"#)
+        .execute(r#"DECLARE ASPECT note WITH $${"type": "object"}$$ AS FACT ON DATASET;"#)
+        .await
+        .unwrap();
+    number(&session, "SELECT count(*) FROM metric_series();").await;
+    assert_eq!(
+        cache.builds(),
+        1,
+        "a write to a relation the frame does not scan keeps the entry"
+    );
+    session
+        .execute(r#"GLOSS note ON fin AS $${"t": 1}$$;"#)
         .await
         .unwrap();
     number(&session, "SELECT count(*) FROM metric_series();").await;
     assert_eq!(
         cache.builds(),
         2,
-        "a version-bound entry misses after any write"
+        "a version-bound entry misses when a relation it scans moves"
     );
 }
 
