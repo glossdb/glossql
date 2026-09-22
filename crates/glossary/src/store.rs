@@ -1,8 +1,7 @@
-//! The store: every relation an Iceberg table in the workspace's lake,
-//! every rule a pure function over rows. Admission (SPEC.md §5.2, §7.1)
+//! The store: every relation a table in the catalog's database, every
+//! rule a pure function over rows. Admission (SPEC.md §5.2, §7.1)
 //! happens on the write paths; supersession is a read — latest row per
-//! key in the format's own `(sequence, position)` order — never an
-//! update.
+//! key in the record's own write order — never an update.
 
 use std::sync::Arc;
 
@@ -47,9 +46,9 @@ pub struct ReadContext {
     /// `glossql.grounding` leg ([`grounding_digest`]).
     pub grounding: u64,
     /// The store's version when this context was built — every relation
-    /// table at its snapshot, derived from the catalog. This is what the
-    /// cache is keyed by, and it is enumerated rather than curated so a
-    /// relation added later joins the key on its own.
+    /// at its highest `seq`, read from the record. A cube built on this
+    /// context serves while the version stands; it is enumerated rather
+    /// than curated so a relation added later joins the key on its own.
     ///
     /// Not the pin: the pin is the *semantic* input key and deliberately
     /// excludes `measurements`, an output. Keyed by pin, a landed
@@ -213,8 +212,48 @@ fn series_view(body: &str) -> String {
     }
 }
 
+/// The pin's parts from the data snapshots and the record's versions:
+/// every store relation except `measurements` — an output, not an
+/// input — so a relation added later joins the pin on its own.
+fn pin_parts(
+    dataset: &str,
+    data: &std::collections::HashMap<String, i64>,
+    versions: &[(String, Option<i64>)],
+) -> Vec<String> {
+    let mut parts: Vec<String> = data
+        .iter()
+        .map(|(table, snap)| format!("{dataset}.{table}:{snap}"))
+        .collect();
+    for (relation, version) in versions {
+        if relation == "measurements" {
+            continue;
+        }
+        parts.push(format!(
+            "{STORE_NAMESPACE}.{relation}:{}",
+            version.map_or_else(|| "-".into(), |v| v.to_string())
+        ));
+    }
+    parts
+}
+
+/// The store's version from the record's: relation and highest `seq`,
+/// sorted and joined.
+fn version_of(versions: &[(String, Option<i64>)]) -> String {
+    let mut parts: Vec<String> = versions
+        .iter()
+        .map(|(relation, v)| {
+            format!(
+                "{relation}:{}",
+                v.map_or_else(|| "-".into(), |v| v.to_string())
+            )
+        })
+        .collect();
+    parts.sort();
+    parts.join(",")
+}
+
 /// The pin from its parts and the grounding leg — the one part no
-/// relation snapshot carries.
+/// relation version carries.
 fn with_grounding(mut parts: Vec<String>, grounding: u64) -> Pin {
     parts.push(format!("{STORE_NAMESPACE}.grounding:{grounding}"));
     Pin::new(parts)
@@ -261,10 +300,9 @@ impl Scope {
 pub struct Relation {
     pub name: &'static str,
     pub columns: &'static [&'static str],
-    /// Columns the lake table is identity-partitioned by — `["dataset"]`
-    /// on the relations keyed by one, so each dataset's rows land in
-    /// their own files. The format's split, not a layout of ours.
-    partition: &'static [&'static str],
+    /// The columns the database types as numbers; every other column
+    /// is text.
+    numbers: &'static [(&'static str, glossql_catalog::Number)],
     /// The supersession key: serving keeps the latest row per key, in
     /// `(seq, pos)` order. Empty means the whole row — re-declaring the
     /// same content collapses, differing content stands beside it.
@@ -287,7 +325,7 @@ pub const RELATIONS: &[Relation] = &[
             "written_at",
             "snapshot_id",
         ],
-        partition: &["dataset"],
+        numbers: &[("snapshot_id", glossql_catalog::Number::Integer)],
         key: &[],
     },
     Relation {
@@ -307,38 +345,38 @@ pub const RELATIONS: &[Relation] = &[
         // enough to be a value. `source_scans` is per-scan deliberately —
         // a sum across a join reads as "what was read" and is not —
         // it fabricates phantom dropped rows.
-        partition: &[],
+        numbers: &[],
         key: &[],
     },
     Relation {
         name: "functions",
         columns: &["name", "scope", "script", "returns"],
-        partition: &[],
+        numbers: &[],
         key: &["name"],
     },
     Relation {
         name: "aspects",
         columns: &["name", "kind", "grains", "condition", "schema"],
-        partition: &[],
+        numbers: &[],
         key: &["name"],
     },
     Relation {
         name: "witnesses",
         columns: &["name", "aspect", "speakers", "detector", "threshold"],
-        partition: &[],
+        numbers: &[("threshold", glossql_catalog::Number::Real)],
         key: &["name"],
     },
     Relation {
         name: "sources",
         columns: &["name", "settings"],
-        partition: &[],
+        numbers: &[],
         key: &["name"],
     },
     // Served from the namespace list; settings ride as a property.
     Relation {
         name: "datasets",
         columns: &["name", "settings"],
-        partition: &[],
+        numbers: &[],
         key: &[],
     },
     // First across: no supersession of its own, one writer,
@@ -346,7 +384,7 @@ pub const RELATIONS: &[Relation] = &[
     Relation {
         name: "relationships",
         columns: &["dataset", "left_path", "op", "right_path"],
-        partition: &["dataset"],
+        numbers: &[],
         key: &[],
     },
     // What extraction lands, keyed by the pin: under a complete key
@@ -364,7 +402,7 @@ pub const RELATIONS: &[Relation] = &[
             "computed_at",
             "reads",
         ],
-        partition: &["dataset"],
+        numbers: &[],
         key: &[],
     },
 ];
@@ -375,19 +413,14 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
     RELATIONS.iter().find(|r| r.name == name).map(|r| r.columns)
 }
 
-/// Where every store relation lives: one namespace, one table per
-/// relation. A workspace holds many datasets — that scopes rows by a
-/// `dataset` KEY column, with the physical per-dataset split supplied by
-/// the format (identity partition), not by a namespace layout of ours.
-/// A `<dataset>_meta` sibling-namespace pairing is deliberately
-/// absent: its whole justification is per-dataset REST grants, and
-/// access rights are held open — if that decision lands on
-/// namespace-level grants, the pairing returns then, by re-bootstrap.
+/// The store's name, as a pin and a measurement's `reads` spell its
+/// relations beside a dataset's tables: `glossql.<relation>`.
 const STORE_NAMESPACE: &str = "glossql";
 
-/// The names a dataset cannot take: the store's own namespace, and the
-/// two path segments the server answers beside `/{dataset}/…` — a
-/// dataset under either would have no page on the human doors.
+/// The names a dataset cannot take: the store's own, which the pin and
+/// the `reads` vocabulary spell beside dataset names, and the two path
+/// segments the server answers beside `/{dataset}/…` — a dataset under
+/// either would have no page on the human doors.
 const RESERVED_DATASETS: [&str; 3] = [STORE_NAMESPACE, "mcp", "assets"];
 
 /// Facts ride what they describe: a dataset's settings on its namespace,
@@ -401,92 +434,32 @@ pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
 /// The source files a landing read — what a later import leaves out.
 pub const LANDING_FILES_PROP: &str = "glossql.source-files";
 
-/// The seam over a workspace's lake, carrying every store relation. The
-/// shapes come from [`RELATIONS`], so a relation added there is a table
-/// here and nothing else.
-async fn lake_metadata(lake: Lake) -> Result<Arc<glossql_catalog::IcebergMetadata>> {
+/// The record, opened on the catalog's database with every stored
+/// relation's shape. The shapes come from [`RELATIONS`], so a relation
+/// added there is a table there and nothing else.
+async fn open_record(lake: &Lake) -> Result<Arc<glossql_catalog::Record>> {
     // `datasets` and `imports` are the lake's own record, composed at
     // read — no table of ours carries them.
-    let moved: Vec<glossql_catalog::RelationSpec> = RELATIONS
+    let stored: Vec<glossql_catalog::RelationSpec> = RELATIONS
         .iter()
         .filter(|r| !matches!(r.name, "datasets" | "imports"))
         .map(|r| glossql_catalog::RelationSpec {
             name: r.name,
             columns: r.columns,
-            partition: r.partition,
+            numbers: r.numbers,
         })
         .collect();
-    let relations = glossql_catalog::IcebergMetadata::open(lake, STORE_NAMESPACE, &moved).await?;
-    Ok(Arc::new(relations))
+    let record = glossql_catalog::Record::open(lake.database(), &stored).await?;
+    Ok(Arc::new(record))
 }
 
-/// Every store relation at its snapshot — what both the version and the
-/// pin are derived from, shared rather than copied because every read
-/// wants the same one.
-type Snapshots = Arc<Vec<(String, Option<i64>)>>;
-
-/// One relation's scanned history, shared rather than copied for the
-/// same reason.
-type History = Arc<Vec<glossql_catalog::Row>>;
-
-/// Per relation, the history read at a snapshot: the snapshot id it
-/// was scanned at (`None` before the first commit) and the rows.
-type Histories = Arc<std::sync::RwLock<std::collections::HashMap<String, (Option<i64>, History)>>>;
-
-/// Rows held back per relation while a batch runs, `None` outside one.
-type Batch =
-    Arc<std::sync::Mutex<Option<std::collections::HashMap<String, Vec<Vec<Option<String>>>>>>>;
+/// One relation's scanned history.
+type History = Vec<glossql_catalog::Row>;
 
 #[derive(Debug, Clone)]
 pub struct Store {
     lake: Lake,
-    metadata: Arc<glossql_catalog::IcebergMetadata>,
-    /// The store namespace's head: every relation at its snapshot,
-    /// walked once and held until a write moves it. The walk is a
-    /// catalog round trip per relation (~2.4 ms on a small workspace)
-    /// and it sits in front of every read, so holding it is the
-    /// difference between paying it per statement and paying it per
-    /// write.
-    ///
-    /// **A commit drops it** — see [`Store::put`], the one place a
-    /// store relation moves. Correct only while one process owns the
-    /// workspace: the head is this process's memory, and a second
-    /// writer's commit would leave it stale with nothing to say so.
-    /// Two processes need shared state, which is a different design.
-    head: Arc<std::sync::RwLock<Option<Snapshots>>>,
-    /// Each relation's history at the snapshot it was scanned at, valid
-    /// while the head still shows that snapshot. Every declare's checks
-    /// and every store-relation `SELECT` read from here, so a statement
-    /// costs a lake walk only for a relation a write has moved — on the
-    /// same single-writer ground as the head itself.
-    histories: Histories,
-    /// Each dataset's newest measurements at the `measurements`
-    /// snapshot they were scanned at — the same arrangement as
-    /// [`Store::histories`], kept apart because this scan is pruned to
-    /// one dataset where a history is the whole relation. A write to any
-    /// other relation moves the version and leaves this standing.
-    newest: Histories,
-    /// Writes held instead of committed, `None` outside a batch. Every
-    /// statement sequence runs batched — begun before its first
-    /// statement, flushed after its last — and [`Store::batch_flush`]
-    /// is where the rows land, one append per relation. The slot is
-    /// the channel's ([`Store::channel`]): the one part of a store a
-    /// clone does not share.
-    batch: Batch,
-    /// Which channel's slot this is — what tells one channel's buffered
-    /// rows from another's in the version a read is keyed by. Zero for
-    /// the root store, which buffers nothing of its own.
-    channel: u64,
-    /// The resolved store behind a read, one entry per dataset, each
-    /// holding the version it was built at. A read whose version still
-    /// matches takes it; a read whose version moved replaces it. There
-    /// is no eviction rule because there is nothing to evict: a moved
-    /// version makes the old entry unreachable, and the map is bounded
-    /// by the workspace's datasets.
-    ///
-    /// Keyed by dataset because `measurements` is dataset-scoped; the
-    /// other five relations are workspace-wide and simply repeat.
-    contexts: Arc<std::sync::RwLock<std::collections::HashMap<String, ReadContext>>>,
+    record: Arc<glossql_catalog::Record>,
 }
 
 /// What the connect-time brief is composed from — see
@@ -505,33 +478,13 @@ pub struct BriefCounts {
 }
 
 impl Store {
-    /// The store over a workspace's own lake — where every relation
-    /// lives; SQLite remains only as the catalog's own backend.
+    /// The store over a workspace's lake and the record beside its
+    /// catalog.
     pub async fn open(lake: Lake) -> Result<Self> {
         Ok(Store {
-            metadata: lake_metadata(lake.clone()).await?,
+            record: open_record(&lake).await?,
             lake,
-            head: Arc::new(std::sync::RwLock::new(None)),
-            histories: Arc::new(std::sync::RwLock::new(Default::default())),
-            newest: Arc::new(std::sync::RwLock::new(Default::default())),
-            batch: Arc::new(std::sync::Mutex::new(None)),
-            channel: 0,
-            contexts: Arc::new(std::sync::RwLock::new(Default::default())),
         })
-    }
-
-    /// This store with a batch slot of its own: what a channel writes
-    /// through. The head, the histories and the read contexts stay
-    /// shared — a flush drops the head for every channel — and only
-    /// the buffered rows are the channel's, so two callers never share
-    /// a buffer and each reads committed state plus its own.
-    pub fn channel(&self) -> Store {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        Store {
-            batch: Arc::new(std::sync::Mutex::new(None)),
-            channel: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            ..self.clone()
-        }
     }
 
     /// The one lake behind this store — sessions and doors share it.
@@ -1034,12 +987,12 @@ impl Store {
 
     /// Glosses at or under a table — what `DROP TABLE` refuses on.
     pub async fn glosses_under(&self, dataset: &str, table: &str) -> Result<i64> {
-        // `dataset` is the relation's partition column: asked of the
-        // scan, it prunes to the dataset's files; asked of the rows, it
+        // `dataset` is the relation's key column: asked of the
+        // read, it selects the dataset's rows; asked of the rows, it
         // read the whole workspace first.
         let scope = Scope::Subject(table.to_string());
         Ok(self
-            .metadata
+            .record
             .scan_where("glossary", "dataset", dataset)
             .await?
             .iter()
@@ -1077,7 +1030,7 @@ impl Store {
         /// One glossary row on its way to a slot: where it landed and
         /// who spoke, which the supersession key is built from.
         struct Landing<'a> {
-            seq: (i64, i64),
+            seq: i64,
             source_grain: bool,
             dataset: &'a str,
             kind: &'a str,
@@ -1418,166 +1371,20 @@ impl Store {
         self.put(name, cells).await
     }
 
-    /// One appended row into a store relation — this and
-    /// [`Store::batch_flush`] are the only places a store relation
-    /// moves, and therefore the only places the head has to be dropped.
-    ///
-    /// The drop follows the commit, never precedes it: dropped first, a
-    /// concurrent reader would re-walk the old snapshots and cache them
-    /// as current, and this write would land with nothing left to
-    /// invalidate. That ordering is the whole correctness argument, and
-    /// it holds because `append` returns only once the Iceberg commit
-    /// is in. Issuing a write is not what moves the head, landing it
-    /// is — which is why a batch in progress takes the row instead:
-    /// nothing lands, and the head moves at the flush.
+    /// One write: the row lands as the relation's next row and every
+    /// later read sees it.
     async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
-        if let Some(held) = self.batch.lock().expect("batch lock").as_mut() {
-            held.entry(relation.to_string()).or_default().push(cells);
-            return Ok(());
-        }
-        let landed = self.metadata.append(relation, vec![cells]).await;
-        // Dropped on the way out whichever way the append went. A
-        // failed append is not a write that did not happen: `append`
-        // creates the relation before it fills it, so a failure between
-        // the two leaves a table the head does not know about, and a
-        // head that omits a relation is wrong in the direction that
-        // hides rows.
-        *self.head.write().expect("head lock") = None;
-        landed.map_err(Error::from)?;
+        self.record.append(relation, vec![cells]).await?;
         Ok(())
     }
 
-    /// Begin holding writes instead of committing them; every write
-    /// until the flush buffers. The slot is the channel's, so the
-    /// boundary is the channel's own statement loop. A batch already
-    /// open stays open: its rows land at the next flush, never
-    /// dropped by a second begin.
-    pub fn batch_begin(&self) {
-        let mut held = self.batch.lock().expect("batch lock");
-        if held.is_none() {
-            *held = Some(Default::default());
-        }
-    }
-
-    /// Land the held writes, one append per touched relation. Two rows
-    /// to one supersession key inside one landing are ordered by
-    /// `_row_id`, assigned at the commit across the files it wrote, so
-    /// the later write wins as it does across landings.
-    ///
-    /// A landing that fails leaves the others landed — each append is
-    /// atomic, and an idempotent caller (bootstrap) completes the rest
-    /// on its next run.
-    pub async fn batch_flush(&self) -> Result<()> {
-        let Some(mut held) = self.batch.lock().expect("batch lock").take() else {
-            return Ok(());
-        };
-        let mut order = Vec::new();
-        for relation in RELATIONS {
-            if let Some(rows) = held.remove(relation.name) {
-                order.push((relation.name, rows));
-            }
-        }
-        // The first landing runs alone: its create also creates the
-        // store namespace, and racing creates would collide there. The
-        // rest are independent tables, landed concurrently — the flush
-        // costs the slowest commit instead of the sum, which is the
-        // whole bill on a catalog charging seconds per call. All run to
-        // completion either way; the first error is the one reported.
-        let mut rest = order.into_iter();
-        let mut landed = Ok(());
-        if let Some((name, rows)) = rest.next() {
-            landed = self.metadata.append(name, rows).await.map_err(Error::from);
-            if landed.is_ok() {
-                landed = futures::future::join_all(
-                    rest.map(|(name, rows)| self.metadata.append(name, rows)),
-                )
-                .await
-                .into_iter()
-                .collect::<std::result::Result<(), _>>()
-                .map_err(Error::from);
-            }
-        }
-        // Same rule as `put`: the head goes whichever way the landing
-        // went — a partial flush has landed relations it must not hide.
-        *self.head.write().expect("head lock") = None;
-        landed
-    }
-
-    /// Walk every store relation into `Store::histories` at once —
-    /// a boot pays the slowest walk instead of one walk per
-    /// first-touching statement. The two composed relations have no
-    /// table to walk.
-    pub async fn warm(&self) -> Result<()> {
-        futures::future::try_join_all(
-            RELATIONS
-                .iter()
-                .filter(|r| !matches!(r.name, "datasets" | "imports"))
-                .map(|r| self.history(r.name)),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// One relation's history, served from [`Store::histories`] while
-    /// the head still shows the snapshot it was scanned at. A batch in
-    /// progress rides on top: its buffered rows join the answer with a
-    /// seq beyond anything standing — and are never cached, because the
-    /// cache holds only what the lake says.
+    /// One relation's history: every row ever written, in write order.
     async fn history(&self, name: &str) -> Result<History> {
-        let snapshot = self
-            .store_snapshots()
-            .await?
-            .iter()
-            .find(|(table, _)| table == name)
-            .map(|(_, snapshot)| *snapshot);
-        let standing = match snapshot {
-            // No table yet — an unwritten relation reads as empty.
-            None => Arc::new(Vec::new()),
-            Some(snapshot) => {
-                let held = self
-                    .histories
-                    .read()
-                    .expect("histories lock")
-                    .get(name)
-                    .filter(|(at, _)| *at == snapshot)
-                    .map(|(_, rows)| Arc::clone(rows));
-                match held {
-                    Some(rows) => rows,
-                    // Two readers racing a moved snapshot both scan and
-                    // both store the same answer — the head's own rule.
-                    None => {
-                        let rows = Arc::new(self.metadata.scan(name).await?);
-                        self.histories
-                            .write()
-                            .expect("histories lock")
-                            .insert(name.to_string(), (snapshot, Arc::clone(&rows)));
-                        rows
-                    }
-                }
-            }
-        };
-        let buffered = self
-            .batch
-            .lock()
-            .expect("batch lock")
-            .as_ref()
-            .and_then(|held| held.get(name).cloned());
-        Ok(match buffered {
-            None => standing,
-            Some(rows) => {
-                let mut all = (*standing).clone();
-                all.extend(
-                    rows.into_iter()
-                        .enumerate()
-                        .map(|(i, cells)| glossql_catalog::Row::new(cells, (i64::MAX, i as i64))),
-                );
-                Arc::new(all)
-            }
-        })
+        Ok(self.record.scan(name).await?)
     }
 
     /// A store relation's current rows: latest per [`Relation`] key in
-    /// `(seq, pos)` order, sorted by cells.
+    /// write order, sorted by cells.
     async fn lake_rows(&self, relation: &Relation) -> Result<Vec<Vec<Option<String>>>> {
         let history = self.history(relation.name).await?;
         let key: Vec<usize> = relation
@@ -1634,9 +1441,6 @@ impl Store {
     }
 
     pub async fn dataset_exists(&self, name: &str) -> Result<bool> {
-        if name == STORE_NAMESPACE {
-            return Ok(false);
-        }
         // One existence query, not the whole workspace. `namespaces()`
         // lists every namespace and then reads the properties of each to
         // answer a question that never looks at them.
@@ -1649,7 +1453,6 @@ impl Store {
             .namespaces()
             .await?
             .into_iter()
-            .filter(|(name, _)| name != STORE_NAMESPACE)
             .map(|(name, props)| {
                 vec![
                     Some(name),
@@ -1669,9 +1472,6 @@ impl Store {
     async fn import_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
         let mut rows = Vec::new();
         for (dataset, _) in self.lake.namespaces().await? {
-            if dataset == STORE_NAMESPACE {
-                continue;
-            }
             for l in self.lake.landings(&dataset).await? {
                 rows.push(vec![
                     Some(l.dataset),
@@ -1691,43 +1491,18 @@ impl Store {
     /// The statement's read context: the store resolved once. The
     /// session supplies what the lake knows (subjects and snapshots);
     /// this adds every relation's rows and the pin over the whole set.
-    ///
-    /// The six relation reads are the expensive half — one Iceberg scan
-    /// each, and each scan opens one small file per row ever written
-    /// there, so the cost tracks the workspace's write history rather
-    /// than its data. They are held per dataset under the version they
-    /// were read at, so a read whose version still stands pays none of
-    /// it. What the lake knows is *not* cached: `universe`, `snapshots`
-    /// and the pin they feed are rebuilt every read, so a landing is
-    /// visible the moment it commits.
+    /// Six reads of the record, none reading another, so they go out
+    /// together. Boxed once here: six reads held at the same time are a
+    /// large future, and every caller would otherwise carry it.
     pub async fn read_context(
         &self,
         dataset: &str,
         universe: Vec<String>,
         snapshots: std::collections::HashMap<String, i64>,
     ) -> Result<ReadContext> {
-        let parts = self.pin_parts(dataset, &snapshots).await?;
-        let version = self.version().await?;
-        let cached = self
-            .contexts
-            .read()
-            .expect("contexts lock")
-            .get(dataset)
-            .filter(|held| held.version == version)
-            .cloned();
-        // The six are behind `Arc`s, so what is cloned here is six
-        // pointers and the lake's own two fields.
-        if let Some(mut ctx) = cached {
-            ctx.universe = universe;
-            ctx.snapshots = snapshots;
-            ctx.pin = with_grounding(parts, ctx.grounding);
-            return Ok(ctx);
-        }
-        // Six relations, none reading another: their scans go out
-        // together, since over a remote warehouse the round trips are
-        // what a version miss costs. Boxed here, once: six scans held
-        // at the same time are a large future, and every caller would
-        // otherwise carry it.
+        let versions = self.record.versions().await?;
+        let parts = pin_parts(dataset, &snapshots, &versions);
+        let version = version_of(&versions);
         let (glossary, witnesses, aspects, measurements, functions, sources) = Box::pin(async {
             futures::try_join!(
                 self.glossary_history(),
@@ -1743,9 +1518,9 @@ impl Store {
         let witnesses = std::sync::Arc::new(witnesses);
         let aspects = std::sync::Arc::new(aspects);
         let grounding = grounding_digest(dataset, &glossary, &aspects, &witnesses);
-        let ctx = ReadContext {
+        Ok(ReadContext {
             glossary,
-            measurements,
+            measurements: std::sync::Arc::new(measurements),
             functions: std::sync::Arc::new(functions),
             witnesses,
             sources: std::sync::Arc::new(sources),
@@ -1755,88 +1530,29 @@ impl Store {
             pin: with_grounding(parts, grounding),
             grounding,
             version,
-        };
-        self.contexts
-            .write()
-            .expect("contexts lock")
-            .insert(dataset.to_string(), ctx.clone());
-        Ok(ctx)
-    }
-
-    /// The store's version: every table currently in the store namespace
-    /// at its snapshot, sorted and joined — the key a cached
-    /// [`ReadContext`] is held under. Enumerated from the catalog, never
-    /// curated, so any store write moves it. A channel with buffered
-    /// rows is at a version of its own — the committed one, its channel
-    /// and its row count — so a read inside a sequence rebuilds on what
-    /// the sequence wrote, and no other channel takes that context.
-    pub async fn version(&self) -> Result<String> {
-        let mut parts: Vec<String> = self
-            .store_snapshots()
-            .await?
-            .iter()
-            .map(|(t, snap)| format!("{t}:{}", snap.map_or_else(|| "-".into(), |s| s.to_string())))
-            .collect();
-        parts.sort();
-        let committed = parts.join(",");
-        let buffered: usize = self
-            .batch
-            .lock()
-            .expect("batch lock")
-            .as_ref()
-            .map_or(0, |held| held.values().map(Vec::len).sum());
-        Ok(if buffered == 0 {
-            committed
-        } else {
-            format!("{committed}~{}:{buffered}", self.channel)
         })
     }
 
-    /// Every store-namespace table at its snapshot — the one catalog
-    /// walk both the version and the pin derive from, enumerated rather
-    /// than curated so a relation added later can never be missed. A
-    /// fresh workspace has no store namespace until the first write
-    /// lands; its enumeration is empty, not an error.
-    ///
-    /// Served from [`Store::head`] once walked. Two readers racing an
-    /// empty head both walk and both store the same answer, which is
-    /// why the walk holds no lock: a duplicate catalog round trip is
-    /// cheaper than an async-aware lock, and the results agree.
-    async fn store_snapshots(&self) -> Result<Snapshots> {
-        if let Some(head) = self.head.read().expect("head lock").clone() {
-            return Ok(head);
-        }
-        let mut out = Vec::new();
-        if self.lake.namespace_exists(STORE_NAMESPACE).await? {
-            let tables = self.lake.table_names(STORE_NAMESPACE).await?;
-            // One load per table with nothing ordering the loads —
-            // walked concurrently, so a remote catalog answers the
-            // enumeration in one round-trip time, not one per relation.
-            let snaps = futures::future::try_join_all(
-                tables
-                    .iter()
-                    .map(|table| self.lake.snapshot_id(STORE_NAMESPACE, table)),
-            )
-            .await?;
-            out = tables.into_iter().zip(snaps).collect();
-        }
-        let head = Arc::new(out);
-        *self.head.write().expect("head lock") = Some(Arc::clone(&head));
-        Ok(head)
+    /// The store's version: every relation at its own — the highest
+    /// `seq` it holds — sorted and joined, the key a read context and a
+    /// cube built on it carry. Any store write moves it.
+    pub async fn version(&self) -> Result<String> {
+        Ok(version_of(&self.record.versions().await?))
     }
 
     // -- the pin, and the measurements it keys -------------------------
 
     /// The statement's pin over `dataset`, from the data snapshots the
-    /// session resolved plus the declaration relations' own, and the
-    /// grounding leg ([`grounding_digest`]) — the same pin a read
-    /// context carries, so a measurement landed at it is served there.
+    /// session resolved plus the declaration relations' own versions,
+    /// and the grounding leg ([`grounding_digest`]) — the same pin a
+    /// read context carries, so a measurement landed at it is served
+    /// there.
     pub async fn pin(
         &self,
         dataset: &str,
         data: &std::collections::HashMap<String, i64>,
     ) -> Result<Pin> {
-        let parts = self.pin_parts(dataset, data).await?;
+        let parts = pin_parts(dataset, data, &self.record.versions().await?);
         let glossary = self.glossary_history().await?;
         let aspects = self.aspects_all().await?;
         let witnesses = self.witnesses_all().await?;
@@ -1846,72 +1562,19 @@ impl Store {
         ))
     }
 
-    /// The pin's parts from the snapshots alone — what a read context
-    /// completes with the grounding leg it has the rows for.
-    async fn pin_parts(
-        &self,
-        dataset: &str,
-        data: &std::collections::HashMap<String, i64>,
-    ) -> Result<Vec<String>> {
-        let mut parts: Vec<String> = data
-            .iter()
-            .map(|(table, snap)| format!("{dataset}.{table}:{snap}"))
-            .collect();
-        // The semantic inputs: every store relation except
-        // `measurements` — an output, not an input — from the same
-        // enumeration the version reads, so a relation added later
-        // joins the pin on its own.
-        for (relation, snap) in self.store_snapshots().await?.iter() {
-            if relation == "measurements" {
-                continue;
-            }
-            parts.push(format!(
-                "{STORE_NAMESPACE}.{relation}:{}",
-                snap.map_or_else(|| "-".into(), |s| s.to_string())
-            ));
-        }
-        Ok(parts)
-    }
-
-    /// The measurements at one pin — the pin pushed into the format's
-    /// scan, so the drift record's history is never read to serve today.
     /// Every (function, subject)'s newest landing in the dataset,
-    /// whatever its pin — what a read context serves from. One scan of
+    /// whatever its pin — what a read context serves from. One read of
     /// the relation by dataset; older rows stay as the drift record.
-    ///
-    /// Held per dataset at the relation's snapshot: a version moved by a
-    /// gloss or a declaration finds the measurements where they were.
     async fn measurements_newest(&self, dataset: &str) -> Result<History> {
-        let snapshot = self
-            .store_snapshots()
-            .await?
-            .iter()
-            .find(|(table, _)| table == "measurements")
-            .and_then(|(_, snapshot)| *snapshot);
-        let held = self
-            .newest
-            .read()
-            .expect("newest lock")
-            .get(dataset)
-            .filter(|(at, _)| *at == snapshot)
-            .map(|(_, rows)| Arc::clone(rows));
-        if let Some(rows) = held {
-            return Ok(rows);
-        }
         let rows = self
-            .metadata
+            .record
             .scan_where("measurements", "dataset", dataset)
             .await?;
-        let rows = Arc::new(rules::latest_by(
+        Ok(rules::latest_by(
             rows,
             |r| (r.get(1).map(str::to_string), r.get(2).map(str::to_string)),
             |r| r.seq,
-        ));
-        self.newest
-            .write()
-            .expect("newest lock")
-            .insert(dataset.to_string(), (snapshot, Arc::clone(&rows)));
-        Ok(rows)
+        ))
     }
 
     /// Every landing of `function` on `subject` in the dataset, newest
@@ -1925,7 +1588,7 @@ impl Store {
         function: &str,
     ) -> Result<Vec<MeasurementRow>> {
         let mut rows = self
-            .metadata
+            .record
             .scan_where("measurements", "dataset", dataset)
             .await?;
         rows.retain(|r| r.get(1) == Some(function) && r.get(2) == Some(subject));

@@ -79,21 +79,12 @@ its own cycle stack, one stack for the whole nesting.
   stays addressable after later commits, which makes it a durable key.
   The catalog-backed provider always reads current, so an unpinned
   pair of scans could straddle a landing.
-- **Ordering is the format's.** Iceberg v3 row lineage —
-  `_last_updated_sequence_number` and `_row_id`, the commit that last
-  touched the row and the row id the commit assigned in order across
-  every file it wrote — is a total order over writes, assigned by the
-  catalog with no coordination between writers and nothing minted by
-  the store. Inside one append, the row id orders the rows: two rows
-  sharing a supersession key resolve to the later one, whichever files
-  they landed in.
-- **One sequence, one commit per relation.** A call's rows land at
-  its end, one append per relation they touch, and what stood before
-  a refusal lands the same way; replacement is a later row, never an
-  update.
+- **Landed tables only.** The lake holds what recipes land. The
+  record — the store's relations — is not Iceberg: it lives in the
+  catalog's database ([store](store.md)), where a row is one insert
+  and a read one query, and its order is the database's identity
+  column.
 - **Facts about a write ride the write** (snapshot properties and
-  summary); claims about a subject are rows.
+  summary); claims about a subject are rows in the record.
 - **Landings read back from snapshot summaries** — one entry per
-  append snapshot, its facts taken from the summary it rode. The
-  store's lineage columns read through iceberg-rust's own scan; they
-  do not cross the SQL surface.
+  append snapshot, its facts taken from the summary it rode.

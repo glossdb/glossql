@@ -2870,13 +2870,11 @@ name = "glossql-catalog"
 version = "0.1.6"
 dependencies = [
  "async-trait",
- "axum",
  "bytes",
  "datafusion",
  "futures",
  "http",
  "iceberg",
- "iceberg-catalog-rest",
  "iceberg-catalog-sql",
  "iceberg-datafusion",
  "moka",
@@ -3367,26 +3365,6 @@ dependencies = [
  "uuid",
  "zeroize",
  "zstd 0.13.3",
-]
-
-[[package]]
-name = "iceberg-catalog-rest"
-version = "0.10.1"
-source = "git+https://github.com/apache/iceberg-rust?rev=5c3d18f4ad22656f7aa13c03657190a0fd5a7d37#5c3d18f4ad22656f7aa13c03657190a0fd5a7d37"
-dependencies = [
- "async-trait",
- "chrono",
- "http",
- "iceberg",
- "itertools 0.13.0",
- "reqwest 0.12.28",
- "serde",
- "serde_derive",
- "serde_json",
- "tokio",
- "tracing",
- "typed-builder",
- "uuid",
 ]
 
 [[package]]

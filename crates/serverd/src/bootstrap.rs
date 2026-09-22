@@ -30,16 +30,9 @@ pub async fn bootstrap(
     // declares on the unbound channel.
     let session = plane.channel(actor, None).await?;
     let shipped = async {
-        // The standing relations are walked concurrently up front, so
-        // the sequence's checks find them held instead of walking one
-        // relation per first-touching statement.
-        plane.store().warm().await?;
-        // One sequence, so one flush: a sequence lands batched, one
-        // append per relation it touches, and a remote catalog charges
-        // a round trip per commit. The order inside it stands — the
-        // library's column evidence conditions on the kit's `role`,
-        // and a witness names an aspect and a detector that must
-        // already stand.
+        // One sequence. The order inside it stands — the library's
+        // column evidence conditions on the kit's `role`, and a witness
+        // names an aspect and a detector that must already stand.
         let sequence = format!(
             "{};\n{};\n{}",
             glossql_scripts::library::KIT,

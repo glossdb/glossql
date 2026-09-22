@@ -40,17 +40,18 @@ an aspect onto a subject; `GLOSSARY()` is the read.
   query and the data. Work arrives as statements and SQL, the engine
   plans all of it, and it uses all available cores and memory.
   Isolation is deployment's job: one workspace per VM.
-- **Iceberg snapshots version everything.** Every declared relation —
-  data, glosses, rulings, the parts of an authored app — is an Iceberg
-  table, and one statement is one commit. There is no separate
-  version-control system to operate: history and audit are reads over
-  snapshots, and each gloss stores the subject table's snapshot id, so
-  it is always clear which data a claim was measured against.
+- **History is rows, never an update.** Every landed table is an
+  Iceberg table and every landing a snapshot; every gloss, ruling and
+  declaration is a row in the record, superseded by a later row and
+  never overwritten. There is no separate version-control system to
+  operate: history and audit are reads, and each gloss stores the
+  subject table's snapshot id, so it is always clear which data a
+  claim was measured against.
 
 The integration points are standard: sources land by recipe from files
 or over ADBC (the SQL runs at the source), reads are served as Arrow
-IPC over plain HTTP, and the lake is ordinary Iceberg — a local
-catalog for development, a REST catalog in production.
+IPC over plain HTTP, and the lake is ordinary Iceberg on a SQL
+catalog — SQLite for development, Postgres in production.
 
 ## Why a grammar and JSON Schemas
 

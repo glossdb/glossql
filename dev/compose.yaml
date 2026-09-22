@@ -1,12 +1,9 @@
 # The dev rig: the backends the server can stand on, as one compose,
 # for the live tests and for a laptop running the server against
-# something other than its workspace directory. Default: Postgres 18
-# (the SQL catalog; init.sql makes its three databases) and Azurite (an
-# Azure warehouse; azurite-container.py makes the `lake` container).
-# `--profile rest` adds the REST catalog pair — SeaweedFS as the S3
-# store, Lakekeeper as the catalog, anonymous, bootstrapped with a
-# `glossql` warehouse over the `lake` bucket by lakekeeper-init.sh.
-# The commands and the variables each arrangement takes: README.md.
+# something other than its workspace directory: Postgres 18 (the SQL
+# catalog; init.sql makes its two databases) and Azurite (an Azure
+# warehouse; azurite-container.py makes the `lake` container). The
+# commands and the variables each arrangement takes: README.md.
 name: glossql-dev
 services:
   postgres:
@@ -41,59 +38,6 @@ services:
       - ./azurite-container.py:/azurite-container.py:ro
     depends_on: [azurite]
 
-  seaweedfs:
-    profiles: [rest]
-    image: chrislusf/seaweedfs:4.46
-    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
-    ports: ["127.0.0.1:8333:8333"]
-    volumes:
-      - ./s3.json:/etc/seaweedfs/s3.json:ro
-      - seaweedfs:/data
-  seaweedfs-init:
-    profiles: [rest]
-    image: chrislusf/seaweedfs:4.46
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        until echo 's3.bucket.list' | weed shell -master=seaweedfs:9333 >/dev/null 2>&1; do sleep 1; done
-        echo 's3.bucket.list' | weed shell -master=seaweedfs:9333 | grep -qE '^[[:space:]]*lake([[:space:]]|$)' \
-          || echo 's3.bucket.create -name lake' | weed shell -master=seaweedfs:9333
-    depends_on: [seaweedfs]
-  lakekeeper-migrate:
-    profiles: [rest]
-    image: quay.io/lakekeeper/catalog:v0.13.3
-    command: ["migrate"]
-    environment: &lakekeeper
-      LAKEKEEPER__PG_ENCRYPTION_KEY: insecure-local-dev-key
-      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:lakekeeper@postgres:5432/lakekeeper
-      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:lakekeeper@postgres:5432/lakekeeper
-    depends_on:
-      postgres:
-        condition: service_healthy
-  lakekeeper:
-    profiles: [rest]
-    image: quay.io/lakekeeper/catalog:v0.13.3
-    command: ["serve"]
-    environment: *lakekeeper
-    ports: ["127.0.0.1:8181:8181"]
-    depends_on:
-      lakekeeper-migrate:
-        condition: service_completed_successfully
-  lakekeeper-init:
-    profiles: [rest]
-    image: curlimages/curl:8.22.0
-    command: sh /lakekeeper-init.sh
-    volumes:
-      - ./lakekeeper-init.sh:/lakekeeper-init.sh:ro
-    depends_on:
-      lakekeeper:
-        condition: service_started
-      # The bucket before the warehouse: Lakekeeper writes a test
-      # object into it when the warehouse is created.
-      seaweedfs-init:
-        condition: service_completed_successfully
-
 volumes:
   postgres:
   azurite:
-  seaweedfs:

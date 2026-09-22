@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 glossql-parser = { path = "../parser" }
 # No backend feature — see glossql-session's manifest.
-glossql-catalog = { path = "../catalog", default-features = false }
+glossql-catalog = { path = "../catalog" }
 serde_json.workspace = true
 jsonschema.workspace = true
 thiserror.workspace = true

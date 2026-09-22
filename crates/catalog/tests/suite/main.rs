@@ -5,6 +5,5 @@
 //! binary links once and runs them all concurrently.
 
 mod lake;
-mod metadata;
-mod rest;
+mod record;
 mod sql;

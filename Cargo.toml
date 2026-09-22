@@ -65,24 +65,23 @@ datafusion-common = "55.1"
 datafusion-functions-json = "0.55"
 iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
 iceberg-catalog-sql = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
-# Not used directly since stage 4½ — this line exists to switch on
-# sqlx's tokio runtime and its drivers for iceberg-catalog-sql, which
-# names neither and panics at pool creation without a runtime. Two
-# drivers: SQLite for the workspace directory, Postgres for the cloud
-# (`GLOSSQL_CATALOG_SQL`); `tls-rustls` is rustls on ring, the provider
-# the rest of the tree already carries.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "tls-rustls"] }
+# The record's queries and, through feature unification, sqlx's tokio
+# runtime and its drivers for iceberg-catalog-sql, which names neither
+# and panics at pool creation without a runtime. Two drivers: SQLite
+# for the workspace directory, Postgres for the cloud
+# (`GLOSSQL_CATALOG_SQL`); `any` is the driver both sit behind;
+# `tls-rustls` is rustls on ring, the provider the rest of the tree
+# already carries.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "sqlite", "postgres", "tls-rustls"] }
 iceberg-datafusion = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
-# The `rest` catalog backend (glossql-catalog's `rest` feature): the
-# Iceberg REST client. The data plane behind every catalog — REST or
-# SQL with a remote warehouse — is our own `Storage` over object_store,
-# the crate DataFusion already runs on, so the binary carries one
-# storage stack: `aws` is the S3 family, `azure` the ADLS/Blob family
-# (Container Apps' managed identity is read by that client), `gcp`
-# Google Cloud Storage (the attached service account's token is read
-# from the metadata server by that client). typetag is
-# iceberg's registration mechanism for storage implementations.
-iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "5c3d18f4ad22656f7aa13c03657190a0fd5a7d37" }
+# The data plane behind the catalog — a SQL catalog with a remote
+# warehouse — is our own `Storage` over object_store, the crate
+# DataFusion already runs on, so the binary carries one storage stack:
+# `aws` is the S3 family, `azure` the ADLS/Blob family (Container
+# Apps' managed identity is read by that client), `gcp` Google Cloud
+# Storage (the attached service account's token is read from the
+# metadata server by that client). typetag is iceberg's registration
+# mechanism for storage implementations.
 object_store = { version = "0.13", features = ["aws", "azure", "gcp"] }
 # The engine's own glob crate, for the glob a remote source path carries.
 glob = "0.3"
@@ -109,8 +108,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2"
 insta = "1"
 async-trait = "0.1"
-# The header/status types the REST catalog client speaks; already in
-# the tree under axum, reqwest and iceberg.
+# The header/status types the storage seam speaks; already in the tree
+# under axum, reqwest and iceberg.
 http = "1"
 faer = "0.24"
 serde = { version = "1", features = ["derive"] }

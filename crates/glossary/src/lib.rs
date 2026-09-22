@@ -1,10 +1,10 @@
 //! The glossary store — declarations, gloss rows, pin-keyed measurements, and
 //! the read shapes behind `GLOSSARY()` / `ATTEST()` (SPEC.md §5–§7).
 //!
-//! One store: every relation
-//! is an Iceberg table in the workspace's lake, ordered by the format's
-//! own row lineage. Supersession is a read — latest row per (subject,
-//! aspect, actor kind) — never an update.
+//! One store: every relation is a table in the catalog's database,
+//! ordered by the database's own identity column. Supersession is a
+//! read — latest row per (subject, aspect, actor kind) — never an
+//! update.
 //!
 //! Subjects are stored dataset-relative, exactly as statements spell them
 //! (`orders.amount`, `orders.customer_id -> customers.id`); the session

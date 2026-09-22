@@ -169,34 +169,17 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
     Ok(())
 }
 
-/// Open the one backend the run names; which one is on the record at
-/// open. The SQL catalog's URI carries the credentials, so the record
-/// gets its scheme and nothing more.
+/// Open the data plane the run names. The SQL catalog's URI carries
+/// the credentials, so the record gets its scheme and nothing more.
 async fn open_lake(catalog: Catalog) -> Result<Lake, String> {
-    match catalog {
-        #[cfg(feature = "rest")]
-        Catalog::Rest(connection) => {
-            tracing::info!(
-                uri = %connection.uri,
-                warehouse = %connection.warehouse,
-                "connecting the catalog"
-            );
-            Lake::connect(connection)
-                .await
-                .map_err(|e| format!("catalog connection: {e}"))
-        }
-        #[cfg(feature = "sql")]
-        Catalog::Sql { catalog, warehouse } => {
-            tracing::info!(
-                catalog = catalog.split(':').next().unwrap_or("sql"),
-                warehouse = %warehouse,
-                "opening the catalog"
-            );
-            Lake::open_sql(&catalog, &warehouse)
-                .await
-                .map_err(|e| e.to_string())
-        }
-    }
+    tracing::info!(
+        catalog = catalog.catalog.split(':').next().unwrap_or("sql"),
+        warehouse = %catalog.warehouse,
+        "opening the catalog"
+    );
+    Lake::open_sql(&catalog.catalog, &catalog.warehouse)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// SIGINT or SIGTERM — the terminal's Ctrl-C or the platform's stop.
