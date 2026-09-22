@@ -191,6 +191,12 @@ impl Record {
         relation: &str,
         filter: Option<(&str, &str)>,
     ) -> crate::Result<Vec<Row>> {
+        let span = tracing::info_span!("scan", relation, rows = tracing::field::Empty);
+        tracing::Instrument::instrument(self.fetch(relation, filter), span).await
+    }
+
+    /// The select, under its span.
+    async fn fetch(&self, relation: &str, filter: Option<(&str, &str)>) -> crate::Result<Vec<Row>> {
         let spec = self.spec(relation)?;
         let columns = spec
             .columns
@@ -216,6 +222,7 @@ impl Record {
             query = query.bind(value.to_string());
         }
         let rows = query.fetch_all(&self.pool).await?;
+        tracing::Span::current().record("rows", rows.len());
         rows.iter().map(|row| decode(spec, row)).collect()
     }
 }
@@ -273,6 +280,12 @@ impl Record {
         if rows.is_empty() {
             return Ok(());
         }
+        let span = tracing::info_span!("append", relation, rows = rows.len());
+        tracing::Instrument::instrument(self.insert(relation, rows), span).await
+    }
+
+    /// The write, under its span.
+    async fn insert(&self, relation: &str, rows: Vec<Vec<Option<String>>>) -> crate::Result<()> {
         let spec = self.spec(relation)?;
         let columns = spec
             .columns
@@ -326,6 +339,11 @@ impl Record {
     /// `None` while nothing has been written to it. What the store's
     /// version and its pin are made of.
     pub async fn versions(&self) -> crate::Result<Vec<(String, Option<i64>)>> {
+        tracing::Instrument::instrument(self.max_seqs(), tracing::info_span!("versions")).await
+    }
+
+    /// The reads behind [`Record::versions`], under their span.
+    async fn max_seqs(&self) -> crate::Result<Vec<(String, Option<i64>)>> {
         let mut names: Vec<&String> = self.specs.keys().collect();
         names.sort();
         let reads = names.iter().map(|name| async move {

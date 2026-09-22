@@ -121,8 +121,10 @@ terminal, JSON otherwise. At `info` the server logs a request at any
 door as its method, path and status, and a call as its actor, the
 dataset it arrived on, the digest and length of its text, and the
 spans of the work it caused — each statement, each read's planning,
-each measurement run, each commit — each closing with its busy and
-idle time.
+the catalog walk and each table it loads, each read and append of
+the record, a source listing, a cube build, each measurement run —
+each closing with its busy and idle time and the count that sizes
+it: tables loaded, rows read, files listed, cells built.
 A read closes when its client has taken the last row or dropped the
 stream, with the engine's own counts: rows served, whether it
 completed, the operators, their compute time and spills; at `debug`
