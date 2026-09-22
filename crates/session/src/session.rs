@@ -1597,7 +1597,7 @@ impl Session {
         // Boxed for the reason `query_stream_with_params` is.
         tracing::Instrument::instrument(
             Box::pin(self.plan_classed(statement)),
-            tracing::debug_span!("plan"),
+            tracing::info_span!("plan"),
         )
         .await
     }
@@ -1772,12 +1772,8 @@ impl Session {
         // The engine's own path, in two steps instead of
         // `DataFrame::execute_stream`, so the physical plan stays in
         // hand: its operators' counts are read when the stream ends.
-        let physical = self
-            .ctx
-            .execute_logical_plan(plan)
-            .await?
-            .create_physical_plan()
-            .await?;
+        let physical =
+            crate::execution::physical(self.ctx.execute_logical_plan(plan).await?).await?;
         let stream =
             datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
         Ok(QueryStream {
@@ -1872,7 +1868,7 @@ impl Session {
         // The same two-step path as a streaming read, so the operators'
         // counts close the statement's span when the stream is done —
         // `USE ds; SELECT …`, the agent's usual call, reads here.
-        let physical = frame.create_physical_plan().await?;
+        let physical = crate::execution::physical(frame).await?;
         let schema = physical.schema();
         let stream =
             datafusion::physical_plan::execute_stream(Arc::clone(&physical), self.ctx.task_ctx())?;
