@@ -100,8 +100,20 @@ async fn walk_session_judged(
             .await
             .unwrap();
     }
+    // The `next` read answers under the shipped `cube` aspect; the kit
+    // declares it, so the fixture cuts that declaration from the kit.
+    let kit = glossql_scripts::library::KIT;
+    let cube_start = kit
+        .find("DECLARE ASPECT cube")
+        .expect("the kit ships the cube aspect");
+    let cube_len = kit[cube_start..]
+        .find("AS FACT ON DATASET;")
+        .expect("the declaration closes")
+        + "AS FACT ON DATASET;".len();
+    let cube = &kit[cube_start..cube_start + cube_len];
     let declarations = glossql_scripts::library::splice(&format!(
-        r#"DECLARE ASPECT metric_bands WITH $${{
+        r#"{cube}
+           DECLARE ASPECT metric_bands WITH $${{
              "type": "object", "required": ["applicable"],
              "properties": {{"applicable": {{"type": "boolean"}},
                             "metrics": {{"type": "array"}}}}}}$$ AS MEASUREMENT ON DATASET;

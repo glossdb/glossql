@@ -26,7 +26,7 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options, partition};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_session::{FunctionRuntime, Matrix};
+use glossql_session::{BandRead, FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
 pub use remote::Remote;
@@ -164,6 +164,25 @@ impl FunctionRuntime for KernelRuntime {
         self.model()?
             .band_point(train, train_y, test_x, alphas, actual)
             .await
+    }
+
+    /// The walk's points together: shapes checked here, one request
+    /// to the service per chunk of them.
+    async fn band_points(
+        &self,
+        reads: &[BandRead],
+        alphas: &[f64],
+    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
+        for (i, read) in reads.iter().enumerate() {
+            let (rows, cols) = (read.train_y.len(), read.test_x.len());
+            if rows < 2 || read.train_x.len() != rows * cols {
+                return Err(format!(
+                    "band_points: read {i}: {rows} rows x {cols} features against {} values",
+                    read.train_x.len()
+                ));
+            }
+        }
+        self.model()?.band_points(reads, alphas).await
     }
 
     /// The `misfit.` door's kernel (fixture 20): the chain-rule density

@@ -1,8 +1,9 @@
 //! The remote runtime against a stand-in kernel service: the wire —
-//! nulls for NaN, the bearer on every call, the three answers' shapes,
-//! a refusal reported by its text, an absent service by its address —
-//! and, with no service named, the three doors refusing at plan time
-//! by name, before any read.
+//! nulls for NaN, the bearer on every call, a walk's points as one
+//! `/bands` request and the replay grid as another, the answers'
+//! shapes, a full queue waited out, a refusal reported by its text, an
+//! absent service by its address — and, with no service named, the
+//! three doors refusing at plan time by name, before any read.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +12,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use glossql_scripts::KernelRuntime;
-use glossql_session::{FunctionRuntime, Matrix};
+use glossql_session::{BandRead, FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
 /// What the stand-in received, route by route.
@@ -22,29 +23,59 @@ fn bearer_ok(headers: &HeaderMap) -> bool {
     headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer k1")
 }
 
-async fn band_point(
+/// `/bands` as the service answers it: per read, a row of quantiles per
+/// test row — the read's index plus the alpha's — and, where an actual
+/// came, a PIT per test row. The first call after `busy` is set is
+/// refused as a full queue, with how long to wait.
+async fn bands(
     State(seen): State<Seen>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
+) -> (StatusCode, HeaderMap, Json<Value>) {
     if !bearer_ok(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
+            HeaderMap::new(),
             Json(json!({"error": "unauthorized: a bearer key this service issued"})),
         );
     }
-    seen.0.lock().unwrap().push(("band_point".into(), body));
+    let alphas = body["alphas"].as_array().map_or(0, Vec::len);
+    let reads: Vec<Value> = body["reads"]
+        .as_array()
+        .map(|reads| {
+            reads
+                .iter()
+                .enumerate()
+                .map(|(i, read)| {
+                    let rows = read["test_x"].as_array().map_or(0, Vec::len);
+                    let quantiles: Vec<Vec<f64>> = (0..rows)
+                        .map(|_| (0..alphas).map(|a| i as f64 + 1.0 + a as f64).collect())
+                        .collect();
+                    match read.get("actual") {
+                        Some(_) => json!({"quantiles": quantiles, "pit": vec![0.25; rows]}),
+                        None => json!({"quantiles": quantiles}),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut calls = seen.0.lock().unwrap();
+    if calls.iter().any(|(route, _)| route == "busy") {
+        calls.retain(|(route, _)| route != "busy");
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", "1".parse().unwrap());
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            headers,
+            Json(json!({"error": "the kernel's queue is full — retry shortly"})),
+        );
+    }
+    calls.push(("bands".into(), body));
     (
         StatusCode::OK,
-        Json(json!({"quantiles": [1.0, 2.0, 3.0, 4.0, 5.0], "pit": 0.25})),
+        HeaderMap::new(),
+        Json(json!({"reads": reads})),
     )
-}
-
-async fn band_grid(State(seen): State<Seen>, Json(body): Json<Value>) -> Json<Value> {
-    let rows = body["test_x"].as_array().map_or(0, Vec::len);
-    let alphas = body["alphas"].as_array().map_or(0, Vec::len);
-    seen.0.lock().unwrap().push(("band_grid".into(), body));
-    Json(json!({"quantiles": vec![vec![1.5; alphas]; rows]}))
 }
 
 async fn misfit(State(seen): State<Seen>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
@@ -62,9 +93,8 @@ async fn misfit(State(seen): State<Seen>, Json(body): Json<Value>) -> (StatusCod
 async fn stub() -> (String, Seen) {
     let seen = Seen::default();
     let app = Router::new()
-        .route("/v1/band_point", post(band_point))
-        .route("/v1/band_grid", post(band_grid))
-        .route("/v1/misfit", post(misfit))
+        .route("/bands", post(bands))
+        .route("/misfit", post(misfit))
         .with_state(seen.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -99,14 +129,46 @@ async fn nans_ride_as_null_and_the_bearer_rides_every_call() {
     assert_eq!(pit, 0.25);
     let calls = seen.0.lock().unwrap();
     let (route, body) = &calls[0];
-    assert_eq!(route, "band_point");
+    assert_eq!(route, "bands");
+    assert_eq!(body["members"], json!(1));
+    assert_eq!(body["alphas"], json!(ALPHAS));
+    let read = &body["reads"][0];
     assert_eq!(
-        body["train_x"],
+        read["train_x"],
         json!([[1.0, 2.0], [3.0, null], [5.0, 6.0]])
     );
-    assert_eq!(body["test_x"], json!([7.0, 8.0]));
-    assert_eq!(body["alphas"], json!(ALPHAS));
-    assert_eq!(body["actual"], json!(2.5));
+    assert_eq!(read["test_x"], json!([[7.0, 8.0]]));
+    assert_eq!(read["actual"], json!([2.5]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_walks_points_ride_one_request_in_order_and_a_full_queue_is_waited_out() {
+    let (url, seen) = stub().await;
+    let rt = KernelRuntime::with_remote(&url, Some("k1")).unwrap();
+    let reads: Vec<BandRead> = (0..3)
+        .map(|i| BandRead {
+            train_x: vec![1.0, 2.0, 3.0, 4.0],
+            train_y: vec![1.0, 2.0],
+            test_x: vec![i as f64, 0.0],
+            actual: 1.0,
+        })
+        .collect();
+    seen.0.lock().unwrap().push(("busy".into(), Value::Null));
+    let answered = rt.band_points(&reads, &ALPHAS).await.unwrap();
+    assert_eq!(answered.len(), 3);
+    for (i, (q, pit)) in answered.iter().enumerate() {
+        // The stand-in's quantile is the read's index plus the alpha's.
+        assert_eq!(q[0], i as f64 + 1.0, "read {i}");
+        assert_eq!(q[4], i as f64 + 5.0, "read {i}");
+        assert_eq!(*pit, 0.25);
+    }
+    let calls = seen.0.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        1,
+        "one request for the three points, after the wait"
+    );
+    assert_eq!(calls[0].1["reads"].as_array().unwrap().len(), 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -135,7 +197,7 @@ async fn a_wrong_bearer_is_a_refusal_by_text() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn band_grid_comes_back_row_major_by_alphas() {
-    let (url, _seen) = stub().await;
+    let (url, seen) = stub().await;
     let rt = KernelRuntime::with_remote(&url, Some("k1")).unwrap();
     let train = [1.0, 2.0, 3.0, 4.0];
     let test = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
@@ -156,7 +218,11 @@ async fn band_grid_comes_back_row_major_by_alphas() {
         )
         .await
         .unwrap();
-    assert_eq!(q, vec![1.5; 6]);
+    // Row-major: three test rows of two alphas, the stand-in's 1 + alpha index.
+    assert_eq!(q, vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
+    let calls = seen.0.lock().unwrap();
+    assert_eq!(calls[0].1["members"], json!(8));
+    assert!(calls[0].1["reads"][0].get("actual").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

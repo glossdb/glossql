@@ -9,7 +9,7 @@ use datafusion::arrow::util::display::array_value_to_string;
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::{Matrix, SessionError};
+use crate::session::{BandRead, SessionError};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -269,7 +269,31 @@ pub(crate) async fn metric_band_walk(
         })
     }
 
-    let mut out = Vec::new();
+    // Every metric's walk points are asked of the kernel together, once
+    // the loop has built them all: one request answers a workspace, and
+    // the service passes tables of one shape through the model as one.
+    // A metric's rows are built after the answer, in the loop's order.
+    struct Pending {
+        t: usize,
+        read: BandRead,
+        partial: Option<String>,
+    }
+    struct Walked {
+        seq: i64,
+        aspect: String,
+        aggregation: &'static str,
+        n: usize,
+        tcol: String,
+        axis_judged: bool,
+        periods: Vec<String>,
+        points: Vec<Pending>,
+    }
+    enum Row {
+        Ready(Value),
+        Walked(Walked),
+    }
+
+    let mut out: Vec<Row> = Vec::new();
     let mut seq = 0i64;
     for slot in current_query_slots(&rctx, dataset).await? {
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
@@ -341,10 +365,10 @@ pub(crate) async fn metric_band_walk(
                 let Some(reason) = e.abstention() else {
                     return Err(e);
                 };
-                out.push(json!({
+                out.push(Row::Ready(json!({
                     "seq": seq, "metric": slot.aspect, "applicable": false,
                     "reason": reason,
-                }));
+                })));
                 seq += 1;
                 continue;
             }
@@ -360,10 +384,10 @@ pub(crate) async fn metric_band_walk(
         // at t trains on t-1 rows and the earliest walkable t is
         // MIN_TRAIN + 1.
         if n < MIN_TRAIN + 2 {
-            out.push(json!({
+            out.push(Row::Ready(json!({
                 "seq": seq, "metric": slot.aspect, "applicable": false,
                 "reason": format!("{n} months, need {}", MIN_TRAIN + 2),
-            }));
+            })));
             seq += 1;
             continue;
         }
@@ -395,7 +419,7 @@ pub(crate) async fn metric_band_walk(
             labels.push(v[i]);
         }
 
-        let mut points: Vec<Value> = Vec::new();
+        let mut points: Vec<Pending> = Vec::new();
         let floor = MIN_TRAIN + 1;
         let start = if n.saturating_sub(MAX_WALK) > floor {
             n - MAX_WALK
@@ -432,25 +456,6 @@ pub(crate) async fn metric_band_walk(
             if train_y.len() < MIN_TRAIN {
                 continue;
             }
-            let train = Matrix {
-                data: &train_x,
-                rows: train_y.len(),
-                cols: 5,
-            };
-            let (q, pit) = runtime
-                .band_point(train, &train_y, &filled(&feats[t - 1]), &ALPHAS, actual)
-                .await
-                .map_err(SessionError::Runtime)?;
-            // A series that repeats values moves on a grid (a ratio over
-            // a fixed field, a count). A corridor narrower than the
-            // grid's step, with the actual inside a step of the median,
-            // is the model's noise around a value the series takes
-            // exactly: the PIT read against it says nothing, so the
-            // point serves its band and actual and withholds the PIT
-            // with the reason. An actual further off than a step is a
-            // real move whatever the corridor; a series that never
-            // repeats has no grid, and a tight corridor on it is earned.
-            let corridor = q[4] - q[0];
             // The newest month is partial while the extract's horizon
             // falls inside it: a short sum against a corridor fitted
             // on whole months reads as a breach that is only the
@@ -464,6 +469,81 @@ pub(crate) async fn metric_band_walk(
                 .map(|(h, end)| {
                     format!("partial: the extract ends {h}, before the period's last day {end}")
                 });
+            points.push(Pending {
+                t,
+                read: BandRead {
+                    train_x,
+                    train_y,
+                    test_x: filled(&feats[t - 1]),
+                    actual,
+                },
+                partial,
+            });
+        }
+        out.push(Row::Walked(Walked {
+            seq,
+            aspect: slot.aspect.clone(),
+            aggregation,
+            n,
+            tcol,
+            axis_judged,
+            periods: series.iter().map(|(p, _)| p[..7].to_string()).collect(),
+            points,
+        }));
+        seq += 1;
+    }
+
+    let reads: Vec<BandRead> = out
+        .iter()
+        .filter_map(|row| match row {
+            Row::Walked(w) => Some(w.points.iter().map(|p| p.read.clone())),
+            Row::Ready(_) => None,
+        })
+        .flatten()
+        .collect();
+    let mut answers = if reads.is_empty() {
+        Vec::new()
+    } else {
+        runtime
+            .band_points(&reads, &ALPHAS)
+            .await
+            .map_err(SessionError::Runtime)?
+    }
+    .into_iter();
+
+    let mut rows = Vec::new();
+    for row in out {
+        let walked = match row {
+            Row::Ready(value) => {
+                rows.push(value);
+                continue;
+            }
+            Row::Walked(walked) => walked,
+        };
+        let Walked {
+            seq,
+            aspect,
+            aggregation,
+            n,
+            tcol,
+            axis_judged,
+            periods,
+            points,
+        } = walked;
+        let mut served: Vec<Value> = Vec::new();
+        for Pending { t, read, partial } in points {
+            let (q, pit) = answers.next().expect("one answer per read");
+            let (train_y, actual) = (read.train_y, read.actual);
+            // A series that repeats values moves on a grid (a ratio over
+            // a fixed field, a count). A corridor narrower than the
+            // grid's step, with the actual inside a step of the median,
+            // is the model's noise around a value the series takes
+            // exactly: the PIT read against it says nothing, so the
+            // point serves its band and actual and withholds the PIT
+            // with the reason. An actual further off than a step is a
+            // real move whatever the corridor; a series that never
+            // repeats has no grid, and a tight corridor on it is earned.
+            let corridor = q[4] - q[0];
             let withheld = match resolution_of(&train_y) {
                 _ if partial.is_some() => partial.clone(),
                 Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
@@ -476,8 +556,8 @@ pub(crate) async fn metric_band_walk(
                 }
                 _ => None,
             };
-            points.push(json!({
-                "period": &series[t].0[..7], "actual": actual,
+            served.push(json!({
+                "period": periods[t], "actual": actual,
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
                 "pit": withheld.is_none().then_some(pit),
                 "withheld": withheld,
@@ -488,10 +568,10 @@ pub(crate) async fn metric_band_walk(
             }));
         }
 
-        for (point_seq, p) in points.iter().enumerate() {
+        for (point_seq, p) in served.iter().enumerate() {
             let mut row = serde_json::Map::new();
             row.insert("seq".into(), json!(seq));
-            row.insert("metric".into(), json!(slot.aspect));
+            row.insert("metric".into(), json!(aspect));
             row.insert("applicable".into(), json!(true));
             row.insert("grain".into(), json!("month"));
             row.insert("aggregation".into(), json!(aggregation));
@@ -502,23 +582,22 @@ pub(crate) async fn metric_band_walk(
             for (k, val) in p.as_object().expect("point object") {
                 row.insert(k.clone(), val.clone());
             }
-            out.push(Value::Object(row));
+            rows.push(Value::Object(row));
         }
-        if points.is_empty() {
-            out.push(json!({
-                "seq": seq, "metric": slot.aspect, "applicable": true,
+        if served.is_empty() {
+            rows.push(json!({
+                "seq": seq, "metric": aspect, "applicable": true,
                 "grain": "month",
                 "aggregation": aggregation,
                 "trained_on": n as i64,
                 "axis": tcol, "axis_judged": axis_judged,
             }));
         }
-        seq += 1;
     }
-    if out.is_empty() {
-        out.push(json!({}));
+    if rows.is_empty() {
+        rows.push(json!({}));
     }
-    rows_batch(out, band_shape())
+    rows_batch(rows, band_shape())
 }
 
 /// `band_points()` — the recorded walk, one row per metric per walked

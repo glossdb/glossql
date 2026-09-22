@@ -238,6 +238,18 @@ pub struct Matrix<'a> {
     pub cols: usize,
 }
 
+/// One walk point as the bands walk asks it: the training rows
+/// (row-major, `test_x.len()` wide), their labels, the row to call, and
+/// the actual the PIT is read against. Owned, so a walk's points travel
+/// together.
+#[derive(Clone, Debug)]
+pub struct BandRead {
+    pub train_x: Vec<f64>,
+    pub train_y: Vec<f64>,
+    pub test_x: Vec<f64>,
+    pub actual: f64,
+}
+
 /// The refusal every model door gives when the runtime carries no
 /// model: by name, with what to set. The three doors — the band walk,
 /// `whatif.`, `misfit.` — are served by the kernel service, hosted or
@@ -331,6 +343,31 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         _actual: f64,
     ) -> Result<(Vec<f64>, f64), String> {
         Err("this runtime carries no band kernel".into())
+    }
+
+    /// Many walk points at once, in order — every metric's walk in one
+    /// call, which is what lets the kernel answer them in one pass. The
+    /// runtime that carries the model overrides this; by default the
+    /// points go one at a time through `band_point`.
+    async fn band_points(
+        &self,
+        reads: &[BandRead],
+        alphas: &[f64],
+    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
+        let mut out = Vec::with_capacity(reads.len());
+        for read in reads {
+            let cols = read.test_x.len();
+            let train = Matrix {
+                data: &read.train_x,
+                rows: read.train_y.len(),
+                cols,
+            };
+            out.push(
+                self.band_point(train, &read.train_y, &read.test_x, alphas, read.actual)
+                    .await?,
+            );
+        }
+        Ok(out)
     }
 }
 

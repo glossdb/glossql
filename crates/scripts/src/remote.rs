@@ -1,10 +1,13 @@
-//! The kernel service over HTTP — glosskernels, wire `v1`: the three
-//! model reads as JSON bodies. Matrices travel as nested lists, NaN as
-//! null both ways. A refusal comes back as `{"error": …}` under a 4xx
-//! and is reported by its text; a service that does not answer is
-//! reported by its address. Nothing here knows what the numbers mean.
+//! The kernel service over HTTP — glosskernels: two routes, `/bands`
+//! (many reads in one request, each its training rows and the rows to
+//! call) and `/misfit`, as JSON bodies. Matrices travel as nested
+//! lists, NaN as null both ways. A refusal comes back as `{"error": …}`
+//! under a 4xx and is reported by its text; a full queue (429) is
+//! waited out for as long as it says, within the call's bound; a
+//! service that does not answer is reported by its address. Nothing
+//! here knows what the numbers mean.
 
-use glossql_session::Matrix;
+use glossql_session::{BandRead, Matrix};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
@@ -18,6 +21,15 @@ const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The interval of the TCP keepalive on a call in flight.
 const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Walk points per `/bands` request: bounds a request's body where a
+/// workspace holds thousands of metrics; the service answers each
+/// request's reads together.
+const READS_PER_REQUEST: usize = 512;
+
+/// The service's ensemble size behind the replay grid read — the
+/// package's default, the regime the read was ruled in for.
+const GRID_MEMBERS: u32 = 8;
 
 /// A kernel service: where, and the bearer it expects.
 pub struct Remote {
@@ -68,31 +80,82 @@ impl Remote {
     }
 
     async fn post(&self, route: &str, body: Value) -> Result<Value, String> {
-        let url = format!("{}/v1/{route}", self.base);
-        let mut request = self.client.post(&url).json(&body);
-        if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
+        let url = format!("{}/{route}", self.base);
+        let deadline = std::time::Instant::now() + CALL_TIMEOUT;
+        loop {
+            let mut request = self.client.post(&url).json(&body);
+            if let Some(token) = &self.token {
+                request = request.bearer_auth(token);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("the kernel service at {} did not answer: {e}", self.base))?;
+            let status = response.status();
+            // The service's queue is full for this caller: it says how
+            // long to wait, and the call waits that long, within its bound.
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                let wait = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .clamp(1, 60);
+                let wait = std::time::Duration::from_secs(wait);
+                if std::time::Instant::now() + wait >= deadline {
+                    return Err(format!(
+                        "the kernel service's queue stayed full for {}s",
+                        CALL_TIMEOUT.as_secs()
+                    ));
+                }
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("the kernel service's answer did not arrive whole: {e}"))?;
+            let value: Value = serde_json::from_str(&text).map_err(|_| {
+                format!("the kernel service answered {status} with something that is not JSON")
+            })?;
+            if !status.is_success() {
+                let reason = value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or(text.as_str());
+                return Err(format!("the kernel service refused ({status}): {reason}"));
+            }
+            return Ok(value);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|e| format!("the kernel service at {} did not answer: {e}", self.base))?;
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("the kernel service's answer did not arrive whole: {e}"))?;
-        let value: Value = serde_json::from_str(&text).map_err(|_| {
-            format!("the kernel service answered {status} with something that is not JSON")
-        })?;
-        if !status.is_success() {
-            let reason = value
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or(text.as_str());
-            return Err(format!("the kernel service refused ({status}): {reason}"));
+    }
+
+    /// `/bands`: the reads' answers, one object per read, in order.
+    async fn bands(
+        &self,
+        reads: Vec<Value>,
+        alphas: &[f64],
+        members: u32,
+    ) -> Result<Vec<Value>, String> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            reads: Vec<Value>,
         }
-        Ok(value)
+        let asked = reads.len();
+        let answer: Answer = decode(
+            self.post(
+                "bands",
+                json!({ "reads": reads, "alphas": alphas, "members": members }),
+            )
+            .await?,
+        )?;
+        if answer.reads.len() != asked {
+            return Err(format!(
+                "the kernel service answered {} reads for {asked}",
+                answer.reads.len()
+            ));
+        }
+        Ok(answer.reads)
     }
 
     pub async fn band_point(
@@ -103,32 +166,68 @@ impl Remote {
         alphas: &[f64],
         actual: f64,
     ) -> Result<(Vec<f64>, f64), String> {
+        let read = BandRead {
+            train_x: train.data.to_vec(),
+            train_y: train_y.to_vec(),
+            test_x: test_x.to_vec(),
+            actual,
+        };
+        let mut answered = self
+            .band_points(std::slice::from_ref(&read), alphas)
+            .await?;
+        Ok(answered.remove(0))
+    }
+
+    /// Walk points, `READS_PER_REQUEST` to a request: each read one
+    /// test row with its actual, the pinned member (`members` 1), the
+    /// PIT read by the service against its raw grid.
+    pub async fn band_points(
+        &self,
+        reads: &[BandRead],
+        alphas: &[f64],
+    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
         #[derive(serde::Deserialize)]
         struct Answer {
-            quantiles: Vec<Option<f64>>,
-            pit: Option<f64>,
+            quantiles: Vec<Vec<Option<f64>>>,
+            pit: Option<Vec<Option<f64>>>,
         }
-        let answer: Answer = decode(
-            self.post(
-                "band_point",
-                json!({
-                    "train_x": rows(train),
-                    "train_y": vector(train_y),
-                    "test_x": vector(test_x),
-                    "alphas": alphas,
-                    "actual": actual,
-                }),
-            )
-            .await?,
-        )?;
-        if answer.quantiles.len() != alphas.len() {
-            return Err(format!(
-                "the kernel service answered {} quantiles for {} alphas",
-                answer.quantiles.len(),
-                alphas.len()
-            ));
+        let mut out = Vec::with_capacity(reads.len());
+        for chunk in reads.chunks(READS_PER_REQUEST) {
+            let bodies = chunk
+                .iter()
+                .map(|r| {
+                    let train = Matrix {
+                        data: &r.train_x,
+                        rows: r.train_y.len(),
+                        cols: r.test_x.len(),
+                    };
+                    json!({
+                        "train_x": rows(train),
+                        "train_y": vector(&r.train_y),
+                        "test_x": [vector(&r.test_x)],
+                        "actual": [r.actual],
+                    })
+                })
+                .collect();
+            for answered in self.bands(bodies, alphas, 1).await? {
+                let mut answer: Answer = decode(answered)?;
+                if answer.quantiles.len() != 1 || answer.quantiles[0].len() != alphas.len() {
+                    return Err(format!(
+                        "the kernel service answered {} rows of {} quantiles for one row at {} alphas",
+                        answer.quantiles.len(),
+                        answer.quantiles.first().map_or(0, Vec::len),
+                        alphas.len()
+                    ));
+                }
+                let pit = answer
+                    .pit
+                    .as_ref()
+                    .and_then(|p| p.first().copied().flatten())
+                    .unwrap_or(f64::NAN);
+                out.push((floats(answer.quantiles.remove(0)), pit));
+            }
         }
-        Ok((floats(answer.quantiles), answer.pit.unwrap_or(f64::NAN)))
+        Ok(out)
     }
 
     pub async fn band_grid(
@@ -142,18 +241,13 @@ impl Remote {
         struct Answer {
             quantiles: Vec<Vec<Option<f64>>>,
         }
-        let answer: Answer = decode(
-            self.post(
-                "band_grid",
-                json!({
-                    "train_x": rows(train),
-                    "train_y": vector(train_y),
-                    "test_x": rows(test),
-                    "alphas": alphas,
-                }),
-            )
-            .await?,
-        )?;
+        let read = json!({
+            "train_x": rows(train),
+            "train_y": vector(train_y),
+            "test_x": rows(test),
+        });
+        let mut answered = self.bands(vec![read], alphas, GRID_MEMBERS).await?;
+        let answer: Answer = decode(answered.remove(0))?;
         if answer.quantiles.len() != test.rows
             || answer.quantiles.iter().any(|r| r.len() != alphas.len())
         {

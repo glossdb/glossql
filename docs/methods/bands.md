@@ -37,8 +37,9 @@ the red line (default 0.98).
 ## Serving the model
 
 The server carries no model. The walk's fits go to the kernel service,
-`glosskernels`, over HTTP — the reference TabICL package behind three
-routes, hosted or run beside the server, named by `GLOSSQL_TABICL_URL`
+`glosskernels`, over HTTP — the reference TabICL package behind two
+routes (`/bands`, a walk in one request; `/misfit`), hosted or run beside
+the server, named by `GLOSSQL_TABICL_URL`
 ([install](../start/install.md)). Without it the walk refuses by
 name. Raw densities never leave the kernel, and the walk's feature
 recipe and point-in-time fill match the graded protocol it was

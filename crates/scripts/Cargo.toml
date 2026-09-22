@@ -18,6 +18,8 @@ thiserror.workspace = true
 # the rustls reqwest the server already rides. The server carries no
 # model: the reads go to the service `GLOSSQL_TABICL_URL` names.
 reqwest.workspace = true
+# The wait a full kernel queue asks for.
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 glossql-glossary = { path = "../glossary" }
