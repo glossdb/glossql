@@ -586,16 +586,13 @@ aspect's judged value, this one names a data column's row value.
 Closes by transcription against a real polymorphic artifact, never by
 argument.
 
-Third: what a `USE` binds. Today it binds the statements after it and
-expires with the call (§3), so every call over a dataset's names opens
-with one, and a call without it is refused by name. The alternative is
-a binding the session holds — one `USE` per connection — which costs
-the other way: a connection bound to a dataset glosses a source or
-reads a second dataset only by re-binding or by the full prefix, and a
-call no longer says what it reads. Closes by counting over the agent
-record — the calls refused for want of a `USE` against the calls that
-reach a source or a second dataset under one binding — never by
-argument.
+Third: what binds a call to a dataset. `USE` binds the statements
+after it and expires with the call (§3); a dataset's door opens the
+call bound, and the workspace door opens it unbound. Whether the
+workspace door's `USE` earns its place once agents work at dataset
+doors closes by counting over the agent record — dataset work done
+under `USE` at the workspace door against work at a dataset's door —
+never by argument.
 
 PoC notes: batch visibility comes from (long-running) transactions — the
 running system's run_id + snapshot-head pointer is the verbose version of
