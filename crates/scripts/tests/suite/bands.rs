@@ -25,8 +25,9 @@ fn live() -> Option<Arc<KernelRuntime>> {
         .ok()
         .filter(|u| !u.trim().is_empty())?;
     let token = std::env::var("GLOSSQL_E2E_TABICL_TOKEN").ok();
+    let bearer = glossql_scripts::Bearer::from_env(token.as_deref(), None);
     Some(Arc::new(
-        KernelRuntime::with_remote(&url, token.as_deref()).expect("a kernel service address"),
+        KernelRuntime::with_remote(&url, bearer).expect("a kernel service address"),
     ))
 }
 

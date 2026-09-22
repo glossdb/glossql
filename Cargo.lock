@@ -2943,6 +2943,7 @@ version = "0.1.5"
 dependencies = [
  "arrow-json",
  "axum",
+ "base64 0.22.1",
  "datafusion",
  "faer",
  "futures",

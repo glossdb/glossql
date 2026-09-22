@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
-use glossql_scripts::KernelRuntime;
+use glossql_scripts::{Bearer, KernelRuntime};
 use glossql_session::{BandRead, FunctionRuntime, Matrix};
 use serde_json::{Value, json};
 
@@ -19,8 +19,47 @@ use serde_json::{Value, json};
 #[derive(Clone, Default)]
 struct Seen(Arc<Mutex<Vec<(String, Value)>>>);
 
+fn key(k: &str) -> Bearer {
+    Bearer::Key(k.into())
+}
+
+/// The token the stand-in metadata server mints: a JWT in shape, its
+/// payload saying who and until when (a fixed day in 2100, so the token
+/// is the same string every time), unsigned — the service verifies; the
+/// client only reads the expiry.
+fn minted_token() -> String {
+    use base64::Engine;
+    let exp = 4_102_444_800u64;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        json!({"aud": "https://kernel.example", "email": "glossql@proj.iam.gserviceaccount.com", "exp": exp})
+            .to_string(),
+    );
+    format!("eyJhbGciOiJSUzI1NiJ9.{payload}.sig")
+}
+
 fn bearer_ok(headers: &HeaderMap) -> bool {
-    headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer k1")
+    let bearer = headers.get("authorization").and_then(|v| v.to_str().ok());
+    bearer == Some("Bearer k1") || bearer == Some(&format!("Bearer {}", minted_token()))
+}
+
+/// The metadata server's identity endpoint as GCP serves it: a token
+/// for the audience asked, only to a caller saying `Metadata-Flavor: Google`.
+async fn identity(
+    State(seen): State<Seen>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, String) {
+    if headers.get("metadata-flavor").and_then(|v| v.to_str().ok()) != Some("Google") {
+        return (
+            StatusCode::FORBIDDEN,
+            "Missing Metadata-Flavor:Google header.".into(),
+        );
+    }
+    seen.0
+        .lock()
+        .unwrap()
+        .push(("identity".into(), json!(query.get("audience"))));
+    (StatusCode::OK, minted_token())
 }
 
 /// `/bands` as the service answers it: per read, a row of quantiles per
@@ -60,6 +99,16 @@ async fn bands(
         })
         .unwrap_or_default();
     let mut calls = seen.0.lock().unwrap();
+    if calls.iter().any(|(route, _)| route == "draining") {
+        calls.retain(|(route, _)| route != "draining");
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", "1".parse().unwrap());
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            headers,
+            Json(json!({"error": "this instance is stopping — retry"})),
+        );
+    }
     if calls.iter().any(|(route, _)| route == "busy") {
         calls.retain(|(route, _)| route != "busy");
         let mut headers = HeaderMap::new();
@@ -95,6 +144,10 @@ async fn stub() -> (String, Seen) {
     let app = Router::new()
         .route("/bands", post(bands))
         .route("/misfit", post(misfit))
+        .route(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            axum::routing::get(identity),
+        )
         .with_state(seen.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -107,7 +160,7 @@ const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
 #[tokio::test(flavor = "multi_thread")]
 async fn nans_ride_as_null_and_the_bearer_rides_every_call() {
     let (url, seen) = stub().await;
-    let rt = KernelRuntime::with_remote(&format!("{url}/"), Some("k1")).unwrap();
+    let rt = KernelRuntime::with_remote(&format!("{url}/"), key("k1")).unwrap();
     assert!(rt.carries_model());
     assert_eq!(rt.kernel_url(), Some(url.as_str()));
     let read = BandRead {
@@ -142,7 +195,7 @@ async fn nans_ride_as_null_and_the_bearer_rides_every_call() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_walks_points_ride_one_request_in_order_and_a_full_queue_is_waited_out() {
     let (url, seen) = stub().await;
-    let rt = KernelRuntime::with_remote(&url, Some("k1")).unwrap();
+    let rt = KernelRuntime::with_remote(&url, key("k1")).unwrap();
     let reads: Vec<BandRead> = (0..3)
         .map(|i| BandRead {
             train_x: vec![1.0, 2.0, 3.0, 4.0],
@@ -171,9 +224,48 @@ async fn a_walks_points_ride_one_request_in_order_and_a_full_queue_is_waited_out
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_identity_is_minted_once_and_rides_every_call_and_a_stopping_instance_is_waited_out() {
+    let (url, seen) = stub().await;
+    let rt = KernelRuntime::with_remote(
+        &url,
+        Bearer::Identity {
+            audience: "https://kernel.example".into(),
+            metadata: url.clone(),
+        },
+    )
+    .unwrap();
+    let read = BandRead {
+        train_x: vec![1.0, 2.0],
+        train_y: vec![1.0, 2.0],
+        test_x: vec![3.0],
+        actual: 1.0,
+    };
+    seen.0
+        .lock()
+        .unwrap()
+        .push(("draining".into(), Value::Null));
+    let first = rt
+        .band_points(std::slice::from_ref(&read), &ALPHAS, None)
+        .await
+        .unwrap();
+    let second = rt
+        .band_points(std::slice::from_ref(&read), &ALPHAS, None)
+        .await
+        .unwrap();
+    assert_eq!(first[0].0[0], 1.0);
+    assert_eq!(second[0].0[0], 1.0);
+    let calls = seen.0.lock().unwrap();
+    let routes: Vec<&str> = calls.iter().map(|(route, _)| route.as_str()).collect();
+    // One token for the audience, before the first call; the 503 waited
+    // out; the second call rides the kept token with no new mint.
+    assert_eq!(routes, ["identity", "bands", "bands"]);
+    assert_eq!(calls[0].1, json!("https://kernel.example"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_wrong_bearer_is_a_refusal_by_text() {
     let (url, _seen) = stub().await;
-    let rt = KernelRuntime::with_remote(&url, Some("nope")).unwrap();
+    let rt = KernelRuntime::with_remote(&url, key("nope")).unwrap();
     let read = BandRead {
         train_x: vec![1.0, 2.0],
         train_y: vec![1.0, 2.0],
@@ -193,7 +285,7 @@ async fn a_wrong_bearer_is_a_refusal_by_text() {
 #[tokio::test(flavor = "multi_thread")]
 async fn band_grid_comes_back_row_major_by_alphas() {
     let (url, seen) = stub().await;
-    let rt = KernelRuntime::with_remote(&url, Some("k1")).unwrap();
+    let rt = KernelRuntime::with_remote(&url, key("k1")).unwrap();
     let train = [1.0, 2.0, 3.0, 4.0];
     let test = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
     let q = rt
@@ -223,7 +315,7 @@ async fn band_grid_comes_back_row_major_by_alphas() {
 #[tokio::test(flavor = "multi_thread")]
 async fn misfit_nulls_come_back_nan_and_a_4xx_is_its_text() {
     let (url, _seen) = stub().await;
-    let rt = KernelRuntime::with_remote(&url, Some("k1")).unwrap();
+    let rt = KernelRuntime::with_remote(&url, key("k1")).unwrap();
     let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
     let scores = rt
         .misfit_scores(Matrix {
@@ -253,7 +345,7 @@ async fn misfit_nulls_come_back_nan_and_a_4xx_is_its_text() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_service_that_does_not_answer_is_reported_by_address() {
-    let rt = KernelRuntime::with_remote("http://127.0.0.1:9", None).unwrap();
+    let rt = KernelRuntime::with_remote("http://127.0.0.1:9", Bearer::None).unwrap();
     let e = rt
         .misfit_scores(Matrix {
             data: &[1.0, 2.0, 3.0, 4.0],
@@ -266,7 +358,7 @@ async fn a_service_that_does_not_answer_is_reported_by_address() {
         e.contains("did not answer") && e.contains("127.0.0.1:9"),
         "{e}"
     );
-    assert!(KernelRuntime::with_remote("kernel.local", None).is_err());
+    assert!(KernelRuntime::with_remote("kernel.local", Bearer::None).is_err());
 }
 
 /// The walk reads its points through the record, point in time: the
@@ -278,7 +370,7 @@ async fn a_service_that_does_not_answer_is_reported_by_address() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_walk_reads_through_the_records_earlier_months_only() {
     let (url, seen) = stub().await;
-    let rt = Arc::new(KernelRuntime::with_remote(&url, Some("k1")).unwrap());
+    let rt = Arc::new(KernelRuntime::with_remote(&url, key("k1")).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let dates: Vec<i32> = super::bands::FIRSTS.iter().map(|f| 19723 + f).collect();
     let flow: Vec<f64> = (0..18).map(|i| 100.0 + 3.0 * i as f64).collect();
