@@ -32,8 +32,8 @@ follow the corpus-first process below.
   the image on a `v*` tag, `release-macos.sh` is the laptop half, the
   rendered tap formula sits beside them. The order and its sharp
   edges: the glossql-release skill.
-- `dev/` — the rig the live tests and a laptop run against: Postgres,
-  Azurite, and the REST pair as one compose (`dev/README.md`).
+- `dev/` — the rig the live tests and a laptop run against: Postgres
+  and Azurite as one compose (`dev/README.md`).
 - `skills/` — the product skills, a `SKILL.md` and its `references/`
   each, where a door-connected agent learns the language; embedded in
   serverd and served on the MCP door as resources and prompts, gated

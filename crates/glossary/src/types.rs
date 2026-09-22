@@ -184,7 +184,7 @@ pub struct GlossRow {
     pub body: String,
     pub written_at: String,
     pub snapshot_id: Option<i64>,
-    pub seq: (i64, i64),
+    pub seq: i64,
 }
 
 /// A declared aspect, parsed once.

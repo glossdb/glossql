@@ -1343,27 +1343,17 @@ async fn a_dataset_stays_glossable_when_a_source_shares_its_name() {
     );
 }
 
-/// The store holds what it resolved under the version it read it at,
-/// and a write moves that version. This is the whole cache: there is no
-/// freshness check on the read path and no invalidation call at the
-/// write — a commit drops the head, the next read walks a new one, and
-/// a moved version simply misses.
-///
-/// Asserted on identity, not contents: the six relations ride behind
-/// `Arc`s, so a served-from-cache context shares their pointers and a
-/// rebuilt one cannot.
+/// The store's version is every relation at its own, and a landed
+/// write moves it: what a read context and a cube built on it are keyed
+/// by.
 #[tokio::test]
-async fn a_read_context_is_held_until_a_write_moves_the_version() {
+async fn a_landed_write_moves_the_version() {
     let (_dir, store) = store().await;
     let first = rctx(&store).await;
     let again = rctx(&store).await;
     assert_eq!(
         first.version, again.version,
         "no write stands between these reads"
-    );
-    assert!(
-        std::sync::Arc::ptr_eq(&first.glossary, &again.glossary),
-        "the second read rebuilt a store nothing had moved"
     );
 
     write(
@@ -1379,16 +1369,12 @@ async fn a_read_context_is_held_until_a_write_moves_the_version() {
         first.version, after.version,
         "a landed gloss left the store's version where it was"
     );
-    assert!(
-        !std::sync::Arc::ptr_eq(&first.glossary, &after.glossary),
-        "a read after a write served the rows from before it"
-    );
     assert_eq!(after.glossary.len(), first.glossary.len() + 1);
 }
 
-/// An idempotent re-declare writes nothing, so it must not move the
-/// version either — otherwise every restart would rebuild every context
-/// for no change at all.
+/// An idempotent re-declare writes nothing, so it moves the version by
+/// nothing either — otherwise every restart would move it for no change
+/// at all.
 #[tokio::test]
 async fn a_re_declare_that_writes_nothing_moves_nothing() {
     let (_dir, store) = store().await;
@@ -1406,154 +1392,34 @@ async fn a_re_declare_that_writes_nothing_moves_nothing() {
     store.declare_aspect(&unit).await.unwrap();
     let after = rctx(&store).await;
     assert_eq!(before.version, after.version);
-    assert!(std::sync::Arc::ptr_eq(&before.aspects, &after.aspects));
 }
 
-/// A batched sequence lands one append per touched relation, and its
-/// cross-references resolve against the batch's own view: the function
-/// RETURNS an aspect that is itself still buffered when the function is
-/// declared.
+/// Two rows to one supersession key, appended in order: the later one
+/// is the current one, inside one call as across calls.
 #[tokio::test]
-async fn a_batch_lands_one_append_per_relation() {
-    let (_dir, store) = store().await; // one landed append on `aspects`
-    store.batch_begin();
-    let Declaration::Aspect(depth) = decl(
-        r#"DECLARE ASPECT depth WITH $${
-            "type": "object",
-            "required": ["value"],
-            "properties": {"value": {"type": "number"}},
-            "additionalProperties": false
-        }$$ AS MEASUREMENT;"#,
-    ) else {
-        unreachable!()
-    };
-    store.declare_aspect(&depth).await.unwrap();
-    let Declaration::Aspect(width) = decl(
-        r#"DECLARE ASPECT width WITH $${
-            "type": "object",
-            "required": ["value"],
-            "properties": {"value": {"type": "number"}},
-            "additionalProperties": false
-        }$$ AS MEASUREMENT;"#,
-    ) else {
-        unreachable!()
-    };
-    store.declare_aspect(&width).await.unwrap();
-    let Declaration::Function(probe) =
-        decl("DECLARE FUNCTION probe FOR GLOBAL AS $$#{}$$ RETURNS depth;")
-    else {
-        unreachable!()
-    };
-    store.declare_function(&probe).await.unwrap();
-    // An identical re-declare of what already stands buffers nothing.
-    let Declaration::Aspect(unit) = decl(
-        r#"DECLARE ASPECT unit WITH $${
-            "type": "object",
-            "required": ["value"],
-            "properties": {"value": {"type": "string"}},
-            "additionalProperties": false
-        }$$ AS FACT;"#,
-    ) else {
-        unreachable!()
-    };
-    store.declare_aspect(&unit).await.unwrap();
-    store.batch_flush().await.unwrap();
-
-    assert!(store.aspect("depth").await.unwrap().is_some());
-    assert!(store.aspect("width").await.unwrap().is_some());
-    assert!(store.function("probe", None).await.unwrap().is_some());
-    let mut appends = std::collections::HashMap::new();
-    for landing in store.lake().landings("glossql").await.unwrap() {
-        *appends.entry(landing.table).or_insert(0) += 1;
-    }
-    assert_eq!(
-        appends.get("aspects"),
-        Some(&2),
-        "the fixture's landing plus one for the whole batch: {appends:?}"
-    );
-    assert_eq!(appends.get("functions"), Some(&1), "{appends:?}");
-}
-
-/// A batch carrying two rows to one supersession key lands, and the
-/// later row wins: inside one landing `_row_id` orders the rows, the
-/// way the sequence number orders landings.
-#[tokio::test]
-async fn a_batch_carrying_two_rows_to_one_key_lands_the_later_one() {
+async fn the_later_row_to_a_key_is_the_current_one() {
     let (_dir, store) = store().await;
-    store.batch_begin();
-    let Declaration::Aspect(first) = decl(
-        r#"DECLARE ASPECT gap WITH $${
-            "type": "object",
-            "required": ["value"],
-            "properties": {"value": {"type": "number"}},
-            "additionalProperties": false
-        }$$ AS MEASUREMENT;"#,
-    ) else {
-        unreachable!()
-    };
-    store.declare_aspect(&first).await.unwrap();
-    let Declaration::Aspect(second) = decl(
-        r#"DECLARE ASPECT gap WITH $${
-            "type": "object",
-            "required": ["value"],
-            "properties": {"value": {"type": "string"}},
-            "additionalProperties": false
-        }$$ AS MEASUREMENT;"#,
-    ) else {
-        unreachable!()
-    };
-    store.declare_aspect(&second).await.unwrap();
-    store.batch_flush().await.unwrap();
-    let (schema, _, _) = store
-        .aspect("gap")
-        .await
-        .unwrap()
-        .expect("the batch landed");
-    assert_eq!(
-        schema["properties"]["value"]["type"], "string",
-        "the later row of the batch is the current one: {schema}"
-    );
-    // The batch is closed: the store writes directly again, and the
-    // direct write supersedes the batch's.
-    store.declare_aspect(&first).await.unwrap();
-    let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
-    assert_eq!(schema["properties"]["value"]["type"], "number", "{schema}");
-}
-
-/// A channel's batch is its own: two channels buffering the same
-/// relation each see committed state plus their own rows, and a flush
-/// on one lands for every channel.
-#[tokio::test]
-async fn a_channels_batch_is_its_own() {
-    let (_dir, store) = store().await;
-    let aspect = |name: &str| {
+    let gap = |kind: &str| {
         let Declaration::Aspect(a) = decl(&format!(
-            r#"DECLARE ASPECT {name} WITH $${{"type": "object"}}$$ AS FACT;"#
+            r#"DECLARE ASPECT gap WITH $${{
+            "type": "object",
+            "required": ["value"],
+            "properties": {{"value": {{"type": "{kind}"}}}},
+            "additionalProperties": false
+        }}$$ AS MEASUREMENT;"#
         )) else {
             unreachable!()
         };
         a
     };
-    let (a, b) = (store.channel(), store.channel());
-    a.batch_begin();
-    b.batch_begin();
-    a.declare_aspect(&aspect("from_a")).await.unwrap();
-    b.declare_aspect(&aspect("from_b")).await.unwrap();
-    assert!(a.aspect("from_a").await.unwrap().is_some());
-    assert!(
-        a.aspect("from_b").await.unwrap().is_none(),
-        "b's buffer is not a's"
+    store.declare_aspect(&gap("number")).await.unwrap();
+    store.declare_aspect(&gap("string")).await.unwrap();
+    let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
+    assert_eq!(
+        schema["properties"]["value"]["type"], "string",
+        "the later row is the current one: {schema}"
     );
-    assert!(b.aspect("from_a").await.unwrap().is_none());
-    b.batch_flush().await.unwrap();
-    assert!(
-        a.aspect("from_b").await.unwrap().is_some(),
-        "a landed row reaches every channel"
-    );
-    assert!(
-        store.aspect("from_a").await.unwrap().is_none(),
-        "still buffered on a"
-    );
-    a.batch_flush().await.unwrap();
-    assert!(store.aspect("from_a").await.unwrap().is_some());
+    store.declare_aspect(&gap("number")).await.unwrap();
+    let (schema, _, _) = store.aspect("gap").await.unwrap().expect("declared");
+    assert_eq!(schema["properties"]["value"]["type"], "number", "{schema}");
 }

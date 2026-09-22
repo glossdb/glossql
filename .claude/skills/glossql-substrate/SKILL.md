@@ -323,26 +323,21 @@ answers — and iceberg-datafusion's `IcebergCatalogProvider` *is* a
   (`iceberg-datafusion/src/table/mod.rs`), so two scans in one query can
   straddle a landing. A pin stays addressable after later commits, so it
   is a durable key. Verified: spike 3.
-- **Ordering is the format's, not ours.** Iceberg **v3** row lineage
-  gives `_last_updated_sequence_number` (the commit that last touched
-  the row) and `_pos` (position in file); together they are a total
-  order over writes. Nothing to mint, no coordination between writers.
-  Verified: spike 7. `_row_id` read synthesis merged 2026-08-29
-  (apache/iceberg-rust#3058, refs #2879) — after our `ffaf049` pin, so
-  it arrives with the next pin move; metadata-only projection pruning
-  is still open (#3117). `_last_updated_sequence_number` landed in
-  PR #2966, merged 2026-08-10, after the 0.10.1 release.
+- **The record is not Iceberg.** The store's relations live in the
+  catalog's database (`crates/catalog/src/record.rs`): a row is one
+  insert, a read one query, the order the identity column. Iceberg
+  holds the landed tables. Measured before the move, on a remote
+  object store: a one-row append cost 5–9 s (a data file, a manifest,
+  a manifest list, a metadata file, a catalog update) and a read
+  opened one file per row ever written.
 - `format-version` is a **reserved** property — rejected at create. Get
   to v3 with `Transaction::upgrade_table_version().set_format_version(V3)`.
 - Metadata columns are readable through **iceberg-rust's own scan**, not
   through iceberg-datafusion's SQL surface.
-- **A commit is a transaction.** One row per commit costs ~16.5 ms;
-  40 rows in one commit costs ~0.47 ms/row. **Ordering inside one commit
-  is only settled by `_pos`, which is per-file** — so a batch is safe
-  when no two of its rows share a supersession key (bootstrap, pre-warm),
-  and unsafe otherwise until the pin carries `_row_id` (read synthesis
-  merged upstream, #3058). Ruled 2026-08-17: one
-  statement, one commit; batch only the two paths that cannot tie.
+- **A commit is a transaction, and a landing is one commit.** One
+  row per commit costs ~16.5 ms on a local disk and seconds on a
+  remote store; the record's rows never commit through Iceberg for
+  that reason.
 - Facts about a write ride the write (snapshot properties/summary);
   claims about a subject are rows.
 - Read landings through `Table::inspect()`, not SQL over

@@ -159,11 +159,10 @@ const HELD_STORAGES: u64 = 64;
 type Properties = Vec<(String, String)>;
 
 /// The storages built so far, by the properties they were built from.
-/// A REST catalog builds its FileIO anew at every table load, and a
-/// storage built anew starts with no client — a connection pool and a
+/// The catalog builds a FileIO at every table load, and a storage
+/// built anew starts with no client — a connection pool and a
 /// credential fetch per scanned table. Properties are compared whole,
-/// credentials included, so a load that carries new ones gets a client
-/// of its own.
+/// so a load that carries different ones gets a client of its own.
 static STORAGES: LazyLock<moka::sync::Cache<Properties, Arc<ObjectStorage>>> =
     LazyLock::new(|| moka::sync::Cache::new(HELD_STORAGES));
 

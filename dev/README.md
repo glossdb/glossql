@@ -4,24 +4,16 @@ The backends the server can stand on, as one compose: what the live
 tests run against, and what a laptop runs the server against when the
 state is to live somewhere other than the workspace directory.
 
-- Default: Postgres 18 as the SQL catalog (`init.sql` makes three
-  databases on first start — `glossql`, `glossql_az`, `lakekeeper`)
-  and Azurite as an Azure warehouse (`azurite-container.py` makes the
-  `lake` container).
-- `--profile rest`: the REST catalog pair — SeaweedFS as the S3 store
-  (`s3.json` holds its one identity, `seaweed-dev` / `seaweed-secret`)
-  and Lakekeeper as the catalog, anonymous, bootstrapped with a
-  `glossql` warehouse over the `lake` bucket (`lakekeeper-init.sh`).
-  SeaweedFS has no STS, so Lakekeeper vends nothing and the server
-  reads the keys from `AWS_*`.
+Postgres 18 as the SQL catalog (`init.sql` makes two databases on
+first start — `glossql`, `glossql_az`) and Azurite as an Azure
+warehouse (`azurite-container.py` makes the `lake` container).
 
 ```bash
-docker compose -f dev/compose.yaml up -d                    # Postgres + Azurite
-docker compose -f dev/compose.yaml --profile rest up -d     # and the REST pair
-docker compose -f dev/compose.yaml --profile rest down -v   # everything, data included
+docker compose -f dev/compose.yaml up -d          # Postgres + Azurite
+docker compose -f dev/compose.yaml down -v        # everything, data included
 ```
 
-Every port binds to the loopback: 5432, 10000, 8333, 8181. A container
+Every port binds to the loopback: 5432 and 10000. A container
 on the compose network — the server image, say — reaches them by
 service name instead, and Azurite needs its address said as object_store's
 emulator mode reads it: `AZURITE_BLOB_STORAGE_URL=http://azurite:10000`
@@ -64,17 +56,6 @@ CSV put under the root, then listed, landed, and probed over a glob.
 GLOSSQL_E2E_SOURCE=abfss://lake@devstoreaccount1.dfs.core.windows.net/sources/finance \
 AZURE_STORAGE_USE_EMULATOR=true \
   cargo test -p glossql-import live_source -- --ignored
-```
-
-The REST catalog over S3:
-
-```bash
-GLOSSQL_E2E_CATALOG_URI=http://127.0.0.1:8181/catalog \
-GLOSSQL_E2E_CATALOG_WAREHOUSE=glossql \
-GLOSSQL_E2E_CATALOG_TOKEN=dev-anonymous \
-AWS_ACCESS_KEY_ID=seaweed-dev AWS_SECRET_ACCESS_KEY=seaweed-secret \
-AWS_ENDPOINT=http://127.0.0.1:8333 AWS_DEFAULT_REGION=local-01 AWS_ALLOW_HTTP=true \
-  cargo test -p glossql-catalog live_catalog -- --ignored
 ```
 
 The kernel service, from a glosskernels checkout running `uv run

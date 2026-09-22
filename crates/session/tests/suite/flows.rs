@@ -2376,44 +2376,18 @@ async fn a_table_named_like_its_dataset_is_reached_by_its_columns() {
     assert!(e.contains("`hr.<column>`"), "{e}");
 }
 
-/// Every sequence runs batched on its channel: a completed sequence
-/// lands one append per relation it touches, and a refusal lands what
-/// stood before it the same way, then says so.
+/// A refusal inside a sequence lands what stood before it — each
+/// statement's rows are written as it runs — and says so.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_sequence_lands_one_append_per_relation_and_a_refusal_its_prefix() {
+async fn a_refusal_lands_its_prefix_and_says_so() {
     let (_dir, store) = scratch_store().await;
     let session = session_with(ActorKind::Agent, "agent-1", &store).await;
-    let appends = |store: &Store| {
-        let store = store.clone();
-        async move {
-            let mut n = std::collections::HashMap::new();
-            for l in store.lake().landings("glossql").await.unwrap() {
-                *n.entry(l.table).or_insert(0usize) += 1;
-            }
-            n.get("aspects").copied().unwrap_or(0)
-        }
-    };
-    // The store namespace exists from the first row on.
     run(
         &session,
         r#"DECLARE DATASET fin SET (purpose: 'p'); USE fin;
            DECLARE ASPECT seed WITH $${"type": "object"}$$ AS FACT;"#,
     )
     .await;
-    let before = appends(&store).await;
-    run(
-        &session,
-        r#"DECLARE ASPECT a WITH $${"type": "object"}$$ AS FACT;
-           DECLARE ASPECT b WITH $${"type": "object"}$$ AS FACT;
-           DECLARE ASPECT c WITH $${"type": "object"}$$ AS FACT;"#,
-    )
-    .await;
-    assert_eq!(
-        appends(&store).await,
-        before + 1,
-        "three declares, one append"
-    );
-
     let e = session
         .execute(
             r#"DECLARE ASPECT d WITH $${"type": "object"}$$ AS FACT;
@@ -2428,11 +2402,6 @@ async fn a_sequence_lands_one_append_per_relation_and_a_refusal_its_prefix() {
     assert!(
         e.contains("statements 1–2 landed; statement 4 not run"),
         "{e}"
-    );
-    assert_eq!(
-        appends(&store).await,
-        before + 2,
-        "the prefix landed as one append"
     );
     assert!(store.aspect("d").await.unwrap().is_some());
     assert!(store.aspect("e").await.unwrap().is_some());

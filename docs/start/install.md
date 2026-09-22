@@ -106,14 +106,10 @@ platform injects the variables, secrets included:
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
 | `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace` unless `GLOSSQL_WAREHOUSE` moves it. Unset, `catalog.sqlite` in the workspace serves |
 | `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix`, `gs://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set; `GOOGLE_SERVICE_ACCOUNT_PATH`, or the attached service account the client reads on Cloud Run with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named the server needs no workspace directory |
-| `GLOSSQL_CATALOG_URI` | an Iceberg REST catalog's endpoint. Set, the workspace's catalog is that service rather than the workspace directory's own SQLite file; storage is attached on the catalog's side, and each table load answers with what its FileIO needs (the connection always offers `X-Iceberg-Access-Delegation: vended-credentials`). Unset, the local catalog is used |
-| `GLOSSQL_CATALOG_WAREHOUSE` | which warehouse of that catalog this workspace is — required with the URI |
-| `GLOSSQL_CATALOG_TOKEN` | a bearer token used as-is: an object-store platform's API token, minted with both its catalog and its storage permissions. Exactly one of token or credential authenticates the connection |
-| `GLOSSQL_CATALOG_CREDENTIAL` | `client_id:client_secret`, exchanged for a bearer token at `GLOSSQL_CATALOG_TOKEN_ENDPOINT` (required with it) and exchanged again when the token nears its stated expiry; `GLOSSQL_CATALOG_SCOPE` as the backend's documentation names it |
 | `GLOSSQL_TABICL_URL` | the kernel service behind the metric-bands walk, `whatif.<scenario>()` and `misfit.<frame>()` — the hosted kernel API, or a `glosskernels` service run beside the server. Unset, those three doors refuse by name and everything else serves |
 | `GLOSSQL_TABICL_TOKEN` | the bearer that service expects: a key the hosted API issued, or whatever a service of your own was started with |
 | `GLOSSQL_TABICL_AUDIENCE` | instead of a token, on GCP: the kernel service's URL. The server mints a Google-signed ID token for it from the metadata server, as the service account it runs as, and refreshes it before it expires — no key anywhere. The kernel service verifies the token and the account (its `GLOSSKERNELS_AUDIENCE` and `GLOSSKERNELS_CALLERS`); Cloud Run checks the same token in front when the service requires authentication |
-| `AWS_ACCESS_KEY_ID` …, `AZURE_STORAGE_ACCOUNT_NAME` … | storage itself needs no glossql variables behind a REST catalog — table loads answer with what FileIO needs. A store that vends nothing, a dev rig or the SQL catalog's warehouse, is configured through the store's standard conventions, read by the storage layer itself: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`; `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_USE_EMULATOR` (with `AZURITE_BLOB_STORAGE_URL` when the emulator is not on the loopback) |
+| `AWS_ACCESS_KEY_ID` …, `AZURE_STORAGE_ACCOUNT_NAME` … | storage has no glossql variables of its own: the warehouse is reached through the store's standard conventions, read by the storage layer itself (or the platform's identity, where the deployment attaches one): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`; `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_USE_EMULATOR` (with `AZURITE_BLOB_STORAGE_URL` when the emulator is not on the loopback) |
 | `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` and `/v1/logs` are appended). Set, the record is also exported there — spans as traces, events as logs, OTLP, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_PROTOCOL` picks the transport, `http/protobuf` (the default) or `grpc`; `OTEL_EXPORTER_OTLP_HEADERS` carries a hosted collector's credentials; `OTEL_RESOURCE_ATTRIBUTES` names the deployment beyond `service.name=glossql`. A platform's managed collector injects the endpoint and the protocol itself — Container Apps' agent does, and speaks gRPC |
 
@@ -194,22 +190,22 @@ it. The server writes nothing outside the workspace directory.
 
 ```
 acme/
-  catalog.sqlite     the Iceberg catalog (absent with GLOSSQL_CATALOG_SQL:
-                     the catalog is then the Postgres server it names)
-  warehouse/         the lake — every table and every declared
-                     relation lives here as Iceberg data
+  catalog.sqlite     the Iceberg catalog and the record — every
+                     declared relation is a table here (absent with
+                     GLOSSQL_CATALOG_SQL: both are then on the Postgres
+                     server it names)
+  warehouse/         the lake — every landed table lives here as
+                     Iceberg data
 ```
 
-The lake is the whole store. There is no separate database for the
-glossary: glosses, functions, witnesses, measurements — every relation
-is an Iceberg table under `warehouse/`, and the workspace directory is
-the complete, copyable state of the system.
+The workspace directory is the complete, copyable state of the
+system: the catalog and the record in one database file, the landed
+tables beside it.
 
-With `GLOSSQL_CATALOG_URI` set, `catalog.sqlite` and `warehouse/` move
-behind the REST catalog and its storage, and with `GLOSSQL_CATALOG_SQL`
-and `GLOSSQL_WAREHOUSE` to the Postgres server and the object store
-they name: the state of the system is then the catalog's warehouse
-and a deployment runs without a directory. Everything else is the same
-lake —
-datasets are namespaces, every relation an Iceberg table, whichever
-side of the connection they live on.
+With `GLOSSQL_CATALOG_SQL` and `GLOSSQL_WAREHOUSE` set, `catalog.sqlite`
+and `warehouse/` move to the Postgres server and the object store they
+name: the state of the system is then that database and that
+warehouse, and a deployment runs without a directory. Everything else
+is the same lake — datasets are namespaces, every landed table an
+Iceberg table, every declared relation a table in the catalog's
+database.

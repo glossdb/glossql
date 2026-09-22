@@ -1,11 +1,12 @@
 //! The workspace data plane: iceberg-rust behind the `Catalog` trait
 //! (SPEC.md §3).
 //!
-//! One `Lake` per workspace, over one of two backends the features
-//! pick: a SQL catalog — SQLite in the workspace directory, or Postgres
-//! named by a URI — plus a local warehouse directory (`sql`), or an
-//! Iceberg REST catalog with its own storage behind it (`rest`,
-//! [`rest::Connection`]). Datasets are namespaces.
+//! One `Lake` per workspace, on the SQL catalog — SQLite in the
+//! workspace directory, or Postgres named by a URI — over a warehouse
+//! on the local disk or in an object store. Datasets are namespaces.
+//! The record (the store's relations) lives in the same database as
+//! the catalog, behind [`Record`]; the lake carries the URI it was
+//! opened on so the store can open the record beside it.
 //! Tables are **created** through [`Lake::create_table`] and dropped
 //! through [`Lake::drop_table`]: the catalog's own async calls, the
 //! table description built the way iceberg-datafusion's
@@ -14,39 +15,31 @@
 //! stalls the whole process once the catalog and the warehouse are
 //! reached over the network. The session mounts
 //! [`IcebergCatalogProvider`] schemas to read. Tables are **written**
-//! through [`Lake::append_batches`], one path for every table the
-//! workspace has:
-//! a landing that materializes a recipe and a store append that records a
-//! gloss differ in what they carry, not in how they commit. Writing here
-//! rather than through the engine is what lets facts ride the snapshot
-//! they describe, and it keeps the write path clear of the engine's
-//! process-wide session state.
+//! through [`Lake::append_batches`], the one path for every landing:
+//! writing here rather than through the engine is what lets facts ride
+//! the snapshot they describe, and it keeps the write path clear of the
+//! engine's process-wide session state.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
 
 use std::collections::HashMap;
-#[cfg(feature = "sql")]
 use std::path::Path;
 use std::sync::Arc;
 
-pub mod metadata;
 mod pushdown;
+pub mod record;
 pub mod storage;
-pub use metadata::{IcebergMetadata, RelationSpec, Row};
 pub use pushdown::PrimitivePushdown;
+pub use record::{Number, Record, RelationSpec, Row};
 pub use storage::ObjectStorageFactory;
-#[cfg(feature = "rest")]
-pub mod rest;
 
 use datafusion::arrow::array::RecordBatch;
-#[cfg(feature = "sql")]
 use iceberg::CatalogBuilder as _;
 use iceberg::arrow::FieldMatchMode;
 use iceberg::arrow::RecordBatchPartitionSplitter;
 use iceberg::arrow::arrow_schema_to_schema_auto_assign_ids;
-#[cfg(feature = "sql")]
 use iceberg::io::LocalFsStorageFactory;
 use iceberg::spec::FormatVersion;
 use iceberg::spec::{DataFile, DataFileFormat};
@@ -61,7 +54,6 @@ use iceberg::writer::partitioning::PartitioningWriter;
 use iceberg::writer::partitioning::fanout_writer::FanoutWriter;
 use iceberg::writer::partitioning::unpartitioned_writer::UnpartitionedWriter;
 use iceberg::{Catalog, NamespaceIdent, TableCreation, TableIdent};
-#[cfg(feature = "sql")]
 use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
 pub use iceberg_datafusion::IcebergCatalogProvider;
 
@@ -73,6 +65,8 @@ pub enum Error {
     Workspace(String),
     #[error(transparent)]
     Iceberg(#[from] iceberg::Error),
+    #[error("record: {0}")]
+    Record(#[from] sqlx::Error),
 }
 
 /// How many times a provider build may be overtaken before the caller is
@@ -83,30 +77,6 @@ pub enum Error {
 /// made stale. Bounded because creates arriving faster than the map can
 /// be assembled is worth reporting rather than looping on.
 const PROVIDER_BUILD_ATTEMPTS: usize = 5;
-
-/// The commit-retry arrangement the store relations are created with.
-///
-/// A store relation is one Iceberg table that every gloss in the
-/// workspace appends to, so writers contend for its metadata pointer far
-/// harder than they ever do for a data table's. Iceberg retries a
-/// conflict itself — reload, re-base, exponential backoff — and the
-/// whole arrangement is read from the table's own properties, which is
-/// why it is set here and not wrapped in a loop of ours.
-///
-/// The count and the curve are one setting, not two. The format's
-/// defaults are four retries backing off towards a minute, tuned for a
-/// remote object store; both halves are wrong here. Four was measured
-/// insufficient — seventeen of twenty-four concurrent writers were
-/// refused — while a minute of sleeping is absurd for a commit that is
-/// a local SQLite update. So: more attempts, over a curve that stays in
-/// the milliseconds, and a total bound so a pathological burst fails
-/// instead of hanging.
-const COMMIT_PROPERTIES: [(&str, &str); 4] = [
-    ("commit.retry.num-retries", "20"),
-    ("commit.retry.min-wait-ms", "20"),
-    ("commit.retry.max-wait-ms", "200"),
-    ("commit.retry.total-timeout-ms", "30000"),
-];
 
 /// Whether a failed commit was refused for conflicting, told by the
 /// error's own kind rather than by its text.
@@ -292,37 +262,28 @@ pub struct Lake {
     /// the reason the others are: a counter copied per clone counts
     /// nothing.
     conflicts: Arc<std::sync::atomic::AtomicU64>,
-    /// How the backend is told a new table's format version. In
-    /// process, `TableCreation`'s own `format_version` field is
-    /// honoured. Over REST that field never crosses the wire (the
-    /// protocol's create request has no such field) and the version
-    /// rides the reserved `format-version` **property** instead,
-    /// interpreted by the server at create and not persisted — the
-    /// same property the in-process metadata builder refuses. One
-    /// fact, two encodings; the constructor that knows the backend
-    /// sets this.
-    version_rides_properties: bool,
+    /// The URI the catalog was opened on — SQLite file or Postgres
+    /// server — and so where the record lives. Carries credentials,
+    /// which is why it is never logged whole.
+    database: String,
 }
 
 impl Lake {
     /// The lake over a built catalog — everything below the
-    /// constructors runs on the trait, whichever backend built it.
-    /// `version_rides_properties`: see the field.
-    #[cfg(any(feature = "sql", feature = "rest"))]
-    fn over(catalog: Arc<dyn Catalog>, version_rides_properties: bool) -> Self {
+    /// constructor runs on the trait.
+    fn over(catalog: Arc<dyn Catalog>, database: String) -> Self {
         Lake {
             catalog,
             provider: Arc::new(std::sync::RwLock::new(None)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            version_rides_properties,
+            database,
         }
     }
 
     /// Open (creating on first use) the workspace data plane on the
     /// workspace directory's own SQLite file.
-    #[cfg(feature = "sql")]
     pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
         if let Some(parent) = catalog_db.parent()
             && !parent.as_os_str().is_empty()
@@ -352,7 +313,6 @@ impl Lake {
     /// numbers its parameters, SQLite takes question marks. The catalog
     /// URI carries credentials, so it is never logged whole here or
     /// anywhere.
-    #[cfg(feature = "sql")]
     pub async fn open_sql(catalog_uri: &str, warehouse: &str) -> Result<Self> {
         let (scheme, _) = catalog_uri.split_once(':').ok_or_else(|| {
             Error::Workspace(format!(
@@ -388,11 +348,17 @@ impl Lake {
                 .with_storage_factory(Arc::new(ObjectStorageFactory)),
         };
         let catalog = builder.load("glossql", HashMap::new()).await?;
-        Ok(Lake::over(Arc::new(catalog), false))
+        Ok(Lake::over(Arc::new(catalog), catalog_uri.to_string()))
     }
 
     pub fn catalog(&self) -> Arc<dyn Catalog> {
         Arc::clone(&self.catalog)
+    }
+
+    /// The database the catalog is on, as the URI it was opened with:
+    /// where the record opens its tables.
+    pub fn database(&self) -> &str {
+        &self.database
     }
 
     /// Create the dataset's namespace if it is missing; `true` = created.
@@ -431,15 +397,9 @@ impl Lake {
         let version = schema.calc_min_compatible_format().max(FormatVersion::V2);
         let creation = TableCreation::builder()
             .name(table.to_string())
-            .schema(schema);
-        // How the backend is told the version: `version_rides_properties`.
-        let creation = if self.version_rides_properties {
-            creation
-                .properties([("format-version".to_string(), (version as u8).to_string())])
-                .build()
-        } else {
-            creation.format_version(version).build()
-        };
+            .schema(schema)
+            .format_version(version)
+            .build();
         self.catalog
             .create_table(&NamespaceIdent::new(dataset.to_string()), creation)
             .await?;

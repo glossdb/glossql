@@ -20,8 +20,8 @@ pub const USAGE: &str = "usage: glossql [--workspace <dir>] [--addr <ip:port>] \
 --workspace is the laptop's shape: the directory holding the catalog \
 and the warehouse. GLOSSQL_CATALOG_SQL names the catalog on a Postgres server \
 (postgres://…), GLOSSQL_WAREHOUSE the warehouse in an object store \
-(s3://…, gs://…, abfss://…), GLOSSQL_CATALOG_URI a REST catalog with both \
-behind it; a deployment names them and runs without a directory.\n\
+(s3://…, gs://…, abfss://…); a deployment names them and runs without a \
+directory.\n\
 every other flag has a variable named after it, the flag winning: \
 GLOSSQL_ADDR, GLOSSQL_ROW_CAP, GLOSSQL_CUBE_CACHE, GLOSSQL_MEMORY_LIMIT, \
 GLOSSQL_SPILL_LIMIT.\n\
@@ -32,9 +32,8 @@ unset, those three doors refuse by name and everything else serves.\n\
 the authorization arrangement is read from .env or the environment: \
 GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
 — or GLOSSQL_INSECURE_OPEN=true serves the doors without authentication, \
-every caller recorded as insecure_dev_mode (the name is the warning); \
-so is the catalog connection, when there is one: GLOSSQL_CATALOG_URI, \
-GLOSSQL_CATALOG_WAREHOUSE and its authentication (see .env.example)";
+every caller recorded as insecure_dev_mode (the name is the warning) \
+(see .env.example)";
 
 /// The command line as typed. `workspace` decides whether `.env` is
 /// read, so the flags are parsed before the environment is.
@@ -131,19 +130,15 @@ pub struct Kernel {
     pub audience: Option<String>,
 }
 
-/// The workspace data plane: the REST catalog when the environment
-/// names one, the SQL catalog otherwise — on the Postgres server the
-/// environment names, or the workspace directory's own SQLite file.
-/// One backend serves a run. A laptop names a directory and it holds
-/// the catalog and the warehouse; a deployment names both in the
-/// environment and has no directory at all.
-pub enum Catalog {
-    #[cfg(feature = "rest")]
-    Rest(glossql_catalog::rest::Connection),
-    /// The catalog URI carries the credentials; the warehouse carries
-    /// none.
-    #[cfg(feature = "sql")]
-    Sql { catalog: String, warehouse: String },
+/// The workspace data plane: the SQL catalog on the Postgres server
+/// the environment names, or the workspace directory's own SQLite
+/// file. A laptop names a directory and it holds the catalog and the
+/// warehouse; a deployment names both in the environment and has no
+/// directory at all. The catalog URI carries the credentials; the
+/// warehouse carries none.
+pub struct Catalog {
+    pub catalog: String,
+    pub warehouse: String,
 }
 
 impl Config {
@@ -255,103 +250,35 @@ fn allowed_hosts(audience: &str) -> Vec<String> {
 }
 
 impl Catalog {
+    /// The SQL catalog: on the Postgres server `GLOSSQL_CATALOG_SQL`
+    /// names, or the workspace directory's own SQLite file; the
+    /// warehouse at the location `GLOSSQL_WAREHOUSE` names in an object
+    /// store, or under the workspace directory. Without a directory the
+    /// environment has to name both.
     fn from(
         var: &impl Fn(&str) -> Option<String>,
         workspace: Option<&std::path::Path>,
     ) -> Result<Catalog, String> {
-        #[cfg(feature = "rest")]
-        if let Some(connection) = rest_from(var)? {
-            return Ok(Catalog::Rest(connection));
-        }
-        sql_from(var, workspace)
+        let catalog = match (var("GLOSSQL_CATALOG_SQL"), workspace) {
+            (Some(uri), _) => uri.trim().to_string(),
+            (None, Some(dir)) => {
+                format!("sqlite:{}?mode=rwc", dir.join("catalog.sqlite").display())
+            }
+            (None, None) => return Err(NO_WORKSPACE.into()),
+        };
+        let warehouse = match (var("GLOSSQL_WAREHOUSE"), workspace) {
+            (Some(location), _) => location.trim().to_string(),
+            (None, Some(dir)) => dir.join("warehouse").display().to_string(),
+            (None, None) => return Err(NO_WORKSPACE.into()),
+        };
+        Ok(Catalog { catalog, warehouse })
     }
 }
 
 /// What a run without a workspace directory is told when the
 /// environment does not name the state either.
-#[cfg(feature = "sql")]
 const NO_WORKSPACE: &str = "--workspace is required while the catalog or the warehouse lives \
 in it: name both GLOSSQL_CATALOG_SQL and GLOSSQL_WAREHOUSE, or the directory";
-
-/// The SQL catalog: on the Postgres server `GLOSSQL_CATALOG_SQL` names,
-/// or the workspace directory's own SQLite file; the warehouse at the
-/// location `GLOSSQL_WAREHOUSE` names in an object store, or under the
-/// workspace directory. Without a directory the environment has to
-/// name both.
-#[cfg(feature = "sql")]
-fn sql_from(
-    var: &impl Fn(&str) -> Option<String>,
-    workspace: Option<&std::path::Path>,
-) -> Result<Catalog, String> {
-    let catalog = match (var("GLOSSQL_CATALOG_SQL"), workspace) {
-        (Some(uri), _) => uri.trim().to_string(),
-        (None, Some(dir)) => format!("sqlite:{}?mode=rwc", dir.join("catalog.sqlite").display()),
-        (None, None) => return Err(NO_WORKSPACE.into()),
-    };
-    let warehouse = match (var("GLOSSQL_WAREHOUSE"), workspace) {
-        (Some(location), _) => location.trim().to_string(),
-        (None, Some(dir)) => dir.join("warehouse").display().to_string(),
-        (None, None) => return Err(NO_WORKSPACE.into()),
-    };
-    Ok(Catalog::Sql { catalog, warehouse })
-}
-
-#[cfg(not(feature = "sql"))]
-fn sql_from(
-    _var: &impl Fn(&str) -> Option<String>,
-    _workspace: Option<&std::path::Path>,
-) -> Result<Catalog, String> {
-    Err("this build carries no local catalog — set GLOSSQL_CATALOG_URI (see .env.example)".into())
-}
-
-/// The catalog connection the environment describes, `None` without
-/// `GLOSSQL_CATALOG_URI`: a URI names its warehouse and exactly one way
-/// to authenticate, and a credential names where it is exchanged.
-#[cfg(feature = "rest")]
-fn rest_from(
-    var: &impl Fn(&str) -> Option<String>,
-) -> Result<Option<glossql_catalog::rest::Connection>, String> {
-    use glossql_catalog::rest::{Auth as CatalogAuth, Connection};
-    let Some(uri) = var("GLOSSQL_CATALOG_URI") else {
-        return Ok(None);
-    };
-    let warehouse = var("GLOSSQL_CATALOG_WAREHOUSE").ok_or(
-        "GLOSSQL_CATALOG_WAREHOUSE is not set — a REST catalog connection names its warehouse",
-    )?;
-    let auth = match (
-        var("GLOSSQL_CATALOG_TOKEN"),
-        var("GLOSSQL_CATALOG_CREDENTIAL"),
-    ) {
-        (Some(token), None) => CatalogAuth::Token(token),
-        (None, Some(credential)) => CatalogAuth::ClientCredentials {
-            credential,
-            token_endpoint: var("GLOSSQL_CATALOG_TOKEN_ENDPOINT").ok_or(
-                "GLOSSQL_CATALOG_TOKEN_ENDPOINT is not set — a credential is exchanged at its \
-                 authorization server's token endpoint",
-            )?,
-            scope: var("GLOSSQL_CATALOG_SCOPE"),
-        },
-        (Some(_), Some(_)) => {
-            return Err(
-                "GLOSSQL_CATALOG_TOKEN and GLOSSQL_CATALOG_CREDENTIAL are both set — \
-                 one of them authenticates the catalog connection"
-                    .into(),
-            );
-        }
-        (None, None) => {
-            return Err(
-                "neither GLOSSQL_CATALOG_TOKEN nor GLOSSQL_CATALOG_CREDENTIAL is set — \
-                 the catalog connection has nothing to authenticate with"
-                    .into(),
-            );
-        }
-    };
-    Ok(Some(Connection {
-        uri,
-        warehouse,
-        auth,
-    }))
-}
 
 #[cfg(test)]
 mod tests {
@@ -469,74 +396,6 @@ mod tests {
         assert!(!super::open(&env(Some("1"))));
         assert!(!super::open(&env(Some("TRUE"))));
         assert!(!super::open(&env(Some("false"))));
-    }
-
-    /// The catalog connection comes from the environment whole, or not
-    /// at all: no URI is the local catalog, a URI must name its
-    /// warehouse and exactly one way to authenticate, and a credential
-    /// must name where it is exchanged. Each refusal names the missing
-    /// variable.
-    #[cfg(feature = "rest")]
-    #[test]
-    fn the_catalog_connection_is_read_whole_or_not_at_all() {
-        use super::Catalog;
-        use glossql_catalog::rest::Auth as CatalogAuth;
-
-        #[cfg(feature = "sql")]
-        assert!(
-            matches!(
-                read(&[], &[]).expect("readable").catalog,
-                Catalog::Sql { .. }
-            ),
-            "no URI is the local catalog"
-        );
-
-        let bare = read(&[], &[("GLOSSQL_CATALOG_URI", "https://c.test")]);
-        assert!(refusal(bare).contains("GLOSSQL_CATALOG_WAREHOUSE"));
-
-        let unauthenticated = read(
-            &[],
-            &[
-                ("GLOSSQL_CATALOG_URI", "https://c.test"),
-                ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
-            ],
-        );
-        assert!(refusal(unauthenticated).contains("GLOSSQL_CATALOG_TOKEN"));
-
-        let token = read(
-            &[],
-            &[
-                ("GLOSSQL_CATALOG_URI", "https://c.test"),
-                ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
-                ("GLOSSQL_CATALOG_TOKEN", "tok"),
-            ],
-        )
-        .expect("readable");
-        assert!(matches!(
-            token.catalog,
-            Catalog::Rest(c) if matches!(&c.auth, CatalogAuth::Token(t) if t == "tok")
-        ));
-
-        let endpointless = read(
-            &[],
-            &[
-                ("GLOSSQL_CATALOG_URI", "https://c.test"),
-                ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
-                ("GLOSSQL_CATALOG_CREDENTIAL", "id:secret"),
-            ],
-        );
-        assert!(refusal(endpointless).contains("GLOSSQL_CATALOG_TOKEN_ENDPOINT"));
-
-        let both = read(
-            &[],
-            &[
-                ("GLOSSQL_CATALOG_URI", "https://c.test"),
-                ("GLOSSQL_CATALOG_WAREHOUSE", "w1"),
-                ("GLOSSQL_CATALOG_TOKEN", "tok"),
-                ("GLOSSQL_CATALOG_CREDENTIAL", "id:secret"),
-            ],
-        );
-        assert!(refusal(both).contains("both set"));
     }
 
     /// Two budgets, two numbers, and neither borrows the other's

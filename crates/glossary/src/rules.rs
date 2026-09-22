@@ -6,8 +6,8 @@
 //! decision nobody can read.
 //!
 //! [`latest_by`] takes the ordering column as a closure, so the same
-//! rule serves any backend's ordering — Iceberg v3's
-//! `_last_updated_sequence_number` today — without being rewritten.
+//! rule serves any backend's ordering — the record's identity column
+//! today — without being rewritten.
 //! While the rule lives inside a SQL `NOT EXISTS`, it has to be
 //! reimplemented for every backend that carries it.
 

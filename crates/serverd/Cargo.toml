@@ -9,23 +9,14 @@ repository.workspace = true
 name = "glossql"
 path = "src/main.rs"
 
-# Which catalog backend the binary carries — the default carries both
-# and the environment picks at start (`GLOSSQL_CATALOG_URI` set =
-# rest). A rest-only build (`--no-default-features --features rest`)
-# leaves sqlite and sqlx out of the binary; a sql-only one
-# (`--no-default-features --features sql`) leaves the REST client and
-# the S3 stack out. No model rides the binary on any build: the three
-# model doors call the kernel service `GLOSSQL_TABICL_URL` names.
-[features]
-default = ["sql", "rest"]
-sql = ["glossql-catalog/sql"]
-rest = ["glossql-catalog/rest"]
+# No model rides the binary: the three model doors call the kernel
+# service `GLOSSQL_TABICL_URL` names.
 
 [dependencies]
 glossql-glossary = { path = "../glossary" }
 glossql-session = { path = "../session" }
 glossql-apps = { path = "../apps" }
-glossql-catalog = { path = "../catalog", default-features = false }
+glossql-catalog = { path = "../catalog" }
 glossql-scripts = { path = "../scripts" }
 glossql-parser = { path = "../parser" }
 datafusion = { workspace = true }
