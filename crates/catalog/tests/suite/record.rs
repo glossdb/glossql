@@ -154,6 +154,22 @@ async fn a_number_column_is_a_number_and_crosses_as_its_text() {
     assert_eq!(rows[0].get(3), Some("42"));
     assert_eq!(rows[0].get(4), Some("0.5"));
     assert_eq!(rows[1].get(3), None, "a missing number is NULL, not zero");
+    // The other order too: a missing number first, then one — the
+    // statement text differs by what is bound, so neither prepared
+    // shape stands in for the other.
+    rel.append(
+        "glossary",
+        vec![vec![
+            Some("fin".into()),
+            Some("items".into()),
+            Some("{}".into()),
+            Some("7".into()),
+            Some("1".into()),
+        ]],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rel.scan("glossary").await.unwrap()[2].get(3), Some("7"));
 
     let refused = rel
         .append(
@@ -176,7 +192,7 @@ async fn a_number_column_is_a_number_and_crosses_as_its_text() {
     );
     assert_eq!(
         rel.scan("glossary").await.unwrap().len(),
-        2,
+        3,
         "nothing landed"
     );
 }

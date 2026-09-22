@@ -133,3 +133,55 @@ async fn live_sql_catalog_round_trip() {
             .expect("a lookup")
     );
 }
+
+/// The record on the same server: a row with a missing number lands
+/// before a row with one, in one relation. Postgres types a prepared
+/// statement's parameters at first use and keeps them, so the shape is
+/// the one the typeless SQLite suite cannot see.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a Postgres server: GLOSSQL_E2E_CATALOG_SQL"]
+async fn live_sql_record_lands_a_missing_number_before_a_number() {
+    use glossql_catalog::{Number, Record, RelationSpec};
+
+    let Some(uri) = std::env::var("GLOSSQL_E2E_CATALOG_SQL")
+        .ok()
+        .filter(|v| !v.is_empty())
+    else {
+        eprintln!("skipping: GLOSSQL_E2E_CATALOG_SQL is not set");
+        return;
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock")
+        .as_millis();
+    let name: &'static str = Box::leak(format!("e2e_witnesses_{stamp}").into_boxed_str());
+    let spec = RelationSpec {
+        name,
+        columns: &["name", "aspect", "speakers", "detector", "threshold"],
+        numbers: &[("threshold", Number::Real)],
+    };
+    let record = Record::open(&uri, std::slice::from_ref(&spec))
+        .await
+        .expect("the record on the server");
+    let row = |name: &str, threshold: Option<&str>| -> Vec<Option<String>> {
+        vec![
+            Some(name.into()),
+            Some("meaning".into()),
+            None,
+            Some("slot_entropy".into()),
+            threshold.map(str::to_string),
+        ]
+    };
+    record
+        .append(name, vec![row("first", None)])
+        .await
+        .expect("a missing threshold lands");
+    record
+        .append(name, vec![row("second", Some("0.7"))])
+        .await
+        .expect("a threshold lands after a missing one, in the same relation");
+    let rows = record.scan(name).await.expect("a read");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get(4), None);
+    assert_eq!(rows[1].get(4), Some("0.7"));
+}

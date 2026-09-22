@@ -280,19 +280,36 @@ impl Record {
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let placeholders = (0..spec.columns.len())
-            .map(|i| self.bind.placeholder(i))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "INSERT INTO {} ({columns}) VALUES ({placeholders})",
-            table(relation)
-        );
         let mut tx = self.pool.begin().await?;
         for row in &rows {
+            // A missing cell is the literal NULL in the statement, never a
+            // bound null: the `any` driver types a bound null on its own
+            // (a double's null goes out as a float4's), and Postgres
+            // holds that type in the prepared statement for every later
+            // bind of the same text. The text varies with the null
+            // pattern instead, and each variant is prepared with the
+            // types of what it actually binds.
+            let mut values = Vec::with_capacity(spec.columns.len());
+            let mut bound = 0;
+            for i in 0..spec.columns.len() {
+                values.push(match row.get(i) {
+                    Some(Some(_)) => {
+                        bound += 1;
+                        self.bind.placeholder(bound - 1)
+                    }
+                    _ => "NULL".to_string(),
+                });
+            }
+            let sql = format!(
+                "INSERT INTO {} ({columns}) VALUES ({})",
+                table(relation),
+                values.join(", ")
+            );
             let mut query = sqlx::query(&sql);
             for (i, column) in spec.columns.iter().enumerate() {
-                let cell = row.get(i).cloned().flatten();
+                let Some(cell) = row.get(i).cloned().flatten() else {
+                    continue;
+                };
                 query = match spec.number(column) {
                     None => query.bind(cell),
                     Some(Number::Integer) => query.bind(parse::<i64>(relation, column, cell)?),
@@ -325,17 +342,10 @@ impl Record {
 /// A number column's cell, parsed as the number the database holds it
 /// as. The writer owns the shape: text that is not a number is its
 /// error, named here rather than stored as one.
-fn parse<T: std::str::FromStr>(
-    relation: &str,
-    column: &str,
-    cell: Option<String>,
-) -> crate::Result<Option<T>> {
-    cell.map(|s| {
-        s.parse::<T>().map_err(|_| {
-            crate::Error::Workspace(format!(
-                "`{relation}.{column}` is a number and `{s}` is not one"
-            ))
-        })
+fn parse<T: std::str::FromStr>(relation: &str, column: &str, cell: String) -> crate::Result<T> {
+    cell.parse::<T>().map_err(|_| {
+        crate::Error::Workspace(format!(
+            "`{relation}.{column}` is a number and `{cell}` is not one"
+        ))
     })
-    .transpose()
 }
