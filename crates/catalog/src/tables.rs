@@ -356,7 +356,7 @@ pub(crate) async fn pin(
         .join(", ");
     let columns = sqlx::query(&format!(
         "SELECT table_id, column_id, parent_column, column_order, column_name, column_type, \
-         CAST(nulls_allowed AS BIGINT) FROM ducklake_column WHERE table_id IN ({list}) \
+         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT) FROM ducklake_column WHERE table_id IN ({list}) \
          AND end_snapshot IS NULL ORDER BY table_id, column_order"
     ))
     .fetch_all(db.pool())
@@ -674,7 +674,7 @@ pub(crate) async fn unschedule(db: &Db, file_id: i64) -> Result<()> {
 async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnRow>> {
     let rows = sqlx::query(&db.sql(
         "SELECT column_id, parent_column, column_order, column_name, column_type, \
-         CAST(nulls_allowed AS BIGINT) FROM ducklake_column WHERE table_id = ? \
+         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT) FROM ducklake_column WHERE table_id = ? \
          AND end_snapshot IS NULL ORDER BY column_order",
     ))
     .bind(table_id)

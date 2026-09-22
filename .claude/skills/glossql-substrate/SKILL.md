@@ -344,7 +344,8 @@ mounted catalog (`crates/catalog/src/scan.rs`, `Mount`) *is* a
   `glossql-import` folds every source type into, spelled in the
   column rows in the specification's vocabulary.
 - **The `any` driver reads no booleans on SQLite.** A boolean column
-  is read as `CAST(… AS BIGINT)`; a timestamp or a uuid is written as
+  is read as `CAST(CAST(… AS INTEGER) AS BIGINT)` — Postgres casts a
+  boolean to an integer, never straight to a bigint; a timestamp or a uuid is written as
   a literal, never bound, so the prepared statement's parameter types
   agree on both dialects.
 
