@@ -328,6 +328,15 @@ pub const RELATIONS: &[Relation] = &[
         numbers: &[("snapshot_id", glossql_catalog::Number::Integer)],
         key: &[],
     },
+    // One row per landing, written by the landing beside its commit
+    // and outliving the files it read. `dropped_rows_count` is decided
+    // at the landing, never re-derived: only the import knows the
+    // recipe's shape, and NULL is the honest answer often enough to be
+    // a value. `source_scans` is per-scan deliberately — a sum across
+    // a join reads as "what was read" and is not — it fabricates
+    // phantom dropped rows. `files` is what the landing read (path,
+    // size, modified), which a later `IMPORT` leaves out; `version` is
+    // the table version the landing made.
     Relation {
         name: "imports",
         columns: &[
@@ -338,14 +347,10 @@ pub const RELATIONS: &[Relation] = &[
             "dropped_rows_count",
             "cast_failures",
             "imported_at",
+            "files",
+            "version",
         ],
-        // Served from snapshots and their properties. `dropped_rows_count`
-        // is decided at the landing, never re-derived: only the import
-        // knows the recipe's shape, and NULL is the honest answer often
-        // enough to be a value. `source_scans` is per-scan deliberately —
-        // a sum across a join reads as "what was read" and is not —
-        // it fabricates phantom dropped rows.
-        numbers: &[],
+        numbers: &[("version", glossql_catalog::Number::Integer)],
         key: &[],
     },
     Relation {
@@ -372,12 +377,19 @@ pub const RELATIONS: &[Relation] = &[
         numbers: &[],
         key: &["name"],
     },
-    // Served from the namespace list; settings ride as a property.
     Relation {
         name: "datasets",
         columns: &["name", "settings"],
         numbers: &[],
-        key: &[],
+        key: &["name"],
+    },
+    // The recipe behind a landed table: one current row per table,
+    // a re-declaration superseding it.
+    Relation {
+        name: "recipes",
+        columns: &["dataset", "table_name", "source", "sql"],
+        numbers: &[],
+        key: &["dataset", "table_name"],
     },
     // First across: no supersession of its own, one writer,
     // one reader.
@@ -423,33 +435,19 @@ const STORE_NAMESPACE: &str = "glossql";
 /// either would have no page on the human doors.
 const RESERVED_DATASETS: [&str; 3] = [STORE_NAMESPACE, "mcp", "assets"];
 
-/// Facts ride what they describe: a dataset's settings on its namespace,
-/// a recipe on its table, a landing's source-side facts on its snapshot.
-const SETTINGS_PROP: &str = "glossql.settings";
-const RECIPE_SOURCE_PROP: &str = "glossql.recipe.source";
-const RECIPE_SQL_PROP: &str = "glossql.recipe.sql";
-pub const LANDING_SCANS_PROP: &str = "glossql.source-scans";
-pub const LANDING_DROPPED_PROP: &str = "glossql.dropped-rows";
-pub const LANDING_CASTS_PROP: &str = "glossql.cast-failures";
-/// The source files a landing read — what a later import leaves out.
-pub const LANDING_FILES_PROP: &str = "glossql.source-files";
-
 /// The record, opened on the catalog's database with every stored
 /// relation's shape. The shapes come from [`RELATIONS`], so a relation
 /// added there is a table there and nothing else.
 async fn open_record(lake: &Lake) -> Result<Arc<glossql_catalog::Record>> {
-    // `datasets` and `imports` are the lake's own record, composed at
-    // read — no table of ours carries them.
     let stored: Vec<glossql_catalog::RelationSpec> = RELATIONS
         .iter()
-        .filter(|r| !matches!(r.name, "datasets" | "imports"))
         .map(|r| glossql_catalog::RelationSpec {
             name: r.name,
             columns: r.columns,
             numbers: r.numbers,
         })
         .collect();
-    let record = glossql_catalog::Record::open(lake.database(), &stored).await?;
+    let record = glossql_catalog::Record::open(&lake.db(), &stored).await?;
     Ok(Arc::new(record))
 }
 
@@ -538,13 +536,7 @@ impl Store {
             .map(|(d, _, _)| d.clone())
             .collect::<std::collections::BTreeSet<_>>()
         {
-            let landings = self
-                .lake
-                .landings(&dataset)
-                .await?
-                .into_iter()
-                .map(|l| (l.table, l.committed_at))
-                .collect();
+            let landings = self.landings(&dataset).await?;
             landed.insert(dataset, landings);
         }
         let approvals_pending = approvals
@@ -625,16 +617,12 @@ impl Store {
         if RESERVED_DATASETS.contains(&name) {
             return Err(Error::ReservedDatasetName(name.into()));
         }
-        self.lake
-            .ensure_namespace(
-                name,
-                std::collections::HashMap::from([(
-                    SETTINGS_PROP.to_string(),
-                    settings_json(&decl.settings),
-                )]),
-            )
-            .await?;
-        Ok(())
+        self.lake.ensure_dataset(name).await?;
+        self.put_unless_current(
+            "datasets",
+            vec![Some(name.to_string()), Some(settings_json(&decl.settings))],
+        )
+        .await
     }
 
     /// Statement identity is content (SPEC.md §3): an unchanged recipe is a
@@ -675,34 +663,113 @@ impl Store {
         })
     }
 
-    /// The recipe rides its table as properties: one per (dataset,
-    /// table), outright replacement, no actor — and it cannot outlive or
-    /// precede the table it describes.
+    /// The recipe as a row: one current row per (dataset, table), a
+    /// re-declaration the later row, no actor.
     pub async fn put_recipe(&self, decl: &RecipeDecl) -> Result<()> {
-        self.lake
-            .set_table_properties(
-                decl.dataset.value.as_str(),
-                decl.table.value.as_str(),
-                std::collections::HashMap::from([
-                    (RECIPE_SOURCE_PROP.to_string(), decl.source.value.clone()),
-                    (RECIPE_SQL_PROP.to_string(), decl.sql.clone()),
-                ]),
-            )
-            .await
-            .map_err(Error::from)
+        self.put_unless_current(
+            "recipes",
+            vec![
+                Some(decl.dataset.value.clone()),
+                Some(decl.table.value.clone()),
+                Some(decl.source.value.clone()),
+                Some(decl.sql.clone()),
+            ],
+        )
+        .await
     }
 
+    /// The table's current recipe, or none when nothing declared it.
     pub async fn recipe(&self, dataset: &str, table: &str) -> Result<Option<RecipeRow>> {
-        let Some(props) = self.lake.table_properties(dataset, table).await? else {
-            return Ok(None);
-        };
-        match (props.get(RECIPE_SOURCE_PROP), props.get(RECIPE_SQL_PROP)) {
-            (Some(source), Some(sql)) => Ok(Some(RecipeRow {
-                source: source.clone(),
-                sql: sql.clone(),
-            })),
-            _ => Ok(None),
+        Ok(self
+            .record
+            .scan_where("recipes", "dataset", dataset)
+            .await?
+            .into_iter()
+            .rfind(|r| r.get(1) == Some(table))
+            .map(|r| RecipeRow {
+                source: r.get(2).unwrap_or_default().to_string(),
+                sql: r.get(3).unwrap_or_default().to_string(),
+            }))
+    }
+
+    /// One landing as a row of `imports`, written beside the commit it
+    /// describes; `files` are `(path, size, modified)` as the source
+    /// listed them.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn put_import(
+        &self,
+        dataset: &str,
+        table: &str,
+        source_scans: String,
+        landed_rows: u64,
+        dropped_rows: Option<u64>,
+        cast_failures: String,
+        files: &[(String, u64, String)],
+        version: i64,
+    ) -> Result<()> {
+        let files = Value::Array(
+            files
+                .iter()
+                .map(|(path, size, modified)| serde_json::json!([path, size, modified]))
+                .collect(),
+        );
+        self.put(
+            "imports",
+            vec![
+                Some(dataset.to_string()),
+                Some(table.to_string()),
+                Some(source_scans),
+                Some(landed_rows.to_string()),
+                dropped_rows.map(|n| n.to_string()),
+                Some(cast_failures),
+                Some(now_utc()),
+                Some(files.to_string()),
+                Some(version.to_string()),
+            ],
+        )
+        .await
+    }
+
+    /// Every file a landing of `dataset.table` read, across its
+    /// landings — what the next `IMPORT` leaves out.
+    pub async fn landed_files(
+        &self,
+        dataset: &str,
+        table: &str,
+    ) -> Result<Vec<(String, u64, String)>> {
+        let mut out = Vec::new();
+        for row in self
+            .record
+            .scan_where("imports", "dataset", dataset)
+            .await?
+        {
+            if row.get(1) != Some(table) {
+                continue;
+            }
+            let files: Vec<(String, u64, String)> = row
+                .get(7)
+                .map(|json| serde_json::from_str(json).map_err(|e| Error::Corrupt(e.to_string())))
+                .transpose()?
+                .unwrap_or_default();
+            out.extend(files);
         }
+        Ok(out)
+    }
+
+    /// The dataset's landings as `(table, imported_at)`.
+    pub async fn landings(&self, dataset: &str) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .record
+            .scan_where("imports", "dataset", dataset)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get(1).unwrap_or_default().to_string(),
+                    r.get(6).unwrap_or_default().to_string(),
+                )
+            })
+            .collect())
     }
 
     pub async fn source_settings(&self, name: &str) -> Result<Option<Value>> {
@@ -1362,9 +1429,8 @@ impl Store {
     // -- SQL forwarded from the session ----------------------------------
 
     /// `DELETE FROM glossary …` — the strike (SPEC.md §5.2). Parked:
-    /// iceberg-rust has no delete write path, so the substrate cannot
-    /// commit a row removal and the refusal names the item instead of
-    /// pretending.
+    /// removal on an append-only record is a language question (§9),
+    /// and the refusal names the item instead of pretending.
     pub async fn forward_delete(&self, target: &str) -> Result<u64> {
         if target != "glossary" {
             return Err(Error::ForwardRejected(target.into()));
@@ -1438,13 +1504,6 @@ impl Store {
         let Some(relation) = RELATIONS.iter().find(|r| r.name == table) else {
             return Err(Error::ForwardRejected(table.into()));
         };
-        // Two relations are the lake's own record, composed rather than
-        // stored: datasets are the namespaces, imports are the snapshots.
-        match relation.name {
-            "datasets" => return self.dataset_rows().await,
-            "imports" => return self.import_rows().await,
-            _ => {}
-        }
         self.lake_rows(relation).await
     }
 
@@ -1455,51 +1514,7 @@ impl Store {
     }
 
     pub async fn dataset_exists(&self, name: &str) -> Result<bool> {
-        // One existence query, not the whole workspace. `namespaces()`
-        // lists every namespace and then reads the properties of each to
-        // answer a question that never looks at them.
-        Ok(self.lake.namespace_exists(name).await?)
-    }
-
-    async fn dataset_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
-        let mut rows: Vec<_> = self
-            .lake
-            .namespaces()
-            .await?
-            .into_iter()
-            .map(|(name, props)| {
-                vec![
-                    Some(name),
-                    Some(
-                        props
-                            .get(SETTINGS_PROP)
-                            .cloned()
-                            .unwrap_or_else(|| "{}".into()),
-                    ),
-                ]
-            })
-            .collect();
-        rows.sort();
-        Ok(rows)
-    }
-
-    async fn import_rows(&self) -> Result<Vec<Vec<Option<String>>>> {
-        let mut rows = Vec::new();
-        for (dataset, _) in self.lake.namespaces().await? {
-            for l in self.lake.landings(&dataset).await? {
-                rows.push(vec![
-                    Some(l.dataset),
-                    Some(l.table),
-                    l.properties.get(LANDING_SCANS_PROP).cloned(),
-                    l.added_records.map(|n| n.to_string()),
-                    l.properties.get(LANDING_DROPPED_PROP).cloned(),
-                    l.properties.get(LANDING_CASTS_PROP).cloned(),
-                    Some(l.committed_at),
-                ]);
-            }
-        }
-        rows.sort();
-        Ok(rows)
+        Ok(self.lake.dataset_exists(name).await?)
     }
 
     /// The statement's read context: the store resolved once. The

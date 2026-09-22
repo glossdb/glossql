@@ -4,7 +4,7 @@ A declarative context language over a SQL host, and a server that speaks
 it. The language describes a dataset — sources, tables, relationships,
 meanings, checks — so that agents and humans work on the same data with
 the same context. The server is one Rust binary with the query engine
-(DataFusion) and the table format (Iceberg) in-process. An agent
+(DataFusion) in-process and its own catalog beside it. An agent
 connects over MCP, lands data, and builds the dataset's glossary;
 questions the data cannot answer go to a human, and the answer is
 stored as part of the record.
@@ -40,18 +40,20 @@ an aspect onto a subject; `GLOSSARY()` is the read.
   query and the data. Work arrives as statements and SQL, the engine
   plans all of it, and it uses all available cores and memory.
   Isolation is deployment's job: one workspace per VM.
-- **History is rows, never an update.** Every landed table is an
-  Iceberg table and every landing a snapshot; every gloss, ruling and
-  declaration is a row in the record, superseded by a later row and
-  never overwritten. There is no separate version-control system to
-  operate: history and audit are reads, and each gloss stores the
-  subject table's snapshot id, so it is always clear which data a
-  claim was measured against.
+- **History is rows, never an update.** Every landing gives its
+  table a new version and one row of the record; every gloss, ruling
+  and declaration is a row in the record, superseded by a later row
+  and never overwritten. There is no separate version-control system
+  to operate: history and audit are reads, and each gloss stores the
+  subject table's version, so it is always clear which data a claim
+  was measured against.
 
 The integration points are standard: sources land by recipe from files
 or over ADBC (the SQL runs at the source), reads are served as Arrow
-IPC over plain HTTP, and the lake is ordinary Iceberg on a SQL
-catalog — SQLite for development, Postgres in production.
+IPC over plain HTTP, and the lake is parquet files under a catalog
+of rows in the shapes the DuckLake specification names — on SQLite for
+development, on Postgres in production — readable by any DuckLake
+client.
 
 ## Why a grammar and JSON Schemas
 
@@ -102,11 +104,11 @@ the typed table and import is a filter, not an ETL step.
 
 ## The server
 
-A Rust workspace (`crates/`) on DataFusion and Iceberg: `parser`
-(the grammar over DataFusion's parser), `glossary` (the store —
-slots, supersession, admission, collapse), `session` (statement
-routing, a channel per call), `catalog` + `import`
-(the Iceberg lake and recipe execution), `scripts` (the native
+A Rust workspace (`crates/`) on DataFusion: `parser` (the grammar
+over DataFusion's parser), `glossary` (the store — slots,
+supersession, admission, collapse), `session` (statement routing, a
+channel per call), `catalog` + `import` (the lake — the catalog's
+tables, the files, the record — and recipe execution), `scripts` (the native
 kernels and the reference library), `apps` (server-rendered data
 apps from declarative artifacts), `serverd` (the doors).
 
@@ -163,7 +165,7 @@ agent judges; the false positives stay visible in the measurement.
 
 A Rust workspace. `cargo build -p glossql-serverd` builds the server;
 use `--release` to run it for real. The dependency tree is heavy —
-DataFusion, Iceberg — and the parallel build needs memory:
+DataFusion — and the parallel build needs memory:
 measured cold on a 15-core machine, compiler memory peaks at ~6 GB for
 a dev build and ~9 GB for release, with single compile units up to
 ~2.6 GB. If the build dies without a compiler error, the OOM killer

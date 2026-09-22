@@ -9,9 +9,9 @@ The server: one binary, one workspace, three doors. How it is built is
 
 - **The statement spine** — the parser over its corpus acceptance
   suite; every fixture transcribes a real artifact.
-- **The store** — every declared relation an Iceberg table in the
-  workspace lake; supersession is a read; admission and grain rules
-  ([store](../architecture/store.md)).
+- **The store** — every declared relation a table of rows in the
+  catalog's database; supersession is a read; admission and grain
+  rules ([store](../architecture/store.md)).
 - **The session** — one per connection, holding actor, dataset, store,
   and engine context: recipe materialization, probe routing, ruling
   composition, the shipped read library, `whatif.<scenario>()` and

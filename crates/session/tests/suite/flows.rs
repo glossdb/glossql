@@ -449,14 +449,13 @@ async fn the_glossary_is_a_plain_readable_relation_and_the_strike_is_parked() {
     +---------------+--------+------------+
     ");
 
-    // The strike routes, and refuses by name until iceberg-rust
-    // can remove rows.
+    // The strike routes, and refuses by name until its ruling.
     let e = session
         .execute("DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';")
         .await
         .unwrap_err();
     assert!(e.to_string().contains("parked"), "{e}");
-    assert!(e.to_string().contains("delete write path"), "{e}");
+    assert!(e.to_string().contains("ruling"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1487,37 +1486,18 @@ async fn scratch_store() -> (tempfile::TempDir, Store) {
     (dir, store)
 }
 
-/// A landing that failed leaves its shape behind, and the shape is
-/// still offered for assessment.
-///
-/// `land` creates the table through the mounted schema and only then
-/// commits the batches, so a commit that refuses leaves a table the
-/// catalog holds with a schema and no snapshot. Nothing else in the
-/// language produces one — every other route writes as it creates.
-///
-/// It is where the two halves of the catalog walk part company: the pin
-/// wants a snapshot and finds none, so the table adds no part to it,
-/// while the grid wants the columns and finds all of them. A walk that
-/// carried the snapshot's absence into the columns — or dropped the
-/// table for having no snapshot — reports nothing here.
-///
-/// What it does not hold is which schema the columns come from. The
-/// static provider reads `current_schema()` when there is no snapshot to
-/// resolve, so the two agree on exactly this shape; they diverge only
-/// after a commit that changes a schema without landing, which nothing
-/// in the language does today.
+/// A landing with no rows is a table with its shape and nothing in it:
+/// its columns stand for assessment like any other's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_landing_that_failed_still_offers_its_columns_for_assessment() {
+async fn an_empty_landing_still_offers_its_columns_for_assessment() {
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
 
-    // No rows, so the commit has no data file to write and refuses —
-    // after the table itself was created.
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("amount", DataType::Float64, false),
     ]));
-    let refused = session
+    session
         .register_table(
             "invoices",
             Arc::new(
@@ -1529,10 +1509,13 @@ async fn a_landing_that_failed_still_offers_its_columns_for_assessment() {
             ),
         )
         .await
-        .expect_err("an empty landing has no data file to commit");
-    assert!(
-        refused.to_string().contains("manifest"),
-        "the refusal should come from the commit, not the create: {refused}"
+        .expect("an empty landing lands its shape");
+    assert_eq!(
+        table(&session, "SELECT count(*) FROM invoices;")
+            .await
+            .trim(),
+        table(&session, "SELECT 0 AS \"count(*)\";").await.trim(),
+        "the table stands, empty"
     );
 
     // Only a witnessed aspect carries a backlog — an unassessed row is
@@ -1914,10 +1897,9 @@ async fn a_json_arrow_read_leaves_the_engine_as_text() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_filter_on_a_list_column_stays_with_the_engine() {
-    // iceberg evaluates a pushed predicate through field accessors,
-    // which primitive fields alone have: `IS NULL` on a list column
-    // pushed to the scan fails at its first poll. The pin declines the
-    // pushdown, so the filter runs in the engine over the scanned rows.
+    // `IS NULL` on a list column: the scan takes the filter as inexact
+    // and the engine keeps it above, so the filter runs over the
+    // scanned rows whatever the file's statistics say.
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
     let mut category = ListBuilder::new(StringBuilder::new());
@@ -2506,8 +2488,8 @@ async fn metric_series_refuses_a_metric_argument_with_the_read_spelled_out() {
 }
 
 /// The pair passes join through the merge join, whose key comparator
-/// has no arm for a zoned timestamp or a time of day — the types
-/// Iceberg lands `timestamptz` and `time` as, the zone read back as
+/// has no arm for a zoned timestamp or a time of day — the types a
+/// landing holds `timestamptz` and `time` as, the zone read back as
 /// `+00:00`. Two columns of either type form one pass, and the pass
 /// must still count them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -11,6 +11,7 @@ use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::planner::IdentNormalizer;
@@ -21,7 +22,7 @@ use datafusion::sql::sqlparser::parser::ParserError;
 use futures::{StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
 
-use glossql_catalog::{IcebergCatalogProvider, Lake};
+use glossql_catalog::{Lake, Landing, Mount};
 use glossql_glossary::{Actor, RecipeAdmission, Store, schemas};
 use glossql_import::SourceSpec;
 use glossql_parser::{
@@ -414,7 +415,7 @@ pub struct Session {
     row_cap: usize,
     /// Which generation of the lake's shared provider this session
     /// mounted — `mount_schema` re-registers when it changed.
-    mounted_provider: std::sync::Mutex<Option<std::sync::Weak<IcebergCatalogProvider>>>,
+    mounted_provider: std::sync::Mutex<Option<std::sync::Weak<Mount>>>,
 }
 
 /// The aspects whose subject is an app address, `<app>` or
@@ -447,6 +448,9 @@ impl Session {
         actor: Actor,
         env: Arc<RuntimeEnv>,
     ) -> Result<Self, SessionError> {
+        // The warehouse's store, under its key, in the runtime every
+        // scan of this session resolves through.
+        store.lake().register(&env);
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "postgres")
             // The engine's own schema surface: `information_schema.tables`
@@ -455,11 +459,12 @@ impl Session {
             // Off in the engine's defaults (datafusion-common
             // config.rs:239), on here.
             .set_bool("datafusion.catalog.information_schema", true)
-            // Iceberg's arrow fields carry `PARQUET:field_id` metadata; any
-            // expression derived from them (a cast, a common subexpression)
-            // drops it logically but not physically, and the aggregate
-            // schema check trips on the difference. The knob exists for
-            // exactly this (datafusion-common config.rs:532).
+            // A field read from a file may carry metadata (`PARQUET:field_id`
+            // on a source's parquet); any expression derived from it (a
+            // cast, a common subexpression) drops it logically but not
+            // physically, and the aggregate schema check trips on the
+            // difference. The knob exists for exactly this
+            // (datafusion-common config.rs:532).
             .set_bool(
                 "datafusion.execution.skip_physical_aggregate_schema_check",
                 true,
@@ -654,26 +659,45 @@ impl Session {
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
         let schema = provider.schema();
         let batches = self.ctx.read_table(provider)?.collect().await?;
-        self.land(&dataset, name, schema, &batches, Default::default())
-            .await
+        self.land(&dataset, name, schema, batches).await
     }
 
-    /// One landing: the table created through the lake — the catalog's
-    /// own create — and the batches committed through iceberg-rust so
-    /// `facts` ride the snapshot: DataFusion's INSERT cannot carry
-    /// them, and facts about a write ride the write.
+    /// One landing from batches in hand: the rows written, the table
+    /// created and the files committed as one, and the landing's row
+    /// on the record.
     async fn land(
         &self,
         dataset: &str,
         table: &str,
         schema: Arc<datafusion::arrow::datatypes::Schema>,
-        batches: &[RecordBatch],
-        facts: std::collections::HashMap<String, String>,
+        batches: Vec<RecordBatch>,
     ) -> Result<(), SessionError> {
         let lake = self.lake();
-        lake.ensure_namespace(dataset, Default::default()).await?;
-        lake.create_table(dataset, table, &schema).await?;
-        lake.append_batches(dataset, table, batches, facts).await?;
+        lake.ensure_dataset(dataset).await?;
+        let rows = Box::pin(RecordBatchStreamAdapter::new(
+            Arc::clone(&schema),
+            futures::stream::iter(batches.into_iter().map(Ok)),
+        ));
+        let written = lake
+            .write(dataset, table, Arc::clone(&schema), rows)
+            .await?;
+        let count = written.rows;
+        let version = lake
+            .commit(dataset, table, &schema, written, Landing::Create)
+            .await?;
+        self.shared
+            .store
+            .put_import(
+                dataset,
+                table,
+                "[]".into(),
+                count,
+                None,
+                "{}".into(),
+                &[],
+                version,
+            )
+            .await?;
         // The walk and what was built on it are behind the landing.
         self.shared.forget_pins();
         Ok(())
@@ -796,10 +820,9 @@ impl Session {
                 {
                     format!("DECLARE RECIPE {table} ON {dataset} (unchanged)")
                 } else {
-                    // Supersede-and-reland: a changed
-                    // recipe drops the old landing and its
-                    // evidence, then lands fresh. Glosses stay — the
-                    // snapshot id discloses their age.
+                    // Supersede-and-reland: a changed recipe replaces
+                    // the old landing whole. Glosses stay — the version
+                    // they carry discloses their age.
                     let replaced = admission == RecipeAdmission::Replaced
                         && lake.table_exists(dataset, table).await?;
                     let recipe = glossql_import::open_recipe(
@@ -808,20 +831,24 @@ impl Session {
                         &d.sql,
                     )
                     .await?;
-                    let rows = if replaced {
-                        // The new recipe runs *first*, whole: until its
-                        // SQL has produced its rows there is nothing to
-                        // replace the old landing with, and a recipe
-                        // that errors must not have destroyed the table
-                        // it was replacing.
-                        let held: Vec<RecordBatch> = recipe.rows.try_collect().await?;
-                        lake.drop_table(dataset, table).await?;
-                        futures::stream::iter(held.into_iter().map(Ok)).boxed()
+                    // A replace is one commit on the standing table: the
+                    // new rows are written beside the old files, and the
+                    // commit ends the old and begins the new. A recipe
+                    // that errors has written nothing the table holds.
+                    let landing = if replaced {
+                        Landing::Replace
                     } else {
-                        recipe.rows
+                        Landing::Create
                     };
                     let (summary, casts) = self
-                        .materialize(dataset, table, recipe.schema, rows, recipe.account)
+                        .materialize(
+                            dataset,
+                            table,
+                            recipe.schema,
+                            recipe.rows,
+                            recipe.account,
+                            landing,
+                        )
                         .await?;
                     store.put_recipe(d).await?;
                     // The counts arrive at the decision moment: whether
@@ -926,12 +953,9 @@ impl Session {
         Ok(())
     }
 
-    /// Land what a recipe produced as its table: create the table through
-    /// the mounted schema (live — no rebuild), then commit the batches
-    /// through iceberg-rust with the landing's source-side facts riding
-    /// the snapshot as properties — DataFusion's INSERT cannot carry
-    /// them. One snapshot per materialization; the `imports` relation is
-    /// these snapshots read back.
+    /// Land what a recipe produced as its table: the rows written under
+    /// the warehouse and committed as one version, the landing's
+    /// source-side facts one row of `imports` beside it.
     async fn materialize(
         &self,
         dataset: &str,
@@ -939,74 +963,65 @@ impl Session {
         schema: Arc<datafusion::arrow::datatypes::Schema>,
         rows: glossql_import::Rows,
         account: glossql_import::Account,
+        landing: Landing,
     ) -> Result<(String, String), SessionError> {
         let lake = self.lake();
-        lake.ensure_namespace(dataset, Default::default()).await?;
-        lake.create_table(dataset, table, &schema).await?;
-        // The rows run while they are written, so a recipe can fail
-        // with its table already created. A table this call created and
-        // could not fill goes with the failure: left standing it would
-        // refuse the retry's create. Files it had written stay in the
-        // store, referenced by nothing.
-        match self.stream_into(&lake, dataset, table, rows, account).await {
-            Ok(landed) => Ok(landed),
-            Err(e) => {
-                lake.drop_table(dataset, table).await?;
-                Err(e)
-            }
-        }
+        lake.ensure_dataset(dataset).await?;
+        self.stream_into(&lake, dataset, table, schema, rows, account, landing)
+            .await
     }
 
-    /// The landing itself: rows written as they arrive, one batch in
-    /// memory, then the account taken against what was written, then
-    /// one commit the account rides as snapshot properties.
+    /// The rows written, committed as `landing` says, and the landing's
+    /// row on the record: what it read, what it dropped, the casts,
+    /// the files, the version it made.
+    #[allow(clippy::too_many_arguments)]
     async fn stream_into(
         &self,
         lake: &Lake,
         dataset: &str,
         table: &str,
-        mut rows: glossql_import::Rows,
+        schema: Arc<datafusion::arrow::datatypes::Schema>,
+        rows: glossql_import::Rows,
         account: glossql_import::Account,
+        landing: Landing,
     ) -> Result<(String, String), SessionError> {
-        let mut writer = lake.writer(dataset, table).await?;
-        while let Some(batch) = rows.next().await {
-            writer.write(batch?).await?;
-        }
-        let written = writer.close().await?;
+        let stream = Box::pin(RecordBatchStreamAdapter::new(
+            Arc::clone(&schema),
+            rows.map_err(|e| datafusion::error::DataFusionError::External(Box::new(e))),
+        ));
+        let written = lake
+            .write(dataset, table, Arc::clone(&schema), stream)
+            .await?;
         let landed = account.landed(written.rows).await?;
-        let mut facts = std::collections::HashMap::from([(
-            glossql_glossary::LANDING_SCANS_PROP.to_string(),
-            serde_json::Value::Array(
-                landed
-                    .source_scans
-                    .iter()
-                    .map(|(relation, held)| serde_json::json!({"relation": relation, "rows": held}))
-                    .collect(),
+        let version = lake
+            .commit(dataset, table, &schema, written, landing)
+            .await?;
+        let scans = serde_json::Value::Array(
+            landed
+                .source_scans
+                .iter()
+                .map(|(relation, held)| serde_json::json!({"relation": relation, "rows": held}))
+                .collect(),
+        )
+        .to_string();
+        let files: Vec<(String, u64, String)> = landed
+            .files
+            .iter()
+            .map(|f| (f.path.clone(), f.size, f.modified.clone()))
+            .collect();
+        self.shared
+            .store
+            .put_import(
+                dataset,
+                table,
+                scans,
+                landed.rows,
+                landed.dropped_rows(),
+                landed.casts.to_json().to_string(),
+                &files,
+                version,
             )
-            .to_string(),
-        )]);
-        if let Some(dropped) = landed.dropped_rows() {
-            facts.insert(
-                glossql_glossary::LANDING_DROPPED_PROP.to_string(),
-                dropped.to_string(),
-            );
-        }
-        facts.insert(
-            glossql_glossary::LANDING_CASTS_PROP.to_string(),
-            landed.casts.to_json().to_string(),
-        );
-        facts.insert(
-            glossql_glossary::LANDING_FILES_PROP.to_string(),
-            serde_json::Value::Array(
-                landed
-                    .files
-                    .iter()
-                    .map(|f| serde_json::json!([f.path, f.size, f.modified]))
-                    .collect(),
-            )
-            .to_string(),
-        );
-        lake.commit_written(written, facts).await?;
+            .await?;
         self.shared.forget_pins();
         Ok((landed.row_summary(), cast_summary(&landed.casts)))
     }
@@ -1032,30 +1047,26 @@ impl Session {
                     name: table.into(),
                 }))?;
         let lake = self.lake();
-        let mut landed = Vec::new();
-        for landing in lake.landings(&dataset).await? {
-            if landing.table != table {
-                continue;
-            }
-            // A landing that recorded no files read none a later import
-            // could leave out, so there is nothing to append beside.
-            let files = landing
-                .properties
-                .get(glossql_glossary::LANDING_FILES_PROP)
-                .and_then(|json| serde_json::from_str::<Vec<(String, u64, String)>>(json).ok())
-                .ok_or_else(|| {
-                    SessionError::Import(glossql_import::Error::Import(format!(
-                        "a landing of `{table}` recorded no source files"
-                    )))
-                })?;
-            landed.extend(files.into_iter().map(|(path, size, modified)| {
-                glossql_import::SourceFile {
-                    path,
-                    size,
-                    modified,
-                }
+        if !lake.table_exists(&dataset, table).await? {
+            return Err(SessionError::Store(glossql_glossary::Error::Unknown {
+                what: "table",
+                name: table.into(),
             }));
         }
+        // What the table's landings read; a landing that recorded no
+        // files read none a later import could leave out.
+        let landed: Vec<glossql_import::SourceFile> = self
+            .shared
+            .store
+            .landed_files(&dataset, table)
+            .await?
+            .into_iter()
+            .map(|(path, size, modified)| glossql_import::SourceFile {
+                path,
+                size,
+                modified,
+            })
+            .collect();
         let update = glossql_import::open_import(
             &self.shared.env(),
             &self.source_spec(&recipe.source).await?,
@@ -1094,7 +1105,15 @@ impl Session {
         }
         let files = new.account.files_read();
         let (summary, casts) = self
-            .stream_into(&lake, &dataset, table, new.rows, new.account)
+            .stream_into(
+                &lake,
+                &dataset,
+                table,
+                new.schema,
+                new.rows,
+                new.account,
+                Landing::Append,
+            )
             .await?;
         let noun = if files == 1 { "file" } else { "files" };
         Ok(Outcome::Done(format!(
@@ -1176,7 +1195,7 @@ impl Session {
         Ok(())
     }
 
-    /// The subject's table snapshot at write time — `None` for dataset-level
+    /// The subject's table version at write time — `None` for dataset-level
     /// subjects, pair paths, or tables the lake does not hold.
     async fn stamp(&self, resolved: &Resolved) -> Result<Option<i64>, SessionError> {
         if resolved.subject == resolved.dataset || resolved.subject.contains(' ') {
@@ -1188,7 +1207,7 @@ impl Session {
             .split('.')
             .next()
             .expect("subjects are non-empty");
-        Ok(lake.snapshot_id(&resolved.dataset, table).await?)
+        Ok(lake.version(&resolved.dataset, table).await?)
     }
 
     /// The gloss half of the landed-subject rule: when the subject's
@@ -2037,9 +2056,9 @@ impl Session {
         }
         self.lake().drop_table(&dataset, table).await?;
         self.shared.forget_pins();
-        // The recipe and the import record die with the table (its
-        // properties and snapshots); measurements that read it sit at
-        // pins that no longer resolve.
+        // The recipe and the landings stay rows of the record;
+        // measurements that read the table sit at pins that no longer
+        // resolve.
         Ok(Outcome::Done(format!("DROP TABLE {table}")))
     }
 

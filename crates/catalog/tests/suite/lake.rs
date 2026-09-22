@@ -1,217 +1,301 @@
-//! The two doors end to end: namespace → provider mount → CREATE via
-//! `SchemaProvider::register_table` → append → snapshot id → read.
-//!
-//! Creating and reading go through iceberg-datafusion — the mounted
-//! provider is what makes a table nameable in SQL at all. Writing does
-//! not: it goes through [`Lake::append_batches`], because a landing's
-//! facts ride the snapshot they describe and DataFusion's `INSERT INTO`
-//! commits without them. This test takes the same two doors the server
-//! takes, so the shapes it holds are the shapes in use.
+//! The data plane end to end: a dataset, a landing, the pin, the
+//! mount, a replace, an append, a drop — each through the same doors
+//! the server takes, so the shapes held here are the shapes in use.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::catalog::{CatalogProvider, SchemaProvider};
-use datafusion::datasource::MemTable;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::catalog::CatalogProvider;
+use datafusion::execution::SendableRecordBatchStream;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::SessionContext;
-use glossql_catalog::Lake;
+use glossql_catalog::{Lake, Landing};
 
-fn orders_schema() -> Arc<Schema> {
+fn orders_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("order_id", DataType::Int64, true),
         Field::new("amount", DataType::Utf8, true),
     ]))
 }
 
-async fn mounted(lake: &Lake, ctx: &SessionContext, dataset: &str) -> Arc<dyn SchemaProvider> {
-    let provider = lake.provider().await.unwrap();
-    let schema = provider.schema(dataset).unwrap();
-    ctx.catalog("datafusion")
-        .unwrap()
-        .register_schema(dataset, Arc::clone(&schema))
-        .unwrap();
-    schema
+fn orders(ids: &[i64]) -> RecordBatch {
+    RecordBatch::try_new(
+        orders_schema(),
+        vec![
+            Arc::new(Int64Array::from(ids.to_vec())),
+            Arc::new(StringArray::from(
+                ids.iter().map(|i| format!("{i}.50")).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn create_and_read_through_the_provider_write_through_the_lake() {
+fn stream(schema: SchemaRef, batches: Vec<RecordBatch>) -> SendableRecordBatchStream {
+    Box::pin(RecordBatchStreamAdapter::new(
+        schema,
+        futures::stream::iter(batches.into_iter().map(Ok)),
+    ))
+}
+
+async fn scratch() -> (tempfile::TempDir, Lake) {
     let dir = tempfile::tempdir().unwrap();
     let lake = Lake::open(
-        &dir.path().join("catalog.db"),
+        &dir.path().join("catalog.sqlite"),
         &dir.path().join("warehouse"),
     )
     .await
     .unwrap();
+    (dir, lake)
+}
 
-    assert!(
-        lake.ensure_namespace("fin", Default::default())
-            .await
-            .unwrap()
-    );
-    assert!(
-        !lake
-            .ensure_namespace("fin", Default::default())
-            .await
-            .unwrap()
-    );
-
-    let ctx = SessionContext::new();
-    let schema = mounted(&lake, &ctx, "fin").await;
-
-    // CREATE: an empty shape through the provider — live, no rebuild.
-    let empty = RecordBatch::new_empty(orders_schema());
-    let shape = MemTable::try_new(orders_schema(), vec![vec![empty]]).unwrap();
-    schema
-        .register_table("orders".into(), Arc::new(shape))
+/// A landing of `batches` into `fin.orders`, as `landing` says.
+async fn land(lake: &Lake, batches: Vec<RecordBatch>, landing: Landing) -> i64 {
+    let schema = orders_schema();
+    let written = lake
+        .write(
+            "fin",
+            "orders",
+            Arc::clone(&schema),
+            stream(Arc::clone(&schema), batches),
+        )
+        .await
         .unwrap();
-    assert!(lake.table_exists("fin", "orders").await.unwrap());
-    assert_eq!(lake.snapshot_id("fin", "orders").await.unwrap(), None);
+    lake.commit("fin", "orders", &schema, written, landing)
+        .await
+        .unwrap()
+}
 
-    // WRITE: through the lake's own append, carrying a fact — which is
-    // the reason this path exists rather than `INSERT INTO`.
-    let batch = RecordBatch::try_new(
-        orders_schema(),
-        vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3])),
-            Arc::new(StringArray::from(vec!["12.50", "8.00", "99.90"])),
-        ],
-    )
-    .unwrap();
-    lake.append_batches(
-        "fin",
-        "orders",
-        std::slice::from_ref(&batch),
-        HashMap::from([("glossql.source_rows".to_string(), "3".to_string())]),
-    )
-    .await
-    .unwrap();
-
-    let snapshot = lake.snapshot_id("fin", "orders").await.unwrap();
-    assert!(snapshot.is_some(), "commit must produce a snapshot");
-    let landings = lake.landings("fin").await.unwrap();
-    let [landing] = landings.as_slice() else {
-        panic!("one append, one landing, got {}", landings.len())
-    };
-    assert_eq!(
-        landing.properties.get("glossql.source_rows"),
-        Some(&"3".to_string()),
-        "the fact rides the snapshot it describes — the reason this is \
-         not `INSERT INTO`, whose commit carries no properties"
-    );
-    assert_eq!(landing.added_records, Some(3));
-
-    // READ: fresh metadata per scan, no remount.
-    let rows = ctx
-        .sql("SELECT count(*) AS n FROM fin.orders")
+/// `count(*)` over `fin.orders` at the current pin.
+async fn count(lake: &Lake) -> i64 {
+    let ctx = SessionContext::new();
+    lake.register(&ctx.runtime_env());
+    let pinned = lake.pin_dataset("fin").await.unwrap();
+    let orders = pinned
+        .iter()
+        .find(|p| p.name == "orders")
+        .expect("orders pinned");
+    ctx.register_table("orders", Arc::clone(&orders.provider))
+        .unwrap();
+    let batches = ctx
+        .sql("SELECT count(*) FROM orders")
         .await
         .unwrap()
         .collect()
         .await
         .unwrap();
-    assert_eq!(
-        format!("{:?}", rows[0].column(0)),
-        "PrimitiveArray<Int64>\n[\n  3,\n]"
-    );
-
-    // A second append moves the snapshot forward.
-    lake.append_batches(
-        "fin",
-        "orders",
-        std::slice::from_ref(&batch),
-        HashMap::new(),
-    )
-    .await
-    .unwrap();
-    let later = lake.snapshot_id("fin", "orders").await.unwrap();
-    assert!(later.is_some());
-    assert_ne!(later, snapshot);
-
-    // Reopening the workspace sees the same table.
-    let reopened = Lake::open(
-        &dir.path().join("catalog.db"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    assert_eq!(reopened.table_names("fin").await.unwrap(), vec!["orders"]);
-    assert_eq!(reopened.snapshot_id("fin", "orders").await.unwrap(), later);
+    batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn provider_is_shared_until_a_namespace_lands() {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(
-        &dir.path().join("catalog.db"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    lake.ensure_namespace("fin", Default::default())
-        .await
-        .unwrap();
-
-    // Every touch is the same mounted representation — an Arc clone,
-    // never a rebuild — and clones of the Lake share it.
-    let first = lake.provider().await.unwrap();
-    let again = lake.provider().await.unwrap();
-    assert!(Arc::ptr_eq(&first, &again));
-    let through_clone = lake.clone().provider().await.unwrap();
-    assert!(Arc::ptr_eq(&first, &through_clone));
-
-    // A namespace create invalidates: the next touch rebuilds over the
-    // current list, and the new dataset is visible.
-    assert!(first.schema("ops").is_none());
-    lake.ensure_namespace("ops", Default::default())
-        .await
-        .unwrap();
-    let rebuilt = lake.provider().await.unwrap();
-    assert!(!Arc::ptr_eq(&first, &rebuilt));
-    assert!(rebuilt.schema("ops").is_some());
-    assert!(rebuilt.schema("fin").is_some());
+fn parquet_files(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir.join("warehouse/fin/orders"))
+        .map(|d| {
+            d.filter(|e| {
+                e.as_ref()
+                    .ok()
+                    .is_some_and(|e| e.path().extension().is_some_and(|x| x == "parquet"))
+            })
+            .count()
+        })
+        .unwrap_or(0)
 }
 
-/// A table nothing has landed into is still a table: it carries its
-/// columns and no snapshot.
-///
-/// Both halves matter downstream and they part company here. The
-/// columns say what can be glossed, so they must be there the moment the
-/// shape exists — a column nobody has written to is a subject waiting to
-/// be assessed, not an absence. The snapshot is `None`, and the read
-/// context turns that into an absence rather than a null, because a
-/// table with nothing in it contributes no part to a statement's pin.
+/// A landing is a table: pinned with its version and columns, readable
+/// through the pin and through the mount, catalogued as one file.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_table_with_no_landing_is_pinned_with_its_columns_and_no_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let lake = Lake::open(
-        &dir.path().join("catalog.db"),
-        &dir.path().join("warehouse"),
-    )
-    .await
-    .unwrap();
-    lake.ensure_namespace("fin", Default::default())
-        .await
-        .unwrap();
-    let ctx = SessionContext::new();
-    let schema = mounted(&lake, &ctx, "fin").await;
-    let empty = RecordBatch::new_empty(orders_schema());
-    schema
-        .register_table(
-            "orders".into(),
-            Arc::new(MemTable::try_new(orders_schema(), vec![vec![empty]]).unwrap()),
-        )
-        .unwrap();
+async fn a_landing_is_pinned_and_mounted() {
+    let (dir, lake) = scratch().await;
+    assert!(lake.ensure_dataset("fin").await.unwrap());
+    assert!(!lake.ensure_dataset("fin").await.unwrap(), "already there");
+    let version = land(&lake, vec![orders(&[1, 2])], Landing::Create).await;
 
     let pinned = lake.pin_dataset("fin").await.unwrap();
-    let [orders] = pinned.as_slice() else {
-        panic!("one table, got {}", pinned.len())
-    };
-    assert_eq!(orders.name, "orders");
-    assert_eq!(orders.snapshot_id, None, "nothing has landed");
-    assert_eq!(
-        orders.columns,
-        vec!["order_id", "amount"],
-        "the shape is glossable before anything is written to it"
+    assert_eq!(pinned.len(), 1);
+    assert_eq!(pinned[0].name, "orders");
+    assert_eq!(pinned[0].snapshot_id, Some(version));
+    assert_eq!(pinned[0].columns, vec!["order_id", "amount"]);
+    assert_eq!(lake.version("fin", "orders").await.unwrap(), Some(version));
+    assert_eq!(count(&lake).await, 2);
+    assert_eq!(parquet_files(dir.path()), 1);
+
+    let ctx = SessionContext::new_with_config(
+        datafusion::prelude::SessionConfig::new().with_information_schema(true),
     );
+    lake.register(&ctx.runtime_env());
+    let mount = lake.provider().await.unwrap();
+    assert_eq!(mount.schema_names(), vec!["fin"]);
+    let schema = mount.schema("fin").unwrap();
+    assert_eq!(schema.table_names(), vec!["orders"]);
+    ctx.catalog("datafusion")
+        .unwrap()
+        .register_schema("fin", schema)
+        .unwrap();
+    let rows = ctx
+        .sql("SELECT order_id FROM fin.orders ORDER BY order_id")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(rows.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
+    let columns = ctx
+        .sql("SELECT column_name FROM information_schema.columns WHERE table_schema = 'fin' ORDER BY ordinal_position")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(columns.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
+}
+
+/// A replace is one commit: the old file ends and is deleted, the new
+/// one begins, the version moves — and a reader racing it sees the old
+/// rows or the new, never an empty table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_replace_is_one_commit_and_never_an_empty_table() {
+    let (dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let before = land(&lake, vec![orders(&[1, 2])], Landing::Create).await;
+
+    let reads = async {
+        let mut seen = Vec::new();
+        for _ in 0..40 {
+            seen.push(count(&lake).await);
+        }
+        seen
+    };
+    let replace = land(&lake, vec![orders(&[7, 8, 9])], Landing::Replace);
+    let (seen, after) = tokio::join!(reads, replace);
+    assert!(after > before, "the version moved");
+    assert!(
+        seen.iter().all(|n| *n == 2 || *n == 3),
+        "every read saw the old rows or the new: {seen:?}"
+    );
+    assert_eq!(count(&lake).await, 3);
+    assert_eq!(
+        parquet_files(dir.path()),
+        2,
+        "the ended file waits out the grace"
+    );
+    lake.sweep(std::time::Duration::ZERO).await;
+    assert_eq!(parquet_files(dir.path()), 1, "the ended file is gone");
+    assert_eq!(lake.version("fin", "orders").await.unwrap(), Some(after));
+}
+
+/// An append adds a file beside the live ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_append_joins_the_live_files() {
+    let (dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let first = land(&lake, vec![orders(&[1, 2])], Landing::Create).await;
+    let second = land(&lake, vec![orders(&[3])], Landing::Append).await;
+    assert!(second > first);
+    assert_eq!(count(&lake).await, 3);
+    assert_eq!(parquet_files(dir.path()), 2);
+}
+
+/// A drop ends the table and deletes its files; the mount and the pin
+/// no longer hold it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drop_ends_the_table_and_its_files() {
+    let (dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    land(&lake, vec![orders(&[1, 2])], Landing::Create).await;
+    let mounted_before = lake.provider().await.unwrap();
+    lake.drop_table("fin", "orders").await.unwrap();
+    assert!(!lake.table_exists("fin", "orders").await.unwrap());
+    assert_eq!(lake.version("fin", "orders").await.unwrap(), None);
+    assert!(lake.pin_dataset("fin").await.unwrap().is_empty());
+    lake.sweep(std::time::Duration::ZERO).await;
+    assert_eq!(parquet_files(dir.path()), 0);
+    let mounted_after = lake.provider().await.unwrap();
+    assert!(
+        !Arc::ptr_eq(&mounted_before, &mounted_after),
+        "the mount was rebuilt"
+    );
+    assert!(
+        mounted_after
+            .schema("fin")
+            .unwrap()
+            .table_names()
+            .is_empty()
+    );
+    // The name is free again.
+    land(&lake, vec![orders(&[5])], Landing::Create).await;
+    assert_eq!(count(&lake).await, 1);
+}
+
+/// Named pins answer `None` for a name that is no table, so the caller
+/// takes the whole walk and its hint.
+#[tokio::test(flavor = "multi_thread")]
+async fn named_pins_refuse_a_name_that_is_no_table() {
+    let (_dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    land(&lake, vec![orders(&[1])], Landing::Create).await;
+    let some = lake
+        .pin_tables("fin", &["orders".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(some.map(|p| p.len()), Some(1));
+    let none = lake
+        .pin_tables("fin", &["orders".to_string(), "ordres".to_string()])
+        .await
+        .unwrap();
+    assert!(none.is_none());
+    assert_eq!(lake.walk_count(), 0, "a named pin is not a walk");
+}
+
+/// The mount is shared until a commit moves it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mount_is_shared_until_a_commit() {
+    let (_dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let a = lake.provider().await.unwrap();
+    let b = lake.provider().await.unwrap();
+    assert!(Arc::ptr_eq(&a, &b));
+    land(&lake, vec![orders(&[1])], Landing::Create).await;
+    let c = lake.provider().await.unwrap();
+    assert!(!Arc::ptr_eq(&a, &c));
+    assert_eq!(c.schema("fin").unwrap().table_names(), vec!["orders"]);
+}
+
+/// Every landed type crosses the catalog rows and comes back as the
+/// schema the scan reads with.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landed_schema_pins_back_as_it_landed() {
+    let (_dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("at", DataType::Timestamp(TimeUnit::Microsecond, None), true),
+        Field::new("day", DataType::Date32, true),
+        Field::new("price", DataType::Decimal128(12, 2), true),
+        Field::new("ok", DataType::Boolean, true),
+        Field::new(
+            "tags",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            true,
+        ),
+    ]));
+    let empty = RecordBatch::new_empty(Arc::clone(&schema));
+    let written = lake
+        .write(
+            "fin",
+            "typed",
+            Arc::clone(&schema),
+            stream(Arc::clone(&schema), vec![empty]),
+        )
+        .await
+        .unwrap();
+    lake.commit("fin", "typed", &schema, written, Landing::Create)
+        .await
+        .unwrap();
+    let pinned = lake.pin_dataset("fin").await.unwrap();
+    assert_eq!(pinned[0].provider.schema(), schema);
 }

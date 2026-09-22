@@ -1,8 +1,8 @@
-//! Batch normalization before a recipe result lands as an Iceberg table.
+//! Batch normalization before a recipe result lands as a table.
 //!
-//! One map: `compat` folds Arrow types iceberg-rust rejects or would
-//! promote to format-v3 types onto their v2 equivalents (ns timestamps →
-//! µs, `UInt64` → `Int64`, …). Nothing else touches the schema — the
+//! One map: `compat` folds Arrow types onto the landed type set — the
+//! types the catalog's column rows spell and every reader agrees on
+//! (ns timestamps → µs, `UInt64` → `Int64`, …). Nothing else touches the schema — the
 //! recipe's authored casts are the landed types (a `force_utf8`
 //! refold is retired raw-twin machinery — it once landed eight
 //! string-typed tables in a single run).
@@ -17,11 +17,10 @@ use crate::{Error, Result};
 
 fn compat_type(t: &DataType) -> DataType {
     match t {
-        // A zoned timestamp is an instant; Iceberg holds it as
-        // `timestamptz` and reads it back zoned `+00:00`, and the
-        // parquet writer refuses a batch whose field names the zone
-        // any other way — `UTC` included, which is what pyarrow and
-        // pandas write. The cast keeps the instant.
+        // A zoned timestamp is an instant; a landing holds it as
+        // `timestamptz` and reads it back zoned `+00:00`, one spelling
+        // for every zone a source writes — `UTC` included, which is what
+        // pyarrow and pandas write. The cast keeps the instant.
         DataType::Timestamp(_, Some(_)) => {
             DataType::Timestamp(TimeUnit::Microsecond, Some("+00:00".into()))
         }
@@ -31,16 +30,16 @@ fn compat_type(t: &DataType) -> DataType {
         DataType::Date64 => DataType::Date32,
         DataType::UInt64 => DataType::Int64,
         DataType::Float16 => DataType::Float32,
-        // Iceberg reads these back as Utf8 / LargeBinary; land them that way
+        // The landed set spells text as Utf8 and bytes as LargeBinary
         DataType::Utf8View | DataType::LargeUtf8 => DataType::Utf8,
         DataType::Binary | DataType::BinaryView => DataType::LargeBinary,
         other => other.clone(),
     }
 }
 
-/// The schema a landing holds: types Iceberg v2 cannot hold folded onto
-/// their nearest v2 shape. Decided by the schema alone, so it is known
-/// before the first row.
+/// The schema a landing holds: types outside the landed set folded
+/// onto their nearest shape in it. Decided by the schema alone, so it
+/// is known before the first row.
 pub fn compat_schema(schema: &Schema) -> SchemaRef {
     let fields: Vec<Field> = schema
         .fields()

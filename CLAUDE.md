@@ -21,8 +21,8 @@ follow the corpus-first process below.
   `session` · `catalog` · `import` · `scripts` · `apps` · `serverd`.
   What each is and how it is built: the crate headers and
   `docs/architecture/`. Directories unprefixed, packages `glossql-*`;
-  datafusion moves in lockstep with iceberg-datafusion, sqlx with
-  iceberg-catalog-sql (the workspace `Cargo.toml` comment).
+  datafusion sets the arrow major and every arrow crate follows it
+  (the workspace `Cargo.toml` comment).
 - `docs/` — the curated statement of the system: what is implemented
   and what is planned (`start/`, `concepts/`, `reference/`,
   `methods/`, `architecture/`, and the concern pages). For agents and
@@ -81,9 +81,9 @@ the next one or bundles a few in a session. No standing sequence.
   artifact, checked against grammar and real table shapes, the forks
   presented to the project lead. The surviving fork becomes a SPEC.md
   diff that shrinks or holds the spec, never grows it by essay.
-- **Build on the substrate.** Extend DataFusion and iceberg-rust at
-  their own seams, never around them; the glossql-substrate skill
-  carries the seam register and its rules.
+- **Build on the substrate.** Extend DataFusion at its own seams,
+  never around it; the glossql-substrate skill carries the seam
+  register and its rules.
 - **Grounding.** The corpus fixtures are the empirical record;
   coverage and semantics questions settle against this repo's own
   code and runs.

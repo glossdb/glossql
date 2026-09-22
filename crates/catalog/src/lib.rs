@@ -1,61 +1,44 @@
-//! The workspace data plane: iceberg-rust behind the `Catalog` trait
-//! (SPEC.md §3).
+//! The workspace data plane: landed tables as parquet files under a
+//! warehouse, and the catalog of them — every table, its versions,
+//! each version's files — as rows of the record's own database in the
+//! shapes the DuckLake 1.0 specification names, so any DuckLake reader
+//! attaches to the same database and reads the same files. The
+//! engine's own parquet scan serves every read; the data keeps no
+//! history: a file no version references is deleted.
 //!
-//! One `Lake` per workspace, on the SQL catalog — SQLite in the
-//! workspace directory, or Postgres named by a URI — over a warehouse
-//! on the local disk or in an object store. Datasets are namespaces.
-//! The record (the store's relations) lives in the same database as
-//! the catalog, behind [`Record`]; the lake carries the URI it was
-//! opened on so the store can open the record beside it.
-//! Tables are **created** through [`Lake::create_table`] and dropped
-//! through [`Lake::drop_table`]: the catalog's own async calls, the
-//! table description built the way iceberg-datafusion's
-//! `SchemaProvider::register_table` builds it — minus that door's
-//! blocking wait on the runtime's worker for the async create, which
-//! stalls the whole process once the catalog and the warehouse are
-//! reached over the network. The session mounts
-//! [`IcebergCatalogProvider`] schemas to read. Tables are **written**
-//! through [`Lake::append_batches`], the one path for every landing:
-//! writing here rather than through the engine is what lets facts ride
-//! the snapshot they describe, and it keeps the write path clear of the
-//! engine's process-wide session state.
-
-// An unwrap outside a test is a panic waiting for the row that has it;
-// tests are exempt (clippy.toml).
-#![warn(clippy::unwrap_used)]
+//! What lives here: the catalog tables (`tables`), the scan over a
+//! version's files and the mounted catalog (`scan`), the record's
+//! relations on the same database (`record`), the object store behind
+//! the warehouse (`storage`). Facts about a landing — what it read,
+//! what it dropped, the casts — are the record's; this crate keeps
+//! files and versions.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-mod pushdown;
 pub mod record;
+mod scan;
 pub mod storage;
-pub use pushdown::PrimitivePushdown;
-pub use record::{Number, Record, RelationSpec, Row};
-pub use storage::ObjectStorageFactory;
+mod tables;
 
-use datafusion::arrow::array::RecordBatch;
-use iceberg::CatalogBuilder as _;
-use iceberg::arrow::FieldMatchMode;
-use iceberg::arrow::RecordBatchPartitionSplitter;
-use iceberg::arrow::arrow_schema_to_schema_auto_assign_ids;
-use iceberg::io::LocalFsStorageFactory;
-use iceberg::spec::FormatVersion;
-use iceberg::spec::{DataFile, DataFileFormat};
-use iceberg::transaction::{ApplyTransactionAction, Transaction};
-use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
-use iceberg::writer::file_writer::ParquetWriterBuilder;
-use iceberg::writer::file_writer::location_generator::{
-    DefaultFileNameGenerator, DefaultLocationGenerator,
-};
-use iceberg::writer::file_writer::rolling_writer::RollingFileWriterBuilder;
-use iceberg::writer::partitioning::PartitioningWriter;
-use iceberg::writer::partitioning::fanout_writer::FanoutWriter;
-use iceberg::writer::partitioning::unpartitioned_writer::UnpartitionedWriter;
-use iceberg::{Catalog, NamespaceIdent, TableCreation, TableIdent};
-use iceberg_catalog_sql::{SqlBindStyle, SqlCatalogBuilder};
-pub use iceberg_datafusion::IcebergCatalogProvider;
+pub use record::{Db, Number, Record, RelationSpec, Row};
+pub use scan::{FilesTable, Mount};
+pub use tables::{LandedFile, Landing};
+
+use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::execution::SendableRecordBatchStream;
+use datafusion::execution::object_store::ObjectStoreUrl;
+use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::parquet::arrow::AsyncArrowWriter;
+use datafusion::parquet::basic::{Compression, ZstdLevel};
+use datafusion::parquet::file::properties::WriterProperties;
+use futures::StreamExt;
+use object_store::buffered::BufWriter;
+use object_store::local::LocalFileSystem;
+use object_store::{ObjectStore, ObjectStoreExt as _};
+use url::Url;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -63,152 +46,23 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("workspace data plane: {0}")]
     Workspace(String),
-    #[error(transparent)]
-    Iceberg(#[from] iceberg::Error),
     #[error("record: {0}")]
     Record(#[from] sqlx::Error),
+    #[error("warehouse: {0}")]
+    Store(#[from] object_store::Error),
+    #[error(transparent)]
+    Engine(#[from] datafusion::error::DataFusionError),
+    #[error("parquet: {0}")]
+    Parquet(#[from] datafusion::parquet::errors::ParquetError),
 }
 
-/// How many times a provider build may be overtaken before the caller is
-/// told the catalog will not hold still.
-///
-/// Nothing to do with commits: a build that loses here has conflicted
-/// with nothing, it has frozen a table map a concurrent create already
-/// made stale. Bounded because creates arriving faster than the map can
-/// be assembled is worth reporting rather than looping on.
-const PROVIDER_BUILD_ATTEMPTS: usize = 5;
-
-/// Whether a failed commit was refused for conflicting, told by the
-/// error's own kind rather than by its text.
-fn is_commit_conflict(error: &iceberg::Error) -> bool {
-    error.kind() == iceberg::ErrorKind::CatalogCommitConflicts
-}
-
-/// The writer chain a landing's rows go through: Parquet files rolled
-/// at the table's target size, named and placed by the table's own
-/// generators.
-type FileBuilder =
-    DataFileWriterBuilder<ParquetWriterBuilder, DefaultLocationGenerator, DefaultFileNameGenerator>;
-
-/// Boxed: a writer chain is kilobytes of generic state, and the writer
-/// is held across awaits several frames below a door.
-enum Rows {
-    Flat(Box<UnpartitionedWriter<FileBuilder>>),
-    Split(
-        Box<RecordBatchPartitionSplitter>,
-        Box<FanoutWriter<FileBuilder>>,
-    ),
-}
-
-/// A table's data files as they are written, a batch at a time, before
-/// any of them is committed — so a caller holding a stream lands it with
-/// one batch in memory, and what it read, wrote and failed on keeps its
-/// own error type.
-///
-/// A data file belongs to exactly one partition, so a partitioned table
-/// needs the rows split by their partition value before anything is
-/// written — the split the format defines, computed from the columns the
-/// spec names. Fanout keeps one file open per value, which is what
-/// unsorted input requires and what iceberg-datafusion defaults to
-/// (`write.datafusion.fanout.enabled`, default true). Without the split a
-/// writer emits files carrying an empty partition struct and the commit
-/// refuses them: `SnapshotProducer::validate_added_data_files` checks the
-/// struct's arity against the table's partition type.
-pub struct TableWriter {
-    table: iceberg::table::Table,
-    rows: Rows,
-    written: u64,
-}
-
-/// What a [`TableWriter`] wrote: the files a commit adds
-/// ([`Lake::commit_written`]) and the rows they hold.
-pub struct Written {
-    table: iceberg::table::Table,
-    files: Vec<DataFile>,
-    pub rows: u64,
-}
-
-impl TableWriter {
-    fn open(table: iceberg::table::Table) -> Result<Self> {
-        let table_props = table.metadata().table_properties();
-        let schema = table.metadata().current_schema().clone();
-        // Landed batches carry no field-id metadata; match by name, as
-        // iceberg-datafusion's own write path does.
-        let parquet = ParquetWriterBuilder::from_table_properties(&table_props, schema.clone())?
-            .with_match_mode(FieldMatchMode::Name);
-        let rolling = RollingFileWriterBuilder::new(
-            parquet,
-            table_props.write_target_file_size_bytes()?,
-            table.file_io().clone(),
-            DefaultLocationGenerator::new(table.metadata())?,
-            DefaultFileNameGenerator::new(
-                uuid::Uuid::now_v7().to_string(),
-                None,
-                DataFileFormat::Parquet,
-            ),
-        );
-        let builder = DataFileWriterBuilder::new(rolling);
-        let spec = Arc::clone(table.metadata().default_partition_spec());
-        let rows = if spec.is_unpartitioned() {
-            Rows::Flat(Box::new(UnpartitionedWriter::new(builder)))
-        } else {
-            Rows::Split(
-                Box::new(RecordBatchPartitionSplitter::try_new_with_computed_values(
-                    schema, spec,
-                )?),
-                Box::new(FanoutWriter::new(builder)),
-            )
-        };
-        Ok(TableWriter {
-            table,
-            rows,
-            written: 0,
-        })
-    }
-
-    pub async fn write(&mut self, batch: RecordBatch) -> Result<()> {
-        self.written += batch.num_rows() as u64;
-        match &mut self.rows {
-            Rows::Flat(writer) => writer.write(batch).await?,
-            Rows::Split(splitter, writer) => {
-                for (key, part) in splitter.split(&batch)? {
-                    writer.write(key, part).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn close(self) -> Result<Written> {
-        let files = match self.rows {
-            Rows::Flat(writer) => writer.close().await?,
-            Rows::Split(_, writer) => writer.close().await?,
-        };
-        Ok(Written {
-            table: self.table,
-            files,
-            rows: self.written,
-        })
-    }
-}
-
-/// The data files one append writes. Free-standing rather than a method,
-/// so the generic writer chain it builds is one state machine a caller
-/// can box away rather than carry.
-async fn write_files(table: iceberg::table::Table, batches: &[RecordBatch]) -> Result<Written> {
-    let mut writer = TableWriter::open(table)?;
-    for batch in batches {
-        writer.write(batch.clone()).await?;
-    }
-    writer.close().await
-}
-
-/// One table pinned at its current snapshot: every scan reads that
-/// snapshot whatever lands after — the statement's consistent view, and
-/// a durable key, since a snapshot stays addressable after later
-/// commits.
+/// A landed table as a statement holds it: its name, its version, its
+/// columns, and the provider that scans its files at that version.
 pub struct PinnedTable {
     pub name: String,
+    /// The version — the snapshot that last changed the table. `None`
+    /// never happens for a landed table and stays an `Option` for the
+    /// callers that key on absence.
     pub snapshot_id: Option<i64>,
     /// The table's columns in schema order — what can be glossed, and
     /// the same schema the provider beside them advertises.
@@ -216,128 +70,29 @@ pub struct PinnedTable {
     pub provider: Arc<dyn datafusion::catalog::TableProvider>,
 }
 
-/// One append snapshot on a data table, with the facts that rode it.
-#[derive(Debug, Clone)]
-pub struct Landing {
-    pub dataset: String,
-    pub table: String,
-    pub committed_at: String,
-    pub added_records: Option<i64>,
-    pub properties: HashMap<String, String>,
+/// What a write produced, before its commit.
+#[derive(Debug)]
+pub struct Written {
+    pub rows: u64,
+    files: Vec<LandedFile>,
 }
 
-/// The workspace's Iceberg side: catalog + warehouse.
-#[derive(Debug, Clone)]
-pub struct Lake {
-    catalog: Arc<dyn Catalog>,
-    /// The one mounted representation of the lake, shared by every
-    /// session — `provider()` hands out Arc clones of it. A namespace
-    /// create invalidates it, and so does a table create or drop:
-    /// [`IcebergCatalogProvider`] freezes the table map per namespace
-    /// at build (iceberg-datafusion schema.rs, `try_new`), so only a
-    /// rebuild sees a new table.
-    provider: Arc<std::sync::RwLock<Option<Arc<IcebergCatalogProvider>>>>,
-    /// Moved by every invalidation, so a build can tell whether the
-    /// catalog changed while it ran. Without it an invalidation that
-    /// lands mid-build is lost: the build stores a map assembled before
-    /// the create, and the table stays invisible until something else
-    /// invalidates. Shared, because [`Lake`] is cloned per access and a
-    /// counter copied per clone counts nothing.
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    /// How many times [`Lake::pin_dataset`] has walked a catalog, for
-    /// the tests that hold the walk to one per statement. A walk is a
-    /// load and a metadata parse per table, so how often it happens is a
-    /// property worth being able to assert rather than reason about.
-    /// Shared for the reason the generation is: a counter copied per
-    /// clone counts nothing.
-    walks: Arc<std::sync::atomic::AtomicU64>,
-    /// How many tables [`Lake::load`] has loaded from the catalog, walks
-    /// included — a load is the catalog round trips and the metadata
-    /// parse, and over a remote warehouse the parse is a fetch. What a
-    /// statement pays beyond its walk is this counter's rise.
-    loads: Arc<std::sync::atomic::AtomicU64>,
-    /// How many commits reached a caller as a conflict — after iceberg
-    /// had already retried them to the end of its own budget.
-    ///
-    /// Not the raw contention: a lost race that the format's backoff
-    /// recovers never appears here, which is the point. One of these is
-    /// a writer that re-based `commit.retry.num-retries` times and still
-    /// lost, and that is the number worth knowing, because it is the one
-    /// that says the table's retry property is set too low. Shared for
-    /// the reason the others are: a counter copied per clone counts
-    /// nothing.
-    conflicts: Arc<std::sync::atomic::AtomicU64>,
-    /// The URI the catalog was opened on — SQLite file or Postgres
-    /// server — and so where the record lives. Carries credentials,
-    /// which is why it is never logged whole.
-    database: String,
+/// The warehouse: where the files are, as the engine keys it.
+#[derive(Debug)]
+struct Warehouse {
+    /// The root every path hangs under, with its trailing slash —
+    /// `file:///…/warehouse/` or `gs://bucket/prefix/`.
+    root: Url,
+    /// The object path of the root within its store: `` or `prefix/`.
+    prefix: String,
+    /// The engine's key for the store: `scheme://authority/`.
+    key: ObjectStoreUrl,
+    store: Arc<dyn ObjectStore>,
 }
 
-impl Lake {
-    /// The lake over a built catalog — everything below the
-    /// constructor runs on the trait.
-    fn over(catalog: Arc<dyn Catalog>, database: String) -> Self {
-        Lake {
-            catalog,
-            provider: Arc::new(std::sync::RwLock::new(None)),
-            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            loads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            conflicts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            database,
-        }
-    }
-
-    /// Open (creating on first use) the workspace data plane on the
-    /// workspace directory's own SQLite file.
-    pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
-        if let Some(parent) = catalog_db.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| Error::Workspace(format!("catalog dir {}: {e}", parent.display())))?;
-        }
-        // `mode=rwc` is how sqlx is told to create the file — it parses
-        // the mode off the URL and sets `create_if_missing`. Touching an
-        // empty file first said the same thing in a second place, and
-        // only sqlite knows what an empty database is.
-        Self::open_sql(
-            &format!("sqlite:{}?mode=rwc", catalog_db.display()),
-            &warehouse.display().to_string(),
-        )
-        .await
-    }
-
-    /// The same data plane on the SQL catalog a URI names — `sqlite:`
-    /// for the workspace file, `postgres://` (or `postgresql://`) for a
-    /// server — over the warehouse `warehouse` names: a directory on
-    /// this machine (a path, or `file://`), or a location in an object
-    /// store (`s3://bucket/prefix`, `gs://bucket/prefix`,
-    /// `abfss://container@account.dfs.core.windows.net/prefix`), reached
-    /// through [`storage`] with the credentials the environment
-    /// carries. The bind style follows the catalog scheme: Postgres
-    /// numbers its parameters, SQLite takes question marks. The catalog
-    /// URI carries credentials, so it is never logged whole here or
-    /// anywhere.
-    pub async fn open_sql(catalog_uri: &str, warehouse: &str) -> Result<Self> {
-        let (scheme, _) = catalog_uri.split_once(':').ok_or_else(|| {
-            Error::Workspace(format!(
-                "the catalog URI `{catalog_uri}` names no scheme — `sqlite:<file>` or `postgres://…`"
-            ))
-        })?;
-        let bind = match scheme.to_ascii_lowercase().as_str() {
-            "sqlite" => SqlBindStyle::QMark,
-            "postgres" | "postgresql" => SqlBindStyle::DollarNumeric,
-            other => {
-                return Err(Error::Workspace(format!(
-                    "the catalog URI scheme `{other}` is not one this binary speaks — sqlite or postgres"
-                )));
-            }
-        };
-        let builder = SqlCatalogBuilder::default()
-            .uri(catalog_uri)
-            .sql_bind_style(bind);
-        let builder = match storage::Warehouse::parse(warehouse)? {
+impl Warehouse {
+    fn open(warehouse: &str) -> Result<Self> {
+        match storage::Warehouse::parse(warehouse)? {
             storage::Warehouse::Local(dir) => {
                 std::fs::create_dir_all(&dir).map_err(|e| {
                     Error::Workspace(format!("warehouse dir {}: {e}", dir.display()))
@@ -345,492 +100,418 @@ impl Lake {
                 let dir = dir.canonicalize().map_err(|e| {
                     Error::Workspace(format!("warehouse dir {}: {e}", dir.display()))
                 })?;
-                builder
-                    .warehouse_location(dir.display().to_string())
-                    .with_storage_factory(Arc::new(LocalFsStorageFactory))
+                let root = Url::from_directory_path(&dir).map_err(|()| {
+                    Error::Workspace(format!("warehouse dir {} is not a URL", dir.display()))
+                })?;
+                Ok(Warehouse {
+                    prefix: root.path().trim_start_matches('/').to_string(),
+                    root,
+                    key: ObjectStoreUrl::local_filesystem(),
+                    store: Arc::new(LocalFileSystem::new()),
+                })
             }
-            storage::Warehouse::Remote(location) => builder
-                .warehouse_location(location)
-                .with_storage_factory(Arc::new(ObjectStorageFactory)),
-        };
-        let catalog = builder.load("glossql", HashMap::new()).await?;
-        Ok(Lake::over(Arc::new(catalog), catalog_uri.to_string()))
-    }
-
-    pub fn catalog(&self) -> Arc<dyn Catalog> {
-        Arc::clone(&self.catalog)
-    }
-
-    /// The database the catalog is on, as the URI it was opened with:
-    /// where the record opens its tables.
-    pub fn database(&self) -> &str {
-        &self.database
-    }
-
-    /// Create the dataset's namespace if it is missing; `true` = created.
-    /// Properties apply at create only — an existing namespace keeps its
-    /// own (set-at-create). A create invalidates the
-    /// shared provider — the next `provider()` rebuilds over the current
-    /// namespace list.
-    pub async fn ensure_namespace(
-        &self,
-        dataset: &str,
-        properties: HashMap<String, String>,
-    ) -> Result<bool> {
-        let ns = NamespaceIdent::new(dataset.to_string());
-        if self.catalog.namespace_exists(&ns).await? {
-            return Ok(false);
+            storage::Warehouse::Remote(location) => {
+                let (store, key) = storage::environment_store(&location)?;
+                let root = Url::parse(&format!("{location}/")).map_err(|e| {
+                    Error::Workspace(format!("warehouse `{location}` is not a URL: {e}"))
+                })?;
+                let mut prefix = root.path().trim_start_matches('/').to_string();
+                if !prefix.is_empty() && !prefix.ends_with('/') {
+                    prefix.push('/');
+                }
+                Ok(Warehouse {
+                    prefix,
+                    root,
+                    key: ObjectStoreUrl::parse(key.as_str())?,
+                    store,
+                })
+            }
         }
-        self.catalog.create_namespace(&ns, properties).await?;
-        self.invalidate_provider();
-        Ok(true)
     }
 
-    /// Create `dataset.table` with the schema the engine computed. The
-    /// Arrow schema becomes an Iceberg one — every column given the
-    /// permanent id Iceberg tracks it by — at the lowest format version
-    /// its types allow, V2 at least: the description iceberg-datafusion's
-    /// `register_table` builds (schema.rs in the pin), created through
-    /// the catalog directly. The mounted provider is invalidated, so the
-    /// next mount sees the table.
-    pub async fn create_table(
-        &self,
-        dataset: &str,
-        table: &str,
-        schema: &datafusion::arrow::datatypes::Schema,
-    ) -> Result<()> {
-        let schema = arrow_schema_to_schema_auto_assign_ids(schema)?;
-        let version = schema.calc_min_compatible_format().max(FormatVersion::V2);
-        let creation = TableCreation::builder()
-            .name(table.to_string())
-            .schema(schema)
-            .format_version(version)
-            .build();
-        self.catalog
-            .create_table(&NamespaceIdent::new(dataset.to_string()), creation)
-            .await?;
-        self.invalidate_provider();
-        Ok(())
+    /// The object path of a table's directory.
+    fn table_dir(&self, dataset: &str, table: &str) -> String {
+        format!("{}{dataset}/{table}/", self.prefix)
     }
+}
 
-    /// Drop `dataset.table` from the catalog — its metadata and its
-    /// snapshots go with it — and invalidate the mounted provider.
-    pub async fn drop_table(&self, dataset: &str, table: &str) -> Result<()> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        self.catalog.drop_table(&ident).await?;
-        self.invalidate_provider();
-        Ok(())
-    }
+/// The data plane of one workspace: the catalog tables in the record's
+/// database and the files under the warehouse. Cloned per access;
+/// everything shared sits behind an `Arc`.
+#[derive(Debug, Clone)]
+pub struct Lake {
+    db: Db,
+    warehouse: Arc<Warehouse>,
+    /// The one mounted representation of the catalog, shared by every
+    /// session — `provider()` hands out Arc clones of it. Every commit
+    /// invalidates it: a mount holds each table's file list at one
+    /// version.
+    mount: Arc<std::sync::RwLock<Option<Arc<Mount>>>>,
+    /// Moved by every invalidation, so a build can tell whether the
+    /// catalog changed while it ran.
+    generation: Arc<AtomicU64>,
+    /// How many times [`Lake::pin_dataset`] has walked a dataset — the
+    /// tests hold the walk to one per statement. A mount build is not
+    /// one: it is the catalog read whole, once per generation.
+    walks: Arc<AtomicU64>,
+    /// The URI the catalog was opened on. Carries credentials, which is
+    /// why it is never logged whole.
+    database: String,
+    /// How long an ended file stays before a commit deletes it: a
+    /// reader that pinned the file before the commit is still scanning
+    /// it, and a scan has no lease. The data keeps no history — the
+    /// grace is for the statement in flight, not for time travel.
+    grace: std::time::Duration,
+}
 
-    /// Append Arrow batches to `dataset.table` as one commit, with the
-    /// given facts riding it as snapshot properties. **The one write
-    /// path into an Iceberg table**: the landing that materializes a
-    /// recipe and the store append that records a gloss both come
-    /// through here, so there is one commit, one conflict rule and one
-    /// place partitioning is handled. Facts about a write ride the
-    /// write, which DataFusion's own INSERT cannot do — its `fast_append`
-    /// sets no snapshot properties.
-    pub async fn append_batches(
-        &self,
-        dataset: &str,
-        table: &str,
-        batches: &[RecordBatch],
-        properties: HashMap<String, String>,
-    ) -> Result<()> {
-        let span = tracing::debug_span!(
-            "commit",
-            dataset,
-            table,
-            rows = batches.iter().map(|b| b.num_rows()).sum::<usize>()
-        );
-        // Boxed: this sits several awaits below a door, and a wrapper
-        // holding the writer chain by value would copy it onto the stack
-        // once more at construction in a debug build.
-        tracing::Instrument::instrument(
-            Box::pin(self.commit_append(dataset, table, batches, properties)),
-            span,
+/// The default grace: longer than any statement runs.
+const GRACE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+const MOUNT_BUILD_ATTEMPTS: usize = 5;
+
+impl Lake {
+    /// The laptop's shape: a SQLite file and a warehouse directory.
+    pub async fn open(catalog_db: &Path, warehouse: &Path) -> Result<Self> {
+        if let Some(parent) = catalog_db.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| Error::Workspace(format!("catalog dir {}: {e}", parent.display())))?;
+        }
+        Self::open_sql(
+            &format!("sqlite:{}?mode=rwc", catalog_db.display()),
+            &warehouse.display().to_string(),
         )
         .await
     }
 
-    /// The append, under its span.
-    async fn commit_append(
+    /// A deployment's shape: the catalog on a SQL server named by its
+    /// URI (`sqlite:<file>` or `postgres://…`), the warehouse a
+    /// directory or an object-store location.
+    pub async fn open_sql(catalog_uri: &str, warehouse: &str) -> Result<Self> {
+        let db = Db::connect(catalog_uri).await?;
+        let warehouse = Warehouse::open(warehouse)?;
+        tables::create(&db, warehouse.root.as_str()).await?;
+        Ok(Lake {
+            db,
+            warehouse: Arc::new(warehouse),
+            mount: Arc::new(std::sync::RwLock::new(None)),
+            generation: Arc::new(AtomicU64::new(0)),
+            walks: Arc::new(AtomicU64::new(0)),
+            database: catalog_uri.to_string(),
+            grace: GRACE,
+        })
+    }
+
+    /// The same lake with another grace before ended files are deleted
+    /// — the tests run with none.
+    pub fn with_grace(mut self, grace: std::time::Duration) -> Self {
+        self.grace = grace;
+        self
+    }
+
+    /// The database the catalog tables and the record share.
+    pub fn db(&self) -> Db {
+        self.db.clone()
+    }
+
+    /// The catalog URI, credentials and all — never logged whole.
+    pub fn database(&self) -> &str {
+        &self.database
+    }
+
+    /// The warehouse's object store, registered under its key in the
+    /// engine runtime a session scans with.
+    pub fn register(&self, env: &RuntimeEnv) {
+        env.register_object_store(
+            self.warehouse.key.as_ref(),
+            Arc::clone(&self.warehouse.store),
+        );
+    }
+
+    // -- datasets ----------------------------------------------------------
+
+    /// The dataset's schema row, created if absent; whether it was.
+    pub async fn ensure_dataset(&self, name: &str) -> Result<bool> {
+        let created = tables::ensure_schema(&self.db, name).await?;
+        if created {
+            self.invalidate_provider();
+        }
+        Ok(created)
+    }
+
+    pub async fn dataset_exists(&self, name: &str) -> Result<bool> {
+        tables::schema_exists(&self.db, name).await
+    }
+
+    /// Every dataset, by name, sorted.
+    pub async fn datasets(&self) -> Result<Vec<String>> {
+        tables::schema_names(&self.db).await
+    }
+
+    pub async fn table_names(&self, dataset: &str) -> Result<Vec<String>> {
+        tables::table_names(&self.db, dataset).await
+    }
+
+    pub async fn table_exists(&self, dataset: &str, table: &str) -> Result<bool> {
+        Ok(self.version(dataset, table).await?.is_some())
+    }
+
+    /// The table's version — the snapshot that last changed it — or
+    /// `None` when the dataset holds no such table.
+    pub async fn version(&self, dataset: &str, table: &str) -> Result<Option<i64>> {
+        let pinned = tables::pin(&self.db, dataset, Some(&[table.to_string()])).await?;
+        Ok(pinned
+            .and_then(|rows| rows.into_iter().next())
+            .map(|t| t.version))
+    }
+
+    // -- writes ------------------------------------------------------------
+
+    /// The rows written as one parquet file under the table's
+    /// directory, nothing committed: the file joins the table through
+    /// [`Lake::commit`], and a write whose commit never comes is a file
+    /// the next commit on the table finds nothing referencing.
+    pub async fn write(
         &self,
         dataset: &str,
         table: &str,
-        batches: &[RecordBatch],
-        properties: HashMap<String, String>,
-    ) -> Result<()> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        let table = self.load(&ident).await?;
-        // Boxed: the writer stack is a deep chain of generic futures, and
-        // this sits several awaits below a door. Inlined it grows every
-        // caller's frame for a state machine that lives for one call.
-        let written = Box::pin(write_files(table, batches)).await?;
-        self.commit_written(written, properties).await
+        schema: SchemaRef,
+        mut rows: SendableRecordBatchStream,
+    ) -> Result<Written> {
+        let name = format!("{}.parquet", uuid::Uuid::now_v7());
+        let path = object_store::path::Path::from(format!(
+            "{}{name}",
+            self.warehouse.table_dir(dataset, table)
+        ));
+        let span = tracing::info_span!("write", dataset, table, rows = tracing::field::Empty);
+        let _enter = span.enter();
+        drop(_enter);
+        let properties = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
+            .build();
+        let sink = BufWriter::new(Arc::clone(&self.warehouse.store), path.clone());
+        let mut writer = AsyncArrowWriter::try_new(sink, Arc::clone(&schema), Some(properties))?;
+        let mut count: u64 = 0;
+        while let Some(batch) = rows.next().await {
+            let batch = batch?;
+            count += batch.num_rows() as u64;
+            writer.write(&batch).await?;
+        }
+        let metadata = writer.close().await?;
+        let size = self.warehouse.store.head(&path).await?.size;
+        // The footer's length sits in the four bytes before the magic;
+        // the specification's `footer_size` is what a reader fetches
+        // in one request to open the file.
+        let trailer = self
+            .warehouse
+            .store
+            .get_range(&path, size.saturating_sub(8)..size.saturating_sub(4))
+            .await?;
+        let footer = trailer
+            .as_ref()
+            .try_into()
+            .map(u32::from_le_bytes)
+            .map(|n| i64::from(n) + 8)
+            .unwrap_or(0);
+        span.record("rows", count);
+        Ok(Written {
+            rows: count,
+            files: vec![LandedFile {
+                path: name,
+                size,
+                rows: metadata.file_metadata().num_rows(),
+                footer,
+            }],
+        })
     }
 
-    /// A writer onto `dataset.table` for a caller that holds its rows
-    /// as a stream: it writes a batch at a time and commits nothing
-    /// until [`Lake::commit_written`].
-    pub async fn writer(&self, dataset: &str, table: &str) -> Result<TableWriter> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        TableWriter::open(self.load(&ident).await?)
-    }
-
-    /// The commit behind every append: the written files join their
-    /// table as one snapshot, the given facts riding it as snapshot
-    /// properties.
-    pub async fn commit_written(
+    /// The written files joined to the table as one commit — created,
+    /// replaced or appended — and the version that commit made. Files a
+    /// replace ended are scheduled for deletion and deleted by a later
+    /// commit's sweep, once the grace has passed.
+    pub async fn commit(
         &self,
+        dataset: &str,
+        table: &str,
+        schema: &Schema,
         written: Written,
-        properties: HashMap<String, String>,
-    ) -> Result<()> {
-        // One commit, with no retry of ours around it. `Transaction::commit`
-        // already retries a conflict at iceberg's own seam: `do_commit`
-        // reloads the table, re-bases on the refreshed metadata and
-        // re-applies the actions, under an exponential backoff bounded by
-        // the table's `commit.retry.num-retries`; the SQL catalog marks
-        // its conflict retryable so that backoff fires. A loop out here
-        // only doubled the attempts and re-entered the backoff with no
-        // delay of its own.
-        // One transaction: the action is built from it and applied to it.
-        // `Transaction::new` clones the table (iceberg transaction/mod.rs),
-        // so a second one is a second copy of the metadata for nothing.
-        let tx = Transaction::new(&written.table);
-        let append = tx
-            .fast_append()
-            .add_data_files(written.files)
-            .set_snapshot_properties(properties);
-        match append.apply(tx)?.commit(self.catalog.as_ref()).await {
-            Ok(_) => Ok(()),
-            // Counted where it surfaces, which is after iceberg has spent
-            // its whole retry budget: one here is an exhausted backoff,
-            // never a single lost race.
+        landing: Landing,
+    ) -> Result<i64> {
+        let span = tracing::info_span!(
+            "commit",
+            dataset,
+            table,
+            landing = ?landing,
+            files = written.files.len(),
+            rows = written.rows
+        );
+        let (version, _ended) = tracing::Instrument::instrument(
+            tables::commit_landing(&self.db, dataset, table, schema, &written.files, landing),
+            span,
+        )
+        .await?;
+        self.invalidate_provider();
+        self.sweep(self.grace).await;
+        Ok(version)
+    }
+
+    /// The table ended, its files scheduled for deletion.
+    pub async fn drop_table(&self, dataset: &str, table: &str) -> Result<()> {
+        tables::drop_table(&self.db, dataset, table).await?;
+        self.invalidate_provider();
+        self.sweep(self.grace).await;
+        Ok(())
+    }
+
+    /// Every file scheduled for deletion longer than `older_than` ago,
+    /// deleted from the store and unscheduled; one the store keeps
+    /// stays scheduled for the next sweep.
+    pub async fn sweep(&self, older_than: std::time::Duration) {
+        let before = chrono::DateTime::<chrono::Utc>::from(
+            std::time::SystemTime::now()
+                .checked_sub(older_than)
+                .unwrap_or(std::time::UNIX_EPOCH),
+        )
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let scheduled = match tables::scheduled(&self.db, &before).await {
+            Ok(rows) => rows,
             Err(e) => {
-                if is_commit_conflict(&e) {
-                    tracing::warn!("commit conflict after iceberg's own retries");
-                    self.conflicts
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::warn!("the deletion schedule could not be read: {e}");
+                return;
+            }
+        };
+        for (file_id, dataset, table, relative) in scheduled {
+            let path = object_store::path::Path::from(format!(
+                "{}{relative}",
+                self.warehouse.table_dir(&dataset, &table)
+            ));
+            match self.warehouse.store.delete(&path).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {
+                    if let Err(e) = tables::unschedule(&self.db, file_id).await {
+                        tracing::warn!(file = %path, "the deleted file stays scheduled: {e}");
+                    }
                 }
-                Err(e.into())
+                Err(e) => tracing::warn!(file = %path, "not deleted, stays scheduled: {e}"),
             }
         }
     }
 
-    /// The shared catalog provider — built over the current namespace
-    /// list on first touch, then an Arc clone for every caller. Two
-    /// concurrent first touches may both build; either result is valid
-    /// and one wins the slot.
-    pub async fn provider(&self) -> Result<Arc<IcebergCatalogProvider>> {
-        use std::sync::atomic::Ordering;
-        for _ in 0..PROVIDER_BUILD_ATTEMPTS {
-            if let Some(shared) = self.provider.read().expect("provider lock").as_ref() {
+    // -- reads -------------------------------------------------------------
+
+    /// Every table of the dataset, pinned at its current version — one
+    /// walk per statement, and the walk is three queries on the
+    /// catalog, whatever the table count. Nothing is fetched from the
+    /// warehouse: the files' paths and sizes are rows.
+    pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
+        self.walks.fetch_add(1, Ordering::Relaxed);
+        let span = tracing::info_span!("pin", dataset, tables = tracing::field::Empty);
+        tracing::Instrument::instrument(self.walk(dataset, None), span)
+            .await
+            .map(|pinned| pinned.unwrap_or_default())
+    }
+
+    /// The named tables of `dataset`, each pinned at its current
+    /// version; `None` when a name is not a table there, which is where
+    /// a misspelling gets its hint from the whole walk.
+    pub async fn pin_tables(
+        &self,
+        dataset: &str,
+        names: &[String],
+    ) -> Result<Option<Vec<PinnedTable>>> {
+        self.walk(dataset, Some(names)).await
+    }
+
+    async fn walk(
+        &self,
+        dataset: &str,
+        names: Option<&[String]>,
+    ) -> Result<Option<Vec<PinnedTable>>> {
+        let Some(rows) = tables::pin(&self.db, dataset, names).await? else {
+            return Ok(None);
+        };
+        tracing::Span::current().record("tables", rows.len());
+        Ok(Some(
+            rows.into_iter().map(|t| self.pinned(dataset, t)).collect(),
+        ))
+    }
+
+    fn pinned(&self, dataset: &str, rows: tables::TableRows) -> PinnedTable {
+        let dir = self.warehouse.table_dir(dataset, &rows.name);
+        let files = rows
+            .files
+            .iter()
+            .map(|f| (format!("{dir}{}", f.path), f.size))
+            .collect();
+        let provider = Arc::new(FilesTable::new(
+            Arc::clone(&rows.schema),
+            self.warehouse.key.clone(),
+            files,
+        ));
+        PinnedTable {
+            name: rows.name,
+            snapshot_id: Some(rows.version),
+            columns: rows
+                .schema
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect(),
+            provider,
+        }
+    }
+
+    /// The mounted catalog — built over every dataset on first touch,
+    /// then an Arc clone for every caller. Two concurrent first touches
+    /// may both build; either result is valid and one wins the slot.
+    pub async fn provider(&self) -> Result<Arc<Mount>> {
+        for _ in 0..MOUNT_BUILD_ATTEMPTS {
+            if let Some(shared) = self.mount.read().expect("mount lock").as_ref() {
                 return Ok(Arc::clone(shared));
             }
             let began = self.generation.load(Ordering::Acquire);
             let built = Arc::new(
-                tracing::Instrument::instrument(
-                    IcebergCatalogProvider::try_new(self.catalog()),
-                    tracing::info_span!("mount"),
-                )
-                .await?,
+                tracing::Instrument::instrument(self.build_mount(), tracing::info_span!("mount"))
+                    .await?,
             );
-            let mut slot = self.provider.write().expect("provider lock");
+            let mut slot = self.mount.write().expect("mount lock");
             if self.generation.load(Ordering::Acquire) == began {
                 *slot = Some(Arc::clone(&built));
                 return Ok(built);
             }
-            // A create landed while this was building, so the map it
-            // froze is already behind. Neither cache it nor hand it
-            // out — build again against what the writer left.
+            // A commit landed while this was building, so the file
+            // lists it froze are already behind. Neither cache it nor
+            // hand it out — build again against what the writer left.
         }
         Err(Error::Workspace(
             "the catalog kept changing while its mounted view was being built".into(),
         ))
     }
 
-    /// Forget the cached provider and mark every build now in flight as
-    /// behind. Callers that miss a namespace or a table another writer
-    /// just created invalidate and touch again.
+    async fn build_mount(&self) -> Result<Mount> {
+        let mut schemas = HashMap::new();
+        for dataset in self.datasets().await? {
+            let tables = self
+                .walk(&dataset, None)
+                .await?
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p.name, p.provider))
+                .collect();
+            schemas.insert(dataset, Arc::new(scan::DatasetSchema::new(tables)));
+        }
+        Ok(Mount::new(schemas))
+    }
+
+    /// Forget the mounted catalog and mark every build now in flight as
+    /// behind. Every commit calls it.
     pub fn invalidate_provider(&self) {
-        use std::sync::atomic::Ordering;
         self.generation.fetch_add(1, Ordering::AcqRel);
-        *self.provider.write().expect("provider lock") = None;
+        *self.mount.write().expect("mount lock") = None;
     }
 
-    /// Every table of the dataset, pinned at its current snapshot — one
-    /// catalog resolution per statement, everything derived computed
-    /// against that set. The catalog-backed provider always reads
-    /// current, so two scans in one query could otherwise straddle a
-    /// landing.
-    ///
-    /// **The one walk over a dataset's catalog.** Loading a table is two
-    /// SQLite queries and a full parse of its metadata file, and
-    /// everything a caller asks about a table — its snapshot, its
-    /// columns, a provider to scan it — is one field or another of the
-    /// metadata this already holds. Asking separately meant loading each
-    /// table three times to read three fields of one document.
-    ///
-    /// A table listed here that will not load is a concurrent drop, and
-    /// it fails the read. Nothing in the language rules on that race, so
-    /// the catalog's own answer is the answer.
-    pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
-        let span = tracing::info_span!("pin", dataset, tables = tracing::field::Empty);
-        tracing::Instrument::instrument(self.walk(dataset), span).await
-    }
-
-    /// The walk, under its span.
-    async fn walk(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
-        use std::sync::atomic::Ordering;
-        self.walks.fetch_add(1, Ordering::Relaxed);
-        let ns = NamespaceIdent::new(dataset.to_string());
-        let idents = self.catalog.list_tables(&ns).await?;
-        tracing::Span::current().record("tables", idents.len());
-        // Every table's load in flight at once, as the substrate's own
-        // schema provider drives them (iceberg-datafusion schema.rs,
-        // `try_join_all`): a load is catalog round trips plus a metadata
-        // parse, and over a remote catalog the trips are the cost.
-        let tables =
-            futures::future::try_join_all(idents.iter().map(|ident| self.load(ident))).await?;
-        let mut out = Vec::with_capacity(tables.len());
-        for (ident, table) in idents.into_iter().zip(tables) {
-            out.push(Self::pinned(ident.name, table).await?);
-        }
-        Ok(out)
-    }
-
-    /// The named tables of `dataset`, each pinned at its current
-    /// snapshot — what a statement that names its tables needs, without
-    /// the rest of the dataset loaded beside them. `None` when a name is
-    /// not a table there: the caller then wants the whole walk, which
-    /// is where a misspelling gets its hint.
-    pub async fn pin_tables(
-        &self,
-        dataset: &str,
-        names: &[String],
-    ) -> Result<Option<Vec<PinnedTable>>> {
-        let ns = NamespaceIdent::new(dataset.to_string());
-        let idents: Vec<TableIdent> = names
-            .iter()
-            .map(|name| TableIdent::new(ns.clone(), name.clone()))
-            .collect();
-        let tables =
-            futures::future::try_join_all(idents.iter().map(|ident| self.load_if_present(ident)))
-                .await?;
-        let mut out = Vec::with_capacity(tables.len());
-        for (ident, table) in idents.into_iter().zip(tables) {
-            let Some(table) = table else {
-                return Ok(None);
-            };
-            out.push(Self::pinned(ident.name, table).await?);
-        }
-        Ok(Some(out))
-    }
-
-    /// One loaded table as a statement holds it.
-    async fn pinned(name: String, table: iceberg::table::Table) -> Result<PinnedTable> {
-        let snapshot_id = table.metadata().current_snapshot_id();
-        let columns = table
-            .metadata()
-            .current_schema()
-            .as_struct()
-            .fields()
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
-        // One constructor for both: the provider holds the table it is
-        // given and never refreshes it, so a scan with no snapshot named
-        // resolves the current snapshot of *this* clone — the same one
-        // `snapshot_id` above records (iceberg-rust table/mod.rs:245-261,
-        // scan/mod.rs:216-231). A table with no snapshot yet scans empty
-        // through the same call (scan/mod.rs:218-229).
-        // Behind [`PrimitivePushdown`]: a filter over a nested column
-        // stays with the engine instead of failing the scan.
-        let provider = PrimitivePushdown::wrap(Arc::new(
-            iceberg_datafusion::IcebergStaticTableProvider::try_new_from_table(table).await?,
-        ));
-        Ok(PinnedTable {
-            name,
-            snapshot_id,
-            columns,
-            provider,
-        })
-    }
-
-    /// Catalog walks so far — one per `pin_dataset`, which loads and
-    /// parses every table of the dataset.
+    /// Dataset walks so far — one per [`Lake::pin_dataset`].
     pub fn walk_count(&self) -> u64 {
-        self.walks.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Tables loaded from the catalog so far, walks included.
-    pub fn load_count(&self) -> u64 {
-        self.loads.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Commits that reached a caller as a conflict, after iceberg had
-    /// already retried them to the end of its own budget. A lost race
-    /// the format's backoff recovered is not one of these.
-    pub fn conflict_count(&self) -> u64 {
-        self.conflicts.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Single-part namespaces with their properties.
-    pub async fn namespaces(&self) -> Result<Vec<(String, HashMap<String, String>)>> {
-        let listed = self.catalog.list_namespaces(None).await?;
-        let single: Vec<(&NamespaceIdent, &String)> = listed
-            .iter()
-            .filter_map(|ns| {
-                let parts: &Vec<String> = ns.as_ref();
-                match parts.as_slice() {
-                    [name] => Some((ns, name)),
-                    _ => None,
-                }
-            })
-            .collect();
-        // The reads in flight at once, as [`Lake::pin_dataset`] drives
-        // its loads: over a remote catalog the round trips are the cost.
-        let got = futures::future::try_join_all(
-            single.iter().map(|(ns, _)| self.catalog.get_namespace(ns)),
-        )
-        .await?;
-        Ok(single
-            .iter()
-            .zip(got)
-            .map(|((_, name), got)| ((*name).clone(), got.properties().clone()))
-            .collect())
-    }
-
-    /// Every landing on the dataset's tables: one entry per append
-    /// snapshot, its facts read back from the snapshot it rode.
-    pub async fn landings(&self, dataset: &str) -> Result<Vec<Landing>> {
-        let span = tracing::info_span!("landings", dataset, tables = tracing::field::Empty);
-        tracing::Instrument::instrument(self.landings_walk(dataset), span).await
-    }
-
-    /// The walk behind [`Lake::landings`], under its span.
-    async fn landings_walk(&self, dataset: &str) -> Result<Vec<Landing>> {
-        let ns = NamespaceIdent::new(dataset.to_string());
-        let idents = self.catalog.list_tables(&ns).await?;
-        tracing::Span::current().record("tables", idents.len());
-        let tables =
-            futures::future::try_join_all(idents.iter().map(|ident| self.load(ident))).await?;
-        let mut out = Vec::new();
-        for (ident, table) in idents.iter().zip(&tables) {
-            for snapshot in table.metadata().snapshots() {
-                let summary = snapshot.summary();
-                if summary.operation != iceberg::spec::Operation::Append {
-                    continue;
-                }
-                out.push(Landing {
-                    dataset: dataset.to_string(),
-                    table: ident.name.clone(),
-                    committed_at: snapshot
-                        .timestamp()?
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string(),
-                    added_records: summary
-                        .additional_properties
-                        .get("added-records")
-                        .and_then(|v| v.parse().ok()),
-                    properties: summary.additional_properties.clone(),
-                });
-            }
-        }
-        Ok(out)
-    }
-
-    /// A table's properties; `None` when the table does not exist.
-    pub async fn table_properties(
-        &self,
-        dataset: &str,
-        table: &str,
-    ) -> Result<Option<HashMap<String, String>>> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        Ok(self
-            .load_if_present(&ident)
-            .await?
-            .map(|t| t.metadata().properties().clone()))
-    }
-
-    /// Set properties on a table, one commit.
-    pub async fn set_table_properties(
-        &self,
-        dataset: &str,
-        table: &str,
-        properties: HashMap<String, String>,
-    ) -> Result<()> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        let table = self.load(&ident).await?;
-        let tx = Transaction::new(&table);
-        let mut action = tx.update_table_properties();
-        for (k, v) in properties {
-            action = action.set(k, v);
-        }
-        action.apply(tx)?.commit(self.catalog.as_ref()).await?;
-        Ok(())
-    }
-
-    /// A table the catalog holds, or `None` when it holds no such table.
-    ///
-    /// `load_table` opens with the same existence query a caller's own
-    /// pre-check would run and refuses with a typed kind
-    /// (iceberg-catalog-sql `catalog.rs`, `load_table`), so asking first
-    /// only ran it twice. Absence is read off the refusal instead.
-    pub(crate) async fn load_if_present(
-        &self,
-        ident: &TableIdent,
-    ) -> Result<Option<iceberg::table::Table>> {
-        match self.load(ident).await {
-            Ok(table) => Ok(Some(table)),
-            Err(e) if e.kind() == iceberg::ErrorKind::TableNotFound => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// One table loaded from the catalog, under its span: the round
-    /// trips and the metadata parse every walk above is made of, so a
-    /// trace shows how many a walk ran and how long each took.
-    async fn load(&self, ident: &TableIdent) -> iceberg::Result<iceberg::table::Table> {
-        self.loads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let span = tracing::info_span!("load", table = %ident.name);
-        tracing::Instrument::instrument(self.catalog.load_table(ident), span).await
-    }
-
-    /// Current snapshot id of `dataset.table`; `None` when the table does
-    /// not exist (a subject may be glossed before its recipe lands) or has
-    /// no snapshot yet.
-    pub async fn snapshot_id(&self, dataset: &str, table: &str) -> Result<Option<i64>> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        Ok(self
-            .load_if_present(&ident)
-            .await?
-            .and_then(|t| t.metadata().current_snapshot_id()))
-    }
-
-    pub async fn namespace_exists(&self, name: &str) -> Result<bool> {
-        Ok(self
-            .catalog
-            .namespace_exists(&NamespaceIdent::new(name.to_string()))
-            .await?)
-    }
-
-    /// Data tables in the dataset's namespace.
-    pub async fn table_names(&self, dataset: &str) -> Result<Vec<String>> {
-        let ns = NamespaceIdent::new(dataset.to_string());
-        Ok(self
-            .catalog
-            .list_tables(&ns)
-            .await?
-            .into_iter()
-            .map(|t| t.name)
-            .collect())
-    }
-
-    pub async fn table_exists(&self, dataset: &str, table: &str) -> Result<bool> {
-        let ident = TableIdent::new(NamespaceIdent::new(dataset.to_string()), table.to_string());
-        Ok(self.catalog.table_exists(&ident).await?)
+        self.walks.load(Ordering::Relaxed)
     }
 }

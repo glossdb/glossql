@@ -56,7 +56,7 @@ pub enum Error {
     #[error("statement targets `{0}` — only the glossary relation accepts forwarded SQL")]
     ForwardRejected(String),
     #[error(
-        "the strike is parked: the substrate cannot remove rows until iceberg-rust lands the delete write path — supersede the slot, or rebuild the workspace"
+        "the strike is parked: removal on an append-only record waits on its ruling (SPEC.md §9) — supersede the slot, or rebuild the workspace"
     )]
     StrikeParked,
     #[error(

@@ -210,9 +210,9 @@ async fn fixture_11_add_source_flow() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("amount"), "{err}");
-    // …while the glosses survive as knowledge. The import record is the
-    // table's own snapshots now, and a re-land replaces the table whole —
-    // the substrate has no overwrite — so the record starts over with it.
+    // …while the glosses survive as knowledge, and so do the landings:
+    // a re-land replaces the table whole, and the record keeps every
+    // landing as its row.
     let kept = session
         .execute("SELECT count(*) FROM glossary WHERE subject = 'fin';")
         .await
@@ -222,7 +222,7 @@ async fn fixture_11_add_source_flow() {
         .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
         .await
         .unwrap();
-    assert_eq!(single_value(&landings), "1");
+    assert_eq!(single_value(&landings), "2");
 
     // A re-land that cannot run leaves the landing it was replacing
     // (dropping the old table before the new recipe produces a single
@@ -239,14 +239,14 @@ async fn fixture_11_add_source_flow() {
         "3",
         "the live landing is untouched by a recipe that never ran"
     );
-    // And the record still describes what actually landed — the standing
-    // table's own snapshot — so the retry does not answer `unchanged`
+    // And the record still describes what actually landed — the two
+    // landings that stood — so the retry does not answer `unchanged`
     // over a table that was never made.
     let recipes = session
         .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
         .await
         .unwrap();
-    assert_eq!(single_value(&recipes), "1");
+    assert_eq!(single_value(&recipes), "2");
 
     // The substrate allowlist: schema-altering SQL is refused at the door.
     let err = session
@@ -291,13 +291,13 @@ async fn drop_table_removes_an_empty_misdeclaration_whole() {
     let outcomes = session.execute("DROP TABLE mistake;").await.unwrap();
     assert_eq!(done(&outcomes[0]), "DROP TABLE mistake");
 
-    // Gone whole: the table, the recipe row, the import record — so the
-    // name is free for a different SQL.
+    // The table is gone and the name is free for a different SQL; the
+    // landing stays a row of the record, as every landing does.
     let gone = session
         .execute("SELECT count(*) FROM imports WHERE table_name = 'mistake';")
         .await
         .unwrap();
-    assert_eq!(single_value(&gone), "0");
+    assert_eq!(single_value(&gone), "1");
     let outcomes = session
         .execute(
             "DECLARE RECIPE mistake ON fin FROM erp AS $$SELECT order_id FROM read_parquet('orders/*.parquet')$$;",

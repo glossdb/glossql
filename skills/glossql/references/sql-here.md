@@ -23,9 +23,7 @@ are positional.
 
 The schema in one read: `information_schema.tables` and
 `information_schema.columns` serve what the call mounted — the bound
-dataset's tables and every column of them, each beside its Iceberg
-metadata tables (`t$snapshots`, `t$manifests`, `t$history`; `WHERE
-table_name NOT LIKE '%$%'` keeps the landed ones). `SHOW TABLES` lists
+dataset's tables and every column of them. `SHOW TABLES` lists
 the landed tables; `DESCRIBE <name>` describes any readable name, the
 shipped reads included.
 

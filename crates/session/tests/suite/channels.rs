@@ -412,10 +412,8 @@ async fn unquoted_names_fold_and_quoted_names_keep_case() {
     );
 
     // The engine's schema surface lists the two landed tables under
-    // the dataset, each beside its Iceberg metadata tables
-    // (`t$snapshots`, `t$manifests`, `t$history`) — the provider's own
-    // listing, which a `$` filter narrows to what landed.
-    for (filter, expected) in [("NOT LIKE '%$%'", "2"), ("LIKE '%$%'", "6")] {
+    // the dataset and nothing beside them.
+    for (filter, expected) in [("NOT LIKE '%$%'", "2"), ("LIKE '%$%'", "0")] {
         let listed = plane
             .execute(
                 actor.clone(),

@@ -4,8 +4,9 @@ Every relation the language declares — glosses, functions, aspects,
 witnesses, sources, relationships, measurements — is a table in the
 catalog's own database: the workspace directory's SQLite file on a
 laptop, the Postgres server a deployment names. The tables the
-workspace lands are Iceberg tables in the lake; the record the
-language keeps sits beside the catalog that names them.
+workspace lands are parquet files under the warehouse, catalogued in
+that same database ([storage](storage.md)); the record the language
+keeps sits beside the rows that name them.
 
 ## One store
 

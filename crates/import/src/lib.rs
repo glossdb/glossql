@@ -259,7 +259,7 @@ pub type Rows = futures::stream::BoxStream<'static, Result<RecordBatch>>;
 
 /// A recipe opened against its source: the schema it lands — exactly the
 /// schema the recipe's SQL produced (the probe's rehearsed identity),
-/// folded only where Iceberg v2 cannot hold a type — known before the
+/// folded only where the landed type set cannot hold a type — known before the
 /// first row, and the rows as a stream. Typing is authored: an uncast
 /// csv/json column is Utf8 because the read side is, never because the
 /// import refolds it.

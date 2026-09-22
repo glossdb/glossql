@@ -1,65 +1,50 @@
-//! The data plane behind every catalog: iceberg's `Storage` seam on the
-//! engine's own storage crate.
+//! The object store behind the warehouse: the engine's own storage
+//! crate, one client per bucket or container, built from the
+//! environment. Three families answer: S3 (`s3://`, `s3a://`, `s3n://`),
+//! Azure (`abfss://container@account.dfs.core.windows.net/…`, `abfs://`,
+//! `az://`, `azure://`, `adl://`, `wasbs://`) and Google Cloud Storage
+//! (`gs://`, `gcs://`); a directory on this machine is the fourth, the
+//! laptop's shape. The engine registers the client under the
+//! location's `scheme://authority/`, which is how it keys a store
+//! (datafusion-execution object_store.rs, `get_url_key`).
 //!
-//! iceberg-rust moves every byte through `FileIO` → [`Storage`], and
-//! leaves what implements that trait to the caller
-//! (`io/storage/mod.rs` invites third-party implementations). This one
-//! is built on `object_store` — the Apache crate DataFusion itself
-//! runs on, already in the binary — so the process carries one storage
-//! stack, not two. Three families answer: S3 (`s3://`, `s3a://`,
-//! `s3n://`), Azure (`abfss://container@account.dfs.core.windows.net/…`,
-//! `abfs://`, `az://`, `azure://`, `adl://`, `wasbs://`) and Google
-//! Cloud Storage (`gs://`, `gcs://`). A client is
-//! scoped to one bucket or container, so clients are built lazily per
-//! authority and shared; in practice a table's FileIO sees one.
-//!
-//! Configuration is layered by concern, between the `s3.*` / `adls.*` /
-//! `gcs.*` properties a table load answers with and object_store's own
-//! environment conventions (`AWS_*`, `AZURE_*`, `GOOGLE_*`): the catalog
-//! says where
-//! the store is and, vending, whom it lets in; the environment says how
-//! this process reaches it and supplies credentials only where the
-//! catalog vends none — a static key must never shadow a vended one.
-//! On Azure with no credential set at all, the client asks the managed
-//! identity — the Container Apps arrangement: the identity is the
-//! credential and there is no secret. The platform names its token
-//! endpoint in `IDENTITY_ENDPOINT`, which this seam hands the builder
-//! (object_store reads it only in its own `from_env`); the client reads
+//! Configuration is the environment's own conventions (`AWS_*`,
+//! `AZURE_*`, `GOOGLE_*`): the process says how it reaches the store
+//! and supplies credentials where the platform vends none. On Azure
+//! with no credential set at all, the client asks the managed identity
+//! — the Container Apps arrangement: the identity is the credential
+//! and there is no secret. The platform names its token endpoint in
+//! `IDENTITY_ENDPOINT`, which this seam hands the builder (object_store
+//! reads it only in its own `from_env`); the client reads
 //! `IDENTITY_HEADER` itself at token time. Without the endpoint the
 //! client would ask the virtual machine's metadata address, which
 //! Container Apps does not offer. A user-assigned identity is named by
-//! `AZURE_STORAGE_CLIENT_ID`. On Google Cloud with no credential set,
-//! the client asks the metadata server for the attached service
-//! account's token — the Cloud Run arrangement, the same shape. No
-//! surface of ours either way.
-//!
-//! The same clients serve a file source whose location is in a store
-//! ([`environment_store`]): there no catalog vends, the environment
-//! alone configures, and the location carries no credential
-//! (SPEC.md §3).
+//! `AZURE_CLIENT_ID`. On Google Cloud the attached service account's
+//! token is read from the metadata server by the client itself.
 
 use std::collections::HashMap;
-use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use futures::StreamExt;
-use futures::stream::BoxStream;
-use iceberg::io::{
-    FileMetadata, FileRead, FileWrite, InputFile, OutputFile, Storage, StorageConfig,
-    StorageFactory,
-};
-use iceberg::{Error, ErrorKind, Result};
+use crate::{Error, Result};
+use object_store::ObjectStore;
 use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
 use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
 use object_store::gcp::{GcpCredential, GoogleCloudStorageBuilder, GoogleConfigKey};
-use object_store::{ObjectStore, ObjectStoreExt, WriteMultipart};
 use url::Url;
 
 /// Where a warehouse lives: a directory on this machine, or a location
 /// in an object store this seam reaches.
+// The property names a catalog would vend a client under, kept as the
+// keys of `ObjectStorage::props`; without a vending catalog the map is
+// empty and the environment alone configures the client.
+const S3_ENDPOINT: &str = "s3.endpoint";
+const S3_REGION: &str = "s3.region";
+const S3_ACCESS_KEY_ID: &str = "s3.access-key-id";
+const S3_SECRET_ACCESS_KEY: &str = "s3.secret-access-key";
+const S3_SESSION_TOKEN: &str = "s3.session-token";
+const S3_PATH_STYLE_ACCESS: &str = "s3.path-style-access";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Warehouse {
     Local(PathBuf),
@@ -109,13 +94,12 @@ struct Location {
     family: Family,
     authority: String,
     root: String,
-    key: object_store::path::Path,
 }
 
 fn location(path: &str) -> Result<Location> {
-    let invalid = |what: &str| Error::new(ErrorKind::DataInvalid, format!("{what}: `{path}`"));
-    let url =
-        Url::parse(path).map_err(|e| invalid("not a location this seam reaches").with_source(e))?;
+    let invalid = |what: &str| Error::Workspace(format!("{what}: `{path}`"));
+    let url = Url::parse(path)
+        .map_err(|e| invalid(&format!("not a location this seam reaches ({e})")))?;
     let scheme = url.scheme().to_ascii_lowercase();
     let family = family(&scheme)
         .ok_or_else(|| invalid("not an S3, Azure or Google Cloud Storage location"))?;
@@ -139,51 +123,14 @@ fn location(path: &str) -> Result<Location> {
         family,
         authority: format!("{scheme}://{authority}"),
         root: format!("{root_scheme}://{authority}"),
-        key: object_store::path::Path::from(url.path().trim_start_matches('/')),
     })
 }
 
-/// Builds [`ObjectStorage`] for a catalog's FileIO — handed to the
-/// catalog builder once; `build` runs per table load, with that load's
-/// properties (a SQL catalog delivers none: the environment configures).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct ObjectStorageFactory;
-
-/// How many distinct property sets keep their storage. A warehouse
-/// answers one set for all its tables, so a handful covers a process; a
-/// catalog that vends fresh credentials with every load answers a new
-/// set each time, and the bound is what keeps those from accumulating.
-const HELD_STORAGES: u64 = 64;
-
-/// A property set in one order — the key a storage is held under.
-type Properties = Vec<(String, String)>;
-
-/// The storages built so far, by the properties they were built from.
-/// The catalog builds a FileIO at every table load, and a storage
-/// built anew starts with no client — a connection pool and a
-/// credential fetch per scanned table. Properties are compared whole,
-/// so a load that carries different ones gets a client of its own.
-static STORAGES: LazyLock<moka::sync::Cache<Properties, Arc<ObjectStorage>>> =
-    LazyLock::new(|| moka::sync::Cache::new(HELD_STORAGES));
-
-#[typetag::serde(name = "GlossqlObjectStorageFactory")]
-impl StorageFactory for ObjectStorageFactory {
-    fn build(&self, config: &StorageConfig) -> Result<Arc<dyn Storage>> {
-        let mut key: Properties = config
-            .props()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        key.sort();
-        Ok(STORAGES.get_with(key, || Arc::new(ObjectStorage::new(config.props().clone()))))
-    }
-}
-
-/// [`Storage`] over object_store's clients, one per authority.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+/// One client per bucket or container, built on first touch from the
+/// properties (none, without a vending catalog) and the environment.
+#[derive(Clone)]
 pub struct ObjectStorage {
     props: HashMap<String, String>,
-    #[serde(skip)]
     stores: Arc<Mutex<HashMap<String, Arc<dyn ObjectStore>>>>,
 }
 
@@ -191,7 +138,7 @@ pub struct ObjectStorage {
 impl std::fmt::Debug for ObjectStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ObjectStorage")
-            .field("s3.endpoint", &self.props.get(iceberg::io::S3_ENDPOINT))
+            .field("s3.endpoint", &self.props.get(S3_ENDPOINT))
             .field("adls.account-name", &self.props.get(ADLS_ACCOUNT_NAME))
             .field("gcs.service.host", &self.props.get(GCS_SERVICE_HOST))
             .finish_non_exhaustive()
@@ -216,21 +163,10 @@ const GCS_CREDENTIALS_JSON: &str = "gcs.credentials-json";
 const GCS_TOKEN: &str = "gcs.oauth2.token";
 const GCS_NO_AUTH: &str = "gcs.no-auth";
 
-/// An `object_store` failure as the engine's error; a missing object
-/// keeps its kind readable for [`ObjectStorage::exists`].
-fn io_error(e: object_store::Error, path: &str) -> Error {
-    Error::new(ErrorKind::Unexpected, "the object store refused")
-        .with_context("path", path.to_string())
-        .with_source(e)
-}
-
 fn does_not_build(family: &str, authority: &str, e: object_store::Error) -> Error {
-    Error::new(
-        ErrorKind::DataInvalid,
-        format!("the {family} configuration does not build"),
-    )
-    .with_context("store", authority.to_string())
-    .with_source(e)
+    Error::Workspace(format!(
+        "the {family} configuration for `{authority}` does not build: {e}"
+    ))
 }
 
 impl ObjectStorage {
@@ -250,7 +186,7 @@ impl ObjectStorage {
     /// none.
     fn s3(&self, bucket: &str) -> Result<Arc<dyn ObjectStore>> {
         let mut builder = AmazonS3Builder::new().with_bucket_name(bucket);
-        if let Some(endpoint) = self.props.get(iceberg::io::S3_ENDPOINT) {
+        if let Some(endpoint) = self.props.get(S3_ENDPOINT) {
             builder = builder.with_endpoint(endpoint);
             // A plain-http endpoint is a dev rig; saying the scheme is
             // saying it on purpose.
@@ -258,21 +194,21 @@ impl ObjectStorage {
                 builder = builder.with_allow_http(true);
             }
         }
-        if let Some(region) = self.props.get(iceberg::io::S3_REGION) {
+        if let Some(region) = self.props.get(S3_REGION) {
             builder = builder.with_region(region);
         }
-        let vended = self.props.contains_key(iceberg::io::S3_ACCESS_KEY_ID)
-            || self.props.contains_key(iceberg::io::S3_SESSION_TOKEN);
-        if let Some(key) = self.props.get(iceberg::io::S3_ACCESS_KEY_ID) {
+        let vended =
+            self.props.contains_key(S3_ACCESS_KEY_ID) || self.props.contains_key(S3_SESSION_TOKEN);
+        if let Some(key) = self.props.get(S3_ACCESS_KEY_ID) {
             builder = builder.with_access_key_id(key);
         }
-        if let Some(secret) = self.props.get(iceberg::io::S3_SECRET_ACCESS_KEY) {
+        if let Some(secret) = self.props.get(S3_SECRET_ACCESS_KEY) {
             builder = builder.with_secret_access_key(secret);
         }
-        if let Some(token) = self.props.get(iceberg::io::S3_SESSION_TOKEN) {
+        if let Some(token) = self.props.get(S3_SESSION_TOKEN) {
             builder = builder.with_token(token);
         }
-        if let Some(path_style) = self.props.get(iceberg::io::S3_PATH_STYLE_ACCESS) {
+        if let Some(path_style) = self.props.get(S3_PATH_STYLE_ACCESS) {
             builder = builder.with_virtual_hosted_style_request(path_style != "true");
         }
         // The environment pass mirrors `AmazonS3Builder::from_env`,
@@ -470,11 +406,6 @@ impl ObjectStorage {
             .insert(at.authority.clone(), Arc::clone(&store));
         Ok(store)
     }
-
-    fn at(&self, path: &str) -> Result<(Arc<dyn ObjectStore>, object_store::path::Path)> {
-        let at = location(path)?;
-        Ok((self.store(&at)?, at.key))
-    }
 }
 
 /// The client for a location this seam reaches, configured by the
@@ -493,161 +424,6 @@ pub fn environment_store(location: &str) -> crate::Result<(Arc<dyn ObjectStore>,
     Ok((store, key))
 }
 
-#[async_trait]
-#[typetag::serde(name = "GlossqlObjectStorage")]
-impl Storage for ObjectStorage {
-    async fn exists(&self, path: &str) -> Result<bool> {
-        let (store, key) = self.at(path)?;
-        match store.head(&key).await {
-            Ok(_) => Ok(true),
-            Err(object_store::Error::NotFound { .. }) => Ok(false),
-            Err(e) => Err(io_error(e, path)),
-        }
-    }
-
-    async fn metadata(&self, path: &str) -> Result<FileMetadata> {
-        let (store, key) = self.at(path)?;
-        let meta = store.head(&key).await.map_err(|e| io_error(e, path))?;
-        Ok(FileMetadata { size: meta.size })
-    }
-
-    async fn read(&self, path: &str) -> Result<Bytes> {
-        let (store, key) = self.at(path)?;
-        store
-            .get(&key)
-            .await
-            .map_err(|e| io_error(e, path))?
-            .bytes()
-            .await
-            .map_err(|e| io_error(e, path))
-    }
-
-    async fn reader(&self, path: &str) -> Result<Box<dyn FileRead>> {
-        let (store, key) = self.at(path)?;
-        Ok(Box::new(ObjectFileRead {
-            store,
-            key,
-            path: path.to_string(),
-        }))
-    }
-
-    async fn write(&self, path: &str, bs: Bytes) -> Result<()> {
-        let (store, key) = self.at(path)?;
-        store
-            .put(&key, bs.into())
-            .await
-            .map_err(|e| io_error(e, path))?;
-        Ok(())
-    }
-
-    async fn writer(&self, path: &str) -> Result<Box<dyn FileWrite>> {
-        let (store, key) = self.at(path)?;
-        let upload = store
-            .put_multipart(&key)
-            .await
-            .map_err(|e| io_error(e, path))?;
-        Ok(Box::new(ObjectFileWrite {
-            upload: Some(WriteMultipart::new(upload)),
-            path: path.to_string(),
-        }))
-    }
-
-    async fn delete(&self, path: &str) -> Result<()> {
-        let (store, key) = self.at(path)?;
-        match store.delete(&key).await {
-            Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
-            Err(e) => Err(io_error(e, path)),
-        }
-    }
-
-    async fn delete_prefix(&self, path: &str) -> Result<()> {
-        let (store, key) = self.at(path)?;
-        let locations = store.list(Some(&key)).map(|m| m.map(|m| m.location));
-        let mut deleting = store.delete_stream(locations.boxed());
-        while let Some(deleted) = deleting.next().await {
-            match deleted {
-                Ok(_) | Err(object_store::Error::NotFound { .. }) => {}
-                Err(e) => return Err(io_error(e, path)),
-            }
-        }
-        Ok(())
-    }
-
-    async fn delete_stream(&self, mut paths: BoxStream<'static, String>) -> Result<()> {
-        while let Some(path) = paths.next().await {
-            self.delete(&path).await?;
-        }
-        Ok(())
-    }
-
-    fn new_input(&self, path: &str) -> Result<InputFile> {
-        Ok(InputFile::new(Arc::new(self.clone()), path.to_string()))
-    }
-
-    fn new_output(&self, path: &str) -> Result<OutputFile> {
-        Ok(OutputFile::new(Arc::new(self.clone()), path.to_string()))
-    }
-}
-
-/// Ranged reads over one object — the shape the parquet reader drives,
-/// with the coalescing done above this seam (iceberg's own reader).
-struct ObjectFileRead {
-    store: Arc<dyn ObjectStore>,
-    key: object_store::path::Path,
-    path: String,
-}
-
-#[async_trait]
-impl FileRead for ObjectFileRead {
-    async fn read(&self, range: Range<u64>) -> Result<Bytes> {
-        self.store
-            .get_range(&self.key, range)
-            .await
-            .map_err(|e| io_error(e, &self.path))
-    }
-}
-
-/// A multipart upload, completed at close — dropped without one, the
-/// store never sees a completed object.
-struct ObjectFileWrite {
-    upload: Option<WriteMultipart>,
-    path: String,
-}
-
-/// The concurrent part-uploads one writer may have in flight.
-const UPLOAD_CONCURRENCY: usize = 8;
-
-impl ObjectFileWrite {
-    fn open(&mut self) -> Result<&mut WriteMultipart> {
-        self.upload.as_mut().ok_or_else(|| {
-            Error::new(ErrorKind::Unexpected, "written after close")
-                .with_context("path", self.path.clone())
-        })
-    }
-}
-
-#[async_trait]
-impl FileWrite for ObjectFileWrite {
-    async fn write(&mut self, bs: Bytes) -> Result<()> {
-        let path = self.path.clone();
-        let upload = self.open()?;
-        upload
-            .wait_for_capacity(UPLOAD_CONCURRENCY)
-            .await
-            .map_err(|e| io_error(e, &path))?;
-        upload.put(bs);
-        Ok(())
-    }
-
-    async fn close(&mut self) -> Result<()> {
-        let path = self.path.clone();
-        self.open()?;
-        let upload = self.upload.take().expect("just opened");
-        upload.finish().await.map_err(|e| io_error(e, &path))?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,24 +435,10 @@ mod tests {
     /// storage — and so the clients — the last one built; new
     /// properties get their own.
     #[test]
-    fn a_repeated_load_reuses_its_storage() {
-        let thin = |s: &Arc<dyn Storage>| Arc::as_ptr(s).cast::<()>();
-        let config = |region: &str| {
-            StorageConfig::new().with_prop(iceberg::io::S3_REGION, region.to_string())
-        };
-        let first = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
-        let again = ObjectStorageFactory.build(&config("eu-north-1")).unwrap();
-        let other = ObjectStorageFactory.build(&config("eu-west-1")).unwrap();
-        assert_eq!(thin(&first), thin(&again));
-        assert_ne!(thin(&first), thin(&other));
-    }
-
-    #[test]
     fn a_location_splits_into_its_store_and_its_key() {
         let at = location("s3://lake/ns/t/data/x.parquet").unwrap();
         assert_eq!(at.family, Family::S3);
         assert_eq!(at.authority, "s3://lake");
-        assert_eq!(at.key.as_ref(), "ns/t/data/x.parquet");
         let at = location("s3a://lake/k").unwrap();
         assert_eq!(at.authority, "s3a://lake");
 
@@ -684,24 +446,24 @@ mod tests {
         assert_eq!(at.family, Family::Azure);
         assert_eq!(at.authority, "abfss://lake@acme.dfs.core.windows.net");
         assert_eq!(at.root, "abfss://lake@acme.dfs.core.windows.net");
-        assert_eq!(at.key.as_ref(), "warehouse/ns/t/m.json");
         let at = location("wasbs://lake@acme.blob.core.windows.net/p/q").unwrap();
         assert_eq!(at.root, "abfss://lake@acme.blob.core.windows.net");
-        assert_eq!(at.key.as_ref(), "p/q");
         let at = location("az://lake/p").unwrap();
         assert_eq!(at.authority, "az://lake");
 
         let at = location("gs://lake/warehouse/ns/t/m.json").unwrap();
         assert_eq!(at.family, Family::Gcs);
         assert_eq!(at.authority, "gs://lake");
-        assert_eq!(at.key.as_ref(), "warehouse/ns/t/m.json");
         let at = location("gcs://lake/p").unwrap();
         assert_eq!(at.authority, "gcs://lake");
         assert_eq!(at.root, "gs://lake");
 
         assert!(location("file:///tmp/x").is_err());
         assert!(location("oss://lake/x").is_err());
-        assert!(location("s3://bucketonly").unwrap().key.as_ref().is_empty());
+        assert_eq!(
+            location("s3://bucketonly").unwrap().authority,
+            "s3://bucketonly"
+        );
     }
 
     /// The platform's token endpoint reaches the client, and the
