@@ -80,6 +80,16 @@ pub(crate) struct ReadSet {
     pub(crate) everything: bool,
 }
 
+impl ReadSet {
+    /// Everything `other` read, added to this set.
+    pub(crate) fn extend(&mut self, other: &ReadSet) {
+        self.tables.extend(other.tables.iter().cloned());
+        self.relations.extend(other.relations.iter().cloned());
+        self.all_tables |= other.all_tables;
+        self.everything |= other.everything;
+    }
+}
+
 impl Resolved {
     /// A resolution holding only the given pins — what a door that
     /// names its own dataset reads, the statement's binding aside.
@@ -454,6 +464,103 @@ async fn resolve_door(
         resolved.plans.insert(key, Arc::new(plan));
         return Ok(());
     }
+    // A shipped read served from memory: the rows one run at this
+    // version and pin produced, planned as a table. The bound dataset
+    // keys it; unbound, the read expands like any other and refuses
+    // wherever it would have.
+    let bound = shared.dataset.read().expect("state lock").clone();
+    if let Door::Shipped(name) = &door
+        && crate::memo::memoized(name)
+        && let Some(dataset) = bound
+    {
+        let memo = Box::pin(memo_shipped(
+            shared, ctx, &door, &dataset, path, done, resolved,
+        ))
+        .await?;
+        let provider = datafusion::datasource::MemTable::try_new(
+            memo.served.schema.clone(),
+            vec![memo.served.partitions.clone()],
+        )?;
+        let plan =
+            LogicalPlanBuilder::scan(name.as_str(), provider_as_source(Arc::new(provider)), None)?
+                .build()?;
+        resolved.record |= memo.record;
+        resolved.reads.extend(&memo.reads);
+        done.insert(key.clone());
+        resolved.plans.insert(key, Arc::new(plan));
+        return Ok(());
+    }
+    expand(shared, ctx, door, path, done, resolved).await
+}
+
+/// One run of a memoized shipped read, or the entry a run at this key
+/// already left. The run expands the read as any door is expanded —
+/// into a scratch copy of the resolution, so a hit leaves nothing of
+/// the body's own doors behind — and executes the plan to its rows.
+async fn memo_shipped(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    door: &Door,
+    dataset: &str,
+    path: &[String],
+    done: &HashSet<String>,
+    resolved: &Resolved,
+) -> Result<Arc<crate::memo::Memo>, SessionError> {
+    let Door::Shipped(name) = door else {
+        unreachable!("only a shipped read is memoized");
+    };
+    let rctx = shared.read_context_for(dataset).await?;
+    let key = crate::memo::MemoKey {
+        read: name.clone(),
+        dataset: dataset.to_string(),
+        version: rctx.version.clone(),
+        pin: rctx.pin.text.clone(),
+    };
+    let span = tracing::info_span!("memo", read = %name);
+    let cache = shared.shipped();
+    tracing::Instrument::instrument(
+        cache.get_or_run(key, || async {
+            let mut scratch = resolved.clone();
+            let mut path = path.to_vec();
+            let mut done = done.clone();
+            Box::pin(expand(
+                shared,
+                ctx,
+                door.clone(),
+                &mut path,
+                &mut done,
+                &mut scratch,
+            ))
+            .await?;
+            let plan = scratch.plan(&door.key()).ok_or_else(|| {
+                SessionError::BadSubject(format!("{} was not planned", door.what()))
+            })?;
+            let frame = ctx.execute_logical_plan((*plan).clone()).await?;
+            let physical = crate::execution::physical(frame).await?;
+            let schema = physical.schema();
+            let partitions = datafusion::physical_plan::collect(physical, ctx.task_ctx()).await?;
+            Ok(crate::memo::Memo {
+                served: crate::reads::Served { schema, partitions },
+                record: scratch.record,
+                reads: scratch.reads,
+            })
+        }),
+        span,
+    )
+    .await
+}
+
+/// The door expanded through its SQL body: nested doors resolved first,
+/// then the body planned with everything it depends on in the map.
+async fn expand(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    door: Door,
+    path: &mut Vec<String>,
+    done: &mut HashSet<String>,
+    resolved: &mut Resolved,
+) -> Result<(), SessionError> {
+    let key = door.key();
     let sql = body_of(shared, &door).await?;
     // A replayed body may not be SQL at all — a `whatif.` scenario is a
     // FACT carrying overrides. It names no doors, so there is nothing to

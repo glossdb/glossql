@@ -476,6 +476,9 @@ impl Session {
                 crate::cube::DEFAULT_CUBE_CACHE_MB,
             )),
             pins: RwLock::new(Default::default()),
+            named: RwLock::new(Default::default()),
+            contexts: RwLock::new(Default::default()),
+            shipped: RwLock::new(crate::memo::ShippedCache::new()),
             normalize_idents: config.options().sql_parser.enable_ident_normalization,
             pages: RwLock::new(Arc::from(Vec::new())),
         });
@@ -537,6 +540,18 @@ impl Session {
     pub fn with_cube_cache(self, cache: crate::cube::CubeCache) -> Self {
         *self.shared.cube.write().expect("cube lock") = cache;
         self
+    }
+
+    /// The shipped-read cache this session serves `next` from — the
+    /// Plane's, so every channel shares one set of entries.
+    pub fn with_shipped_cache(self, cache: crate::memo::ShippedCache) -> Self {
+        *self.shared.shipped.write().expect("shipped lock") = cache;
+        self
+    }
+
+    /// The shipped-read cache, for the tests that count its runs.
+    pub fn shipped_cache(&self) -> crate::memo::ShippedCache {
+        self.shared.shipped()
     }
 
     /// The pages the door serves, for `pages()` — the Plane's, embedded
@@ -659,6 +674,8 @@ impl Session {
         lake.ensure_namespace(dataset, Default::default()).await?;
         lake.create_table(dataset, table, &schema).await?;
         lake.append_batches(dataset, table, batches, facts).await?;
+        // The walk and what was built on it are behind the landing.
+        self.shared.forget_pins();
         Ok(())
     }
 
@@ -990,6 +1007,7 @@ impl Session {
             .to_string(),
         );
         lake.commit_written(written, facts).await?;
+        self.shared.forget_pins();
         Ok((landed.row_summary(), cast_summary(&landed.casts)))
     }
 
@@ -2018,6 +2036,7 @@ impl Session {
             });
         }
         self.lake().drop_table(&dataset, table).await?;
+        self.shared.forget_pins();
         // The recipe and the import record die with the table (its
         // properties and snapshots); measurements that read it sit at
         // pins that no longer resolve.

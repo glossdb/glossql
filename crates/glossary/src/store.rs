@@ -460,6 +460,11 @@ type History = Vec<glossql_catalog::Row>;
 pub struct Store {
     lake: Lake,
     record: Arc<glossql_catalog::Record>,
+    /// Moved by every write of this store — what a reader holding a
+    /// context built from the record checks before serving it again.
+    /// Shared: a store is cloned per session, and a counter copied per
+    /// clone counts nothing.
+    writes: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// What the connect-time brief is composed from — see
@@ -484,7 +489,14 @@ impl Store {
         Ok(Store {
             record: open_record(&lake).await?,
             lake,
+            writes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
+    }
+
+    /// Writes this store has landed so far. A context built at one
+    /// count serves while the count stands; any write moves it.
+    pub fn writes(&self) -> u64 {
+        self.writes.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// The one lake behind this store — sessions and doors share it.
@@ -1375,6 +1387,8 @@ impl Store {
     /// later read sees it.
     async fn put(&self, relation: &str, cells: Vec<Option<String>>) -> Result<()> {
         self.record.append(relation, vec![cells]).await?;
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 
