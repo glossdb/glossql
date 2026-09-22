@@ -430,10 +430,11 @@ pub fn relation_columns(name: &str) -> Option<&'static [&'static str]> {
 const STORE_NAMESPACE: &str = "glossql";
 
 /// The names a dataset cannot take: the store's own, which the pin and
-/// the `reads` vocabulary spell beside dataset names, and the two path
+/// the `reads` vocabulary spell beside dataset names; the two path
 /// segments the server answers beside `/{dataset}/…` — a dataset under
-/// either would have no page on the human doors.
-const RESERVED_DATASETS: [&str; 3] = [STORE_NAMESPACE, "mcp", "assets"];
+/// either would have no page on the human doors; and `main`, the
+/// schema a DuckLake client opens the catalog on.
+const RESERVED_DATASETS: [&str; 4] = [STORE_NAMESPACE, "mcp", "assets", "main"];
 
 /// The record, opened on the catalog's database with every stored
 /// relation's shape. The shapes come from [`RELATIONS`], so a relation

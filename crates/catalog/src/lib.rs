@@ -300,9 +300,9 @@ impl Lake {
         }
         let metadata = writer.close().await?;
         let size = self.warehouse.store.head(&path).await?.size;
-        // The footer's length sits in the four bytes before the magic;
-        // the specification's `footer_size` is what a reader fetches
-        // in one request to open the file.
+        // The footer's length sits in the four bytes before the magic,
+        // and that number is the specification's `footer_size` — what
+        // a reader checks against the file when it opens it.
         let trailer = self
             .warehouse
             .store
@@ -312,7 +312,7 @@ impl Lake {
             .as_ref()
             .try_into()
             .map(u32::from_le_bytes)
-            .map(|n| i64::from(n) + 8)
+            .map(i64::from)
             .unwrap_or(0);
         span.record("rows", count);
         Ok(Written {

@@ -22,56 +22,85 @@ use sqlx::Row as _;
 use crate::record::Db;
 use crate::{Error, Result};
 
-/// The specification's tables, verbatim; created if absent, in this
-/// order.
+/// The catalog's tables as DuckDB's own DuckLake extension creates
+/// them (its 1.0 line), created if absent, in this order. Three types
+/// follow the dialect the way that extension writes them: a boolean,
+/// a timestamp and a uuid are `BIGINT`, `VARCHAR` and `VARCHAR` on
+/// SQLite and `BOOLEAN`, `TIMESTAMP WITH TIME ZONE` and `UUID` on
+/// Postgres.
 const DDL: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS ducklake_metadata (\"key\" VARCHAR NOT NULL, \"value\" VARCHAR NOT NULL, \"scope\" VARCHAR, scope_id BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_snapshot (snapshot_id BIGINT PRIMARY KEY, snapshot_time TIMESTAMP WITH TIME ZONE, schema_version BIGINT, next_catalog_id BIGINT, next_file_id BIGINT)",
+    "CREATE TABLE IF NOT EXISTS ducklake_snapshot (snapshot_id BIGINT PRIMARY KEY, snapshot_time {TS}, schema_version BIGINT, next_catalog_id BIGINT, next_file_id BIGINT)",
     "CREATE TABLE IF NOT EXISTS ducklake_snapshot_changes (snapshot_id BIGINT PRIMARY KEY, changes_made VARCHAR, author VARCHAR, commit_message VARCHAR, commit_extra_info VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_schema (schema_id BIGINT PRIMARY KEY, schema_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_name VARCHAR, path VARCHAR, path_is_relative BOOLEAN)",
-    "CREATE TABLE IF NOT EXISTS ducklake_table (table_id BIGINT, table_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_id BIGINT, table_name VARCHAR, path VARCHAR, path_is_relative BOOLEAN)",
-    "CREATE TABLE IF NOT EXISTS ducklake_view (view_id BIGINT, view_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_id BIGINT, view_name VARCHAR, dialect VARCHAR, sql VARCHAR, column_aliases VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_schema (schema_id BIGINT PRIMARY KEY, schema_uuid {UUID}, begin_snapshot BIGINT, end_snapshot BIGINT, schema_name VARCHAR, path VARCHAR, path_is_relative {BOOL})",
+    "CREATE TABLE IF NOT EXISTS ducklake_table (table_id BIGINT, table_uuid {UUID}, begin_snapshot BIGINT, end_snapshot BIGINT, schema_id BIGINT, table_name VARCHAR, path VARCHAR, path_is_relative {BOOL})",
+    "CREATE TABLE IF NOT EXISTS ducklake_view (view_id BIGINT, view_uuid {UUID}, begin_snapshot BIGINT, end_snapshot BIGINT, schema_id BIGINT, view_name VARCHAR, dialect VARCHAR, \"sql\" VARCHAR, column_aliases VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_tag (object_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, \"key\" VARCHAR, \"value\" VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_column_tag (table_id BIGINT, column_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, \"key\" VARCHAR, \"value\" VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_data_file (data_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, file_order BIGINT, path VARCHAR, path_is_relative BOOLEAN, file_format VARCHAR, record_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, row_id_start BIGINT, partition_id BIGINT, encryption_key VARCHAR, mapping_id BIGINT, partial_max BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_file_column_stats (data_file_id BIGINT, table_id BIGINT, column_id BIGINT, column_size_bytes BIGINT, value_count BIGINT, null_count BIGINT, min_value VARCHAR, max_value VARCHAR, contains_nan BOOLEAN, extra_stats VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_delete_file (delete_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, data_file_id BIGINT, path VARCHAR, path_is_relative BOOLEAN, format VARCHAR, delete_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, encryption_key VARCHAR, partial_max BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_column (column_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, table_id BIGINT, column_order BIGINT, column_name VARCHAR, column_type VARCHAR, initial_default VARCHAR, default_value VARCHAR, nulls_allowed BOOLEAN, parent_column BIGINT, default_value_type VARCHAR, default_value_dialect VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_data_file (data_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, file_order BIGINT, path VARCHAR, path_is_relative {BOOL}, file_format VARCHAR, record_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, row_id_start BIGINT, partition_id BIGINT, encryption_key VARCHAR, mapping_id BIGINT, partial_max BIGINT)",
+    "CREATE TABLE IF NOT EXISTS ducklake_file_column_stats (data_file_id BIGINT, table_id BIGINT, column_id BIGINT, column_size_bytes BIGINT, value_count BIGINT, null_count BIGINT, min_value VARCHAR, max_value VARCHAR, contains_nan {BOOL}, extra_stats VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_file_variant_stats (data_file_id BIGINT, table_id BIGINT, column_id BIGINT, variant_path VARCHAR, shredded_type VARCHAR, column_size_bytes BIGINT, value_count BIGINT, null_count BIGINT, min_value VARCHAR, max_value VARCHAR, contains_nan {BOOL}, extra_stats VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_delete_file (delete_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, data_file_id BIGINT, path VARCHAR, path_is_relative {BOOL}, format VARCHAR, delete_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, encryption_key VARCHAR, partial_max BIGINT)",
+    "CREATE TABLE IF NOT EXISTS ducklake_column (column_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, table_id BIGINT, column_order BIGINT, column_name VARCHAR, column_type VARCHAR, initial_default VARCHAR, default_value VARCHAR, nulls_allowed {BOOL}, parent_column BIGINT, default_value_type VARCHAR, default_value_dialect VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_table_stats (table_id BIGINT, record_count BIGINT, next_row_id BIGINT, file_size_bytes BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_table_column_stats (table_id BIGINT, column_id BIGINT, contains_null BOOLEAN, contains_nan BOOLEAN, min_value VARCHAR, max_value VARCHAR, extra_stats VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_table_column_stats (table_id BIGINT, column_id BIGINT, contains_null {BOOL}, contains_nan {BOOL}, min_value VARCHAR, max_value VARCHAR, extra_stats VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_partition_info (partition_id BIGINT, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_partition_column (partition_id BIGINT, table_id BIGINT, partition_key_index BIGINT, column_id BIGINT, transform VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_partition_column (partition_id BIGINT, table_id BIGINT, partition_key_index BIGINT, column_id BIGINT, \"transform\" VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_file_partition_value (data_file_id BIGINT, table_id BIGINT, partition_key_index BIGINT, partition_value VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_files_scheduled_for_deletion (data_file_id BIGINT, path VARCHAR, path_is_relative BOOLEAN, schedule_start TIMESTAMP WITH TIME ZONE)",
+    "CREATE TABLE IF NOT EXISTS ducklake_files_scheduled_for_deletion (data_file_id BIGINT, path VARCHAR, path_is_relative {BOOL}, schedule_start {TS})",
     "CREATE TABLE IF NOT EXISTS ducklake_inlined_data_tables (table_id BIGINT, table_name VARCHAR, schema_version BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_column_mapping (mapping_id BIGINT, table_id BIGINT, type VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_name_mapping (mapping_id BIGINT, column_id BIGINT, source_name VARCHAR, target_field_id BIGINT, parent_column BIGINT, is_partition BOOLEAN)",
+    "CREATE TABLE IF NOT EXISTS ducklake_column_mapping (mapping_id BIGINT, table_id BIGINT, \"type\" VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_name_mapping (mapping_id BIGINT, column_id BIGINT, source_name VARCHAR, target_field_id BIGINT, parent_column BIGINT, is_partition {BOOL})",
     "CREATE TABLE IF NOT EXISTS ducklake_schema_versions (begin_snapshot BIGINT, schema_version BIGINT, table_id BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_macro (macro_id BIGINT, macro_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_id BIGINT, macro_name VARCHAR, macro_type VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_macro_impl (macro_id BIGINT, dialect VARCHAR, sql VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_macro_parameters (macro_id BIGINT, parameter_index BIGINT, parameter_name VARCHAR, parameter_type VARCHAR, default_value VARCHAR, default_value_type VARCHAR, default_value_dialect VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_macro (schema_id BIGINT, macro_id BIGINT, macro_name VARCHAR, begin_snapshot BIGINT, end_snapshot BIGINT)",
+    "CREATE TABLE IF NOT EXISTS ducklake_macro_impl (macro_id BIGINT, impl_id BIGINT, dialect VARCHAR, \"sql\" VARCHAR, \"type\" VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_macro_parameters (macro_id BIGINT, impl_id BIGINT, column_id BIGINT, parameter_name VARCHAR, parameter_type VARCHAR, default_value VARCHAR, default_value_type VARCHAR)",
     "CREATE TABLE IF NOT EXISTS ducklake_sort_info (sort_id BIGINT, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT)",
-    "CREATE TABLE IF NOT EXISTS ducklake_sort_expression (sort_id BIGINT, table_id BIGINT, sort_key_index BIGINT, expression VARCHAR, expression_type VARCHAR, expression_dialect VARCHAR, sort_type VARCHAR, null_order VARCHAR)",
-    "CREATE TABLE IF NOT EXISTS ducklake_file_variant_stats (data_file_id BIGINT, table_id BIGINT, column_id BIGINT, shredded_type VARCHAR)",
+    "CREATE TABLE IF NOT EXISTS ducklake_sort_expression (sort_id BIGINT, table_id BIGINT, sort_key_index BIGINT, expression VARCHAR, dialect VARCHAR, sort_direction VARCHAR, null_order VARCHAR)",
 ];
 
 /// Create every table, then the first snapshot and the metadata rows
 /// when the catalog is new. `data_path` is the warehouse root every
 /// relative path hangs under, with its trailing slash.
 pub(crate) async fn create(db: &Db, data_path: &str) -> Result<()> {
+    let (bool_type, ts_type, uuid_type) = if db.is_sqlite() {
+        ("BIGINT", "VARCHAR", "VARCHAR")
+    } else {
+        ("BOOLEAN", "TIMESTAMP WITH TIME ZONE", "UUID")
+    };
     for statement in DDL {
-        sqlx::query(statement).execute(db.pool()).await?;
+        let statement = statement
+            .replace("{BOOL}", bool_type)
+            .replace("{TS}", ts_type)
+            .replace("{UUID}", uuid_type);
+        sqlx::query(&statement).execute(db.pool()).await?;
     }
     let snapshots: i64 = sqlx::query("SELECT count(*) FROM ducklake_snapshot")
         .fetch_one(db.pool())
         .await?
         .try_get(0)?;
     if snapshots == 0 {
+        // Snapshot 0 creates the `main` schema, as a DuckLake client
+        // expects a catalog to open with one.
         sqlx::query(&format!(
             "INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time, schema_version, \
-             next_catalog_id, next_file_id) VALUES (0, '{}', 0, 1, 1)",
+             next_catalog_id, next_file_id) VALUES (0, '{}', 0, 1, 0)",
             now()
         ))
+        .execute(db.pool())
+        .await?;
+        sqlx::query(
+            "INSERT INTO ducklake_snapshot_changes (snapshot_id, changes_made, author, \
+             commit_message, commit_extra_info) VALUES (0, 'created_schema:\"main\"', NULL, NULL, NULL)",
+        )
+        .execute(db.pool())
+        .await?;
+        sqlx::query(&db.sql(&format!(
+            "INSERT INTO ducklake_schema (schema_id, schema_uuid, begin_snapshot, end_snapshot, \
+             schema_name, path, path_is_relative) VALUES (0, '{}', 0, NULL, 'main', 'main/', ?)",
+            uuid::Uuid::now_v7()
+        )))
+        .bind(true)
         .execute(db.pool())
         .await?;
         for (key, value) in [
@@ -128,16 +157,17 @@ type Tx = sqlx::Transaction<'static, sqlx::Any>;
 const COMMIT_ATTEMPTS: usize = 3;
 
 /// One catalog commit: `body` runs inside a transaction holding the
-/// snapshot it produces, and the snapshot row lands with it. A second
-/// writer that took the same snapshot id meets the primary key at its
-/// insert, and the commit runs again on the next id.
-async fn commit<T, F>(db: &Db, changes: &str, body: F) -> Result<T>
+/// snapshot it produces and names what it changed, and the snapshot
+/// row lands with it. A second writer that took the same snapshot id
+/// meets the primary key at its insert, and the commit runs again on
+/// the next id.
+async fn commit<T, F>(db: &Db, body: F) -> Result<T>
 where
     F: for<'a> Fn(
         &'a Db,
         &'a mut Tx,
         &'a mut Snapshot,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(T, String)>> + Send + 'a>>,
 {
     let mut attempt = 0;
     loop {
@@ -154,7 +184,7 @@ where
             next_catalog_id: last.try_get(1)?,
             next_file_id: last.try_get(2)?,
         };
-        let out = body(db, &mut tx, &mut snapshot).await?;
+        let (out, changes) = body(db, &mut tx, &mut snapshot).await?;
         let landed = async {
             sqlx::query(&db.sql(&format!(
                 "INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time, schema_version, \
@@ -171,7 +201,7 @@ where
                  commit_message, commit_extra_info) VALUES (?, ?, NULL, NULL, NULL)",
             ))
             .bind(snapshot.id)
-            .bind(changes)
+            .bind(&changes)
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
@@ -205,12 +235,18 @@ async fn schema_id(db: &Db, executor: &mut Tx, name: &str) -> Result<Option<i64>
 
 /// The dataset's schema row, created if absent; whether it was.
 pub(crate) async fn ensure_schema(db: &Db, name: &str) -> Result<bool> {
+    // Asked outside the commit first: a dataset that stands makes no
+    // snapshot. The check inside the transaction is for the writer
+    // that lost the race to create it.
+    if schema_exists(db, name).await? {
+        return Ok(false);
+    }
     let name = name.to_string();
-    commit(db, "created_schema", move |db, tx, snapshot| {
+    commit(db, move |db, tx, snapshot| {
         let name = name.clone();
         Box::pin(async move {
             if schema_id(db, tx, &name).await?.is_some() {
-                return Ok(false);
+                return Ok((false, String::new()));
             }
             let id = snapshot.catalog_id();
             sqlx::query(&db.sql(&format!(
@@ -225,7 +261,7 @@ pub(crate) async fn ensure_schema(db: &Db, name: &str) -> Result<bool> {
             .bind(true)
             .execute(&mut **tx)
             .await?;
-            Ok(true)
+            Ok((true, format!("created_schema:\"{name}\"")))
         })
     })
     .await
@@ -242,8 +278,11 @@ pub(crate) async fn schema_exists(db: &Db, name: &str) -> Result<bool> {
 }
 
 pub(crate) async fn schema_names(db: &Db) -> Result<Vec<String>> {
+    // Schema 0 is `main`, the one a DuckLake client opens on; it is
+    // no dataset.
     let rows = sqlx::query(
-        "SELECT schema_name FROM ducklake_schema WHERE end_snapshot IS NULL ORDER BY schema_name",
+        "SELECT schema_name FROM ducklake_schema WHERE end_snapshot IS NULL AND schema_id <> 0 \
+         ORDER BY schema_name",
     )
     .fetch_all(db.pool())
     .await?;
@@ -448,7 +487,7 @@ pub(crate) async fn commit_landing(
     let table = table.to_string();
     let files = files.to_vec();
     let schema = schema.clone();
-    commit(db, "landing", move |db, tx, snapshot| {
+    commit(db, move |db, tx, snapshot| {
         let (dataset, table, files, schema) =
             (dataset.clone(), table.clone(), files.clone(), schema.clone());
         Box::pin(async move {
@@ -474,7 +513,7 @@ pub(crate) async fn commit_landing(
                     .execute(&mut **tx)
                     .await?;
                     insert_columns(db, tx, snapshot, id, &schema).await?;
-                    (id, format!("created_table:{id}"))
+                    (id, format!("created_table:\"{dataset}\".\"{table}\""))
                 }
                 (Landing::Create, Some(_)) => {
                     return Err(Error::Workspace(format!(
@@ -528,8 +567,7 @@ pub(crate) async fn commit_landing(
                 .execute(&mut **tx)
                 .await?;
             }
-            let _ = changes;
-            Ok((snapshot.id, ended))
+            Ok(((snapshot.id, ended), changes))
         })
     })
     .await
@@ -540,7 +578,7 @@ pub(crate) async fn commit_landing(
 pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Vec<(i64, String)>> {
     let dataset = dataset.to_string();
     let table = table.to_string();
-    commit(db, "dropped_table", move |db, tx, snapshot| {
+    commit(db, move |db, tx, snapshot| {
         let (dataset, table) = (dataset.clone(), table.clone());
         Box::pin(async move {
             let Some(id) = table_id(db, tx, &dataset, &table).await? else {
@@ -557,7 +595,7 @@ pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Ve
                     .execute(&mut **tx)
                     .await?;
             }
-            Ok(ended)
+            Ok((ended, format!("dropped_table:{id}")))
         })
     })
     .await

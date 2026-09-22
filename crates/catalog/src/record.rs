@@ -135,6 +135,12 @@ impl Db {
         &self.pool
     }
 
+    /// Whether the database is SQLite — the dialect that has no
+    /// boolean, timestamp or uuid type of its own.
+    pub(crate) fn is_sqlite(&self) -> bool {
+        matches!(self.bind, Bind::QMark)
+    }
+
     /// A statement written with `?` placeholders, in this database's
     /// bind style. No literal in the statements written here holds a
     /// question mark.
