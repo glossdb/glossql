@@ -67,7 +67,7 @@ docker run --rm -p 8080:8080 \
   -e GLOSSQL_WAREHOUSE=abfss://lake@account.dfs.core.windows.net/warehouse \
   -e AZURE_STORAGE_ACCOUNT_NAME=account -e AZURE_STORAGE_ACCOUNT_KEY=… \
   -e GLOSSQL_TABICL_URL=https://… -e GLOSSQL_TABICL_TOKEN=… \
-  ghcr.io/glossdb/glossql:0.1.5
+  ghcr.io/glossdb/glossql:0.1.6
 ```
 
 The image sizes the server for a box with 8 GiB of memory and an
