@@ -85,7 +85,10 @@ async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
     // when the environment names one (bodies ride their declarations,
     // fixture 24 — nothing of the runtime's lives in the workspace).
     let runtime = Arc::new(match &config.kernel {
-        Some(kernel) => KernelRuntime::with_remote(&kernel.url, kernel.token.as_deref())?,
+        Some(kernel) => KernelRuntime::with_remote(
+            &kernel.url,
+            glossql_scripts::Bearer::from_env(kernel.token.as_deref(), kernel.audience.as_deref()),
+        )?,
         None => KernelRuntime::native(),
     });
     match runtime.kernel_url() {

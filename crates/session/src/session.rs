@@ -257,7 +257,7 @@ pub struct BandRead {
 pub fn no_model(door: &str) -> SessionError {
     SessionError::BadSubject(format!(
         "not served: {door} needs the kernel service and this server carries no model — \
-         set GLOSSQL_TABICL_URL (and GLOSSQL_TABICL_TOKEN) to the hosted kernel API, or to \
+         set GLOSSQL_TABICL_URL (and GLOSSQL_TABICL_TOKEN or GLOSSQL_TABICL_AUDIENCE) to the hosted kernel API, or to \
          a glosskernels service of your own"
     ))
 }

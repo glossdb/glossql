@@ -19,7 +19,9 @@ thiserror.workspace = true
 # model: the reads go to the service `GLOSSQL_TABICL_URL` names.
 reqwest.workspace = true
 # The wait a full kernel queue asks for.
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "sync"] }
+# An ID token's expiry, read off its payload to time the refresh.
+base64.workspace = true
 
 [dev-dependencies]
 glossql-glossary = { path = "../glossary" }

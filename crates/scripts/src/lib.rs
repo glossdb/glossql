@@ -29,7 +29,7 @@ use datafusion::arrow::util::display::array_value_to_string;
 use glossql_session::{BandRead, FunctionRuntime, Matrix, PIT_BINS};
 use serde_json::{Value, json};
 
-pub use remote::Remote;
+pub use remote::{Bearer, GOOGLE_METADATA, Remote};
 
 /// The native kernels, and — when the server names one — the kernel
 /// service behind the three model reads.
@@ -59,11 +59,10 @@ impl KernelRuntime {
     }
 
     /// The native kernels, and the model reads served by the kernel
-    /// service at `url` (`GLOSSQL_TABICL_URL`), `token` as the bearer on
-    /// every call.
-    pub fn with_remote(url: &str, token: Option<&str>) -> Result<Self, String> {
+    /// service at `url` (`GLOSSQL_TABICL_URL`), `bearer` on every call.
+    pub fn with_remote(url: &str, bearer: Bearer) -> Result<Self, String> {
         Ok(KernelRuntime {
-            remote: Some(Remote::new(url, token)?),
+            remote: Some(Remote::new(url, bearer)?),
         })
     }
 

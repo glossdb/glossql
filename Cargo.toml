@@ -124,6 +124,7 @@ tower = { version = "0.5", features = ["util"] }
 # behind the model reads (glossql-scripts). In the tree through
 # iceberg without a TLS backend; rustls names one — pure Rust, the
 # same in a container as on a laptop.
+base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Instrumentation. `tracing` is the facade every crate emits through —
 # already in the tree via axum, rmcp, iceberg and sqlx; the subscriber

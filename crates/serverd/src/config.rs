@@ -27,8 +27,8 @@ GLOSSQL_ADDR, GLOSSQL_ROW_CAP, GLOSSQL_CUBE_CACHE, GLOSSQL_MEMORY_LIMIT, \
 GLOSSQL_SPILL_LIMIT.\n\
 the band model behind the metric-bands walk, whatif. and misfit. is \
 the kernel service named by GLOSSQL_TABICL_URL (its bearer in \
-GLOSSQL_TABICL_TOKEN); unset, those three doors refuse by name and \
-everything else serves.\n\
+GLOSSQL_TABICL_TOKEN, or minted by the platform for GLOSSQL_TABICL_AUDIENCE); \
+unset, those three doors refuse by name and everything else serves.\n\
 the authorization arrangement is read from .env or the environment: \
 GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
 — or GLOSSQL_INSECURE_OPEN=true serves the doors without authentication, \
@@ -122,10 +122,13 @@ pub struct Auth {
 }
 
 /// The kernel service behind the model reads: `GLOSSQL_TABICL_URL`,
-/// its bearer in `GLOSSQL_TABICL_TOKEN`.
+/// its bearer in `GLOSSQL_TABICL_TOKEN` — or, on a platform that mints
+/// ID tokens for the service account this process runs as, the
+/// audience the service verifies in `GLOSSQL_TABICL_AUDIENCE`.
 pub struct Kernel {
     pub url: String,
     pub token: Option<String>,
+    pub audience: Option<String>,
 }
 
 /// The workspace data plane: the REST catalog when the environment
@@ -191,6 +194,7 @@ impl Config {
             kernel: var("GLOSSQL_TABICL_URL").map(|url| Kernel {
                 url,
                 token: var("GLOSSQL_TABICL_TOKEN"),
+                audience: var("GLOSSQL_TABICL_AUDIENCE"),
             }),
             catalog: Catalog::from(&var, flags.workspace.as_deref())?,
             addr,
