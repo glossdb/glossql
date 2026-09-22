@@ -2843,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-apps"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow-ipc",
  "arrow-json",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-catalog"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-glossary"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "futures",
@@ -2908,7 +2908,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-import"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "adbc_core",
  "adbc_driver_manager",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-parser"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "datafusion-common",
  "datafusion-sql",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-scripts"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow-json",
  "axum",
@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-serverd"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow-ipc",
  "arrow-json",
@@ -2996,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "glossql-session"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arrow-json",
  "async-trait",
