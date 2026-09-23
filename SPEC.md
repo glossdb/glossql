@@ -106,11 +106,13 @@ IMPORT segments;
 ```
 
 `IMPORT` is the data update: the table's recipe runs again over its
-source, and the result joins the table as one more snapshot — the
-table, the landings it holds and its glosses stand. It reproduces the
-table's schema or it errors. It is sent from outside, by a schedule or
-an agent; nothing watches a source. The table is named as a read names
-it, under the `USE`'d dataset or with its dataset in front.
+source, and the table becomes the result as the source stands now, in
+one commit — the table, the landings it holds and its glosses stand.
+Which files or rows the engine reads to get there is its own economy,
+never the statement's. It reproduces the table's schema or it errors.
+It is sent from outside, by a schedule or an agent; nothing watches a
+source. The table is named as a read names it, under the `USE`'d
+dataset or with its dataset in front.
 
 Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any

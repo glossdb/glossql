@@ -696,6 +696,7 @@ impl Session {
                 "{}".into(),
                 &[],
                 version,
+                Landing::Create.as_str(),
             )
             .await?;
         // The walk and what was built on it are behind the landing.
@@ -1020,17 +1021,20 @@ impl Session {
                 landed.casts.to_json().to_string(),
                 &files,
                 version,
+                landing.as_str(),
             )
             .await?;
         self.shared.forget_pins();
         Ok((landed.row_summary(), cast_summary(&landed.casts)))
     }
 
-    /// `IMPORT [dataset.]table` (SPEC.md §3): a data update. The
-    /// table's recipe opens over the files its source holds that no
-    /// landing of the table has read, and their rows join the table as
-    /// one more snapshot — the table, its history and its glosses
-    /// stand. The schema is the table's or the import is refused.
+    /// `IMPORT [dataset.]table` (SPEC.md §3): a data update. The table
+    /// becomes its recipe's result as the source stands now, in one
+    /// commit — the table, its history and its glosses stand. Whether
+    /// the engine appends the files no landing has read or runs the
+    /// recipe whole and replaces the table is its own economy
+    /// (`glossql_import::open_import`), and the outcome names which
+    /// ran. The schema is the table's or the import is refused.
     async fn import(&self, import: glossql_parser::Import) -> Result<Outcome, SessionError> {
         let dataset = match &import.dataset {
             Some(dataset) => dataset.value.clone(),
@@ -1053,8 +1057,8 @@ impl Session {
                 name: table.into(),
             }));
         }
-        // What the table's landings read; a landing that recorded no
-        // files read none a later import could leave out.
+        // The files the table's standing rows came from; a table whose
+        // landings recorded none is replaced whole.
         let landed: Vec<glossql_import::SourceFile> = self
             .shared
             .store
@@ -1074,10 +1078,24 @@ impl Session {
             &landed,
         )
         .await?;
-        let glossql_import::Update::Rows(new) = update else {
-            return Ok(Outcome::Done(format!(
-                "IMPORT {table} ON {dataset} (unchanged: the source holds no new file)"
-            )));
+        let (new, landing, how) = match update {
+            glossql_import::Update::Unchanged => {
+                return Ok(Outcome::Done(format!(
+                    "IMPORT {table} ON {dataset} (unchanged: the source holds no new file)"
+                )));
+            }
+            glossql_import::Update::Append(recipe) => {
+                let files = recipe.account.files_read();
+                let noun = if files == 1 { "file" } else { "files" };
+                (
+                    recipe,
+                    Landing::Append,
+                    format!("appended from {files} new {noun}"),
+                )
+            }
+            glossql_import::Update::Replace { recipe, why } => {
+                (recipe, Landing::Replace, format!("replaced: {why}"))
+            }
         };
         // A data update reproduces the schema or errors (SPEC.md §3).
         let standing = self
@@ -1097,13 +1115,13 @@ impl Session {
         if shape(standing.schema().as_arrow()) != shape(&new.schema) {
             return Err(SessionError::Import(glossql_import::Error::Import(
                 format!(
-                    "the new files give `{table}` another schema — {} against the table's {}",
+                    "the recipe now gives `{table}` another schema — {} against the table's {}; \
+                     a new shape is a re-declaration",
                     describe(&shape(&new.schema)),
                     describe(&shape(standing.schema().as_arrow())),
                 ),
             )));
         }
-        let files = new.account.files_read();
         let (summary, casts) = self
             .stream_into(
                 &lake,
@@ -1112,12 +1130,11 @@ impl Session {
                 new.schema,
                 new.rows,
                 new.account,
-                Landing::Append,
+                landing,
             )
             .await?;
-        let noun = if files == 1 { "file" } else { "files" };
         Ok(Outcome::Done(format!(
-            "IMPORT {table} ON {dataset} ({summary}{casts}; from {files} new {noun})"
+            "IMPORT {table} ON {dataset} ({summary}{casts}; {how})"
         )))
     }
 

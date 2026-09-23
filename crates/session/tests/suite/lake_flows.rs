@@ -399,12 +399,14 @@ async fn a_recipe_that_fails_while_landing_leaves_no_table() {
     assert!(done(&outcomes[0]).contains("3 rows landed"), "{outcomes:?}");
 }
 
-/// A data update (SPEC.md §3): `IMPORT` lands what the source holds
-/// new as one more snapshot of the same table — the first landing's
-/// rows, its history and its glosses stand — and refuses by name what
-/// an append cannot express.
+/// A data update (SPEC.md §3): `IMPORT` makes the table its recipe's
+/// result as the source stands now. The engine appends the files no
+/// landing has read when that is the result, and runs the recipe
+/// whole to replace the table otherwise — a recipe that aggregates, a
+/// landed file rewritten or gone — naming why. The first landing's
+/// history and glosses stand either way.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_import_appends_the_new_files_as_a_snapshot() {
+async fn an_import_appends_where_sound_and_replaces_otherwise() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("export");
     std::fs::create_dir_all(root.join("orders")).unwrap();
@@ -424,12 +426,26 @@ async fn an_import_appends_the_new_files_as_a_snapshot() {
         ))
         .await
         .unwrap();
+    let orders = |sql: &'static str| {
+        let session = &session;
+        async move {
+            let out = session.execute(sql).await.unwrap();
+            let Outcome::Rows { batches, .. } = &out[0] else {
+                panic!("a read answers rows")
+            };
+            let cell = |i: usize| {
+                datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0)
+                    .unwrap()
+            };
+            (cell(0), cell(1))
+        }
+    };
 
     // Nothing new at the source: the statement says so and lands nothing.
     let same = session.execute("IMPORT orders;").await.unwrap();
     assert!(done(&same[0]).contains("unchanged"), "{same:?}");
 
-    // A second export arrives beside the first.
+    // A second export arrives beside the first: its rows append.
     std::fs::write(
         root.join("orders/2026-02.csv"),
         "id,amount\n3,30\n4,40\n5,x\n",
@@ -438,7 +454,128 @@ async fn an_import_appends_the_new_files_as_a_snapshot() {
     let imported = session.execute("IMPORT fin.orders;").await.unwrap();
     assert_eq!(
         done(&imported[0]),
-        "IMPORT orders ON fin (2 rows landed, 1 dropped; casts clean; from 1 new file)",
+        "IMPORT orders ON fin (2 rows landed, 1 dropped; casts clean; appended from 1 new file)",
+    );
+    assert_eq!(
+        orders("SELECT count(*), sum(amount) FROM orders;").await,
+        ("3".to_string(), "80".to_string())
+    );
+
+    // The same table, one more landing on its record.
+    let history = session
+        .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
+        .await
+        .unwrap();
+    assert_eq!(single_value(&history), "2");
+    let again = session.execute("IMPORT orders;").await.unwrap();
+    assert!(done(&again[0]).contains("unchanged"), "{again:?}");
+
+    // What an append cannot stand for runs whole and replaces the
+    // table, and the outcome names why: a recipe whose result is not
+    // its rows file by file, then a landed file rewritten in place.
+    let aggregate = session.execute("IMPORT totals;").await.unwrap();
+    assert!(
+        done(&aggregate[0]).contains("replaced: the recipe plans a `Aggregate"),
+        "{aggregate:?}"
+    );
+    let n = session.execute("SELECT n FROM totals;").await.unwrap();
+    assert_eq!(single_value(&n), "5");
+    std::fs::write(root.join("orders/2026-01.csv"), "id,amount\n1,11\n").unwrap();
+    let moved = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&moved[0]).contains("replaced: `orders/2026-01.csv` changed since it landed"),
+        "{moved:?}"
+    );
+    assert_eq!(
+        orders("SELECT count(*), sum(amount) FROM orders;").await,
+        ("3".to_string(), "81".to_string())
+    );
+
+    // The replace recorded every file it read, so the next new file
+    // appends again; a landed file gone from the source replaces.
+    std::fs::write(root.join("orders/2026-03.csv"), "id,amount\n6,60\n").unwrap();
+    let appended = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&appended[0]).contains("appended from 1 new file"),
+        "{appended:?}"
+    );
+    std::fs::remove_file(root.join("orders/2026-02.csv")).unwrap();
+    let gone = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&gone[0]).contains("replaced: `orders/2026-02.csv` is gone from the source"),
+        "{gone:?}"
+    );
+    assert_eq!(
+        orders("SELECT count(*), sum(amount) FROM orders;").await,
+        ("2".to_string(), "71".to_string())
+    );
+
+    // Every landing says how its rows joined the table.
+    let modes = session
+        .execute(
+            "SELECT array_to_string(array_agg(mode ORDER BY version), ',') \
+             FROM imports WHERE table_name = 'orders';",
+        )
+        .await
+        .unwrap();
+    assert_eq!(single_value(&modes), "create,append,replace,append,replace");
+}
+
+/// At a relational source the recipe computes its whole result, so an
+/// import replaces the table with it: what the source now holds is
+/// what the table holds, rows changed or removed included. Runs where
+/// an ADBC sqlite driver is installed, as the import suite's own
+/// relational test does; skips otherwise.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_import_from_a_relational_source_replaces_the_table() {
+    let Some(driver) = sqlite_driver() else {
+        eprintln!("skipped: no ADBC sqlite driver (set GLOSSQL_ADBC_SQLITE_DRIVER)");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("erp.db");
+    let seed = |sql: &str| {
+        let status = std::process::Command::new("python3")
+            .args([
+                "-c",
+                &format!(
+                    "import sqlite3; c = sqlite3.connect({:?}); c.executescript({:?}); c.commit()",
+                    db.display().to_string(),
+                    sql
+                ),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "seeding sqlite");
+    };
+    seed(
+        "CREATE TABLE orders (order_id INTEGER, amount REAL); \
+          INSERT INTO orders VALUES (1, 12.5), (2, 8.0), (3, 1.25);",
+    );
+    let session = workspace(dir.path()).await;
+    let landed = session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a relational update');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp SET (type: relational_db, driver: '{driver}', location: '{}');\n\
+             DECLARE RECIPE orders ON fin FROM erp AS $$\
+               SELECT order_id, amount FROM orders WHERE order_id > 1$$;",
+            db.display()
+        ))
+        .await
+        .unwrap();
+    assert!(done(&landed[3]).contains("2 rows landed"), "{landed:?}");
+
+    // The source moves on: one row changed, one removed, one added.
+    seed(
+        "UPDATE orders SET amount = 9.0 WHERE order_id = 2; \
+          DELETE FROM orders WHERE order_id = 3; \
+          INSERT INTO orders VALUES (4, 4.0);",
+    );
+    let imported = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&imported[0]).contains("replaced: the source computes the whole result"),
+        "{imported:?}"
     );
     let total = session
         .execute("SELECT count(*), sum(amount) FROM orders;")
@@ -450,34 +587,32 @@ async fn an_import_appends_the_new_files_as_a_snapshot() {
     let cell = |i: usize| {
         datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0).unwrap()
     };
-    assert_eq!((cell(0), cell(1)), ("3".to_string(), "80".to_string()));
-
-    // The same table, one more landing on its record.
-    let history = session
-        .execute("SELECT count(*) FROM imports WHERE table_name = 'orders';")
+    assert_eq!((cell(0), cell(1)), ("2".to_string(), "13.0".to_string()));
+    let modes = session
+        .execute(
+            "SELECT array_to_string(array_agg(mode ORDER BY version), ',') \
+             FROM imports WHERE table_name = 'orders';",
+        )
         .await
         .unwrap();
-    assert_eq!(single_value(&history), "2");
-    let again = session.execute("IMPORT orders;").await.unwrap();
-    assert!(done(&again[0]).contains("unchanged"), "{again:?}");
+    assert_eq!(single_value(&modes), "create,replace");
+}
 
-    // What an append cannot express is refused by name: a recipe whose
-    // result is not its rows file by file, and a landed file that moved.
-    let aggregate = session
-        .execute("IMPORT totals;")
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(aggregate.contains("import refused"), "{aggregate}");
-    assert!(aggregate.contains("plans a `Aggregate"), "{aggregate}");
-    std::fs::write(root.join("orders/2026-01.csv"), "id,amount\n1,11\n").unwrap();
-    let moved = session
-        .execute("IMPORT orders;")
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        moved.contains("`orders/2026-01.csv` changed since it landed"),
-        "{moved}"
-    );
+/// The ADBC sqlite driver, if one is installed: the env var wins, then
+/// the well-known pip wheel location. Absent, the relational test skips.
+fn sqlite_driver() -> Option<String> {
+    if let Ok(path) = std::env::var("GLOSSQL_ADBC_SQLITE_DRIVER") {
+        return Some(path);
+    }
+    let out = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import adbc_driver_sqlite; print(adbc_driver_sqlite._driver_path())",
+        ])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
 }

@@ -359,7 +359,9 @@ pub const RELATIONS: &[Relation] = &[
     // a join reads as "what was read" and is not — it fabricates
     // phantom dropped rows. `files` is what the landing read (path,
     // size, modified), which a later `IMPORT` leaves out; `version` is
-    // the table version the landing made.
+    // the table version the landing made; `mode` is how the rows
+    // joined the table — `create`, `replace` or `append` — which is
+    // what tells a later import which landings' files still stand.
     Relation {
         name: "imports",
         columns: &[
@@ -372,6 +374,7 @@ pub const RELATIONS: &[Relation] = &[
             "imported_at",
             "files",
             "version",
+            "mode",
         ],
         numbers: &[("version", glossql_catalog::Number::Integer)],
         key: &[],
@@ -730,6 +733,7 @@ impl Store {
         cast_failures: String,
         files: &[(String, u64, String)],
         version: i64,
+        mode: &str,
     ) -> Result<()> {
         let files = Value::Array(
             files
@@ -749,13 +753,15 @@ impl Store {
                 Some(now_utc()),
                 Some(files.to_string()),
                 Some(version.to_string()),
+                Some(mode.to_string()),
             ],
         )
         .await
     }
 
-    /// Every file a landing of `dataset.table` read, across its
-    /// landings — what the next `IMPORT` leaves out.
+    /// Every file the table's standing rows came from — the files of
+    /// the landing that last created or replaced the table and of the
+    /// appends since — which is what the next `IMPORT` leaves out.
     pub async fn landed_files(
         &self,
         dataset: &str,
@@ -769,6 +775,9 @@ impl Store {
         {
             if row.get(1) != Some(table) {
                 continue;
+            }
+            if row.get(9) != Some("append") {
+                out.clear();
             }
             let files: Vec<(String, u64, String)> = row
                 .get(7)

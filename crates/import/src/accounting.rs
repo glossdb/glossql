@@ -300,7 +300,8 @@ pub(crate) fn file_scans(sql: &str) -> Vec<String> {
 /// another row — read from the engine's own plan, where an aggregate, a
 /// window, a join, a limit or a set operation is a node and not a
 /// spelling: only scans, projections, filters, aliases and sorts pass,
-/// over exactly one scan.
+/// over exactly one scan. `Err` names what does not, for the outcome
+/// of the replace that runs instead.
 pub(crate) fn appendable(plan: &datafusion::logical_expr::LogicalPlan) -> Result<(), String> {
     use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
     use datafusion::logical_expr::LogicalPlan;
@@ -319,15 +320,9 @@ pub(crate) fn appendable(plan: &datafusion::logical_expr::LogicalPlan) -> Result
         }
         Ok(TreeNodeRecursion::Continue)
     });
-    let cannot = |what: String| {
-        Err(format!(
-            "the recipe {what}, so its result is not its rows file by file, and the lake \
-             cannot yet replace a table's rows in one commit"
-        ))
-    };
     match (other, scans) {
-        (Some(node), _) => cannot(format!("plans a `{node}`")),
+        (Some(node), _) => Err(format!("the recipe plans a `{node}`")),
         (None, 1) => Ok(()),
-        (None, n) => cannot(format!("reads {n} relations")),
+        (None, n) => Err(format!("the recipe reads {n} relations")),
     }
 }

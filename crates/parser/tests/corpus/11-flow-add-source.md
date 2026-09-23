@@ -65,8 +65,9 @@ The table is its recipe's result — identity is content, the hash of the
 SQL and the schema it produces (the v0.3 engine already keys recipes this
 way). The declaration's outcome carries the counts at the decision moment
 (`DECLARE RECIPE orders ON fin (2 rows landed, 1 dropped)`). A data update
-re-runs the same recipe and appends a snapshot; it must reproduce the
-schema or it errors. It is asked for by name, from outside — a schedule
+re-runs the same recipe and the table becomes its result as the source
+stands now, in one commit; it must reproduce the schema or it errors.
+It is asked for by name, from outside — a schedule
 or an agent sends it, nothing in the server watches a source:
 
 ```glossql
