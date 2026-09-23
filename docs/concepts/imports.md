@@ -96,24 +96,24 @@ closed — tables come from recipes.
 
 ## Data updates
 
-`IMPORT <table>` is how a table takes in what its source holds new.
-The recipe runs again, and the result joins the table as one more
-snapshot: the table, its landings in `imports` and its glosses stand,
-and a gloss written before the update reads as `stale` against it. The
-update reproduces the table's schema or it errors. Nothing in the
-server watches a source — a schedule or an agent sends the statement,
-and with nothing new at the source it answers `unchanged`.
+`IMPORT <table>` is how a table takes in what its source holds now.
+The recipe runs again, and the table becomes its result, in one
+commit: the table, its landings in `imports` and its glosses stand.
+The update reproduces the table's schema or it errors naming the
+difference; a new shape is a re-declaration. Nothing in the server
+watches a source — a schedule or an agent sends the statement.
 
-An update's meaning is the recipe's result as the source stands now.
-The lake commits appends, so the server lands the update when
-appending is that result: the recipe maps rows one for one over a
-single file scan — no aggregate, window, join, limit or set operation
-— and every file the table has landed still stands as it landed. Each
-landing records the files it read, by path, size and modification
-time, and the update reads the files no landing has. A recipe of
-another shape, a landed file that changed or is gone, and a relational
-source are refused by name; replacing a table's rows in one commit is
-planned, on the lake's overwrite.
+How the engine reaches the result is its own. At a file source, when
+the recipe maps rows one for one over a single file scan — no
+aggregate, window, join, limit or set operation — and every file the
+table landed still stands as it landed, only the files no landing has
+read run, and their rows join the table. Each landing records the
+files it read, by path, size and modification time, so the engine
+knows which those are; with none new it answers `unchanged`. In every
+other case — a relational source, a recipe of another shape, a landed
+file rewritten or gone — the recipe runs whole and the result replaces
+the table's rows in one commit. The outcome says which ran and why,
+and the `imports` row records it as its `mode`.
 
 ## The source deposit
 

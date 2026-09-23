@@ -40,8 +40,8 @@ pub struct Probe {
 }
 
 /// `IMPORT [dataset.]table` — a data update: the table's recipe runs
-/// again over its source and what the source holds new joins the table
-/// as a snapshot. The dataset is the `USE`'d one unless the name
+/// again over its source and the table becomes the result as the
+/// source stands now. The dataset is the `USE`'d one unless the name
 /// carries it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {

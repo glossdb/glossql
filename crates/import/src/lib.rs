@@ -330,18 +330,23 @@ async fn open_pinned(
     sql: &str,
     pinned: Pinned,
 ) -> Result<Recipe> {
-    open_checked(env, spec, sql, pinned, false).await
+    match open_checked(env, spec, sql, pinned, false).await? {
+        Ok(recipe) => Ok(recipe),
+        Err(reason) => Err(Error::Import(reason)),
+    }
 }
 
-/// [`open_pinned`], refusing a recipe whose plan an append cannot stand
-/// for when `appending` — checked on the plan, before a row is read.
+/// [`open_pinned`], and — when `appending` — the recipe over these
+/// files alone only if appending their rows is the recipe's result;
+/// `Ok(Err(reason))` names the plan node that says otherwise, checked
+/// before a row is read.
 async fn open_checked(
     env: &RuntimeEnv,
     spec: &SourceSpec,
     sql: &str,
     pinned: Pinned,
     appending: bool,
-) -> Result<Recipe> {
+) -> Result<std::result::Result<Recipe, String>> {
     let read: Vec<SourceFile> = pinned.values().flatten().cloned().collect();
     let seen: Scanned = Arc::default();
     let ctx = reader_ctx(env, spec, Some(Arc::clone(&seen)), pinned)?;
@@ -349,13 +354,13 @@ async fn open_checked(
         Ok(df) => df,
         Err(e) => return Err(planning_error(spec, "recipe", Error::Recipe, e).await),
     };
-    if appending {
-        accounting::appendable(df.logical_plan()).map_err(Error::Import)?;
+    if appending && let Err(reason) = accounting::appendable(df.logical_plan()) {
+        return Ok(Err(reason));
     }
     let schema = normalize::compat_schema(df.schema().as_arrow());
     let shape = Arc::clone(&schema);
     let rows = df.execute_stream().await?;
-    Ok(Recipe {
+    Ok(Ok(Recipe {
         schema: Arc::clone(&schema),
         rows: Box::pin(rows.map(move |b| normalize::compat_batch(b?, &shape))),
         account: Account {
@@ -363,72 +368,68 @@ async fn open_checked(
             files: Some((ctx, seen, sql.to_string())),
             read,
         },
-    })
+    }))
 }
 
-/// What an import found at the source.
+/// What an import found at the source, and how the table becomes the
+/// recipe's result.
 pub enum Update {
     /// The source holds no file the table has not landed.
     Unchanged,
-    /// The recipe opened over the new files alone.
-    Rows(Recipe),
+    /// The recipe opened over the new files alone: their rows join the
+    /// table, and that is the result.
+    Append(Recipe),
+    /// The recipe opened whole, to replace the table; `why` names what
+    /// ruled out an append — the source kind, the recipe's shape, a
+    /// landed file that changed or is gone, a table with no file record.
+    Replace { recipe: Recipe, why: String },
 }
 
 /// Open a data update: the recipe over the files its source holds that
 /// `landed` does not. An import's meaning is the recipe's result as the
-/// source stands now; appending the new files' rows *is* that result
-/// exactly when the recipe maps rows one for one over a single scan and
-/// every landed file still stands as it landed — anything else is
-/// refused by name, because the lake cannot yet replace a table's rows
-/// in one commit.
+/// source stands now. Appending the new files' rows *is* that result
+/// exactly when the recipe maps rows one for one over a single scan
+/// and every landed file still stands as it landed; in every other
+/// case the recipe opens whole and the caller replaces the table.
 pub async fn open_import(
     env: &RuntimeEnv,
     spec: &SourceSpec,
     sql: &str,
     landed: &[SourceFile],
 ) -> Result<Update> {
+    let whole = |why: String| async move {
+        Ok(Update::Replace {
+            recipe: open_recipe(env, spec, sql).await?,
+            why,
+        })
+    };
     if spec.kind == SourceKind::RelationalDb {
-        return Err(Error::Import(
-            "a relational source computes the whole result again, and the lake cannot yet \
-             replace a table's rows in one commit"
-                .into(),
-        ));
+        return whole("the source computes the whole result".into()).await;
+    }
+    if landed.is_empty() {
+        return whole("the table's landings recorded no files".into()).await;
     }
     let mut pinned = pin(env, spec, sql).await?;
     let scans = accounting::file_scans(sql);
     let [rel] = scans.as_slice() else {
-        return Err(Error::Import(format!(
-            "the recipe reads {} file scans, so its result is not its rows file by file, \
-             and the lake cannot yet replace a table's rows in one commit",
-            scans.len()
-        )));
+        return whole(format!("the recipe reads {} file scans", scans.len())).await;
     };
     let listed = pinned.remove(rel).unwrap_or_default();
     for file in landed {
         match listed.iter().find(|f| f.path == file.path) {
             Some(now) if now == file => {}
-            Some(_) => {
-                return Err(Error::Import(format!(
-                    "`{}` changed since it landed, and the lake cannot yet replace a \
-                     table's rows in one commit",
-                    file.path
-                )));
-            }
-            None => {
-                return Err(Error::Import(format!(
-                    "`{}` landed and is gone from the source, and the lake cannot yet \
-                     replace a table's rows in one commit",
-                    file.path
-                )));
-            }
+            Some(_) => return whole(format!("`{}` changed since it landed", file.path)).await,
+            None => return whole(format!("`{}` is gone from the source", file.path)).await,
         }
     }
     let new: Vec<SourceFile> = listed.into_iter().filter(|f| !landed.contains(f)).collect();
     if new.is_empty() {
         return Ok(Update::Unchanged);
     }
-    let recipe = open_checked(env, spec, sql, Pinned::from([(rel.clone(), new)]), true).await?;
-    Ok(Update::Rows(recipe))
+    match open_checked(env, spec, sql, Pinned::from([(rel.clone(), new)]), true).await? {
+        Ok(recipe) => Ok(Update::Append(recipe)),
+        Err(why) => whole(why).await,
+    }
 }
 
 impl Account {

@@ -52,11 +52,13 @@ probe_stmt        = "PROBE", name, "AS", dollar ;
 
 import_stmt       = "IMPORT", [ name, "." ], name ;
                     (* IMPORT [dataset.]table — a data update: the
-                       table's recipe runs over what its source holds
-                       new, and the rows join the table as one more
-                       snapshot. The schema is the table's or the
-                       import errors; an import the lake cannot commit
-                       as an append is refused by name *)
+                       table's recipe runs again over its source and
+                       the table becomes the result as the source
+                       stands now, in one commit. The schema is the
+                       table's or the import errors; how the engine
+                       reaches the result — appending the files no
+                       landing has read, or replacing the table whole
+                       — is its own, and the outcome names it *)
 
 (* -- sources ------------------------------------------------------------ *)
 

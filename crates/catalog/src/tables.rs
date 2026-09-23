@@ -472,6 +472,17 @@ pub enum Landing {
     Append,
 }
 
+impl Landing {
+    /// The landing's word, as the record's `imports.mode` spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Landing::Create => "create",
+            Landing::Replace => "replace",
+            Landing::Append => "append",
+        }
+    }
+}
+
 /// The landing as one commit; the snapshot it made is the table's new
 /// version. The files a replace ended are scheduled for deletion in the
 /// same transaction, and returned so the caller can delete them.

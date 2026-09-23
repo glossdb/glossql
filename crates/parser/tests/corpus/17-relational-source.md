@@ -79,6 +79,18 @@ SELECT CAST(transaction_date AS DATE) AS d, credit FROM ledger LIMIT 5;
 diagnostic re-landing to learn its types before it did). The second read is the
 typed contract this dialect can carry: cast at read over ISO text.
 
+## The update runs at the source too
+
+```glossql
+IMPORT ledger;
+```
+
+The recipe runs again at the source and the table becomes its result,
+replaced in one commit: a relational source computes the whole result
+itself, so there is no file for the engine to leave out. The outcome
+says so (`replaced: the source computes the whole result`), and the
+landing's row in `imports` carries `mode = 'replace'`.
+
 ## Verdicts
 
 - **TRANSCRIBES** — the spine (source with driver, harvest probe,
