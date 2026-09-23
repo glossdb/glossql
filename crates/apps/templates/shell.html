@@ -42,7 +42,7 @@
        nothing to switch between, so it shows no tabs. #}
     {% if app and pages | length > 1 %}
     <nav class="tabs" aria-label="pages">
-      {% for p in pages %}<a{% if p.name == page %} class="current" aria-current="page"{% endif %} href="/{{ dataset }}/app/{{ app.name }}{% if p.name != 'index' %}/p/{{ p.name }}{% endif %}">{{ p.title }}</a>{% endfor %}
+      {% for p in pages %}<a{% if p.name == page %} class="current" aria-current="page"{% endif %} href="/{{ dataset }}/app/{{ app.name }}{% if p.name != 'index' %}/p/{{ p.name }}{% endif %}{% if draft %}?draft{% endif %}">{{ p.title }}</a>{% endfor %}
     </nav>
     {% endif %}
   </div>
@@ -51,7 +51,9 @@
 <main>
 {# A glossed app opens with its title, in full, whatever the picker
    could fit. The built-in's pages are its tabs, so it prints none. #}
-{% if app and app.origin == "glossed" %}<h1 class="app-title">{{ app.title }}</h1>{% endif %}
+{# Which cut the page shows: the draft, or the release it is served
+   at; an app nobody released is its draft and says nothing. #}
+{% if app and app.origin == "glossed" %}<h1 class="app-title">{{ app.title }}{% if draft %} <span class="chip" title="the newest parts, not the release">draft</span>{% elif released %} <span class="chip" title="released at {{ released }}">released</span>{% endif %}</h1>{% endif %}
 {% block main %}{% endblock %}
 </main>
 </body>

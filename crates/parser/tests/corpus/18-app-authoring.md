@@ -101,3 +101,12 @@ $$;
   context, `PUBLISH` flips serving state, the first candidate verb since
   the simplification · draft visibility before publish (rides the
   actor/auth basket, held open).
+- The release is a gloss, not a verb: a release is a fact about the
+  app, and `GLOSS` writes facts. The door serves the parts as they
+  stood when the release was written, the draft under `?draft`, and
+  an earlier cut by its time:
+
+```glossql
+GLOSS app_release ON model AS $${"note": "first cut"}$$;
+GLOSS app_release ON model AS $${"at": "2026-09-23T09:00:00.000Z"}$$;
+```

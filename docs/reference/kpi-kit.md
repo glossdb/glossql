@@ -39,6 +39,7 @@ asks judgment only.
 | `recipe_change` | FACT ON TABLE | `table`, `sql`, `reason` — the correction channel: the human gloss is the approval, the re-declare is the agent's next act |
 | `ruling` | FACT (grainless) | `rulings`: a list of `{aspect, key, stance, dimension?, assumption?, note?}` with stance `confirmed` / `corrected` / `unclear`. The `key` is the only thing joined on; `assumption` is the prose snapshot the human read, never a match column. Witness-free on purpose — actor kind stamps the writer, and a witness would put an unassessed row on every subject |
 | `app` / `app_page` / `app_frame` / `app_spec` | FACT (grainless) | an app's parts as glosses — `title` + optional `dataset` pin; `html`; `sql`; `spec`. One gloss per part, so an author edits one frame without rewriting the app. Grainless and witness-free: an app part is not a claim about the data, so it owes no verdict |
+| `app_release` | FACT (grainless) | the app's release — the door serves the parts as they stood when it was written, or at the earlier release `at` names; `note` optional. What is written after it is the draft, at `?draft` |
 
 Names machinery reads, shipped by this file: `recipe_change` (the
 brief counts pending approvals by that name), `title` / `x-kind` in

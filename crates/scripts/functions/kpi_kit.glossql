@@ -200,3 +200,14 @@ DECLARE ASPECT app_spec WITH $${
   "properties": {"spec": {"type": "string"}}
 }$$ AS FACT;
 
+-- A release: the door serves the app's parts as they stood when this
+-- gloss was written, or at the earlier release `at` names (its
+-- `released_at` in `app_releases`); everything written since is the
+-- draft, served under `?draft`. An app nobody released serves its
+-- draft. Supersession is the usual key, so a human's release stands
+-- over an agent's.
+DECLARE ASPECT app_release WITH $${
+  "type": "object",
+  "properties": {"note": {"type": "string"}, "at": {"type": "string"}}
+}$$ AS FACT;
+

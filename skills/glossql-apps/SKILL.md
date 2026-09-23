@@ -84,6 +84,28 @@ what an app is made of:
 SELECT app, path, actor_kind FROM app_parts ORDER BY app, path
 ```
 
+## Release when it is ready
+
+Every part you write is the draft, and readers see it at the plain URL
+only until the first release. A release is one gloss:
+
+```glossql
+GLOSS app_release ON delivery AS $${"note": "Monday operations, first cut"}$$;
+```
+
+From then on the door serves each part as it stood at the release;
+your later edits show under `?draft` on the same URLs, and the bar says
+which is on the page. Release again when the draft is ready. To return
+to an earlier release, name its time as `app_releases` prints it:
+
+```glossql
+GLOSS app_release ON delivery AS $${"at": "2026-09-23T09:00:00.000Z", "note": "back to the first cut"}$$;
+```
+
+```sql
+SELECT app, at, note, released_at FROM app_releases
+```
+
 ## Frames are SQL, and they are where the thinking goes
 
 One SELECT per frame, streamed as Arrow IPC. The browser fetches each

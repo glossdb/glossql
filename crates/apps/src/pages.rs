@@ -100,7 +100,7 @@ pub async fn datasets(State(door): State<AppDoor>) -> Response {
                 }
             }
         }
-        glossed.extend(crate::glossed::parts(&door, name).await);
+        glossed.extend(crate::glossed::parts(&door, name, false).await.parts);
     }
     overview::grouped(
         &mut datasets,
@@ -171,7 +171,9 @@ async fn page_response(
         Ok(names) => names,
         Err(response) => return response,
     };
-    let glossed = crate::glossed::parts(door, dataset).await;
+    let draft = params.iter().any(|(k, _)| k == "draft");
+    let loaded = crate::glossed::parts(door, dataset, draft).await;
+    let glossed = loaded.parts;
     let def = match AppDef::load(app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
@@ -206,6 +208,10 @@ async fn page_response(
     ctx.insert("dataset", dataset);
     ctx.insert("datasets", &datasets);
     ctx.insert("state", &state_map(params));
+    // Which cut the page shows: the draft, or the release it is served
+    // at — the bar says so, and the tabs keep the draft on.
+    ctx.insert("draft", &draft);
+    ctx.insert("released", &loaded.releases.get(app));
     ctx.insert("origin", &*door.origin);
     render(&format!("pages/{page}.html"), ctx, tera)
 }
@@ -214,8 +220,10 @@ async fn page_response(
 pub async fn spec(
     State(door): State<AppDoor>,
     Path((dataset, app, spec)): Path<(String, String, String)>,
+    Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
-    let glossed = crate::glossed::parts(&door, &dataset).await;
+    let draft = params.iter().any(|(k, _)| k == "draft");
+    let glossed = crate::glossed::parts(&door, &dataset, draft).await.parts;
     let def = match AppDef::load(&app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),

@@ -25,6 +25,23 @@ GLOSS app_frame ON delivery.monthly AS $${"sql":
 
 The `app_parts` read serves what an app is made of, one row per file.
 
+## Draft and release
+
+Every part written is the draft. A release is one gloss:
+
+```glossql
+GLOSS app_release ON delivery AS $${"note": "Monday operations, first cut"}$$;
+```
+
+The door serves, for each part, the newest row written at or before
+the release; the draft stays reachable at `?draft` on the same URLs,
+and the bar says which one is on the page. An app nobody released
+serves its draft. To return to an earlier release, name its time:
+`{"at": "<released_at>"}`, as the `app_releases` read prints it.
+Supersession is the usual key, so a human's release stands over an
+agent's. Data and metadata keep flowing to every reader the moment
+they land; only the app has this gate.
+
 ## Frames compute, tiles place, specs draw
 
 **Frames are SQL, and they are where the thinking goes.** One SELECT

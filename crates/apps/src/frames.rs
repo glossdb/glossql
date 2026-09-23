@@ -29,7 +29,10 @@ pub async fn frame(
     if let Some(missing) = crate::missing(&door, &dataset).await {
         return fail(StatusCode::NOT_FOUND, missing);
     }
-    let glossed = crate::glossed::parts(&door, &dataset).await;
+    // `draft` among the params asks for the newest parts, not the
+    // release's; the page's params reach every frame it fetches.
+    let draft = params.iter().any(|(k, _)| k == "draft");
+    let glossed = crate::glossed::parts(&door, &dataset, draft).await.parts;
     let def = match AppDef::load(&app, &glossed) {
         Ok(Some(def)) => def,
         Ok(None) => return fail(StatusCode::NOT_FOUND, format!("no app `{app}`")),
