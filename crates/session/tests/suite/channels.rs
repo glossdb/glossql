@@ -255,17 +255,17 @@ async fn a_re_land_stales_other_channels_reads_too() {
         .unwrap();
     assert_eq!(single_value(&before), "current");
 
-    // The first channel supersedes the recipe — a fresh landing, a new
-    // snapshot. The analyst channel's next read must mark the gloss
-    // stale.
+    // The first channel supersedes the recipe with one that re-derives
+    // a column — a fresh landing, a new version of `amount`. The
+    // analyst channel's next read must mark the table's gloss stale.
     plane
         .execute(
             agent("engineer"),
             None,
             "USE fin;\n\
              DECLARE RECIPE orders ON fin FROM erp_export AS $$\
-               SELECT order_id, try_cast(amount AS DOUBLE) AS amount \
-               FROM read_parquet('orders/*.parquet') WHERE order_id > 0$$;",
+               SELECT order_id, round(try_cast(amount AS DOUBLE)) AS amount \
+               FROM read_parquet('orders/*.parquet')$$;",
         )
         .await
         .unwrap();

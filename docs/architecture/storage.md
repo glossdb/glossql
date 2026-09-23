@@ -32,6 +32,15 @@ a replace, an append and a drop touch.
   and, once replaced or dropped, the snapshot it ended at. A table's
   version is the snapshot that last changed it, and that is the
   number a gloss row stores as `snapshot_id` and the pin carries.
+- **A column is versioned.** A replace keeps the row of a column
+  whose name, type and recipe expression are unchanged, begins a new
+  version under the same `column_id` when its type or expression
+  changed, and ends one that is gone; a new column takes a new id.
+  The expression is the column's `glossql.expr` tag, in the
+  specification's column-tag table. That history is what a gloss
+  ages against: a column's live version, or the snapshot a column of
+  the table was last re-versioned or dropped at, later than the
+  gloss's snapshot.
 - **A replace is one commit.** The new rows are written beside the
   old files first; the commit ends the old file rows and begins the
   new ones. A reader that pinned the table before the commit reads

@@ -31,14 +31,20 @@ pub enum Scope {
 
 /// What the session knows and the store cannot: the subjects that exist
 /// (tables and columns from the data plane — the disclosure grid enumerates
-/// them so absence shows as a row, never as omission) and each table's
-/// current snapshot (the staleness comparison). Empty context still collapses
-/// correctly; it just cannot show `unassessed` subjects nobody wrote about
-/// or mark snapshot staleness.
+/// them so absence shows as a row, never as omission), each table's
+/// current snapshot (the pin's data legs) and each table's shape (the
+/// staleness comparison). Empty context still collapses correctly; it
+/// just cannot show `unassessed` subjects nobody wrote about or mark
+/// staleness.
 #[derive(Debug, Clone, Default)]
 pub struct ReadContext {
     pub universe: Vec<String>,
     pub snapshots: std::collections::HashMap<String, i64>,
+    /// Each table's columns by the snapshot their live version began
+    /// at, and the table's newest column change — what a gloss ages
+    /// against (SPEC.md §5.2): its subject changed after it, never the
+    /// rows.
+    pub shapes: std::collections::HashMap<String, glossql_catalog::Shape>,
     /// The statement's pin — what every measurement this read serves or
     /// computes is keyed by.
     pub pin: Pin,
@@ -1040,9 +1046,10 @@ impl Store {
 
     /// Admission by aspect kind (SPEC.md §5.2), then a plain insert; the
     /// supersession key (subject, aspect, actor kind) is applied by reads.
-    /// `snapshot_id` is the subject's table snapshot at write time — `None`
-    /// when the subject has no table (dataset-level, pair paths) or no data
-    /// plane is attached.
+    /// `snapshot_id` is the subject's table version at write time, what
+    /// the read compares the subject's later changes against — `None`
+    /// when the subject has no table (dataset-level, pair paths) or no
+    /// data plane is attached.
     pub async fn gloss(
         &self,
         dataset: &str,
@@ -1324,13 +1331,24 @@ impl Store {
                 continue;
             }
             let serving = group[rules::serving(&group).expect("a group is never empty")];
-            let current = table_of(&subject)
-                .and_then(|t| ctx.snapshots.get(t))
-                .copied();
-            // Served and marked either way: a gloss whose table moved
-            // on, or a voice landed at an earlier pin.
+            // What the subject ages against (SPEC.md §5.2): a column,
+            // the snapshot its live version began at — or, gone from
+            // the table, the table's newest column change; a table,
+            // that change; a dataset or a pair path, nothing.
+            let changed = match rules::grain_of(dataset, &subject) {
+                "column" => table_of(&subject)
+                    .and_then(|t| ctx.shapes.get(t))
+                    .map(|shape| {
+                        let column = subject.split_once('.').map_or("", |(_, c)| c);
+                        shape.columns.get(column).copied().unwrap_or(shape.changed)
+                    }),
+                "table" => ctx.shapes.get(subject.as_str()).map(|s| s.changed),
+                _ => None,
+            };
+            // Served and marked either way: a gloss whose subject
+            // changed after it, or a voice landed at an earlier pin.
             let state = if serving.current {
-                rules::state(serving.snapshot_id, current)
+                rules::state(serving.snapshot_id, changed)
             } else {
                 "stale"
             };
@@ -1561,6 +1579,7 @@ impl Store {
         dataset: &str,
         universe: Vec<String>,
         snapshots: std::collections::HashMap<String, i64>,
+        shapes: std::collections::HashMap<String, glossql_catalog::Shape>,
     ) -> Result<ReadContext> {
         let versions = self.record.versions().await?;
         let parts = pin_parts(dataset, &snapshots, &versions);
@@ -1589,6 +1608,7 @@ impl Store {
             aspects,
             universe,
             snapshots,
+            shapes,
             pin: with_grounding(parts, grounding),
             grounding,
             version,

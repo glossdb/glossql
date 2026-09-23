@@ -98,7 +98,8 @@ An unchanged re-declaration is a no-op; a changed one supersedes and
 re-lands: the table is replaced whole, in one commit, and the recipe
 it carries is superseded. The landings it holds stay on the record,
 as every landing does. Glosses stay — no machinery deletes knowledge;
-their snapshot ids disclose their age against the fresh landing. `DROP
+a gloss on a column the re-land re-derived, retyped or dropped reads
+as `stale`, one on a column it kept stays `current` (§5.2). `DROP
 TABLE` drops the table, and refuses while it holds data or glosses.
 
 ```sql
@@ -343,10 +344,13 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
 DELETE FROM glossary WHERE subject = 'orders.amount' AND aspect = 'unit';
 ```
 
-- Every row carries `snapshot_id` — the subject's table snapshot at write
-  time (NULL for dataset-level subjects and pair paths). Provenance and
-  staleness are a join against the table's snapshot history, never a guess.
-  The read shapes in §5.3 are unchanged; the column lives on the relation.
+- Every row carries `snapshot_id` — the catalog snapshot at write time
+  (NULL for dataset-level subjects and pair paths). A gloss reads `stale`
+  once its subject changed after that snapshot: a column re-derived,
+  retyped or dropped, a table one of whose columns did. Rows arriving
+  under the same shape do not age it. Provenance and staleness are a
+  join against the catalog's column history, never a guess. The read
+  shapes in §5.3 are unchanged; the column lives on the relation.
 
 ### 5.3 Reading
 
@@ -367,9 +371,10 @@ the read never hides one:
 - `contested` — entropy above the threshold; value withheld, band and
   score say how badly.
 - `current` — served, basis unchanged.
-- `stale` — served **and marked**: the table's snapshot moved on since the
-  write, or an input the serving function voice read has moved since it
-  landed (§7). Staleness never suppresses judgment; it shows beside it.
+- `stale` — served **and marked**: the subject changed since the write
+  (§5.2), or an input the serving function voice read has moved since
+  it landed (§7). Staleness never suppresses judgment; it shows beside
+  it.
 
 ```sql
 SELECT * FROM GLOSSARY(orders.amount, all => true);

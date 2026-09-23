@@ -84,9 +84,11 @@ closure is an authored recipe amendment.
 
 Statement identity is content — the recipe SQL and the schema it
 produces. An unchanged re-declaration is a no-op. A changed one
-supersedes and re-lands: the table lands fresh and its record starts
-over with it. Glosses stay — no machinery deletes knowledge; their
-snapshot ids disclose their age against the fresh landing. This
+supersedes and re-lands: the table is replaced whole, in one commit.
+Glosses stay — no machinery deletes knowledge. Each ages by its own
+subject: a gloss on a column the re-land re-derived, retyped or
+dropped reads as `stale`, one on a column it kept stays `current`,
+and a gloss on the table ages when any of its columns did. This
 supersede-and-reland is the correction path: fix a source wart by
 re-declaring the recipe, never by editing data.
 

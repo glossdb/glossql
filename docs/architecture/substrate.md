@@ -76,8 +76,9 @@ its own cycle stack, one stack for the whole nesting.
 
 - **The snapshot is the version.** A statement's reads pin it — every
   scan reads the file list of the pinned version whatever lands after
-  — and a version stays a durable key: a gloss row stores it, and the
-  staleness rule compares it with the table's current one.
+  — and a version stays a durable key: a measurement's pin carries
+  it, a gloss row stores it, and the staleness rule compares it with
+  the snapshot the subject's column last changed at.
 - **Landed tables only.** The lake holds what recipes land, as parquet
   files. The record — the store's relations — lives in the same
   database ([store](store.md)), where a row is one insert and a read

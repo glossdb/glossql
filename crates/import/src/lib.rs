@@ -28,6 +28,7 @@ mod normalize;
 
 pub use accounting::{CastAccounting, CastCheck};
 
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -47,7 +48,7 @@ use datafusion::datasource::listing::{
 use datafusion::error::DataFusionError;
 use datafusion::execution::object_store::DefaultObjectStoreRegistry;
 use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::{Expr, LogicalPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::scalar::ScalarValue;
 use futures::StreamExt as _;
@@ -268,6 +269,12 @@ pub struct Recipe {
     pub rows: Rows,
     /// What accounts for the landing once its rows have passed.
     pub account: Account,
+    /// Each landed column's derivation — the recipe's expression for
+    /// it, as the plan spells it — where the engine planned the recipe;
+    /// empty at a relational source, whose dialect owns the SQL. The
+    /// catalog keeps a column's version while its type and derivation
+    /// stand (SPEC.md §5.2).
+    pub exprs: HashMap<String, String>,
 }
 
 /// What a landing's accounting reads, held until the rows have passed:
@@ -295,6 +302,7 @@ pub async fn open_recipe(env: &RuntimeEnv, spec: &SourceSpec, sql: &str) -> Resu
                 files: None,
                 read: Vec::new(),
             },
+            exprs: HashMap::new(),
         });
     }
     let pinned = pin(env, spec, sql).await?;
@@ -357,6 +365,7 @@ async fn open_checked(
     if appending && let Err(reason) = accounting::appendable(df.logical_plan()) {
         return Ok(Err(reason));
     }
+    let exprs = derivations(df.logical_plan());
     let schema = normalize::compat_schema(df.schema().as_arrow());
     let shape = Arc::clone(&schema);
     let rows = df.execute_stream().await?;
@@ -368,7 +377,60 @@ async fn open_checked(
             files: Some((ctx, seen, sql.to_string())),
             read,
         },
+        exprs,
     }))
+}
+
+/// Each output column's derivation as the plan spells it: the
+/// projection's or the aggregate's expression for the column, its
+/// column references unqualified so that a source path or an alias is
+/// no part of it, reached through the nodes that keep the columns as
+/// they are. Empty for a root that makes its columns another way — a
+/// union, a join with no projection over it — where the catalog keeps
+/// a column's version on its name and type alone.
+fn derivations(plan: &LogicalPlan) -> HashMap<String, String> {
+    use datafusion::common::tree_node::{Transformed, TreeNode};
+    use datafusion::logical_expr::Distinct;
+    let mut node = plan;
+    loop {
+        node = match node {
+            LogicalPlan::Sort(s) => &s.input,
+            LogicalPlan::Limit(l) => &l.input,
+            LogicalPlan::Filter(f) => &f.input,
+            LogicalPlan::SubqueryAlias(a) => &a.input,
+            LogicalPlan::Distinct(Distinct::All(input)) => input,
+            _ => break,
+        };
+    }
+    let exprs: Vec<Expr> = match node {
+        LogicalPlan::Projection(p) => p.expr.clone(),
+        LogicalPlan::Aggregate(a) => a
+            .group_expr
+            .iter()
+            .chain(a.aggr_expr.iter())
+            .cloned()
+            .collect(),
+        _ => return HashMap::new(),
+    };
+    node.schema()
+        .fields()
+        .iter()
+        .zip(exprs)
+        .map(|(field, expr)| {
+            let bare = expr
+                .clone()
+                .transform(|e| {
+                    Ok(match e {
+                        Expr::Column(c) => Transformed::yes(Expr::Column(
+                            datafusion::common::Column::new_unqualified(c.name),
+                        )),
+                        other => Transformed::no(other),
+                    })
+                })
+                .map_or_else(|_| expr.to_string(), |t| t.data.to_string());
+            (field.name().clone(), bare)
+        })
+        .collect()
 }
 
 /// What an import found at the source, and how the table becomes the

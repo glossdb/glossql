@@ -67,7 +67,7 @@ fn human() -> Actor {
 /// as a statement's pre-pass builds it.
 async fn rctx(store: &Store) -> ReadContext {
     store
-        .read_context("fin", vec![], Default::default())
+        .read_context("fin", vec![], Default::default(), Default::default())
         .await
         .unwrap()
 }
@@ -535,6 +535,7 @@ async fn measurements_serve_the_latest_row_at_a_pin_and_miss_at_another() {
             "fin",
             vec![],
             std::collections::HashMap::from([("orders".into(), 7)]),
+            Default::default(),
         )
         .await
         .unwrap();
@@ -569,7 +570,10 @@ async fn a_measurement_stands_while_what_it_read_is_unchanged() {
     .unwrap();
 
     // payments moves: not a leg it read, the row stands.
-    let ctx = s.read_context("fin", vec![], at(7, 4)).await.unwrap();
+    let ctx = s
+        .read_context("fin", vec![], at(7, 4), Default::default())
+        .await
+        .unwrap();
     assert!(
         Store::measurement_in(&ctx, "fin", "orders", "profile").is_some(),
         "a write it cannot see is not its staleness"
@@ -581,14 +585,20 @@ async fn a_measurement_stands_while_what_it_read_is_unchanged() {
         unreachable!()
     };
     s.declare_function(&f).await.unwrap();
-    let ctx = s.read_context("fin", vec![], at(7, 4)).await.unwrap();
+    let ctx = s
+        .read_context("fin", vec![], at(7, 4), Default::default())
+        .await
+        .unwrap();
     assert!(
         Store::measurement_in(&ctx, "fin", "orders", "profile").is_some(),
         "a store write it cannot see is not its staleness"
     );
 
     // orders moves: the one leg it read, and the row no longer stands.
-    let ctx = s.read_context("fin", vec![], at(8, 4)).await.unwrap();
+    let ctx = s
+        .read_context("fin", vec![], at(8, 4), Default::default())
+        .await
+        .unwrap();
     assert!(
         Store::measurement_in(&ctx, "fin", "orders", "profile").is_none(),
         "its own input moved"
@@ -645,6 +655,7 @@ async fn grain_gates_glosses_and_bounds_disclosure() {
         .read_context(
             "fin",
             vec!["orders".into(), "orders.amount".into(), "orders.qty".into()],
+            Default::default(),
             Default::default(),
         )
         .await
@@ -712,7 +723,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
         "fin",
         &Scope::Dataset,
         None,
-        &s.read_context("fin", uni(), Default::default())
+        &s.read_context("fin", uni(), Default::default(), Default::default())
             .await
             .unwrap(),
         &Default::default(),
@@ -740,7 +751,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
         "fin",
         &Scope::Dataset,
         None,
-        &s.read_context("fin", uni(), Default::default())
+        &s.read_context("fin", uni(), Default::default(), Default::default())
             .await
             .unwrap(),
         &Default::default(),
@@ -773,7 +784,7 @@ async fn a_condition_narrows_what_a_subject_owes() {
         "fin",
         &Scope::Dataset,
         None,
-        &s.read_context("fin", uni(), Default::default())
+        &s.read_context("fin", uni(), Default::default(), Default::default())
             .await
             .unwrap(),
         &Default::default(),
@@ -1215,7 +1226,12 @@ async fn a_source_subject_is_refused_outside_source_grain() {
     // And the disclosure agrees: the table owes an entity row, the
     // source never does.
     let ctx = s
-        .read_context("fin", vec!["orders".into()], Default::default())
+        .read_context(
+            "fin",
+            vec!["orders".into()],
+            Default::default(),
+            Default::default(),
+        )
         .await
         .unwrap();
     let rows = Store::collapsed_read("fin", &Scope::Dataset, None, &ctx, &Default::default());
@@ -1309,7 +1325,7 @@ async fn a_dataset_stays_glossable_when_a_source_shares_its_name() {
     // And the backlog agrees with admission, in both directions: the row
     // it takes is disclosed, the reading it refuses is not owed.
     let ctx = s
-        .read_context("f1", vec![], Default::default())
+        .read_context("f1", vec![], Default::default(), Default::default())
         .await
         .unwrap();
     let rows = Store::collapsed_read("f1", &Scope::Dataset, None, &ctx, &Default::default());

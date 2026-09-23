@@ -683,7 +683,14 @@ impl Session {
             .await?;
         let count = written.rows;
         let version = lake
-            .commit(dataset, table, &schema, written, Landing::Create)
+            .commit(
+                dataset,
+                table,
+                &schema,
+                written,
+                Landing::Create,
+                &std::collections::HashMap::new(),
+            )
             .await?;
         self.shared
             .store
@@ -841,16 +848,8 @@ impl Session {
                     } else {
                         Landing::Create
                     };
-                    let (summary, casts) = self
-                        .materialize(
-                            dataset,
-                            table,
-                            recipe.schema,
-                            recipe.rows,
-                            recipe.account,
-                            landing,
-                        )
-                        .await?;
+                    let (summary, casts) =
+                        self.materialize(dataset, table, recipe, landing).await?;
                     store.put_recipe(d).await?;
                     // The counts arrive at the decision moment: whether
                     // the dropped rows — and the cells the casts nulled
@@ -961,31 +960,32 @@ impl Session {
         &self,
         dataset: &str,
         table: &str,
-        schema: Arc<datafusion::arrow::datatypes::Schema>,
-        rows: glossql_import::Rows,
-        account: glossql_import::Account,
+        recipe: glossql_import::Recipe,
         landing: Landing,
     ) -> Result<(String, String), SessionError> {
         let lake = self.lake();
         lake.ensure_dataset(dataset).await?;
-        self.stream_into(&lake, dataset, table, schema, rows, account, landing)
+        self.stream_into(&lake, dataset, table, recipe, landing)
             .await
     }
 
     /// The rows written, committed as `landing` says, and the landing's
     /// row on the record: what it read, what it dropped, the casts,
     /// the files, the version it made.
-    #[allow(clippy::too_many_arguments)]
     async fn stream_into(
         &self,
         lake: &Lake,
         dataset: &str,
         table: &str,
-        schema: Arc<datafusion::arrow::datatypes::Schema>,
-        rows: glossql_import::Rows,
-        account: glossql_import::Account,
+        recipe: glossql_import::Recipe,
         landing: Landing,
     ) -> Result<(String, String), SessionError> {
+        let glossql_import::Recipe {
+            schema,
+            rows,
+            account,
+            exprs,
+        } = recipe;
         let stream = Box::pin(RecordBatchStreamAdapter::new(
             Arc::clone(&schema),
             rows.map_err(|e| datafusion::error::DataFusionError::External(Box::new(e))),
@@ -995,7 +995,7 @@ impl Session {
             .await?;
         let landed = account.landed(written.rows).await?;
         let version = lake
-            .commit(dataset, table, &schema, written, landing)
+            .commit(dataset, table, &schema, written, landing, &exprs)
             .await?;
         let scans = serde_json::Value::Array(
             landed
@@ -1123,15 +1123,7 @@ impl Session {
             )));
         }
         let (summary, casts) = self
-            .stream_into(
-                &lake,
-                &dataset,
-                table,
-                new.schema,
-                new.rows,
-                new.account,
-                landing,
-            )
+            .stream_into(&lake, &dataset, table, new, landing)
             .await?;
         Ok(Outcome::Done(format!(
             "IMPORT {table} ON {dataset} ({summary}{casts}; {how})"
