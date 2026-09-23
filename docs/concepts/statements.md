@@ -10,7 +10,8 @@ normative definition; this page is the working map.
 
 - `DECLARE SOURCE` — names where data comes from: parquet, csv, json,
   or a relational database reached by its connection URI.
-- `DECLARE RECIPE` — materializes a table from a source. The recipe
+- `DECLARE RECIPE` — materializes a table from a source; `SET (key:
+  …)` names the table's key, by which an import merges. The recipe
   SQL runs at the source and carries the casts: typing is authored,
   not detected.
 - `PROBE` — the recipe rehearsal: the same SQL surface, executed at

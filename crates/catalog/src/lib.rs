@@ -342,6 +342,44 @@ impl Lake {
         })
     }
 
+    /// The written files as a table before their commit: what a merge
+    /// reads a recipe's rows back from, beside the landed table, to
+    /// write the rows that replace it.
+    pub fn staged(
+        &self,
+        dataset: &str,
+        table: &str,
+        written: &Written,
+        schema: SchemaRef,
+    ) -> Arc<dyn datafusion::catalog::TableProvider> {
+        let dir = self.warehouse.table_dir(dataset, table);
+        Arc::new(FilesTable::new(
+            schema,
+            self.warehouse.key.clone(),
+            written
+                .files
+                .iter()
+                .map(|f| (format!("{dir}{}", f.path), f.size))
+                .collect(),
+        ))
+    }
+
+    /// Written files whose commit never comes, deleted from the store.
+    /// One the store keeps is logged and left: nothing references it.
+    pub async fn discard(&self, dataset: &str, table: &str, written: Written) {
+        for file in written.files {
+            let path = object_store::path::Path::from(format!(
+                "{}{}",
+                self.warehouse.table_dir(dataset, table),
+                file.path
+            ));
+            match self.warehouse.store.delete(&path).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
+                Err(e) => tracing::warn!(file = %path, "a discarded file stays: {e}"),
+            }
+        }
+    }
+
     /// The written files joined to the table as one commit — created,
     /// replaced or appended — and the version that commit made. `exprs`
     /// is each column's derivation, the recipe's expression for it,

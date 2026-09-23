@@ -236,12 +236,18 @@ fn parse_declaration(p: &mut Parser) -> Result<Declaration, ParserError> {
             let dataset = folded_ident(p)?;
             expect_word(p, "FROM")?;
             let source = folded_ident(p)?;
+            let settings = if consume_word(p, "SET") {
+                parse_settings(p)?
+            } else {
+                Vec::new()
+            };
             expect_word(p, "AS")?;
             let sql = parse_dollar(p, "dollar-quoted recipe SQL — AS $$ SELECT … $$")?;
             Ok(Declaration::Recipe(RecipeDecl {
                 table,
                 dataset,
                 source,
+                settings,
                 sql,
             }))
         }

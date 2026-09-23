@@ -88,7 +88,11 @@ source, landing nothing, its result always carrying its schema (a
 `LIMIT 0` probe of the final SQL rehearses exactly the identity the
 recipe will stamp). Then the recipe lands as table `segments` — the typed
 table, versioned on every import. The default recipe is
-`SELECT *`. The engine keeps one number per import — `dropped_rows_count`,
+`SELECT *`. A recipe may name its table's key, `SET (key: order_id)`
+before `AS`, a column of its result or a comma-separated list of
+them: a keyed recipe's result merges into the table by that key on
+every import; an unkeyed recipe's result is the table. The engine
+keeps one number per import — `dropped_rows_count`,
 source rows minus landed rows — in the declaration's outcome at the
 decision moment and in the `imports` relation for history; which rows
 were dropped is the author's question, answered at the source.
@@ -109,8 +113,10 @@ IMPORT segments;
 `IMPORT` is the data update: the table's recipe runs again over its
 source, and the table becomes the result as the source stands now, in
 one commit — the table, the landings it holds and its glosses stand.
-Which files or rows the engine reads to get there is its own economy,
-never the statement's. It reproduces the table's schema or it errors.
+An unkeyed recipe replaces the table whole; a keyed recipe replaces
+the rows whose key the result carries and keeps the rest. Which files
+or rows the engine reads to get there is its own economy, never the
+statement's. It reproduces the table's schema or it errors.
 It is sent from outside, by a schedule or an agent; nothing watches a
 source. The table is named as a read names it, under the `USE`'d
 dataset or with its dataset in front.

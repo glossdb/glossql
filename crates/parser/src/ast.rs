@@ -86,14 +86,16 @@ pub enum SettingValue {
     Number(String),
 }
 
-/// `DECLARE RECIPE r ON dataset FROM source AS $$ <sql> $$` — the SQL runs
-/// at the source, in the source's dialect; it is dollar-quoted so
-/// foreign-dialect text never meets the host tokenizer.
+/// `DECLARE RECIPE r ON dataset FROM source [SET (key: …)] AS $$ <sql> $$`
+/// — the SQL runs at the source, in the source's dialect; it is
+/// dollar-quoted so foreign-dialect text never meets the host
+/// tokenizer. The settings name the table's key, if any (SPEC.md §3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecipeDecl {
     pub table: Ident,
     pub dataset: Ident,
     pub source: Ident,
+    pub settings: Vec<Setting>,
     pub sql: String,
 }
 

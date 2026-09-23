@@ -438,26 +438,32 @@ fn derivations(plan: &LogicalPlan) -> HashMap<String, String> {
 pub enum Update {
     /// The source holds no file the table has not landed.
     Unchanged,
-    /// The recipe opened over the new files alone: their rows join the
-    /// table, and that is the result.
+    /// The recipe opened over the files that are new — or, for a keyed
+    /// recipe, new or changed — alone: their rows join the table,
+    /// appended or merged by the key, and that is the result.
     Append(Recipe),
-    /// The recipe opened whole, to replace the table; `why` names what
-    /// ruled out an append — the source kind, the recipe's shape, a
-    /// landed file that changed or is gone, a table with no file record.
+    /// The recipe opened whole, to replace the table or merge by the
+    /// key; `why` names what ruled out the files alone — the source
+    /// kind, the recipe's shape, a landed file that changed or is
+    /// gone, a table with no file record.
     Replace { recipe: Recipe, why: String },
 }
 
 /// Open a data update: the recipe over the files its source holds that
 /// `landed` does not. An import's meaning is the recipe's result as the
-/// source stands now. Appending the new files' rows *is* that result
+/// source stands now. The new files' rows alone *are* that result
 /// exactly when the recipe maps rows one for one over a single scan
 /// and every landed file still stands as it landed; in every other
-/// case the recipe opens whole and the caller replaces the table.
+/// case the recipe opens whole. A keyed recipe's rows join by their
+/// key, so for it a changed file's rows run again and a gone file's
+/// rows stand — a delete at the source is its owner's to expose as a
+/// row.
 pub async fn open_import(
     env: &RuntimeEnv,
     spec: &SourceSpec,
     sql: &str,
     landed: &[SourceFile],
+    keyed: bool,
 ) -> Result<Update> {
     let whole = |why: String| async move {
         Ok(Update::Replace {
@@ -477,18 +483,26 @@ pub async fn open_import(
         return whole(format!("the recipe reads {} file scans", scans.len())).await;
     };
     let listed = pinned.remove(rel).unwrap_or_default();
-    for file in landed {
-        match listed.iter().find(|f| f.path == file.path) {
-            Some(now) if now == file => {}
+    let mut due: Vec<SourceFile> = Vec::new();
+    for file in &listed {
+        match landed.iter().find(|f| f.path == file.path) {
+            Some(was) if was == file => {}
+            Some(_) if keyed => due.push(file.clone()),
             Some(_) => return whole(format!("`{}` changed since it landed", file.path)).await,
-            None => return whole(format!("`{}` is gone from the source", file.path)).await,
+            None => due.push(file.clone()),
         }
     }
-    let new: Vec<SourceFile> = listed.into_iter().filter(|f| !landed.contains(f)).collect();
-    if new.is_empty() {
+    if !keyed
+        && let Some(gone) = landed
+            .iter()
+            .find(|f| !listed.iter().any(|l| l.path == f.path))
+    {
+        return whole(format!("`{}` is gone from the source", gone.path)).await;
+    }
+    if due.is_empty() {
         return Ok(Update::Unchanged);
     }
-    match open_checked(env, spec, sql, Pinned::from([(rel.clone(), new)]), true).await? {
+    match open_checked(env, spec, sql, Pinned::from([(rel.clone(), due)]), true).await? {
         Ok(recipe) => Ok(Update::Append(recipe)),
         Err(why) => whole(why).await,
     }

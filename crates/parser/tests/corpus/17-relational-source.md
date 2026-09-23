@@ -91,6 +91,27 @@ itself, so there is no file for the engine to leave out. The outcome
 says so (`replaced: the source computes the whole result`), and the
 landing's row in `imports` carries `mode = 'replace'`.
 
+A million-row ledger is not re-read whole every night. The owner
+fences the source into a view of what changed, and the recipe names
+the table's key:
+
+```glossql
+DECLARE RECIPE ledger ON fin2 FROM books SET (key: id) AS $$
+  SELECT id,
+         businessID   AS business_id,
+         CAST(Credit  AS REAL) AS credit,
+         CAST(Debit   AS REAL) AS debit,
+         date(Transaction_DATE) AS transaction_date
+  FROM master_txn_changes$$;
+IMPORT ledger;
+```
+
+Every import merges the view's rows into the table by `id`: a row
+with a known key replaces it, a new key joins, every other row
+stands. A row the view never shows cannot be merged, so a source that
+deletes is fenced with the deletes as rows carrying a flag. The
+landing's row carries `mode = 'merge'`.
+
 ## Verdicts
 
 - **TRANSCRIBES** — the spine (source with driver, harvest probe,
