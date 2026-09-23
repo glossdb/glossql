@@ -8,6 +8,13 @@
 //! as a dataset's pin. A file's life is the pair `begin_snapshot` /
 //! `end_snapshot`: live while the end is null, ended by the commit that
 //! replaced or dropped it, scheduled for deletion by that same commit.
+//! A column's life is the same pair, version by version under one
+//! `column_id`, as the specification has it: a replace keeps the row
+//! of a column whose name, type and derivation are unchanged, begins
+//! a new version of one whose type or derivation changed, ends one
+//! that is gone. The derivation — the recipe's expression for the
+//! column, where the landing knows it — is the column's
+//! `glossql.expr` tag.
 //!
 //! Every write is one transaction that also appends the snapshot row,
 //! so two writers racing for the same snapshot id meet the primary key
@@ -20,7 +27,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef, T
 use sqlx::Row as _;
 
 use crate::record::Db;
-use crate::{Error, Result};
+use crate::{Error, Result, Shape};
 
 /// The catalog's tables as DuckDB's own DuckLake extension creates
 /// them (its 1.0 line), created if absent, in this order. Three types
@@ -300,7 +307,12 @@ struct ColumnRow {
     name: String,
     kind: String,
     nullable: bool,
+    /// The snapshot this version of the column began at.
+    begin: i64,
 }
+
+/// The column tag that carries a column's derivation.
+const EXPR_TAG: &str = "glossql.expr";
 
 /// One live file of a table, relative to the table's directory.
 #[derive(Debug, Clone)]
@@ -318,6 +330,8 @@ pub(crate) struct TableRows {
     pub version: i64,
     pub schema: SchemaRef,
     pub files: Vec<FileRow>,
+    /// Each column's live version and the table's newest column change.
+    pub shape: Shape,
 }
 
 /// Every live table of the dataset — or the named ones, `None` when
@@ -356,8 +370,8 @@ pub(crate) async fn pin(
         .join(", ");
     let columns = sqlx::query(&format!(
         "SELECT table_id, column_id, parent_column, column_order, column_name, column_type, \
-         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT) FROM ducklake_column WHERE table_id IN ({list}) \
-         AND end_snapshot IS NULL ORDER BY table_id, column_order"
+         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT), begin_snapshot FROM ducklake_column \
+         WHERE table_id IN ({list}) AND end_snapshot IS NULL ORDER BY table_id, column_order"
     ))
     .fetch_all(db.pool())
     .await?;
@@ -376,20 +390,46 @@ pub(crate) async fn pin(
     ))
     .fetch_all(db.pool())
     .await?;
-    let mut by_table: HashMap<i64, (Vec<ColumnRow>, Vec<FileRow>, i64)> = HashMap::new();
+    // The table's newest column change: the newest end over every
+    // version of every column it has had — a re-derived or retyped
+    // column ends its previous version, a dropped column ends its
+    // last. A column added ends nothing and is no change to what
+    // stood.
+    let shapes = sqlx::query(&format!(
+        "SELECT table_id, MAX(end_snapshot) FROM ducklake_column \
+         WHERE table_id IN ({list}) GROUP BY table_id"
+    ))
+    .fetch_all(db.pool())
+    .await?;
+    struct Slot {
+        columns: Vec<ColumnRow>,
+        files: Vec<FileRow>,
+        version: i64,
+        changed: i64,
+    }
+    let mut by_table: HashMap<i64, Slot> = HashMap::new();
     for (id, _, begin) in &ids {
-        by_table.insert(*id, (Vec::new(), Vec::new(), *begin));
+        by_table.insert(
+            *id,
+            Slot {
+                columns: Vec::new(),
+                files: Vec::new(),
+                version: *begin,
+                changed: *begin,
+            },
+        );
     }
     for r in &columns {
         let id: i64 = r.try_get(0)?;
         if let Some(slot) = by_table.get_mut(&id) {
-            slot.0.push(ColumnRow {
+            slot.columns.push(ColumnRow {
                 column_id: r.try_get(1)?,
                 parent: r.try_get(2)?,
                 order: r.try_get(3)?,
                 name: r.try_get(4)?,
                 kind: r.try_get(5)?,
                 nullable: r.try_get::<i64, _>(6)? != 0,
+                begin: r.try_get(7)?,
             });
         }
     }
@@ -397,29 +437,48 @@ pub(crate) async fn pin(
         let id: i64 = r.try_get(0)?;
         if let Some(slot) = by_table.get_mut(&id) {
             let size: i64 = r.try_get(2)?;
-            slot.1.push(FileRow {
+            slot.files.push(FileRow {
                 path: r.try_get(1)?,
                 size: u64::try_from(size).unwrap_or(0),
             });
             let begin: i64 = r.try_get(3)?;
-            slot.2 = slot.2.max(begin);
+            slot.version = slot.version.max(begin);
         }
     }
     for r in &ends {
         let id: i64 = r.try_get(0)?;
         let end: Option<i64> = r.try_get(1)?;
         if let (Some(slot), Some(end)) = (by_table.get_mut(&id), end) {
-            slot.2 = slot.2.max(end);
+            slot.version = slot.version.max(end);
+        }
+    }
+    for r in &shapes {
+        let id: i64 = r.try_get(0)?;
+        let end: Option<i64> = r.try_get(1)?;
+        if let (Some(slot), Some(end)) = (by_table.get_mut(&id), end) {
+            slot.changed = slot.changed.max(end);
         }
     }
     let mut out = Vec::with_capacity(ids.len());
     for (id, name, _) in ids {
-        let (columns, files, version) = by_table.remove(&id).unwrap_or_default();
+        let Some(slot) = by_table.remove(&id) else {
+            continue;
+        };
+        let shape = Shape {
+            columns: slot
+                .columns
+                .iter()
+                .filter(|c| c.parent.is_none())
+                .map(|c| (c.name.clone(), c.begin))
+                .collect(),
+            changed: slot.changed,
+        };
         out.push(TableRows {
             name,
-            version,
-            schema: Arc::new(schema_from_rows(&columns)?),
-            files,
+            version: slot.version,
+            schema: Arc::new(schema_from_rows(&slot.columns)?),
+            files: slot.files,
+            shape,
         });
     }
     Ok(Some(out))
@@ -465,8 +524,8 @@ pub struct LandedFile {
 pub enum Landing {
     /// The table does not exist: its row, its columns and its files.
     Create,
-    /// The table's live files end and these begin; the columns are
-    /// re-rowed when the shape changed.
+    /// The table's live files end and these begin; the columns evolve
+    /// to the shape, version by version.
     Replace,
     /// These files join the live ones; the shape is the table's.
     Append,
@@ -484,8 +543,9 @@ impl Landing {
 }
 
 /// The landing as one commit; the snapshot it made is the table's new
-/// version. The files a replace ended are scheduled for deletion in the
-/// same transaction, and returned so the caller can delete them.
+/// version. `exprs` is each column's derivation where the landing
+/// knows it. The files a replace ended are scheduled for deletion in
+/// the same transaction, and returned so the caller can delete them.
 pub(crate) async fn commit_landing(
     db: &Db,
     dataset: &str,
@@ -493,14 +553,21 @@ pub(crate) async fn commit_landing(
     schema: &Schema,
     files: &[LandedFile],
     landing: Landing,
+    exprs: &HashMap<String, String>,
 ) -> Result<(i64, Vec<(i64, String)>)> {
     let dataset = dataset.to_string();
     let table = table.to_string();
     let files = files.to_vec();
     let schema = schema.clone();
+    let exprs = exprs.clone();
     commit(db, move |db, tx, snapshot| {
-        let (dataset, table, files, schema) =
-            (dataset.clone(), table.clone(), files.clone(), schema.clone());
+        let (dataset, table, files, schema, exprs) = (
+            dataset.clone(),
+            table.clone(),
+            files.clone(),
+            schema.clone(),
+            exprs.clone(),
+        );
         Box::pin(async move {
             let Some(schema_id) = schema_id(db, tx, &dataset).await? else {
                 return Err(Error::Workspace(format!("no dataset `{dataset}`")));
@@ -523,7 +590,20 @@ pub(crate) async fn commit_landing(
                     .bind(true)
                     .execute(&mut **tx)
                     .await?;
-                    insert_columns(db, tx, snapshot, id, &schema).await?;
+                    let mut order = 0;
+                    for field in schema.fields() {
+                        insert_field(
+                            db,
+                            tx,
+                            snapshot,
+                            id,
+                            field,
+                            None,
+                            &mut order,
+                            exprs.get(field.name()),
+                        )
+                        .await?;
+                    }
                     (id, format!("created_table:\"{dataset}\".\"{table}\""))
                 }
                 (Landing::Create, Some(_)) => {
@@ -536,18 +616,12 @@ pub(crate) async fn commit_landing(
                 }
                 (Landing::Replace, Some(id)) => {
                     ended = end_files(db, tx, snapshot, id).await?;
-                    let live = live_columns(db, tx, id).await?;
-                    if schema_from_rows(&live)? != schema {
-                        sqlx::query(&db.sql(
-                            "UPDATE ducklake_column SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
-                        ))
-                        .bind(snapshot.id)
-                        .bind(id)
-                        .execute(&mut **tx)
-                        .await?;
-                        insert_columns(db, tx, snapshot, id, &schema).await?;
+                    let altered = evolve_columns(db, tx, snapshot, id, &schema, &exprs).await?;
+                    let mut changes = format!("deleted_from_table:{id},inserted_into_table:{id}");
+                    if altered {
+                        changes.push_str(&format!(",altered_table:{id}"));
                     }
-                    (id, format!("deleted_from_table:{id},inserted_into_table:{id}"))
+                    (id, changes)
                 }
                 (Landing::Append, Some(id)) => (id, format!("inserted_into_table:{id}")),
             };
@@ -584,8 +658,8 @@ pub(crate) async fn commit_landing(
     .await
 }
 
-/// The table ended: its row, its columns and its files, the files
-/// scheduled for deletion and returned.
+/// The table ended: its row, its columns, their tags and its files,
+/// the files scheduled for deletion and returned.
 pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Vec<(i64, String)>> {
     let dataset = dataset.to_string();
     let table = table.to_string();
@@ -597,6 +671,7 @@ pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Ve
             };
             let ended = end_files(db, tx, snapshot, id).await?;
             for statement in [
+                "UPDATE ducklake_column_tag SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_column SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_table SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
             ] {
@@ -682,11 +757,13 @@ pub(crate) async fn unschedule(db: &Db, file_id: i64) -> Result<()> {
     Ok(())
 }
 
+// -- columns, version by version -------------------------------------------
+
 async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnRow>> {
     let rows = sqlx::query(&db.sql(
         "SELECT column_id, parent_column, column_order, column_name, column_type, \
-         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT) FROM ducklake_column WHERE table_id = ? \
-         AND end_snapshot IS NULL ORDER BY column_order",
+         CAST(CAST(nulls_allowed AS INTEGER) AS BIGINT), begin_snapshot FROM ducklake_column \
+         WHERE table_id = ? AND end_snapshot IS NULL ORDER BY column_order",
     ))
     .bind(table_id)
     .fetch_all(&mut **tx)
@@ -700,55 +777,308 @@ async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnR
                 name: r.try_get(3)?,
                 kind: r.try_get(4)?,
                 nullable: r.try_get::<i64, _>(5)? != 0,
+                begin: r.try_get(6)?,
             })
         })
         .collect()
 }
 
-/// The schema as column rows at this snapshot: one row per field, a
-/// nested field's children under it by `parent_column`.
-async fn insert_columns(
+/// Each live column's derivation, by column id.
+async fn live_exprs(db: &Db, tx: &mut Tx, table_id: i64) -> Result<HashMap<i64, String>> {
+    let rows = sqlx::query(&db.sql(
+        "SELECT column_id, \"value\" FROM ducklake_column_tag \
+         WHERE table_id = ? AND \"key\" = ? AND end_snapshot IS NULL",
+    ))
+    .bind(table_id)
+    .bind(EXPR_TAG)
+    .fetch_all(&mut **tx)
+    .await?;
+    rows.iter()
+        .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+        .collect()
+}
+
+/// The rows by parent, each list in column order.
+fn rows_by_parent(rows: &[ColumnRow]) -> HashMap<Option<i64>, Vec<ColumnRow>> {
+    let mut by_parent: HashMap<Option<i64>, Vec<ColumnRow>> = HashMap::new();
+    for row in rows {
+        by_parent.entry(row.parent).or_default().push(row.clone());
+    }
+    for list in by_parent.values_mut() {
+        list.sort_by_key(|r| r.order);
+    }
+    by_parent
+}
+
+/// The table's columns brought to `schema`, version by version: a
+/// column whose name, type and derivation are unchanged keeps its row,
+/// renumbered to its place in the new order; one whose type or
+/// derivation changed begins a new version under the same id; one gone
+/// from the schema ends; a new one takes a new id. Whether any column
+/// changed.
+async fn evolve_columns(
     db: &Db,
     tx: &mut Tx,
     snapshot: &mut Snapshot,
     table_id: i64,
     schema: &Schema,
-) -> Result<()> {
-    let mut order = 0;
-    let mut pending: Vec<(Option<i64>, Arc<Field>)> = schema
-        .fields()
-        .iter()
-        .map(|f| (None, Arc::clone(f)))
-        .collect();
-    // Breadth-first over the nesting: a child's parent row exists by the
-    // time the child is written.
-    while !pending.is_empty() {
-        let mut next = Vec::new();
-        for (parent, field) in pending {
-            let id = snapshot.catalog_id();
-            let kind = ducklake_type(field.data_type())?;
-            sqlx::query(&db.sql(
-                "INSERT INTO ducklake_column (column_id, begin_snapshot, end_snapshot, table_id, \
-                 column_order, column_name, column_type, initial_default, default_value, nulls_allowed, \
-                 parent_column, default_value_type, default_value_dialect) \
-                 VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)",
-            ))
-            .bind(id)
-            .bind(snapshot.id)
-            .bind(table_id)
-            .bind(order)
-            .bind(field.name())
-            .bind(&kind)
-            .bind(field.is_nullable())
-            .bind(parent)
-            .execute(&mut **tx)
-            .await?;
-            order += 1;
-            for child in children(field.data_type()) {
-                next.push((Some(id), child));
+    exprs: &HashMap<String, String>,
+) -> Result<bool> {
+    let live = live_columns(db, tx, table_id).await?;
+    let had = schema_from_rows(&live)?;
+    let tags = live_exprs(db, tx, table_id).await?;
+    let by_parent = rows_by_parent(&live);
+    let top = by_parent.get(&None).cloned().unwrap_or_default();
+    let mut order = 0i64;
+    let mut handled: Vec<i64> = Vec::new();
+    let mut altered = false;
+    for field in schema.fields() {
+        let want = exprs.get(field.name());
+        let standing = top.iter().find(|r| r.name == *field.name());
+        match standing {
+            Some(row)
+                if had
+                    .field_with_name(field.name())
+                    .is_ok_and(|was| same_column(was, field))
+                    && tags.get(&row.column_id) == want =>
+            {
+                for (column_id, at) in renumber(row, field, &by_parent, &mut order) {
+                    sqlx::query(&db.sql(
+                        "UPDATE ducklake_column SET column_order = ? \
+                         WHERE table_id = ? AND column_id = ? AND end_snapshot IS NULL",
+                    ))
+                    .bind(at)
+                    .bind(table_id)
+                    .bind(column_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                handled.push(row.column_id);
+            }
+            Some(row) => {
+                altered = true;
+                end_column(db, tx, snapshot, table_id, row, &by_parent).await?;
+                insert_field(
+                    db,
+                    tx,
+                    snapshot,
+                    table_id,
+                    field,
+                    Some(row.column_id),
+                    &mut order,
+                    want,
+                )
+                .await?;
+                handled.push(row.column_id);
+            }
+            None => {
+                altered = true;
+                insert_field(db, tx, snapshot, table_id, field, None, &mut order, want).await?;
             }
         }
-        pending = next;
+    }
+    for row in &top {
+        if !handled.contains(&row.column_id) {
+            altered = true;
+            end_column(db, tx, snapshot, table_id, row, &by_parent).await?;
+        }
+    }
+    Ok(altered)
+}
+
+/// Whether a landed column and a field are the same column: the same
+/// type in the specification's vocabulary — what the rows would read
+/// back as — and the same nullability.
+fn same_column(was: &Field, want: &Field) -> bool {
+    was.is_nullable() == want.is_nullable()
+        && folded_type(want.data_type()).is_ok_and(|kind| *was.data_type() == kind)
+}
+
+/// A type as it reads back from its rows: every scalar through the
+/// specification's spelling and back, nested types rebuilt the way
+/// [`schema_from_rows`] rebuilds them.
+fn folded_type(kind: &DataType) -> Result<DataType> {
+    Ok(match kind {
+        DataType::List(f) | DataType::LargeList(f) => DataType::List(Arc::new(Field::new(
+            f.name(),
+            folded_type(f.data_type())?,
+            f.is_nullable(),
+        ))),
+        DataType::Struct(fields) => DataType::Struct(Fields::from(
+            fields
+                .iter()
+                .map(|f| {
+                    Ok(Field::new(
+                        f.name(),
+                        folded_type(f.data_type())?,
+                        f.is_nullable(),
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        )),
+        DataType::Map(entries, _) => match entries.data_type() {
+            DataType::Struct(kv) => {
+                let kv = kv
+                    .iter()
+                    .map(|f| {
+                        Ok(Field::new(
+                            f.name(),
+                            folded_type(f.data_type())?,
+                            f.is_nullable(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(Fields::from(kv)),
+                        false,
+                    )),
+                    false,
+                )
+            }
+            _ => kind.clone(),
+        },
+        other => arrow_type(&ducklake_type(other)?)?,
+    })
+}
+
+/// The kept column's rows at their new places: the row itself, then
+/// its descendants zipped with the field's, depth first — one counter
+/// over the whole schema, so every order is unique within the snapshot.
+fn renumber(
+    row: &ColumnRow,
+    field: &Field,
+    by_parent: &HashMap<Option<i64>, Vec<ColumnRow>>,
+    order: &mut i64,
+) -> Vec<(i64, i64)> {
+    let mut out = vec![(row.column_id, *order)];
+    *order += 1;
+    if let Some(rows) = by_parent.get(&Some(row.column_id)) {
+        for (child, kind) in rows.iter().zip(children(field.data_type())) {
+            out.extend(renumber(child, &kind, by_parent, order));
+        }
+    }
+    out
+}
+
+/// The column's row, its descendants' rows and their tags ended at
+/// this snapshot.
+async fn end_column(
+    db: &Db,
+    tx: &mut Tx,
+    snapshot: &Snapshot,
+    table_id: i64,
+    row: &ColumnRow,
+    by_parent: &HashMap<Option<i64>, Vec<ColumnRow>>,
+) -> Result<()> {
+    let mut ids = vec![row.column_id];
+    let mut i = 0;
+    while i < ids.len() {
+        if let Some(rows) = by_parent.get(&Some(ids[i])) {
+            ids.extend(rows.iter().map(|r| r.column_id));
+        }
+        i += 1;
+    }
+    let list = ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    for table in ["ducklake_column", "ducklake_column_tag"] {
+        sqlx::query(&db.sql(&format!(
+            "UPDATE {table} SET end_snapshot = ? WHERE table_id = ? AND column_id IN ({list}) \
+             AND end_snapshot IS NULL"
+        )))
+        .bind(snapshot.id)
+        .bind(table_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// One column row to write.
+struct NewRow {
+    id: i64,
+    parent: Option<i64>,
+    order: i64,
+    name: String,
+    kind: String,
+    nullable: bool,
+}
+
+/// The field as column rows at this snapshot — under `id` when it is
+/// a new version of a standing column, a fresh id otherwise; its
+/// nested fields under it, each fresh — and its derivation as the
+/// column's tag when the landing knows one.
+#[allow(clippy::too_many_arguments)]
+async fn insert_field(
+    db: &Db,
+    tx: &mut Tx,
+    snapshot: &mut Snapshot,
+    table_id: i64,
+    field: &Field,
+    id: Option<i64>,
+    order: &mut i64,
+    expr: Option<&String>,
+) -> Result<()> {
+    fn flatten(
+        snapshot: &mut Snapshot,
+        field: &Field,
+        id: i64,
+        parent: Option<i64>,
+        order: &mut i64,
+        out: &mut Vec<NewRow>,
+    ) -> Result<()> {
+        out.push(NewRow {
+            id,
+            parent,
+            order: *order,
+            name: field.name().clone(),
+            kind: ducklake_type(field.data_type())?,
+            nullable: field.is_nullable(),
+        });
+        *order += 1;
+        for child in children(field.data_type()) {
+            let child_id = snapshot.catalog_id();
+            flatten(snapshot, &child, child_id, Some(id), order, out)?;
+        }
+        Ok(())
+    }
+    let top = id.unwrap_or_else(|| snapshot.catalog_id());
+    let mut rows = Vec::new();
+    flatten(snapshot, field, top, None, order, &mut rows)?;
+    for row in rows {
+        sqlx::query(&db.sql(
+            "INSERT INTO ducklake_column (column_id, begin_snapshot, end_snapshot, table_id, \
+             column_order, column_name, column_type, initial_default, default_value, nulls_allowed, \
+             parent_column, default_value_type, default_value_dialect) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)",
+        ))
+        .bind(row.id)
+        .bind(snapshot.id)
+        .bind(table_id)
+        .bind(row.order)
+        .bind(&row.name)
+        .bind(&row.kind)
+        .bind(row.nullable)
+        .bind(row.parent)
+        .execute(&mut **tx)
+        .await?;
+    }
+    if let Some(expr) = expr {
+        sqlx::query(&db.sql(
+            "INSERT INTO ducklake_column_tag (table_id, column_id, begin_snapshot, end_snapshot, \
+             \"key\", \"value\") VALUES (?, ?, ?, NULL, ?, ?)",
+        ))
+        .bind(table_id)
+        .bind(top)
+        .bind(snapshot.id)
+        .bind(EXPR_TAG)
+        .bind(expr)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -930,6 +1260,7 @@ mod tests {
                 name: "id".into(),
                 kind: "int64".into(),
                 nullable: false,
+                begin: 0,
             },
             ColumnRow {
                 column_id: 2,
@@ -938,6 +1269,7 @@ mod tests {
                 name: "tags".into(),
                 kind: "list".into(),
                 nullable: true,
+                begin: 0,
             },
             ColumnRow {
                 column_id: 3,
@@ -946,6 +1278,7 @@ mod tests {
                 name: "who".into(),
                 kind: "struct".into(),
                 nullable: true,
+                begin: 0,
             },
             ColumnRow {
                 column_id: 4,
@@ -954,6 +1287,7 @@ mod tests {
                 name: "item".into(),
                 kind: "varchar".into(),
                 nullable: true,
+                begin: 0,
             },
             ColumnRow {
                 column_id: 5,
@@ -962,6 +1296,7 @@ mod tests {
                 name: "name".into(),
                 kind: "varchar".into(),
                 nullable: true,
+                begin: 0,
             },
             ColumnRow {
                 column_id: 6,
@@ -970,6 +1305,7 @@ mod tests {
                 name: "age".into(),
                 kind: "int32".into(),
                 nullable: true,
+                begin: 0,
             },
         ];
         let schema = schema_from_rows(&rows).unwrap();

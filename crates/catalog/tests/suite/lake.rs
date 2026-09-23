@@ -2,6 +2,7 @@
 //! mount, a replace, an append, a drop — each through the same doors
 //! the server takes, so the shapes held here are the shapes in use.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
@@ -62,7 +63,7 @@ async fn land(lake: &Lake, batches: Vec<RecordBatch>, landing: Landing) -> i64 {
         )
         .await
         .unwrap();
-    lake.commit("fin", "orders", &schema, written, landing)
+    lake.commit("fin", "orders", &schema, written, landing, &HashMap::new())
         .await
         .unwrap()
 }
@@ -188,6 +189,217 @@ async fn a_replace_is_one_commit_and_never_an_empty_table() {
     assert_eq!(lake.version("fin", "orders").await.unwrap(), Some(after));
 }
 
+/// A landing of an empty table of `schema` into `fin.orders`, as
+/// `landing` says, with each column's derivation; the version it made.
+async fn land_shape(
+    lake: &Lake,
+    schema: SchemaRef,
+    landing: Landing,
+    exprs: &[(&str, &str)],
+) -> i64 {
+    let exprs: HashMap<String, String> = exprs
+        .iter()
+        .map(|(c, e)| ((*c).to_string(), (*e).to_string()))
+        .collect();
+    let empty = RecordBatch::new_empty(Arc::clone(&schema));
+    let written = lake
+        .write(
+            "fin",
+            "orders",
+            Arc::clone(&schema),
+            stream(Arc::clone(&schema), vec![empty]),
+        )
+        .await
+        .unwrap();
+    lake.commit("fin", "orders", &schema, written, landing, &exprs)
+        .await
+        .unwrap()
+}
+
+/// `fin.orders` as pinned: its shape and its column names in order.
+async fn shape(lake: &Lake) -> (glossql_catalog::Shape, Vec<String>) {
+    let pinned = lake.pin_dataset("fin").await.unwrap();
+    let orders = pinned
+        .iter()
+        .find(|p| p.name == "orders")
+        .expect("orders pinned");
+    (orders.shape.clone(), orders.columns.clone())
+}
+
+/// A replace evolves the columns version by version (SPEC.md §5.2): a
+/// column whose name, type and derivation stand keeps its row; one
+/// re-derived or retyped begins a new version under the same id; one
+/// dropped ends; a reorder alone changes nothing. The pin says each
+/// column's version and the table's newest change, and a DuckLake
+/// reader sees the derivation as the column's `glossql.expr` tag.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replace_keeps_the_columns_it_did_not_change() {
+    let (dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let fields = |list: &[(&str, DataType)]| {
+        Arc::new(Schema::new(
+            list.iter()
+                .map(|(name, kind)| Field::new(*name, kind.clone(), true))
+                .collect::<Vec<_>>(),
+        ))
+    };
+    let two = fields(&[("order_id", DataType::Int64), ("amount", DataType::Utf8)]);
+    let v1 = land_shape(
+        &lake,
+        Arc::clone(&two),
+        Landing::Create,
+        &[("order_id", "order_id"), ("amount", "amount")],
+    )
+    .await;
+    let (s1, _) = shape(&lake).await;
+    assert_eq!(
+        (s1.columns["order_id"], s1.columns["amount"], s1.changed),
+        (v1, v1, v1)
+    );
+
+    // A widening keeps every standing column at its version, and is no
+    // change to the table.
+    let three = fields(&[
+        ("order_id", DataType::Int64),
+        ("amount", DataType::Utf8),
+        ("note", DataType::Utf8),
+    ]);
+    let v2 = land_shape(
+        &lake,
+        Arc::clone(&three),
+        Landing::Replace,
+        &[
+            ("order_id", "order_id"),
+            ("amount", "amount"),
+            ("note", "note"),
+        ],
+    )
+    .await;
+    let (s2, _) = shape(&lake).await;
+    assert_eq!(
+        (
+            s2.columns["order_id"],
+            s2.columns["amount"],
+            s2.columns["note"],
+            s2.changed
+        ),
+        (v1, v1, v2, v1)
+    );
+
+    // A re-derivation with the same type begins a new version of that
+    // column alone.
+    let v3 = land_shape(
+        &lake,
+        Arc::clone(&three),
+        Landing::Replace,
+        &[
+            ("order_id", "order_id"),
+            ("amount", "trim(amount) AS amount"),
+            ("note", "note"),
+        ],
+    )
+    .await;
+    let (s3, _) = shape(&lake).await;
+    assert_eq!(
+        (
+            s3.columns["order_id"],
+            s3.columns["amount"],
+            s3.columns["note"],
+            s3.changed
+        ),
+        (v1, v3, v2, v3)
+    );
+
+    // A retype likewise, and the columns take the new order.
+    let retyped = fields(&[
+        ("amount", DataType::Float64),
+        ("order_id", DataType::Int64),
+        ("note", DataType::Utf8),
+    ]);
+    let derived = [
+        ("amount", "try_cast(amount AS Float64) AS amount"),
+        ("order_id", "order_id"),
+        ("note", "note"),
+    ];
+    let v4 = land_shape(&lake, Arc::clone(&retyped), Landing::Replace, &derived).await;
+    let (s4, order) = shape(&lake).await;
+    assert_eq!(
+        (
+            s4.columns["amount"],
+            s4.columns["order_id"],
+            s4.columns["note"],
+            s4.changed
+        ),
+        (v4, v1, v2, v4)
+    );
+    assert_eq!(order, ["amount", "order_id", "note"]);
+
+    // The same shape again moves no column.
+    let v5 = land_shape(&lake, Arc::clone(&retyped), Landing::Replace, &derived).await;
+    assert!(v5 > v4);
+    let (s5, _) = shape(&lake).await;
+    assert_eq!(s5, s4);
+
+    // A drop ends the column and moves the table's change.
+    let narrower = fields(&[("amount", DataType::Float64), ("order_id", DataType::Int64)]);
+    let v6 = land_shape(&lake, narrower, Landing::Replace, &derived[..2]).await;
+    let (s6, order) = shape(&lake).await;
+    assert!(!s6.columns.contains_key("note"));
+    assert_eq!(
+        (s6.columns["amount"], s6.columns["order_id"], s6.changed),
+        (v4, v1, v6)
+    );
+    assert_eq!(order, ["amount", "order_id"]);
+
+    // Through the catalog's own tables, as a DuckLake reader has them:
+    // one id per column across its versions, the derivation as its tag.
+    use sqlx::Row as _;
+    let pool = sqlx::AnyPool::connect(&format!(
+        "sqlite:{}",
+        dir.path().join("catalog.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let versions = sqlx::query(
+        "SELECT column_name, COUNT(DISTINCT column_id), COUNT(*), \
+         SUM(CASE WHEN end_snapshot IS NULL THEN 1 ELSE 0 END) \
+         FROM ducklake_column WHERE parent_column IS NULL \
+         GROUP BY column_name ORDER BY column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let versions: Vec<(String, i64, i64, i64)> = versions
+        .iter()
+        .map(|r| {
+            (
+                r.get::<String, _>(0),
+                r.get::<i64, _>(1),
+                r.get::<i64, _>(2),
+                r.get::<i64, _>(3),
+            )
+        })
+        .collect();
+    assert_eq!(
+        versions,
+        [
+            ("amount".to_string(), 1, 3, 1),
+            ("note".to_string(), 1, 1, 0),
+            ("order_id".to_string(), 1, 1, 1),
+        ]
+    );
+    let tag: String = sqlx::query(
+        "SELECT t.\"value\" FROM ducklake_column_tag t \
+         JOIN ducklake_column c ON c.column_id = t.column_id AND c.end_snapshot IS NULL \
+         WHERE c.column_name = 'amount' AND t.end_snapshot IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get(0);
+    assert_eq!(tag, "try_cast(amount AS Float64) AS amount");
+}
+
 /// An append adds a file beside the live ones.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_append_joins_the_live_files() {
@@ -293,9 +505,16 @@ async fn a_landed_schema_pins_back_as_it_landed() {
         )
         .await
         .unwrap();
-    lake.commit("fin", "typed", &schema, written, Landing::Create)
-        .await
-        .unwrap();
+    lake.commit(
+        "fin",
+        "typed",
+        &schema,
+        written,
+        Landing::Create,
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
     let pinned = lake.pin_dataset("fin").await.unwrap();
     assert_eq!(pinned[0].provider.schema(), schema);
 }

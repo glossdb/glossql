@@ -128,8 +128,9 @@ pub struct RawRow {
 /// value's absence or presence means — the read never hides a gap:
 /// `unassessed` (a witness exists, nobody spoke — the row still appears),
 /// `contested` (entropy over threshold, value withheld), `current`, or
-/// `stale` (served and marked: the table's snapshot moved on, or the
-/// column's type decision postdates the write).
+/// `stale` (served and marked: the subject changed after the write — a
+/// column re-derived, retyped or dropped, a table one of whose columns
+/// did — or the voice landed at an earlier pin).
 #[derive(Debug, Clone)]
 pub struct CollapsedRow {
     pub subject: String,

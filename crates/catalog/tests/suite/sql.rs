@@ -2,6 +2,7 @@
 //! behind `GLOSSQL_E2E_CATALOG_SQL`; the warehouse a directory unless
 //! `GLOSSQL_E2E_WAREHOUSE` names a location.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
@@ -77,9 +78,16 @@ async fn live_sql_catalog_round_trip() {
                 .write(&dataset, "orders", Arc::clone(&orders), stream)
                 .await
                 .expect("a write");
-            lake.commit(&dataset, "orders", &orders, written, landing)
-                .await
-                .expect("a commit")
+            lake.commit(
+                &dataset,
+                "orders",
+                &orders,
+                written,
+                landing,
+                &HashMap::new(),
+            )
+            .await
+            .expect("a commit")
         }
     };
     let first = land(batch(&[1, 2, 3]), Landing::Create).await;

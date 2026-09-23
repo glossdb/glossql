@@ -28,9 +28,11 @@ gloss appends a row that wins the read; the old row remains as
 history.
 
 Every gloss row carries the `snapshot_id` of its subject's table at
-write time, so provenance and staleness are a join against the table's
-snapshot history, never a guess: a gloss written before the table
-moved on is served *and marked* `stale`.
+write time, so provenance and staleness are a join against the
+catalog's column history, never a guess: a gloss whose subject changed
+after it — a column re-derived, retyped or dropped, a table one of
+whose columns did — is served *and marked* `stale`. Rows arriving
+under the same shape age nothing.
 
 ## Sessions
 

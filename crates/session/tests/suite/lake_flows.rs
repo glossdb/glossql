@@ -521,6 +521,116 @@ async fn an_import_appends_where_sound_and_replaces_otherwise() {
     assert_eq!(single_value(&modes), "create,append,replace,append,replace");
 }
 
+/// A gloss ages by its subject, never by the rows (SPEC.md §5.2): an
+/// import under the same recipe and a re-declaration that widens the
+/// table age nothing; a re-declaration that re-derives or retypes a
+/// column ages the glosses on that column and on the table; one that
+/// drops a column ages its glosses; and no other gloss moves.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gloss_ages_by_its_column_not_by_the_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(root.join("orders")).unwrap();
+    std::fs::write(root.join("orders/2026-01.csv"), "id,amount\n1,10\n").unwrap();
+    let session = workspace(dir.path()).await;
+    let recipe = |select: &str| {
+        format!(
+            "DECLARE RECIPE orders ON fin FROM export AS $$\
+               SELECT {select} FROM read_csv('orders/*.csv')$$;"
+        )
+    };
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a gloss ages by its subject');\n\
+             USE fin;\n\
+             DECLARE SOURCE export SET (type: csv, location: '{}');\n\
+             {}\n\
+             DECLARE ASPECT note WITH $${{\"type\": \"object\"}}$$ AS FACT;\n\
+             GLOSS note ON orders AS $${{\"value\": \"the table\"}}$$;\n\
+             GLOSS note ON orders.id AS $${{\"value\": \"the id\"}}$$;\n\
+             GLOSS note ON orders.amount AS $${{\"value\": \"the amount\"}}$$;",
+            root.display(),
+            recipe("id, try_cast(amount AS BIGINT) AS amount")
+        ))
+        .await
+        .unwrap();
+    let states = || {
+        let session = &session;
+        async move {
+            let out = session
+                .execute(
+                    "SELECT subject, state FROM GLOSSARY() WHERE aspect = 'note' ORDER BY subject;",
+                )
+                .await
+                .unwrap();
+            let Outcome::Rows { batches, .. } = &out[0] else {
+                panic!("a read answers rows")
+            };
+            let mut pairs = Vec::new();
+            for batch in batches {
+                for i in 0..batch.num_rows() {
+                    let cell = |c: usize| {
+                        datafusion::arrow::util::display::array_value_to_string(batch.column(c), i)
+                            .unwrap()
+                    };
+                    pairs.push(format!("{}={}", cell(0), cell(1)));
+                }
+            }
+            pairs.join(" ")
+        }
+    };
+    let all_current = "orders=current orders.amount=current orders.id=current";
+    assert_eq!(states().await, all_current);
+
+    // Rows arriving under the same recipe age nothing.
+    std::fs::write(root.join("orders/2026-02.csv"), "id,amount\n2,20\n").unwrap();
+    let imported = session.execute("IMPORT orders;").await.unwrap();
+    assert!(done(&imported[0]).contains("appended"), "{imported:?}");
+    assert_eq!(states().await, all_current);
+
+    // A widening keeps every standing column, and every gloss.
+    session
+        .execute(&recipe(
+            "id, try_cast(amount AS BIGINT) AS amount, upper(id) AS loud",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(states().await, all_current);
+
+    // A retype ages the glosses on that column and on the table.
+    session
+        .execute(&recipe(
+            "id, try_cast(amount AS DOUBLE) AS amount, upper(id) AS loud",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        states().await,
+        "orders=stale orders.amount=stale orders.id=current"
+    );
+
+    // Re-spoken, they are current again; a drop ages the dropped
+    // column's gloss and the table's, and no other.
+    session
+        .execute(
+            r#"GLOSS note ON orders AS $${"value": "the table, again"}$$;
+               GLOSS note ON orders.amount AS $${"value": "the amount, again"}$$;"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(states().await, all_current);
+    session
+        .execute(&recipe(
+            "try_cast(amount AS DOUBLE) AS amount, upper(id) AS loud",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        states().await,
+        "orders=stale orders.amount=current orders.id=stale"
+    );
+}
+
 /// At a relational source the recipe computes its whole result, so an
 /// import replaces the table with it: what the source now holds is
 /// what the table holds, rows changed or removed included. Runs where

@@ -56,6 +56,20 @@ pub enum Error {
     Parquet(#[from] datafusion::parquet::errors::ParquetError),
 }
 
+/// Each live column of a table by its version, and the table's newest
+/// column change — what a gloss on a column or a table ages against
+/// (SPEC.md §5.2). A column's version is the snapshot its live row
+/// began at: a new one begins when a replace changes the column's type
+/// or derivation. The table's change is the snapshot a column of it
+/// was last re-versioned or dropped at — the newest end over its
+/// column rows — so a column added, which ends nothing, is no change
+/// to what stood, and the table's creation is the floor.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Shape {
+    pub columns: HashMap<String, i64>,
+    pub changed: i64,
+}
+
 /// A landed table as a statement holds it: its name, its version, its
 /// columns, and the provider that scans its files at that version.
 pub struct PinnedTable {
@@ -67,6 +81,8 @@ pub struct PinnedTable {
     /// The table's columns in schema order — what can be glossed, and
     /// the same schema the provider beside them advertises.
     pub columns: Vec<String>,
+    /// The columns' versions and the table's newest column change.
+    pub shape: Shape,
     pub provider: Arc<dyn datafusion::catalog::TableProvider>,
 }
 
@@ -327,9 +343,12 @@ impl Lake {
     }
 
     /// The written files joined to the table as one commit — created,
-    /// replaced or appended — and the version that commit made. Files a
-    /// replace ended are scheduled for deletion and deleted by a later
-    /// commit's sweep, once the grace has passed.
+    /// replaced or appended — and the version that commit made. `exprs`
+    /// is each column's derivation, the recipe's expression for it,
+    /// where the landing knows it: a replace keeps a column's version
+    /// while its type and derivation stand. Files a replace ended are
+    /// scheduled for deletion and deleted by a later commit's sweep,
+    /// once the grace has passed.
     pub async fn commit(
         &self,
         dataset: &str,
@@ -337,6 +356,7 @@ impl Lake {
         schema: &Schema,
         written: Written,
         landing: Landing,
+        exprs: &HashMap<String, String>,
     ) -> Result<i64> {
         let span = tracing::info_span!(
             "commit",
@@ -347,7 +367,15 @@ impl Lake {
             rows = written.rows
         );
         let (version, _ended) = tracing::Instrument::instrument(
-            tables::commit_landing(&self.db, dataset, table, schema, &written.files, landing),
+            tables::commit_landing(
+                &self.db,
+                dataset,
+                table,
+                schema,
+                &written.files,
+                landing,
+                exprs,
+            ),
             span,
         )
         .await?;
@@ -400,7 +428,7 @@ impl Lake {
     // -- reads -------------------------------------------------------------
 
     /// Every table of the dataset, pinned at its current version — one
-    /// walk per statement, and the walk is three queries on the
+    /// walk per statement, and the walk is five queries on the
     /// catalog, whatever the table count. Nothing is fetched from the
     /// warehouse: the files' paths and sizes are rows.
     pub async fn pin_dataset(&self, dataset: &str) -> Result<Vec<PinnedTable>> {
@@ -457,6 +485,7 @@ impl Lake {
                 .iter()
                 .map(|f| f.name().clone())
                 .collect(),
+            shape: rows.shape,
             provider,
         }
     }

@@ -111,12 +111,15 @@ pub fn contested(crossing: bool, voices: usize) -> bool {
     crossing && voices >= 2
 }
 
-/// **Serve and mark**: staleness never
-/// suppresses a value, it shows beside it. A slot written against a
-/// snapshot the table has since moved past is `stale`, and still served.
-pub fn state(seen: Option<i64>, current: Option<i64>) -> &'static str {
-    match (seen, current) {
-        (Some(seen), Some(current)) if seen != current => "stale",
+/// **Serve and mark**: staleness never suppresses a value, it shows
+/// beside it. A slot written at `seen` — its subject's table version
+/// at write time — whose subject changed at a later snapshot (a column
+/// re-derived, retyped or dropped; a table one of whose columns did)
+/// is `stale`, and still served. Rows arriving under the same shape
+/// change nothing here.
+pub fn state(seen: Option<i64>, changed: Option<i64>) -> &'static str {
+    match (seen, changed) {
+        (Some(seen), Some(changed)) if changed > seen => "stale",
         _ => "current",
     }
 }
@@ -301,6 +304,8 @@ mod tests {
     fn staleness_marks_and_never_suppresses() {
         assert_eq!(state(Some(1), Some(2)), "stale");
         assert_eq!(state(Some(2), Some(2)), "current");
+        // A change before the write is what the write saw.
+        assert_eq!(state(Some(3), Some(2)), "current");
         // Nothing to compare against is not evidence of staleness.
         assert_eq!(state(None, Some(2)), "current");
         assert_eq!(state(Some(1), None), "current");

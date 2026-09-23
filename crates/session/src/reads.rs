@@ -358,6 +358,7 @@ impl Shared {
         // callers rather than two walking the same catalog.
         let mut universe = Vec::new();
         let mut snapshots = std::collections::HashMap::new();
+        let mut shapes = std::collections::HashMap::new();
         for pinned in self.pinned(dataset).await?.iter() {
             // Only `Some`: a table nothing has landed into is a subject
             // that can be glossed but contributes no part to the pin
@@ -367,6 +368,7 @@ impl Shared {
             if let Some(snapshot) = pinned.snapshot_id {
                 snapshots.insert(pinned.name.clone(), snapshot);
             }
+            shapes.insert(pinned.name.clone(), pinned.shape.clone());
             for column in &pinned.columns {
                 universe.push(format!("{}.{column}", pinned.name));
             }
@@ -374,7 +376,7 @@ impl Shared {
         }
         Ok(self
             .store
-            .read_context(dataset, universe, snapshots)
+            .read_context(dataset, universe, snapshots, shapes)
             .await?)
     }
 }
@@ -1314,6 +1316,7 @@ async fn read_context_at(shared: &Shared, dataset: &str) -> Result<ReadContext, 
             .read_context(
                 dataset,
                 vec![dataset.to_string()],
+                std::collections::HashMap::new(),
                 std::collections::HashMap::new(),
             )
             .await?);
