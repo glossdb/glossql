@@ -33,9 +33,10 @@ top. Each point's fit saw only the months before it.
 
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,
-the disclosed rival — at the metric's resolution, computed at read
-and cached, never recorded. Nothing to run and nothing to land:
-`metric_series()` builds what is not built. A dimension the cube
+the disclosed rival — at the metric's resolution, computed at read,
+landed in the catalog under the engine's cache, never recorded.
+Nothing to run: `metric_series()` builds what is not built, a landing
+rebuilds what it moved, and every instance reads the same head. A dimension the cube
 should slice must be a served column of the extract.
 
 The axes come from judged verdicts, not from the data's shape — or

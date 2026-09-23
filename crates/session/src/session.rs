@@ -581,10 +581,27 @@ impl Session {
     /// ones the engine refused are reported together afterwards.
     /// Returns how many landed.
     pub async fn remeasure(&self) -> Result<usize, SessionError> {
+        self.remeasure_with(true).await
+    }
+
+    /// [`Session::remeasure`] over the stale voices alone — what a
+    /// landing owes before it answers. The never-made measurements the
+    /// cube's fact rows want are the docket's re-measure to run: listing
+    /// them builds every cube, and a landing builds its cubes once,
+    /// after the voices they read stand again.
+    pub async fn remeasure_stale(&self) -> Result<usize, SessionError> {
+        self.remeasure_with(false).await
+    }
+
+    async fn remeasure_with(&self, with_wanted: bool) -> Result<usize, SessionError> {
         use datafusion::sql::sqlparser::ast::Ident;
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
         let ctx = self.shared.read_context().await?;
-        let wanted = crate::cube::wanted(&self.shared).await?;
+        let wanted = if with_wanted {
+            crate::cube::wanted(&self.shared).await?
+        } else {
+            Vec::new()
+        };
         let mut stale: Vec<(String, Vec<String>)> = ctx
             .measurements
             .iter()
@@ -870,6 +887,7 @@ impl Session {
                     let (summary, casts) =
                         self.materialize(dataset, table, recipe, landing).await?;
                     store.put_recipe(d).await?;
+                    let tail = self.landing_tail(dataset).await;
                     // The counts arrive at the decision moment: whether
                     // the dropped rows — and the cells the casts nulled
                     // — are acceptable is the author's call, made now.
@@ -882,7 +900,7 @@ impl Session {
                     } else {
                         ""
                     };
-                    format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts})")
+                    format!("DECLARE RECIPE {table} ON {dataset} ({verb}{summary}{casts}{tail})")
                 }
             }
             Declaration::Relationship(d) => {
@@ -1257,9 +1275,50 @@ impl Session {
             }
             None => self.merge_into(&lake, &dataset, table, new, &key).await?,
         };
+        let tail = self.landing_tail(&dataset).await;
         Ok(Outcome::Done(format!(
-            "IMPORT {table} ON {dataset} ({summary}{casts}; {how})"
+            "IMPORT {table} ON {dataset} ({summary}{casts}; {how}{tail})"
         )))
+    }
+
+    /// What a landing owes before it answers: the measurements the
+    /// moved pin made stale, re-run, then the cubes over the tables it
+    /// moved, rebuilt on those voices and landed as their heads — so a
+    /// reader after a scheduled import finds the head current and pays
+    /// nothing. Every other cube entry is a hit. Runs where the channel
+    /// is bound to the landing's dataset; what it did joins the
+    /// outcome, and what it could not — a voice the kernel is not
+    /// there to re-run — joins it by name rather than failing the
+    /// landing that stands.
+    ///
+    /// Type-erased: the tail awaits every cube build and every
+    /// extraction inside a landing's future, which sits inside the
+    /// statement loop's, and left as one nested type it overflows the
+    /// compiler's `Send` proof for the doors' handlers.
+    fn landing_tail<'a>(
+        &'a self,
+        dataset: &'a str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = String> + Send + 'a>> {
+        Box::pin(async move {
+            if self.dataset().as_deref() != Some(dataset) {
+                return String::new();
+            }
+            let measured = match self.remeasure_stale().await {
+                Ok(n) => n.to_string(),
+                Err(e) => format!("re-measure: {e}"),
+            };
+            let cache = self.shared.cube();
+            let before = cache.builds();
+            let cubes = match crate::cube::cubes(&self.shared).await {
+                Ok(_) => cache.builds() - before,
+                // No cube aspect, no grounding: nothing to rebuild.
+                Err(_) => 0,
+            };
+            if cubes == 0 && measured == "0" {
+                return String::new();
+            }
+            format!("; {cubes} cubes rebuilt, {measured} measurements re-run")
+        })
     }
 
     /// A probe (SPEC.md §3): the recipe rehearsal, executed at its source,

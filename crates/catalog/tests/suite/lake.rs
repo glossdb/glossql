@@ -400,6 +400,58 @@ async fn a_replace_keeps_the_columns_it_did_not_change() {
     assert_eq!(tag, "try_cast(amount AS Float64) AS amount");
 }
 
+/// A table's tags ride its commits, as the specification's tag table
+/// has them: set with a create, each replaced by a later commit that
+/// sets its key again, gone with the table.
+#[tokio::test(flavor = "multi_thread")]
+async fn tags_ride_the_tables_commits() {
+    let (_dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let kv = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    };
+    let tagged = |landing: Landing, tags: Vec<(String, String)>| {
+        let lake = lake.clone();
+        async move {
+            let schema = orders_schema();
+            let written = lake
+                .write(
+                    "fin",
+                    "orders",
+                    Arc::clone(&schema),
+                    stream(Arc::clone(&schema), vec![orders(&[1])]),
+                )
+                .await
+                .unwrap();
+            lake.commit_tagged(
+                "fin",
+                "orders",
+                &schema,
+                written,
+                landing,
+                &HashMap::new(),
+                &tags,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    assert!(lake.tags("fin", "orders").await.unwrap().is_empty());
+    tagged(Landing::Create, kv(&[("key", "k1"), ("fact", "f1")])).await;
+    let tags = lake.tags("fin", "orders").await.unwrap();
+    assert_eq!(tags.get("key").map(String::as_str), Some("k1"));
+    assert_eq!(tags.get("fact").map(String::as_str), Some("f1"));
+    tagged(Landing::Replace, kv(&[("key", "k2")])).await;
+    let tags = lake.tags("fin", "orders").await.unwrap();
+    assert_eq!(tags.get("key").map(String::as_str), Some("k2"));
+    assert_eq!(tags.get("fact").map(String::as_str), Some("f1"));
+    lake.drop_table("fin", "orders").await.unwrap();
+    assert!(lake.tags("fin", "orders").await.unwrap().is_empty());
+}
+
 /// An append adds a file beside the live ones.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_append_joins_the_live_files() {

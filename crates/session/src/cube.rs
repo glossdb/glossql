@@ -93,7 +93,9 @@ const NO_JUDGED_TIME: &str = "no judged time column: no served date column carri
 /// A calendar resolution — the rungs of the ladder, finest first, and
 /// the grains a read may ask for. Ordered, so the coarser of two is
 /// `max`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub(crate) enum Resolution {
     Minute,
     Hour,
@@ -206,8 +208,10 @@ async fn settings(
     Ok(Settings { floor, windows })
 }
 
-/// One metric's fact row: what the cube admitted and why not.
-#[derive(Debug, Clone)]
+/// One metric's fact row: what the cube admitted and why not. It
+/// rides the landed cube as a tag, as JSON, which is why it derives
+/// serde and owns its two basis words.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Fact {
     pub metric: String,
     pub applicable: bool,
@@ -226,7 +230,7 @@ pub(crate) struct Fact {
     /// on that column did, `default` when nothing detected a stock and
     /// the metric is summed as a flow — the common case, and the row
     /// says so rather than leaving it a silent assumption.
-    pub behavior_basis: Option<&'static str>,
+    pub behavior_basis: Option<String>,
     /// The declared row identity — the grounding's `grain` columns as
     /// served. Empty when the grounding declares none: the shape is
     /// undeclared and the build takes the frame as served.
@@ -247,7 +251,7 @@ pub(crate) struct Fact {
     /// do, `measured over authored` when the grounding's empty list did
     /// not hold — it closes a distinct count or a ratio, the shapes no
     /// column slices whole, and on any other the verdicts decide.
-    pub axes_basis: &'static str,
+    pub axes_basis: String,
     pub bucketed: Vec<String>,
     /// The served columns the cube does not slice on — every one that
     /// is neither the value, a ratio's half nor time-typed and was not
@@ -314,7 +318,7 @@ impl Fact {
             dims: Vec::new(),
             basis: Vec::new(),
             admitted_by: Vec::new(),
-            axes_basis: "measured",
+            axes_basis: "measured".into(),
             bucketed: Vec::new(),
             unadmitted: Vec::new(),
             unadmitted_why: Vec::new(),
@@ -413,14 +417,14 @@ impl Planned {
             judged_current,
             reason: None,
             behavior: Some(self.verb.to_string()),
-            behavior_basis: Some(self.behavior_basis),
+            behavior_basis: Some(self.behavior_basis.to_string()),
             grain: self.grain,
             resolution: Some(self.resolution),
             window: self.window,
             dims,
             basis,
             admitted_by,
-            axes_basis: self.axes_basis,
+            axes_basis: self.axes_basis.to_string(),
             bucketed: Vec::new(),
             unadmitted,
             unadmitted_why,
@@ -515,8 +519,56 @@ struct CubeKey {
     /// landing elsewhere and every write move those, and what of the
     /// relations a build reads is the digest's business.
     pin: String,
-    /// Everything else the build reads, folded — [`metric_digest`].
-    digest: u64,
+    /// Everything else the build reads, folded — [`metric_digest`] —
+    /// as hex, stable across processes: it rides the landed cube as
+    /// its key tag.
+    digest: String,
+}
+
+impl CubeKey {
+    /// The landed cube's table, in the catalog's `main` schema: the
+    /// metric's own cells, or the cells at a coarser grain beside them.
+    fn table(&self) -> String {
+        match self.grain {
+            None => format!("cube__{}__{}", self.dataset, self.metric),
+            Some(grain) => format!(
+                "cube__{}__{}__{}",
+                self.dataset,
+                self.metric,
+                grain.as_str()
+            ),
+        }
+    }
+
+    /// What the head's key tag says: the data legs and the digest.
+    fn tag(&self) -> String {
+        format!("{}\n{}", self.pin, self.digest)
+    }
+}
+
+/// The schema the landed cubes live in — schema id 0, outside the
+/// mount, so a cube table is neither a dataset's nor a subject.
+const CUBE_SCHEMA: &str = "main";
+/// The head's tags: the key it was built at, and its fact row as JSON.
+const CUBE_KEY_TAG: &str = "glossql.cube.key";
+const CUBE_FACT_TAG: &str = "glossql.cube.fact";
+
+/// A `Hasher` over blake3: every `Hash` impl the digest folds writes
+/// its bytes here, so the digest is the same in every process — the
+/// standard library's hasher is not, and this one rides the catalog.
+/// Integers hash in native byte order, as `Hash` writes them; every
+/// host this runs on is little-endian.
+struct Digest(blake3::Hasher);
+
+impl std::hash::Hasher for Digest {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    /// Unused: the digest is read as hex, never as a number.
+    fn finish(&self) -> u64 {
+        0
+    }
 }
 
 /// What one metric's build reads of the dataset: the tables its frame
@@ -566,7 +618,8 @@ fn reads_of(
 /// digesting alike build alike, so a write that cannot reach this
 /// build — a ruling, a note gloss, a check's landing, a gloss on a
 /// column no served field descends from — keeps the entry a hit.
-/// In-process only: the hash owes no stability across runs.
+/// Stable across processes, so a head landed by one instance serves
+/// another.
 /// Completeness is checkable in one file: `plan` and `build` read
 /// nothing of the store beyond (slot, judged, settings) — the frame's
 /// own scans are [`workspace_reads`]'s to catch.
@@ -576,7 +629,7 @@ fn metric_digest(
     reads: &Reads,
     judged: &Judged,
     settings: &Settings,
-) -> u64 {
+) -> String {
     use std::hash::{Hash, Hasher};
     fn verdict(h: &mut impl Hasher, m: &HashMap<String, Verdict>, subject: &str) {
         if let Some(v) = m.get(subject) {
@@ -594,7 +647,7 @@ fn metric_digest(
             0u8.hash(h);
         }
     }
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut h = Digest(blake3::Hasher::new());
     slot.subject.hash(&mut h);
     slot.aspect.hash(&mut h);
     slot.body.hash(&mut h);
@@ -628,7 +681,7 @@ fn metric_digest(
         r.as_str().hash(&mut h);
         w.hash(&mut h);
     }
-    h.finish()
+    h.0.finalize().to_hex().to_string()
 }
 
 /// The workspace relations a frame's plan scans, by name, sorted;
@@ -669,6 +722,8 @@ fn workspace_reads(plan: &datafusion::logical_expr::LogicalPlan) -> Vec<String> 
 pub struct CubeCache {
     inner: moka::future::Cache<CubeKey, Arc<Cube>>,
     builds: Arc<AtomicU64>,
+    /// Entries loaded from a landed head instead of built.
+    loads: Arc<AtomicU64>,
 }
 
 impl CubeCache {
@@ -686,13 +741,19 @@ impl CubeCache {
         CubeCache {
             inner,
             builds: Arc::new(AtomicU64::new(0)),
+            loads: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// How many builds this cache has run — one per miss, whatever the
-    /// number of readers that shared it.
+    /// How many builds this cache has run — one per miss no head
+    /// answered, whatever the number of readers that shared it.
     pub fn builds(&self) -> u64 {
         self.builds.load(Ordering::Relaxed)
+    }
+
+    /// How many entries a landed head served in place of a build.
+    pub fn loads(&self) -> u64 {
+        self.loads.load(Ordering::Relaxed)
     }
 
     /// Entries standing once moka's pending evictions have run.
@@ -1001,6 +1062,7 @@ struct Surface {
     pin_text: String,
     cache: CubeCache,
     ctx: SessionContext,
+    lake: glossql_catalog::Lake,
 }
 
 impl Surface {
@@ -1029,6 +1091,7 @@ impl Surface {
             pin_text: rctx.pin.text.clone(),
             cache: shared.cube(),
             ctx: shared.session_ctx(),
+            lake: shared.lake(),
         }))
     }
 
@@ -1074,7 +1137,14 @@ impl Surface {
         }
         self.cache
             .inner
-            .get_with(key, async {
+            .get_with(key.clone(), async {
+                // The head first: a cube landed at this key — by
+                // another instance, or by this one before a restart —
+                // is one file read, not a build.
+                if let Some(cube) = self.load_head(&key).await {
+                    self.cache.loads.fetch_add(1, Ordering::Relaxed);
+                    return Arc::new(cube);
+                }
                 self.cache.builds.fetch_add(1, Ordering::Relaxed);
                 let span = tracing::info_span!(
                     "cube",
@@ -1094,14 +1164,122 @@ impl Surface {
                 )
                 .await;
                 span.record("rows", cube.cells.num_rows());
+                self.land_head(&key, &cube).await;
                 Arc::new(cube)
             })
             .await
     }
+
+    /// The cube landed under `key`, if the head carries exactly that
+    /// key: its cells read from the file, its fact row from the tag.
+    /// Any other key, no table, or a head this build cannot read is
+    /// none — the build runs, and lands over it. Type-erased, as
+    /// [`Surface::land_head`] is: both carry the lake's writer and
+    /// reader futures, and inside every reader's future those overflow
+    /// the compiler's `Send` proof for the doors' handlers.
+    fn load_head<'a>(
+        &'a self,
+        key: &'a CubeKey,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Option<Cube>> + Send + 'a>> {
+        Box::pin(self.load_head_inner(key))
+    }
+
+    async fn load_head_inner(&self, key: &CubeKey) -> Option<Cube> {
+        let table = key.table();
+        let tags = self.lake.tags(CUBE_SCHEMA, &table).await.ok()?;
+        if tags.get(CUBE_KEY_TAG) != Some(&key.tag()) {
+            return None;
+        }
+        let fact: Fact = serde_json::from_str(tags.get(CUBE_FACT_TAG)?).ok()?;
+        let pinned = self
+            .lake
+            .pin_tables(CUBE_SCHEMA, std::slice::from_ref(&table))
+            .await
+            .ok()
+            .flatten()?
+            .pop()?;
+        let batches = self
+            .ctx
+            .read_table(pinned.provider)
+            .ok()?
+            .collect()
+            .await
+            .ok()?;
+        let cells = datafusion::arrow::compute::concat_batches(&series_schema(), &batches).ok()?;
+        tracing::info!(cube = %table, rows = cells.num_rows(), "cube loaded from its head");
+        Some(Cube {
+            fact,
+            cells,
+            version_bound: None,
+        })
+    }
+
+    /// The built cube landed as the head under its key, replaced in one
+    /// commit so a reader attached to the catalog sees the current
+    /// cube at the current snapshot. An abstention and an entry bound
+    /// to the record's version stay in memory only: the first has no
+    /// cells, the second no key a catalog reader could check. A
+    /// landing that fails is logged; the entry serves either way.
+    fn land_head<'a>(
+        &'a self,
+        key: &'a CubeKey,
+        cube: &'a Cube,
+    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(self.land_head_inner(key, cube))
+    }
+
+    async fn land_head_inner(&self, key: &CubeKey, cube: &Cube) {
+        if !cube.fact.applicable || cube.version_bound.is_some() {
+            return;
+        }
+        let Ok(fact) = serde_json::to_string(&cube.fact) else {
+            return;
+        };
+        let table = key.table();
+        let landed = async {
+            let schema = cube.cells.schema();
+            let rows = Box::pin(
+                datafusion::physical_plan::stream::RecordBatchStreamAdapter::new(
+                    Arc::clone(&schema),
+                    futures::stream::iter([Ok(cube.cells.clone())]),
+                ),
+            );
+            let written = self
+                .lake
+                .write(CUBE_SCHEMA, &table, Arc::clone(&schema), rows)
+                .await?;
+            let landing = if self.lake.table_exists(CUBE_SCHEMA, &table).await? {
+                glossql_catalog::Landing::Replace
+            } else {
+                glossql_catalog::Landing::Create
+            };
+            self.lake
+                .commit_tagged(
+                    CUBE_SCHEMA,
+                    &table,
+                    &schema,
+                    written,
+                    landing,
+                    &HashMap::new(),
+                    &[
+                        (CUBE_KEY_TAG.to_string(), key.tag()),
+                        (CUBE_FACT_TAG.to_string(), fact),
+                    ],
+                )
+                .await
+        }
+        .await;
+        match landed {
+            Ok(version) => tracing::info!(cube = %table, version, "cube landed"),
+            Err(e) => tracing::warn!(cube = %table, "the cube was not landed: {e}"),
+        }
+    }
 }
 
-/// Every metric's own entry — what `metric_axes()` describes.
-async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
+/// Every metric's own entry — what `metric_axes()` describes. A
+/// landing calls it to rebuild and land the cubes over the tables it
+/// moved: every other entry is a hit.
+pub(crate) async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
     let Some(surface) = Surface::load(shared).await? else {
         return Ok(Vec::new());
     };
@@ -2062,14 +2240,14 @@ async fn build(
             judged_current,
             reason: None,
             behavior: Some(verb.to_string()),
-            behavior_basis: Some(behavior_basis),
+            behavior_basis: Some(behavior_basis.to_string()),
             grain,
             resolution: Some(resolution),
             window,
             dims,
             basis,
             admitted_by,
-            axes_basis,
+            axes_basis: axes_basis.to_string(),
             bucketed,
             unadmitted: unadmitted.iter().map(|(c, _, _)| c.clone()).collect(),
             unadmitted_why: unadmitted.iter().map(|(_, w, _)| w.clone()).collect(),
@@ -2753,14 +2931,14 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             )),
             text(|f| f.reason.as_deref()),
             text(|f| f.behavior.as_deref()),
-            text(|f| f.behavior_basis),
+            text(|f| f.behavior_basis.as_deref()),
             list(|f| &f.grain),
             text(|f| f.resolution.map(Resolution::as_str)),
             text(|f| f.window.as_deref()),
             list(|f| &f.dims),
             list(|f| &f.basis),
             list(|f| &f.admitted_by),
-            text(|f| Some(f.axes_basis)),
+            text(|f| Some(f.axes_basis.as_str())),
             list(|f| &f.bucketed),
             list(|f| &f.unadmitted),
             list(|f| &f.unadmitted_why),
@@ -2805,7 +2983,7 @@ mod tests {
             metric: metric.into(),
             grain: None,
             pin: "p".into(),
-            digest: 7,
+            digest: "7".into(),
         }
     }
 

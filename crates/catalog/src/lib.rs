@@ -396,6 +396,24 @@ impl Lake {
         landing: Landing,
         exprs: &HashMap<String, String>,
     ) -> Result<i64> {
+        self.commit_tagged(dataset, table, schema, written, landing, exprs, &[])
+            .await
+    }
+
+    /// [`Lake::commit`], setting the table's tags in the same commit —
+    /// each ending the live tag of its key. What a landed cube carries
+    /// its key and its fact row as.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn commit_tagged(
+        &self,
+        dataset: &str,
+        table: &str,
+        schema: &Schema,
+        written: Written,
+        landing: Landing,
+        exprs: &HashMap<String, String>,
+        tags: &[(String, String)],
+    ) -> Result<i64> {
         let span = tracing::info_span!(
             "commit",
             dataset,
@@ -413,6 +431,7 @@ impl Lake {
                 &written.files,
                 landing,
                 exprs,
+                tags,
             ),
             span,
         )
@@ -461,6 +480,12 @@ impl Lake {
                 Err(e) => tracing::warn!(file = %path, "not deleted, stays scheduled: {e}"),
             }
         }
+    }
+
+    /// The table's live tags by key; empty where there is no such
+    /// table.
+    pub async fn tags(&self, dataset: &str, table: &str) -> Result<HashMap<String, String>> {
+        tables::tags(&self.db, dataset, table).await
     }
 
     // -- reads -------------------------------------------------------------

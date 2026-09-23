@@ -627,7 +627,8 @@ declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
 `metric_series()` serves the cube's cells —
 every grounded metric at its judged resolution, computed at the read's
-pin from the groundings and the judged verdicts, cached, never landed —
+pin from the groundings and the judged verdicts, landed under the
+cache, never recorded —
 as long rows: metric names become data so a static frame (the built-in
 docket app) slices any metric with plain value filters; `metric_axes()`
 beside it says what the cube admitted.

@@ -18,7 +18,7 @@ leaves the workspace, walk this map and run what answers it:
 | hierarchies inside dimensions | `detect_hierarchies()` |
 | two metrics accidentally identical | `detect_grounding_collisions()` |
 | whether a metric's month is surprising | `metric_bands()`, adjudicated by `band_breach` |
-| the app's series and slices | `metric_series(grain => …)` — the cube, computed at read and cached, never landed; `metric_axes()` says what it admitted and, per served column, what keeps the rest out |
+| the app's series and slices | `metric_series(grain => …)` — the cube, computed at read and landed under the cache, never recorded; `metric_axes()` says what it admitted and, per served column, what keeps the rest out |
 | which rows look wrong, on a signal | `misfit.<frame>()` |
 | whether an authored expectation holds | a check function's voice + `rate_tolerance`, read via `ATTEST()` |
 
