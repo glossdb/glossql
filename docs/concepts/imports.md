@@ -66,6 +66,12 @@ its own dialect; at a file source the server runs it, with
 location and `try_to_date` / `try_to_timestamp` registered. The
 default recipe is `SELECT *`.
 
+A recipe may name its table's key, `SET (key: order_id)` before `AS`
+— a column of its result, or a comma-separated list of them. A keyed
+recipe's result merges into the table by that key on every import
+(below); an unkeyed recipe's result is the table. A key the recipe
+does not produce is refused at the declaration.
+
 **A landing streams.** The recipe's rows are written as they arrive,
 one batch in memory, and join the table as one commit — so the size of
 a first landing is bounded by the store, not by the server's memory. A
@@ -116,6 +122,18 @@ other case — a relational source, a recipe of another shape, a landed
 file rewritten or gone — the recipe runs whole and the result replaces
 the table's rows in one commit. The outcome says which ran and why,
 and the `imports` row records it as its `mode`.
+
+**A keyed recipe merges.** Its rows replace the landed rows with the
+same key and every other row stands — the rows of the files that are
+new or changed at a file source, the whole result at a relational
+one, merged in one commit as plain parquet, no delete files. This is
+the shape for a large source whose owner exposes only what changed: a
+view of the rows changed in a window, read by the recipe as it is.
+A row the source no longer returns is not the merge's to see; an
+owner who fences a source that deletes exposes the deletes as rows
+carrying a flag, and the recipe carries the flag as a column. A file
+gone from a file source likewise changes nothing. The `imports` row
+says `merge`.
 
 ## The source deposit
 

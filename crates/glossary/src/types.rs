@@ -259,6 +259,27 @@ pub enum RecipeAdmission {
 pub struct RecipeRow {
     pub source: String,
     pub sql: String,
+    /// The declaration's `SET` pairs as JSON; `key` names the table's
+    /// key (SPEC.md §3).
+    pub settings: String,
+}
+
+impl RecipeRow {
+    /// The table's key columns, in the order named — empty for an
+    /// unkeyed recipe, whose result is the table.
+    pub fn key(&self) -> Vec<String> {
+        serde_json::from_str::<serde_json::Value>(&self.settings)
+            .ok()
+            .and_then(|v| v.get("key")?.as_str().map(str::to_string))
+            .map(|key| {
+                key.split(',')
+                    .map(str::trim)
+                    .filter(|k| !k.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// A declared witness (SPEC.md §7.1). Function voices are not here — they

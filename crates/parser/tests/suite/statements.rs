@@ -22,6 +22,10 @@ snap!(
     "DECLARE RECIPE segments ON fin FROM crm AS $$SELECT id, segment FROM customer_segments$$;"
 );
 snap!(
+    recipe_decl_keyed,
+    "DECLARE RECIPE segments ON fin FROM crm SET (key: id) AS $$SELECT id, segment FROM customer_segments$$;"
+);
+snap!(
     dataset_decl_and_use,
     "DECLARE DATASET fin SET (purpose: 'working-capital analysis');\nUSE fin;"
 );

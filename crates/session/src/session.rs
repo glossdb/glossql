@@ -839,6 +839,25 @@ impl Session {
                         &d.sql,
                     )
                     .await?;
+                    // The key is a column of the result (SPEC.md §3):
+                    // a name the recipe does not produce is refused
+                    // here, where the declaration is, not at the first
+                    // import's merge.
+                    for k in recipe_key(&d.settings) {
+                        if recipe.schema.field_with_name(&k).is_err() {
+                            return Err(SessionError::Runtime(format!(
+                                "DECLARE RECIPE {table}: the key names `{k}`, which the recipe \
+                                 does not produce — it gives {}",
+                                recipe
+                                    .schema
+                                    .fields()
+                                    .iter()
+                                    .map(|f| format!("`{}`", f.name()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )));
+                        }
+                    }
                     // A replace is one commit on the standing table: the
                     // new rows are written beside the old files, and the
                     // commit ends the old and begins the new. A recipe
@@ -997,6 +1016,98 @@ impl Session {
         let version = lake
             .commit(dataset, table, &schema, written, landing, &exprs)
             .await?;
+        self.record_landing(dataset, table, &landed, version, landing.as_str())
+            .await
+    }
+
+    /// The recipe's rows merged into the table by `key` (SPEC.md §3):
+    /// the rows are written beside the table first, then read back
+    /// beside it, and what replaces the table is every landed row
+    /// whose key none of them carries, then all of them — one plan,
+    /// one file, one commit. A key that is NULL on both sides matches.
+    /// The staged rows are discarded once the merged file stands.
+    async fn merge_into(
+        &self,
+        lake: &Lake,
+        dataset: &str,
+        table: &str,
+        recipe: glossql_import::Recipe,
+        key: &[String],
+    ) -> Result<(String, String), SessionError> {
+        let glossql_import::Recipe {
+            schema,
+            rows,
+            account,
+            exprs,
+        } = recipe;
+        let stream = Box::pin(RecordBatchStreamAdapter::new(
+            Arc::clone(&schema),
+            rows.map_err(|e| datafusion::error::DataFusionError::External(Box::new(e))),
+        ));
+        let staged = lake
+            .write(dataset, table, Arc::clone(&schema), stream)
+            .await?;
+        let landed = account.landed(staged.rows).await?;
+        let merged = async {
+            let standing = lake
+                .pin_tables(dataset, &[table.to_string()])
+                .await?
+                .and_then(|mut pinned| pinned.pop())
+                .ok_or(SessionError::Store(glossql_glossary::Error::Unknown {
+                    what: "table",
+                    name: table.into(),
+                }))?;
+            let ctx = SessionContext::new_with_config_rt(SessionConfig::new(), self.shared.env());
+            ctx.register_table("landed", standing.provider)?;
+            ctx.register_table(
+                "changes",
+                lake.staged(dataset, table, &staged, Arc::clone(&schema)),
+            )?;
+            let columns = schema
+                .fields()
+                .iter()
+                .map(|f| crate::subject::qi(f.name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let on = key
+                .iter()
+                .map(|k| {
+                    let k = crate::subject::qi(k);
+                    format!("c.{k} IS NOT DISTINCT FROM l.{k}")
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            let sql = format!(
+                "SELECT {columns} FROM landed l \
+                 WHERE NOT EXISTS (SELECT 1 FROM changes c WHERE {on}) \
+                 UNION ALL SELECT {columns} FROM changes"
+            );
+            let rows = ctx.sql(&sql).await?.execute_stream().await?;
+            let written = lake
+                .write(dataset, table, Arc::clone(&schema), rows)
+                .await?;
+            lake.commit(dataset, table, &schema, written, Landing::Replace, &exprs)
+                .await
+                .map_err(SessionError::from)
+        }
+        .await;
+        lake.discard(dataset, table, staged).await;
+        let version = merged?;
+        self.record_landing(dataset, table, &landed, version, "merge")
+            .await
+    }
+
+    /// The landing's row on the record — what it read, what it dropped,
+    /// the casts, the files, the version it made, how its rows joined
+    /// the table — and the pins forgotten behind it.
+    async fn record_landing(
+        &self,
+        dataset: &str,
+        table: &str,
+        landed: &glossql_import::Landed,
+        version: i64,
+        mode: &str,
+    ) -> Result<(String, String), SessionError> {
         let scans = serde_json::Value::Array(
             landed
                 .source_scans
@@ -1021,7 +1132,7 @@ impl Session {
                 landed.casts.to_json().to_string(),
                 &files,
                 version,
-                landing.as_str(),
+                mode,
             )
             .await?;
         self.shared.forget_pins();
@@ -1071,13 +1182,18 @@ impl Session {
                 modified,
             })
             .collect();
+        let key = recipe.key();
         let update = glossql_import::open_import(
             &self.shared.env(),
             &self.source_spec(&recipe.source).await?,
             &recipe.sql,
             &landed,
+            !key.is_empty(),
         )
         .await?;
+        // How the rows join the table: a keyed recipe's merge by its
+        // key, whatever ran; else an append of the new files' rows, or
+        // the whole result in place of the table.
         let (new, landing, how) = match update {
             glossql_import::Update::Unchanged => {
                 return Ok(Outcome::Done(format!(
@@ -1087,14 +1203,26 @@ impl Session {
             glossql_import::Update::Append(recipe) => {
                 let files = recipe.account.files_read();
                 let noun = if files == 1 { "file" } else { "files" };
-                (
-                    recipe,
-                    Landing::Append,
-                    format!("appended from {files} new {noun}"),
-                )
+                if key.is_empty() {
+                    (
+                        recipe,
+                        Some(Landing::Append),
+                        format!("appended from {files} new {noun}"),
+                    )
+                } else {
+                    (
+                        recipe,
+                        None,
+                        format!("merged from {files} new or changed {noun}"),
+                    )
+                }
             }
             glossql_import::Update::Replace { recipe, why } => {
-                (recipe, Landing::Replace, format!("replaced: {why}"))
+                if key.is_empty() {
+                    (recipe, Some(Landing::Replace), format!("replaced: {why}"))
+                } else {
+                    (recipe, None, format!("merged: {why}"))
+                }
             }
         };
         // A data update reproduces the schema or errors (SPEC.md §3).
@@ -1122,9 +1250,13 @@ impl Session {
                 ),
             )));
         }
-        let (summary, casts) = self
-            .stream_into(&lake, &dataset, table, new, landing)
-            .await?;
+        let (summary, casts) = match landing {
+            Some(landing) => {
+                self.stream_into(&lake, &dataset, table, new, landing)
+                    .await?
+            }
+            None => self.merge_into(&lake, &dataset, table, new, &key).await?,
+        };
         Ok(Outcome::Done(format!(
             "IMPORT {table} ON {dataset} ({summary}{casts}; {how})"
         )))
@@ -2349,6 +2481,27 @@ fn read_names(reads: &crate::prepass::ReadSet, dataset: &str) -> String {
     names.sort();
     names.dedup();
     names.join(",")
+}
+
+/// The key a recipe declaration names — `SET (key: col)` or
+/// `SET (key: 'a, b')` — as the store will read it back.
+fn recipe_key(settings: &[glossql_parser::Setting]) -> Vec<String> {
+    use glossql_parser::SettingValue;
+    settings
+        .iter()
+        .find(|s| s.key.value == "key")
+        .map(|s| match &s.value {
+            SettingValue::Name(n) => n.value.clone(),
+            SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
+        })
+        .map(|key| {
+            key.split(',')
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn cast_summary(casts: &glossql_import::CastAccounting) -> String {

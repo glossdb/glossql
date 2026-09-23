@@ -631,6 +631,182 @@ async fn a_gloss_ages_by_its_column_not_by_the_rows() {
     );
 }
 
+/// A keyed recipe merges on import (SPEC.md §3): the rows of the new
+/// and changed files replace the landed rows with the same key and
+/// keep the rest; a file gone from the source changes nothing, since
+/// a delete is the source owner's to expose as a row; and the table
+/// equals, row for row, an unkeyed recipe over the full current view.
+/// A key the recipe does not produce is refused at the declaration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keyed_recipe_merges_on_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(root.join("changes")).unwrap();
+    std::fs::create_dir_all(root.join("full")).unwrap();
+    std::fs::write(
+        root.join("changes/2026-01.csv"),
+        "id,amount\n1,10\n2,20\n3,30\n",
+    )
+    .unwrap();
+    let session = workspace(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a keyed merge');\n\
+             USE fin;\n\
+             DECLARE SOURCE export SET (type: csv, location: '{}');\n\
+             DECLARE RECIPE orders ON fin FROM export SET (key: id) AS $$\
+               SELECT id, try_cast(amount AS BIGINT) AS amount \
+               FROM read_csv('changes/*.csv')$$;",
+            root.display()
+        ))
+        .await
+        .unwrap();
+    let refused = session
+        .execute(
+            "DECLARE RECIPE bad ON fin FROM export SET (key: nope) AS $$\
+               SELECT id FROM read_csv('changes/*.csv')$$;",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("the key names `nope`"), "{refused}");
+    let orders = |sql: &'static str| {
+        let session = &session;
+        async move {
+            let out = session.execute(sql).await.unwrap();
+            let Outcome::Rows { batches, .. } = &out[0] else {
+                panic!("a read answers rows")
+            };
+            let cell = |i: usize| {
+                datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0)
+                    .unwrap()
+            };
+            (cell(0), cell(1))
+        }
+    };
+
+    // A new file carries one changed row and one new one.
+    std::fs::write(root.join("changes/2026-02.csv"), "id,amount\n2,25\n4,40\n").unwrap();
+    let merged = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&merged[0]).contains("merged from 1 new or changed file"),
+        "{merged:?}"
+    );
+    assert_eq!(
+        orders("SELECT count(*), sum(amount) FROM orders;").await,
+        ("4".to_string(), "105".to_string())
+    );
+
+    // A file rewritten in place runs again, and its rows win by key.
+    std::fs::write(root.join("changes/2026-02.csv"), "id,amount\n2,26\n4,41\n").unwrap();
+    let again = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&again[0]).contains("merged from 1 new or changed file"),
+        "{again:?}"
+    );
+    assert_eq!(
+        orders("SELECT count(*), sum(amount) FROM orders;").await,
+        ("4".to_string(), "107".to_string())
+    );
+
+    // A file gone from the source is not the merge's to see.
+    std::fs::remove_file(root.join("changes/2026-01.csv")).unwrap();
+    let gone = session.execute("IMPORT orders;").await.unwrap();
+    assert!(done(&gone[0]).contains("unchanged"), "{gone:?}");
+
+    // Row for row, the merged table is the full view landed whole.
+    std::fs::write(
+        root.join("full/now.csv"),
+        "id,amount\n1,10\n2,26\n3,30\n4,41\n",
+    )
+    .unwrap();
+    session
+        .execute(
+            "DECLARE RECIPE full ON fin FROM export AS $$\
+               SELECT id, try_cast(amount AS BIGINT) AS amount \
+               FROM read_csv('full/*.csv')$$;",
+        )
+        .await
+        .unwrap();
+    for sql in [
+        "SELECT count(*), 0 FROM (SELECT * FROM orders EXCEPT SELECT * FROM full);",
+        "SELECT count(*), 0 FROM (SELECT * FROM full EXCEPT SELECT * FROM orders);",
+    ] {
+        assert_eq!(orders(sql).await.0, "0", "{sql}");
+    }
+    let modes = session
+        .execute(
+            "SELECT array_to_string(array_agg(mode ORDER BY version), ',') \
+             FROM imports WHERE table_name = 'orders';",
+        )
+        .await
+        .unwrap();
+    assert_eq!(single_value(&modes), "create,merge,merge");
+}
+
+/// At a relational source a keyed recipe reads the owner's changes
+/// view and merges by the key: what the view holds replaces the rows
+/// with those keys, every other row stands. Runs where an ADBC sqlite
+/// driver is installed; skips otherwise.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keyed_recipe_merges_a_relational_changes_view() {
+    let Some(driver) = sqlite_driver() else {
+        eprintln!("skipped: no ADBC sqlite driver (set GLOSSQL_ADBC_SQLITE_DRIVER)");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("erp.db");
+    let seed = |sql: &str| {
+        let status = std::process::Command::new("python3")
+            .args([
+                "-c",
+                &format!(
+                    "import sqlite3; c = sqlite3.connect({:?}); c.executescript({:?}); c.commit()",
+                    db.display().to_string(),
+                    sql
+                ),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "seeding sqlite");
+    };
+    seed(
+        "CREATE TABLE changes (order_id INTEGER, amount REAL); \
+         INSERT INTO changes VALUES (1, 12.5), (2, 8.0), (3, 1.25);",
+    );
+    let session = workspace(dir.path()).await;
+    session
+        .execute(&format!(
+            "DECLARE DATASET fin SET (purpose: 'a relational merge');\n\
+             USE fin;\n\
+             DECLARE SOURCE erp SET (type: relational_db, driver: '{driver}', location: '{}');\n\
+             DECLARE RECIPE orders ON fin FROM erp SET (key: order_id) AS $$\
+               SELECT order_id, amount FROM changes$$;",
+            db.display()
+        ))
+        .await
+        .unwrap();
+
+    // The owner's view now holds one changed row and one new one.
+    seed("DELETE FROM changes; INSERT INTO changes VALUES (2, 9.0), (4, 4.0);");
+    let imported = session.execute("IMPORT orders;").await.unwrap();
+    assert!(
+        done(&imported[0]).contains("merged: the source computes the whole result"),
+        "{imported:?}"
+    );
+    let total = session
+        .execute("SELECT count(*), sum(amount) FROM orders;")
+        .await
+        .unwrap();
+    let Outcome::Rows { batches, .. } = &total[0] else {
+        panic!("a read answers rows")
+    };
+    let cell = |i: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0).unwrap()
+    };
+    assert_eq!((cell(0), cell(1)), ("4".to_string(), "26.75".to_string()));
+}
+
 /// At a relational source the recipe computes its whole result, so an
 /// import replaces the table with it: what the source now holds is
 /// what the table holds, rows changed or removed included. Runs where

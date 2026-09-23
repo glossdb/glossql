@@ -416,10 +416,11 @@ pub const RELATIONS: &[Relation] = &[
         key: &["name"],
     },
     // The recipe behind a landed table: one current row per table,
-    // a re-declaration superseding it.
+    // a re-declaration superseding it. `settings` is the declaration's
+    // `SET` pairs as JSON — `key` names the table's key.
     Relation {
         name: "recipes",
-        columns: &["dataset", "table_name", "source", "sql"],
+        columns: &["dataset", "table_name", "source", "sql", "settings"],
         numbers: &[],
         key: &["dataset", "table_name"],
     },
@@ -689,7 +690,11 @@ impl Store {
         }
         Ok(match self.recipe(dataset, table).await? {
             None => RecipeAdmission::Created,
-            Some(prior) if prior.source == decl.source.value && prior.sql == decl.sql => {
+            Some(prior)
+                if prior.source == decl.source.value
+                    && prior.sql == decl.sql
+                    && prior.settings == settings_json(&decl.settings) =>
+            {
                 RecipeAdmission::Unchanged
             }
             Some(_) => RecipeAdmission::Replaced,
@@ -706,6 +711,7 @@ impl Store {
                 Some(decl.table.value.clone()),
                 Some(decl.source.value.clone()),
                 Some(decl.sql.clone()),
+                Some(settings_json(&decl.settings)),
             ],
         )
         .await
@@ -722,6 +728,7 @@ impl Store {
             .map(|r| RecipeRow {
                 source: r.get(2).unwrap_or_default().to_string(),
                 sql: r.get(3).unwrap_or_default().to_string(),
+                settings: r.get(4).unwrap_or("{}").to_string(),
             }))
     }
 
@@ -767,13 +774,14 @@ impl Store {
 
     /// Every file the table's standing rows came from — the files of
     /// the landing that last created or replaced the table and of the
-    /// appends since — which is what the next `IMPORT` leaves out.
+    /// appends and merges since, the newest entry per path — which is
+    /// what the next `IMPORT` leaves out.
     pub async fn landed_files(
         &self,
         dataset: &str,
         table: &str,
     ) -> Result<Vec<(String, u64, String)>> {
-        let mut out = Vec::new();
+        let mut out: Vec<(String, u64, String)> = Vec::new();
         for row in self
             .record
             .scan_where("imports", "dataset", dataset)
@@ -782,7 +790,7 @@ impl Store {
             if row.get(1) != Some(table) {
                 continue;
             }
-            if row.get(9) != Some("append") {
+            if !matches!(row.get(9), Some("append" | "merge")) {
                 out.clear();
             }
             let files: Vec<(String, u64, String)> = row
@@ -790,7 +798,12 @@ impl Store {
                 .map(|json| serde_json::from_str(json).map_err(|e| Error::Corrupt(e.to_string())))
                 .transpose()?
                 .unwrap_or_default();
-            out.extend(files);
+            for file in files {
+                match out.iter_mut().find(|f| f.0 == file.0) {
+                    Some(slot) => *slot = file,
+                    None => out.push(file),
+                }
+            }
         }
         Ok(out)
     }
