@@ -209,8 +209,9 @@ SELECT subject, band, score FROM ATTEST(ops::duration_present);
 ## The surfaces
 
 The cube holds each metric's cells at its judged resolution — the
-total and the slices along its judged dimensions — computed at read
-and cached, never recorded; the docket and any app chart it through
+total and the slices along its judged dimensions — computed at read,
+landed in the catalog under the engine's cache, never recorded; the
+docket and any app chart it through
 `metric_series()`, and `metric_axes()` says what it admitted:
 
 ```sql

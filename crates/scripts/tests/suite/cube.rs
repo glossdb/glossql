@@ -220,6 +220,206 @@ const POINTS_BY_TEAM: &[&str] = &[
 
 const AXES: &str = "SELECT dims, basis, admitted_by FROM metric_axes();";
 
+/// A second metric over the results alone, serving no dimension —
+/// what a gloss on `results.venue` cannot reach.
+const TOTAL_POINTS: &[&str] = &[
+    r#"DECLARE ASPECT total WITH $${"title": "Total"}$$ AS QUERY ON DATASET;"#,
+    r#"GLOSS total ON fin AS $${"sql": "SELECT date, points AS value FROM results"}$$;"#,
+];
+
+/// The cube's head is a table in the catalog (SPEC.md §9): a cube
+/// built once lands under its key, and a second instance over the
+/// same catalog — its own cache, its own store — serves it from the
+/// head without a build.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landed_head_serves_a_second_instance_without_a_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = CubeCache::new(64);
+    let session = cube_session_with(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        POINTS_BY_TEAM,
+        Some(first.clone()),
+    )
+    .await;
+    session.execute(AXES).await.unwrap();
+    assert_eq!((first.builds(), first.loads()), (1, 0));
+
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        lake.version("main", "cube__fin__points")
+            .await
+            .unwrap()
+            .is_some(),
+        "the cube landed in the catalog's main schema"
+    );
+    let second = CubeCache::new(64);
+    let other = Session::new(
+        Store::open(lake).await.unwrap(),
+        Actor {
+            kind: ActorKind::Agent,
+            id: "t2".into(),
+        },
+    )
+    .unwrap()
+    .with_cube_cache(second.clone());
+    other.execute("USE fin;").await.unwrap();
+    let axes = grid(&other, AXES).await;
+    assert!(
+        axes.contains("[cid] | [results.constructor_id] | [measurement]"),
+        "{axes}"
+    );
+    assert_eq!((second.builds(), second.loads()), (0, 1));
+    let cells = grid(
+        &other,
+        "SELECT count(*) FROM metric_series() WHERE metric = 'points' AND dimension = '';",
+    )
+    .await;
+    assert!(cells.contains("| 12"), "{cells}");
+}
+
+/// A gloss on one metric's axis replaces that metric's head and no
+/// other: the digest of the metric that serves the column moves, the
+/// digest of the one that does not stands, and only the first table
+/// takes a new version.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gloss_on_one_metrics_axis_replaces_its_head_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = CubeCache::new(64);
+    let glosses: Vec<&str> = POINTS_BY_TEAM
+        .iter()
+        .chain(TOTAL_POINTS.iter())
+        .copied()
+        .collect();
+    let session = cube_session_with(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &glosses,
+        Some(cache.clone()),
+    )
+    .await;
+    session.execute(AXES).await.unwrap();
+    assert_eq!(cache.builds(), 2);
+    let lake = Lake::open(
+        &dir.path().join("catalog.db"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .unwrap();
+    let points = lake.version("main", "cube__fin__points").await.unwrap();
+    let total = lake.version("main", "cube__fin__total").await.unwrap();
+    assert!(points.is_some() && total.is_some());
+
+    session
+        .execute(r#"GLOSS dimension ON results.venue AS $${"value": "primary"}$$;"#)
+        .await
+        .unwrap();
+    session.execute(AXES).await.unwrap();
+    assert_eq!(cache.builds(), 3, "one cube rebuilt");
+    assert_ne!(
+        lake.version("main", "cube__fin__points").await.unwrap(),
+        points
+    );
+    assert_eq!(
+        lake.version("main", "cube__fin__total").await.unwrap(),
+        total
+    );
+}
+
+/// A landing rebuilds the cubes over the table it moved and re-runs the
+/// measurements the moved pin made stale before it answers, so the
+/// next read builds nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landing_rebuilds_the_cubes_over_the_table_it_moved() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut csv = String::from("date,constructor_id,venue,points\n");
+    for m in 0..12 {
+        for (i, cid) in ["c1", "c2", "c3"].iter().enumerate() {
+            csv.push_str(&format!(
+                "2024-{:02}-01,{cid},{},{}\n",
+                m + 1,
+                if m % 2 == 0 { "street" } else { "circuit" },
+                10.0 * (i + 1) as f64
+            ));
+        }
+    }
+    std::fs::write(root.join("2024.csv"), csv).unwrap();
+    let cache = CubeCache::new(64);
+    let session = cube_session_with(
+        dir.path(),
+        vec![("constructors", constructors())],
+        &[],
+        Some(cache.clone()),
+    )
+    .await;
+    session
+        .execute(&format!(
+            "DECLARE SOURCE export SET (type: csv, location: '{}');\n\
+             DECLARE RECIPE results ON fin FROM export AS $$\
+               SELECT try_cast(date AS DATE) AS date, constructor_id, venue, \
+                      try_cast(points AS DOUBLE) AS points FROM read_csv('*.csv')$$;",
+            root.display()
+        ))
+        .await
+        .unwrap();
+    for g in POINTS_BY_TEAM {
+        session.execute(g).await.unwrap();
+    }
+    // A voice that reads the table: stale once the table moves, and
+    // the landing's to re-run before it rebuilds the cube.
+    session
+        .execute(
+            r#"DECLARE ASPECT row_count WITH $${"type": "integer"}$$ AS MEASUREMENT ON TABLE;
+               DECLARE FUNCTION count_rows FOR GLOBAL AS $$SELECT count(*) AS n FROM results$$
+                 RETURNS row_count;
+               SELECT count_rows() FROM results;"#,
+        )
+        .await
+        .unwrap();
+    session.execute(AXES).await.unwrap();
+    assert_eq!(cache.builds(), 1);
+
+    // Another year of results lands; the import answers with the stale
+    // voice re-run and the cube rebuilt, and the read after it hits.
+    let mut more = String::from("date,constructor_id,venue,points\n");
+    for m in 1..=6 {
+        for (i, cid) in ["c1", "c2", "c3"].iter().enumerate() {
+            more.push_str(&format!(
+                "2025-{m:02}-01,{cid},street,{}\n",
+                10.0 * (i + 1) as f64
+            ));
+        }
+    }
+    std::fs::write(root.join("2025.csv"), more).unwrap();
+    let imported = session.execute("IMPORT results;").await.unwrap();
+    let Outcome::Done(text) = &imported[0] else {
+        panic!("an import answers done: {imported:?}")
+    };
+    assert!(
+        text.contains("1 cubes rebuilt, 1 measurements re-run"),
+        "{text}"
+    );
+    assert_eq!(cache.builds(), 2);
+    session.execute(AXES).await.unwrap();
+    assert_eq!(cache.builds(), 2, "the read after the landing hits");
+    let n = grid(
+        &session,
+        "SELECT value FROM GLOSSARY(results) WHERE aspect = 'row_count';",
+    )
+    .await;
+    assert!(
+        n.contains("54"),
+        "the re-run voice counts the new rows: {n}"
+    );
+}
+
 /// The team is a label in its own table — a near-key there, never an
 /// axis by its own verdict — and every metric could be sliced by
 /// anything but the team. A declared edge reaches it from the results'
@@ -2009,7 +2209,9 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
         "true"
     );
 
-    // A cache with no room evicts what it builds: every read rebuilds.
+    // A cache with no room evicts what it builds: every read misses,
+    // and what the first read landed as a head the second loads back
+    // instead of building; what never lands rebuilds.
     let dir = tempfile::tempdir().unwrap();
     let tiny = CubeCache::new(0);
     let session = cube_session_with(
@@ -2021,7 +2223,15 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     .await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
     number(&session, "SELECT count(*) FROM metric_series();").await;
-    assert_eq!(tiny.builds(), 4, "nothing stays under a zero cap");
+    assert_eq!(
+        tiny.builds() + tiny.loads(),
+        4,
+        "nothing stays under a zero cap"
+    );
+    assert!(
+        tiny.loads() >= 1,
+        "a landed head serves what the cap evicted"
+    );
 }
 
 /// A read at a grain coarser than a metric's resolution is its own

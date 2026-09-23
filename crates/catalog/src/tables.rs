@@ -544,8 +544,11 @@ impl Landing {
 
 /// The landing as one commit; the snapshot it made is the table's new
 /// version. `exprs` is each column's derivation where the landing
-/// knows it. The files a replace ended are scheduled for deletion in
-/// the same transaction, and returned so the caller can delete them.
+/// knows it; `tags` are the table's tags to set, each ending the live
+/// tag of the same key. The files a replace ended are scheduled for
+/// deletion in the same transaction, and returned so the caller can
+/// delete them.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn commit_landing(
     db: &Db,
     dataset: &str,
@@ -554,19 +557,22 @@ pub(crate) async fn commit_landing(
     files: &[LandedFile],
     landing: Landing,
     exprs: &HashMap<String, String>,
+    tags: &[(String, String)],
 ) -> Result<(i64, Vec<(i64, String)>)> {
     let dataset = dataset.to_string();
     let table = table.to_string();
     let files = files.to_vec();
     let schema = schema.clone();
     let exprs = exprs.clone();
+    let tags = tags.to_vec();
     commit(db, move |db, tx, snapshot| {
-        let (dataset, table, files, schema, exprs) = (
+        let (dataset, table, files, schema, exprs, tags) = (
             dataset.clone(),
             table.clone(),
             files.clone(),
             schema.clone(),
             exprs.clone(),
+            tags.clone(),
         );
         Box::pin(async move {
             let Some(schema_id) = schema_id(db, tx, &dataset).await? else {
@@ -625,6 +631,7 @@ pub(crate) async fn commit_landing(
                 }
                 (Landing::Append, Some(id)) => (id, format!("inserted_into_table:{id}")),
             };
+            set_tags(db, tx, snapshot, id, &tags).await?;
             let from = sqlx::query(&db.sql(
                 "SELECT COALESCE(MAX(file_order), -1) FROM ducklake_data_file WHERE table_id = ?",
             ))
@@ -671,6 +678,7 @@ pub(crate) async fn drop_table(db: &Db, dataset: &str, table: &str) -> Result<Ve
             };
             let ended = end_files(db, tx, snapshot, id).await?;
             for statement in [
+                "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_column_tag SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_column SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
                 "UPDATE ducklake_table SET end_snapshot = ? WHERE table_id = ? AND end_snapshot IS NULL",
@@ -755,6 +763,61 @@ pub(crate) async fn unschedule(db: &Db, file_id: i64) -> Result<()> {
     .execute(db.pool())
     .await?;
     Ok(())
+}
+
+// -- tags on the table ------------------------------------------------------
+
+/// The table's tags set at this snapshot: the live tag of each key
+/// ends, the new one begins. The specification's tag table is what
+/// `COMMENT ON TABLE` writes to, keyed the same way.
+async fn set_tags(
+    db: &Db,
+    tx: &mut Tx,
+    snapshot: &Snapshot,
+    table_id: i64,
+    tags: &[(String, String)],
+) -> Result<()> {
+    for (key, value) in tags {
+        sqlx::query(&db.sql(
+            "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND \"key\" = ? \
+             AND end_snapshot IS NULL",
+        ))
+        .bind(snapshot.id)
+        .bind(table_id)
+        .bind(key)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query(&db.sql(
+            "INSERT INTO ducklake_tag (object_id, begin_snapshot, end_snapshot, \"key\", \"value\") \
+             VALUES (?, ?, NULL, ?, ?)",
+        ))
+        .bind(table_id)
+        .bind(snapshot.id)
+        .bind(key)
+        .bind(value)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// The live table's live tags, by key; empty for a table that is not
+/// there.
+pub(crate) async fn tags(db: &Db, dataset: &str, table: &str) -> Result<HashMap<String, String>> {
+    let rows = sqlx::query(&db.sql(
+        "SELECT g.\"key\", g.\"value\" FROM ducklake_tag g \
+         JOIN ducklake_table t ON t.table_id = g.object_id \
+         JOIN ducklake_schema s ON s.schema_id = t.schema_id \
+         WHERE s.schema_name = ? AND t.table_name = ? AND s.end_snapshot IS NULL \
+         AND t.end_snapshot IS NULL AND g.end_snapshot IS NULL",
+    ))
+    .bind(dataset)
+    .bind(table)
+    .fetch_all(db.pool())
+    .await?;
+    rows.iter()
+        .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+        .collect()
 }
 
 // -- columns, version by version -------------------------------------------
