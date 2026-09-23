@@ -120,8 +120,8 @@ fn shipped_app_declarations() -> &'static str {
         .find("DECLARE ASPECT app WITH")
         .expect("the kit ships the app aspects");
     let last = kit[start..]
-        .find("DECLARE ASPECT app_spec")
-        .expect("the kit ships app_spec");
+        .find("DECLARE ASPECT app_release")
+        .expect("the kit ships app_release");
     let len = last
         + kit[start + last..]
             .find("AS FACT;")
@@ -290,6 +290,89 @@ async fn pages_render_and_frames_stream() {
     let spec = get(&app, "/perf/app/board/specs/monthly.vl.json").await;
     assert_eq!(spec.status(), StatusCode::OK);
     assert!(text(spec).await.contains("\"mark\""));
+}
+
+/// The door serves an app at its release: a part glossed after the
+/// release serves under `?draft` and not at the plain URL, the bar says
+/// which is on the page, a release naming an earlier one's time serves
+/// that cut, and an app nobody released serves its draft.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_gates_what_the_door_serves() {
+    let (app, plane, _dir) = workspace().await;
+    let session = plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            Some("perf"),
+        )
+        .await
+        .unwrap();
+    let doubled = r#"GLOSS app_frame ON board.monthly AS $${"sql": "SELECT month, sum(value) * 2 AS value FROM ledger GROUP BY month ORDER BY month"}$$;"#;
+
+    // No release: the draft serves at the plain URL, and the bar says
+    // nothing of it.
+    let frame = get(&app, "/perf/app/board/frames/monthly").await;
+    assert_eq!(values(frame).await, vec![12.5, 4.0]);
+    let page = text(get(&app, "/perf/app/board").await).await;
+    assert!(!page.contains("class=\"chip\""), "{page}");
+
+    // Released, then edited: the plain URL keeps the release, `?draft`
+    // shows the edit, and the bar names each.
+    session
+        .execute(r#"GLOSS app_release ON board AS $${"note": "first cut"}$$;"#)
+        .await
+        .unwrap();
+    session.execute(doubled).await.unwrap();
+    let frame = get(&app, "/perf/app/board/frames/monthly").await;
+    assert_eq!(values(frame).await, vec![12.5, 4.0]);
+    let frame = get(&app, "/perf/app/board/frames/monthly?draft").await;
+    assert_eq!(values(frame).await, vec![25.0, 8.0]);
+    let page = text(get(&app, "/perf/app/board").await).await;
+    assert!(page.contains(">released</span>"), "{page}");
+    let page = text(get(&app, "/perf/app/board?draft").await).await;
+    assert!(page.contains(">draft</span>"), "{page}");
+
+    // A second release serves the edit; one naming the first's time
+    // returns to it, and `app_releases` says which stands.
+    session
+        .execute(r#"GLOSS app_release ON board AS $${"note": "second cut"}$$;"#)
+        .await
+        .unwrap();
+    let frame = get(&app, "/perf/app/board/frames/monthly").await;
+    assert_eq!(values(frame).await, vec![25.0, 8.0]);
+    let first = session
+        .execute("SELECT min(written_at) FROM glossary WHERE aspect = 'app_release';")
+        .await
+        .unwrap();
+    let glossql_session::Outcome::Rows { batches, .. } = &first[0] else {
+        panic!("a read answers rows")
+    };
+    let first_at =
+        datafusion::arrow::util::display::array_value_to_string(batches[0].column(0), 0).unwrap();
+    session
+        .execute(&format!(
+            r#"GLOSS app_release ON board AS $${{"at": "{first_at}", "note": "back"}}$$;"#
+        ))
+        .await
+        .unwrap();
+    let frame = get(&app, "/perf/app/board/frames/monthly").await;
+    assert_eq!(values(frame).await, vec![12.5, 4.0]);
+    let released = session
+        .execute("SELECT app, note, at FROM app_releases;")
+        .await
+        .unwrap();
+    let glossql_session::Outcome::Rows { batches, .. } = &released[0] else {
+        panic!("a read answers rows")
+    };
+    let cell = |i: usize| {
+        datafusion::arrow::util::display::array_value_to_string(batches[0].column(i), 0).unwrap()
+    };
+    assert_eq!(
+        (cell(0), cell(1), cell(2)),
+        ("board".to_string(), "back".to_string(), first_at)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

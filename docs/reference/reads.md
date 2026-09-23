@@ -139,12 +139,14 @@ ruled-at live in workspace-wide relations — callers join
 
 ### app_parts
 
-Apps authored as glosses, one row per file. Columns: `dataset`, `app`,
-`path` (where the part goes: `index.html`, `frames/open.sql`,
-`specs/series.vl.json`, or `app` for the manifest), `text` (the file
-content as the gloss spelled it), `actor_kind`. Two collapses in
-order: newest writing per (dataset, subject, aspect, actor kind), then
-the human's over the agent's. Workspace-wide, like the three above —
+Apps authored as glosses, one row per file — the draft. Columns:
+`dataset`, `app`, `path` (where the part goes: `index.html`,
+`frames/open.sql`, `specs/series.vl.json`, or `app` for the
+manifest), `text` (the file content as the gloss spelled it),
+`actor_kind`. Two collapses in order: newest writing per (dataset,
+subject, aspect, actor kind), then the human's over the agent's. What
+the door serves is the app at its release (`app_releases`), cut from
+the same rows by the release's time. Workspace-wide, like the three above —
 `workspace_next` counts every app the workspace holds, the app door
 serves one dataset's.
 
@@ -167,6 +169,15 @@ resolution, measured back from the data's own edge (see the KPI kit).
 A served date that unions several columns of one table — an interval
 table's start and end dates, `+1` and `−1` — is the axis when every
 one of them is judged, at the coarsest of their cadences.
+
+### app_releases
+
+What is released of each glossed app, one row per app that carries a
+release. Columns: `dataset`, `app`, `at` (the time the served parts
+are cut at: the release's own, or the earlier release its body's `at`
+names), `note`, `actor_kind`, `released_at` (when the serving release
+was written — what a later release names in `at` to return to it).
+The same two collapses as `app_parts`. Workspace-wide.
 
 ### metric_series(grain => …)
 

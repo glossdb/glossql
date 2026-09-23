@@ -14,7 +14,9 @@
 --
 -- Two collapses, in this order: the newest writing per (dataset,
 -- subject, aspect, actor kind), then the human's over the agent's —
--- the same precedence every other read serves.
+-- the same precedence every other read serves. This is the draft:
+-- what the door serves is the app at its release (`app_releases`),
+-- cut from the same rows by the release's time.
 --
 -- `dataset` is in the key and in the output for the reason it is in
 -- the other workspace-wide reads: an app is glossed in one dataset, a

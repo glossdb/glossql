@@ -15,7 +15,11 @@ is read from disk: an app lives in the record or in the binary.
    chart spec (`spec`). Supersession versions each part on its own; a
    human's part wins over the agent's. The `app_parts` read shows every
    part as a file row, keyed the way a directory would spell them
-   (`index.html`, `frames/open.sql`, `specs/monthly.vl.json`).
+   (`index.html`, `frames/open.sql`, `specs/monthly.vl.json`). The
+   door serves the parts as they stood at the app's release — a gloss
+   of `app_release` on `<name>` — and the newest parts under `?draft`;
+   an app nobody released serves its draft (`app_releases` says what
+   is released).
 2. **The built-in** — the docket ships in the binary and resolves the
    same way, after the record.
 

@@ -33,6 +33,7 @@ pub(crate) const LIBRARY: &[(&str, &str)] = &[
         include_str!("../reads/open_questions.sql"),
     ),
     ("app_parts", include_str!("../reads/app_parts.sql")),
+    ("app_releases", include_str!("../reads/app_releases.sql")),
     (
         "workspace_next",
         include_str!("../reads/workspace_next.sql"),

@@ -68,7 +68,7 @@ pub async fn rule(
     if let Some(missing) = crate::missing(&door, &dataset).await {
         return plain(StatusCode::NOT_FOUND, missing);
     }
-    let glossed = crate::glossed::parts(&door, &dataset).await;
+    let glossed = crate::glossed::parts(&door, &dataset, false).await.parts;
     match AppDef::load(&app, &glossed) {
         Ok(Some(_)) => {}
         Ok(None) => return plain(StatusCode::NOT_FOUND, format!("no app `{app}`")),
