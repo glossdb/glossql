@@ -7,38 +7,44 @@
 //! witness, ranked by actor kind, contestable, its history the drift
 //! record. The cube is the data at a grain — a GROUP BY result. It is
 //! about nothing, judged by nobody, and an old cube is not drift (the
-//! lake holds every snapshot). So it is a query result: **cached,
-//! never recorded.** Nothing here writes.
+//! lake holds every snapshot). So it is a query result: **landed
+//! under the cache, never recorded.** Nothing here writes the record.
 //!
-//! One table per metric and grain, one cache entry per (dataset,
-//! metric, grain, data legs, digest): the pin's parts for the tables
-//! the metric's frame scans, and everything else its build reads —
-//! the grounding, the frame as planned, the verdicts and glosses on
-//! the columns it serves, the edges on the tables it scans, the cube
-//! settings — folded to one number ([`metric_digest`]). A write that
-//! cannot reach the build — a ruling, a note, a check's landing, a
-//! gloss on another metric's column, a landing on another table —
-//! changes neither, and the entry stays a hit; a moved input is a
-//! miss, never an invalidation. The one exception is a frame that
-//! itself scans a workspace relation: its entry binds to those
-//! relations' versions on top ([`workspace_reads`]). The fill is lazy and single-flight
+//! One head per metric: its cells at the floor grain over the ladder's
+//! longest rung, landed in the catalog under the key (dataset, metric,
+//! data legs, digest) — the pin's parts for the tables the metric's
+//! frame scans, and everything else its build reads: the grounding,
+//! the frame as planned, the verdicts and glosses on the columns it
+//! serves, the edges on the tables it scans, the cube settings —
+//! folded to one number ([`metric_digest`]). A write that cannot
+//! reach the build — a ruling, a note, a check's landing, a gloss on
+//! another metric's column, a landing on another table — changes
+//! neither, and the entry stays a hit; a moved input is a miss, never
+//! an invalidation. The one exception is a frame that itself scans a
+//! workspace relation: its entry binds to those relations' versions
+//! on top ([`workspace_reads`]). The fill is lazy and single-flight
 //! (moka's `get_with`): concurrent readers of one key share one
 //! build, nothing recomputes eagerly, and the build runs where the
 //! triggering read runs. The cache is the Plane's, handed to each
 //! session at construction as the function runtime is; a session
 //! built without a Plane carries its own.
 //!
-//! Resolution and window come from the `cube` FACT aspect the KPI kit
-//! declares on the dataset: a metric's own cells are at its judged
-//! cadence (`temporal_profile`) and never finer than the declared
-//! floor; the window is the ladder's rung for that resolution,
-//! measured back from the data's own edge. A read at a coarser grain
-//! is its own build: the same grounding, the same verb and axes, at
-//! the asked grain over that grain's rung — so a day metric's months
-//! span the month rung, not the day rung — cached beside the metric's
-//! own cells. A grain finer than the metric's resolution serves no
-//! rows. A ratio cell carries its halves at every dimension, the
-//! rival included.
+//! Every grain a read serves is a plan over the head, never a scan:
+//! the cells at that grain, windowed to the ladder's rung for it, are
+//! derived from the floor cells by the verb each row carries — a flow
+//! sums, a ratio re-divides its summed halves, a stock takes the
+//! latest floor cell in the bucket — and cached as their own entry
+//! beside the head. A read at the metric's own resolution is the same
+//! derivation; a grain finer than that resolution serves no rows.
+//!
+//! Resolution, floor and windows come from the `cube` FACT aspect the
+//! KPI kit declares on the dataset: a metric's own resolution is its
+//! judged cadence (`temporal_profile`) and never finer than the
+//! declared floor; the head stands at the floor, over the longest
+//! window any grain from the resolution up may ask for, measured back
+//! from the data's own edge; the ladder's rungs are the windows the
+//! grains are served over. A ratio cell carries its halves at every
+//! dimension, the rival included.
 //!
 //! Admission is the judged surface, never the data's shape: the time
 //! axis is the served date column whose `temporal_profile` names a
@@ -237,6 +243,12 @@ pub(crate) struct Fact {
     pub grain: Vec<String>,
     pub resolution: Option<Resolution>,
     pub window: Option<String>,
+    /// The periods of data at the resolution before the window — the
+    /// buckets the data holds and the metric's own series does not
+    /// serve. Zero when the data fits the rung; a `cube` gloss widening
+    /// the rung is what moves it.
+    #[serde(default)]
+    pub outside: i64,
     pub dims: Vec<String>,
     /// Per admitted dimension, in `dims` order: the column subject whose
     /// verdict admitted it — its own, or the key column reached through
@@ -287,6 +299,13 @@ pub(crate) struct Fact {
     /// docket's re-measure runs them.
     pub wanted: Vec<String>,
     pub wanted_over: Vec<String>,
+    /// Where the frame serves nothing the cube could slice on and the
+    /// grounding lists no axes: the columns of the tables it scans
+    /// that a `dimension` gloss or an applicable relevance verdict
+    /// admits and the frame does not serve — the axis is judged, the
+    /// road is to serve the column. Empty elsewhere.
+    #[serde(default)]
+    pub unserved: Vec<String>,
     pub alternative: Option<String>,
     /// The measured disagreement between the metric's total series and
     /// the rival's, over their shared periods — with an authored
@@ -315,6 +334,7 @@ impl Fact {
             grain: Vec::new(),
             resolution: None,
             window: None,
+            outside: 0,
             dims: Vec::new(),
             basis: Vec::new(),
             admitted_by: Vec::new(),
@@ -325,6 +345,7 @@ impl Fact {
             unadmitted_act: Vec::new(),
             wanted: Vec::new(),
             wanted_over: Vec::new(),
+            unserved: Vec::new(),
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
@@ -349,7 +370,11 @@ struct Planned {
     /// The declared grain, every column verified served; empty when
     /// the grounding declares none.
     grain: Vec<String>,
+    /// The metric's own resolution: the coarser of its judged cadence
+    /// and the floor.
     resolution: Resolution,
+    /// The ladder's rung for the resolution — the window the metric's
+    /// own series is served over.
     window: Option<String>,
     verb: &'static str,
     behavior_basis: &'static str,
@@ -361,6 +386,8 @@ struct Planned {
     axes_basis: &'static str,
     /// What the row reads and nobody measured — `(function, subject)`.
     wanted: Vec<(String, String)>,
+    /// [`Fact::unserved`].
+    unserved: Vec<String>,
     /// The workspace relations the frame scans ([`workspace_reads`])
     /// — the build binds such an entry to their versions.
     foreign: Vec<String>,
@@ -421,6 +448,7 @@ impl Planned {
             grain: self.grain,
             resolution: Some(self.resolution),
             window: self.window,
+            outside: 0,
             dims,
             basis,
             admitted_by,
@@ -431,6 +459,7 @@ impl Planned {
             unadmitted_act,
             wanted,
             wanted_over,
+            unserved: self.unserved,
             alternative: None,
             alternative_divergence: None,
             alternative_error: None,
@@ -511,8 +540,10 @@ pub(crate) struct Cube {
 struct CubeKey {
     dataset: String,
     metric: String,
-    /// `None` for the metric's own cells at its resolution; `Some` for
-    /// the cells built at a coarser grain a read asked for.
+    /// `None` for the head — the floor cells over the longest rung,
+    /// the one entry that is built, loaded and landed; `Some` for the
+    /// cells a read serves at a grain, a plan over the head cached
+    /// beside it.
     grain: Option<Resolution>,
     /// The pin's legs for the tables the frame scans — the data. The
     /// other tables' legs and the workspace relations' stay out: a
@@ -526,18 +557,10 @@ struct CubeKey {
 }
 
 impl CubeKey {
-    /// The landed cube's table, in the catalog's `main` schema: the
-    /// metric's own cells, or the cells at a coarser grain beside them.
+    /// The landed head's table, in the catalog's `main` schema. Only
+    /// the head lands; a grain entry has no table.
     fn table(&self) -> String {
-        match self.grain {
-            None => format!("cube__{}__{}", self.dataset, self.metric),
-            Some(grain) => format!(
-                "cube__{}__{}__{}",
-                self.dataset,
-                self.metric,
-                grain.as_str()
-            ),
-        }
+        format!("cube__{}__{}", self.dataset, self.metric)
     }
 
     /// What the head's key tag says: the data legs and the digest.
@@ -552,6 +575,10 @@ const CUBE_SCHEMA: &str = "main";
 /// The head's tags: the key it was built at, and its fact row as JSON.
 const CUBE_KEY_TAG: &str = "glossql.cube.key";
 const CUBE_FACT_TAG: &str = "glossql.cube.fact";
+/// The shape of a head, folded into every digest: a head landed under
+/// another shape — cells at the metric's own resolution over its own
+/// rung, once — misses and is built over.
+const HEAD_SHAPE: &str = "floor cells over the longest rung";
 
 /// A `Hasher` over blake3: every `Hash` impl the digest folds writes
 /// its bytes here, so the digest is the same in every process — the
@@ -580,6 +607,12 @@ impl std::hash::Hasher for Digest {
 struct Reads {
     tables: Vec<String>,
     subjects: Vec<String>,
+    /// Whether the frame serves any column the cube could slice on —
+    /// neither the value, a half nor time-typed. A frame that serves
+    /// none names the judged columns it leaves out
+    /// ([`Fact::unserved`]), so its build reads every column of the
+    /// tables it scans, and the digest folds them.
+    sliceable: bool,
 }
 
 fn reads_of(
@@ -588,6 +621,10 @@ fn reads_of(
     pointers: &[crate::behavior::Pointer],
 ) -> Reads {
     let scanned = crate::provenance::scanned_tables(plan, dataset);
+    let sliceable = plan.schema().fields().iter().any(|f| {
+        !matches!(f.name().as_str(), "value" | "num" | "den")
+            && !crate::whatif::is_temporal(f.data_type())
+    });
     let mut subjects: std::collections::BTreeSet<String> =
         crate::provenance::served_sources(plan, dataset)
             .into_values()
@@ -606,6 +643,7 @@ fn reads_of(
     Reads {
         tables,
         subjects: subjects.into_iter().collect(),
+        sliceable,
     }
 }
 
@@ -629,6 +667,7 @@ fn metric_digest(
     reads: &Reads,
     judged: &Judged,
     settings: &Settings,
+    shapes: &HashMap<String, glossql_catalog::Shape>,
 ) -> String {
     use std::hash::{Hash, Hasher};
     fn verdict(h: &mut impl Hasher, m: &HashMap<String, Verdict>, subject: &str) {
@@ -648,6 +687,7 @@ fn metric_digest(
         }
     }
     let mut h = Digest(blake3::Hasher::new());
+    HEAD_SHAPE.hash(&mut h);
     slot.subject.hash(&mut h);
     slot.aspect.hash(&mut h);
     slot.body.hash(&mut h);
@@ -661,6 +701,23 @@ fn metric_digest(
         verdict(&mut h, &judged.behavior, s);
         gloss(&mut h, &judged.behavior_gloss, s);
         gloss(&mut h, &judged.dimension, s);
+    }
+    // A frame with nothing to slice on reads the admission of every
+    // column of the tables it scans, to name what it leaves out.
+    if !reads.sliceable {
+        for t in &reads.tables {
+            let Some(shape) = shapes.get(t) else {
+                continue;
+            };
+            let mut columns: Vec<&String> = shape.columns.keys().collect();
+            columns.sort();
+            for c in columns {
+                let s = format!("{t}.{c}");
+                s.hash(&mut h);
+                verdict(&mut h, &judged.relevance, &s);
+                gloss(&mut h, &judged.dimension, &s);
+            }
+        }
     }
     for p in &judged.pointers {
         if !reads.tables.contains(&p.src_t) && !reads.tables.contains(&p.dst_t) {
@@ -1059,6 +1116,9 @@ struct Surface {
     slots: Vec<QuerySlot>,
     judged: Judged,
     settings: Settings,
+    /// The bound dataset's tables and their columns at the pin — what
+    /// a frame could serve and does not ([`Fact::unserved`]).
+    shapes: HashMap<String, glossql_catalog::Shape>,
     pin_text: String,
     cache: CubeCache,
     ctx: SessionContext,
@@ -1088,6 +1148,7 @@ impl Surface {
             slots,
             judged,
             settings,
+            shapes: rctx.shapes.clone(),
             pin_text: rctx.pin.text.clone(),
             cache: shared.cube(),
             ctx: shared.session_ctx(),
@@ -1095,19 +1156,17 @@ impl Surface {
         }))
     }
 
-    /// One metric's entry: its own cells (`None`), or the cells built
-    /// at a coarser grain over that grain's rung. A hit, or one
-    /// single-flight build shared by every reader of the key. The key
-    /// is cut from the frame as planned — planning scans nothing, and
-    /// the build takes the plan along rather than planning twice; a
-    /// frame that does not plan keys on the grounding alone, and its
-    /// build abstains with the planner's reason.
-    async fn entry(
+    /// One metric's key at this surface, with the frame as planned.
+    /// The key is cut from the plan — planning scans nothing, and the
+    /// build takes the plan along rather than planning twice; a frame
+    /// that does not plan keys on the grounding alone, and its build
+    /// abstains with the planner's reason.
+    async fn key(
         &self,
         shared: &Arc<Shared>,
         slot: &QuerySlot,
         grain: Option<Resolution>,
-    ) -> Arc<Cube> {
+    ) -> (CubeKey, Option<datafusion::logical_expr::LogicalPlan>) {
         let probe = match frame_sql(&slot.body) {
             Some(sql) => crate::whatif::build_plan(shared, &self.ctx, &sql)
                 .await
@@ -1123,17 +1182,40 @@ impl Surface {
             metric: slot.aspect.clone(),
             grain,
             pin: glossql_glossary::table_legs(&self.pin_text, &self.dataset, &reads.tables),
-            digest: metric_digest(slot, probe.as_ref(), &reads, &self.judged, &self.settings),
+            digest: metric_digest(
+                slot,
+                probe.as_ref(),
+                &reads,
+                &self.judged,
+                &self.settings,
+                &self.shapes,
+            ),
         };
-        if let Some(cube) = self.cache.inner.get(&key).await {
-            // A version-bound entry — its frame scans workspace
-            // relations — serves while their versions stand.
-            if cube.version_bound.as_ref().is_none_or(|(relations, at)| {
-                *at == glossql_glossary::version_view(&self.version, relations)
-            }) {
-                return cube;
-            }
-            self.cache.inner.invalidate(&key).await;
+        (key, probe)
+    }
+
+    /// The cached entry under `key`, where it stands. A version-bound
+    /// entry — its frame scans workspace relations — serves while
+    /// their versions stand, and is dropped when they moved.
+    async fn standing(&self, key: &CubeKey) -> Option<Arc<Cube>> {
+        let cube = self.cache.inner.get(key).await?;
+        if cube.version_bound.as_ref().is_none_or(|(relations, at)| {
+            *at == glossql_glossary::version_view(&self.version, relations)
+        }) {
+            return Some(cube);
+        }
+        self.cache.inner.invalidate(key).await;
+        None
+    }
+
+    /// One metric's head: its cells at the floor over the longest
+    /// rung. A hit, or one single-flight fill shared by every reader
+    /// of the key — the landed head where one stands at this key, the
+    /// build otherwise, landed as it finishes.
+    async fn entry(&self, shared: &Arc<Shared>, slot: &QuerySlot) -> Arc<Cube> {
+        let (key, probe) = self.key(shared, slot, None).await;
+        if let Some(cube) = self.standing(&key).await {
+            return cube;
         }
         self.cache
             .inner
@@ -1150,7 +1232,6 @@ impl Surface {
                     "cube",
                     dataset = %self.dataset,
                     metric = %slot.aspect,
-                    grain = grain.map(Resolution::as_str).unwrap_or(""),
                     rows = tracing::field::Empty,
                 );
                 // Boxed: the build's future carries the whole frame —
@@ -1159,13 +1240,48 @@ impl Surface {
                 // stack it overflows a test thread's 2 MB, which is the
                 // same reason every `build_plan` call below is pinned.
                 let cube = tracing::Instrument::instrument(
-                    Box::pin(build_metric(shared, self, slot, grain, probe)),
+                    Box::pin(build_metric(shared, self, slot, probe)),
                     span.clone(),
                 )
                 .await;
                 span.record("rows", cube.cells.num_rows());
                 self.land_head(&key, &cube).await;
                 Arc::new(cube)
+            })
+            .await
+    }
+
+    /// One metric's cells at a grain: a plan over its head, windowed
+    /// to the ladder's rung for the grain, cached beside the head
+    /// under the same key legs. Never a build and never landed — the
+    /// head is what lands, and a fresh instance derives from what it
+    /// loads. A head that abstains serves as it is.
+    async fn at_grain(
+        &self,
+        shared: &Arc<Shared>,
+        slot: &QuerySlot,
+        head: Arc<Cube>,
+        grain: Resolution,
+    ) -> Arc<Cube> {
+        if !head.fact.applicable {
+            return head;
+        }
+        let (key, _) = self.key(shared, slot, Some(grain)).await;
+        if let Some(cube) = self.standing(&key).await {
+            return cube;
+        }
+        let window = self.settings.windows.get(&grain).cloned();
+        self.cache
+            .inner
+            .get_with(key, async {
+                match derive(&head, grain, window.as_deref()).await {
+                    Ok(cube) => Arc::new(cube),
+                    Err(Abstain(reason)) => Arc::new(Cube {
+                        fact: Fact::abstain(&slot.aspect, reason),
+                        cells: RecordBatch::new_empty(series_schema()),
+                        version_bound: head.version_bound.clone(),
+                    }),
+                }
             })
             .await
     }
@@ -1276,16 +1392,16 @@ impl Surface {
     }
 }
 
-/// Every metric's own entry — what `metric_axes()` describes. A
-/// landing calls it to rebuild and land the cubes over the tables it
-/// moved: every other entry is a hit.
+/// Every metric's head — what `metric_axes()` describes. A landing
+/// calls it to rebuild and land the heads over the tables it moved:
+/// every other entry is a hit, and every grain follows from its head.
 pub(crate) async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
     let Some(surface) = Surface::load(shared).await? else {
         return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(surface.slots.len());
     for slot in &surface.slots {
-        out.push(surface.entry(shared, slot, None).await);
+        out.push(surface.entry(shared, slot).await);
     }
     Ok(out)
 }
@@ -1362,7 +1478,7 @@ async fn write_fact(
         .iter()
         .find(|s| s.subject == subject && s.aspect == aspect)
         .ok_or_else(withheld)?;
-    let planned = Box::pin(plan(shared, &surface, slot, None, None)).await?;
+    let planned = Box::pin(plan(shared, &surface, slot, None)).await?;
     let mut fact = planned.fact(aspect);
     // Beside the serving frame, the newest other writing on the slot:
     // the one this write superseded, or the standing human grounding
@@ -1395,8 +1511,8 @@ async fn write_fact(
             body: other.body.clone(),
             rank: if other.actor_kind == "human" { 0 } else { 1 },
         };
-        let now = Box::pin(build_metric(shared, &surface, slot, None, None)).await;
-        let before = Box::pin(build_metric(shared, &surface, &before, None, None)).await;
+        let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
+        let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
         // Like against like: a ratio's monthly value and a flow's
         // total are different numbers, and the row says so instead.
         fact.superseded_divergence = Some(if !before.fact.applicable {
@@ -1500,10 +1616,9 @@ async fn build_metric(
     shared: &Arc<Shared>,
     surface: &Surface,
     slot: &QuerySlot,
-    asked: Option<Resolution>,
     probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Cube {
-    match build(shared, surface, slot, asked, probe).await {
+    match build(shared, surface, slot, probe).await {
         Ok(cube) => cube,
         // An abstention binds to no version: its reasons derive from
         // the plan over the digest-covered surface, so no write flips
@@ -1542,14 +1657,12 @@ type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
 
 /// The plan stage — see [`Planned`]. Everything here is decided by
 /// the plan's schema, its provenance and the judged surface; nothing
-/// scans. `asked` is the coarser grain a read asked for, or none for
-/// the metric's own resolution; `probe` the frame's plan where the
-/// caller built it for the key.
+/// scans. `probe` is the frame's plan where the caller built it for
+/// the key.
 async fn plan(
     shared: &Arc<Shared>,
     surface: &Surface,
     slot: &QuerySlot,
-    asked: Option<Resolution>,
     probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Result<Planned, Abstain> {
     let Surface {
@@ -1557,6 +1670,7 @@ async fn plan(
         dataset,
         judged,
         settings,
+        shapes,
         ..
     } = surface;
     let dataset = dataset.as_str();
@@ -1650,12 +1764,10 @@ async fn plan(
     let mut judged_current = time_current;
     // The metric's own resolution is the coarser of the judged cadence
     // and the declared floor — the floor alone where the verdict names
-    // no cadence. A read at a coarser grain builds at that grain.
-    // Either way the window is the ladder's rung for the resolution
-    // built, so a month series spans the month rung whatever the
-    // metric's own cadence.
-    let own = cadence.map_or(settings.floor, |c| c.max(settings.floor));
-    let resolution = asked.map_or(own, |g| g.max(own));
+    // no cadence — and its window the ladder's rung for it. The head
+    // itself stands at the floor, over the longest rung any grain from
+    // this resolution up is served over ([`build`]).
+    let resolution = cadence.map_or(settings.floor, |c| c.max(settings.floor));
     let window = settings.windows.get(&resolution).cloned();
 
     // A ratio declares itself by serving both halves of its division —
@@ -1895,6 +2007,44 @@ async fn plan(
             ));
         }
     }
+    // Where nothing served can be an axis and the author listed none,
+    // the frame is a date and a value: the row names the columns of
+    // the tables it scans that a gloss or a verdict already admits and
+    // it does not serve — the axis is judged, the road is to serve it.
+    let mut unserved: Vec<String> = Vec::new();
+    if cand.is_empty() && authored.is_none() {
+        let served: std::collections::HashSet<&String> = sources.values().flatten().collect();
+        for table in &scanned {
+            let Some(shape) = shapes.get(table) else {
+                continue;
+            };
+            for column in shape.columns.keys() {
+                let subject = format!("{table}.{column}");
+                if served.contains(&subject) {
+                    continue;
+                }
+                // The gloss is the read policy over the verdict, here
+                // as in admission: `none` closes the column, a word
+                // admits it, and without one the verdict decides.
+                let admitted = match judged
+                    .dimension
+                    .get(&subject)
+                    .and_then(|(v, _)| v["value"].as_str())
+                {
+                    Some("none") => false,
+                    Some("primary" | "supporting") => true,
+                    _ => judged
+                        .relevance
+                        .get(&subject)
+                        .is_some_and(|v| v.body["applicable"].as_bool() == Some(true)),
+                };
+                if admitted {
+                    unserved.push(subject);
+                }
+            }
+        }
+        unserved.sort();
+    }
     let sql = sql.to_string();
     Ok(Planned {
         body,
@@ -1910,6 +2060,7 @@ async fn plan(
         unadmitted,
         axes_basis,
         wanted,
+        unserved,
         foreign: workspace_reads(&probe),
     })
 }
@@ -1918,14 +2069,22 @@ async fn build(
     shared: &Arc<Shared>,
     surface: &Surface,
     slot: &QuerySlot,
-    asked: Option<Resolution>,
     probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Result<Cube, Abstain> {
-    let Surface { ctx, version, .. } = surface;
+    let Surface {
+        ctx,
+        version,
+        settings,
+        ..
+    } = surface;
     let metric = slot.aspect.as_str();
+    // The head's own grain: the floor, whatever the metric's cadence,
+    // so every grain from the resolution up derives exactly — a weekly
+    // series' months come from its days, never from its weeks.
+    let floor = settings.floor;
     // Boxed: the plan stage's future is most of the build's, and a
     // build constructed on the stack under a write's depth must fit.
-    let planned = Box::pin(plan(shared, surface, slot, asked, probe)).await?;
+    let planned = Box::pin(plan(shared, surface, slot, probe)).await?;
     // What binds the entry, where the frame scans workspace relations.
     let bound = |foreign: &[String]| {
         (!foreign.is_empty()).then(|| {
@@ -1957,6 +2116,7 @@ async fn build(
         mut unadmitted,
         axes_basis,
         wanted,
+        unserved,
         mut foreign,
         ..
     } = planned;
@@ -2057,29 +2217,63 @@ async fn build(
         }
     }
 
-    // The window, measured from the data's own edge: the bucket of
-    // the latest observation less the rung's interval, and every
-    // series keeps the buckets after it. An unbounded rung keeps all.
-    let since = match &window {
-        Some(w) => {
-            let q = format!(
-                "SELECT {} - INTERVAL '{}' AS since FROM ({sql})",
-                period_expr(&format!("max({tcol_q})", tcol_q = qi(tcol)), resolution),
-                w.replace('\'', "''")
-            );
-            let batches = run(shared, ctx, &q).await?;
-            batches
-                .iter()
-                .find(|b| b.num_rows() > 0)
-                .and_then(|b| {
-                    let col = b.column_by_name("since")?;
-                    (!col.is_null(0))
-                        .then(|| array_value_to_string(col, 0).ok())
-                        .flatten()
-                })
-                .map(|t| format!("TIMESTAMP '{t}'"))
-        }
-        None => None,
+    // The windows and the data's reach, one pass over the frame: the
+    // edge (the latest observation) and the periods the data holds at
+    // the metric's resolution. A grain's window is the edge's bucket
+    // at that grain less the grain's rung; the head keeps every floor
+    // bucket after the earliest window of the grains from the
+    // resolution up, so each of them derives from it whole. A grain
+    // without a rung is unbounded, and so is the head.
+    let p_own = period_expr(&qi(tcol), resolution);
+    let served: Vec<Resolution> = Resolution::ALL
+        .into_iter()
+        .filter(|r| *r >= resolution)
+        .collect();
+    let unbounded = served.iter().any(|r| !settings.windows.contains_key(r));
+    let sinces: String = served
+        .iter()
+        .filter_map(|r| Some((r, settings.windows.get(r)?)))
+        .map(|(r, w)| {
+            format!(
+                ", {} - INTERVAL '{}' AS \"since_{}\"",
+                period_expr("edge", *r),
+                w.replace('\'', "''"),
+                r.as_str()
+            )
+        })
+        .collect();
+    let q = format!(
+        "SELECT edge, spanned{sinces} FROM (\
+            SELECT max({tcol_q}) AS edge, \
+                   count(DISTINCT {p_own}) FILTER (WHERE value IS NOT NULL) AS spanned \
+            FROM ({sql}))",
+        tcol_q = qi(tcol)
+    );
+    let batches = run(shared, ctx, &q).await?;
+    let row = batches.iter().find(|b| b.num_rows() > 0);
+    let text = |name: &str| -> Option<String> {
+        let col = row?.column_by_name(name)?;
+        (!col.is_null(0))
+            .then(|| array_value_to_string(col, 0).ok())
+            .flatten()
+    };
+    let spanned = int_column(&batches, "spanned")
+        .map_err(|e| Abstain(e.to_string()))?
+        .first()
+        .copied()
+        .unwrap_or(0);
+    let since_at = |r: Resolution| text(&format!("since_{}", r.as_str()));
+    // The metric's own window — what its series is served over, what
+    // the members rank over, and what `outside` counts against.
+    let since_own = since_at(resolution).map(|t| format!("TIMESTAMP '{t}'"));
+    let since = if unbounded {
+        None
+    } else {
+        served
+            .iter()
+            .filter_map(|r| since_at(*r))
+            .min()
+            .map(|t| format!("TIMESTAMP '{t}'"))
     };
 
     let mut cells: Vec<Cell> = Vec::new();
@@ -2098,11 +2292,11 @@ async fn build(
             }
         };
 
-    // The total series.
+    // The total series, at the floor over the head's window.
     let total = series(
         shared,
         ctx,
-        &total_sql(sql, tcol, verb, resolution, since.as_deref()),
+        &total_sql(sql, tcol, verb, floor, since.as_deref()),
         false,
     )
     .await?;
@@ -2110,12 +2304,15 @@ async fn build(
 
     // Member series per admitted dimension, same verb, same window —
     // independent plans, driven concurrently. A bucketed dimension
-    // names its top members by weight and folds the rest into
-    // 'other'; the set is resolved first and spliced as literals,
-    // deterministic (weight, then name) so two builds at one pin agree.
+    // names its top members by weight over the metric's own window
+    // and folds the rest into 'other'; the set is resolved first and
+    // spliced as literals, deterministic (weight, then name) so two
+    // builds at one pin agree.
     let members = dims.iter().map(|dcol| {
         let bucketed = bucketed.iter().any(|b| b == dcol);
         let since = since.as_deref();
+        let since_own = since_own.as_deref();
+        let p_own = p_own.as_str();
         async move {
             let member = if bucketed {
                 let weight = if verb == "ratio" {
@@ -2123,9 +2320,7 @@ async fn build(
                 } else {
                     "sum(value)"
                 };
-                let clause = since.map_or(String::new(), |s| {
-                    format!(" AND {} > {s}", period_expr(&qi(tcol), resolution))
-                });
+                let clause = since_own.map_or(String::new(), |s| format!(" AND {p_own} > {s}"));
                 let q = format!(
                     "SELECT CAST({dcol_q} AS VARCHAR) AS mc_member FROM ({sql}) \
                      WHERE {dcol_q} IS NOT NULL{clause} GROUP BY 1 \
@@ -2169,7 +2364,7 @@ async fn build(
             let rows = series(
                 shared,
                 ctx,
-                &member_sql(sql, tcol, dcol, &member, verb, resolution, since),
+                &member_sql(sql, tcol, dcol, &member, verb, floor, since),
                 true,
             )
             .await?;
@@ -2202,7 +2397,7 @@ async fn build(
                 .get("alternative")
                 .and_then(Value::as_str)
                 .unwrap_or("(rival)");
-            match rival_series(shared, surface, alt_sql, verb, resolution, since.as_deref()).await {
+            match rival_series(shared, surface, alt_sql, verb, floor, since.as_deref()).await {
                 Ok((rows, rival_verb, rival_foreign)) => {
                     foreign.extend(rival_foreign);
                     foreign.sort();
@@ -2233,6 +2428,23 @@ async fn build(
         }
     }
 
+    // The head lands sorted by period, so a reader's window prunes
+    // the file's row groups; the cells then read in one order
+    // wherever they are served from.
+    cells.sort_by(|a, b| {
+        a.period
+            .cmp(&b.period)
+            .then_with(|| a.dimension.cmp(&b.dimension))
+            .then_with(|| a.member.cmp(&b.member))
+    });
+    let cells = cells_batch(&slot.aspect, &cells);
+    // What the data holds at the resolution and the window leaves out:
+    // the periods the frame spans less the periods the total series
+    // serves inside the metric's own window — counted over the head,
+    // which holds every bucket the window could keep.
+    let inside = periods_inside(&cells, resolution, since_own.as_deref()).await?;
+    let outside = (spanned - inside).max(0);
+
     Ok(Cube {
         fact: Fact {
             metric: metric.to_string(),
@@ -2244,6 +2456,7 @@ async fn build(
             grain,
             resolution: Some(resolution),
             window,
+            outside,
             dims,
             basis,
             admitted_by,
@@ -2257,13 +2470,177 @@ async fn build(
                 .collect(),
             wanted: wanted.iter().map(|(f, _)| f.clone()).collect(),
             wanted_over: wanted.into_iter().map(|(_, s)| s).collect(),
+            unserved,
             alternative,
             alternative_divergence,
             alternative_error,
             superseded_divergence: None,
         },
-        cells: cells_batch(&slot.aspect, &cells),
+        cells,
         version_bound: bound(&foreign),
+    })
+}
+
+/// A context over one cube's cells as the table `h` — the cached
+/// batch mounted as a `MemTable`, copied into nothing; every grain
+/// and every count over a head is a plan on it.
+fn over_cells(cells: &RecordBatch) -> Result<SessionContext, Abstain> {
+    let ctx = SessionContext::new();
+    let table =
+        datafusion::datasource::MemTable::try_new(cells.schema(), vec![vec![cells.clone()]])
+            .map_err(|e| Abstain(e.to_string()))?;
+    ctx.register_table("h", Arc::new(table))
+        .map_err(|e| Abstain(e.to_string()))?;
+    Ok(ctx)
+}
+
+/// The periods of a head's total series at a resolution, after
+/// `since` — what the metric's own window serves; every period when
+/// the window is unbounded.
+async fn periods_inside(
+    cells: &RecordBatch,
+    resolution: Resolution,
+    since: Option<&str>,
+) -> Result<i64, Abstain> {
+    if cells.num_rows() == 0 {
+        return Ok(0);
+    }
+    let ctx = over_cells(cells)?;
+    let p = period_expr("period", resolution);
+    let w = since.map_or(String::new(), |s| format!(" AND {p} > {s}"));
+    let batches = ctx
+        .sql(&format!(
+            "SELECT count(DISTINCT {p}) AS n FROM h WHERE dimension = ''{w}"
+        ))
+        .await
+        .map_err(|e| Abstain(e.to_string()))?
+        .collect()
+        .await
+        .map_err(|e| Abstain(e.to_string()))?;
+    Ok(int_column(&batches, "n")
+        .map_err(|e| Abstain(e.to_string()))?
+        .first()
+        .copied()
+        .unwrap_or(0))
+}
+
+/// The cells at a grain, derived from a head: each row folded into
+/// its bucket at the grain by the verb it carries — a flow sums, a
+/// ratio re-divides its summed halves, a stock takes the bucket's
+/// latest floor cell — over the grain's window, measured back from
+/// the head's own edge. The head holds every floor bucket any window
+/// from the metric's resolution up can keep ([`build`]), so nothing
+/// here scans. A bucketed stock member (`other`) takes the bucket's
+/// latest `other` cell, where the raw query would take each of its
+/// raw members' own latest; the fact row's `bucketed` names it.
+async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<Cube, Abstain> {
+    let ctx = over_cells(&head.cells)?;
+    let sql = |q: String| {
+        let ctx = ctx.clone();
+        async move {
+            ctx.sql(&q)
+                .await
+                .map_err(|e| Abstain(e.to_string()))?
+                .collect()
+                .await
+                .map_err(|e| Abstain(e.to_string()))
+        }
+    };
+    let p = period_expr("period", grain);
+    let since = match window {
+        Some(w) if head.cells.num_rows() > 0 => {
+            let edge = sql(format!(
+                "SELECT {} - INTERVAL '{}' AS since FROM h",
+                period_expr("max(period)", grain),
+                w.replace('\'', "''")
+            ))
+            .await?;
+            edge.iter()
+                .find(|b| b.num_rows() > 0)
+                .and_then(|b| {
+                    let col = b.column_by_name("since")?;
+                    (!col.is_null(0))
+                        .then(|| array_value_to_string(col, 0).ok())
+                        .flatten()
+                })
+                .map(|t| format!("TIMESTAMP '{t}'"))
+        }
+        _ => None,
+    };
+    let w = since.map_or(String::new(), |s| format!(" WHERE {p} > {s}"));
+    let batches = sql(format!(
+        "WITH w AS (SELECT * FROM h{w}) \
+         SELECT dimension, member, {p} AS period, sum(value) AS value, \
+                CAST(NULL AS DOUBLE) AS num, CAST(NULL AS DOUBLE) AS den, behavior \
+         FROM w WHERE behavior = 'flow' GROUP BY 1, 2, 3, 7 \
+         UNION ALL \
+         SELECT dimension, member, {p} AS period, sum(num) / nullif(sum(den), 0) AS value, \
+                sum(num) AS num, sum(den) AS den, behavior \
+         FROM w WHERE behavior = 'ratio' GROUP BY 1, 2, 3, 7 \
+         UNION ALL \
+         SELECT dimension, member, period, value, num, den, behavior FROM (\
+            SELECT dimension, member, {p} AS period, value, num, den, behavior, \
+                   row_number() OVER (PARTITION BY dimension, member, {p} \
+                                      ORDER BY period DESC) AS rn \
+            FROM w WHERE behavior = 'stock') WHERE rn = 1 \
+         ORDER BY period, dimension, member"
+    ))
+    .await?;
+    let mut cells: Vec<Cell> = Vec::new();
+    for b in batches.iter().filter(|b| b.num_rows() > 0) {
+        let col = |n: &str| -> Result<&ArrayRef, Abstain> {
+            b.column_by_name(n)
+                .ok_or_else(|| Abstain(format!("the grain served no {n}")))
+        };
+        let floats = |n: &str| -> Result<Float64Array, Abstain> {
+            cast(col(n)?, &DataType::Float64)
+                .map_err(|e| Abstain(e.to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .cloned()
+                .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
+        };
+        let period = cast(
+            col("period")?,
+            &DataType::Timestamp(TimeUnit::Nanosecond, None),
+        )
+        .map_err(|e| Abstain(e.to_string()))?;
+        let period = period
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .ok_or_else(|| Abstain("period did not read as a timestamp".into()))?;
+        let (dimension, member, behavior) = (col("dimension")?, col("member")?, col("behavior")?);
+        let (value, num, den) = (floats("value")?, floats("num")?, floats("den")?);
+        let at = |c: &Float64Array, i: usize| (!c.is_null(i)).then(|| c.value(i));
+        for i in 0..b.num_rows() {
+            if value.is_null(i) || period.is_null(i) {
+                continue;
+            }
+            let text =
+                |c: &ArrayRef| array_value_to_string(c, i).map_err(|e| Abstain(e.to_string()));
+            let behavior: &'static str = match text(behavior)?.as_str() {
+                "stock" => "stock",
+                "ratio" => "ratio",
+                _ => "flow",
+            };
+            cells.push(Cell {
+                dimension: text(dimension)?,
+                member: text(member)?,
+                period: period.value(i),
+                value: value.value(i),
+                num: at(&num, i),
+                den: at(&den, i),
+                behavior,
+            });
+        }
+    }
+    let mut fact = head.fact.clone();
+    fact.resolution = Some(grain);
+    fact.window = window.map(str::to_string);
+    Ok(Cube {
+        cells: cells_batch(&fact.metric, &cells),
+        fact,
+        version_bound: head.version_bound.clone(),
     })
 }
 
@@ -2709,14 +3086,12 @@ pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, Sess
 
 /// `metric_series(grain => …)` — the cells of every current grounding:
 /// `(metric, dimension, member, period, value, num, den, behavior)`.
-/// Without a grain each metric serves its own cells, at its own
-/// resolution over its own rung. With one, a metric at that resolution
-/// serves its own cells; a finer metric serves the cells built at the
-/// asked grain over that grain's rung — the same grounding, verb and
-/// axes, a second entry beside the first; a metric coarser than the
-/// asked grain serves no rows — honest absence. `period` is the
-/// bucket's start, a typed timestamp. A cache entry is never stale:
-/// it is a hit or a miss.
+/// Without a grain each metric serves its cells at its own resolution
+/// over its own rung; with one, at the asked grain over that grain's
+/// rung — either a plan over the metric's head, cached beside it. A
+/// metric coarser than the asked grain serves no rows — honest
+/// absence. `period` is the bucket's start, a typed timestamp. A cache
+/// entry is never stale: it is a hit or a miss.
 ///
 /// The cached cube is the table. Its cells are handed to the planner
 /// as they sit in the cache — one batch per metric, `Arc`-shared,
@@ -2729,20 +3104,22 @@ pub(crate) async fn metric_series_batch(
     let mut partitions = Vec::new();
     if let Some(surface) = Surface::load(shared).await? {
         for slot in &surface.slots {
-            let own = surface.entry(shared, slot, None).await;
+            let head = surface.entry(shared, slot).await;
             // An abstained metric has no resolution and no cells.
-            let Some(resolution) = own.fact.resolution else {
+            let Some(resolution) = head.fact.resolution else {
                 continue;
             };
-            let cells = match grain {
-                None => own.cells.clone(),
-                Some(g) if g == resolution => own.cells.clone(),
-                Some(g) if g > resolution => {
-                    surface.entry(shared, slot, Some(g)).await.cells.clone()
-                }
-                Some(_) => continue,
-            };
-            partitions.push(cells);
+            let asked = grain.unwrap_or(resolution);
+            if asked < resolution {
+                continue;
+            }
+            partitions.push(
+                surface
+                    .at_grain(shared, slot, head, asked)
+                    .await
+                    .cells
+                    .clone(),
+            );
         }
     }
     Ok(Served {
@@ -2753,9 +3130,9 @@ pub(crate) async fn metric_series_batch(
 
 /// `metric_axes()` — one row per current grounding, the record read:
 /// `(metric, applicable, judged_current, reason, behavior,
-/// behavior_basis, grain, resolution, window, dims, basis,
+/// behavior_basis, grain, resolution, window, outside, dims, basis,
 /// admitted_by, bucketed, unadmitted, unadmitted_why, unadmitted_act, wanted,
-/// wanted_over, alternative, alternative_divergence,
+/// wanted_over, unserved, alternative, alternative_divergence,
 /// alternative_error)`. What the cube
 /// admitted and why not, and
 /// whether the verdicts it admitted on stand at this pin; served from
@@ -2866,6 +3243,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
         ),
         Field::new("resolution", DataType::Utf8, true),
         Field::new("window", DataType::Utf8, true),
+        Field::new("outside", DataType::Int64, false),
         Field::new(
             "dims",
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
@@ -2912,6 +3290,11 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
             true,
         ),
+        Field::new(
+            "unserved",
+            DataType::List(Arc::new(Field::new_list_field(DataType::Utf8, true))),
+            true,
+        ),
         Field::new("alternative", DataType::Utf8, true),
         Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
@@ -2935,6 +3318,9 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.grain),
             text(|f| f.resolution.map(Resolution::as_str)),
             text(|f| f.window.as_deref()),
+            Arc::new(datafusion::arrow::array::Int64Array::from_iter_values(
+                facts.iter().map(|f| f.outside),
+            )),
             list(|f| &f.dims),
             list(|f| &f.basis),
             list(|f| &f.admitted_by),
@@ -2945,6 +3331,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             list(|f| &f.unadmitted_act),
             list(|f| &f.wanted),
             list(|f| &f.wanted_over),
+            list(|f| &f.unserved),
             text(|f| f.alternative.as_deref()),
             text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),

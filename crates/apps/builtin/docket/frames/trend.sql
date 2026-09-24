@@ -1,12 +1,12 @@
 -- One metric's story at the viewer's grain: the metric's own series
 -- (dimension '' — the total at the grounding's own verb) and the
 -- disclosed rival beside it where the grounding names one (dimension
--- 'alternative'). The cells are the cube's at the metric's resolution;
--- the grain re-buckets them by the verb on the server, and the span
--- clips the newest periods here — the frame is the filter, and a
--- grain finer than the metric's resolution serves nothing. `$grain`
--- and `$span` are page params; the reference on the page carries the
--- defaults.
+-- 'alternative'). The cells at the grain are a plan over the metric's
+-- head, folded by the verb each row carries and windowed to the
+-- grain's rung on the server; the span clips the newest periods here
+-- — the frame is the filter, and a grain finer than the metric's
+-- resolution serves nothing. `$grain` and `$span` are page params;
+-- the reference on the page carries the defaults.
 --
 -- The series carry their own names: the chosen one wears the metric's
 -- title, the rival says it is one.

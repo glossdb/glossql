@@ -152,19 +152,24 @@ serves one dataset's.
 
 ## The cube's reads
 
-Two table functions over the cube — every grounded metric's cells at
-its resolution, a query result computed at the read's pin from the
-grounding and the judged verdicts, cached in memory, never recorded.
-Both build what is not built; a cache entry is never stale, it is a
-hit or a miss — keyed by the tables the metric's frame scans and
-everything its build reads (the grounding, the verdicts and glosses
-on the columns it serves, the edges on those tables, the cube
-settings), so a write that reaches no build (a ruling, a note, a
-check's landing, a gloss on another metric's column, a landing on
-another table) keeps the entry hot, and a moved input misses the
-metrics it reaches and no other. The resolution is the
-metric's judged cadence (`temporal_profile`), never finer than the
-`cube` aspect's floor; the window is that aspect's rung for the
+Two table functions over the cube — every grounded metric's cells, a
+query result computed at the read's pin from the grounding and the
+judged verdicts, landed in the catalog under the engine's cache,
+never recorded. One head per metric: its cells at the `cube` aspect's
+floor grain over the longest window of the aspect's ladder, built
+once and landed. Every grain a read serves is a plan over the head —
+a flow sums, a ratio re-divides its summed halves, a stock takes the
+bucket's latest cell — windowed to the ladder's rung for that grain,
+cached beside the head in memory. Both reads build what is not
+built; a cache entry is never stale, it is a hit or a miss — keyed by
+the tables the metric's frame scans and everything its build reads
+(the grounding, the verdicts and glosses on the columns it serves,
+the edges on those tables, the cube settings), so a write that
+reaches no build (a ruling, a note, a check's landing, a gloss on
+another metric's column, a landing on another table) keeps the entry
+hot, and a moved input misses the metrics it reaches and no other. A
+metric's resolution is its judged cadence (`temporal_profile`), never
+finer than the floor; its own series is served over the rung for that
 resolution, measured back from the data's own edge (see the KPI kit).
 A served date that unions several columns of one table — an interval
 table's start and end dates, `+1` and `−1` — is the axis when every
@@ -186,14 +191,13 @@ disclosed rival, anything else a judged dimension column), `member`,
 `period` (a typed timestamp, the bucket's start), `value`, `num` /
 `den` (a ratio's summed halves, NULL elsewhere), `behavior` (the verb
 that made the row — `flow`, `stock` or `ratio`; a rival's may differ
-from the metric's). Without a grain each metric serves its own cells,
-at its own resolution over its own rung. With one (`minute` … `year`)
-a metric at that resolution serves its own cells; a finer metric
-serves cells built at the asked grain over that grain's rung — the
-same grounding, verb and axes, cached beside its own cells — so a day
-metric's months span the month rung; a metric coarser than the asked
-grain serves no rows. The one argument is the grain; filters ride
-`WHERE`.
+from the metric's). Without a grain each metric serves its cells at
+its own resolution over its own rung. With one (`minute` … `year`)
+each metric at or below that resolution serves its cells at the
+asked grain over that grain's rung — a plan over its head, the same
+grounding, verb and axes — so a day metric's months span the month
+rung; a metric coarser than the asked grain serves no rows. The one
+argument is the grain; filters ride `WHERE`.
 
 ### metric_axes()
 
@@ -213,7 +217,10 @@ said otherwise — `marked` when the grounding's `stock` marker did,
 nothing detected a stock and it reads as a flow), `grain` (the grounding's
 declared row identity as served — the build refuses a frame that
 breaks it, and the empty list is an undeclared shape, taken as
-served), `resolution`, `window`, `dims`, `basis`
+served), `resolution`, `window`, `outside` (the periods of data at the
+resolution before the window — what the data holds and the metric's
+own series leaves out; zero when the data fits the rung, and a `cube`
+gloss widening the rung is what moves it), `dims`, `basis`
 and `admitted_by` (per admitted dimension, in `dims` order: the column
 subject whose verdict admitted it, and what decided — `measurement`,
 or `human` / `agent` where a `dimension` gloss or the grounding's
@@ -246,7 +253,12 @@ returning `temporal_profile` over each source column of a served date
 without a verdict, the one returning `dimension_relevance` over each
 candidate column with neither a verdict nor a `dimension` gloss;
 `owed` lists them as `never measured`, and the docket's re-measure
-runs them), `alternative`, `alternative_divergence` (the
+runs them), `unserved` (where the frame serves nothing the cube can
+slice on and the grounding lists no axes: the columns of the tables it
+scans that a `dimension` gloss or an applicable relevance verdict
+admits and the frame does not serve — the axis is judged, the road
+is to serve the column; empty elsewhere), `alternative`,
+`alternative_divergence` (the
 measured disagreement between the metric's total and the rival's over
 their shared periods — with an authored `tolerance` on the disclosing
 assumption the count of breaching periods, otherwise the maximum

@@ -113,6 +113,7 @@ async fn cube_session_on(
                       CASE WHEN $subject LIKE '%.signed' THEN 'irregular'
                            WHEN $subject LIKE 'ticks.%' THEN 'minute'
                            WHEN $subject LIKE 'daily.%' THEN 'day'
+                           WHEN $subject LIKE 'weekly.%' THEN 'week'
                            WHEN $subject LIKE '%.to_date' THEN 'day'
                            ELSE 'month' END AS granularity,
                       CASE WHEN $subject LIKE '%.signed' THEN NULL
@@ -283,10 +284,11 @@ async fn a_landed_head_serves_a_second_instance_without_a_build() {
     assert!(cells.contains("| 12"), "{cells}");
 }
 
-/// A gloss on one metric's axis replaces that metric's head and no
-/// other: the digest of the metric that serves the column moves, the
-/// digest of the one that does not stands, and only the first table
-/// takes a new version.
+/// A gloss on a column replaces the heads whose fact row it can
+/// change and no other: the metric that serves the column slices by
+/// it now, and the metric that serves only a date and a value names
+/// it as the judged column it leaves out. A gloss on a column of a
+/// table neither reads moves nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_gloss_on_one_metrics_axis_replaces_its_head_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -320,15 +322,45 @@ async fn a_gloss_on_one_metrics_axis_replaces_its_head_alone() {
         .await
         .unwrap();
     session.execute(AXES).await.unwrap();
-    assert_eq!(cache.builds(), 3, "one cube rebuilt");
+    assert_eq!(
+        cache.builds(),
+        4,
+        "both rebuilt: points slices by venue, total names it as unserved"
+    );
     assert_ne!(
         lake.version("main", "cube__fin__points").await.unwrap(),
         points
     );
-    assert_eq!(
+    assert_ne!(
         lake.version("main", "cube__fin__total").await.unwrap(),
         total
     );
+    assert_eq!(
+        cell(
+            &session,
+            "SELECT array_to_string(unserved, ',') FROM metric_axes() WHERE metric = 'total';"
+        )
+        .await,
+        "results.constructor_id,results.venue",
+        "the key's verdict and the venue's gloss both admit a column the frame leaves out"
+    );
+    // A gloss on the label table's column: neither frame slices by it
+    // and the total scans only results — nothing rebuilds.
+    let (points, total) = (
+        lake.version("main", "cube__fin__points").await.unwrap(),
+        lake.version("main", "cube__fin__total").await.unwrap(),
+    );
+    session
+        .execute(r#"GLOSS dimension ON constructors.label AS $${"value": "none"}$$;"#)
+        .await
+        .unwrap();
+    session.execute(AXES).await.unwrap();
+    assert_eq!(
+        lake.version("main", "cube__fin__total").await.unwrap(),
+        total,
+        "a gloss on a table the frame does not scan keeps the head"
+    );
+    let _ = points;
 }
 
 /// A landing rebuilds the cubes over the table it moved and re-runs the
@@ -417,6 +449,23 @@ async fn a_landing_rebuilds_the_cubes_over_the_table_it_moved() {
     assert!(
         n.contains("54"),
         "the re-run voice counts the new rows: {n}"
+    );
+    // Every grain follows from the landed head: the years after the
+    // import reach the new rows and cost no build.
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'year') \
+             WHERE metric = 'points' AND dimension = '';",
+        )
+        .await,
+        2.0,
+        "both years from the head",
+    );
+    assert_eq!(
+        cache.builds(),
+        2,
+        "a grain after a landing derives, never builds"
     );
 }
 
@@ -2234,12 +2283,12 @@ async fn the_cache_builds_once_and_misses_when_the_surface_or_data_moves() {
     );
 }
 
-/// A read at a grain coarser than a metric's resolution is its own
-/// entry: built once from the grounding over that grain's rung, a hit
-/// after. The metric's own cells serve a read at its own resolution,
-/// and a finer grain serves nothing; neither builds.
+/// A read at a grain coarser than a metric's resolution is a plan
+/// over the metric's head, cached as its own entry beside it: nothing
+/// scans, the builds count stands. The metric's own resolution is the
+/// same derivation, and a finer grain serves nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_coarser_grain_is_its_own_entry_built_once() {
+async fn a_coarser_grain_is_a_plan_over_the_head_never_a_build() {
     let months = dated(
         vec![Field::new("value", DataType::Float64, false)],
         MONTH_STARTS.iter().map(|s| 19723 + s).collect(),
@@ -2279,11 +2328,7 @@ async fn a_coarser_grain_is_its_own_entry_built_once() {
         6.0,
         "year cells",
     );
-    assert_eq!(
-        cache.builds(),
-        4,
-        "one more build per metric, at the asked grain"
-    );
+    assert_eq!(cache.builds(), 2, "a grain derives from the head: no build");
     let year = |metric: &'static str, period: &'static str| {
         let session = &session;
         async move {
@@ -2309,7 +2354,7 @@ async fn a_coarser_grain_is_its_own_entry_built_once() {
         "SELECT count(*) FROM metric_series(grain => 'year');",
     )
     .await;
-    assert_eq!(cache.builds(), 4, "a repeat at the grain is a hit");
+    assert_eq!(cache.builds(), 2, "a repeat at the grain is a hit");
 
     near(
         number(
@@ -2331,10 +2376,284 @@ async fn a_coarser_grain_is_its_own_entry_built_once() {
     );
     assert_eq!(
         cache.builds(),
-        4,
+        2,
         "neither the own grain nor a finer one builds"
     );
-    assert_eq!(cache.entries().await, 4, "two entries per metric");
+    assert_eq!(
+        cache.entries().await,
+        6,
+        "per metric: the head, its own resolution, the year"
+    );
+}
+
+/// Every grain is the raw query at that grain: a flow's months sum
+/// its days, a stock's month is its latest day, a ratio's month
+/// re-divides its summed halves — and a weekly series' months are
+/// exact, because the head stands at the floor (days), never at the
+/// cadence (weeks), so a week straddling a month boundary folds each
+/// observation into its own month.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_grain_is_the_raw_query_at_that_grain() {
+    // Daily rows, 2024-01-01 .. 2024-04-09 (100 days): value rises,
+    // the halves make a ratio that drifts.
+    let daily = dated(
+        vec![
+            Field::new("value", DataType::Float64, false),
+            Field::new("num", DataType::Float64, false),
+            Field::new("den", DataType::Float64, false),
+        ],
+        (0..100).map(|i| 19723 + i).collect(),
+        vec![
+            Arc::new(Float64Array::from(
+                (0..100).map(|i| (i % 7) as f64 + 1.0).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(
+                (0..100).map(|i| (i % 5) as f64).collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(
+                (0..100).map(|i| (i % 3) as f64 + 1.0).collect::<Vec<_>>(),
+            )),
+        ],
+    );
+    // Fridays from 2024-01-05: a week that starts in January and
+    // observes in February (2024-02-02) is the straddle.
+    let weekly = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        (0..20).map(|i| 19723 + 4 + 7 * i).collect(),
+        vec![Arc::new(Float64Array::from(
+            (0..20).map(|i| i as f64 + 1.0).collect::<Vec<_>>(),
+        ))],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("daily", daily), ("weekly", weekly)],
+        &[
+            r#"DECLARE ASPECT flow WITH $${"title": "Flow"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT level WITH $${"title": "Level"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT share WITH $${"title": "Share"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT weekly_flow WITH $${"title": "Weekly"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS flow ON fin AS $${"sql": "SELECT date, value FROM daily"}$$;"#,
+            r#"GLOSS level ON fin AS $${"sql": "SELECT date, value FROM daily", "behavior": "stock"}$$;"#,
+            r#"GLOSS share ON fin AS $${"sql": "SELECT date, num / den AS value, num, den FROM daily"}$$;"#,
+            r#"GLOSS weekly_flow ON fin AS $${"sql": "SELECT date, value FROM weekly"}$$;"#,
+            "SELECT judge_time() FROM daily.date;",
+            "SELECT judge_time() FROM weekly.date;",
+        ],
+    )
+    .await;
+    let axes = grid(
+        &session,
+        "SELECT metric, resolution, behavior FROM metric_axes() ORDER BY metric;",
+    )
+    .await;
+    for want in [
+        "flow        | day        | flow",
+        "level       | day        | stock",
+        "share       | day        | ratio",
+        "weekly_flow | week       | flow",
+    ] {
+        assert!(axes.contains(want), "{want} in\n{axes}");
+    }
+
+    // The derived month against the raw query at month, per verb.
+    let agree = |metric: &'static str, raw: &'static str| {
+        let session = &session;
+        async move {
+            let sql = format!(
+                "SELECT count(*) FILTER (WHERE abs(m.value - r.value) > 1e-9) AS off, count(*) AS n \
+                 FROM metric_series(grain => 'month') m \
+                 JOIN ({raw}) r ON r.period = m.period \
+                 WHERE m.metric = '{metric}' AND m.dimension = ''"
+            );
+            let got = grid(session, &sql).await;
+            assert!(
+                got.contains("| 0   |"),
+                "{metric} disagrees with the raw month:\n{got}"
+            );
+            assert!(
+                !got.contains("| 0   | 0"),
+                "{metric} shares no month with the raw query:\n{got}"
+            );
+        }
+    };
+    agree(
+        "flow",
+        "SELECT CAST(date_trunc('month', date) AS TIMESTAMP) AS period, sum(value) AS value \
+         FROM daily GROUP BY 1",
+    )
+    .await;
+    agree(
+        "level",
+        "SELECT period, sum(value) AS value FROM (\
+            SELECT CAST(date_trunc('month', date) AS TIMESTAMP) AS period, value, \
+                   rank() OVER (PARTITION BY date_trunc('month', date) ORDER BY date DESC) AS rk \
+            FROM daily) WHERE rk = 1 GROUP BY period",
+    )
+    .await;
+    agree(
+        "share",
+        "SELECT CAST(date_trunc('month', date) AS TIMESTAMP) AS period, sum(num) / sum(den) AS value \
+         FROM daily GROUP BY 1",
+    )
+    .await;
+    agree(
+        "weekly_flow",
+        "SELECT CAST(date_trunc('month', date) AS TIMESTAMP) AS period, sum(value) AS value \
+         FROM weekly GROUP BY 1",
+    )
+    .await;
+    // The straddle, spelled out: February holds the four Fridays that
+    // fall in it, the first of which sits in a week that began in
+    // January.
+    near(
+        number(
+            &session,
+            "SELECT value FROM metric_series(grain => 'month') \
+             WHERE metric = 'weekly_flow' AND dimension = '' AND period = '2024-02-01T00:00:00';",
+        )
+        .await,
+        5.0 + 6.0 + 7.0 + 8.0,
+        "February from its Fridays",
+    );
+}
+
+/// The fact row says what the window cut: `outside` counts the
+/// periods of data at the metric's resolution before its window, and
+/// a `cube` gloss widening the rung brings them in and zeroes it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_fact_row_counts_the_periods_outside_the_window() {
+    // 60 month starts from 2021-01-01 (18628) to 2025-12-01.
+    let month_starts: Vec<i32> = {
+        let mut out = Vec::new();
+        let days_in = |y: i32, m: i32| -> i32 {
+            match m {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                _ => {
+                    if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                        29
+                    } else {
+                        28
+                    }
+                }
+            }
+        };
+        let mut d = 18628;
+        for y in 2021..=2025 {
+            for m in 1..=12 {
+                out.push(d);
+                d += days_in(y, m);
+            }
+        }
+        out
+    };
+    let months = dated(
+        vec![Field::new("value", DataType::Float64, false)],
+        month_starts,
+        vec![Arc::new(Float64Array::from(vec![1.0; 60]))],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let cache = CubeCache::new(64);
+    let session = cube_session_with(
+        dir.path(),
+        vec![("t", months)],
+        &[
+            r#"DECLARE ASPECT a WITH $${"title": "A"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS a ON fin AS $${"sql": "SELECT date, value FROM t"}$$;"#,
+            "SELECT judge_time() FROM t.date;",
+        ],
+        Some(cache.clone()),
+    )
+    .await;
+    let row = grid(
+        &session,
+        "SELECT resolution, window, outside FROM metric_axes() WHERE metric = 'a';",
+    )
+    .await;
+    assert!(row.contains("| month      | 48 months | 12"), "{row}");
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        48.0,
+        "the own series serves the rung",
+    );
+    // The head holds the data whole, so the year grain reaches every
+    // year without a build.
+    near(
+        number(
+            &session,
+            "SELECT count(*) FROM metric_series(grain => 'year');",
+        )
+        .await,
+        5.0,
+        "every year from the head",
+    );
+    assert_eq!(cache.builds(), 1);
+
+    session
+        .execute(r#"GLOSS cube ON fin AS $${"windows": {"month": "60 months"}}$$;"#)
+        .await
+        .unwrap();
+    let row = grid(
+        &session,
+        "SELECT resolution, window, outside FROM metric_axes() WHERE metric = 'a';",
+    )
+    .await;
+    assert!(row.contains("| month      | 60 months | 0"), "{row}");
+    near(
+        number(&session, "SELECT count(*) FROM metric_series();").await,
+        60.0,
+        "the widened rung serves the data whole",
+    );
+}
+
+/// A frame that serves only a date and a value admits no axis, and
+/// the fact row says which judged columns of its tables it leaves
+/// out — the road is to serve one. Serving it admits the axis and
+/// empties the field.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_fact_row_names_the_judged_columns_the_frame_does_not_serve() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = cube_session(
+        dir.path(),
+        vec![("results", results()), ("constructors", constructors())],
+        &[
+            r#"DECLARE ASPECT total WITH $${"title": "Total"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS total ON fin AS $${"sql": "SELECT date, points AS value FROM results"}$$;"#,
+            "SELECT judge_time() FROM results.date;",
+            "SELECT judge_axis() FROM results.venue;",
+            "SELECT judge_axis() FROM results.constructor_id;",
+            r#"GLOSS dimension ON results.constructor_id AS $${"value": "none"}$$;"#,
+        ],
+    )
+    .await;
+    let row = |sql: &'static str| {
+        let session = &session;
+        async move {
+            cell(
+                session,
+                &format!("SELECT {sql} FROM metric_axes() WHERE metric = 'total';"),
+            )
+            .await
+        }
+    };
+    assert_eq!(row("applicable").await, "true");
+    assert_eq!(row("cardinality(dims)").await, "0");
+    assert_eq!(
+        row("array_to_string(unserved, ',')").await,
+        "results.venue",
+        "venue is judged and unserved; constructor_id is closed by its gloss"
+    );
+    session
+        .execute(r#"GLOSS total ON fin AS $${"sql": "SELECT date, venue, points AS value FROM results"}$$;"#)
+        .await
+        .unwrap();
+    assert_eq!(row("array_to_string(dims, ',')").await, "venue");
+    assert_eq!(
+        row("cardinality(unserved)").await,
+        "0",
+        "served and admitted: nothing left out"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
