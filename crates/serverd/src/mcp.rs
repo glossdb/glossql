@@ -38,7 +38,8 @@ for the moment they matter, and every page the door serves is a row of `pages()`
 2. `SELECT * FROM datasets`, then what the brief below names. \
 The objects: a dataset holds tables, landed by recipes from sources; an aspect is a named \
 JSON contract; a gloss speaks an aspect's value on a subject (a table, a column, the \
-dataset itself), and a QUERY aspect's gloss is SQL, served back as `read.<name>()` — a \
+dataset itself), and a QUERY aspect's gloss is SQL, served back as a view under the \
+aspect's name — a \
 metric, a current fact, or a derived relation, which the metrics skill tells apart; \
 functions measure, and their measurements are the evidence; witnesses adjudicate the \
 voices on a slot; a human's ruling outranks every agent gloss. Live state is read through \

@@ -243,6 +243,55 @@ async fn a_grounding_is_a_view_in_the_catalog() {
     assert!(e.to_string().contains("never share a name"), "{e}");
 }
 
+/// A grounding's view composes as a view does: another grounding
+/// names it bare and plans; its columns qualify under its name; a
+/// definition over a shipped read plans; and one that names itself
+/// refuses with the path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_view_composes_as_a_view_does() {
+    let (_dir, store) = scratch_store().await;
+    let session = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;
+           GLOSS revenue ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;
+           DECLARE ASPECT half WITH $${"title": "Half"}$$ AS QUERY ON DATASET;
+           GLOSS half ON fin AS $${"sql": "SELECT value / 2 AS value FROM revenue"}$$;
+           DECLARE ASPECT asked WITH $${"title": "Asked"}$$ AS QUERY ON DATASET;
+           GLOSS asked ON fin AS $${"sql": "SELECT count(*) AS value FROM open_questions"}$$;
+           DECLARE ASPECT looping WITH $${"title": "Loop"}$$ AS QUERY ON DATASET;
+           GLOSS looping ON fin AS $${"sql": "SELECT value FROM looping"}$$;"#,
+    )
+    .await;
+    let half = table(&session, "SELECT sum(value) AS v FROM half;").await;
+    assert!(half.contains("21.25"), "{half}");
+    let qualified = table(
+        &session,
+        "SELECT sum(revenue.value) AS v FROM revenue JOIN half ON half.value * 2 = revenue.value;",
+    )
+    .await;
+    assert!(qualified.contains("42.5"), "{qualified}");
+    let asked = table(&session, "SELECT value FROM asked;").await;
+    assert!(asked.contains("| 0"), "{asked}");
+    let listed = table(
+        &session,
+        "SELECT table_name FROM information_schema.tables WHERE table_type = 'VIEW' \
+         AND table_schema = 'fin' ORDER BY 1;",
+    )
+    .await;
+    for name in ["asked", "half", "looping", "revenue"] {
+        assert!(listed.contains(name), "{listed}");
+    }
+    let e = session.execute("SELECT * FROM looping;").await.unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("read cycle: read.looping -> read.looping"),
+        "{e}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gloss_then_read_collapsed_and_raw() {
     let (_dir, session) = agent_session().await;
@@ -1918,7 +1967,7 @@ async fn a_missing_table_at_the_door_names_the_roads_out() {
         .to_string();
     assert!(e.contains("table 'datafusion.fin.fin' not found"), "{e}");
     assert!(
-        e.contains("`fin` is the dataset in use, not a table; a metric reads as a relation: `SELECT * FROM read.<name>()`"),
+        e.contains("`fin` is the dataset in use, not a table; a metric reads as a relation: `SELECT * FROM <name>`"),
         "{e}"
     );
     assert!(e.contains("tables in `fin`: customers, orders"), "{e}");

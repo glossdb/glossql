@@ -281,7 +281,7 @@ assets are not dataset-scoped and serve at `/assets/{file}`.
   tabs. The workspace root, `/`, is each dataset at a glance, with
   the apps, the doors and the connect line.
 - **A relation as a file.** `GET /<dataset>/app/export/<name>.csv` or
-  `.parquet`, where `<name>` is a table or `read.<aspect>`, streams
+  `.parquet`, where `<name>` is a table or a metric, streams
   the relation as it stands at the read — the same channel and plan as
   a frame, the same streaming shape as `/query`, nothing stored twice.
   Parquet keeps the engine's types; CSV is text. The name is an

@@ -31,7 +31,7 @@ instead of following a staged arc.
   `relationship_coherence` keeps measuring what each declared join
   asserts.
 - **Composition.** A re-grounded component propagates into every
-  composed read with no further act (`read.<aspect>()` in FROM
+  composed read with no further act (the metric's name in FROM
   position); only assumption prose needs a re-record.
 - **The validation pattern.** Expectation gloss + check voice +
   detector + `ATTEST`; carries expected dirt — the authored

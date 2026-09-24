@@ -61,8 +61,8 @@ $$ RETURNS on_time_completion;
 - `FOR` scopes to a dataset, or `GLOBAL`.
 - `RETURNS` names the aspect the output fills, validated against that
   aspect's JSON Schema at extraction.
-- The body composes anything a read can, inline: tables,
-  `read.<aspect>()` groundings, the declaration relations as plain
+- The body composes anything a read can, inline: tables, groundings
+  by their names, the declaration relations as plain
   tables, and the shipped `profile` aggregate beside the engine's own
   (`mad` and `entropy` ride inside its struct:
   `profile(v)['numeric']['mad']`, `profile(v)['entropy']`). A glossed

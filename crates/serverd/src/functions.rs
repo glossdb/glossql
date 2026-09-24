@@ -62,8 +62,8 @@ pub async fn pages(plane: &Plane) -> Result<Vec<DoorPage>, SessionError> {
              declared function runs as an extraction, `SELECT <name>() FROM \
              <subject>`, and `SELECT name FROM functions` lists what stands \
              now (`extract`, as declared when the door opened). \
-             `read.<name>()`, `misfit.<name>()` and `whatif.<name>()` serve \
-             what the workspace glossed.",
+             a grounding serves under its name, `misfit.<name>()` and \
+             `whatif.<name>()` serve what the workspace glossed.",
             &door,
         ),
         page(

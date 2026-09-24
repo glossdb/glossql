@@ -7,7 +7,7 @@
 --   recipe   an approved recipe change with no import of that table
 --            since the approval — the re-declare has not run;
 --   formula  a human formula answer newer than the metric's recorded
---            materialization — `read.<metric>()` keeps serving the
+--            materialization — the metric's view keeps serving the
 --            recorded SQL until an agent recomposes it;
 --   contest  a slot withheld at read because voices differ or a
 --            detector crossed;

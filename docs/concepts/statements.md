@@ -53,11 +53,12 @@ actor rides the connection and the engine stamps every statement
   call — `function`, `subject`, `body`, `computed_at`, `computed` —
   and `computed` is false when the recorded row was served at an
   unchanged pin, its `computed_at` the earlier run's.
-- `read.<aspect>()` — a grounded metric as a relation: the current
-  grounding expands at plan time, composable in any FROM position.
-  The grounding is also a view of the dataset's schema in the catalog,
-  under the metric's name, so the bare name plans the same way and a
-  reader attached to the catalog sees the definition and its dialect.
+- `<metric>` — a grounded metric as a relation. The serving grounding
+  is a view of the dataset's schema under the metric's name; a
+  statement plans its definition at the statement's pins and composes
+  it in any FROM position, bare or as `dataset.metric`.
+  `read.<metric>()` names the same view. A reader attached to the
+  catalog sees the definition and its dialect.
   A metric and a landed table of one dataset never share a name.
 - Plain SQL — tables, and the declaration relations (`functions`,
   `aspects`, `witnesses`, `sources`, `relationships`, `glossary`,

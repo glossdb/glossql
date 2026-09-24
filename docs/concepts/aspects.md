@@ -18,8 +18,9 @@ The kind fixes the aspect's role:
   gloss body is a **grounding** — SQL plus disclosed assumptions —
   validated against the fixed grounding schema; the `WITH` schema
   carries the ontology entry (description, indicators, rendering).
-  The value materializes by running the grounding SQL (`read.<aspect>()`),
-  never through a function. Anything the company revises — meaning,
+  The value materializes by running the grounding SQL, a view under
+  the aspect's name (`FROM <aspect>`), never through a function.
+  Anything the company revises — meaning,
   unit, owner — belongs in a gloss, not in the declaration, because a
   gloss supersedes and a declaration cannot change once glosses exist
   under it.

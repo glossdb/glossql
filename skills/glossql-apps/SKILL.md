@@ -67,7 +67,7 @@ the dataset.
 ```glossql
 GLOSS app ON delivery AS $${"title": "Monday operations"}$$;
 GLOSS app_frame ON delivery.monthly AS $${"sql":
-  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM read.throughput() GROUP BY 1 ORDER BY 1"}$$;
+  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM throughput GROUP BY 1 ORDER BY 1"}$$;
 ```
 
 A manifest names no dataset — the URL binds it, so the same app serves
@@ -131,7 +131,7 @@ frame once per state and every tile bound to it shares that one table.
   anyone noticing.
 
 A frame is planned through the same path every other read takes, so
-every door is available inside one — `read.<metric>()` for a grounding,
+every door is available inside one — a grounding under its name,
 `metric_series(grain => $grain)` for the cube's cells at a grain
 (`dimension = ''` is the total, `'alternative'` the disclosed rival;
 a row carries `num`/`den` for a ratio's summed halves and `behavior`,
@@ -174,7 +174,7 @@ vocabulary. Four macros and a prose block:
   {{ tiles::value(frame="frames/front", field="open", label="Open questions",
        chip="open_questions", note="what the door would ask a human") }}
   {{ tiles::chart(frame="frames/monthly", spec="specs/trend.vl.json",
-       title="Throughput by month", chip="read.throughput()") }}
+       title="Throughput by month", chip="throughput") }}
 </div>
 {% endblock %}
 ```

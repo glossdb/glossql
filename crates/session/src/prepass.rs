@@ -22,6 +22,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use datafusion::catalog::TableProvider;
+use datafusion::catalog::view::ViewTable;
 use datafusion::datasource::provider_as_source;
 use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
 use datafusion::prelude::SessionContext;
@@ -65,11 +66,15 @@ pub(crate) struct Resolved {
     /// same reason as `record`; the data tables a body scans directly
     /// come from the executed plan instead.
     pub(crate) reads: ReadSet,
-    /// The bound dataset's groundings as the catalog lists them — the
-    /// views under the metrics' names. A bare or dataset-qualified
-    /// name among them is the grounding, expanded as `read.<name>()`
-    /// is; a shipped read's name and a CTE's stand over it.
-    views: HashSet<String>,
+    /// The bound dataset's groundings as the catalog lists them: each
+    /// view under its metric's name, with its definition. A bare or
+    /// dataset-qualified name among them is the grounding; a shipped
+    /// read's name and a CTE's stand over it.
+    views: HashMap<String, String>,
+    /// The groundings this statement names, each planned at its pins
+    /// and held as a `ViewTable` over that plan — served under the
+    /// metric's name as a pinned table is, and by `read.<name>()`.
+    served: HashMap<String, Arc<dyn TableProvider>>,
 }
 
 /// What a statement's resolution read, named against the pin's legs:
@@ -123,10 +128,12 @@ impl Resolved {
         self.batches.get(key)
     }
 
-    /// Whether a name is one of the bound dataset's groundings, as the
-    /// catalog lists them.
-    pub(crate) fn is_view(&self, name: &str) -> bool {
-        self.views.contains(name)
+    /// The grounding of that name as this statement serves it — its
+    /// view over the definition planned at the statement's pins — once
+    /// resolved; `None` for a name that is no grounding of the bound
+    /// dataset.
+    pub(crate) fn view(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
+        self.served.get(name).cloned()
     }
 
     /// Whether this factor is a name the statement binds as a CTE — see
@@ -167,7 +174,9 @@ fn shadowed(idents: &IdentNormalizer, ctes: &HashSet<String>, f: &TableFactor) -
 /// the compute pass's ([`crate::reads::compute_batch`]).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Door {
-    /// `read.<aspect>()` — a QUERY grounding, fetched from the store.
+    /// `read.<aspect>()`, or the aspect's bare name — a QUERY
+    /// grounding: its definition, as the catalog's view under the
+    /// metric's name carries it.
     Serve(String),
     /// A shipped read (`crates/session/reads/*.sql`) — SQL from the binary.
     Shipped(String),
@@ -214,8 +223,8 @@ impl Door {
 /// traversal via sqlparser's derive-generated visitor, so a scalar
 /// subquery in the SELECT list is covered like a FROM item. A
 /// hand-written walker misses positions; this one cannot.
-fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashSet<String>) -> Vec<Door> {
-    struct Collect<'a>(Vec<Door>, &'a IdentNormalizer, &'a HashSet<String>);
+fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashMap<String, String>) -> Vec<Door> {
+    struct Collect<'a>(Vec<Door>, &'a IdentNormalizer, &'a HashMap<String, String>);
     impl VisitorMut for Collect<'_> {
         type Break = ();
         fn pre_visit_table_factor(&mut self, f: &mut TableFactor) -> ControlFlow<()> {
@@ -250,10 +259,10 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashSet<String>) ->
                     // A grounding's view of the bound dataset, bare or
                     // under its dataset: the grounding, planned under
                     // the serve door's key.
-                    [name] if args.is_none() && self.2.contains(name) => {
+                    [name] if args.is_none() && self.2.contains_key(name) => {
                         self.0.push(Door::Serve(name.clone()));
                     }
-                    [_, name] if args.is_none() && self.2.contains(name) => {
+                    [_, name] if args.is_none() && self.2.contains_key(name) => {
                         self.0.push(Door::Serve(name.clone()));
                     }
                     _ => {
@@ -341,16 +350,22 @@ pub(crate) fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
     Ok(query)
 }
 
-/// The body behind a door, fetched or embedded.
-async fn body_of(shared: &Shared, door: &Door) -> Result<String, SessionError> {
+/// The body behind a door: the catalog's view, the binary, or nothing.
+async fn body_of(
+    shared: &Shared,
+    resolved: &Resolved,
+    door: &Door,
+) -> Result<String, SessionError> {
     match door {
-        Door::Serve(aspect) => served_grounding(shared, aspect).await,
+        Door::Serve(aspect) => served_grounding(shared, &resolved.views, aspect).await,
         Door::Shipped(name) => crate::library::read_sql(name)
             .map(str::to_string)
             .ok_or_else(|| SessionError::BadSubject(format!("no shipped read `{name}`"))),
         // Both replay a declared grounding; a body that is not SQL names
         // no doors and walks to nothing.
-        Door::Replay(_, name) => Ok(served_grounding(shared, name).await.unwrap_or_default()),
+        Door::Replay(_, name) => Ok(served_grounding(shared, &resolved.views, name)
+            .await
+            .unwrap_or_default()),
         Door::Column(_) => unreachable!("the column door resolves before any body is fetched"),
     }
 }
@@ -581,7 +596,7 @@ async fn expand(
     resolved: &mut Resolved,
 ) -> Result<(), SessionError> {
     let key = door.key();
-    let sql = body_of(shared, &door).await?;
+    let sql = body_of(shared, resolved, &door).await?;
     // A replayed body may not be SQL at all — a `whatif.` scenario is a
     // FACT carrying overrides. It names no doors, so there is nothing to
     // walk and nothing to refuse.
@@ -626,7 +641,19 @@ async fn expand(
         .map_err(|e| SessionError::BadSubject(format!("not served: {}: {e}", door.what())))?;
 
     done.insert(key.clone());
-    resolved.plans.insert(key, Arc::new(plan));
+    match door {
+        // A grounding is a view: DataFusion's own provider for a plan
+        // served under a name, which the builder inlines wherever the
+        // name is read.
+        Door::Serve(name) => {
+            resolved
+                .served
+                .insert(name, Arc::new(ViewTable::new(plan, Some(sql))));
+        }
+        _ => {
+            resolved.plans.insert(key, Arc::new(plan));
+        }
+    }
     Ok(())
 }
 
@@ -662,7 +689,7 @@ pub(crate) async fn resolve(
     let mut resolved = Resolved {
         pins,
         ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
-        views: shared.view_names().await?,
+        views: shared.views().await?,
         ..Resolved::default()
     };
     let DFStatement::Statement(inner) = statement else {

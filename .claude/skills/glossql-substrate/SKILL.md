@@ -70,8 +70,13 @@ sync planner callback.
 | **a logical transformation of other tables** | **`ViewTable` wrapping a logical plan** |
 | a custom source needing full control | all three layers |
 
-`ViewTable` is the one we kept missing: a `read.<aspect>()` grounding is
-a logical transformation of other tables, which is exactly a view.
+`ViewTable` is how a grounding serves: the pre-pass plans the
+definition at the statement's pins and holds a `ViewTable` over the
+plan under the metric's name. `LogicalPlanBuilder::scan` inlines a
+source that carries a plan (datafusion-expr `logical_plan/builder.rs`,
+`scan_with_filters_inner`), so the name reads as DataFusion's own
+views do, its columns qualified under it. The mount lists the view
+with its definition and the tag's schema and never plans it.
 
 ## Resolve async before planning, never inside it
 

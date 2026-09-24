@@ -160,7 +160,7 @@ per member. The recorded SQL below is that recomposition written down
 for one choice of axis; the formula is what it was written down from:
 
 ```glossql
-GLOSS backlog_days ON ops AS $${"sql": "-- backlog days by region as well as in total.\nWITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM read.backlog() GROUP BY date_trunc('month', date), region), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM read.throughput() GROUP BY date_trunc('month', date), region) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * 30.0 AS value, bl.region FROM bl JOIN th ON bl.m = th.m AND bl.region = th.region"}$$;
+GLOSS backlog_days ON ops AS $${"sql": "-- backlog days by region as well as in total.\nWITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM backlog GROUP BY date_trunc('month', date), region), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM throughput GROUP BY date_trunc('month', date), region) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * 30.0 AS value, bl.region FROM bl JOIN th ON bl.m = th.m AND bl.region = th.region"}$$;
 ```
 
 Two things this is not: it is not a roll-up (each member's ratio is
@@ -176,7 +176,7 @@ added into one wrong headline, an order of magnitude off its true
 value. Nothing infers this from the SQL — serve the columns.
 
 ```glossql
-GLOSS backlog_days ON ops AS $${"sql": "WITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM read.backlog() GROUP BY 1, 2), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM read.throughput() GROUP BY 1, 2) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, bl.bal AS num, th.th * (1.0 / date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, bl.region FROM bl JOIN th ON th.m = bl.m AND th.region = bl.region"}$$;
+GLOSS backlog_days ON ops AS $${"sql": "WITH bl AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS bal FROM backlog GROUP BY 1, 2), th AS (SELECT date_trunc('month', date) AS m, region, sum(value) AS th FROM throughput GROUP BY 1, 2) SELECT CAST(bl.m AS DATE) AS date, bl.bal / nullif(th.th, 0) * date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY) AS value, bl.bal AS num, th.th * (1.0 / date_part('day', bl.m + INTERVAL '1' MONTH - INTERVAL '1' DAY)) AS den, bl.region FROM bl JOIN th ON th.m = bl.m AND th.region = bl.region"}$$;
 ```
 
 **A distinct count is the same class without halves.** The cube sums
@@ -188,7 +188,7 @@ dimension columns, and say so in a keyed assumption; per-member
 distinct counts are separate metrics or a drill recomputed from the
 entity rows.
 
-`value` stays each row's own ratio — that is what `read.backlog_days()`
+`value` stays each row's own ratio — that is what `backlog_days`
 serves and what a drill shows. `num` and `den` are the same division's
 halves, scaled so their quotient is the metric in its own unit: here
 the day factor rides the denominator, so `sum(num)/sum(den)` is days.

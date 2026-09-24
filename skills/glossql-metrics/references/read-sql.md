@@ -24,9 +24,10 @@ most of the lost calls:
 ## Read at the reader's grain
 
 Grain is the reader's: the app asks by month, another reader by day,
-the same definitions answer both. Evaluate through `read.<aspect>()` —
-the current grounding as an ordinary relation, human slot outranking
-agent, so a human answer is what runs.
+the same definitions answer both. Evaluate `FROM <metric>`: a
+grounding is a view under the metric's name, the current one after
+the collapse, human slot outranking agent, so a human answer is what
+runs. `read.<metric>()` names the same view.
 
 - **Flows sum** over any partition.
 - **Stocks take the last period per window** —
@@ -159,6 +160,6 @@ nondeterministic and must never feed a sparkline.
 
 **Record what a read proves.** A composed evaluation you verified may
 land as the metric's own QUERY gloss — durable executable knowledge,
-served by `read.<aspect>()` from then on. Compose it `FROM
-read.throughput()` where you can, so a re-ruled component propagates
-through every metric built on it.
+served as the view `throughput` from then on. Compose `FROM
+throughput` where you can, so a re-ruled component propagates through
+every metric built on it.

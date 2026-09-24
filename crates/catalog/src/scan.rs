@@ -92,10 +92,12 @@ impl TableProvider for FilesTable {
 
 /// A grounding's view as the mount lists it: its definition and the
 /// schema its tag carries, of type View, so `information_schema` and
-/// `SHOW TABLES` see it beside the tables. It is never scanned here:
-/// a statement bound to the dataset expands the name through the
-/// engine's own planner, as `read.<name>()` is, and any other reader
-/// of the mount is told so.
+/// `SHOW TABLES` see it beside the tables. The mount has no session
+/// to plan the definition with — it may name a door — so a statement
+/// bound to the dataset never scans this: its pre-pass plans the
+/// definition at the statement's pins and serves the plan as a
+/// `ViewTable` under the name. A reader outside the binding is told
+/// that road.
 #[derive(Debug)]
 pub struct ViewStub {
     dataset: String,
@@ -158,11 +160,17 @@ impl DatasetSchema {
         DatasetSchema { tables, views }
     }
 
-    /// The names of the dataset's views, sorted.
-    pub fn view_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.views.keys().cloned().collect();
-        names.sort();
-        names
+    /// The dataset's views: each name to its definition.
+    pub fn views(&self) -> HashMap<String, String> {
+        self.views
+            .iter()
+            .map(|(name, view)| {
+                (
+                    name.clone(),
+                    view.get_table_definition().unwrap_or_default().to_string(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -205,12 +213,12 @@ impl Mount {
         Mount { schemas }
     }
 
-    /// The names of a dataset's views at the mount's version; empty
-    /// for a dataset the mount does not hold.
-    pub fn view_names(&self, dataset: &str) -> Vec<String> {
+    /// A dataset's views at the mount's version, each name to its
+    /// definition; empty for a dataset the mount does not hold.
+    pub fn views(&self, dataset: &str) -> HashMap<String, String> {
         self.schemas
             .get(dataset)
-            .map(|s| s.view_names())
+            .map(|s| s.views())
             .unwrap_or_default()
     }
 }

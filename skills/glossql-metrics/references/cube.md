@@ -27,7 +27,7 @@ top. Each point's fit saw only the months before it.
   changes, not for a definitions entry, a page or a declared check.
 - A declared fact (`x-kind: fact`) `fact_values()` serves whole, its
   number where the frame is one row with a value; a derived relation
-  is `read.<name>()`'s alone.
+  serves as its view alone.
 - It follows the grounding's authored behavior — mark your stocks —
   then the `behavior` gloss on the column summed, then the evidence.
 

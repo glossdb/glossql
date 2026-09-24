@@ -93,7 +93,7 @@ Then close what owes an act, in the same session:
 - **A human formula answer newer than the metric's recorded gloss**:
   the two are one definition in two forms — re-record the
   materialization to match (or carry the difference as a disclosed
-  assumption). Until you do, `read.<metric>()` serves the old SQL and
+  assumption). Until you do, the metric's view serves the old SQL and
   the app shows the answer as waiting on you.
 - **An approved `recipe_change`** (a human gloss carrying
   `{table, sql, reason}`): run the `DECLARE RECIPE` it approves — the

@@ -1681,8 +1681,9 @@ impl Session {
     /// contested slot withheld — lands as a view of the dataset's
     /// schema under the metric's name, in the engine's dialect, with
     /// the schema it plans to as its tag; a stopped or absent
-    /// grounding ends the view. A write to the catalog that fails is
-    /// logged, never the statement's error.
+    /// grounding ends the view. The view is what a statement then
+    /// serves under the name, and under `read.<name>()`. A write to
+    /// the catalog that fails is logged, never the statement's error.
     async fn sync_view(&self, dataset: &str, aspect: &str) {
         let landed = async {
             let rctx = self.shared.read_context_for(dataset).await?;
@@ -2000,7 +2001,7 @@ impl Session {
         let dataset_road = match self.dataset() {
             Some(d) if d == missing => format!(
                 " — `{d}` is the dataset in use, not a table; a metric reads as a relation: \
-                 `SELECT * FROM read.<name>()`"
+                 `SELECT * FROM <name>`"
             ),
             _ => String::new(),
         };
@@ -2271,13 +2272,7 @@ impl Session {
             .into_keys()
             .map(|n| (n, "BASE TABLE"))
             .collect();
-        names.extend(
-            self.shared
-                .view_names()
-                .await?
-                .into_iter()
-                .map(|n| (n, "VIEW")),
-        );
+        names.extend(self.shared.views().await?.into_keys().map(|n| (n, "VIEW")));
         names.sort();
         let schema = Arc::new(Schema::new(vec![
             Field::new("dataset", DataType::Utf8, false),

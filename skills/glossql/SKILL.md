@@ -68,7 +68,7 @@ is what `SELECT * FROM datasets` wants; a qualified
 | `DROP TABLE work_orders;` | remove a table — refused while it holds data |
 | `DECLARE RELATIONSHIP a.col -> b.col;` | declare a join edge (`<->` both ways); a composite endpoint is a tuple, `a.(x, y) -> b.(x, y)`; both endpoints must be landed columns |
 | `DECLARE ASPECT name WITH $$json-schema$$ AS MEASUREMENT\|FACT\|QUERY [ON TABLE, COLUMN, … [WHEN aspect = 'value']];` | add to the vocabulary; the schema is the validated contract; `ON` is the grain — the subject classes it speaks to, absent = all; `WHEN` narrows relevance to subjects whose sibling aspect carries the value |
-| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; an aspect ON TABLE or ON COLUMN takes only a landed one; a QUERY aspect is grounded on the dataset (`GLOSS revenue ON fin AS …`), and the outcome is the metric's fact row |
+| `GLOSS aspect ON subject AS $$json$$;` | speak a value into your slot; an aspect ON TABLE or ON COLUMN takes only a landed one; a QUERY aspect is grounded on the dataset (`GLOSS revenue ON fin AS …`), the outcome is the metric's fact row, and the grounding then serves as a view under the aspect's name (`FROM revenue`) |
 | `SELECT … FROM GLOSSARY(subject);` | the collapsed context, one row per aspect |
 | `SELECT … FROM GLOSSARY(subject, all => true);` | every slot, raw; `all => true` is the call's second argument, never a WHERE condition |
 | `DECLARE FUNCTION f FOR ops\|GLOBAL AS $$body$$ [RETURNS aspect];` | register a function — with `RETURNS` one SQL query the engine plans, without it a detector script; `SELECT script FROM functions` reads the shipped library back as worked examples (`glossql-functions` teaches writing one) |
