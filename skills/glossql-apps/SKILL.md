@@ -184,6 +184,9 @@ vocabulary. Four macros and a prose block:
   format renders `NaN` for it.
 - `chart(frame, spec, …)` — a vega-lite spec over the frame; a window
   over its series is the frame's own params.
+- `<gl-table frame="frames/<name>" rows="50">` — the frame as a plain
+  table, every column as the SQL named it, the row count in the
+  footer: the tile for a result you want read as a table, not placed.
 - `gl-rows` with your own `<template>` — a row surface where you place
   each field by name (`{subj}`, `{what}`), for anything that is a list
   of matters rather than a table of numbers. `join="frames/<name>"

@@ -1974,3 +1974,42 @@ async fn an_unchanged_asset_revalidates_without_its_body() {
     let stale = conditional("\"0000000000000000\"".parse().unwrap()).await;
     assert_eq!(stale.status(), StatusCode::OK);
 }
+
+/// Every tile the reference page and the apps skill name is a script
+/// the shell loads and an asset the door serves. The prose is the
+/// author's contract; a tile it names that the browser never defines
+/// renders as nothing, silently.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_documented_tile_is_shipped() {
+    const SHELL: &str = include_str!("../../templates/shell.html");
+    const REFERENCE: &str = include_str!("../../../../docs/reference/apps.md");
+    const SKILL: &str = include_str!("../../../../skills/glossql-apps/SKILL.md");
+
+    let mut tiles: Vec<String> = [REFERENCE, SKILL]
+        .iter()
+        .flat_map(|page| page.split("gl-").skip(1))
+        .map(|rest| {
+            rest.chars()
+                .take_while(|c| c.is_ascii_lowercase())
+                .collect()
+        })
+        .filter(|name: &String| !name.is_empty())
+        .collect();
+    tiles.sort();
+    tiles.dedup();
+    assert!(tiles.len() >= 5, "{tiles:?}");
+
+    let assets = Router::new().nest("/assets", glossql_apps::assets_router());
+    for tile in tiles {
+        let script = format!("/assets/gl-{tile}.js");
+        assert!(SHELL.contains(&script), "the shell loads no {script}");
+        let served = get(&assets, &script).await;
+        assert_eq!(served.status(), StatusCode::OK, "{script}");
+        assert!(
+            text(served)
+                .await
+                .contains(&format!("customElements.define('gl-{tile}'")),
+            "{script} defines no element"
+        );
+    }
+}
