@@ -231,7 +231,7 @@ async fn shape(lake: &Lake) -> (glossql_catalog::Shape, Vec<String>) {
 /// re-derived or retyped begins a new version under the same id; one
 /// dropped ends; a reorder alone changes nothing. The pin says each
 /// column's version and the table's newest change, and a DuckLake
-/// reader sees the derivation as the column's `glossql.expr` tag.
+/// reader sees the derivations as the table's `glossql.exprs` tag.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_replace_keeps_the_columns_it_did_not_change() {
     let (dir, lake) = scratch().await;
@@ -352,7 +352,8 @@ async fn a_replace_keeps_the_columns_it_did_not_change() {
     assert_eq!(order, ["amount", "order_id"]);
 
     // Through the catalog's own tables, as a DuckLake reader has them:
-    // one id per column across its versions, the derivation as its tag.
+    // one id per column across its versions, the derivations as the
+    // table's tag.
     use sqlx::Row as _;
     let pool = sqlx::AnyPool::connect(&format!(
         "sqlite:{}",
@@ -389,15 +390,87 @@ async fn a_replace_keeps_the_columns_it_did_not_change() {
         ]
     );
     let tag: String = sqlx::query(
-        "SELECT t.\"value\" FROM ducklake_column_tag t \
-         JOIN ducklake_column c ON c.column_id = t.column_id AND c.end_snapshot IS NULL \
-         WHERE c.column_name = 'amount' AND t.end_snapshot IS NULL",
+        "SELECT g.\"value\" FROM ducklake_tag g \
+         JOIN ducklake_table t ON t.table_id = g.object_id AND t.end_snapshot IS NULL \
+         WHERE t.table_name = 'orders' AND g.\"key\" = 'glossql.exprs' \
+         AND g.end_snapshot IS NULL",
     )
     .fetch_one(&pool)
     .await
     .unwrap()
     .get(0);
-    assert_eq!(tag, "try_cast(amount AS Float64) AS amount");
+    assert_eq!(
+        tag,
+        r#"{"amount":"try_cast(amount AS Float64) AS amount","order_id":"order_id"}"#
+    );
+}
+
+/// What a landing and a grounding write is what a DuckLake reader
+/// opens: the derivations ride the table as one tag and no column tag
+/// carries a key but `comment`, since the reader refuses the catalog
+/// on any other; a view without aliases spells the empty list as `''`,
+/// since the reader parses a quoted list there and refuses a null.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landing_and_a_grounding_write_what_a_reader_opens() {
+    let (dir, lake) = scratch().await;
+    lake.ensure_dataset("fin").await.unwrap();
+    let schema = orders_schema();
+    let written = lake
+        .write(
+            "fin",
+            "orders",
+            Arc::clone(&schema),
+            stream(Arc::clone(&schema), vec![orders(&[1])]),
+        )
+        .await
+        .unwrap();
+    let exprs: HashMap<String, String> = [
+        ("order_id", "order_id"),
+        ("amount", "trim(amount) AS amount"),
+    ]
+    .iter()
+    .map(|(c, e)| ((*c).to_string(), (*e).to_string()))
+    .collect();
+    lake.commit("fin", "orders", &schema, written, Landing::Create, &exprs)
+        .await
+        .unwrap();
+    lake.put_view(
+        "fin",
+        "revenue",
+        "SELECT order_id, amount FROM orders",
+        Some(&schema),
+    )
+    .await
+    .unwrap();
+
+    use sqlx::Row as _;
+    let pool = sqlx::AnyPool::connect(&format!(
+        "sqlite:{}",
+        dir.path().join("catalog.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let column_tags: i64 =
+        sqlx::query("SELECT count(*) FROM ducklake_column_tag WHERE \"key\" <> 'comment'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+    assert_eq!(column_tags, 0);
+    let tags = lake.tags("fin", "orders").await.unwrap();
+    assert_eq!(
+        tags.get("glossql.exprs").map(String::as_str),
+        Some(r#"{"amount":"trim(amount) AS amount","order_id":"order_id"}"#)
+    );
+    let aliases: String = sqlx::query(
+        "SELECT column_aliases FROM ducklake_view WHERE view_name = 'revenue' \
+         AND end_snapshot IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get(0);
+    assert_eq!(aliases, "");
 }
 
 /// A table's tags ride its commits, as the specification's tag table

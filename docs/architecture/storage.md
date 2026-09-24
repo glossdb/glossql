@@ -36,8 +36,10 @@ a replace, an append and a drop touch.
   whose name, type and recipe expression are unchanged, begins a new
   version under the same `column_id` when its type or expression
   changed, and ends one that is gone; a new column takes a new id.
-  The expression is the column's `glossql.expr` tag, in the
-  specification's column-tag table. That history is what a gloss
+  The expressions are the table's `glossql.exprs` tag, one JSON
+  object of column name to expression, rewritten with each create
+  and replace; the specification's column-tag table stays a reader's,
+  `comment` its only key. That history is what a gloss
   ages against: a column's live version, or the snapshot a column of
   the table was last re-versioned or dropped at, later than the
   gloss's snapshot.

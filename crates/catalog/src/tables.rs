@@ -20,7 +20,7 @@
 //! so two writers racing for the same snapshot id meet the primary key
 //! and the loser runs again on the next id.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef, TimeUnit};
@@ -311,8 +311,12 @@ struct ColumnRow {
     begin: i64,
 }
 
-/// The column tag that carries a column's derivation.
-const EXPR_TAG: &str = "glossql.expr";
+/// The table tag that carries its columns' derivations: one JSON
+/// object, column name to expression. A table tag, not one per
+/// column: a DuckLake reader takes `comment` alone as a column tag's
+/// key and refuses the whole catalog on any other, and takes any key
+/// on a table.
+const EXPRS_TAG: &str = "glossql.exprs";
 
 /// One live file of a table, relative to the table's directory.
 #[derive(Debug, Clone)]
@@ -544,7 +548,8 @@ impl Landing {
 
 /// The landing as one commit; the snapshot it made is the table's new
 /// version. `exprs` is each column's derivation where the landing
-/// knows it; `tags` are the table's tags to set, each ending the live
+/// knows it, the table's derivations tag once a create or a replace
+/// lands; `tags` are the table's tags to set, each ending the live
 /// tag of the same key. The files a replace ended are scheduled for
 /// deletion in the same transaction, and returned so the caller can
 /// delete them.
@@ -606,17 +611,7 @@ pub(crate) async fn commit_landing(
                     .await?;
                     let mut order = 0;
                     for field in schema.fields() {
-                        insert_field(
-                            db,
-                            tx,
-                            snapshot,
-                            id,
-                            field,
-                            None,
-                            &mut order,
-                            exprs.get(field.name()),
-                        )
-                        .await?;
+                        insert_field(db, tx, snapshot, id, field, None, &mut order).await?;
                     }
                     (id, format!("created_table:\"{dataset}\".\"{table}\""))
                 }
@@ -640,6 +635,11 @@ pub(crate) async fn commit_landing(
                 (Landing::Append, Some(id)) => (id, format!("inserted_into_table:{id}")),
             };
             set_tags(db, tx, snapshot, id, &tags).await?;
+            // The derivations are the create's or the replace's; an
+            // append's shape is the table's and its tag stands.
+            if landing != Landing::Append {
+                set_exprs(db, tx, snapshot, id, &exprs).await?;
+            }
             let from = sqlx::query(&db.sql(
                 "SELECT COALESCE(MAX(file_order), -1) FROM ducklake_data_file WHERE table_id = ?",
             ))
@@ -786,15 +786,7 @@ async fn set_tags(
     tags: &[(String, String)],
 ) -> Result<()> {
     for (key, value) in tags {
-        sqlx::query(&db.sql(
-            "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND \"key\" = ? \
-             AND end_snapshot IS NULL",
-        ))
-        .bind(snapshot.id)
-        .bind(table_id)
-        .bind(key)
-        .execute(&mut **tx)
-        .await?;
+        end_tag(db, tx, snapshot, table_id, key).await?;
         sqlx::query(&db.sql(
             "INSERT INTO ducklake_tag (object_id, begin_snapshot, end_snapshot, \"key\", \"value\") \
              VALUES (?, ?, NULL, ?, ?)",
@@ -807,6 +799,54 @@ async fn set_tags(
         .await?;
     }
     Ok(())
+}
+
+/// The object's live tag of `key` ended at this snapshot.
+async fn end_tag(
+    db: &Db,
+    tx: &mut Tx,
+    snapshot: &Snapshot,
+    object_id: i64,
+    key: &str,
+) -> Result<()> {
+    sqlx::query(&db.sql(
+        "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND \"key\" = ? \
+         AND end_snapshot IS NULL",
+    ))
+    .bind(snapshot.id)
+    .bind(object_id)
+    .bind(key)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// The table's derivations set at this snapshot: the live tag ends,
+/// and one begins where the landing knows any, its columns in name
+/// order.
+async fn set_exprs(
+    db: &Db,
+    tx: &mut Tx,
+    snapshot: &Snapshot,
+    table_id: i64,
+    exprs: &HashMap<String, String>,
+) -> Result<()> {
+    if exprs.is_empty() {
+        return end_tag(db, tx, snapshot, table_id, EXPRS_TAG).await;
+    }
+    let ordered: BTreeMap<&str, &str> = exprs
+        .iter()
+        .map(|(column, expr)| (column.as_str(), expr.as_str()))
+        .collect();
+    let value = serde_json::to_string(&ordered)?;
+    set_tags(
+        db,
+        tx,
+        snapshot,
+        table_id,
+        &[(EXPRS_TAG.to_string(), value)],
+    )
+    .await
 }
 
 /// The live table's live tags, by key; empty for a table that is not
@@ -934,10 +974,13 @@ pub(crate) async fn put_view(
                 }
             }
             let id = snapshot.catalog_id();
+            // `column_aliases` is a reader's quoted list of the view's
+            // column names; a view without aliases carries the empty
+            // list, `''` — a reader parses the list and refuses a null.
             sqlx::query(&db.sql(&format!(
                 "INSERT INTO ducklake_view (view_id, view_uuid, begin_snapshot, end_snapshot, \
                  schema_id, view_name, dialect, \"sql\", column_aliases) \
-                 VALUES (?, '{}', ?, NULL, ?, ?, ?, ?, NULL)",
+                 VALUES (?, '{}', ?, NULL, ?, ?, ?, ?, '')",
                 uuid::Uuid::now_v7()
             )))
             .bind(id)
@@ -1061,19 +1104,21 @@ async fn live_columns(db: &Db, tx: &mut Tx, table_id: i64) -> Result<Vec<ColumnR
         .collect()
 }
 
-/// Each live column's derivation, by column id.
-async fn live_exprs(db: &Db, tx: &mut Tx, table_id: i64) -> Result<HashMap<i64, String>> {
-    let rows = sqlx::query(&db.sql(
-        "SELECT column_id, \"value\" FROM ducklake_column_tag \
-         WHERE table_id = ? AND \"key\" = ? AND end_snapshot IS NULL",
+/// The table's live derivations, by column name: its tag as the last
+/// create or replace wrote it; empty where none knew any.
+async fn live_exprs(db: &Db, tx: &mut Tx, table_id: i64) -> Result<HashMap<String, String>> {
+    let row = sqlx::query(&db.sql(
+        "SELECT \"value\" FROM ducklake_tag \
+         WHERE object_id = ? AND \"key\" = ? AND end_snapshot IS NULL",
     ))
     .bind(table_id)
-    .bind(EXPR_TAG)
-    .fetch_all(&mut **tx)
+    .bind(EXPRS_TAG)
+    .fetch_optional(&mut **tx)
     .await?;
-    rows.iter()
-        .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
-        .collect()
+    match row {
+        Some(row) => Ok(serde_json::from_str(&row.try_get::<String, _>(0)?)?),
+        None => Ok(HashMap::new()),
+    }
 }
 
 /// The rows by parent, each list in column order.
@@ -1118,7 +1163,7 @@ async fn evolve_columns(
                 if had
                     .field_with_name(field.name())
                     .is_ok_and(|was| same_column(was, field))
-                    && tags.get(&row.column_id) == want =>
+                    && tags.get(field.name()) == want =>
             {
                 for (column_id, at) in renumber(row, field, &by_parent, &mut order) {
                     sqlx::query(&db.sql(
@@ -1144,14 +1189,13 @@ async fn evolve_columns(
                     field,
                     Some(row.column_id),
                     &mut order,
-                    want,
                 )
                 .await?;
                 handled.push(row.column_id);
             }
             None => {
                 altered = true;
-                insert_field(db, tx, snapshot, table_id, field, None, &mut order, want).await?;
+                insert_field(db, tx, snapshot, table_id, field, None, &mut order).await?;
             }
         }
     }
@@ -1288,9 +1332,7 @@ struct NewRow {
 
 /// The field as column rows at this snapshot — under `id` when it is
 /// a new version of a standing column, a fresh id otherwise; its
-/// nested fields under it, each fresh — and its derivation as the
-/// column's tag when the landing knows one.
-#[allow(clippy::too_many_arguments)]
+/// nested fields under it, each fresh.
 async fn insert_field(
     db: &Db,
     tx: &mut Tx,
@@ -1299,7 +1341,6 @@ async fn insert_field(
     field: &Field,
     id: Option<i64>,
     order: &mut i64,
-    expr: Option<&String>,
 ) -> Result<()> {
     fn flatten(
         snapshot: &mut Snapshot,
@@ -1342,19 +1383,6 @@ async fn insert_field(
         .bind(&row.kind)
         .bind(row.nullable)
         .bind(row.parent)
-        .execute(&mut **tx)
-        .await?;
-    }
-    if let Some(expr) = expr {
-        sqlx::query(&db.sql(
-            "INSERT INTO ducklake_column_tag (table_id, column_id, begin_snapshot, end_snapshot, \
-             \"key\", \"value\") VALUES (?, ?, ?, NULL, ?, ?)",
-        ))
-        .bind(table_id)
-        .bind(top)
-        .bind(snapshot.id)
-        .bind(EXPR_TAG)
-        .bind(expr)
         .execute(&mut **tx)
         .await?;
     }
