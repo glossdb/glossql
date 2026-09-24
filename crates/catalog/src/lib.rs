@@ -54,6 +54,8 @@ pub enum Error {
     Engine(#[from] datafusion::error::DataFusionError),
     #[error("parquet: {0}")]
     Parquet(#[from] datafusion::parquet::errors::ParquetError),
+    #[error("tag: {0}")]
+    Tag(#[from] serde_json::Error),
 }
 
 /// Each live column of a table by its version, and the table's newest
