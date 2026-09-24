@@ -101,8 +101,10 @@ The other tiles:
   `frame` and the store supplies the rows; width defaults to the
   container. An empty frame shows the `empty` text, as `gl-rows`
   does, instead of drawing a blank view.
-- `<gl-table frame="frames/x" rows="50">` — the frame as a plain HTML
-  table, first N rows (default 50), total row count in the footer.
+- `<gl-table frame="frames/x" rows="50" empty="…">` — the frame as a
+  plain HTML table, every column in the frame's order, first N rows
+  (default 50), total row count in the footer; an empty frame shows
+  the `empty` text.
 - `<gl-value frame="frames/kpis" field="billings"
   delta-field="billings_delta" unit="days" format="compact" good="up">`
   — one number from the frame's first row, optional delta beside it.
