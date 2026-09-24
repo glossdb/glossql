@@ -69,7 +69,9 @@ a replace, an append and a drop touch.
   grounding ends the row and begins another, a stop ends it. The
   columns and types the definition plans to ride the view as its tag,
   `glossql.view.schema`, so the engine lists the view without
-  planning it. A metric and a table of one dataset never share a
+  planning it. A statement bound to the dataset serves the view by
+  planning its definition at the statement's pins; `read.<metric>()`
+  names the same view. A metric and a table of one dataset never share a
   name: the catalog refuses either landing under the other's name.
 - **A landing's facts are the record's.** What it read, what it
   dropped, the casts, the files and the version it made are one row

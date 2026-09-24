@@ -20,7 +20,7 @@ says where it goes: `app` (the manifest), `app_page` (a tera page),
 ```glossql
 GLOSS app ON delivery AS $${"title": "Monday operations"}$$;
 GLOSS app_frame ON delivery.monthly AS $${"sql":
-  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM read.throughput() GROUP BY 1 ORDER BY 1"}$$;
+  "SELECT date_trunc('month', date) AS period, sum(value) AS value FROM throughput GROUP BY 1 ORDER BY 1"}$$;
 ```
 
 The `app_parts` read serves what an app is made of, one row per file.
@@ -54,7 +54,7 @@ path named is not a param — the frame's channel is bound to it, and
 logic — labels, percentages, a CSS class chosen by a verdict — as
 columns; templates place values, they do not decide them. A frame plans through the same path
 as every other read, so every door is available inside one:
-`read.<metric>()` for a grounding, `metric_series()` for the cube's
+a grounding under its name, `metric_series()` for the cube's
 cells at a grain, `whatif.<scenario>()` for a declared scenario beside
 the real books.
 

@@ -57,7 +57,11 @@ stands, what is open — when you want the counts.
 
 Four things look alike here and are not. Decide which one you mean
 before you write it: the workspace accepts all four under the same
-`GLOSS` statement and reads each differently afterwards.
+`GLOSS` statement and reads each differently afterwards. Whichever it
+is, the serving grounding is a view of the dataset under the aspect's
+name: `SELECT … FROM <name>` reads it, filters it and joins it as any
+view, and `information_schema` lists it. `read.<name>()` names the
+same view.
 
 - **A metric** — a QUERY aspect whose grounding serves a row-grain
   relation with a `value` column and a date column. The cube turns it
@@ -76,7 +80,7 @@ before you write it: the workspace accepts all four under the same
   the source hands over already summed, a count from a snapshot
   table. Ground it as a QUERY aspect that serves `value` and no date,
   with `"x-kind": "fact"` in the aspect's blob — the declaration is
-  what makes it a fact. `read.<name>()` serves it, `fact_values()`
+  what makes it a fact. `FROM <name>` serves it, `fact_values()`
   serves every declared fact's number, and the docket lists it under
   facts: one number, as of the newest landing of the tables it
   reads. The cube abstains on it, and that is the right answer. A fact
@@ -84,9 +88,9 @@ before you write it: the workspace accepts all four under the same
 - **A derived relation** — governed SQL other groundings build on: a
   snapshot boundary, a cleaned join, a scoped subset. Ground it with
   `"x-kind": "relation"`; every other grounding composes `FROM
-  read.<name>()`, so a ruled change propagates. It serves any
-  columns, needs no `value`, and the cube abstains on it by design.
-  There is no `CREATE VIEW` here; this is the view.
+  <name>`, so a ruled change propagates. It serves any columns,
+  needs no `value`, and the cube abstains on it by design. There is
+  no `CREATE VIEW` here; a grounding is the view.
 - **A validation** — an authored expectation (a FACT gloss) with a
   function voice that measures it and a detector that bands the two;
   `ATTEST()` is where it shows. Never a metric.

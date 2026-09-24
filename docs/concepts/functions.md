@@ -11,7 +11,7 @@ SQL. Normative definition: [SPEC.md §6](../../SPEC.md).
 ## Measurements and voices
 
 A `RETURNS` body is SQL — read-only, planned at the statement's pin,
-composing anything a read can: tables, `read.<aspect>()` groundings,
+composing anything a read can: tables, groundings by their names,
 the declaration relations, the shipped aggregates. The aspect's JSON
 Schema is the one contract: output is validated against it at
 extraction, and `GLOSSARY()` serves it as-is.

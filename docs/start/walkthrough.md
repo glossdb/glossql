@@ -166,12 +166,13 @@ GLOSS throughput ON ops AS $${
 }$$;
 ```
 
-The grounding serves at any reader's grain through `read.<aspect>()`.
-The human slot outranks the agent's, so a human answer is what runs:
+The grounding is a view under the metric's name, and it serves at
+any reader's grain. The human slot outranks the agent's, so a human
+answer is what runs:
 
 ```sql
 SELECT date_trunc('month', date) AS month, sum(value) AS hours
-FROM read.throughput() GROUP BY date_trunc('month', date)
+FROM throughput GROUP BY date_trunc('month', date)
 ORDER BY month
 ```
 

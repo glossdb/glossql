@@ -1,6 +1,7 @@
 //! Downloads: a landed table or a served metric's relation as a file.
 //! `GET /<dataset>/app/export/<name>.csv` or `.parquet`, where `<name>`
-//! is a table of the dataset or `read.<aspect>`. The file is the
+//! is a table or a metric of the dataset — a metric's grounding is a
+//! view under its name; `read.<aspect>` names the same view. The file is the
 //! relation as it stands at the read, encoded on the way out — the
 //! same channel and plan as a frame, the same streaming shape as the
 //! Arrow door, nothing stored twice. Parquet keeps the engine's types;
@@ -55,7 +56,7 @@ pub async fn export(
     let Some(sql) = relation_sql(name) else {
         return plain(
             StatusCode::NOT_FOUND,
-            format!("`{name}` is not a table name or `read.<aspect>`"),
+            format!("`{name}` is not a table's or a metric's name"),
         );
     };
     let actor = Actor {

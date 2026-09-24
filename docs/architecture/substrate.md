@@ -21,11 +21,12 @@ its own cycle stack, one stack for the whole nesting.
 - **The async pre-pass** — DataFusion's own planner resolves every
   table reference asynchronously first and only then runs the
   synchronous plan builder. The server copies that shape: every door a
-  statement names — a `read.<aspect>()` grounding, a replayed
+  statement names — a grounding's view, a replayed
   scenario, a subject column — is resolved depth-first before planning
-  begins, its SQL fetched from the store and built into a logical
-  plan. No blocking calls inside planning, no re-entrancy, and the
-  cycle check is the resolution path itself: a door already on the
+  begins, its SQL read from the catalog's view or the binary and
+  built into a logical plan. No blocking calls inside planning, no
+  re-entrancy, and the cycle check is the resolution path itself: a
+  door already on the
   path is a cycle, spelled out in the error. AST walks use sqlparser's
   derive-generated visitors, never a hand-written walker, which misses
   positions (scalar subqueries, for one).

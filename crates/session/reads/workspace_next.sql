@@ -178,7 +178,7 @@ CROSS JOIN (VALUES
   ('aspects', 'DECLARE ASPECT to add vocabulary — AS FACT, MEASUREMENT or QUERY, grained with ON'),
   ('claims', 'GLOSS a subject with an aspect — the write verb; a human writing outranks the agent slot at every read'),
   ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
-  ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — read.<name>() then serves it'),
+  ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — its name then serves it as a view'),
   ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
   ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its column overrides and their basis — whatif.<name>() then replays the recipes and bands the result'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),

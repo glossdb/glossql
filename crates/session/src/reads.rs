@@ -13,6 +13,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::TableProvider;
 use datafusion::common::{DataFusionError, Result as DFResult};
 use datafusion::datasource::{MemTable, provider_as_source};
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -164,19 +165,15 @@ impl Shared {
     /// The bound dataset's groundings as the catalog lists them — the
     /// views under the metrics' names, read off the mount, which a
     /// grounding write rebuilds. Empty while nothing is bound.
-    pub(crate) async fn view_names(
+    /// The bound dataset's groundings as the catalog lists them: each
+    /// view's name to its definition, at the mount's generation.
+    pub(crate) async fn views(
         &self,
-    ) -> Result<std::collections::HashSet<String>, SessionError> {
+    ) -> Result<std::collections::HashMap<String, String>, SessionError> {
         let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
             return Ok(Default::default());
         };
-        Ok(self
-            .lake()
-            .provider()
-            .await?
-            .view_names(&dataset)
-            .into_iter()
-            .collect())
+        Ok(self.lake().provider().await?.views(&dataset))
     }
 
     pub fn forget_pins(&self) {
@@ -778,7 +775,13 @@ impl RelationPlanner for GlossqlReads {
                     "read.{aspect}() takes no arguments — filters ride WHERE"
                 )));
             }
-            return self.planned(&format!("read.{aspect}"), alias.clone());
+            let provider = self.resolved.view(&aspect).ok_or_else(|| {
+                DataFusionError::Plan(format!(
+                    "`read.{aspect}` was not resolved before planning — the pre-pass missed \
+                     this reference"
+                ))
+            })?;
+            return self.scan(aspect, provider, alias.clone());
         }
         // A name the statement binds as a CTE is not ours to plan. This
         // seam runs *before* DataFusion's own CTE lookup (datafusion-sql
@@ -832,8 +835,9 @@ impl RelationPlanner for GlossqlReads {
             return self.planned(&format!("subject_column:{subject}"), alias.clone());
         }
         // A data table of the bound dataset, pinned at the statement's
-        // snapshot — bare or dataset-qualified. Another dataset's tables
-        // fall through to the live provider.
+        // snapshot, or a grounding of it planned at those pins — bare or
+        // dataset-qualified. Another dataset's tables fall through to
+        // the live provider.
         //
         // Through the planner's own normalizer, and that is not tidiness:
         // if this lookup spells a name differently from the way
@@ -844,52 +848,22 @@ impl RelationPlanner for GlossqlReads {
         // default path itself uses, so agreeing with it is the whole
         // requirement.
         let normal = |i: &Ident| context.normalize_ident(i.clone());
+        let relation_of = |name: &str| self.resolved.pin(name).or_else(|| self.resolved.view(name));
         let pinned = match name.0.as_slice() {
-            [t] if args.is_none() => t.as_ident().and_then(|i| self.resolved.pin(&normal(i))),
+            [t] if args.is_none() => t.as_ident().and_then(|i| relation_of(&normal(i))),
             [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
                 (Some(d), Some(t))
                     if self.shared.dataset.read().expect("state lock").as_deref()
                         == Some(normal(d).as_str()) =>
                 {
-                    self.resolved.pin(&normal(t))
+                    relation_of(&normal(t))
                 }
                 _ => None,
             },
             _ => None,
         };
         if let Some(provider) = pinned {
-            let plan = LogicalPlanBuilder::scan(
-                display_name(&relation),
-                provider_as_source(provider),
-                None,
-            )?
-            .build()?;
-            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
-                plan,
-                alias.clone(),
-            ))));
-        }
-        // A grounding's view of the bound dataset — bare or under its
-        // dataset — is the grounding, expanded as `read.<name>()` is;
-        // the pre-pass planned it under that key. The catalog lists the
-        // view for every reader; here the engine serves it.
-        let view = match name.0.as_slice() {
-            [t] if args.is_none() => t.as_ident().map(normal),
-            [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
-                (Some(d), Some(t))
-                    if self.shared.dataset.read().expect("state lock").as_deref()
-                        == Some(normal(d).as_str()) =>
-                {
-                    Some(normal(t))
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some(view) = view
-            && self.resolved.is_view(&view)
-        {
-            return self.planned(&format!("read.{view}"), alias.clone());
+            return self.scan(display_name(&relation), provider, alias.clone());
         }
         Ok(RelationPlanning::Original(Box::new(relation)))
     }
@@ -1273,15 +1247,40 @@ impl GlossqlReads {
             alias,
         ))))
     }
+
+    /// The relation scanned as this statement holds it under `name`: a
+    /// pinned table, or a grounding's view. A view's source carries its
+    /// plan, and the builder inlines it under the name
+    /// (`LogicalPlanBuilder::scan`, datafusion-expr `builder.rs`), so
+    /// `revenue.value` qualifies as `orders.amount` does.
+    fn scan(
+        &self,
+        name: String,
+        provider: Arc<dyn TableProvider>,
+        alias: Option<TableAlias>,
+    ) -> DFResult<RelationPlanning> {
+        let plan = LogicalPlanBuilder::scan(name, provider_as_source(provider), None)?.build()?;
+        Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+            plan, alias,
+        ))))
+    }
 }
 
-/// What a `read.<aspect>()` may expand: a QUERY aspect with a current
-/// collapsed grounding on the `USE`'d dataset — human outranking agent,
-/// so a pinned definition is literally what runs.
+/// What a grounding's name, or `read.<aspect>()`, serves: the
+/// definition the catalog's view under the metric's name carries — the
+/// serving grounding after the record's collapse, human outranking
+/// agent, landed with the gloss (`Session::sync_view`). A name with no
+/// view is refused with the road, read from the record on that path
+/// alone: the aspect is undeclared, is no QUERY aspect, is stopped, or
+/// has no grounding.
 pub(crate) async fn served_grounding(
     shared: &Shared,
+    views: &std::collections::HashMap<String, String>,
     aspect: &str,
 ) -> Result<String, SessionError> {
+    if let Some(sql) = views.get(aspect) {
+        return Ok(sql.clone());
+    }
     let dataset = shared
         .dataset
         .read()
@@ -1313,12 +1312,6 @@ pub(crate) async fn served_grounding(
              `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$` grounds it"
         )));
     };
-    if row.state != "current" {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): the grounding on `{dataset}` is {}",
-            row.state
-        )));
-    }
     let value = row.value.ok_or_else(|| {
         SessionError::BadSubject(format!(
             "read.{aspect}(): the current grounding carries no value"
@@ -1332,9 +1325,17 @@ pub(crate) async fn served_grounding(
             "read.{aspect}(): stopped — {why}"
         )));
     }
-    body["sql"].as_str().map(str::to_string).ok_or_else(|| {
-        SessionError::BadSubject(format!("read.{aspect}(): the grounding carries no `sql`"))
-    })
+    if body["sql"].as_str().is_none() {
+        return Err(SessionError::BadSubject(format!(
+            "read.{aspect}(): the grounding carries no `sql`"
+        )));
+    }
+    // The record serves a grounding the catalog does not list: its
+    // view did not land with the gloss. The gloss is the road.
+    Err(SessionError::BadSubject(format!(
+        "read.{aspect}(): the grounding on `{dataset}` has no view in the catalog — \
+         `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$` lands it"
+    )))
 }
 
 // -- argument decoding ---------------------------------------------------
