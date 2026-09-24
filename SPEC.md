@@ -125,7 +125,7 @@ Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass as reads about schema and plans (`DESCRIBE` over any
 name a read can plan — a landed table, a store relation, a shipped
 read, a cube read with its arguments; `SHOW TABLES` lists the bound
-dataset's tables; `EXPLAIN` only
+dataset's tables and its groundings' views, typed; `EXPLAIN` only
 over a query), `DROP TABLE` routes to the rules
 above, and everything else that would alter schema or data directly is
 refused. Tables come from recipes.
@@ -337,6 +337,13 @@ GLOSS fk_note ON orders.customer_id -> customers.id AS $${"value": "2% orphaned 
   assumptions ride the body as on any grounding. Supersession is the
   usual: a human `sql` over an agent `stopped` serves, a human `stopped`
   over an agent `sql` stops.
+- **A grounding is a view in the catalog.** The dataset's schema holds
+  a view under the metric's name carrying the serving grounding's
+  `sql`, in the engine's dialect; a superseding grounding replaces it,
+  a stop ends it. `read.<metric>()` keeps its meaning, and the bare
+  name — or `dataset.metric` — plans the same way. A dataset's schema
+  is one name space: a grounding on a landed table's name is refused,
+  and a recipe on a grounded metric's name is refused.
 - **Supersession key: (subject, aspect, actor kind).** A human re-gloss
   supersedes the human's value; an agent's supersedes the agent's. The slots
   stay separate; a witness adjudicates across them (§7).

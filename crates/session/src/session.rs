@@ -691,6 +691,12 @@ impl Session {
     ) -> Result<(), SessionError> {
         let lake = self.lake();
         lake.ensure_dataset(dataset).await?;
+        if lake.view_exists(dataset, table).await? {
+            return Err(SessionError::BadSubject(format!(
+                "`{dataset}.{table}`: the grounded metric `{table}` holds the name — a metric \
+                 and a table of one dataset never share a name"
+            )));
+        }
         let rows = Box::pin(RecordBatchStreamAdapter::new(
             Arc::clone(&schema),
             futures::stream::iter(batches.into_iter().map(Ok)),
@@ -840,6 +846,16 @@ impl Session {
                 let admission = store.recipe_admission(d).await?;
                 let (dataset, table) = (d.dataset.value.as_str(), d.table.value.as_str());
                 let lake = self.lake();
+                // One name space per dataset (SPEC.md §3): a table never
+                // lands under a grounded metric's name. Refused before
+                // the source is read.
+                if lake.view_exists(dataset, table).await? {
+                    return Err(SessionError::BadSubject(format!(
+                        "DECLARE RECIPE {table} ON {dataset}: the grounded metric `{table}` holds \
+                         the name — a metric and a table of one dataset never share a name; \
+                         name the table differently"
+                    )));
+                }
                 if admission == RecipeAdmission::Unchanged
                     && lake.table_exists(dataset, table).await?
                 {
@@ -1515,6 +1531,32 @@ impl Session {
         if let Some((_, _, Some(grains))) = self.shared.store.aspect(aspect).await? {
             self.check_glossed_subject(&mut resolved, &grains).await?;
         }
+        let is_grounding = self
+            .shared
+            .store
+            .aspect(aspect)
+            .await?
+            .is_some_and(|(_, kind, _)| kind == "query");
+        // A grounding is a view in the catalog under the metric's name
+        // (SPEC.md §5.2), and a dataset's schema is one name space: a
+        // metric and a landed table never share a name. Refused before
+        // the gloss lands, so the record and the catalog agree.
+        if is_grounding
+            && self
+                .shared
+                .pinned(&resolved.dataset)
+                .await?
+                .iter()
+                .any(|p| p.name == aspect)
+        {
+            let dataset = &resolved.dataset;
+            return Err(SessionError::BadSubject(format!(
+                "GLOSS {aspect} ON {dataset}: the landed table `{dataset}.{aspect}` holds the \
+                 name — a metric and a table of one dataset never share a name; the metric's \
+                 view would stand beside the table in the catalog. Name the metric \
+                 differently, or drop the table"
+            )));
+        }
         let snapshot = self.stamp(&resolved).await?;
         let written = self
             .shared
@@ -1528,12 +1570,6 @@ impl Session {
                 snapshot,
             )
             .await;
-        let is_grounding = self
-            .shared
-            .store
-            .aspect(aspect)
-            .await?
-            .is_some_and(|(_, kind, _)| kind == "query");
         // A metric is grounded on the dataset (SPEC.md §4); a grounding
         // on a table or a column is refused with the write that lands.
         if let Err(e @ glossql_glossary::Error::GrainRefused { .. }) = &written
@@ -1569,6 +1605,13 @@ impl Session {
             )));
         }
         written?;
+        // The catalog's view of the metric follows the collapse the
+        // record now serves: the serving grounding's SQL, or none
+        // where the metric is stopped. Never fails the write — the
+        // gloss landed; a view that could not is logged.
+        if is_grounding {
+            self.sync_view(&resolved.dataset, aspect).await;
+        }
         // A grounding's write answers with the metric's fact row — the
         // `metric_axes()` shape at the pin the write moved to: whether
         // the SQL plans, the verb and where it came from, the axes the
@@ -1631,6 +1674,51 @@ impl Session {
             "GLOSS {aspect} ON {}",
             resolved.subject
         )))
+    }
+
+    /// The catalog's view of one metric brought to the record's
+    /// collapse: the serving grounding — human over agent, a
+    /// contested slot withheld — lands as a view of the dataset's
+    /// schema under the metric's name, in the engine's dialect, with
+    /// the schema it plans to as its tag; a stopped or absent
+    /// grounding ends the view. A write to the catalog that fails is
+    /// logged, never the statement's error.
+    async fn sync_view(&self, dataset: &str, aspect: &str) {
+        let landed = async {
+            let rctx = self.shared.read_context_for(dataset).await?;
+            let slot = crate::search::current_query_slots(&rctx, dataset)
+                .await?
+                .into_iter()
+                .find(|s| s.subject == dataset && s.aspect == aspect);
+            let sql = slot
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s.body).ok())
+                .and_then(|b| b.get("sql").and_then(|v| v.as_str()).map(str::to_string));
+            let lake = self.lake();
+            match sql {
+                Some(sql) => {
+                    let ctx = self.shared.session_ctx();
+                    let schema = crate::whatif::build_plan(&self.shared, &ctx, &sql)
+                        .await
+                        .ok()
+                        .map(|plan| plan.schema().as_arrow().clone());
+                    lake.put_view(dataset, aspect, &sql, schema.as_ref())
+                        .await?;
+                }
+                None => {
+                    lake.end_view(dataset, aspect).await?;
+                }
+            }
+            Ok::<(), SessionError>(())
+        }
+        .await;
+        if let Err(e) = landed {
+            tracing::warn!(
+                dataset,
+                metric = aspect,
+                "the metric's view was not landed: {e}"
+            );
+        }
     }
 
     /// Extraction (SPEC.md §6): the compute act. A hit at the statement's
@@ -2168,18 +2256,33 @@ impl Session {
         })
     }
 
-    /// `SHOW TABLES`: the bound dataset's landed tables as
-    /// `(dataset, table_name)` — the names a read can use unqualified.
-    /// Refused without a `USE`; the store's relations and the shipped
-    /// reads are not tables and are not listed (the glossql skill names
-    /// them, `DESCRIBE` describes them).
+    /// `SHOW TABLES`: the bound dataset's landed tables and its
+    /// groundings' views as `(dataset, table_name, table_type)` — the
+    /// names a read can use unqualified, typed as `information_schema`
+    /// types them. Refused without a `USE`; the store's relations and
+    /// the shipped reads are not tables and are not listed (the
+    /// glossql skill names them, `DESCRIBE` describes them).
     async fn show_tables(&self) -> Result<Outcome, SessionError> {
         let dataset = self.dataset().ok_or(SessionError::NoDataset)?;
-        let mut names: Vec<String> = self.shared.statement_pins().await?.into_keys().collect();
+        let mut names: Vec<(String, &'static str)> = self
+            .shared
+            .statement_pins()
+            .await?
+            .into_keys()
+            .map(|n| (n, "BASE TABLE"))
+            .collect();
+        names.extend(
+            self.shared
+                .view_names()
+                .await?
+                .into_iter()
+                .map(|n| (n, "VIEW")),
+        );
         names.sort();
         let schema = Arc::new(Schema::new(vec![
             Field::new("dataset", DataType::Utf8, false),
             Field::new("table_name", DataType::Utf8, false),
+            Field::new("table_type", DataType::Utf8, false),
         ]));
         let batch = RecordBatch::try_new(
             schema,
@@ -2188,8 +2291,9 @@ impl Session {
                     names.iter().map(|_| dataset.as_str()),
                 )) as ArrayRef,
                 Arc::new(StringArray::from_iter_values(
-                    names.iter().map(String::as_str),
+                    names.iter().map(|(n, _)| n.as_str()),
                 )),
+                Arc::new(StringArray::from_iter_values(names.iter().map(|(_, t)| *t))),
             ],
         )
         .map_err(DataFusionError::from)?;

@@ -90,32 +90,105 @@ impl TableProvider for FilesTable {
     }
 }
 
-/// One dataset's tables at the mount's version.
+/// A grounding's view as the mount lists it: its definition and the
+/// schema its tag carries, of type View, so `information_schema` and
+/// `SHOW TABLES` see it beside the tables. It is never scanned here:
+/// a statement bound to the dataset expands the name through the
+/// engine's own planner, as `read.<name>()` is, and any other reader
+/// of the mount is told so.
+#[derive(Debug)]
+pub struct ViewStub {
+    dataset: String,
+    name: String,
+    definition: String,
+    schema: SchemaRef,
+}
+
+impl ViewStub {
+    pub(crate) fn new(dataset: &str, name: &str, definition: &str, schema: SchemaRef) -> Self {
+        ViewStub {
+            dataset: dataset.to_string(),
+            name: name.to_string(),
+            definition: definition.to_string(),
+            schema,
+        }
+    }
+}
+
+#[async_trait]
+impl TableProvider for ViewStub {
+    fn schema(&self) -> SchemaRef {
+        Arc::clone(&self.schema)
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::View
+    }
+
+    fn get_table_definition(&self) -> Option<&str> {
+        Some(&self.definition)
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn Session,
+        _projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        Err(datafusion::error::DataFusionError::Plan(format!(
+            "`{}` is a grounding of `{}`: it serves under `USE {}`, as `{}` or read.{}()",
+            self.name, self.dataset, self.dataset, self.name, self.name
+        )))
+    }
+}
+
+/// One dataset's tables and views at the mount's version.
 #[derive(Debug)]
 pub struct DatasetSchema {
     tables: HashMap<String, Arc<dyn TableProvider>>,
+    views: HashMap<String, Arc<dyn TableProvider>>,
 }
 
 impl DatasetSchema {
-    pub(crate) fn new(tables: HashMap<String, Arc<dyn TableProvider>>) -> Self {
-        DatasetSchema { tables }
+    pub(crate) fn new(
+        tables: HashMap<String, Arc<dyn TableProvider>>,
+        views: HashMap<String, Arc<dyn TableProvider>>,
+    ) -> Self {
+        DatasetSchema { tables, views }
+    }
+
+    /// The names of the dataset's views, sorted.
+    pub fn view_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.views.keys().cloned().collect();
+        names.sort();
+        names
     }
 }
 
 #[async_trait]
 impl SchemaProvider for DatasetSchema {
     fn table_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.tables.keys().cloned().collect();
+        let mut names: Vec<String> = self
+            .tables
+            .keys()
+            .chain(self.views.keys())
+            .cloned()
+            .collect();
         names.sort();
         names
     }
 
     async fn table(&self, name: &str) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        Ok(self.tables.get(name).cloned())
+        Ok(self
+            .tables
+            .get(name)
+            .or_else(|| self.views.get(name))
+            .cloned())
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        self.tables.contains_key(name)
+        self.tables.contains_key(name) || self.views.contains_key(name)
     }
 }
 
@@ -130,6 +203,15 @@ pub struct Mount {
 impl Mount {
     pub(crate) fn new(schemas: HashMap<String, Arc<DatasetSchema>>) -> Self {
         Mount { schemas }
+    }
+
+    /// The names of a dataset's views at the mount's version; empty
+    /// for a dataset the mount does not hold.
+    pub fn view_names(&self, dataset: &str) -> Vec<String> {
+        self.schemas
+            .get(dataset)
+            .map(|s| s.view_names())
+            .unwrap_or_default()
     }
 }
 

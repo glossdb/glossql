@@ -25,7 +25,7 @@ mod tables;
 
 pub use record::{Db, Number, Record, RelationSpec, Row};
 pub use scan::{FilesTable, Mount};
-pub use tables::{LandedFile, Landing};
+pub use tables::{LandedFile, Landing, ViewRow};
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::execution::SendableRecordBatchStream;
@@ -184,6 +184,11 @@ pub struct Lake {
 const GRACE: std::time::Duration = std::time::Duration::from_secs(3600);
 
 const MOUNT_BUILD_ATTEMPTS: usize = 5;
+
+/// The dialect a grounding's view is written in — the engine's own.
+/// A reader attached to the catalog reads the definition and this
+/// word; one that speaks the dialect runs it.
+const VIEW_DIALECT: &str = "datafusion";
 
 impl Lake {
     /// The laptop's shape: a SQLite file and a warehouse directory.
@@ -441,6 +446,43 @@ impl Lake {
         Ok(version)
     }
 
+    // -- views -------------------------------------------------------------
+
+    /// A grounding's view landed in the dataset's schema under the
+    /// metric's name: the definition in the engine's dialect, and the
+    /// schema it planned to where it planned, as the view's tag. A live
+    /// view of that name ends in the same commit; a live table of that
+    /// name refuses. The snapshot it made.
+    pub async fn put_view(
+        &self,
+        dataset: &str,
+        name: &str,
+        sql: &str,
+        schema: Option<&Schema>,
+    ) -> Result<i64> {
+        let version = tables::put_view(&self.db, dataset, name, VIEW_DIALECT, sql, schema).await?;
+        self.invalidate_provider();
+        Ok(version)
+    }
+
+    /// The live view of that name ended; false where none stands.
+    pub async fn end_view(&self, dataset: &str, name: &str) -> Result<bool> {
+        let ended = tables::end_view(&self.db, dataset, name).await?;
+        if ended {
+            self.invalidate_provider();
+        }
+        Ok(ended)
+    }
+
+    pub async fn view_exists(&self, dataset: &str, name: &str) -> Result<bool> {
+        tables::view_exists(&self.db, dataset, name).await
+    }
+
+    /// Every live view of the dataset, by name.
+    pub async fn views(&self, dataset: &str) -> Result<Vec<ViewRow>> {
+        tables::views(&self.db, dataset).await
+    }
+
     /// The table ended, its files scheduled for deletion.
     pub async fn drop_table(&self, dataset: &str, table: &str) -> Result<()> {
         tables::drop_table(&self.db, dataset, table).await?;
@@ -590,7 +632,17 @@ impl Lake {
                 .into_iter()
                 .map(|p| (p.name, p.provider))
                 .collect();
-            schemas.insert(dataset, Arc::new(scan::DatasetSchema::new(tables)));
+            let views = self
+                .views(&dataset)
+                .await?
+                .into_iter()
+                .map(|v| {
+                    let stub: Arc<dyn datafusion::catalog::TableProvider> =
+                        Arc::new(scan::ViewStub::new(&dataset, &v.name, &v.sql, v.schema));
+                    (v.name, stub)
+                })
+                .collect();
+            schemas.insert(dataset, Arc::new(scan::DatasetSchema::new(tables, views)));
         }
         Ok(Mount::new(schemas))
     }

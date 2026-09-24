@@ -61,6 +61,14 @@ a replace, an append and a drop touch.
   rebuilds the heads over the tables it moved before it answers, and
   every grain follows. A cube that abstains, or whose frame reads the
   record itself, stays in memory.
+- **A grounding is a view.** The serving grounding of each metric
+  lands in the dataset's schema as a view under the metric's name,
+  `dialect` the engine's, `sql` the grounding's; a superseding
+  grounding ends the row and begins another, a stop ends it. The
+  columns and types the definition plans to ride the view as its tag,
+  `glossql.view.schema`, so the engine lists the view without
+  planning it. A metric and a table of one dataset never share a
+  name: the catalog refuses either landing under the other's name.
 - **A landing's facts are the record's.** What it read, what it
   dropped, the casts, the files and the version it made are one row
   of the `imports` relation, written beside the commit and outliving

@@ -65,6 +65,11 @@ pub(crate) struct Resolved {
     /// same reason as `record`; the data tables a body scans directly
     /// come from the executed plan instead.
     pub(crate) reads: ReadSet,
+    /// The bound dataset's groundings as the catalog lists them — the
+    /// views under the metrics' names. A bare or dataset-qualified
+    /// name among them is the grounding, expanded as `read.<name>()`
+    /// is; a shipped read's name and a CTE's stand over it.
+    views: HashSet<String>,
 }
 
 /// What a statement's resolution read, named against the pin's legs:
@@ -116,6 +121,12 @@ impl Resolved {
 
     pub(crate) fn batch(&self, key: &str) -> Option<&crate::reads::Served> {
         self.batches.get(key)
+    }
+
+    /// Whether a name is one of the bound dataset's groundings, as the
+    /// catalog lists them.
+    pub(crate) fn is_view(&self, name: &str) -> bool {
+        self.views.contains(name)
     }
 
     /// Whether this factor is a name the statement binds as a CTE — see
@@ -203,8 +214,8 @@ impl Door {
 /// traversal via sqlparser's derive-generated visitor, so a scalar
 /// subquery in the SELECT list is covered like a FROM item. A
 /// hand-written walker misses positions; this one cannot.
-fn doors_in(idents: &IdentNormalizer, q: &mut Query) -> Vec<Door> {
-    struct Collect<'a>(Vec<Door>, &'a IdentNormalizer);
+fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashSet<String>) -> Vec<Door> {
+    struct Collect<'a>(Vec<Door>, &'a IdentNormalizer, &'a HashSet<String>);
     impl VisitorMut for Collect<'_> {
         type Break = ();
         fn pre_visit_table_factor(&mut self, f: &mut TableFactor) -> ControlFlow<()> {
@@ -236,6 +247,15 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query) -> Vec<Door> {
                     [name] if args.is_none() && crate::library::read_sql(name).is_some() => {
                         self.0.push(Door::Shipped(name.clone()));
                     }
+                    // A grounding's view of the bound dataset, bare or
+                    // under its dataset: the grounding, planned under
+                    // the serve door's key.
+                    [name] if args.is_none() && self.2.contains(name) => {
+                        self.0.push(Door::Serve(name.clone()));
+                    }
+                    [_, name] if args.is_none() && self.2.contains(name) => {
+                        self.0.push(Door::Serve(name.clone()));
+                    }
                     _ => {
                         // The malformed-argument case is left uncollected
                         // on purpose: the planner meets the factor, calls
@@ -249,7 +269,7 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query) -> Vec<Door> {
             ControlFlow::Continue(())
         }
     }
-    let mut c = Collect(Vec::new(), idents);
+    let mut c = Collect(Vec::new(), idents, views);
     let _ = q.visit(&mut c);
     c.0.sort_by_key(Door::key);
     c.0.dedup();
@@ -575,7 +595,8 @@ async fn expand(
     };
 
     path.push(key.clone());
-    for child in doors_in(&shared.idents(), &mut body) {
+    let views = resolved.views.clone();
+    for child in doors_in(&shared.idents(), &mut body, &views) {
         Box::pin(resolve_door(shared, ctx, child, path, done, resolved)).await?;
     }
     path.pop();
@@ -641,6 +662,7 @@ pub(crate) async fn resolve(
     let mut resolved = Resolved {
         pins,
         ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
+        views: shared.view_names().await?,
         ..Resolved::default()
     };
     let DFStatement::Statement(inner) = statement else {
@@ -656,7 +678,8 @@ pub(crate) async fn resolve(
     refuse_subject_relations(q, &resolved)?;
     let mut done = HashSet::new();
     let mut path = Vec::new();
-    for door in doors_in(&idents, q) {
+    let views = resolved.views.clone();
+    for door in doors_in(&idents, q, &views) {
         resolve_door(shared, ctx, door, &mut path, &mut done, &mut resolved).await?;
     }
     compute_batches(shared, q, &mut resolved).await?;

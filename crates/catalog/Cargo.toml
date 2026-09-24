@@ -18,6 +18,8 @@ futures.workspace = true
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# A view's schema tag, one JSON row per column.
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

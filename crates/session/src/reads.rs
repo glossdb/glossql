@@ -161,6 +161,24 @@ impl Shared {
     /// Everything held from the catalog, dropped so the next statement
     /// walks again. A landing one statement commits is visible to the
     /// next, which is the whole of what this has to guarantee.
+    /// The bound dataset's groundings as the catalog lists them — the
+    /// views under the metrics' names, read off the mount, which a
+    /// grounding write rebuilds. Empty while nothing is bound.
+    pub(crate) async fn view_names(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, SessionError> {
+        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+            return Ok(Default::default());
+        };
+        Ok(self
+            .lake()
+            .provider()
+            .await?
+            .view_names(&dataset)
+            .into_iter()
+            .collect())
+    }
+
     pub fn forget_pins(&self) {
         self.pins.write().expect("pins lock").clear();
         self.named.write().expect("named lock").clear();
@@ -850,6 +868,28 @@ impl RelationPlanner for GlossqlReads {
                 plan,
                 alias.clone(),
             ))));
+        }
+        // A grounding's view of the bound dataset — bare or under its
+        // dataset — is the grounding, expanded as `read.<name>()` is;
+        // the pre-pass planned it under that key. The catalog lists the
+        // view for every reader; here the engine serves it.
+        let view = match name.0.as_slice() {
+            [t] if args.is_none() => t.as_ident().map(normal),
+            [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
+                (Some(d), Some(t))
+                    if self.shared.dataset.read().expect("state lock").as_deref()
+                        == Some(normal(d).as_str()) =>
+                {
+                    Some(normal(t))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(view) = view
+            && self.resolved.is_view(&view)
+        {
+            return self.planned(&format!("read.{view}"), alias.clone());
         }
         Ok(RelationPlanning::Original(Box::new(relation)))
     }
