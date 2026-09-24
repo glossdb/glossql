@@ -103,16 +103,19 @@ DECLARE ASPECT definitions WITH $${
   "type": "object", "properties": {"definitions": {"type": "object"}}
 }$$ AS FACT ON DATASET;
 
--- The cube's shape: a metric's cells are computed at its judged
--- cadence and never finer than `resolution`, the floor; `windows` is
--- the retention ladder — per resolution the maximum window, measured
--- back from the data's own edge, the finer the resolution the shorter
--- the window. A metric's window is the rung of its own resolution.
+-- The cube's shape: a metric's resolution is its judged cadence and
+-- never finer than `resolution`, the floor, and its head — the cells
+-- every grain derives from — is built at the floor over the longest
+-- of the `windows`; `windows` is the ladder — per resolution the
+-- window a grain is served over, measured back from the data's own
+-- edge, the finer the resolution the shorter the window. A metric's
+-- own series is served over the rung of its resolution, and
+-- `metric_axes().outside` counts the periods that rung leaves out.
 -- The defaults ride the schema; a gloss overrides any rung or the
 -- floor and supersedes like any gloss. Witness-free: a setting is not
 -- a claim about the data and owes no backlog row. The cube itself is a
--- query result — cached, never recorded — read through
--- `metric_series()` and `metric_axes()`.
+-- query result — landed under the cache, never recorded — read
+-- through `metric_series()` and `metric_axes()`.
 
 DECLARE ASPECT cube WITH $${
   "type": "object",

@@ -33,11 +33,17 @@ top. Each point's fit saw only the months before it.
 
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,
-the disclosed rival — at the metric's resolution, computed at read,
-landed in the catalog under the engine's cache, never recorded.
+the disclosed rival — computed at read, landed in the catalog under
+the engine's cache, never recorded. One head per metric, at the
+floor grain over the longest window of the ladder; every grain a
+read asks for is a plan over it, served over that grain's rung.
 Nothing to run: `metric_series()` builds what is not built, a landing
-rebuilds what it moved, and every instance reads the same head. A dimension the cube
-should slice must be a served column of the extract.
+rebuilds what it moved, and every instance reads the same head. A
+dimension the cube should slice must be a served column of the
+extract; where the frame serves only a date and a value,
+`metric_axes().unserved` names the judged columns it could serve.
+`metric_axes().outside` counts the periods the metric's rung leaves
+out; a `cube` gloss widening the rung brings them in.
 
 The axes come from judged verdicts, not from the data's shape — or
 from the grounding's own word: `"axes": ["region", "channel"]` in the

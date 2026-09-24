@@ -340,7 +340,7 @@ async fn the_routes_answer_from_the_record() {
                 .unwrap();
             let slices = goal(&session, "slices").await;
             assert_eq!(
-                slices["say"], "re-record takings serving one of track",
+                slices["say"], "re-record takings serving one of races.track",
                 "{slices:?}"
             );
             let statement = slices["statement"].as_str().unwrap();
@@ -365,7 +365,7 @@ async fn the_routes_answer_from_the_record() {
             let held = goal(&session, "slices").await;
             assert_eq!(held["state"], "next", "{held:?}");
             assert_eq!(
-                held["say"], "re-record takings serving one of track",
+                held["say"], "re-record takings serving one of races.track",
                 "{held:?}"
             );
             session

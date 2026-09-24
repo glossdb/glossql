@@ -103,18 +103,12 @@ pool AS (
   LEFT JOIN roles ON roles.subject = cols.t || '.' || cols.column_name
   LEFT JOIN verdict ON verdict.subject = cols.t || '.' || cols.column_name
 ),
--- the columns a gloss or an applicable verdict admits: gloss first,
--- then by relevance
-admitted AS (
-  SELECT metric, column_name,
-         CASE stance WHEN 'primary' THEN 0 WHEN 'supporting' THEN 1 ELSE 2 END AS stance_rank,
-         coalesce(relevance, 0.0) AS relevance, ordinal_position
-  FROM pool
-  WHERE stance IN ('primary', 'supporting') OR (stance IS NULL AND applicable)
-),
+-- the columns a gloss or an applicable verdict admits and the frame
+-- does not serve: the fact row's own list, judged where the cube
+-- judges admission
 columns AS (
-  SELECT metric, array_to_string(array_agg(column_name ORDER BY stance_rank, relevance DESC, ordinal_position), ', ') AS columns
-  FROM admitted GROUP BY metric
+  SELECT metric, array_to_string(unserved, ', ') AS columns
+  FROM axes WHERE applicable AND cardinality(unserved) > 0
 ),
 other_axes AS (
   SELECT a.metric, ' — also ' || array_to_string(array_agg(b.metric || ': ' || b.columns ORDER BY b.metric), '; ') AS other_axes
@@ -310,8 +304,24 @@ WHERE NOT a.applicable AND cardinality(a.wanted) = 0
   AND s.stopped = '' AND s.kind NOT IN ('relation', 'fact')
   AND coalesce(a.reason, '') <> ''
 
+-- the data reaches further back than the metric's window: the fact
+-- row counts the periods the window leaves out, and a cube gloss
+-- widening the rung brings them in — the rung is the dataset's to
+-- set, once, for every metric at that resolution
 UNION ALL
-SELECT 'metrics', 5, 'done', '', '',
+SELECT 'metrics', 5, 'next', 'GLOSS cube',
+       'widen the ' || a.resolution || ' rung: ' || CAST(a.outside AS VARCHAR) || ' ' || a.resolution || 's of ' || a.metric || ' lie outside its window',
+       a.metric || ' serves ' || CAST(w.served AS VARCHAR) || ' ' || a.resolution || 's under the ' || a.window || ' rung, and the data holds ' || CAST(a.outside AS VARCHAR) || ' more before it. The window is the `cube` gloss''s rung for the resolution; widen it to hold the data, or leave it where the older periods are not the business''s question',
+       $f$GLOSS cube ON $f$ || ds.dataset || $f$ AS $${"windows": {"$f$ || a.resolution || $f$": "$f$ || CAST(w.served + a.outside AS VARCHAR) || ' ' || a.resolution || $f$s"}}$$;$f$,
+       ''
+FROM axes a
+JOIN (SELECT metric, count(DISTINCT period) AS served FROM metric_series() WHERE dimension = '' GROUP BY metric) w
+  ON w.metric = a.metric
+CROSS JOIN ds
+WHERE a.applicable AND a.outside > 0
+
+UNION ALL
+SELECT 'metrics', 6, 'done', '', '',
        'every metric the dataset claims is served or stopped; the next concept is the human''s to name'
          || coalesce(' — unread: ' || u.tables, '') || coalesce('; judged and unserved: ' || v.columns, ''),
        '', ''
@@ -375,7 +385,7 @@ WHERE r.act = 'abstained'
 UNION ALL
 SELECT 'slices', 7, 'next', 'GLOSS query',
        're-record ' || c.metric || ' serving one of ' || c.columns || coalesce(o.other_axes, ''),
-       'the frame serves only a date and a value; a verdict or a gloss admits ' || c.columns || ' of ' || coalesce(t.t, '<table>')
+       'the frame serves only a date and a value; a verdict or a gloss admits ' || c.columns
          || ' as an axis, and the cube slices only on served columns. Serve the axis as the frame''s own column, or a label reached through a declared edge by a LEFT JOIN: the total must hold, and the write''s row says what changed against the standing frame',
        '-- admitted and not served: ' || c.columns || '; the frame''s own column, or a LEFT JOIN to a label — the total must hold. A distinct count or a ratio, which no column slices whole, says "axes": [] instead; a flow serves the axis' || chr(10)
          || $f$GLOSS $f$ || c.metric || $f$ ON $f$ || ds.dataset || $f$ AS $$$f$ || coalesce(b.body, '<the standing body>') || $f$$$;$f$,

@@ -48,15 +48,19 @@ a replace, an append and a drop touch.
   table. The ended files are scheduled for deletion and deleted by a
   later commit once a grace has passed, longer than any statement
   runs. The data keeps no history.
-- **The cube's head is a table.** Each metric's cells land in the
-  catalog's `main` schema as `cube__<dataset>__<metric>`, a coarser
-  grain's beside it under `__<grain>`, replaced in one commit; the
-  key the cube was built at — the data legs and a digest over what
-  else the build read — and its fact row are the table's tags. Every
-  instance and every restart read the same head, and the engine's
-  cache is the read-through level over it: a landing rebuilds the
-  cubes over the tables it moved before it answers. A cube that
-  abstains, or whose frame reads the record itself, stays in memory.
+- **The cube's head is a table.** Each metric's cells at the floor
+  grain, over the longest window of the ladder, land in the catalog's
+  `main` schema as `cube__<dataset>__<metric>`, sorted by period and
+  replaced in one commit; the key the cube was built at — the data
+  legs and a digest over what else the build read — and its fact row
+  are the table's tags, `glossql.cube.key` and `glossql.cube.fact`.
+  Every grain a read serves is a plan over the head, windowed to the
+  ladder's rung for that grain and cached beside it in memory; it is
+  never landed. Every instance and every restart read the same head,
+  and the engine's cache is the read-through level over it: a landing
+  rebuilds the heads over the tables it moved before it answers, and
+  every grain follows. A cube that abstains, or whose frame reads the
+  record itself, stays in memory.
 - **A landing's facts are the record's.** What it read, what it
   dropped, the casts, the files and the version it made are one row
   of the `imports` relation, written beside the commit and outliving
