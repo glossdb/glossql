@@ -579,6 +579,14 @@ pub(crate) async fn commit_landing(
                 return Err(Error::Workspace(format!("no dataset `{dataset}`")));
             };
             let existing = table_id(db, tx, &dataset, &table).await?;
+            // One name space per schema, as a reader attached to the
+            // catalog has it: a table never lands under a view's name.
+            if existing.is_none() && view_id(db, tx, &dataset, &table).await?.is_some() {
+                return Err(Error::Workspace(format!(
+                    "`{table}` is a grounded metric's view in `{dataset}`: a table and a \
+                     metric of one dataset never share a name"
+                )));
+            }
             let mut ended = Vec::new();
             let (id, changes) = match (landing, existing) {
                 (Landing::Create, None) => {
@@ -817,6 +825,213 @@ pub(crate) async fn tags(db: &Db, dataset: &str, table: &str) -> Result<HashMap<
     .await?;
     rows.iter()
         .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+        .collect()
+}
+
+// -- views -----------------------------------------------------------------
+
+/// The tag a view carries beside its definition: its columns and the
+/// specification's spelling of their types, as the engine planned the
+/// definition — what the mount advertises for it without planning.
+const VIEW_SCHEMA_TAG: &str = "glossql.view.schema";
+
+/// One live view of a dataset, as read back: the definition and the
+/// dialect it is written in, and the schema its tag carries — empty
+/// where the definition did not plan when it was written.
+#[derive(Debug, Clone)]
+pub struct ViewRow {
+    pub name: String,
+    pub dialect: String,
+    pub sql: String,
+    pub schema: SchemaRef,
+}
+
+/// The live view's id in the dataset, or none.
+async fn view_id(db: &Db, tx: &mut Tx, dataset: &str, view: &str) -> Result<Option<i64>> {
+    let row = sqlx::query(&db.sql(
+        "SELECT v.view_id FROM ducklake_view v JOIN ducklake_schema s ON s.schema_id = v.schema_id \
+         WHERE s.schema_name = ? AND v.view_name = ? AND s.end_snapshot IS NULL AND v.end_snapshot IS NULL",
+    ))
+    .bind(dataset)
+    .bind(view)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|r| r.try_get(0)).transpose()?)
+}
+
+/// The view's schema as its tag spells it: one `[name, type,
+/// nullable]` per column. None where a column's type is not one the
+/// vocabulary spells, and the view then carries no schema.
+fn view_schema_tag(schema: &Schema) -> Option<String> {
+    let columns: Option<Vec<serde_json::Value>> = schema
+        .fields()
+        .iter()
+        .map(|f| {
+            let kind = ducklake_type(f.data_type()).ok()?;
+            Some(serde_json::json!([f.name(), kind, f.is_nullable()]))
+        })
+        .collect();
+    columns.map(|c| serde_json::Value::Array(c).to_string())
+}
+
+fn view_schema(tag: Option<&str>) -> SchemaRef {
+    let fields: Vec<Field> = tag
+        .and_then(|t| serde_json::from_str::<Vec<(String, String, bool)>>(t).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(name, kind, nullable)| {
+            Some(Field::new(name, arrow_type(&kind).ok()?, nullable))
+        })
+        .collect();
+    Arc::new(Schema::new(fields))
+}
+
+/// The view landed in the dataset's schema under `name`, in one
+/// commit: a live view of that name ends and this one begins, its
+/// schema tag beside it. Refused where a live table holds the name.
+/// The snapshot it made.
+pub(crate) async fn put_view(
+    db: &Db,
+    dataset: &str,
+    name: &str,
+    dialect: &str,
+    sql: &str,
+    schema: Option<&Schema>,
+) -> Result<i64> {
+    let dataset = dataset.to_string();
+    let name = name.to_string();
+    let dialect = dialect.to_string();
+    let sql = sql.to_string();
+    let tag = schema.and_then(view_schema_tag);
+    commit(db, move |db, tx, snapshot| {
+        let (dataset, name, dialect, sql, tag) = (
+            dataset.clone(),
+            name.clone(),
+            dialect.clone(),
+            sql.clone(),
+            tag.clone(),
+        );
+        Box::pin(async move {
+            let Some(schema_id) = schema_id(db, tx, &dataset).await? else {
+                return Err(Error::Workspace(format!("no dataset `{dataset}`")));
+            };
+            if table_id(db, tx, &dataset, &name).await?.is_some() {
+                return Err(Error::Workspace(format!(
+                    "`{name}` is a landed table of `{dataset}`: a table and a metric of one \
+                     dataset never share a name"
+                )));
+            }
+            if let Some(old) = view_id(db, tx, &dataset, &name).await? {
+                for statement in [
+                    "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND end_snapshot IS NULL",
+                    "UPDATE ducklake_view SET end_snapshot = ? WHERE view_id = ? AND end_snapshot IS NULL",
+                ] {
+                    sqlx::query(&db.sql(statement))
+                        .bind(snapshot.id)
+                        .bind(old)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
+            let id = snapshot.catalog_id();
+            sqlx::query(&db.sql(&format!(
+                "INSERT INTO ducklake_view (view_id, view_uuid, begin_snapshot, end_snapshot, \
+                 schema_id, view_name, dialect, \"sql\", column_aliases) \
+                 VALUES (?, '{}', ?, NULL, ?, ?, ?, ?, NULL)",
+                uuid::Uuid::now_v7()
+            )))
+            .bind(id)
+            .bind(snapshot.id)
+            .bind(schema_id)
+            .bind(&name)
+            .bind(&dialect)
+            .bind(&sql)
+            .execute(&mut **tx)
+            .await?;
+            if let Some(tag) = &tag {
+                sqlx::query(&db.sql(
+                    "INSERT INTO ducklake_tag (object_id, begin_snapshot, end_snapshot, \"key\", \"value\") \
+                     VALUES (?, ?, NULL, ?, ?)",
+                ))
+                .bind(id)
+                .bind(snapshot.id)
+                .bind(VIEW_SCHEMA_TAG)
+                .bind(tag)
+                .execute(&mut **tx)
+                .await?;
+            }
+            Ok((snapshot.id, format!("created_view:{id}")))
+        })
+    })
+    .await
+}
+
+/// The live view of that name ended, with its tags; false, and no
+/// commit, where none stands.
+pub(crate) async fn end_view(db: &Db, dataset: &str, name: &str) -> Result<bool> {
+    if !view_exists(db, dataset, name).await? {
+        return Ok(false);
+    }
+    let dataset = dataset.to_string();
+    let name = name.to_string();
+    commit(db, move |db, tx, snapshot| {
+        let (dataset, name) = (dataset.clone(), name.clone());
+        Box::pin(async move {
+            let Some(id) = view_id(db, tx, &dataset, &name).await? else {
+                return Ok((false, String::new()));
+            };
+            for statement in [
+                "UPDATE ducklake_tag SET end_snapshot = ? WHERE object_id = ? AND end_snapshot IS NULL",
+                "UPDATE ducklake_view SET end_snapshot = ? WHERE view_id = ? AND end_snapshot IS NULL",
+            ] {
+                sqlx::query(&db.sql(statement))
+                    .bind(snapshot.id)
+                    .bind(id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            Ok((true, format!("dropped_view:{id}")))
+        })
+    })
+    .await
+}
+
+pub(crate) async fn view_exists(db: &Db, dataset: &str, name: &str) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar(&db.sql(
+        "SELECT count(*) FROM ducklake_view v JOIN ducklake_schema s ON s.schema_id = v.schema_id \
+         WHERE s.schema_name = ? AND v.view_name = ? AND s.end_snapshot IS NULL AND v.end_snapshot IS NULL",
+    ))
+    .bind(dataset)
+    .bind(name)
+    .fetch_one(db.pool())
+    .await?;
+    Ok(n > 0)
+}
+
+/// Every live view of the dataset, by name.
+pub(crate) async fn views(db: &Db, dataset: &str) -> Result<Vec<ViewRow>> {
+    let rows = sqlx::query(&db.sql(
+        "SELECT v.view_name, v.dialect, v.\"sql\", g.\"value\" FROM ducklake_view v \
+         JOIN ducklake_schema s ON s.schema_id = v.schema_id \
+         LEFT JOIN ducklake_tag g ON g.object_id = v.view_id AND g.\"key\" = ? \
+              AND g.end_snapshot IS NULL \
+         WHERE s.schema_name = ? AND s.end_snapshot IS NULL AND v.end_snapshot IS NULL \
+         ORDER BY v.view_name",
+    ))
+    .bind(VIEW_SCHEMA_TAG)
+    .bind(dataset)
+    .fetch_all(db.pool())
+    .await?;
+    rows.iter()
+        .map(|r| {
+            let tag: Option<String> = r.try_get(3)?;
+            Ok(ViewRow {
+                name: r.try_get(0)?,
+                dialect: r.try_get(1)?,
+                sql: r.try_get(2)?,
+                schema: view_schema(tag.as_deref()),
+            })
+        })
         .collect()
 }
 

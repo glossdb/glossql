@@ -121,6 +121,128 @@ async fn information_schema_serves_the_mounted_schema_in_one_read() {
     );
 }
 
+/// A grounding is a view in the catalog (SPEC.md §5.2): the dataset's
+/// schema holds it under the metric's name with the serving
+/// grounding's SQL, so `information_schema` and `SHOW TABLES` list it
+/// beside the tables, and the bare name plans as `read.<metric>()`
+/// does. The human's grounding replaces the agent's view; a stop ends
+/// it. One name space: a grounding on a table's name and a table on a
+/// metric's name are refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_grounding_is_a_view_in_the_catalog() {
+    let (_dir, store) = scratch_store().await;
+    let session = session_with(ActorKind::Agent, "agent-1", &store).await;
+    run(&session, SETUP).await;
+    land_orders_and_customers(&session).await;
+    run(
+        &session,
+        r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;
+           GLOSS revenue ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#,
+    )
+    .await;
+    let listed = table(
+        &session,
+        "SELECT table_name, table_type FROM information_schema.tables \
+         WHERE table_schema = 'fin' ORDER BY table_name;",
+    )
+    .await;
+    assert!(
+        listed.contains("orders     | BASE TABLE") && listed.contains("revenue    | VIEW"),
+        "{listed}"
+    );
+    let defined = table(
+        &session,
+        "SELECT definition FROM information_schema.views WHERE table_name = 'revenue';",
+    )
+    .await;
+    assert!(
+        defined.contains("SELECT amount AS value FROM orders"),
+        "{defined}"
+    );
+    let columns = table(
+        &session,
+        "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'revenue';",
+    )
+    .await;
+    assert!(columns.contains("value       | Float64"), "{columns}");
+    let shown = table(&session, "SHOW TABLES;").await;
+    assert!(
+        shown.contains("revenue    | VIEW") && shown.contains("orders     | BASE TABLE"),
+        "{shown}"
+    );
+    // The bare name and the dataset-qualified name plan as the door.
+    for from in ["revenue", "fin.revenue", "read.revenue()"] {
+        let total = table(&session, &format!("SELECT sum(value) AS v FROM {from};")).await;
+        assert!(total.contains("42.5"), "{from}: {total}");
+    }
+
+    // The human's grounding serves, and the view follows the collapse.
+    let human = session_with(ActorKind::Human, "philipp", &store).await;
+    run(
+        &human,
+        r#"USE fin; GLOSS revenue ON fin AS $${"sql": "SELECT amount * 2 AS value FROM orders"}$$;"#,
+    )
+    .await;
+    let defined = table(
+        &session,
+        "SELECT definition FROM information_schema.views WHERE table_name = 'revenue';",
+    )
+    .await;
+    assert!(defined.contains("amount * 2"), "{defined}");
+    let total = table(&session, "SELECT sum(value) AS v FROM revenue;").await;
+    assert!(total.contains("85"), "{total}");
+
+    // A stop ends the view; the name is no relation until a grounding
+    // serves again.
+    run(
+        &human,
+        r#"GLOSS revenue ON fin AS $${"stopped": "the ledger is not landed"}$$;"#,
+    )
+    .await;
+    let defined = table(
+        &session,
+        "SELECT count(*) AS n FROM information_schema.views WHERE table_name = 'revenue';",
+    )
+    .await;
+    assert!(defined.contains("| 0"), "{defined}");
+    let e = session
+        .execute("SELECT sum(value) FROM revenue;")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("revenue"), "{e}");
+
+    // One name space per dataset, both ways.
+    run(
+        &session,
+        r#"DECLARE ASPECT orders WITH $${"title": "Orders"}$$ AS QUERY ON DATASET;"#,
+    )
+    .await;
+    let e = session
+        .execute(r#"GLOSS orders ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("never share a name"), "{e}");
+    run(
+        &session,
+        r#"DECLARE ASPECT margin WITH $${"title": "Margin"}$$ AS QUERY ON DATASET;
+           GLOSS margin ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#,
+    )
+    .await;
+    let batch = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)])),
+        vec![Arc::new(Int32Array::from(vec![1]))],
+    )
+    .unwrap();
+    let e = session
+        .register_table(
+            "margin",
+            Arc::new(MemTable::try_new(batch.schema(), vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("never share a name"), "{e}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gloss_then_read_collapsed_and_raw() {
     let (_dir, session) = agent_session().await;

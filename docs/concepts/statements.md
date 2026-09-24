@@ -55,6 +55,10 @@ actor rides the connection and the engine stamps every statement
   unchanged pin, its `computed_at` the earlier run's.
 - `read.<aspect>()` — a grounded metric as a relation: the current
   grounding expands at plan time, composable in any FROM position.
+  The grounding is also a view of the dataset's schema in the catalog,
+  under the metric's name, so the bare name plans the same way and a
+  reader attached to the catalog sees the definition and its dialect.
+  A metric and a landed table of one dataset never share a name.
 - Plain SQL — tables, and the declaration relations (`functions`,
   `aspects`, `witnesses`, `sources`, `relationships`, `glossary`,
   `measurements`, `imports`) read as ordinary tables. Removal is
@@ -72,7 +76,7 @@ Substrate SQL runs behind an allowlist: queries pass, `DESCRIBE` and
 `EXPLAIN` pass (`DESCRIBE` over any name a read can plan: a landed
 table, a store relation, a shipped read, a cube read with its
 arguments; `SHOW TABLES` lists the bound
-dataset's tables), `DROP TABLE` refuses while
+dataset's tables and its groundings' views, typed), `DROP TABLE` refuses while
 the table holds data or
 glosses, and everything else that would alter schema or data directly
 is refused. Tables come from recipes.
