@@ -68,47 +68,33 @@ the next one or bundles a few in a session. No standing sequence.
 
 ## Ground rules
 
-- **One document.** SPEC.md is the only normative prose — no
-  satellite design docs, no assumption files, no per-topic notes.
+- **Code is the work.** A task on the server ends in changed code and
+  a passing suite. The rules under "The language" bind `SPEC.md` and
+  `grammar.ebnf`; they do not gate server code.
 - **Standing invariant.** Workspace `cargo test` passes: every
   ```sql block in SPEC.md parses, every corpus fixture behaves as
   tagged, every fenced example under `docs/`, `skills/`, and
   `.claude/skills/` parses and plans, and the store and session
   suites hold the execution semantics. A change that breaks it
   doesn't land.
-- **Ideation before prose.** No idea enters SPEC.md until it survives
-  a corpus test: competing statement forms for the same real
-  artifact, checked against grammar and real table shapes, the forks
-  presented to the project lead. The surviving fork becomes a SPEC.md
-  diff that shrinks or holds the spec, never grows it by essay.
 - **Build on the substrate.** Extend DataFusion at its own seams,
   never around it; the glossql-substrate skill carries the seam
   register and its rules.
 - **Grounding.** The corpus fixtures are the empirical record;
   coverage and semantics questions settle against this repo's own
   code and runs.
+
+## The language
+
+- **One document.** SPEC.md is the only normative prose — no
+  satellite design docs, no assumption files, no per-topic notes.
+- **Ideation before prose.** No idea enters SPEC.md until it survives
+  a corpus test: competing statement forms for the same real
+  artifact, checked against grammar and real table shapes, the forks
+  presented to the project lead. The surviving fork becomes a SPEC.md
+  diff that shrinks or holds the spec, never grows it by essay.
 - **Design authority.** The language has a single owner: the project
   lead. Every grammar change is reviewed by them; propose as SPEC.md
   edits with rationale — the grammar never drifts through
   implementation convenience. Sober voice everywhere: definition
   before significance, claims sized to named mechanisms, no selling.
-
-## Language decisions in force
-
-Work in progress, not settled — the project lead may reopen any of it:
-
-language before implementation · a workspace holds many datasets, an
-app binds to one · everything-context is JSON against JSON Schemas ·
-the aspect trichotomy (`AS MEASUREMENT | FACT | QUERY`) with one
-uniform `GLOSS` statement · supersession key (subject, aspect, actor
-kind) · actor rides the transport, no BY clause · functions are
-scripts with JSON contracts · witness slot model with detector
-adjudication (band + score) · judgment in detectors and read policy,
-never in results · authored prose is opaque · `GLOSS` is the write
-verb, `GLOSSARY()`/`ATTEST()` are the reads.
-
-## Held open (do not decide in passing)
-
-Persistence backend · engine substrate and its mapping · governance
-and access rights · actor transport mechanics · cross-workspace
-portability.
