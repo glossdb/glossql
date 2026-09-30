@@ -26,8 +26,8 @@ reads are served as Arrow over plain HTTP ([connect](start/connect.md)).
   the reads, the KPI kit, the doors contract, app authoring.
 - [`methods/`](methods/README.md) — the instruments and why to trust
   them: each algorithm with its measured verdict and stated limits.
-- [`architecture/`](architecture/README.md) — the store, the substrate
-  seams, and storage.
+- [`architecture/`](architecture/README.md) — the kernel and its
+  seams, the store, the substrate seams, and storage.
 - [`system/`](system/README.md) — the server at a glance: what stands
   and its known limits.
 - [`onboarding/`](onboarding/README.md) — the onboarding path: what
