@@ -1,67 +1,69 @@
-# Bands — expectation ranges from an in-context model
+# Bands — expectation ranges from a forecast service
 
 `metric_bands` walks each grounded metric's recent months and
 computes, for every walked point, the range that month should have
 landed in given everything before it. It runs at dataset grain
 (`SELECT metric_bands() FROM fin`) and reports per point the band
 quantiles (p05–p95) and the PIT — the quantile at which the actual
-landed, 0..1 and ordinal by construction. The `band_breach` detector
-adjudicates PITs; the measurement only reports.
+landed in the model's own distribution, 0..1 and ordinal by
+construction. The `band_breach` detector adjudicates PITs; the
+measurement only reports.
 
-## Why an in-context model
+## Why a forecast service
 
 With 1–2 years of monthly history, a curve fitted to the series
-cannot produce bands that mean what their nominal coverage claims.
-TabICL — the in-context tabular model behind the kernel — conditions
-on the walk's own feature recipe per point instead, and the PIT
-construction is its own check: if the
-bands are calibrated, PITs are uniform; systematic drift shows up as
-mass at the edges, which is what the detector scores.
+cannot produce bands that mean what their nominal coverage claims. A
+pretrained forecast model conditions on the series as it stands, and
+the PIT construction is its own check: if the bands are calibrated,
+PITs are uniform; systematic drift shows up as mass at the edges,
+which is what the detector scores. The service measured its coverage
+one period ahead at 0.78 to 0.84 for a nominal 0.80 on monthly and
+weekly data, held-out sets included.
 
 ## Mechanism
 
-The `metric_band_walk` door owns the walk protocol — the monthly
-verb, the feature recipe, the point-in-time fills (no future value
-leaks into a walked point). The model call is one kernel behind the
-runtime seam, answered by the kernel service. The `band_breach` detector
-(`crates/scripts/functions/band_breach.sql`) sees only the
-measurement's slots: displacement is `|2·pit − 1|` — 0.0 at the
-median, 0.8 at a nominal-80 edge — and the score is the worst
-displacement across the latest point of every monitored metric,
+The `metric_band_walk` door owns the walk's protocol on this side —
+the monthly read at the grounding's verb, the extract's shape, the
+`withheld` and `partial` rules. It sends every metric's monthly
+series as one table — the metric as `member`, the month as `period`,
+one `value` column — with the specification `{"targets": ["value"],
+"origins": 6, "horizon": 1, "levels": [0.05, 0.1, 0.5, 0.9, 0.95]}`.
+The service takes each of the last six months as an origin, forecasts
+the month after it from the history up to the origin, and answers one
+row per metric, walked month and level, with the actual and the PIT.
+The bands are the model's own; the service reads no record. A metric
+with fewer months than a full walk walks the origins it has; one with
+fewer than seven is inapplicable before any call; one the service
+cannot walk at all is inapplicable in the service's own words. The
+`band_breach` detector (`crates/scripts/functions/band_breach.sql`)
+sees only the measurement's slots: displacement is `|2·pit − 1|` —
+0.0 at the median, 0.8 at a nominal-80 edge — and the score is the
+worst displacement across the latest point of every monitored metric,
 raised to the number of metrics scored: the worst of k calibrated
-displacements sits under an edge with probability the edge to the
-k, so the power keeps the edges' base rate at any metric count. The
-score is banded green/yellow/orange with the witness threshold as
-the red line (default 0.98).
+displacements sits under an edge with probability the edge to the k,
+so the power keeps the edges' base rate at any metric count. The
+score is banded green/yellow/orange with the witness threshold as the
+red line (default 0.98).
 
-## Reading through the record
+## The record
 
-The bands a point serves are read through the record: the PITs of every
-past walk on the dataset, one per metric and month, sent with the read
-as a hundred counts. The kernel reads each alpha at the level the past
-PITs put it — a voice whose 10% line held 84% of the time is read lower
-there — weighed in with a default record the kernel ships, built from
-public panels, so the first walk of a workspace is read honestly too
-(on twelve monthly series, the default widens the 80% band by 8–20%,
-the median 12%). The record takes over from the default as it grows.
-
-Point in time, as the fills are: the months walked go to the kernel
-one request each, and a month's request carries the PITs of months
-before it only — never a month's own, never a later one. The PIT a
-point records is against the raw read, never the calibrated band; a
-record of corrected answers would chase its own correction. The bands
-served are the calibrated ones, and the `withheld` rule reads them.
+The PITs of every walk land with the measurement, one per metric and
+month, and `band_points()` serves them as rows: how good past
+forecasts were is read from the record, never from the service. The
+service's `width` field — a factor on every quantile's distance from
+the median, for a dataset whose record says the intervals run narrow
+or wide — is not sent: on records of one to two years it does not
+pay.
 
 ## Serving the model
 
-The server carries no model. The walk's fits go to the kernel service,
-`glosskernels`, over HTTP — the reference TabICL package behind two
-routes (`/bands`, a walk in one request; `/misfit`), hosted or run beside
-the server, named by `GLOSSQL_TABICL_URL`
+The server carries no model. The walk's call goes to the service the
+forecast point names, over HTTP as one Arrow IPC stream each way —
+column names and types with the rows, the specification and the
+answer in the schema's metadata — at `GLOSSQL_FORECAST_URL`
 ([install](../start/install.md)). Without it the walk refuses by
-name. Raw densities never leave the kernel, and the walk's feature
-recipe and point-in-time fill match the graded protocol it was
-evaluated against before it shipped.
+name. Every answer names the service and its version, and the
+measurement records it as `served_by`.
 
 ## Limits
 
@@ -77,12 +79,12 @@ evaluated against before it shipped.
   that move is real whatever the corridor's width. A series that never
   repeats has no grid, and a tight corridor on it is valid.
 - The walk covers the six most recent months, and a walked point
-  conditions on at least five preceding ones — a metric with too
-  short a history is served inapplicable with the reason.
-- The record is the dataset's, every metric's PITs together: a
-  metric's own six months say too little alone, and the default record
-  carries the first hundred. A record older than a re-grounding still
-  counts; the drift it carries is what the detector reads.
+  conditions on at least six known values before it — a metric with
+  too short a history is served inapplicable with the reason, and one
+  shorter than a full walk walks the origins it has.
+- The record is the dataset's, every metric's PITs together. A record
+  older than a re-grounding still counts; the drift it carries is what
+  the detector reads.
 - A month the extract stops inside is partial, and its short sum
   against a corridor fitted on whole months reflects the calendar, not
   a move. Where the extract lands finer than monthly — some month

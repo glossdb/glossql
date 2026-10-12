@@ -2558,7 +2558,7 @@ async fn the_workspace_says_what_it_affords() {
     assert_eq!(row("metrics")["stands"], json!(1), "{rows:?}");
     assert_eq!(row("metrics")["open"], json!(1), "{rows:?}");
     assert_eq!(row("claims")["open"], json!(1), "{rows:?}");
-    // The two model doors. Both are planner doors, not rows
+    // The scenarios and the sample frames. The sample door is a planner door, not a row
     // in `functions`, so this map is the only place an agent meets them
     // at all. Each is declared here and never glossed — vocabulary
     // standing with no body, which is exactly what `open` means.

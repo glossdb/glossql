@@ -8,5 +8,4 @@ statistic, the measured verdict, the stated limits.
 - [`coherence.md`](coherence.md) — what a declared join asserts, checked.
 - [`discovery.md`](discovery.md) — containment-based relationship discovery.
 - [`behavior.md`](behavior.md) — the stock/flow evidence and its reconciliation.
-- [`bands.md`](bands.md) — expectation bands from an in-context model.
-- [`whatif.md`](whatif.md) — scenarios as plan-rewrite replay.
+- [`bands.md`](bands.md) — expectation bands from a forecast service.

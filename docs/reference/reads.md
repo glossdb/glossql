@@ -337,7 +337,8 @@ bound dataset.
 The recorded walk, flattened: what `metric_bands` last landed for the
 bound dataset, one row per metric per walked point — `metric`,
 `applicable`, `reason`, `grain`, `aggregation`, `trained_on`, `axis`,
-`axis_judged`, `point_seq`, `period`, `actual`, `p05`…`p95`, `pit`,
+`axis_judged`, `served_by` (the service that answered and its
+version), `point_seq`, `period`, `actual`, `p05`…`p95`, `pit`,
 `withheld`, `partial`, `displacement` (|2·pit − 1|, what the detector
 scores; none where the PIT is withheld), `computed_at` and `current`
 (whether the measurement stands at this pin). A metric the walk found

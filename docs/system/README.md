@@ -14,14 +14,14 @@ The server: one binary, one workspace, three doors. How it is built is
   rules ([store](../architecture/store.md)).
 - **The session** — one per connection, holding actor, dataset, store,
   and engine context: recipe materialization, probe routing, ruling
-  composition, the shipped read library, `whatif.<scenario>()` and
-  `misfit.<frame>()` ([reads](../reference/reads.md)).
+  composition, the shipped read library and `misfit.<frame>()`
+  ([reads](../reference/reads.md)).
 - **Import** — file sources with cast accounting; recipe and probe
   execution at the source over ADBC; source-row counting.
 - **Scripts** — the native kernels; the shipped
-  function library declared at boot; the band plane over the
-  in-context model, served by the kernel service `GLOSSQL_TABICL_URL`
-  names ([functions](../reference/functions.md),
+  function library declared at boot; the table call to the service a
+  point names, `GLOSSQL_<POINT>_URL`
+  ([functions](../reference/functions.md),
   [methods](../methods/README.md)).
 - **The doors** — `/<dataset>/mcp` and `/mcp` (one `glossql` tool,
   stateless, row cap; the dataset's door opens every call on it, the

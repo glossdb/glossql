@@ -1,16 +1,17 @@
 //! The metric-bands walk and its points, and the period SQL every
 //! monthly reader shares.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, Int64Array, RecordBatch};
-use datafusion::arrow::datatypes::{DataType, Field};
+use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch, StringArray};
+use datafusion::arrow::compute::{CastOptions, cast_with_options};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use serde_json::{Value, json};
 
 use crate::reads::Shared;
-use crate::session::{BandRead, PIT_BINS, SessionError};
+use crate::session::{FORECAST, SessionError};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -83,7 +84,7 @@ async fn run_grain(
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
     let q = grain_sql(sql, tcol, verb, grain, halves);
-    let plan = crate::whatif::build_plan(shared, ctx, &q).await?;
+    let plan = crate::plan::build_plan(shared, ctx, &q).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -176,7 +177,7 @@ async fn extract_shape(
          FROM ({sql})",
         tcol_q = qi(tcol)
     );
-    let plan = crate::whatif::build_plan(shared, ctx, &q).await?;
+    let plan = crate::plan::build_plan(shared, ctx, &q).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -221,73 +222,56 @@ fn month_end(period: &str) -> Option<String> {
 }
 
 /// `metric_band_walk('dataset')` — for every grounded metric, walk the
-/// recent months and ask the TabICL forward what range each month
-/// should have landed in, given everything before it. The protocol —
-/// monthly read at the grounding's verb, the feature recipe, the
-/// point-in-time fills, the walk — is authored policy; the model call
-/// is one kernel behind the runtime seam, never reimplemented.
-/// Evaluated against generated ground truth before it shipped.
+/// recent months: from each of the last six months as an origin, the
+/// forecast service says what range the month after it should have
+/// landed in, given the history up to the origin. The protocol here is
+/// the monthly read at the grounding's verb, the extract's shape, and
+/// the `withheld` and `partial` rules; the service builds its own rows
+/// from the series and reads the PIT against its own distribution. The
+/// model call is one table call behind the runtime seam, never
+/// reimplemented.
 ///
-/// The feature recipe and the fill are graded protocol, exact: the
-/// trailing mean excludes the current month, every fill is
-/// point-in-time, and no training row exists before the first
-/// observed month. Change any of it only against a graded re-run —
-/// each of these three has silently drifted once.
-///
-/// Each walked point records its bands and its PIT — the quantile at
-/// which the actual landed, 0..1 and ordinal by construction (raw
-/// densities never leave the kernel). The band_breach detector
-/// adjudicates PITs; this door only reports.
+/// Each walked point records its bands, its actual and its PIT — the
+/// quantile at which the actual landed, 0..1 and ordinal by
+/// construction. The band_breach detector adjudicates PITs; this door
+/// only reports.
 pub(crate) async fn metric_band_walk(
     shared: &Arc<Shared>,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
-    const ALPHAS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
-    const MIN_TRAIN: usize = 5;
-    const MAX_WALK: usize = 6;
+    const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
+    /// Origins walked per metric: the last six months, each the end of
+    /// the history the month after it is forecast from.
+    const ORIGINS: usize = 6;
+    /// The months a metric needs to walk at all: one origin with the
+    /// six known values the service needs behind it. A metric with
+    /// fewer months than a full walk walks the origins it has.
+    const MIN_MONTHS: usize = 7;
 
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let anchors = crate::cube::Anchors::at(&rctx, dataset).await?;
     let runtime = shared.runtime();
-    if !runtime.carries_model() {
-        return Err(crate::session::no_model("metric_bands()"));
+    if !runtime.serves(FORECAST) {
+        return Err(crate::session::no_model("metric_bands()", FORECAST));
     }
 
-    // Median over the present values of one feature column. Even counts
-    // average the two middles, as the graded protocol's pandas median
-    // does.
-    fn col_median(mut values: Vec<f64>) -> Option<f64> {
-        if values.is_empty() {
-            return None;
-        }
-        values.sort_by(f64::total_cmp);
-        let k = values.len();
-        Some(if k % 2 == 1 {
-            values[k / 2]
-        } else {
-            (values[k / 2 - 1] + values[k / 2]) / 2.0
-        })
-    }
-
-    // Every metric's walk points are asked of the kernel together, once
-    // the loop has built them all: one request answers a workspace, and
-    // the service passes tables of one shape through the model as one.
-    // A metric's rows are built after the answer, in the loop's order.
-    struct Pending {
-        t: usize,
-        read: BandRead,
-        partial: Option<String>,
-    }
+    // Every metric's series goes to the service together, once the
+    // loop has read them all: one table answers a workspace, and the
+    // service forecasts the series of one request together. A metric's
+    // rows are built after the answer, in the loop's order.
     struct Walked {
         seq: i64,
         aspect: String,
         aggregation: &'static str,
-        n: usize,
         tcol: String,
         axis_judged: bool,
-        periods: Vec<String>,
-        points: Vec<Pending>,
+        /// The monthly series, periods as `YYYY-MM`, a NULL where the
+        /// verb could not value the month.
+        series: Vec<(String, Option<f64>)>,
+        /// The extract's last day, where its rows land finer than
+        /// monthly.
+        horizon: Option<String>,
     }
     enum Row {
         Ready(Value),
@@ -307,7 +291,7 @@ pub(crate) async fn metric_band_walk(
         // The grounding is a grain-free extract with a time axis and a
         // `value` column; the time column by dtype, as any reader finds
         // it. A grounding that does not plan fails the walk whole.
-        let probe = crate::whatif::build_plan(shared, &ctx, sql).await?;
+        let probe = crate::plan::build_plan(shared, &ctx, sql).await?;
         let fields = probe.schema();
         let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
         if !has("value") {
@@ -315,17 +299,16 @@ pub(crate) async fn metric_band_walk(
         }
         // The judged column where a verdict stands, the first date
         // column by dtype where none does. Only the *column* is judged:
-        // the walk's cadence stays month because the feature recipe is
-        // month-shaped (month-of-year, the 12-month lag), and
-        // re-cadencing it would change the graded protocol above. The
-        // measurement names the axis it took, so a walk anchored on an
-        // unjudged column says so rather than reading like the cube's.
+        // the walk's cadence stays month, the grain the service's
+        // intervals are measured at. The measurement names the axis it
+        // took, so a walk anchored on an unjudged column says so rather
+        // than reading like the cube's.
         let sources = crate::provenance::served_sources(&probe, dataset);
         let judged = crate::cube::judged_time_column(fields, &sources, &anchors.temporal);
         let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
         let Some(tcol) = judged_axis
             .clone()
-            .or_else(|| crate::whatif::date_column(fields.fields()))
+            .or_else(|| crate::plan::date_column(fields.fields()))
         else {
             continue;
         };
@@ -374,171 +357,105 @@ pub(crate) async fn metric_band_walk(
                 continue;
             }
         };
-        // Rows landing through the month stop mid-month when the
-        // extract does; a monthly-dated series is whole at its one
-        // row, and its horizon says nothing.
-        let horizon = horizon.filter(|_| sub_monthly);
-        let v: Vec<Option<f64>> = series.iter().map(|(_, v)| *v).collect();
-        let n = v.len();
-        // Feature rows start at month 1 — month 0 has no lag of its own
-        // and the graded protocol builds no row for it — so a walk point
-        // at t trains on t-1 rows and the earliest walkable t is
-        // MIN_TRAIN + 1.
-        if n < MIN_TRAIN + 2 {
+        let n = series.len();
+        if n < MIN_MONTHS {
             out.push(Row::Ready(json!({
                 "seq": seq, "metric": slot.aspect, "applicable": false,
-                "reason": format!("{n} months, need {}", MIN_TRAIN + 2),
+                "reason": format!("{n} months, need {MIN_MONTHS}"),
             })));
             seq += 1;
             continue;
         }
-
-        // Features for month i (row i-1): index, month-of-year, the 1-
-        // and 12-month lags, and the trailing 3-month MEAN — `lag3m` in
-        // the graded protocol, not the raw
-        // t-3 value. Absent features stay absent; they fill per walk
-        // step from training rows only.
-        let mut feats: Vec<[Option<f64>; 5]> = Vec::new();
-        let mut labels: Vec<Option<f64>> = Vec::new();
-        for i in 1..n {
-            // The period in its display form is at least `YYYY-MM-DD`;
-            // a shorter one is no period the walk can read.
-            let moy: f64 = series[i]
-                .0
-                .get(5..7)
-                .and_then(|m| m.parse::<i64>().ok())
-                .ok_or_else(|| {
-                    SessionError::Runtime(format!("period {:?} has no month", series[i].0))
-                })? as f64;
-            let lag1 = v[i - 1];
-            let lo = i.saturating_sub(3);
-            let present: Vec<f64> = (lo..i).filter_map(|j| v[j]).collect();
-            let lag3m =
-                (!present.is_empty()).then(|| present.iter().sum::<f64>() / present.len() as f64);
-            let lag12 = if i >= 12 { v[i - 12] } else { None };
-            feats.push([Some(i as f64), Some(moy), lag1, lag3m, lag12]);
-            labels.push(v[i]);
-        }
-
-        let mut points: Vec<Pending> = Vec::new();
-        let floor = MIN_TRAIN + 1;
-        let start = if n.saturating_sub(MAX_WALK) > floor {
-            n - MAX_WALK
-        } else {
-            floor
-        };
-        for t in start..n {
-            let Some(actual) = v[t] else { continue };
-            // Absent features fill from the training rows only, per
-            // feature, recomputed at this step — so the fit stays
-            // point-in-time. A feature absent throughout fills 0.0.
-            let mut fills = [0.0f64; 5];
-            for (c, fill) in fills.iter_mut().enumerate() {
-                let col: Vec<f64> = (0..t.saturating_sub(1))
-                    .filter_map(|r| feats[r][c])
-                    .collect();
-                if let Some(m) = col_median(col) {
-                    *fill = m;
-                }
-            }
-            let filled = |row: &[Option<f64>; 5]| -> Vec<f64> {
-                row.iter()
-                    .enumerate()
-                    .map(|(c, v)| v.unwrap_or(fills[c]))
-                    .collect()
+        // Rows landing through the month stop mid-month when the
+        // extract does; a monthly-dated series is whole at its one
+        // row, and its horizon says nothing.
+        let horizon = horizon.filter(|_| sub_monthly);
+        // The YYYY-MM head: periods arrive in the column's display
+        // form, and a shorter one is no period the walk can read.
+        let mut monthly = Vec::with_capacity(n);
+        for (period, value) in series {
+            let Some(month) = period.get(..7) else {
+                return Err(SessionError::Runtime(format!(
+                    "period {period:?} has no month"
+                )));
             };
-            let mut train_x = Vec::new();
-            let mut train_y = Vec::new();
-            for r in 0..t.saturating_sub(1) {
-                let Some(label) = labels[r] else { continue };
-                train_x.extend(filled(&feats[r]));
-                train_y.push(label);
-            }
-            if train_y.len() < MIN_TRAIN {
-                continue;
-            }
-            // The newest month is partial while the extract's horizon
-            // falls inside it: a short sum against a corridor fitted
-            // on whole months reads as a breach that is only the
-            // calendar. The point serves its bands and its actual so
-            // far, withholds the PIT, and says so — the detector
-            // scores the newest complete month instead.
-            let partial = (t == n - 1)
-                .then(|| horizon.as_deref().zip(month_end(&series[t].0[..7])))
-                .flatten()
-                .filter(|(h, end)| *h < end.as_str())
-                .map(|(h, end)| {
-                    format!("partial: the extract ends {h}, before the period's last day {end}")
-                });
-            points.push(Pending {
-                t,
-                read: BandRead {
-                    train_x,
-                    train_y,
-                    test_x: filled(&feats[t - 1]),
-                    actual,
-                },
-                partial,
-            });
+            monthly.push((month.to_string(), value));
         }
         out.push(Row::Walked(Walked {
             seq,
             aspect: slot.aspect.clone(),
             aggregation,
-            n,
             tcol,
             axis_judged,
-            periods: series.iter().map(|(p, _)| p[..7].to_string()).collect(),
-            points,
+            series: monthly,
+            horizon,
         }));
         seq += 1;
     }
 
-    // The points are read through the record: every past walk's PITs,
-    // one per metric and month (the newest landing's), counted per
-    // hundredth. Point in time: a month's points, every metric's
-    // together, read through the PITs of months before it only — so
-    // the months called are grouped, one request each, the record's
-    // count growing along the walk. Sent even when empty: the kernel
-    // then weighs in its own default record, and a workspace is read
-    // honestly on its first walk.
-    let record = pit_record(shared, dataset).await?;
-    let mut by_month: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
-    for (i, row) in out.iter().enumerate() {
-        if let Row::Walked(w) = row {
-            for (j, p) in w.points.iter().enumerate() {
-                by_month
-                    .entry(w.periods[p.t].clone())
-                    .or_default()
-                    .push((i, j));
+    // The one table, as the contract has the walk send it: `member`
+    // the metric, `period` the month, one value column, every row
+    // actual. The service walks the last six months of every member
+    // and answers one row per member, walked month and level, with the
+    // actual and the PIT; a member it cannot walk fails alone, in the
+    // answer's `errors`.
+    let walked: Vec<&Walked> = out
+        .iter()
+        .filter_map(|row| match row {
+            Row::Walked(w) => Some(w),
+            Row::Ready(_) => None,
+        })
+        .collect();
+    let answered = if walked.is_empty() {
+        None
+    } else {
+        let (mut members, mut periods, mut values) = (Vec::new(), Vec::new(), Vec::new());
+        for w in &walked {
+            for (period, value) in &w.series {
+                members.push(w.aspect.as_str());
+                periods.push(period.as_str());
+                values.push(*value);
             }
         }
-    }
-    let mut answered: HashMap<(usize, usize), (Vec<f64>, f64)> = HashMap::new();
-    for (month, at) in &by_month {
-        let mut history = vec![0.0f64; PIT_BINS];
-        for ((_, period), pit) in &record {
-            if period < month {
-                let bin = ((pit * PIT_BINS as f64) as usize).min(PIT_BINS - 1);
-                history[bin] += 1.0;
-            }
-        }
-        let reads: Vec<BandRead> = at
-            .iter()
-            .map(|&(i, j)| match &out[i] {
-                Row::Walked(w) => w.points[j].read.clone(),
-                Row::Ready(_) => unreachable!("only walked rows are indexed"),
-            })
-            .collect();
-        let answers = runtime
-            .band_points(&reads, &ALPHAS, Some(&history))
-            .await
-            .map_err(SessionError::Runtime)?;
-        answered.extend(at.iter().copied().zip(answers));
-    }
+        let table = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("member", DataType::Utf8, false),
+                Field::new("period", DataType::Utf8, false),
+                Field::new("value", DataType::Float64, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(members)),
+                Arc::new(StringArray::from(periods)),
+                Arc::new(Float64Array::from(values)),
+            ],
+        )
+        .map_err(SessionError::from)?;
+        let spec = json!({
+            "targets": ["value"], "origins": ORIGINS, "horizon": 1, "levels": LEVELS,
+        });
+        Some(
+            runtime
+                .table(FORECAST, table, spec)
+                .await
+                .map_err(SessionError::Runtime)?,
+        )
+    };
+    let (points, errors, served_by) = match &answered {
+        Some(answered) => (
+            walk_points(&answered.table, &LEVELS)
+                .map_err(|e| SessionError::Runtime(format!("the forecast service answered {e}")))?,
+            walk_errors(&answered.answer),
+            Some(format!(
+                "{} {}",
+                answered.answer["service"].as_str().unwrap_or("?"),
+                answered.answer["version"].as_str().unwrap_or("?")
+            )),
+        ),
+        None => (HashMap::new(), HashMap::new(), None),
+    };
 
     let mut rows = Vec::new();
-    for (i, row) in out.into_iter().enumerate() {
+    for row in out {
         let walked = match row {
             Row::Ready(value) => {
                 rows.push(value);
@@ -550,16 +467,32 @@ pub(crate) async fn metric_band_walk(
             seq,
             aspect,
             aggregation,
-            n,
             tcol,
             axis_judged,
-            periods,
-            points,
+            series,
+            horizon,
         } = walked;
+        let n = series.len();
         let mut served: Vec<Value> = Vec::new();
-        for (j, Pending { t, read, partial }) in points.into_iter().enumerate() {
-            let (q, pit) = answered.remove(&(i, j)).expect("one answer per read");
-            let (train_y, actual) = (read.train_y, read.actual);
+        for (t, (period, value)) in series.iter().enumerate() {
+            let Some(actual) = *value else { continue };
+            let Some(point) = points.get(&(aspect.clone(), period.clone())) else {
+                continue;
+            };
+            let q = point.levels;
+            // The newest month is partial while the extract's horizon
+            // falls inside it: a short sum against a corridor fitted
+            // on whole months reads as a breach that is only the
+            // calendar. The point serves its bands and its actual so
+            // far, withholds the PIT, and says so — the detector
+            // scores the newest complete month instead.
+            let partial = (t == n - 1)
+                .then(|| horizon.as_deref().zip(month_end(period)))
+                .flatten()
+                .filter(|(h, end)| *h < end.as_str())
+                .map(|(h, end)| {
+                    format!("partial: the extract ends {h}, before the period's last day {end}")
+                });
             // A series that repeats values moves on a grid (a ratio over
             // a fixed field, a count). A corridor narrower than the
             // grid's step, with the actual inside a step of the median,
@@ -569,23 +502,24 @@ pub(crate) async fn metric_band_walk(
             // with the reason. An actual further off than a step is a
             // real move whatever the corridor; a series that never
             // repeats has no grid, and a tight corridor on it is earned.
+            let history: Vec<f64> = series[..t].iter().filter_map(|(_, v)| *v).collect();
             let corridor = q[4] - q[0];
-            let withheld = match resolution_of(&train_y) {
+            let withheld = match resolution_of(&history) {
                 _ if partial.is_some() => partial.clone(),
                 Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
                     Some(format!(
                         "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
                     ))
                 }
-                Some(res) if res == 0.0 && actual == train_y[0] => {
+                Some(res) if res == 0.0 && history.first() == Some(&actual) => {
                     Some("the training series is constant and the actual equals it".to_string())
                 }
                 _ => None,
             };
             served.push(json!({
-                "period": periods[t], "actual": actual,
+                "period": period, "actual": actual,
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
-                "pit": withheld.is_none().then_some(pit),
+                "pit": withheld.is_none().then_some(point.pit).flatten(),
                 "withheld": withheld,
                 // Always present: the detector reads it as a struct
                 // field, and a field no point carries is not in the
@@ -594,6 +528,19 @@ pub(crate) async fn metric_band_walk(
             }));
         }
 
+        // A metric the service walked nowhere, and said why, is
+        // inapplicable with its reasons; one it walked nowhere without
+        // a word (every recent month unvalued) serves its head alone.
+        if served.is_empty()
+            && let Some(reasons) = errors.get(&aspect)
+        {
+            rows.push(json!({
+                "seq": seq, "metric": aspect, "applicable": false,
+                "reason": reasons.join("; "),
+                "served_by": served_by,
+            }));
+            continue;
+        }
         for (point_seq, p) in served.iter().enumerate() {
             let mut row = serde_json::Map::new();
             row.insert("seq".into(), json!(seq));
@@ -604,6 +551,7 @@ pub(crate) async fn metric_band_walk(
             row.insert("trained_on".into(), json!(n as i64));
             row.insert("axis".into(), json!(tcol));
             row.insert("axis_judged".into(), json!(axis_judged));
+            row.insert("served_by".into(), json!(served_by));
             row.insert("point_seq".into(), json!(point_seq as i64));
             for (k, val) in p.as_object().expect("point object") {
                 row.insert(k.clone(), val.clone());
@@ -617,6 +565,7 @@ pub(crate) async fn metric_band_walk(
                 "aggregation": aggregation,
                 "trained_on": n as i64,
                 "axis": tcol, "axis_judged": axis_judged,
+                "served_by": served_by,
             }));
         }
     }
@@ -626,37 +575,95 @@ pub(crate) async fn metric_band_walk(
     rows_batch(rows, band_shape())
 }
 
-/// The record's PITs, one per metric and month: every landing of the
-/// walk on this dataset, the newest landing of a month winning, a
-/// withheld point carrying none. Read off the drift record, since a
-/// month walked at an earlier pin is that month's PIT still.
-async fn pit_record(
-    shared: &Arc<Shared>,
-    dataset: &str,
-) -> Result<HashMap<(String, String), f64>, SessionError> {
-    let mut out = HashMap::new();
-    for landing in shared
-        .store
-        .measurement_landings(dataset, dataset, "metric_bands")
-        .await?
-    {
-        let Ok(body) = serde_json::from_str::<Value>(&landing.body) else {
+/// One walked point as the service answered it: the band value per
+/// level asked, in the order asked, and the PIT where the actual was
+/// known to the service.
+struct Point {
+    levels: [f64; 5],
+    pit: Option<f64>,
+}
+
+/// The answer's period rows, by member and period: one row per level
+/// folded into one point. A total row (`span` set) is none of the
+/// walk's and is skipped; a level nobody asked, or a point missing a
+/// level, is a wrong answer.
+fn walk_points(
+    answer: &RecordBatch,
+    levels: &[f64; 5],
+) -> Result<HashMap<(String, String), Point>, String> {
+    let column = |name: &str| {
+        answer
+            .column_by_name(name)
+            .ok_or_else(|| format!("no `{name}` column"))
+    };
+    let floats = |name: &str| -> Result<Float64Array, String> {
+        cast_with_options(
+            column(name)?,
+            &DataType::Float64,
+            &CastOptions {
+                safe: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("`{name}` does not read as a number: {e}"))?
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .cloned()
+        .ok_or_else(|| format!("`{name}` does not read as a number"))
+    };
+    let (member, period, span) = (column("member")?, column("period")?, column("span")?);
+    let (level, value, pit) = (floats("level")?, floats("value")?, floats("pit")?);
+    let mut out: HashMap<(String, String), [Option<f64>; 5]> = HashMap::new();
+    let mut pits: HashMap<(String, String), Option<f64>> = HashMap::new();
+    for i in 0..answer.num_rows() {
+        if !span.is_null(i) || period.is_null(i) || member.is_null(i) || level.is_null(i) {
+            continue;
+        }
+        let key = (
+            array_value_to_string(member, i).map_err(|e| e.to_string())?,
+            array_value_to_string(period, i).map_err(|e| e.to_string())?,
+        );
+        let asked = levels
+            .iter()
+            .position(|l| (l - level.value(i)).abs() < 1e-9)
+            .ok_or_else(|| format!("a level {} nobody asked", level.value(i)))?;
+        out.entry(key.clone()).or_default()[asked] = (!value.is_null(i)).then(|| value.value(i));
+        pits.insert(key, (!pit.is_null(i)).then(|| pit.value(i)));
+    }
+    out.into_iter()
+        .map(|(key, q)| {
+            let mut levels = [0.0; 5];
+            for (slot, v) in levels.iter_mut().zip(q) {
+                *slot =
+                    v.ok_or_else(|| format!("{} at {} without every level asked", key.0, key.1))?;
+            }
+            let pit = pits.remove(&key).flatten();
+            Ok((key, Point { levels, pit }))
+        })
+        .collect()
+}
+
+/// The answer's `errors` by member: what failed alone, in the service's
+/// words, the origin named where one was.
+fn walk_errors(answer: &Value) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for e in answer["errors"].as_array().into_iter().flatten() {
+        let Some(member) = e["member"].as_str() else {
             continue;
         };
-        for metric in body["metrics"].as_array().into_iter().flatten() {
-            let Some(name) = metric["metric"].as_str() else {
-                continue;
-            };
-            for point in metric["points"].as_array().into_iter().flatten() {
-                if let (Some(period), Some(pit)) = (point["period"].as_str(), point["pit"].as_f64())
-                {
-                    out.entry((name.to_string(), period.to_string()))
-                        .or_insert(pit);
-                }
-            }
-        }
+        let error = e["error"].as_str().unwrap_or("failed");
+        let said = match e.get("origin").filter(|o| !o.is_null()) {
+            Some(origin) => format!(
+                "origin {}: {error}",
+                origin
+                    .as_str()
+                    .map_or_else(|| origin.to_string(), str::to_string)
+            ),
+            None => error.to_string(),
+        };
+        out.entry(member.to_string()).or_default().push(said);
     }
-    Ok(out)
+    out
 }
 
 /// `band_points()` — the recorded walk, one row per metric per walked
@@ -696,6 +703,7 @@ pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
                     "trained_on",
                     "axis",
                     "axis_judged",
+                    "served_by",
                 ] {
                     row.insert(key.into(), metric[key].clone());
                 }
@@ -763,6 +771,9 @@ fn band_shape() -> Vec<Field> {
         // temporal_profile verdict named it. Per metric, not per point.
         Field::new("axis", DataType::Utf8, true),
         Field::new("axis_judged", DataType::Boolean, true),
+        // The service that answered, and its version: what the bands
+        // rest on. Per metric, not per point.
+        Field::new("served_by", DataType::Utf8, true),
         Field::new("point_seq", DataType::Int64, true),
         Field::new("period", DataType::Utf8, true),
         Field::new("actual", DataType::Float64, true),

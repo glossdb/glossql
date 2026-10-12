@@ -136,19 +136,17 @@ every door is available inside one — a grounding under its name,
 (`dimension = ''` is the total, `'alternative'` the disclosed rival;
 a row carries `num`/`den` for a ratio's summed halves and `behavior`,
 the verb that made it), `metric_axes()` for what the cube admitted per
-metric, and `whatif.<scenario>()` for a declared what-if beside the
-real books:
+metric, and `band_points()` for the recorded walk beside the real
+books:
 
 ```sql
-SELECT month, replay, p05, p50, p95 FROM whatif.capacity_shift()
-WHERE concept = CAST($concept AS VARCHAR) ORDER BY month
+SELECT period, actual, p05, p50, p95 FROM band_points()
+WHERE metric = CAST($metric AS VARCHAR) AND period IS NOT NULL ORDER BY point_seq
 ```
 
 The one limit: a placeholder binds a **value, not a relation name** —
 a door argument counts as a value (`metric_series(grain => $grain)`
-works).
-The scenario is fixed per frame; the URL steers the concept, the month,
-the slice. A page comparing two scenarios holds two frames.
+works). The URL steers the metric, the month, the slice.
 
 A viewer's window is ordinary params: `?grain=quarter&span=24` binds
 as `$grain` and `$span`, and the frame SQL is the filter — the cube

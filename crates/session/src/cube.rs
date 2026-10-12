@@ -623,7 +623,7 @@ fn reads_of(
     let scanned = crate::provenance::scanned_tables(plan, dataset);
     let sliceable = plan.schema().fields().iter().any(|f| {
         !matches!(f.name().as_str(), "value" | "num" | "den")
-            && !crate::whatif::is_temporal(f.data_type())
+            && !crate::plan::is_temporal(f.data_type())
     });
     let mut subjects: std::collections::BTreeSet<String> =
         crate::provenance::served_sources(plan, dataset)
@@ -974,7 +974,7 @@ pub(crate) fn judged_time_column(
     }
     let mut best: Option<Ranked> = None;
     for f in fields.fields() {
-        if !crate::whatif::is_temporal(f.data_type()) {
+        if !crate::plan::is_temporal(f.data_type()) {
             continue;
         }
         let Some(columns) = sources.get(f.name()) else {
@@ -1168,9 +1168,7 @@ impl Surface {
         grain: Option<Resolution>,
     ) -> (CubeKey, Option<datafusion::logical_expr::LogicalPlan>) {
         let probe = match frame_sql(&slot.body) {
-            Some(sql) => crate::whatif::build_plan(shared, &self.ctx, &sql)
-                .await
-                .ok(),
+            Some(sql) => crate::plan::build_plan(shared, &self.ctx, &sql).await.ok(),
             None => None,
         };
         let reads = probe
@@ -1687,7 +1685,7 @@ async fn plan(
         .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?;
     let probe = match probe {
         Some(p) => p,
-        None => crate::whatif::build_plan(shared, ctx, sql).await?,
+        None => crate::plan::build_plan(shared, ctx, sql).await?,
     };
     // Planned through to the physical plan as well: the engine admits
     // at the logical stage what it refuses at the physical one — a
@@ -1735,7 +1733,7 @@ async fn plan(
     let mut wanted: Vec<(String, String)> = Vec::new();
     if let Some(function) = &judged.temporal_fn {
         for f in fields.fields() {
-            if !crate::whatif::is_temporal(f.data_type()) {
+            if !crate::plan::is_temporal(f.data_type()) {
                 continue;
             }
             let Some(columns) = sources.get(f.name()) else {
@@ -1872,7 +1870,7 @@ async fn plan(
         let n = f.name().as_str();
         if n == "value"
             || (is_ratio && (n == "num" || n == "den"))
-            || crate::whatif::is_temporal(f.data_type())
+            || crate::plan::is_temporal(f.data_type())
         {
             continue;
         }
@@ -2718,7 +2716,7 @@ async fn rival_series(
         judged,
         ..
     } = surface;
-    let probe = crate::whatif::build_plan(shared, ctx, sql).await?;
+    let probe = crate::plan::build_plan(shared, ctx, sql).await?;
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
@@ -2738,7 +2736,7 @@ async fn rival_series(
             let mut dates = fields
                 .fields()
                 .iter()
-                .filter(|f| crate::whatif::is_temporal(f.data_type()));
+                .filter(|f| crate::plan::is_temporal(f.data_type()));
             match (dates.next(), dates.next()) {
                 (Some(only), None) => only.name().clone(),
                 (Some(_), Some(_)) => {
@@ -2865,7 +2863,7 @@ async fn run(
     ctx: &SessionContext,
     sql: &str,
 ) -> Result<Vec<RecordBatch>, Abstain> {
-    let plan = crate::whatif::build_plan(shared, ctx, sql).await?;
+    let plan = crate::plan::build_plan(shared, ctx, sql).await?;
     ctx.execute_logical_plan(plan)
         .await
         .map_err(|e| Abstain(format!("not served: {e}")))?

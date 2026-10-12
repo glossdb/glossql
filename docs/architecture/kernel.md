@@ -104,11 +104,11 @@ A service turns rows into rows. The pattern of a point:
 
 This is how the bands work today. `metric_bands` and `band_breach`
 are declarations in the kit. Behind `metric_band_walk` the runtime
-calls the model service, which the code names the kernel service
-(`crates/scripts/src/remote.rs`), reached at `GLOSSQL_TABICL_URL`. It
-refuses by name when none is set (`crates/session/src/session.rs`,
-`no_model`). `misfit.<frame>()` and `whatif.<scenario>()` take the
-same road.
+calls the service the forecast point names
+(`crates/scripts/src/remote.rs`), reached at `GLOSSQL_FORECAST_URL`.
+It refuses by name when none is set (`crates/session/src/session.rs`,
+`no_model`). `misfit.<frame>()` takes the same road on the misfit
+point.
 
 Two rules hold for every service:
 
@@ -118,26 +118,25 @@ Two rules hold for every service:
   the pin are decided here. The service decides nothing about what the
   numbers mean.
 
-Today the runtime has one typed method per read: the walk's points,
-the what-if's grid, the misfit's scores. Numbers travel as JSON lists,
-column names and types lost. One URL serves the three reads. The
-walk's rows are built in Rust and sent as training rows.
+The runtime has one table call (`FunctionRuntime::table`,
+`crates/session/src/session.rs`): a point, a table and a specification
+in; a table and an answer object out. Rows travel as Arrow IPC, column
+names and types with them. The deployment names a service per point
+(`GLOSSQL_<POINT>_URL`). Every answer carries the service's name and
+version, and the measurement records it (`served_by` on the walk).
+The core sends the series or the frame as it stands; the service
+builds its own rows from it. A service wraps a standard model behind a
+standard interface, so a deployment may run another service in its
+place.
 
-Planned: one general call in two shapes.
+Two points are filled: the **forecast** (the walk sends every metric's
+monthly series and reads bands, actual and PIT per walked month) and
+the **misfit** (the frame in, a score per row out). Both are compute
+doors.
 
-- A **scalar service** answers row by row: a text in, a vector out. It
-  rides the engine's async scalar function seam, so a recipe or a
-  query names it like any function.
-- A **table service** answers a table with a table: a series in, bands
-  or a forecast out; a frame in, a score per row out. It stays a
-  compute door, as the bands are today.
-
-Rows travel as Arrow IPC, column names and types with them. The
-deployment names a service per point. Every answer carries the
-service's name and version, and the measurement records it. The core
-sends the series or the frame as it stands. The service builds its
-own rows from it. A service wraps a standard model behind a standard
-interface, so a deployment may run another service in its place.
+Planned: a **scalar service** that answers row by row — a text in, a
+vector out — on the engine's async scalar function seam, so a recipe
+or a query names it like any function. It lands with its first user.
 
 ## The door
 
@@ -156,11 +155,8 @@ for a reader. A similarity is never a join key, an identity or what
 closes a question. A ranking service is a candidate point; its
 experiment runs in the evaluation rig first.
 
-**Phase 1, out.** The typed methods become the general call. The row
-design and the replay grid leave the engine; the service builds its
-rows. The what-if of today moves to the service side as a project of
-its own. The model service takes its own name: it is the forecast
-services, not the kernel.
+**Phase 1, out.** The model service takes its own name: it is the
+forecast services, not the kernel.
 
 **After phase 1.** The forecast as a declared analysis: an aspect, a
 door, a backtest measurement, its arms in the next read. The vector

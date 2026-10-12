@@ -186,7 +186,7 @@ enum Door {
     /// extraction, so the body cannot name the column itself.
     /// No SQL behind it — the plan is built here.
     Column(String),
-    /// `misfit.<frame>()` / `whatif.<scenario>()`. The compute pass
+    /// `misfit.<frame>()`. The compute pass
     /// builds their batch, so this pass does not plan them — it walks
     /// the body they replay, for the path. That is the whole cycle
     /// guard: a frame whose SQL names its own door is a repeat on the
@@ -247,9 +247,6 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashMap<String, Str
                     }
                     [prefix, name] if prefix == "misfit" => {
                         self.0.push(Door::Replay("misfit", name.clone()));
-                    }
-                    [prefix, name] if prefix == "whatif" => {
-                        self.0.push(Door::Replay("whatif", name.clone()));
                     }
                     // A bare name with no arguments, if we ship a read of
                     // that name. Anything else falls through untouched.
@@ -597,9 +594,8 @@ async fn expand(
 ) -> Result<(), SessionError> {
     let key = door.key();
     let sql = body_of(shared, resolved, &door).await?;
-    // A replayed body may not be SQL at all — a `whatif.` scenario is a
-    // FACT carrying overrides. It names no doors, so there is nothing to
-    // walk and nothing to refuse.
+    // A replayed body that does not parse names no doors, so there is
+    // nothing to walk; the door refuses it itself when it is read.
     let mut body = match parse(&sql, &door.what()) {
         Ok(q) => q,
         Err(e) if door.planned() => return Err(e),

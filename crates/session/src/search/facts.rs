@@ -59,7 +59,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         let serve = |row: &mut serde_json::Map<String, Value>, reason: String| {
             row.insert("reason".into(), json!(reason));
         };
-        let plan = match crate::whatif::build_plan(shared, &ctx, sql).await {
+        let plan = match crate::plan::build_plan(shared, &ctx, sql).await {
             Ok(plan) => plan,
             Err(e) => {
                 serve(&mut row, format!("not served: {e}"));
@@ -78,7 +78,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         }
         let q = format!("SELECT value FROM ({sql}) LIMIT 2");
         let served = async {
-            let plan = crate::whatif::build_plan(shared, &ctx, &q).await?;
+            let plan = crate::plan::build_plan(shared, &ctx, &q).await?;
             ctx.execute_logical_plan(plan)
                 .await
                 .map_err(SessionError::not_served)?
@@ -172,7 +172,7 @@ pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, 
         let Some(sql) = body.get("sql").and_then(Value::as_str) else {
             continue;
         };
-        let plan = match crate::whatif::build_plan(shared, &ctx, sql).await {
+        let plan = match crate::plan::build_plan(shared, &ctx, sql).await {
             Ok(plan) => plan,
             Err(e) => {
                 out.push(reason(format!("not served: {e}")));

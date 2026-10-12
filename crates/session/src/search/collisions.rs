@@ -225,7 +225,7 @@ async fn series_fingerprint(
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
-    let probe = crate::whatif::build_plan(shared, ctx, sql).await.ok()?;
+    let probe = crate::plan::build_plan(shared, ctx, sql).await.ok()?;
     let fields = probe.schema();
     let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
     // The same verb rule every monthly reader applies: a ratio serves
@@ -245,7 +245,7 @@ async fn series_fingerprint(
     let sources = crate::provenance::served_sources(&probe, dataset);
     let tcol = crate::cube::judged_time_column(fields, &sources, &anchors.temporal)
         .map(|(column, ..)| column)
-        .or_else(|| crate::whatif::date_column(fields.fields()))?;
+        .or_else(|| crate::plan::date_column(fields.fields()))?;
     let verb = crate::cube::verb_of(
         body,
         is_ratio,
@@ -256,7 +256,7 @@ async fn series_fingerprint(
     )
     .verb;
     let q = monthly_sql(sql, &tcol, verb);
-    let plan = crate::whatif::build_plan(shared, ctx, &q).await.ok()?;
+    let plan = crate::plan::build_plan(shared, ctx, &q).await.ok()?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await

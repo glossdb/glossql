@@ -155,7 +155,7 @@ definitions.
 ### metric_bands → `metric_bands`
 
 `SELECT metric_bands() FROM <dataset>`. For every grounded metric,
-walks the recent months and asks the TabICL forward what range each
+walks the recent months and asks the forecast service what range each
 month should have landed in given everything before it. Each walked
 point records the band quantiles (p05–p95) and its PIT — the quantile
 at which the actual landed. Per metric, `aggregation` names what one

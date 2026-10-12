@@ -259,7 +259,7 @@ pub(crate) async fn behavior_anchors(
         let shared = Arc::clone(shared);
         let ctx = ctx.clone();
         async move {
-            let plan = crate::whatif::build_plan(&shared, &ctx, &q).await?;
+            let plan = crate::plan::build_plan(&shared, &ctx, &q).await?;
             ctx.execute_logical_plan(plan)
                 .await
                 .map_err(SessionError::not_served)?
@@ -275,7 +275,7 @@ pub(crate) async fn behavior_anchors(
         let shared = Arc::clone(shared);
         let ctx = ctx.clone();
         async move {
-            let plan = crate::whatif::build_plan(&shared, &ctx, &q).await?;
+            let plan = crate::plan::build_plan(&shared, &ctx, &q).await?;
             let served = ctx
                 .execute_logical_plan(plan)
                 .await
@@ -676,7 +676,7 @@ pub(crate) async fn behavior_anchors(
                                         format!(", SUM(CAST(s.{} AS DOUBLE)) AS \"s_{c}\"", qi(c))
                                     })
                                     .collect();
-                                let mp = crate::whatif::build_plan(
+                                let mp = crate::plan::build_plan(
                                     shared,
                                     &ctx,
                                     &format!(

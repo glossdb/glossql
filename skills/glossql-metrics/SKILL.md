@@ -122,7 +122,7 @@ abstains with your own text.
 | `references/read-sql.md` | before any read over a metric: flows, stocks and ratios, what this engine has that postgres lacks, and the three refusals that cost most calls |
 | `references/validate.md` | when a number needs a check that says why it holds, and at the close — a reconciliation run by hand becomes a standing check |
 | `references/cube.md` | when a metric's axes, resolution or window are not what you expected, and after every ruling |
-| `references/doors.md` | for a what-if, a which-rows question, a bespoke function or an app |
+| `references/doors.md` | for a which-rows question, a bespoke function or an app |
 | `references/close.md` | before the read-back: the three lists and the question round |
 
 Each is served beside this page as `skill://glossql-metrics/<reference>`.

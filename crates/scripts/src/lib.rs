@@ -2,10 +2,10 @@
 //! bodies are SQL the engine plans — a measurement over data, a detector
 //! over its witness's `slots` — so nothing here evaluates a body. What
 //! remains is what SQL cannot express: the statistical kernels in Rust,
-//! behind the engine's aggregate registrations and the runtime's typed
-//! methods — and the three model reads, which the server never computes
-//! itself. They go to the kernel service ([`remote`]) when the
-//! environment names one, and refuse by name when none is.
+//! behind the engine's aggregate registrations and the runtime's
+//! reconcile method — and the table call, which the server never
+//! computes itself. It goes to the service the deployment names for the
+//! point ([`remote`]), and refuses by the point's name when none is.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -26,22 +26,24 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options, partition};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_session::{BandRead, FunctionRuntime, Matrix, PIT_BINS};
+use glossql_session::{Answered, FunctionRuntime, POINTS};
 use serde_json::{Value, json};
 
 pub use remote::{Bearer, GOOGLE_METADATA, Remote};
 
-/// The native kernels, and — when the server names one — the kernel
-/// service behind the three model reads.
+/// The native kernels, and — per point the server names — the service
+/// behind the table call.
 pub struct KernelRuntime {
-    remote: Option<Remote>,
+    remotes: HashMap<&'static str, Remote>,
 }
 
 impl std::fmt::Debug for KernelRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KernelRuntime")
-            .field("kernel", &self.remote.as_ref().map(Remote::url))
-            .finish()
+        let mut named = f.debug_struct("KernelRuntime");
+        for point in POINTS {
+            named.field(point, &self.remotes.get(point).map(Remote::url));
+        }
+        named.finish()
     }
 }
 
@@ -53,35 +55,37 @@ fn fail<T>(message: impl Into<String>) -> ScriptResult<T> {
 
 impl KernelRuntime {
     /// The native kernels alone — the profile aggregates and reconcile.
-    /// The three model reads refuse by name.
+    /// Every point refuses by name.
     pub fn native() -> Self {
-        KernelRuntime { remote: None }
+        KernelRuntime {
+            remotes: HashMap::new(),
+        }
     }
 
-    /// The native kernels, and the model reads served by the kernel
-    /// service at `url` (`GLOSSQL_TABICL_URL`), `bearer` on every call.
-    pub fn with_remote(url: &str, bearer: Bearer) -> Result<Self, String> {
-        Ok(KernelRuntime {
-            remote: Some(Remote::new(url, bearer)?),
-        })
+    /// The same runtime with `point` ([`POINTS`]) served by the service
+    /// at `url` (`GLOSSQL_<POINT>_URL`), `bearer` on every call. A name
+    /// that is no point is refused: nothing would ever read it.
+    pub fn with_point(mut self, point: &str, url: &str, bearer: Bearer) -> Result<Self, String> {
+        let Some(point) = POINTS.iter().copied().find(|p| *p == point) else {
+            return Err(format!(
+                "`{point}` is no service point — the points are {}",
+                POINTS.join(", ")
+            ));
+        };
+        self.remotes.insert(point, Remote::new(url, bearer)?);
+        Ok(self)
     }
 
-    /// Where the model reads go, when they go anywhere.
-    pub fn kernel_url(&self) -> Option<&str> {
-        self.remote.as_ref().map(Remote::url)
-    }
-
-    fn model(&self) -> Result<&Remote, String> {
-        self.remote
-            .as_ref()
-            .ok_or_else(|| "this runtime carries no model".to_string())
+    /// Where a point's calls go, when they go anywhere.
+    pub fn url(&self, point: &str) -> Option<&str> {
+        self.remotes.get(point).map(Remote::url)
     }
 }
 
 #[glossql_session::async_trait]
 impl FunctionRuntime for KernelRuntime {
-    fn carries_model(&self) -> bool {
-        self.remote.is_some()
+    fn serves(&self, point: &str) -> bool {
+        self.remotes.contains_key(point)
     }
 
     /// The shipped statistics (`profile`; `mad` and `entropy` ride
@@ -92,40 +96,22 @@ impl FunctionRuntime for KernelRuntime {
         statistics::udafs()
     }
 
-    /// The `whatif.` door's kernel: the regressor ensemble over the
-    /// replayed worlds — a replay grid is a handful of worlds, the
-    /// sparse-support regime the ensemble was ruled in for. The shape
-    /// is checked here; the service checks that something varies.
-    async fn band_grid(
+    /// The table call: to the service named for `point`, as it stands.
+    /// The service checks the table against its specification; a table
+    /// with no rows is refused here, since no point answers one.
+    async fn table(
         &self,
-        train: Matrix<'_>,
-        train_y: &[f64],
-        test: Matrix<'_>,
-        alphas: &[f64],
-    ) -> Result<Vec<f64>, String> {
-        let Matrix {
-            data: train_x,
-            rows,
-            cols,
-        } = train;
-        let Matrix {
-            data: test_x,
-            rows: test_rows,
-            cols: test_cols,
-        } = test;
-        if rows < 2
-            || train_x.len() != rows * cols
-            || test_cols != cols
-            || test_x.len() != test_rows * cols
-        {
-            return Err(format!(
-                "band_grid: {rows} train rows x {cols} features against {} train values \
-                 and {} test values",
-                train_y.len(),
-                test_x.len()
-            ));
+        point: &str,
+        table: RecordBatch,
+        spec: Value,
+    ) -> Result<Answered, String> {
+        let Some(remote) = self.remotes.get(point) else {
+            return Err(format!("this runtime fills no {point} point"));
+        };
+        if table.num_rows() == 0 {
+            return Err(format!("{point}: the table holds no rows"));
         }
-        self.model()?.band_grid(train, train_y, test, alphas).await
+        remote.table(point, table, spec).await
     }
 
     /// The behavior-evidence door's kernel: the stock/flow
@@ -137,48 +123,6 @@ impl FunctionRuntime for KernelRuntime {
         terms: &[String],
     ) -> Result<Value, String> {
         reconcile_kernel(aligned, n_common, terms.to_vec())
-    }
-
-    /// The walk's points together: shapes checked here, one request
-    /// to the service per chunk of them.
-    async fn band_points(
-        &self,
-        reads: &[BandRead],
-        alphas: &[f64],
-        pit_history: Option<&[f64]>,
-    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
-        if let Some(history) = pit_history
-            && (history.len() != PIT_BINS || history.iter().any(|c| c.is_nan() || *c < 0.0))
-        {
-            return Err(format!(
-                "band_points: a PIT history is {PIT_BINS} non-negative counts, got {}",
-                history.len()
-            ));
-        }
-        for (i, read) in reads.iter().enumerate() {
-            let (rows, cols) = (read.train_y.len(), read.test_x.len());
-            if rows < 2 || read.train_x.len() != rows * cols {
-                return Err(format!(
-                    "band_points: read {i}: {rows} rows x {cols} features against {} values",
-                    read.train_x.len()
-                ));
-            }
-        }
-        self.model()?.band_points(reads, alphas, pit_history).await
-    }
-
-    /// The `misfit.` door's kernel (fixture 20): the chain-rule density
-    /// read, fit on the frame and scored on the same frame, log space
-    /// end to end — the service runs the two orderings.
-    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
-        let Matrix { data, rows, cols } = x;
-        if rows < 2 || cols < 2 || data.len() != rows * cols {
-            return Err(format!(
-                "misfit_scores: {rows} rows x {cols} features against {} values",
-                data.len()
-            ));
-        }
-        self.model()?.misfit(x).await
     }
 }
 

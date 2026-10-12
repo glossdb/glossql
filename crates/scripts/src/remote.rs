@@ -1,41 +1,46 @@
-//! The kernel service over HTTP — glosskernels: two routes, `/bands`
-//! (many reads in one request, each its training rows and the rows to
-//! call) and `/misfit`, as JSON bodies. Matrices travel as nested
-//! lists, NaN as null both ways. A refusal comes back as `{"error": …}`
-//! under a 4xx and is reported by its text; a full queue (429) and a
-//! stopping instance (503) are waited out for as long as they say, and
-//! a connection that drops mid-flight is tried again a few times, all
-//! within the call's bound — the reads are pure, so a call sent twice
-//! costs only time; a service that does not answer is reported by its
-//! address at once. The bearer is a key
-//! used as-is, or an ID token the platform mints for the service and
-//! this client refreshes before it expires. Nothing here knows what the
-//! numbers mean.
+//! A service point over HTTP: one table and a specification in, one
+//! table and an answer out, as Arrow IPC streams — column names and
+//! types travel with the rows, the specification as JSON in the
+//! schema's metadata under `spec`, the answer object under `answer`.
+//! A refusal comes back as JSON under a 4xx — `{"error": …}`, and
+//! where the specification is at fault `errors` naming every field to
+//! repair — and is reported with its text and its fields; a full queue
+//! (429) and a stopping instance (503) are waited out for as long as
+//! they say, and a connection that drops mid-flight is tried again a
+//! few times, all within the call's bound — the reads are pure, so a
+//! call sent twice costs only time; a service that does not answer is
+//! reported by its address at once. The bearer is a key used as-is, or
+//! an ID token the platform mints for the service and this client
+//! refreshes before it expires. Nothing here knows what the numbers
+//! mean.
 
+use std::collections::HashMap;
+
+use arrow_ipc::reader::StreamReader;
+use arrow_ipc::writer::StreamWriter;
 use base64::Engine;
-use glossql_session::{BandRead, Matrix};
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use datafusion::arrow::array::RecordBatch;
+use glossql_session::Answered;
+use serde_json::Value;
+
+/// The media type of an Arrow IPC stream, both ways.
+const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
+
+/// The schema metadata keys the wire uses: the specification on the
+/// way in, the answer object on the way out.
+const SPEC: &str = "spec";
+const ANSWER: &str = "answer";
 
 /// How long the service has to accept a connection.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// How long one call may take, whole: the bound the kernel service
-/// puts on a request of its own, so the client gives up where the
-/// service would have.
+/// How long one call may take, whole: the bound the service puts on
+/// a request of its own, so the client gives up where the service
+/// would have.
 const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The interval of the TCP keepalive on a call in flight.
 const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Walk points per `/bands` request: bounds a request's body where a
-/// workspace holds thousands of metrics; the service answers each
-/// request's reads together.
-const READS_PER_REQUEST: usize = 512;
-
-/// The service's ensemble size behind the replay grid read — the
-/// package's default, the regime the read was ruled in for.
-const GRID_MEMBERS: u32 = 8;
 
 /// The longest wait between tries on a `503` that names none; the
 /// waits double from one second up to it.
@@ -60,11 +65,11 @@ const TOKEN_ASSUMED: std::time::Duration = std::time::Duration::from_secs(1800);
 pub enum Bearer {
     /// An open service (a laptop).
     None,
-    /// A key used as-is (`GLOSSQL_TABICL_TOKEN`).
+    /// A key used as-is (`GLOSSQL_<POINT>_TOKEN`).
     Key(String),
     /// A Google-signed ID token for `audience` — the service's URL, which
     /// it verifies — minted by the metadata server at `metadata` for the
-    /// service account this process runs as (`GLOSSQL_TABICL_AUDIENCE`).
+    /// service account this process runs as (`GLOSSQL_<POINT>_AUDIENCE`).
     /// No key anywhere; the token is refreshed before it expires.
     Identity { audience: String, metadata: String },
 }
@@ -86,7 +91,7 @@ impl Bearer {
     }
 }
 
-/// A kernel service: where, and the bearer it expects.
+/// A service behind one point: where, and the bearer it expects.
 pub struct Remote {
     client: reqwest::Client,
     base: String,
@@ -104,16 +109,14 @@ impl std::fmt::Debug for Remote {
 }
 
 impl Remote {
-    /// `url` is the service's address (`GLOSSQL_TABICL_URL`); `bearer`
+    /// `url` is the service's address (`GLOSSQL_<POINT>_URL`); `bearer`
     /// what rides every call.
     pub fn new(url: &str, bearer: Bearer) -> Result<Self, String> {
         let base = url.trim().trim_end_matches('/').to_string();
         if !(base.starts_with("http://") || base.starts_with("https://")) {
-            return Err(format!(
-                "GLOSSQL_TABICL_URL is `{url}` — the kernel service's http(s) address"
-            ));
+            return Err(format!("`{url}` is not a service's http(s) address"));
         }
-        // A kernel's answer takes as long as its model does, up to the
+        // An answer takes as long as the model does, up to the
         // service's own bound; reaching the service is bounded apart,
         // and a peer that has gone away is noticed by the keepalive
         // rather than waited out.
@@ -122,7 +125,7 @@ impl Remote {
             .connect_timeout(CONNECT_TIMEOUT)
             .tcp_keepalive(KEEPALIVE)
             .build()
-            .map_err(|e| format!("the kernel service client does not build: {e}"))?;
+            .map_err(|e| format!("the service client does not build: {e}"))?;
         Ok(Remote {
             client,
             base,
@@ -165,11 +168,11 @@ impl Remote {
             .send()
             .await
             .map_err(|e| {
-                format!("the metadata server did not mint a token for the kernel service: {e}")
+                format!("the metadata server did not mint a token for the service: {e}")
             })?;
         if !response.status().is_success() {
             return Err(format!(
-                "the metadata server refused to mint a token for the kernel service ({}) — is a service account attached?",
+                "the metadata server refused to mint a token for the service ({}) — is a service account attached?",
                 response.status()
             ));
         }
@@ -184,7 +187,23 @@ impl Remote {
         Ok(Some(token))
     }
 
-    async fn post(&self, route: &str, body: Value) -> Result<Value, String> {
+    /// The table call on `route`: the table with `spec` in its schema's
+    /// metadata, as one IPC stream; the answer's rows as one batch and
+    /// its answer object. A refusal is reported with the service's text
+    /// and the fields it names.
+    pub async fn table(
+        &self,
+        route: &str,
+        table: RecordBatch,
+        spec: Value,
+    ) -> Result<Answered, String> {
+        let body =
+            encode(table, &spec).map_err(|e| format!("the {route} table does not encode: {e}"))?;
+        let bytes = self.post(route, body).await?;
+        decode(&bytes).map_err(|e| format!("the {route} service's answer does not read: {e}"))
+    }
+
+    async fn post(&self, route: &str, body: Vec<u8>) -> Result<bytes::Bytes, String> {
         let url = format!("{}/{route}", self.base);
         let deadline = std::time::Instant::now() + CALL_TIMEOUT;
         let mut backoff = std::time::Duration::from_secs(1);
@@ -196,7 +215,7 @@ impl Remote {
             async move {
                 if std::time::Instant::now() + wait >= deadline {
                     return Err(format!(
-                        "the kernel service {why} for {}s",
+                        "the {route} service {why} for {}s",
                         CALL_TIMEOUT.as_secs()
                     ));
                 }
@@ -205,7 +224,12 @@ impl Remote {
             }
         };
         loop {
-            let mut request = self.client.post(&url).json(&body);
+            let mut request = self
+                .client
+                .post(&url)
+                .header(reqwest::header::CONTENT_TYPE, ARROW_STREAM)
+                .header(reqwest::header::ACCEPT, ARROW_STREAM)
+                .body(body.clone());
             if let Some(token) = self.bearer(false).await? {
                 request = request.bearer_auth(token);
             }
@@ -230,7 +254,7 @@ impl Remote {
                 }
                 Err(e) => {
                     return Err(format!(
-                        "the kernel service at {} did not answer: {e}",
+                        "the {route} service at {} did not answer: {e}",
                         self.base
                     ));
                 }
@@ -268,173 +292,84 @@ impl Remote {
                 self.bearer(true).await?;
                 continue;
             }
-            let text = response
-                .text()
+            let bytes = response
+                .bytes()
                 .await
-                .map_err(|e| format!("the kernel service's answer did not arrive whole: {e}"))?;
-            let value: Value = serde_json::from_str(&text).map_err(|_| {
-                format!("the kernel service answered {status} with something that is not JSON")
-            })?;
+                .map_err(|e| format!("the {route} service's answer did not arrive whole: {e}"))?;
             if !status.is_success() {
-                let reason = value
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or(text.as_str());
-                return Err(format!("the kernel service refused ({status}): {reason}"));
+                return Err(format!(
+                    "the {route} service refused ({status}): {}",
+                    refusal(&bytes)
+                ));
             }
-            return Ok(value);
+            return Ok(bytes);
         }
-    }
-
-    /// `/bands`: the reads' answers, one object per read, in order.
-    async fn bands(
-        &self,
-        reads: Vec<Value>,
-        alphas: &[f64],
-        members: u32,
-        pit_history: Option<&[f64]>,
-    ) -> Result<Vec<Value>, String> {
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            reads: Vec<Value>,
-        }
-        let asked = reads.len();
-        let mut body = json!({ "reads": reads, "alphas": alphas, "members": members });
-        if let Some(history) = pit_history {
-            body["pit_history"] = json!(history);
-        }
-        let answer: Answer = decode(self.post("bands", body).await?)?;
-        if answer.reads.len() != asked {
-            return Err(format!(
-                "the kernel service answered {} reads for {asked}",
-                answer.reads.len()
-            ));
-        }
-        Ok(answer.reads)
-    }
-
-    /// Walk points, `READS_PER_REQUEST` to a request: each read one
-    /// test row with its actual, the pinned member (`members` 1), the
-    /// PIT read by the service against its raw grid. With a
-    /// `pit_history` the service reads the bands through it and its
-    /// default record (the raw bands ride back beside them, unread here).
-    pub async fn band_points(
-        &self,
-        reads: &[BandRead],
-        alphas: &[f64],
-        pit_history: Option<&[f64]>,
-    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            quantiles: Vec<Vec<Option<f64>>>,
-            pit: Option<Vec<Option<f64>>>,
-        }
-        let mut out = Vec::with_capacity(reads.len());
-        for chunk in reads.chunks(READS_PER_REQUEST) {
-            let bodies = chunk
-                .iter()
-                .map(|r| {
-                    let train = Matrix {
-                        data: &r.train_x,
-                        rows: r.train_y.len(),
-                        cols: r.test_x.len(),
-                    };
-                    json!({
-                        "train_x": rows(train),
-                        "train_y": vector(&r.train_y),
-                        "test_x": [vector(&r.test_x)],
-                        "actual": [r.actual],
-                    })
-                })
-                .collect();
-            for answered in self.bands(bodies, alphas, 1, pit_history).await? {
-                let mut answer: Answer = decode(answered)?;
-                if answer.quantiles.len() != 1 || answer.quantiles[0].len() != alphas.len() {
-                    return Err(format!(
-                        "the kernel service answered {} rows of {} quantiles for one row at {} alphas",
-                        answer.quantiles.len(),
-                        answer.quantiles.first().map_or(0, Vec::len),
-                        alphas.len()
-                    ));
-                }
-                let pit = answer
-                    .pit
-                    .as_ref()
-                    .and_then(|p| p.first().copied().flatten())
-                    .unwrap_or(f64::NAN);
-                out.push((floats(answer.quantiles.remove(0)), pit));
-            }
-        }
-        Ok(out)
-    }
-
-    pub async fn band_grid(
-        &self,
-        train: Matrix<'_>,
-        train_y: &[f64],
-        test: Matrix<'_>,
-        alphas: &[f64],
-    ) -> Result<Vec<f64>, String> {
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            quantiles: Vec<Vec<Option<f64>>>,
-        }
-        let read = json!({
-            "train_x": rows(train),
-            "train_y": vector(train_y),
-            "test_x": rows(test),
-        });
-        let mut answered = self.bands(vec![read], alphas, GRID_MEMBERS, None).await?;
-        let answer: Answer = decode(answered.remove(0))?;
-        if answer.quantiles.len() != test.rows
-            || answer.quantiles.iter().any(|r| r.len() != alphas.len())
-        {
-            return Err(format!(
-                "the kernel service answered {} rows for {} test rows and {} alphas",
-                answer.quantiles.len(),
-                test.rows,
-                alphas.len()
-            ));
-        }
-        Ok(answer.quantiles.into_iter().flat_map(floats).collect())
-    }
-
-    pub async fn misfit(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            scores: Vec<Option<f64>>,
-        }
-        let answer: Answer = decode(self.post("misfit", json!({ "x": rows(x) })).await?)?;
-        if answer.scores.len() != x.rows {
-            return Err(format!(
-                "the kernel service answered {} scores for {} rows",
-                answer.scores.len(),
-                x.rows
-            ));
-        }
-        Ok(floats(answer.scores))
     }
 }
 
-/// A row-major matrix as nested lists, non-finite values as null.
-fn rows(m: Matrix<'_>) -> Vec<Vec<Value>> {
-    m.data.chunks(m.cols.max(1)).map(vector).collect()
+/// The table as one IPC stream, `spec` in the schema's metadata.
+fn encode(table: RecordBatch, spec: &Value) -> Result<Vec<u8>, String> {
+    let mut metadata = table.schema().metadata().clone();
+    metadata.insert(SPEC.to_string(), spec.to_string());
+    let schema = table.schema().as_ref().clone().with_metadata(metadata);
+    let table = table
+        .with_schema(std::sync::Arc::new(schema.clone()))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut out, &schema).map_err(|e| e.to_string())?;
+    writer.write(&table).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
-fn vector(v: &[f64]) -> Vec<Value> {
-    v.iter()
-        .map(|f| if f.is_finite() { json!(f) } else { Value::Null })
-        .collect()
+/// The answer's IPC stream as one batch and its answer object. A
+/// stream of no batches is the empty table in the stream's schema.
+fn decode(bytes: &[u8]) -> Result<Answered, String> {
+    let reader =
+        StreamReader::try_new(std::io::Cursor::new(bytes), None).map_err(|e| e.to_string())?;
+    let schema = reader.schema();
+    let answer: Value = match schema.metadata().get(ANSWER) {
+        Some(text) => {
+            serde_json::from_str(text).map_err(|e| format!("`answer` is not JSON: {e}"))?
+        }
+        None => return Err("the schema's metadata holds no `answer`".into()),
+    };
+    let batches = reader
+        .collect::<Result<Vec<RecordBatch>, _>>()
+        .map_err(|e| e.to_string())?;
+    let bare = std::sync::Arc::new(schema.as_ref().clone().with_metadata(HashMap::new()));
+    let table = if batches.is_empty() {
+        RecordBatch::new_empty(bare)
+    } else {
+        datafusion::arrow::compute::concat_batches(&bare, &batches).map_err(|e| e.to_string())?
+    };
+    Ok(Answered { table, answer })
 }
 
-/// Nulls back to NaN — the contract the doors read.
-fn floats(v: Vec<Option<f64>>) -> Vec<f64> {
-    v.into_iter().map(|f| f.unwrap_or(f64::NAN)).collect()
-}
-
-fn decode<T: DeserializeOwned>(value: Value) -> Result<T, String> {
-    serde_json::from_value(value)
-        .map_err(|e| format!("the kernel service's answer has the wrong shape: {e}"))
+/// A refusal's text: the service's `error`, and the fields its `errors`
+/// name, each with its own text; the raw body where it is not the
+/// JSON the contract promises.
+fn refusal(bytes: &[u8]) -> String {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return String::from_utf8_lossy(bytes).into_owned();
+    };
+    let mut said = value["error"]
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_string);
+    let fields: Vec<String> = value["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| match (e["field"].as_str(), e["error"].as_str()) {
+            (Some(field), Some(error)) => format!("{field}: {error}"),
+            _ => e.to_string(),
+        })
+        .collect();
+    if !fields.is_empty() {
+        said.push_str(" — ");
+        said.push_str(&fields.join("; "));
+    }
+    said
 }
 
 /// How long a JWT says it is good for, from its `exp` claim — read

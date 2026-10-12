@@ -792,8 +792,8 @@ impl RelationPlanner for GlossqlReads {
         if self.resolved.shadowed(&self.shared.idents(), &relation) {
             return Ok(RelationPlanning::Original(Box::new(relation)));
         }
-        // A compute door the pre-pass evaluated — `whatif.<x>()`,
-        // `misfit.<x>()`, `glossary(...)`, `attest(...)`,
+        // A compute door the pre-pass evaluated — `misfit.<x>()`,
+        // `glossary(...)`, `attest(...)`,
         // `metric_series(grain => …)`, the store's relations. Keyed by the factor's
         // own rendering, which is what arrives here again: a lookup —
         // nothing computes, fetches or blocks during planning.
@@ -918,8 +918,8 @@ pub(crate) fn door_reads(
         return;
     };
     let [part] = name.0.as_slice() else {
-        // `whatif.` and `misfit.` doors: a scenario replays a
-        // grounding with overrides — not enumerable from here.
+        // The `misfit.` door: a frame replays a grounding — not
+        // enumerable from here.
         reads.everything = true;
         return;
     };
@@ -1003,19 +1003,6 @@ pub(crate) async fn compute_batch(
     if let [prefix, door] = name.0.as_slice()
         && let (Some(prefix), Some(door)) = (prefix.as_ident(), door.as_ident())
     {
-        if shared.idents().normalize(prefix.clone()) == "whatif" {
-            let Some(a) = args else { return Ok(None) };
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(format!(
-                    "whatif.{}() takes no arguments — the scenario body carries the \
-                     overrides (fixture 19)",
-                    door.value
-                )));
-            }
-            return Ok(Some(
-                (Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?).into(),
-            ));
-        }
         if shared.idents().normalize(prefix.clone()) == "misfit" {
             let Some(a) = args else { return Ok(None) };
             if !a.args.is_empty() {

@@ -3,8 +3,8 @@
 //! served back row by row with a `misfit` score: how badly each row fits
 //! the rest of the same frame. One frame ranked against itself (the
 //! model is protocol-robust — self-fit read the same as a clean
-//! reference in the evaluation), the kernel behind the runtime seam, the
-//! judge's conclusion landing as an ordinary gloss. Nothing is cached:
+//! reference in the evaluation), the service behind the runtime seam,
+//! the judge's conclusion landing as an ordinary gloss. Nothing is cached:
 //! an investigation frame is small by construction and the ranking is
 //! ephemeral by design.
 //!
@@ -12,29 +12,29 @@
 //! past the stated caps is refused with the number, a frame with too
 //! little numeric surface abstains with the reason (the evaluation's
 //! `sales_orders` lesson — some tables cannot carry a density read),
-//! and every excluded column is named in `basis`. Unlike `whatif.`,
-//! a refusal refuses the read — the relation's shape *is* the frame,
-//! so there is no fixed schema to carry refusal rows.
+//! and every excluded column is named in `basis`. A refusal refuses
+//! the read — the relation's shape *is* the frame, so there is no fixed
+//! schema to carry refusal rows.
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, ArrayRef, Float64Array, StringArray};
-use datafusion::arrow::compute::{cast, concat_batches};
+use datafusion::arrow::array::{Array, ArrayRef, Float64Array, Int64Array, StringArray};
+use datafusion::arrow::compute::{CastOptions, cast, cast_with_options, concat_batches};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::util::display::array_value_to_string;
 use glossql_glossary::Scope;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::reads::{Shared, verdicts};
-use crate::session::{Matrix, SessionError};
+use crate::session::{MISFIT, SessionError};
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
-/// The row cap bounds the kernel's context — a bigger population is
+/// The row cap bounds the model's context — a bigger population is
 /// sampled down in the frame SQL, never streamed through the model.
 /// 2000 is the measured bound (3.7s at 2048 on Metal with
 /// the parallel chain rule).
-/// The `whatif.` door mirrors this cap on its replay frame.
-pub(crate) const ROW_CAP: usize = 2000;
+const ROW_CAP: usize = 2000;
 const COL_CAP: usize = 16;
 
 pub(crate) async fn misfit_batch(
@@ -48,8 +48,11 @@ pub(crate) async fn misfit_batch(
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let bad = |detail: String| SessionError::BadSubject(format!("misfit.{frame}(): {detail}"));
-    if !shared.runtime().carries_model() {
-        return Err(crate::session::no_model(&format!("misfit.{frame}()")));
+    if !shared.runtime().serves(MISFIT) {
+        return Err(crate::session::no_model(
+            &format!("misfit.{frame}()"),
+            MISFIT,
+        ));
     }
 
     let Some((_, kind, _)) = shared.store.aspect(frame).await? else {
@@ -93,7 +96,7 @@ pub(crate) async fn misfit_batch(
     // The frame's rows, capped one past the stated limit so the refusal
     // can say "more than" without materializing the excess.
     let capped = format!("SELECT * FROM ({sql}) LIMIT {}", ROW_CAP + 1);
-    let plan = crate::whatif::build_plan(shared, &ctx, &capped).await?;
+    let plan = crate::plan::build_plan(shared, &ctx, &capped).await?;
     let batches = ctx
         .execute_logical_plan(plan)
         .await
@@ -125,10 +128,13 @@ pub(crate) async fn misfit_batch(
         }
     }
 
-    // The numeric surface, discovered; every exclusion named. Id-named
-    // columns are out by the evaluation's structural lesson: key-like
-    // columns separate any two row sets trivially.
-    let mut included: Vec<(String, Vec<f64>)> = Vec::new();
+    // The surface, discovered; every exclusion named. Id-named columns
+    // are out by the evaluation's structural lesson: key-like columns
+    // separate any two row sets trivially. A constant column says
+    // nothing about any row. Every other column travels as it is: a
+    // number as a number, text and booleans as categories the service
+    // reads as such, a date as the count it is stored as.
+    let mut included: Vec<(String, ArrayRef)> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
     for (field, col) in schema.fields().iter().zip(frame_batch.columns()) {
         let name = field.name();
@@ -136,18 +142,15 @@ pub(crate) async fn misfit_batch(
             excluded.push(format!("{name} (id)"));
             continue;
         }
-        let Some(values) = column_floats(col) else {
+        let Some(sent) = service_column(col) else {
             excluded.push(format!("{name} ({})", field.data_type()));
             continue;
         };
-        let mut seen: Vec<f64> = values.iter().copied().filter(|v| !v.is_nan()).collect();
-        seen.sort_by(f64::total_cmp);
-        seen.dedup();
-        if seen.len() < 2 {
+        if distinct_values(&sent)? < 2 {
             excluded.push(format!("{name} (constant)"));
             continue;
         }
-        included.push((name.clone(), values));
+        included.push((name.clone(), sent));
     }
     if included.len() < 2 {
         let named = if excluded.is_empty() {
@@ -156,8 +159,8 @@ pub(crate) async fn misfit_batch(
             format!("excluded {}", excluded.join(", "))
         };
         return Err(bad(format!(
-            "too little numeric surface: {} usable column(s) after {named} — a density \
-             read needs at least two, so the frame abstains",
+            "too little surface: {} usable column(s) after {named} — a density read \
+             needs at least two, so the frame abstains",
             included.len()
         )));
     }
@@ -169,27 +172,37 @@ pub(crate) async fn misfit_batch(
         )));
     }
 
-    // Row-major (rows × cols), nulls as NaN — the kernel's contract.
-    let cols = included.len();
-    let mut x = vec![0f64; rows * cols];
-    for (c, (_, values)) in included.iter().enumerate() {
-        for (r, v) in values.iter().enumerate() {
-            x[r * cols + c] = *v;
-        }
-    }
-    let scores = shared
+    // The frame as the one table the service takes: every usable
+    // column under its own name. `cells` would name the column to look
+    // at per row; the relation's two added columns are fixture 20's
+    // shape, so the door asks for none.
+    // TODO: serve the column to look at once fixture 20 gives it a
+    // place — `cells: true` answers one column per frame column.
+    let sent = RecordBatch::try_new(
+        Arc::new(Schema::new(
+            included
+                .iter()
+                .map(|(name, col)| Field::new(name, col.data_type().clone(), true))
+                .collect::<Vec<_>>(),
+        )),
+        included.iter().map(|(_, col)| Arc::clone(col)).collect(),
+    )
+    .map_err(SessionError::from)?;
+    let answered = shared
         .runtime()
-        .misfit_scores(Matrix {
-            data: &x,
-            rows,
-            cols,
-        })
+        .table(MISFIT, sent, json!({ "cells": false }))
         .await
-        .map_err(|e| bad(format!("not served: the misfit kernel refused — {e}")))?;
-    // Complementary null patterns can make a conditioning column's
-    // impute mean NaN inside the kernel, and NaN survives its unique
-    // filter — a non-finite score carries no ranking, so the read
-    // refuses (the refuse-or-abstain contract) instead of serving NaN.
+        .map_err(|e| bad(format!("not served: the misfit service refused — {e}")))?;
+    // One row per frame row, placed by `row`: the score is how far the
+    // row's strangest cell lies below what is typical for its column,
+    // lower stranger; the door serves it negated, so a higher misfit
+    // fits the frame worse (fixture 20).
+    let scores = scores_by_row(&answered.table, rows)
+        .map_err(|e| bad(format!("not served: the misfit service answered {e}")))?;
+    // A score the service could not read — a column whose null pattern
+    // leaves no common support — comes back missing or non-finite, and
+    // a non-finite score carries no ranking, so the read refuses (the
+    // refuse-or-abstain contract) instead of serving NaN.
     if scores.iter().any(|s| !s.is_finite()) {
         return Err(bad(format!(
             "the density read came back non-finite over [{}] — the columns' null \
@@ -227,33 +240,91 @@ pub(crate) async fn misfit_batch(
     RecordBatch::try_new(Arc::new(Schema::new(fields)), columns).map_err(SessionError::from)
 }
 
-/// A column read as f64s (nulls as NaN), or None where the type carries
-/// no numeric reading. Text is never parsed; temporal types ride their
-/// underlying representation (days, milliseconds) — order and spacing
-/// are what the density read uses.
-fn column_floats(col: &ArrayRef) -> Option<Vec<f64>> {
-    let attempt = match col.data_type() {
-        dt if dt.is_numeric() => cast(col, &DataType::Float64).ok(),
-        DataType::Boolean | DataType::Date32 => cast(col, &DataType::Int32)
-            .ok()
-            .and_then(|c| cast(&c, &DataType::Float64).ok()),
-        DataType::Date64 | DataType::Timestamp(_, _) | DataType::Duration(_) => {
-            cast(col, &DataType::Int64)
-                .ok()
-                .and_then(|c| cast(&c, &DataType::Float64).ok())
+/// A column as the service takes it, or None where the type carries no
+/// reading. Numbers travel as they are, a decimal as a float; text and
+/// booleans are categories; temporal types ride their underlying count
+/// (days, milliseconds) — order and spacing are what the density read
+/// uses. Text is never parsed.
+fn service_column(col: &ArrayRef) -> Option<ArrayRef> {
+    match col.data_type() {
+        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => {
+            cast(col, &DataType::Float64).ok()
+        }
+        dt if dt.is_numeric() => Some(Arc::clone(col)),
+        DataType::Boolean | DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => {
+            Some(Arc::clone(col))
+        }
+        DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _) | DataType::Duration(_) => {
+            cast(col, &DataType::Int64).ok()
         }
         _ => None,
-    }?;
-    let floats = attempt.as_any().downcast_ref::<Float64Array>()?;
-    Some(
-        (0..floats.len())
-            .map(|i| {
-                if floats.is_null(i) {
-                    f64::NAN
-                } else {
-                    floats.value(i)
-                }
-            })
-            .collect(),
+    }
+}
+
+/// How many distinct values a column holds, nulls aside. The frame is
+/// under the row cap when this runs, so the set is bounded by it.
+fn distinct_values(col: &ArrayRef) -> Result<usize, SessionError> {
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..col.len() {
+        if !col.is_null(i) {
+            seen.insert(array_value_to_string(col, i).map_err(SessionError::from)?);
+        }
+    }
+    Ok(seen.len())
+}
+
+/// The answer's `score` per frame row, placed by its `row`: every row
+/// once, in the frame's order. A missing score is NaN, which the caller
+/// refuses on.
+fn scores_by_row(answer: &RecordBatch, rows: usize) -> Result<Vec<f64>, String> {
+    let column = |name: &str| {
+        answer
+            .column_by_name(name)
+            .ok_or_else(|| format!("no `{name}` column"))
+    };
+    let row = cast_with_options(
+        column("row")?,
+        &DataType::Int64,
+        &CastOptions {
+            safe: true,
+            ..Default::default()
+        },
     )
+    .map_err(|e| format!("`row` does not read as an integer: {e}"))?;
+    let row = row
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .ok_or("`row` does not read as an integer")?;
+    let score = cast_with_options(
+        column("score")?,
+        &DataType::Float64,
+        &CastOptions {
+            safe: true,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("`score` does not read as a number: {e}"))?;
+    let score = score
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or("`score` does not read as a number")?;
+    if answer.num_rows() != rows {
+        return Err(format!("{} rows for a frame of {rows}", answer.num_rows()));
+    }
+    let mut out = vec![f64::NAN; rows];
+    let mut placed = vec![false; rows];
+    for i in 0..answer.num_rows() {
+        if row.is_null(i) {
+            return Err("a row without its position".into());
+        }
+        let at = usize::try_from(row.value(i)).map_err(|_| "a row position below zero")?;
+        if at >= rows || placed[at] {
+            return Err(format!("row {at} outside the frame or answered twice"));
+        }
+        placed[at] = true;
+        if !score.is_null(i) {
+            out[at] = score.value(i);
+        }
+    }
+    Ok(out)
 }

@@ -124,7 +124,7 @@ pub(crate) async fn relationship_checks(
                 .schema()
                 .fields()
                 .iter()
-                .filter(|f| crate::whatif::is_temporal(f.data_type()))
+                .filter(|f| crate::plan::is_temporal(f.data_type()))
                 .take(3)
                 .map(|f| f.name().clone())
                 .collect();

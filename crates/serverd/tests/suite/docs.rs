@@ -118,7 +118,7 @@ fn missing_table(error: &str) -> bool {
     error.contains("table 'datafusion.")
         || error.contains("No table named")
         || error.contains("table not found")
-        // `read.<metric>()` / `whatif.<lever>()` name a workspace's own
+        // `read.<metric>()` / `misfit.<frame>()` name a workspace's own
         // groundings, which a fresh one has none of. Narrow on purpose:
         // only an undeclared aspect behind a serve door, never a
         // missing column inside one.
