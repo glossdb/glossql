@@ -109,8 +109,10 @@ remeasures AS (
 -- the function and the column, in `wanted` / `wanted_over` — and the
 -- witnesses make an unwritten claim owed: a declared function
 -- returning a witnessed measurement aspect at dataset grain, with no
--- voice here while a grounding stands, is the walk that never ran.
--- One row per function, as re-measure; the act is the run.
+-- voice here while a grounding stands, is the walk or the forecast
+-- that never ran. A witness without a detector counts: it names the
+-- measurement as standing. One row per function, as re-measure; the
+-- act is the run.
 wanted AS (
   SELECT DISTINCT unnest(x.wanted) AS function, unnest(x.wanted_over) AS over
   FROM metric_axes() x
@@ -132,7 +134,7 @@ unwalked AS (
   FROM functions f
   JOIN current_dataset d ON f.scope = 'GLOBAL' OR f.scope = d.dataset
   JOIN aspects a ON a.name = f.returns AND a.kind = 'measurement' AND a.grains = 'dataset'
-  WHERE EXISTS (SELECT 1 FROM witnesses w WHERE w.aspect = a.name AND w.detector IS NOT NULL)
+  WHERE EXISTS (SELECT 1 FROM witnesses w WHERE w.aspect = a.name)
     AND EXISTS (SELECT 1 FROM metric_surfaces s WHERE s.grounded)
     AND NOT EXISTS (SELECT 1 FROM measurements m
                     WHERE m.dataset = d.dataset AND m.function = f.name)

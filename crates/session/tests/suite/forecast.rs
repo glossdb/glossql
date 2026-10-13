@@ -1,0 +1,460 @@
+//! The forecast at an origin: the door behind `metric_forecast`, against
+//! a stub service that answers the periods ahead. What the door sends
+//! — each metric as a whole at its own grain, the history and the
+//! periods ahead, the totals a flow asks for — and what it serves: one
+//! row per metric and point, the inapplicable ones with their reason.
+
+use std::sync::{Arc, Mutex};
+
+use datafusion::arrow::array::{
+    Array, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
+};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::arrow::util::pretty::pretty_format_batches;
+use datafusion::datasource::MemTable;
+use glossql_glossary::{Actor, ActorKind, Store};
+use glossql_session::{Answered, FORECAST, FunctionRuntime, Outcome, Session};
+use serde_json::{Value, json};
+
+/// A forecast service that carries the last actual forward: every
+/// step's median is the member's last value, the bands at ±8% and
+/// ±10% of it; a total is the sum of its steps' medians with the same
+/// relative bands. It records every specification it is handed.
+#[derive(Debug, Default)]
+struct Flat {
+    specs: Mutex<Vec<Value>>,
+}
+
+#[glossql_session::async_trait]
+impl FunctionRuntime for Flat {
+    fn serves(&self, point: &str) -> bool {
+        point == FORECAST
+    }
+
+    async fn table(
+        &self,
+        point: &str,
+        table: RecordBatch,
+        spec: Value,
+    ) -> Result<Answered, String> {
+        assert_eq!(point, FORECAST);
+        assert!(
+            spec.get("origins").is_none(),
+            "the forecast asks no origins: {spec}"
+        );
+        self.specs.lock().unwrap().push(spec.clone());
+        let levels: Vec<f64> = spec["levels"]
+            .as_array()
+            .expect("levels")
+            .iter()
+            .map(|l| l.as_f64().expect("a level"))
+            .collect();
+        let totals: Vec<i64> = spec["totals"]
+            .as_array()
+            .map(|t| t.iter().map(|s| s.as_i64().expect("a span")).collect())
+            .unwrap_or_default();
+        let member = table.column_by_name("member").expect("member");
+        let period = table.column_by_name("period").expect("period");
+        let value = table
+            .column_by_name("value")
+            .expect("value")
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("floats");
+        let status = table
+            .column_by_name("status")
+            .expect("status")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("text");
+        // Per member, in the table's order: the last actual and its
+        // period, then the periods ahead.
+        struct Series {
+            name: String,
+            last: Option<(String, f64)>,
+            ahead: Vec<String>,
+        }
+        let mut series: Vec<Series> = Vec::new();
+        for i in 0..table.num_rows() {
+            let m = array_value_to_string(member, i).expect("text");
+            let p = array_value_to_string(period, i).expect("text");
+            if series.last().is_none_or(|s| s.name != m) {
+                series.push(Series {
+                    name: m.clone(),
+                    last: None,
+                    ahead: Vec::new(),
+                });
+            }
+            let s = series.last_mut().expect("a series");
+            match status.value(i) {
+                "actual" => {
+                    assert!(!value.is_null(i), "an actual row carries a value");
+                    s.last = Some((p, value.value(i)));
+                }
+                "forecast" => {
+                    assert!(value.is_null(i), "a period ahead carries no value");
+                    s.ahead.push(p);
+                }
+                other => panic!("status {other}"),
+            }
+        }
+        let (mut m_col, mut o_col, mut step_col, mut p_col, mut span_col, mut l_col, mut v_col) = (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        for s in &series {
+            let (origin, last) = s.last.clone().expect("history");
+            let mut push = |step: i64, span: Option<i64>, median: f64| {
+                for l in &levels {
+                    m_col.push(s.name.clone());
+                    o_col.push(origin.clone());
+                    step_col.push(step);
+                    p_col.push(s.ahead[(step - 1) as usize].clone());
+                    span_col.push(span);
+                    l_col.push(*l);
+                    v_col.push(median * (1.0 + (l - 0.5) * 0.2));
+                }
+            };
+            for step in 1..=s.ahead.len() as i64 {
+                push(step, None, last);
+            }
+            for span in &totals {
+                push(*span, Some(*span), last * *span as f64);
+            }
+        }
+        let n = m_col.len();
+        let table = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("member", DataType::Utf8, false),
+                Field::new("origin", DataType::Utf8, true),
+                Field::new("step", DataType::Int64, false),
+                Field::new("period", DataType::Utf8, true),
+                Field::new("span", DataType::Int64, true),
+                Field::new("column", DataType::Utf8, false),
+                Field::new("level", DataType::Float64, false),
+                Field::new("value", DataType::Float64, true),
+                Field::new("actual", DataType::Float64, true),
+                Field::new("pit", DataType::Float64, true),
+            ])),
+            vec![
+                Arc::new(StringArray::from(m_col)),
+                Arc::new(StringArray::from(o_col)),
+                Arc::new(Int64Array::from(step_col)),
+                Arc::new(StringArray::from(p_col)),
+                Arc::new(Int64Array::from(span_col)),
+                Arc::new(StringArray::from(vec!["value"; n])),
+                Arc::new(Float64Array::from(l_col)),
+                Arc::new(Float64Array::from(v_col)),
+                Arc::new(Float64Array::from(vec![None::<f64>; n])),
+                Arc::new(Float64Array::from(vec![None::<f64>; n])),
+            ],
+        )
+        .expect("the answer table");
+        Ok(Answered {
+            table,
+            answer: json!({"service": "flat", "version": "test", "errors": []}),
+        })
+    }
+}
+
+/// Day offsets since the epoch for a civil date.
+fn day(year: i32, month: u32, day: u32) -> i32 {
+    let d = chrono::NaiveDate::from_ymd_opt(year, month, day).expect("a civil date");
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+    (d - epoch).num_days() as i32
+}
+
+/// The temporal verdict the cube admits a series on, judged by a stub
+/// function that names one cadence — one aspect has one producer, so
+/// the cadence is the fixture's.
+fn judged(cadence: &str) -> String {
+    format!(
+        r##"
+DECLARE ASPECT temporal_profile WITH $${{"type": "object", "required": ["applicable"],
+  "properties": {{"applicable": {{"type": "boolean"}}}}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE FUNCTION judge_time FOR GLOBAL AS
+  $$SELECT true AS applicable, '{cadence}' AS granularity, named_struct('ratio', 1.0) AS completeness$$
+  RETURNS temporal_profile;
+"##
+    )
+}
+
+/// A session over a lake in a scratch dir, the dataset in use, the
+/// forecast service stubbed.
+async fn session(stub: Arc<Flat>, setup: &str) -> Session {
+    let dir = tempfile::tempdir().expect("a scratch dir");
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .expect("a lake");
+    let store = Store::open(lake).await.expect("a store");
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
+    .expect("a session")
+    .with_runtime(stub);
+    session.execute(setup).await.expect("the setup lands");
+    std::mem::forget(dir);
+    session
+}
+
+async fn register(session: &Session, name: &str, schema: Arc<Schema>, batch: RecordBatch) {
+    session
+        .register_table(
+            name,
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("a table")),
+        )
+        .await
+        .expect("the table registers");
+}
+
+async fn rows(session: &Session, sql: &str) -> String {
+    let outcomes = session.execute(sql).await.expect("the read serves");
+    let Some(Outcome::Rows { batches, .. }) = outcomes.into_iter().next_back() else {
+        panic!("no rows");
+    };
+    pretty_format_batches(&batches)
+        .expect("printable")
+        .to_string()
+}
+
+fn dated_values(column: &str, dates: Vec<i32>, values: Vec<f64>) -> (Arc<Schema>, RecordBatch) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new(column, DataType::Date32, false),
+        Field::new("amount", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Date32Array::from(dates)),
+            Arc::new(Float64Array::from(values)),
+        ],
+    )
+    .expect("a batch");
+    (schema, batch)
+}
+
+/// Eighteen months of a rising flow, 2024-01 to 2025-06, and a race
+/// table whose win rate is a ratio.
+async fn monthly_session(stub: Arc<Flat>) -> Session {
+    let setup = format!(
+        r##"
+DECLARE DATASET fin SET (purpose: 'the forecast at an origin');
+USE fin;
+DECLARE ASPECT cube WITH $${{"type": "object", "properties": {{
+  "resolution": {{"default": "month"}},
+  "windows": {{"type": "object", "properties": {{"month": {{"default": "48 months"}}}}}}}}}}$$
+AS FACT ON DATASET;
+{judged}
+DECLARE ASPECT revenue WITH $${{"title": "Revenue"}}$$ AS QUERY ON DATASET;
+DECLARE ASPECT win_rate WITH $${{"title": "Win rate"}}$$ AS QUERY ON DATASET;
+DECLARE ASPECT dated WITH $${{"title": "Dates alone"}}$$ AS QUERY ON DATASET;
+DECLARE ASPECT recent WITH $${{"title": "Recent revenue"}}$$ AS QUERY ON DATASET;
+GLOSS revenue ON fin AS $${{"sql": "SELECT sale_date, amount AS value FROM sales"}}$$;
+GLOSS win_rate ON fin AS $${{"sql": "SELECT race_date, wins / starts AS value, wins AS num, starts AS den FROM races"}}$$;
+GLOSS dated ON fin AS $${{"sql": "SELECT sale_date FROM sales"}}$$;
+GLOSS recent ON fin AS $${{"sql": "SELECT sale_date, amount AS value FROM sales WHERE sale_date >= DATE '2025-03-01'"}}$$;
+"##,
+        judged = judged("month")
+    );
+    let session = session(stub, &setup).await;
+    let months: Vec<(i32, u32)> = (0..18)
+        .map(|i| (2024 + i / 12, (i % 12 + 1) as u32))
+        .collect();
+    let (schema, batch) = dated_values(
+        "sale_date",
+        months.iter().map(|(y, m)| day(*y, *m, 1)).collect(),
+        (0..18).map(|i| 100.0 + 10.0 * i as f64).collect(),
+    );
+    register(&session, "sales", schema, batch).await;
+    let races = Arc::new(Schema::new(vec![
+        Field::new("race_date", DataType::Date32, false),
+        Field::new("wins", DataType::Float64, false),
+        Field::new("starts", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&races),
+        vec![
+            Arc::new(Date32Array::from(
+                months
+                    .iter()
+                    .map(|(y, m)| day(*y, *m, 15))
+                    .collect::<Vec<_>>(),
+            )),
+            Arc::new(Float64Array::from(vec![1.0; 18])),
+            Arc::new(Float64Array::from(vec![20.0; 18])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "races", races, batch).await;
+    session
+        .execute(
+            "SELECT judge_time() FROM sales.sale_date; SELECT judge_time() FROM races.race_date;",
+        )
+        .await
+        .expect("the cadence is judged");
+    session
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_door_forecasts_each_metric_as_a_whole_at_its_grain() {
+    let stub = Arc::new(Flat::default());
+    let session = monthly_session(Arc::clone(&stub)).await;
+    let served = rows(
+        &session,
+        "SELECT metric, applicable, reason, grain, origin, served_by, step, span, to_go, period, p50 \
+         FROM metric_forecast_ahead('fin') ORDER BY seq, point_seq;",
+    )
+    .await;
+
+    // The flow: twelve steps from the origin, the last month with an
+    // actual, then the quarter and the year to go — July starts the
+    // third quarter, three months to its end and six to the year's.
+    let revenue: Vec<&str> = served.lines().filter(|l| l.contains("revenue")).collect();
+    assert_eq!(revenue.len(), 14, "{served}");
+    assert!(
+        revenue[0].contains("2025-06-01") && revenue[0].contains("2025-07-01"),
+        "the origin and the first period ahead: {}",
+        revenue[0]
+    );
+    assert!(revenue[11].contains("2026-06-01"), "{}", revenue[11]);
+    assert!(
+        revenue[12].contains("quarter") && revenue[12].contains("2025-09-01"),
+        "{}",
+        revenue[12]
+    );
+    assert!(
+        revenue[13].contains("year") && revenue[13].contains("2025-12-01"),
+        "{}",
+        revenue[13]
+    );
+    // The stub carries the last value forward: 270 per month, 810 the
+    // quarter, 1620 the year.
+    assert!(revenue[0].contains("270.0"), "{}", revenue[0]);
+    assert!(revenue[12].contains("810.0"), "{}", revenue[12]);
+    assert!(revenue[13].contains("1620.0"), "{}", revenue[13]);
+    for line in &revenue {
+        assert!(
+            line.contains("month") && line.contains("flat test"),
+            "{line}"
+        );
+    }
+    // The ratio: twelve steps and no total — a total of a ratio is not
+    // a sum.
+    let win_rate: Vec<&str> = served.lines().filter(|l| l.contains("win_rate")).collect();
+    assert_eq!(win_rate.len(), 12, "{served}");
+    assert!(win_rate.iter().all(|l| !l.contains("quarter")), "{served}");
+    // No series to forecast: the cube's reason stands.
+    let dated: Vec<&str> = served.lines().filter(|l| l.contains("dated")).collect();
+    assert_eq!(dated.len(), 1, "{served}");
+    assert!(
+        dated[0].contains("false") && dated[0].contains("no value column"),
+        "{}",
+        dated[0]
+    );
+    // Too short a history: inapplicable before any call.
+    let recent: Vec<&str> = served.lines().filter(|l| l.contains("recent")).collect();
+    assert_eq!(recent.len(), 1, "{served}");
+    assert!(
+        recent[0].contains("4 months of history: a forecast needs 6"),
+        "{}",
+        recent[0]
+    );
+
+    // Two requests: the flow with its totals, the ratio without — one
+    // specification per request, so metrics asking for different
+    // spans go separately.
+    let specs = stub.specs.lock().unwrap().clone();
+    assert_eq!(specs.len(), 2, "{specs:?}");
+    for spec in &specs {
+        assert_eq!(spec["targets"], json!(["value"]));
+        assert_eq!(spec["horizon"], json!(12));
+        assert_eq!(spec["grain"], json!("month"));
+        assert_eq!(spec["levels"], json!([0.05, 0.1, 0.5, 0.9, 0.95]));
+    }
+    let totals: Vec<&Value> = specs.iter().map(|s| &s["totals"]).collect();
+    assert!(totals.contains(&&json!([3, 6])), "{specs:?}");
+    assert!(totals.contains(&&Value::Null), "{specs:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_week_metric_walks_thirteen_steps_to_the_quarter() {
+    let stub = Arc::new(Flat::default());
+    let setup = format!(
+        r##"
+DECLARE DATASET fin SET (purpose: 'weekly');
+USE fin;
+DECLARE ASPECT cube WITH $${{"type": "object", "properties": {{
+  "resolution": {{"default": "week"}},
+  "windows": {{"type": "object", "properties": {{"week": {{"default": "3 years"}}}}}}}}}}$$
+AS FACT ON DATASET;
+{judged}
+DECLARE ASPECT visits WITH $${{"title": "Visits"}}$$ AS QUERY ON DATASET;
+GLOSS visits ON fin AS $${{"sql": "SELECT visit_date, amount AS value FROM visit_log"}}$$;
+"##,
+        judged = judged("week")
+    );
+    let session = session(Arc::clone(&stub), &setup).await;
+    // Twenty Mondays from 2025-01-06: the last is 2025-05-19, the first
+    // week ahead starts 2025-05-26, and six Mondays fall before the
+    // quarter ends on 2025-06-30.
+    let monday = day(2025, 1, 6);
+    let (schema, batch) = dated_values(
+        "visit_date",
+        (0..20).map(|i| monday + 7 * i).collect(),
+        (0..20).map(|i| 50.0 + i as f64).collect(),
+    );
+    register(&session, "visit_log", schema, batch).await;
+    session
+        .execute("SELECT judge_time() FROM visit_log.visit_date;")
+        .await
+        .expect("the cadence is judged");
+    let served = rows(
+        &session,
+        "SELECT grain, origin, step, span, to_go, period FROM metric_forecast_ahead('fin') \
+         ORDER BY point_seq;",
+    )
+    .await;
+    let lines: Vec<&str> = served.lines().filter(|l| l.contains("week")).collect();
+    assert_eq!(lines.len(), 14, "{served}");
+    assert!(
+        lines[0].contains("2025-05-19") && lines[0].contains("2025-05-26"),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[12].contains("2025-08-18"), "{}", lines[12]);
+    assert!(
+        lines[13].contains("quarter")
+            && lines[13].contains("| 6 ")
+            && lines[13].contains("2025-06-30"),
+        "{}",
+        lines[13]
+    );
+    let specs = stub.specs.lock().unwrap().clone();
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0]["horizon"], json!(13));
+    assert_eq!(specs[0]["grain"], json!("week"));
+    assert_eq!(specs[0]["totals"], json!([6]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_door_reads_the_dataset_in_use() {
+    let session = monthly_session(Arc::new(Flat::default())).await;
+    let e = session
+        .execute("SELECT * FROM metric_forecast_ahead('other');")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("USE other first"), "{e}");
+}

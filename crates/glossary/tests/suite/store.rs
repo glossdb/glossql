@@ -319,6 +319,13 @@ async fn measurement_aspects_take_one_producer_and_no_speaker_gate() {
     };
     let e = s.declare_witness(&bad).await.unwrap_err();
     assert!(matches!(e, Error::MeasurementWitnessSpeakers(_)), "{e}");
+
+    // A measurement's witness may carry no detector: it names the
+    // measurement as standing, so a landing owes it.
+    let Declaration::Witness(standing) = decl("DECLARE WITNESS m_w ON min_max;") else {
+        unreachable!()
+    };
+    s.declare_witness(&standing).await.unwrap();
 }
 
 #[tokio::test]

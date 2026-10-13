@@ -64,12 +64,12 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         assert!(!stored.ends_with(".sql"), "{name} stored as a path");
     }
 
-    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "14");
-    // 10 measurement contracts + the KPI kit's 11 semantic aspects
+    assert_eq!(count(&plane, "SELECT count(*) FROM functions;").await, "15");
+    // 11 measurement contracts + the KPI kit's 11 semantic aspects
     // (the cube's floor and ladder among them) + the ruling channel +
     // the four app parts an agent authors a surface with + the app's
     // release.
-    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "28");
+    assert_eq!(count(&plane, "SELECT count(*) FROM aspects;").await, "29");
     // The functions without RETURNS are the detectors.
     assert_eq!(
         count(
@@ -79,8 +79,8 @@ async fn a_fresh_workspace_receives_the_shipped_system() {
         .await,
         "3"
     );
-    // The kit's witnesses: the semantic six plus bands_w.
-    assert_eq!(count(&plane, "SELECT count(*) FROM witnesses;").await, "7");
+    // The kit's witnesses: the semantic six, bands_w and forecast_w.
+    assert_eq!(count(&plane, "SELECT count(*) FROM witnesses;").await, "8");
     // Owed questions stand on these from boot — nothing hand-declared.
     assert_eq!(
         count(

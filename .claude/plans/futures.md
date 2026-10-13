@@ -7,26 +7,22 @@ serverd crates, the kit, the next read and the docket.
 
 ## The order
 
-1. The general service call lands and `/bands` leaves the client; the
-   walk runs on `/forecast` with origins (#103). The what-if door's
-   grid, support worlds and band read go; the plan rewrite stays
-   (#104). These two are one step: everything else in this plan rides
-   the general call.
-2. The rename (#102): the service's name, the dev rig, the sibling
-   notes. glossthesi's `main` is at 0.2.0, tagged `v0.2.0`.
-3. The futures, in the order of the table below. The forecast first,
-   because the world row serves it and the span rule reads its record.
-4. The cube's widening, its own decision once the world is in.
+The general service call stands: one table in, one table out per
+point; the walk runs on `/forecast` with origins; the what-if door is
+gone and the plan rewrite stays. The forecast measurement stands on
+it: `metric_forecast` lands the model's quantiles per step and span
+at the origin, and two reads serve them. Everything below rides both.
+
+1. The futures, in the order of the table below. The world first,
+   because the forecast world reads a measurement that stands while
+   the plan and the scenario worlds wait on their forms.
+2. The cube's widening, its own decision once the world is in.
 
 ## The table
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| One general service call; `/bands` leaves the client; the walk on `/forecast` with origins | Easy, mostly removal | scripts, the runtime trait, the band walk, misfit | First | #103 |
-| The what-if door: the grid, the support worlds and the band read go; the plan rewrite stays as the propagation's seed | Easy | one module and its tests; SPEC §9's note, fixture 19 | First | #104 |
-| The rename: the service's name in ten files, the dev rig, the sibling notes | Easy | docs, skills, crates, .claude, dev; glossval's working notes | Next | #102 |
-| The forecast as a measurement at an origin, its read, the PIT at read | Medium | the library, a point on the general call, the kit | Phase 2, first | |
-| A world on the cube reads: plan and scenario as heads, the forecast from the measurement, variance as a join | Medium, core | cube, the two cube reads, the docket | Phase 2 | |
+| A world on the cube reads: plan and scenario as heads, the forecast from the measurement, variance as a join | Medium, core | cube, the two cube reads, the docket | Next | |
 | Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
 | The scenario read in two passes: replay through the groundings, the estimate from the service | Medium | session, scripts, a point on the general call | Phase 2 | |
 | The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
@@ -45,12 +41,27 @@ serverd crates, the kit, the next read and the docket.
   `CubeKey`, 540). A head over another frame is another digest
   already; the cube itself is a query result under the cache, never
   recorded.
-- The walk. `band_points()` (`crates/session/src/reads.rs:523`), one
-  step ahead, `pit` per point. `metric_bands` is declared in
-  `crates/scripts/functions/bootstrap.glossql:141`, its function at
-  196, `band_breach` at 199, the witness `bands_w` in
+- The walk. `metric_band_walk` (`crates/session/src/search/bands.rs:238`)
+  reads each grounding at month grain by its verb and sends one table
+  to `/forecast` with `origins: 6`, `horizon: 1` and five levels (242);
+  it records bands, actual and PIT per walked month and `served_by`.
+  `band_points()` (680) flattens the latest measurement. `metric_bands`
+  is declared in `crates/scripts/functions/bootstrap.glossql:141`, its
+  function at 196, `band_breach` at 199, the witness `bands_w` in
   `witnesses.glossql:18`. The bands goal's arms in
-  `crates/session/reads/next.sql` read `band_points()` and `owed`.
+  `crates/session/reads/next.sql:431` read `band_points()` and `owed`.
+  The walk reads the groundings, not the cube.
+- The forecast measurement (#105). `metric_forecast` lands, per
+  metric as a whole at its own grain, the model's quantiles per step
+  and span from the origin (`crates/session/src/search/forecast.rs`:
+  `metric_forecast_ahead`); `forecast_points()` joins the actual at
+  read and says where it landed, `forecast_coverage()` counts the
+  shares inside the 80% and 90% bands over every run. The horizon per
+  grain is month 12, week 13, day 31, quarter 4; a flow asks the
+  quarter and the year to go as spans where they fit
+  (`docs/methods/forecast.md`). The kit declares the aspect, the
+  function and a witness without a detector; the owed rule admits
+  such a witness (`cube.rs`, `wanted`; `owed.sql`).
 - The wire's worlds. A row's `status` is `actual`, `plan`, `forecast`
   or `scenario` (`../glossthesi/docs/contract.md`). `/forecast` takes
   covariates known ahead at any horizon, `origins` for a backtest,
@@ -59,11 +70,11 @@ serverd crates, the kit, the next read and the docket.
   members. `/whatif` returns per column a sign, the model's rows, the
   history's estimate, `basis` and the held-back error.
 - The plan rewrite. Every scan of an overridden table gains a
-  projection over the overridden column from the scenario's start
-  month, and the groundings replay over it
-  (`crates/session/src/whatif.rs`, module header; `whatif_batch`, 63;
-  `build_plan`, 553). The `replay` column is the arithmetic half. It
-  takes one factor from a start month, not a value per period.
+  projection over the overridden column from a start date, and a
+  grounding replays over it (`crates/session/src/replay.rs`:
+  `Override`, 21; `apply_overrides`, 33; `crates/session/src/plan.rs`:
+  `build_plan`, 18). It takes one factor from a start date, not a
+  value per period. No door calls it yet.
 - Levers. None is declared. The `role` enum is key, measure,
   dimension, timestamp, attribute
   (`crates/scripts/functions/kpi_kit.glossql:37`). What a lever is,
@@ -100,26 +111,6 @@ serverd crates, the kit, the next read and the docket.
 In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
 leaves this file.
-
-### The forecast as a measurement
-
-- **What it buys.** Every applicable metric carries the model's
-  numbers for the periods ahead, from the current origin, with
-  spans, and the record keeps them. When the actuals land, the PIT
-  per point is read, so the dataset learns its own coverage by
-  horizon. The walk is the same call with origins.
-- **What stands.** `metric_bands` and `band_points()` (above) are the
-  one-step instance. `/forecast` takes `horizon`, `levels`, `totals`,
-  `grain`, `width` and `origins`. The cube's resolution and rung per
-  metric are on the fact row (`metric_axes()`). The contract's walk
-  sends `metric_series()` at month grain.
-- **Done when.** A library function lands per metric at an origin:
-  horizon from the cube's rung, fixed levels, the totals of the
-  quarter and the year, the grain from the metric's resolution. A
-  read serves the points, and the PIT is a join to the actual cells
-  at read, never written. The walk is this function with origins and
-  `metric_bands` reads from it. The coverage by horizon per dataset is
-  a read. The session suite holds it on the fixtures.
 
 ### A world on the cube reads
 

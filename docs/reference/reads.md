@@ -349,6 +349,33 @@ walked serves no rows. The record itself, never a re-run —
 read: `SELECT metric, period, displacement FROM band_points() WHERE
 partial = false ORDER BY displacement DESC`. Requires a bound dataset.
 
+### forecast_points()
+
+The recorded forecast, flattened: what `metric_forecast` last landed
+for the bound dataset, one row per metric and point — `seq`, `metric`,
+`applicable`, `reason`, `grain` (the metric's own resolution), `origin`
+(the last period with an actual, as the bucket's first day),
+`served_by`, `point_seq`, `step` (periods past the origin; for a total,
+the span), `span` (set on a total: the steps it sums), `to_go` (what a
+total runs to: `quarter`, `year` or `month`), `period` (the period
+forecast; for a total, the one it ends at), `p05`…`p95`, `actual`
+(joined from the cube at read, where the period has landed; a total's
+is the sum of its periods, where every one is known), `landed`
+(`below`, `low`, `inside`, `high` or `above` against p05, p10, p90 and
+p95), `computed_at` and `current`. A metric the door found inapplicable
+is one row with its reason and no point; a dataset never forecast
+serves no rows. The record itself, never a re-run
+([forecast](../methods/forecast.md)). Requires a bound dataset.
+
+### forecast_coverage()
+
+Over every forecast the record holds for the bound dataset, one
+forecast per metric and origin: `metric` (`''` the dataset as a whole),
+`grain`, `step`, `span`, `to_go`, `points` (whose actual has landed),
+`inside_80` and `inside_90` (the shares inside p10–p90 and p05–p95),
+`forecasts` (the distinct origins the points come from). The table a
+span rule reads. Requires a bound dataset.
+
 ## The sources' read
 
 ### source_files('source')

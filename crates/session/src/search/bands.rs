@@ -645,7 +645,7 @@ fn walk_points(
 
 /// The answer's `errors` by member: what failed alone, in the service's
 /// words, the origin named where one was.
-fn walk_errors(answer: &Value) -> HashMap<String, Vec<String>> {
+pub(super) fn walk_errors(answer: &Value) -> HashMap<String, Vec<String>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     for e in answer["errors"].as_array().into_iter().flatten() {
         let Some(member) = e["member"].as_str() else {

@@ -143,7 +143,14 @@ async fn walk_session_judged(
            DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
              RETURNS metric_bands;
            DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
-           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;"#
+           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
+           DECLARE ASPECT metric_forecast WITH $${{
+             "type": "object", "required": ["applicable"],
+             "properties": {{"applicable": {{"type": "boolean"}},
+                            "metrics": {{"type": "array"}}}}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$metric_forecast.sql$$
+             RETURNS metric_forecast;
+           DECLARE WITNESS forecast_w ON metric_forecast;"#
     ))
     .expect("shipped body splices");
     session.execute(&declarations).await.unwrap();
@@ -633,5 +640,107 @@ async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
     assert!(
         (score - displacement).abs() < 1e-6,
         "score {score} against the complete month's displacement {displacement}: {shown}"
+    );
+}
+
+/// The forecast at an origin against the service: the cube's cells and
+/// the periods ahead go as one table, and what lands is the model's
+/// bands per step and span with the service's name on it.
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL"]
+#[tokio::test(flavor = "multi_thread")]
+async fn metric_forecast_lands_against_the_service() {
+    let Some(rt) = live().filter(|rt| rt.serves(FORECAST)) else {
+        eprintln!("skipping: GLOSSQL_E2E_FORECAST_URL is not set");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    // A year and a half of a rising monthly flow with seasonality, and a
+    // rising stock level.
+    let months = 18usize;
+    let (mut flow, mut stock) = (Vec::new(), Vec::new());
+    for i in 0..months {
+        let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
+        flow.push(100.0 + 3.0 * i as f64 + seasonal);
+        stock.push(1000.0 + 5.0 * i as f64);
+    }
+    let dates: Vec<i32> = FIRSTS.iter().map(|f| 19723 + f).collect();
+    let session = walk_session(
+        dir.path(),
+        Arc::clone(&rt),
+        vec![
+            ("lines", dates.clone(), flow),
+            ("levels", dates, stock),
+        ],
+        &[
+            r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
+            r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            r#"SELECT judge_time() FROM lines.date;"#,
+            r#"SELECT judge_time() FROM levels.date;"#,
+        ],
+    )
+    .await;
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .unwrap();
+    let outcomes = session
+        .execute(
+            "SELECT metric, origin, step, span, to_go, period, p05, p10, p50, p90, p95, served_by \
+             FROM forecast_points() ORDER BY metric, point_seq;",
+        )
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
+        panic!("rows")
+    };
+    let text = datafusion::arrow::util::pretty::pretty_format_batches(batches)
+        .unwrap()
+        .to_string();
+    eprintln!("{text}");
+    let rows: Vec<Vec<String>> = text
+        .lines()
+        .filter(|l| l.contains("2025-06-01"))
+        .map(|l| {
+            // Cells by position: an empty span or to_go stays a cell.
+            l.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
+        .collect();
+    // The flow: twelve steps, the quarter and the year to go. The
+    // stock: twelve steps and no total.
+    assert_eq!(
+        rows.iter().filter(|r| r[0] == "revenue").count(),
+        14,
+        "{text}"
+    );
+    assert_eq!(
+        rows.iter().filter(|r| r[0] == "inventory").count(),
+        12,
+        "{text}"
+    );
+    for r in &rows {
+        let q: Vec<f64> = r[6..11].iter().map(|c| c.parse().unwrap()).collect();
+        assert!(
+            q.windows(2).all(|w| w[0] <= w[1]),
+            "ordered quantiles: {r:?}"
+        );
+        assert!(r[11].starts_with("glossthesi"), "{r:?}");
+    }
+    // The first month ahead continues the trend: the median within a
+    // fifth of the line.
+    let first = rows
+        .iter()
+        .find(|r| r[0] == "revenue" && r[2] == "1")
+        .unwrap();
+    assert_eq!(first[5], "2025-07-01");
+    let p50: f64 = first[8].parse().unwrap();
+    assert!(
+        (124.0..=186.0).contains(&p50),
+        "the trend sits near 154: {p50}"
     );
 }

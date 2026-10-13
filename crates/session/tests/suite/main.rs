@@ -7,6 +7,7 @@
 mod bands;
 mod channels;
 mod flows;
+mod forecast;
 mod lake_flows;
 mod memo;
 mod misfit;

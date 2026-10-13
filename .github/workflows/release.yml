@@ -4,8 +4,8 @@
 # on a laptop — .github/release-macos.sh — and the tap formula points at
 # it; the script also opens the draft release.
 # This is not CI: nothing here runs on push, the test suite gates
-# changes locally. Nothing built here carries a model: the band model
-# is the glosskernels service, released from its own repository.
+# changes locally. Nothing built here carries a model: the forecast
+# model is glossthesi, released from its own repository.
 name: release
 
 on:

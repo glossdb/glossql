@@ -521,8 +521,14 @@ pub const DOORS: &[(&str, &str)] = &[
     ("metric_series", "metric_series([grain => '<grain>'])"),
     ("fact_values", "fact_values()"),
     ("band_points", "band_points()"),
+    ("forecast_points", "forecast_points()"),
+    ("forecast_coverage", "forecast_coverage()"),
     ("metric_sources", "metric_sources()"),
     ("metric_band_walk", "metric_band_walk('<dataset>')"),
+    (
+        "metric_forecast_ahead",
+        "metric_forecast_ahead('<dataset>')",
+    ),
     ("grounding_collisions", "grounding_collisions('<dataset>')"),
     ("behavior_anchors", "behavior_anchors('<subject>')"),
     ("relationship_checks", "relationship_checks('<dataset>')"),
@@ -895,6 +901,9 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "grounding_collisions"
                 | "metric_band_walk"
                 | "band_points"
+                | "metric_forecast_ahead"
+                | "forecast_points"
+                | "forecast_coverage"
                 | "metric_axes"
                 | "metric_sources"
                 | "behavior_anchors"
@@ -945,7 +954,13 @@ pub(crate) fn door_reads(
         // `glossql.grounding`, the digest of every QUERY writing, the
         // QUERY aspects and their witnesses — so a definitions entry,
         // an app page or a declared check moves none of these.
-        ("grounding_collisions" | "metric_band_walk" | "metric_sources", _) => {
+        (
+            "grounding_collisions"
+            | "metric_band_walk"
+            | "metric_forecast_ahead"
+            | "metric_sources",
+            _,
+        ) => {
             reads.all_tables = true;
             reads.relations.insert("grounding".into());
         }
@@ -1124,6 +1139,38 @@ pub(crate) async fn compute_batch(
                 ));
             }
             Ok(Some((crate::search::band_points(shared).await?).into()))
+        }
+        // The forecast at an origin: the door behind `metric_forecast`,
+        // and the two reads over what it landed.
+        ("metric_forecast_ahead", Some(a)) => {
+            let dataset = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "metric_forecast_ahead takes one quoted dataset: \
+                     metric_forecast_ahead('dataset')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                (crate::search::metric_forecast_ahead(shared, &dataset).await?).into(),
+            ))
+        }
+        ("forecast_points", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "forecast_points() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::search::forecast_points(shared).await?).into()))
+        }
+        ("forecast_coverage", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "forecast_coverage() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some(
+                (crate::search::forecast_coverage(shared).await?).into(),
+            ))
         }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {

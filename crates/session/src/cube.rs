@@ -3145,7 +3145,9 @@ pub(crate) async fn metric_axes_batch(shared: &Arc<Shared>) -> Result<RecordBatc
 /// read that no function has landed, as `(function, subject)`: each
 /// row's wants over its served columns, then — while a grounding
 /// stands — every declared function returning a witnessed measurement
-/// aspect at dataset grain with no voice here (the bands walk). The
+/// aspect at dataset grain with no voice here (the bands walk, the
+/// forecast). A witness without a detector counts: it names the
+/// measurement as standing, and a forecast has nothing to band. The
 /// same rows `owed` derives in SQL as `never measured`; re-measure
 /// runs these.
 pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>, SessionError> {
@@ -3182,10 +3184,7 @@ pub(crate) async fn wanted(shared: &Arc<Shared>) -> Result<Vec<(String, String)>
         let at_dataset = rctx.aspects.iter().any(|a| {
             a.name == aspect && a.kind == "measurement" && a.grains.as_deref() == Some("dataset")
         });
-        let witnessed = rctx
-            .witnesses
-            .iter()
-            .any(|w| w.aspect == aspect && w.detector.is_some());
+        let witnessed = rctx.witnesses.iter().any(|w| w.aspect == aspect);
         if at_dataset
             && witnessed
             && glossql_glossary::Store::measurements_in(&rctx, &dataset, &f.name).is_empty()

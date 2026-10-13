@@ -130,9 +130,10 @@ standard interface, so a deployment may run another service in its
 place.
 
 Two points are filled: the **forecast** (the walk sends every metric's
-monthly series and reads bands, actual and PIT per walked month) and
-the **misfit** (the frame in, a score per row out). Both are compute
-doors.
+monthly series and reads bands, actual and PIT per walked month; the
+forecast at an origin sends the cube's cells and the periods ahead and
+reads the bands per step) and the **misfit** (the frame in, a score per
+row out). All are compute doors.
 
 Planned: a **scalar service** that answers row by row — a text in, a
 vector out — on the engine's async scalar function seam, so a recipe
@@ -155,12 +156,10 @@ for a reader. A similarity is never a join key, an identity or what
 closes a question. A ranking service is a candidate point; its
 experiment runs in the evaluation rig first.
 
-**Phase 1, out.** The model service takes its own name: it is the
-forecast services, not the kernel.
-
-**After phase 1.** The forecast as a declared analysis: an aspect, a
-door, a backtest measurement, its arms in the next read. The vector
-index in the parquet footer, when the full scan is too slow. The
+**After phase 1.** The forecast's arms in the next read and the
+worlds on the cube reads: plan, forecast and scenario beside the
+actual. The vector index in the parquet footer, when the full scan is
+too slow. The
 cube: every served column, the whole history, and the two
 measurements order the columns and warn instead of deciding. Whether
 the cube's limits fit the forecast's use cases is analysed once phase

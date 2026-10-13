@@ -10,9 +10,9 @@ One release is one version everywhere: `version` in the workspace
 `glossql --version` answers with it. The artifacts: a macOS arm64
 tarball behind the brew tap, and the server image on GHCR
 (`ghcr.io/glossdb/glossql:<version>` and `:latest`, x86_64, built
-from the `Dockerfile` at the tag). No model rides either: the band
-model is the glosskernels service, released from its own repository
-on its own cadence. **Never built**: macOS x86_64, ARM Linux, Jetson,
+from the `Dockerfile` at the tag). No model rides either: the
+forecast model is glossthesi, released from its own repository on
+its own cadence. **Never built**: macOS x86_64, ARM Linux, Jetson,
 a cuda flavor, a Linux package (the image is the Linux artifact) —
 ruled, don't propose them back.
 
@@ -23,8 +23,8 @@ nowhere else.
 
 ## The order
 
-1. If the kernel service's wire changed, glosskernels releases first
-   — the server's live test against a running service is the check.
+1. If glossthesi's wire changed, glossthesi releases first — the
+   server's live tests against a running service are the check.
 2. Bump `version` in the workspace `Cargo.toml`, and the image tag in
    the `docker run` example of `docs/start/install.md`. Workspace
    `cargo test` green — a datafusion pin move since the last release

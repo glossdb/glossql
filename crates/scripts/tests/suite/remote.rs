@@ -171,8 +171,12 @@ fn flagged(seen: &Seen) -> Option<Response> {
 /// `/forecast` as the stand-in answers the walk: the last `origins`
 /// periods of every member are forecast, one row per level — the value
 /// the level's index plus one — with the member's own value as the
-/// actual and a PIT of 0.25. A specification without `levels` is the
-/// refusal the service gives, naming the field.
+/// actual and a PIT of 0.25. Without `origins` it answers the periods
+/// ahead — the rows whose `status` is not `actual` — carrying the
+/// member's last actual forward: the median is that value, the bands
+/// at ±8% and ±10% of it, a total the sum of its steps' medians. A
+/// specification without `levels` is the refusal the service gives,
+/// naming the field.
 async fn forecast(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Response {
     if !bearer_ok(&headers) {
         return refuse(
@@ -215,6 +219,9 @@ async fn forecast(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> 
             Some((name, rows)) if *name == m => rows.push(i),
             _ => members.push((m, vec![i])),
         }
+    }
+    if origins == 0 {
+        return ahead(&table, &spec, levels, &members);
     }
     let (mut m_col, mut p_col, mut l_col, mut v_col, mut a_col, mut pit_col) = (
         Vec::new(),
@@ -266,6 +273,99 @@ async fn forecast(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> 
             Arc::new(Float64Array::from(v_col)),
             Arc::new(Float64Array::from(a_col)),
             Arc::new(Float64Array::from(pit_col)),
+        ],
+    )
+    .unwrap();
+    answer(
+        table,
+        json!({"service": "stand-in", "version": "test", "errors": []}),
+    )
+}
+
+/// The forecast without origins: per member, the actual rows are the
+/// history and the rows of another status the periods ahead, one step
+/// each; the answer carries the last actual forward.
+fn ahead(
+    table: &RecordBatch,
+    spec: &Value,
+    levels: &[Value],
+    members: &[(String, Vec<usize>)],
+) -> Response {
+    let period = table.column_by_name("period").unwrap();
+    let value = table
+        .column_by_name("value")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    let status = table
+        .column_by_name("status")
+        .map(|c| c.as_any().downcast_ref::<StringArray>().unwrap().clone());
+    let totals: Vec<i64> = spec["totals"]
+        .as_array()
+        .map(|t| t.iter().map(|s| s.as_i64().unwrap()).collect())
+        .unwrap_or_default();
+    let (mut m_col, mut o_col, mut s_col, mut p_col, mut span_col, mut l_col, mut v_col) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    for (name, rows) in members {
+        let is_actual = |i: usize| status.as_ref().is_none_or(|s| s.value(i) == "actual");
+        let Some(&last) = rows.iter().rfind(|&&i| is_actual(i)) else {
+            continue;
+        };
+        let steps: Vec<usize> = rows.iter().copied().filter(|&i| !is_actual(i)).collect();
+        let origin = array_value_to_string(period, last).unwrap();
+        let median = value.value(last);
+        let mut push = |step: i64, span: Option<i64>, center: f64| {
+            for level in levels {
+                let l = level.as_f64().unwrap();
+                m_col.push(name.clone());
+                o_col.push(Some(origin.clone()));
+                s_col.push(step);
+                p_col.push(array_value_to_string(period, steps[(step - 1) as usize]).unwrap());
+                span_col.push(span);
+                l_col.push(l);
+                v_col.push(center * (1.0 + (l - 0.5) * 0.2));
+            }
+        };
+        for step in 1..=steps.len() as i64 {
+            push(step, None, median);
+        }
+        for span in &totals {
+            push(*span, Some(*span), median * *span as f64);
+        }
+    }
+    let n = m_col.len();
+    let table = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("member", DataType::Utf8, false),
+            Field::new("origin", DataType::Utf8, true),
+            Field::new("step", DataType::Int64, false),
+            Field::new("period", DataType::Utf8, true),
+            Field::new("span", DataType::Int64, true),
+            Field::new("column", DataType::Utf8, false),
+            Field::new("level", DataType::Float64, false),
+            Field::new("value", DataType::Float64, true),
+            Field::new("actual", DataType::Float64, true),
+            Field::new("pit", DataType::Float64, true),
+        ])),
+        vec![
+            Arc::new(StringArray::from(m_col)),
+            Arc::new(StringArray::from(o_col)),
+            Arc::new(Int64Array::from(s_col)),
+            Arc::new(StringArray::from(p_col)),
+            Arc::new(Int64Array::from(span_col)),
+            Arc::new(StringArray::from(vec!["value"; n])),
+            Arc::new(Float64Array::from(l_col)),
+            Arc::new(Float64Array::from(v_col)),
+            Arc::new(Float64Array::from(vec![None::<f64>; n])),
+            Arc::new(Float64Array::from(vec![None::<f64>; n])),
         ],
     )
     .unwrap();
@@ -728,4 +828,181 @@ async fn without_a_service_the_doors_refuse_at_plan_time_by_name() {
             "{statement}: {e}"
         );
     }
+}
+
+/// The forecast lands as a measurement at the origin: the cube's cells
+/// and the periods ahead go as one table with the contract's
+/// specification, and the reads say what landed — `forecast_points()`
+/// joins the actual at read, `forecast_coverage()` counts the landed
+/// points over every forecast in the record once a landing has moved
+/// the origin.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_forecast_lands_at_the_origin_and_the_reads_follow_the_actuals() {
+    use datafusion::arrow::util::pretty::pretty_format_batches;
+
+    let (url, seen) = stub().await;
+    let rt = Arc::new(runtime(&url, key("k1")));
+    let dir = tempfile::tempdir().unwrap();
+    // Eighteen months of a rising flow, landed from a file source so a
+    // later export can append to the table.
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(root.join("lines")).unwrap();
+    let mut csv = String::from("date,value\n");
+    for i in 0..18 {
+        csv += &format!("{}-{:02}-01,{}\n", 2024 + i / 12, i % 12 + 1, 100 + 10 * i);
+    }
+    std::fs::write(root.join("lines/2024.csv"), csv).unwrap();
+    let statements = [
+        format!(
+            "DECLARE SOURCE export SET (type: csv, location: '{}');",
+            root.display()
+        ),
+        "DECLARE RECIPE lines ON fin FROM export AS $$SELECT CAST(date AS DATE) AS date, \
+         CAST(value AS DOUBLE) AS value FROM read_csv('lines/*.csv')$$;"
+            .to_string(),
+        "IMPORT lines;".to_string(),
+        r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#.to_string(),
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#.to_string(),
+        // The cube admits a series on a judged time column.
+        "SELECT judge_time() FROM lines.date;".to_string(),
+    ];
+    let session = super::bands::walk_session(
+        dir.path(),
+        Arc::clone(&rt),
+        vec![],
+        &statements.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .await;
+    let table = |sql: &'static str| {
+        let session = &session;
+        async move {
+            let outcomes = session.execute(sql).await.unwrap();
+            let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
+                panic!("rows")
+            };
+            pretty_format_batches(batches).unwrap().to_string()
+        }
+    };
+
+    seen.0.lock().unwrap().clear();
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .unwrap();
+    {
+        let calls = seen.0.lock().unwrap();
+        let sent: Vec<&(String, Value)> = calls.iter().filter(|(r, _)| r == "forecast").collect();
+        assert_eq!(sent.len(), 1, "one table for the flow");
+        let body = &sent[0].1;
+        assert_eq!(
+            body["spec"],
+            json!({"targets": ["value"], "horizon": 12, "levels": LEVELS,
+                   "grain": "month", "totals": [3, 6]})
+        );
+        let rows = body["rows"].as_array().unwrap();
+        assert_eq!(
+            rows.len(),
+            30,
+            "eighteen months of history and twelve ahead"
+        );
+        assert_eq!(rows[17]["status"], json!("actual"));
+        assert_eq!(rows[17]["value"], json!(270.0));
+        assert_eq!(rows[18]["status"], json!("forecast"));
+        assert!(rows[18]["value"].is_null(), "{}", rows[18]);
+    }
+    let points = table(
+        "SELECT origin, step, span, to_go, period, p50, actual, landed, served_by \
+         FROM forecast_points() WHERE metric = 'revenue' ORDER BY point_seq;",
+    )
+    .await;
+    let lines: Vec<&str> = points
+        .lines()
+        .filter(|l| l.contains("2025-06-01"))
+        .collect();
+    assert_eq!(
+        lines.len(),
+        14,
+        "twelve steps, the quarter and the year to go: {points}"
+    );
+    assert!(
+        lines[0].contains("2025-07-01")
+            && lines[0].contains("270.0")
+            && lines[0].contains("stand-in test"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[12].contains("quarter") && lines[12].contains("810.0"),
+        "{}",
+        lines[12]
+    );
+    assert!(
+        lines[13].contains("year") && lines[13].contains("1620.0"),
+        "{}",
+        lines[13]
+    );
+    // Nothing ahead has landed: no actual, nowhere landed.
+    let empty =
+        table("SELECT count(actual) AS n, count(landed) AS m FROM forecast_points();").await;
+    assert!(empty.contains("| 0 | 0 |"), "{empty}");
+    let none = table("SELECT count(*) AS n FROM forecast_coverage();").await;
+    assert!(none.contains("| 0 |"), "{none}");
+
+    // A landing moves the origin: two more months arrive at the source,
+    // the first inside the recorded band (p10 248.4 to p90 291.6), the
+    // second above p95 (297).
+    std::fs::write(
+        root.join("lines/2025-h2.csv"),
+        "date,value\n2025-07-01,275\n2025-08-01,300\n",
+    )
+    .unwrap();
+    session.execute("IMPORT lines;").await.unwrap();
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .unwrap();
+    let moved = table(
+        "SELECT origin, step, span, to_go, period FROM forecast_points() \
+         WHERE metric = 'revenue' ORDER BY point_seq;",
+    )
+    .await;
+    let lines: Vec<&str> = moved.lines().filter(|l| l.contains("2025-08-01")).collect();
+    assert_eq!(lines.len(), 14, "{moved}");
+    assert!(lines[0].contains("2025-09-01"), "{}", lines[0]);
+    assert!(
+        lines[12].contains("quarter") && lines[12].contains("| 1 "),
+        "{}",
+        lines[12]
+    );
+    assert!(
+        lines[13].contains("year") && lines[13].contains("| 4 "),
+        "{}",
+        lines[13]
+    );
+
+    // The first forecast's first two steps have their actuals now: one
+    // inside both bands, one above both. The dataset row and the
+    // metric's row agree, since one metric stands.
+    let coverage = table(
+        "SELECT metric, grain, step, span, points, inside_80, inside_90, forecasts \
+         FROM forecast_coverage() ORDER BY metric, step;",
+    )
+    .await;
+    let rows: Vec<&str> = coverage.lines().filter(|l| l.contains("month")).collect();
+    assert_eq!(rows.len(), 4, "{coverage}");
+    for (row, step, share) in [
+        (0, "1", "1.0"),
+        (1, "2", "0.0"),
+        (2, "1", "1.0"),
+        (3, "2", "0.0"),
+    ] {
+        let line = rows[row];
+        assert!(line.contains(&format!("| {step} ")), "{line}");
+        assert!(line.contains(&format!("| {share} ")), "{line}");
+        assert!(line.contains("| 1 "), "one point from one forecast: {line}");
+    }
+    assert!(
+        rows[2].contains("revenue") && !rows[0].contains("revenue"),
+        "{coverage}"
+    );
 }

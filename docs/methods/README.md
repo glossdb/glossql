@@ -9,3 +9,4 @@ statistic, the measured verdict, the stated limits.
 - [`discovery.md`](discovery.md) — containment-based relationship discovery.
 - [`behavior.md`](behavior.md) — the stock/flow evidence and its reconciliation.
 - [`bands.md`](bands.md) — expectation bands from a forecast service.
+- [`forecast.md`](forecast.md) — the periods ahead from a forecast service, and the coverage the record learns.

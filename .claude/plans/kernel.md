@@ -58,9 +58,8 @@ The words the plans use beyond the language's own.
 The project lead's position, in short.
 
 - Kernel means the business information kernel. glossdb is it.
-- The model service is glossthesi, the forecast services, in its own
-  repo. glossql still calls it the kernel service and names it by
-  `GLOSSQL_TABICL_URL`; the rename rides the futures plan's first rows.
+- The model service is glossthesi, in its own repo. glossql names it
+  per point: `GLOSSQL_FORECAST_URL`, `GLOSSQL_MISFIT_URL`.
 - Define the core first, including the kits. Then evolve that idea.
   That is the meta layer, and the docs page is its statement.
 - The pattern of a point: declared in the kit, filled by a service the

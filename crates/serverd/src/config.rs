@@ -481,12 +481,15 @@ mod tests {
     }
 
     /// A service is named per point, each with its own bearer; a point
-    /// left unnamed is simply not there, and the old one-URL variable
-    /// names nothing.
+    /// left unnamed is simply not there, and a URL under a name the
+    /// server declares no point for names nothing.
     #[test]
     fn a_service_is_named_per_point() {
-        let none = read(&[], &[("GLOSSQL_TABICL_URL", "http://127.0.0.1:8100")]).expect("readable");
-        assert!(none.points.is_empty(), "the old variable names no point");
+        let none = read(&[], &[("GLOSSQL_OTHER_URL", "http://127.0.0.1:8100")]).expect("readable");
+        assert!(
+            none.points.is_empty(),
+            "an undeclared point names no service"
+        );
 
         let one = read(
             &[],
