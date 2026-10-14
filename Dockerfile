@@ -11,7 +11,7 @@ RUN cargo build --locked --release -p glossql-serverd
 
 # What the binary links is glibc, libm and libgcc (`ldd` on it), and
 # what it needs beside them is the root certificates — the issuer's
-# keys, the kernel service, Postgres over TLS and the object stores are
+# keys, glossthesi, Postgres over TLS and the object stores are
 # all reached over https — and a /tmp for the engine's spill files.
 # The distroless C-runtime image is exactly that, with an unprivileged
 # user and no shell or package manager.

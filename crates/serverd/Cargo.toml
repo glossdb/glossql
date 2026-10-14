@@ -9,8 +9,8 @@ repository.workspace = true
 name = "glossql"
 path = "src/main.rs"
 
-# No model rides the binary: the three model doors call the kernel
-# service `GLOSSQL_TABICL_URL` names.
+# No model rides the binary: a point's table call goes to the service
+# `GLOSSQL_<POINT>_URL` names.
 
 [dependencies]
 glossql-glossary = { path = "../glossary" }

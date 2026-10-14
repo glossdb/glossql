@@ -31,6 +31,25 @@ top. Each point's fit saw only the months before it.
 - It follows the grounding's authored behavior — mark your stocks —
   then the `behavior` gloss on the column summed, then the evidence.
 
+## The forecast at an origin
+
+`metric_forecast` asks the service, per metric, for the periods ahead
+from the last period with an actual — twelve months, thirteen weeks,
+thirty-one days or four quarters by the metric's grain — and for a
+flow the quarter and the year to go. `SELECT metric_forecast() FROM
+<dataset>` runs it; a landing owes it again, since the origin moved.
+
+- `forecast_points()` is the latest forecast as rows; `actual` and
+  `landed` fill as the periods land.
+- `metric_series(world => 'forecast')` serves the newest run's medians
+  as cells beside the actuals, at the metric's own resolution; the
+  default read is the actual world alone.
+- `forecast_coverage()` counts, over every forecast recorded, how often
+  the actual landed inside the 80% and 90% bands per step. Read it
+  before you hand a range out as a promise.
+- No PIT: a forecast is written before the actual exists, and five
+  quantiles say the band it fell in, not its exact place.
+
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,
 the disclosed rival — computed at read, landed in the catalog under
@@ -126,7 +145,10 @@ metric's own resolution; a grain finer than a metric's resolution
 serves no rows for it). `dimension = ''` is the metric's own total,
 `'alternative'` the disclosed rival, anything else a served
 dimension; a ratio row carries `num` / `den`, and `behavior` is the
-verb that made the row. This is what an app frame charts:
+verb that made the row. `world` says which set of numbers a row is:
+`actual` unless asked, `world => 'forecast'` the newest
+`metric_forecast` run's medians ahead of the actuals at the metric's
+own resolution. This is what an app frame charts:
 
 ```sql
 SELECT metric, period, value FROM metric_series(grain => 'month')

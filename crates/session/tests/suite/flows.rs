@@ -1035,8 +1035,8 @@ async fn the_serve_door_runs_the_current_grounding() {
         .execute("SELECT * FROM read.looping();")
         .await
         .unwrap_err();
-    // Keys are door-prefixed since the guard covers whatif./misfit.
-    // too — a mixed cycle names each door on the path.
+    // Keys are door-prefixed since the guard covers misfit. too — a
+    // mixed cycle names each door on the path.
     assert!(
         e.to_string()
             .contains("read cycle: read.looping -> read.looping"),
@@ -1205,9 +1205,9 @@ async fn select_into_is_refused_on_the_streaming_path_too() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_self_referential_frame_errors_instead_of_recursing() {
     // The `read.` door has guarded expansion cycles since it landed; the
-    // `whatif.` and `misfit.` doors re-enter the planner through the SQL
-    // they replay and without a guard a self-referential body recurses
-    // to stack overflow.
+    // `misfit.` door re-enters the planner through the SQL it replays
+    // and without a guard a self-referential body recurses to stack
+    // overflow.
     let (_dir, session) = agent_session().await;
     run(&session, SETUP).await;
     run(
@@ -1715,7 +1715,7 @@ async fn an_empty_landing_still_offers_its_columns_for_assessment() {
 /// statement builds under it.
 ///
 /// A walk loads every table of the dataset and parses its metadata, and
-/// the doors build plans freely: `whatif`, `misfit`, `search` and the
+/// the doors build plans freely: `misfit`, `search` and the
 /// cube each resolve their own SQL, and each resolution used to start a
 /// fresh walk. The count is what says the statement pays for one.
 ///

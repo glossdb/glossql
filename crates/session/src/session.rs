@@ -217,54 +217,62 @@ pub enum Outcome {
     Affected(u64),
 }
 
-/// The kernel seam (`glossql-scripts`): the native statistical kernels
-/// and aggregate registrations behind the doors. Function bodies are
-/// SQL the engine plans — a measurement over data (§6), a detector over
-/// its witness's `slots` — so nothing here evaluates a body; the seam
-/// carries only what SQL cannot: the model reads and the reconcile
-/// discriminator. The model reads are async — a kernel service answers
-/// them over HTTP — and a runtime says whether it carries a model at
-/// all, so a door refuses at plan time by name instead of failing in
-/// the read. Tests inject fakes.
-/// A row-major matrix borrowed from the caller: `rows × cols` values,
-/// nulls as NaN where a kernel admits them.
-#[derive(Clone, Copy, Debug)]
-pub struct Matrix<'a> {
-    pub data: &'a [f64],
-    pub rows: usize,
-    pub cols: usize,
-}
-
-/// One walk point as the bands walk asks it: the training rows
-/// (row-major, `test_x.len()` wide), their labels, the row to call, and
-/// the actual the PIT is read against. Owned, so a walk's points travel
-/// together.
+/// The service seam (`glossql-scripts`): the native statistical kernels
+/// and aggregate registrations behind the doors, and the one table call
+/// a service point answers. Function bodies are SQL the engine plans —
+/// a measurement over data (§6), a detector over its witness's `slots`
+/// — so nothing here evaluates a body; the seam carries only what SQL
+/// cannot: the table call and the reconcile discriminator. The table
+/// call is async — a service answers it over HTTP — and a runtime says
+/// which points it fills, so a door refuses at plan time by the point's
+/// name instead of failing in the read. Tests inject fakes.
+///
+/// A table answered by a service: its rows, and the answer object the
+/// service put beside them — its name and version, the items that
+/// failed alone (`errors`), what the answer rests on (`assumptions`).
 #[derive(Clone, Debug)]
-pub struct BandRead {
-    pub train_x: Vec<f64>,
-    pub train_y: Vec<f64>,
-    pub test_x: Vec<f64>,
-    pub actual: f64,
+pub struct Answered {
+    pub table: RecordBatch,
+    pub answer: Value,
 }
 
-/// The refusal every model door gives when the runtime carries no
-/// model: by name, with what to set. The three doors — the band walk,
-/// `whatif.`, `misfit.` — are served by the kernel service, hosted or
-/// run beside the server; the server itself never carries the model.
-pub fn no_model(door: &str) -> SessionError {
+/// The points a deployment fills with a service, by name. A point's
+/// name is the route the service serves and the stem of its variables:
+/// `GLOSSQL_<POINT>_URL`, `_TOKEN`, `_AUDIENCE`, the name in capitals.
+pub const POINTS: [&str; 2] = [FORECAST, MISFIT];
+
+/// The forecast point: the metric-bands walk sends every metric's
+/// monthly series and reads bands, actual and PIT per walked period.
+pub const FORECAST: &str = "forecast";
+
+/// The misfit point: `misfit.<frame>()` sends the frame and reads a
+/// score per row.
+pub const MISFIT: &str = "misfit";
+
+/// The variable that names a point's service.
+pub fn point_variable(point: &str, suffix: &str) -> String {
+    format!("GLOSSQL_{}_{suffix}", point.to_ascii_uppercase())
+}
+
+/// The refusal a door gives when the runtime fills none of its point:
+/// by name, with what to set. The server itself never carries a model;
+/// a service the deployment names answers the point.
+pub fn no_model(door: &str, point: &str) -> SessionError {
     SessionError::BadSubject(format!(
-        "not served: {door} needs the kernel service and this server carries no model — \
-         set GLOSSQL_TABICL_URL (and GLOSSQL_TABICL_TOKEN or GLOSSQL_TABICL_AUDIENCE) to the hosted kernel API, or to \
-         a glosskernels service of your own"
+        "not served: {door} needs the {point} service and this server names none — \
+         set {} (and {} or {}) to a service that serves /{point}",
+        point_variable(point, "URL"),
+        point_variable(point, "TOKEN"),
+        point_variable(point, "AUDIENCE"),
     ))
 }
 
 #[async_trait::async_trait]
 pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
-    /// Whether a model stands behind the three model reads. `false`
-    /// refuses the doors at plan time ([`no_model`]); the reads' own
-    /// defaults below refuse too, for a runtime that lies.
-    fn carries_model(&self) -> bool {
+    /// Whether a service stands behind `point` ([`POINTS`]). `false`
+    /// refuses the point's doors at plan time ([`no_model`]); the call's
+    /// own default below refuses too, for a runtime that lies.
+    fn serves(&self, _point: &str) -> bool {
         false
     }
 
@@ -277,31 +285,21 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         Vec::new()
     }
 
-    /// The band kernel behind the `whatif.` door:
-    /// fit one estimator on the replayed worlds, quantiles at `alphas`
-    /// for every test row. `train` and `test` share their columns; the
-    /// return is row-major (test rows × alphas). The runtime that
-    /// carries the model overrides this (the ensemble — sparse replay
-    /// grids are the regime it was ruled in for); the default refuses,
-    /// and the door reports why.
-    async fn band_grid(
+    /// The table call: `table` and `spec` go to the service behind
+    /// `point`, column names and types with the rows; its rows and its
+    /// answer object come back. What the table and the specification
+    /// hold is the point's contract, read by the door that sends them;
+    /// nothing here knows what the numbers mean. A scalar shape — a
+    /// value per row, called from a recipe — is a second method here
+    /// when its first user lands. The runtime that carries a service
+    /// overrides this; the default refuses, and the door reports why.
+    async fn table(
         &self,
-        _train: Matrix<'_>,
-        _train_y: &[f64],
-        _test: Matrix<'_>,
-        _alphas: &[f64],
-    ) -> Result<Vec<f64>, String> {
-        Err("this runtime carries no band kernel".into())
-    }
-
-    /// The misfit kernel behind the `misfit.` door (fixture 20): fit
-    /// on the frame, score the same frame — one mean
-    /// log density per row, log space end to end (higher = fits the
-    /// frame better). Nulls ride as NaN. The runtime that carries the
-    /// model overrides this; the default refuses, and the door reports
-    /// why.
-    async fn misfit_scores(&self, _x: Matrix<'_>) -> Result<Vec<f64>, String> {
-        Err("this runtime carries no misfit kernel".into())
+        point: &str,
+        _table: RecordBatch,
+        _spec: Value,
+    ) -> Result<Answered, String> {
+        Err(format!("this runtime fills no {point} point"))
     }
 
     /// The stock/flow discriminator behind the behavior-evidence door:
@@ -324,32 +322,7 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
     ) -> Result<Value, String> {
         Err("this runtime carries no reconcile kernel".into())
     }
-
-    /// The metric-bands walk's kernel: the walk's points together, in
-    /// order — every metric's, which is what lets the kernel answer them
-    /// in one pass. Per point, one fit on its training rows and one
-    /// read of its test row: the band value per alpha, and the PIT —
-    /// the quantile at which `actual` lands in the raw predicted
-    /// distribution. `pit_history` is the record's past PITs, counted
-    /// per hundredth (`PIT_BINS` counts): the bands come back read at
-    /// the levels those PITs put the alphas at, weighed with the
-    /// kernel's own default record; the PIT is always against the raw
-    /// read. `None` asks for the raw bands. The runtime that carries
-    /// the model overrides this; the default refuses, and the door
-    /// reports why.
-    async fn band_points(
-        &self,
-        _reads: &[BandRead],
-        _alphas: &[f64],
-        _pit_history: Option<&[f64]>,
-    ) -> Result<Vec<(Vec<f64>, f64)>, String> {
-        Err("this runtime carries no band kernel".into())
-    }
 }
-
-/// How a PIT history is counted: per hundredth of 0..1, as the kernel
-/// takes it.
-pub const PIT_BINS: usize = 100;
 
 #[derive(Debug)]
 pub struct NoRuntime;
@@ -1699,7 +1672,7 @@ impl Session {
             match sql {
                 Some(sql) => {
                     let ctx = self.shared.session_ctx();
-                    let schema = crate::whatif::build_plan(&self.shared, &ctx, &sql)
+                    let schema = crate::plan::build_plan(&self.shared, &ctx, &sql)
                         .await
                         .ok()
                         .map(|plan| plan.schema().as_arrow().clone());

@@ -1,7 +1,7 @@
 //! The reference library as data.
 //!
 //! A function's body is carried by its declaration
-//! (fixture 24), so the shipped library is fourteen ordinary statements
+//! (fixture 24), so the shipped library is fifteen ordinary statements
 //! and the workspace keeps no `functions/` directory. The bodies still
 //! live as files *in this repo* — an operator edits a script with an
 //! editor and the binary embeds it at build time — but nothing reads a
@@ -65,6 +65,10 @@ pub const SCRIPTS: &[(&str, &str)] = &[
     (
         "band_breach.sql",
         include_str!("../functions/band_breach.sql"),
+    ),
+    (
+        "metric_forecast.sql",
+        include_str!("../functions/metric_forecast.sql"),
     ),
     (
         "rate_tolerance.sql",

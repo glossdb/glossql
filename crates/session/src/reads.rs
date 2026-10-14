@@ -518,11 +518,20 @@ pub const DOORS: &[(&str, &str)] = &[
     ("glossary", "GLOSSARY(<subject>[, all => true])"),
     ("attest", "ATTEST(<dataset>)"),
     ("metric_axes", "metric_axes()"),
-    ("metric_series", "metric_series([grain => '<grain>'])"),
+    (
+        "metric_series",
+        "metric_series([grain => '<grain>'][, world => '<world>'])",
+    ),
     ("fact_values", "fact_values()"),
     ("band_points", "band_points()"),
+    ("forecast_points", "forecast_points()"),
+    ("forecast_coverage", "forecast_coverage()"),
     ("metric_sources", "metric_sources()"),
     ("metric_band_walk", "metric_band_walk('<dataset>')"),
+    (
+        "metric_forecast_ahead",
+        "metric_forecast_ahead('<dataset>')",
+    ),
     ("grounding_collisions", "grounding_collisions('<dataset>')"),
     ("behavior_anchors", "behavior_anchors('<subject>')"),
     ("relationship_checks", "relationship_checks('<dataset>')"),
@@ -792,8 +801,8 @@ impl RelationPlanner for GlossqlReads {
         if self.resolved.shadowed(&self.shared.idents(), &relation) {
             return Ok(RelationPlanning::Original(Box::new(relation)));
         }
-        // A compute door the pre-pass evaluated — `whatif.<x>()`,
-        // `misfit.<x>()`, `glossary(...)`, `attest(...)`,
+        // A compute door the pre-pass evaluated — `misfit.<x>()`,
+        // `glossary(...)`, `attest(...)`,
         // `metric_series(grain => …)`, the store's relations. Keyed by the factor's
         // own rendering, which is what arrives here again: a lookup —
         // nothing computes, fetches or blocks during planning.
@@ -895,6 +904,9 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "grounding_collisions"
                 | "metric_band_walk"
                 | "band_points"
+                | "metric_forecast_ahead"
+                | "forecast_points"
+                | "forecast_coverage"
                 | "metric_axes"
                 | "metric_sources"
                 | "behavior_anchors"
@@ -918,8 +930,8 @@ pub(crate) fn door_reads(
         return;
     };
     let [part] = name.0.as_slice() else {
-        // `whatif.` and `misfit.` doors: a scenario replays a
-        // grounding with overrides — not enumerable from here.
+        // The `misfit.` door: a frame replays a grounding — not
+        // enumerable from here.
         reads.everything = true;
         return;
     };
@@ -945,7 +957,13 @@ pub(crate) fn door_reads(
         // `glossql.grounding`, the digest of every QUERY writing, the
         // QUERY aspects and their witnesses — so a definitions entry,
         // an app page or a declared check moves none of these.
-        ("grounding_collisions" | "metric_band_walk" | "metric_sources", _) => {
+        (
+            "grounding_collisions"
+            | "metric_band_walk"
+            | "metric_forecast_ahead"
+            | "metric_sources",
+            _,
+        ) => {
             reads.all_tables = true;
             reads.relations.insert("grounding".into());
         }
@@ -1003,19 +1021,6 @@ pub(crate) async fn compute_batch(
     if let [prefix, door] = name.0.as_slice()
         && let (Some(prefix), Some(door)) = (prefix.as_ident(), door.as_ident())
     {
-        if shared.idents().normalize(prefix.clone()) == "whatif" {
-            let Some(a) = args else { return Ok(None) };
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(format!(
-                    "whatif.{}() takes no arguments — the scenario body carries the \
-                     overrides (fixture 19)",
-                    door.value
-                )));
-            }
-            return Ok(Some(
-                (Box::pin(crate::whatif::whatif_batch(shared, &door.value)).await?).into(),
-            ));
-        }
         if shared.idents().normalize(prefix.clone()) == "misfit" {
             let Some(a) = args else { return Ok(None) };
             if !a.args.is_empty() {
@@ -1138,6 +1143,38 @@ pub(crate) async fn compute_batch(
             }
             Ok(Some((crate::search::band_points(shared).await?).into()))
         }
+        // The forecast at an origin: the door behind `metric_forecast`,
+        // and the two reads over what it landed.
+        ("metric_forecast_ahead", Some(a)) => {
+            let dataset = single_string_arg(a).ok_or_else(|| {
+                SessionError::BadSubject(
+                    "metric_forecast_ahead takes one quoted dataset: \
+                     metric_forecast_ahead('dataset')"
+                        .into(),
+                )
+            })?;
+            Ok(Some(
+                (crate::search::metric_forecast_ahead(shared, &dataset).await?).into(),
+            ))
+        }
+        ("forecast_points", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "forecast_points() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::search::forecast_points(shared).await?).into()))
+        }
+        ("forecast_coverage", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "forecast_coverage() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some(
+                (crate::search::forecast_coverage(shared).await?).into(),
+            ))
+        }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(
@@ -1188,11 +1225,14 @@ pub(crate) async fn compute_batch(
         }
         ("glossary", Some(a)) => Ok(Some((glossary_read(shared, &a.args).await?).into())),
         ("attest", Some(a)) => Ok(Some((attest_read(shared, &a.args).await?).into())),
-        // The cube's two reads (crate::cube): the cells at a grain and
-        // the fact row per metric. Both build what is not built.
+        // The cube's two reads (crate::cube): the cells at a grain in a
+        // world, and the fact row per metric. Both build what is not
+        // built.
         ("metric_series", Some(a)) => {
-            let grain = crate::cube::grain_arg(&a.args)?;
-            Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
+            let (grain, world) = crate::cube::series_args(&a.args)?;
+            Ok(Some(
+                crate::cube::metric_series_batch(shared, grain, world).await?,
+            ))
         }
         ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {

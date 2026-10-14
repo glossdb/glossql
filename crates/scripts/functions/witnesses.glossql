@@ -4,7 +4,9 @@
 -- detectors) and binds the two. Who may speak, and which claims the
 -- door owes a question for while they stand unwritten. slot_entropy
 -- adjudicates the low-entropy enums; bands adjudicate through
--- band_breach.
+-- band_breach. The forecast's witness carries no detector: it names
+-- the measurement as standing, so a landing owes it, and a forecast
+-- has nothing to band.
 
 DECLARE WITNESS meaning_w ON meaning BY (AGENT, HUMAN);
 DECLARE WITNESS entity_w ON entity BY (AGENT, HUMAN);
@@ -16,3 +18,4 @@ DECLARE WITNESS unit_w ON unit BY (AGENT, HUMAN)
   DETECTOR slot_entropy THRESHOLD 0.7;
 DECLARE WITNESS dimension_w ON dimension BY (AGENT, HUMAN);
 DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
+DECLARE WITNESS forecast_w ON metric_forecast;

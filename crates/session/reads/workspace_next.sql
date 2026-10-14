@@ -119,12 +119,12 @@ counts AS (
          (SELECT count(*) FROM witnesses w
           WHERE NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = w.aspect)
             AND NOT EXISTS (SELECT 1 FROM measurements m WHERE m.aspect = w.aspect)) AS open_validations,
-         -- The two model doors. Both are planner doors rather than rows
-         -- in `functions`, so nothing else on this map or in the
-         -- relations would ever mention them: an agent could not find
-         -- what it could not name. `open` is vocabulary standing
-         -- without a body — declared, never glossed, so the door has
-         -- nothing to serve.
+         -- The scenarios and the sample frames. The sample door is a
+         -- planner door rather than a row in `functions`, so nothing
+         -- else on this map or in the relations would ever mention it:
+         -- an agent could not find what it could not name. `open` is
+         -- vocabulary standing without a body — declared, never
+         -- glossed, so there is nothing to serve.
          (SELECT count(*) FROM aspects
           WHERE kind = 'fact'
             AND json_get_str(schema, 'x-kind') = 'scenario') AS n_scenarios,
@@ -180,7 +180,7 @@ CROSS JOIN (VALUES
   ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
   ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — its name then serves it as a view'),
   ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
-  ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its column overrides and their basis — whatif.<name>() then replays the recipes and bands the result'),
+  ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its overrides and their basis — the declared form is the record; the read that serves a scenario is planned'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')

@@ -107,8 +107,8 @@ uuid = { version = "1", features = ["v7"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # The HTTP client the server makes its own calls with: the issuer's
-# discovery document and key set (serverd), and the kernel service
-# behind the model reads (glossql-scripts). rustls names the TLS
+# discovery document and key set (serverd), and glossthesi behind
+# the model reads (glossql-scripts). rustls names the TLS
 # backend — pure Rust, the same in a container as on a laptop.
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

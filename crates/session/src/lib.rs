@@ -24,24 +24,26 @@ mod library;
 mod measure;
 mod memo;
 mod misfit;
+mod plan;
 mod plane;
 mod prepass;
 mod provenance;
 mod reads;
+pub mod replay;
 pub mod rulings;
 mod search;
 mod session;
 mod subject;
-mod whatif;
 
 /// The attribute a [`FunctionRuntime`] implementation carries — the
-/// model reads are async trait methods.
+/// table call is an async trait method.
 pub use async_trait::async_trait;
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
 pub use memo::ShippedCache;
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
 pub use reads::{DOORS, DoorPage};
 pub use session::{
-    BandRead, CallShape, FunctionRuntime, Matrix, NoRuntime, Outcome, PIT_BINS, Registered,
-    Session, SessionError, call_shape, detector_functions, no_model, reader_functions,
+    Answered, CallShape, FORECAST, FunctionRuntime, MISFIT, NoRuntime, Outcome, POINTS, Registered,
+    Session, SessionError, call_shape, detector_functions, no_model, point_variable,
+    reader_functions,
 };

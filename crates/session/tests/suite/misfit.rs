@@ -1,81 +1,124 @@
 //! The `misfit.` door end to end (fixture 20): a
 //! declared sample frame served back with a per-row misfit score. The
-//! kernel here is a fake — deviation from each column's mean — so these
-//! tests pin the door's mechanics (dispatch, the numeric surface and
+//! service here is a fake — deviation from each numeric column's mean —
+//! so these tests pin the door's mechanics (dispatch, the surface and
 //! its named exclusions, the stated caps, no cache), while the real
-//! chain-rule density is graded in the sibling's suite and wired in
+//! chain-rule density is graded in the service's own suite and wired in
 //! `glossql-scripts`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use datafusion::arrow::array::{Date32Array, Float64Array, Int64Array, RecordBatch, StringArray};
+use datafusion::arrow::array::{
+    Array, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
+};
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{FunctionRuntime, Matrix, Outcome, Session};
+use glossql_session::{Answered, FunctionRuntime, MISFIT, Outcome, Session};
+use serde_json::{Value, json};
 
-/// A kernel that scores each row by its summed deviation from the
-/// column means — the mechanics stand-in for the density: a planted
+/// The answer table of the misfit point: `row` and `score`, one per
+/// frame row, in the frame's order.
+fn scored(scores: Vec<f64>) -> Answered {
+    let n = scores.len();
+    let table = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("row", DataType::Int64, false),
+            Field::new("score", DataType::Float64, true),
+        ])),
+        vec![
+            Arc::new(Int64Array::from((0..n as i64).collect::<Vec<_>>())),
+            Arc::new(Float64Array::from(scores)),
+        ],
+    )
+    .expect("the answer table");
+    Answered {
+        table,
+        answer: json!({"service": "mean", "version": "test", "errors": []}),
+    }
+}
+
+/// A service that scores each row by its summed deviation from the
+/// numeric columns' means, negated as the service's score is (lower is
+/// stranger) — the mechanics stand-in for the density: a planted
 /// outlier must surface at the top, so surface-assembly mistakes show
-/// as a wrong ranking.
+/// as a wrong ranking. A category column counts for nothing here; that
+/// it arrives as text is what the door is pinned on.
 #[derive(Debug, Default)]
 struct MeanKernel {
     fits: AtomicUsize,
+    /// The columns of the last frame sent, by name and type.
+    sent: std::sync::Mutex<Vec<(String, DataType)>>,
 }
 
 #[glossql_session::async_trait]
 impl FunctionRuntime for MeanKernel {
-    fn carries_model(&self) -> bool {
-        true
+    fn serves(&self, point: &str) -> bool {
+        point == MISFIT
     }
 
-    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
-        let Matrix {
-            data: x,
-            rows,
-            cols,
-        } = x;
+    async fn table(
+        &self,
+        point: &str,
+        table: RecordBatch,
+        spec: Value,
+    ) -> Result<Answered, String> {
+        assert_eq!(point, MISFIT);
+        assert_eq!(spec, json!({"cells": false}));
         self.fits.fetch_add(1, Ordering::SeqCst);
-        let mut means = vec![0f64; cols];
-        for (c, mean) in means.iter_mut().enumerate() {
-            let vals: Vec<f64> = (0..rows)
-                .map(|r| x[r * cols + c])
-                .filter(|v| !v.is_nan())
+        *self.sent.lock().unwrap() = table
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| (f.name().clone(), f.data_type().clone()))
+            .collect();
+        let rows = table.num_rows();
+        let mut deviation = vec![0f64; rows];
+        for col in table.columns() {
+            if !col.data_type().is_numeric() {
+                continue;
+            }
+            let floats = cast(col, &DataType::Float64).expect("a number casts");
+            let floats = floats
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .expect("floats");
+            let present: Vec<f64> = (0..rows)
+                .filter(|&r| !floats.is_null(r))
+                .map(|r| floats.value(r))
                 .collect();
-            *mean = vals.iter().sum::<f64>() / vals.len().max(1) as f64;
+            let mean = present.iter().sum::<f64>() / present.len().max(1) as f64;
+            for (r, d) in deviation.iter_mut().enumerate() {
+                if !floats.is_null(r) {
+                    *d += (floats.value(r) - mean).abs();
+                }
+            }
         }
-        Ok((0..rows)
-            .map(|r| {
-                -(0..cols)
-                    .map(|c| {
-                        let v = x[r * cols + c];
-                        if v.is_nan() {
-                            0.0
-                        } else {
-                            (v - means[c]).abs()
-                        }
-                    })
-                    .sum::<f64>()
-            })
-            .collect())
+        Ok(scored(deviation.into_iter().map(|d| -d).collect()))
     }
 }
 
-/// A kernel that hands back a non-finite score — the door must refuse,
+/// A service that hands back a non-finite score — the door must refuse,
 /// never serve NaN rows.
 #[derive(Debug, Default)]
 struct NanKernel;
 
 #[glossql_session::async_trait]
 impl FunctionRuntime for NanKernel {
-    fn carries_model(&self) -> bool {
-        true
+    fn serves(&self, point: &str) -> bool {
+        point == MISFIT
     }
 
-    async fn misfit_scores(&self, x: Matrix<'_>) -> Result<Vec<f64>, String> {
-        Ok(vec![f64::NAN; x.rows])
+    async fn table(
+        &self,
+        _point: &str,
+        table: RecordBatch,
+        _spec: Value,
+    ) -> Result<Answered, String> {
+        Ok(scored(vec![f64::NAN; table.num_rows()]))
     }
 }
 
@@ -173,21 +216,34 @@ async fn frame_session() -> (tempfile::TempDir, Session, Arc<MeanKernel>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_misfit_door_ranks_and_composes() {
-    let (_dir, session, _) = frame_session().await;
+    let (_dir, session, kernel) = frame_session().await;
 
     // The planted outlier tops the ranking; the basis names the ranked
-    // columns and every exclusion with its reason.
+    // columns and every exclusion with its reason. Text travels as a
+    // category, the date as the count it is stored as.
     let top = table(
         &session,
         "SELECT amount, basis FROM misfit.suspects() ORDER BY misfit DESC LIMIT 1;",
     )
     .await;
     assert!(top.contains("10000.0"), "{top}");
-    assert!(top.contains("order_date"), "{top}");
-    assert!(top.contains("amount"), "{top}");
+    assert!(
+        top.contains("ranked 24 rows on [order_date, amount, region]"),
+        "{top}"
+    );
     assert!(top.contains("order_id (id)"), "{top}");
-    assert!(top.contains("region (Utf8)"), "{top}");
     assert!(top.contains("flag (constant)"), "{top}");
+
+    // What crossed the wire: the usable columns under their own names,
+    // the date as a count, the text as text.
+    assert_eq!(
+        *kernel.sent.lock().unwrap(),
+        vec![
+            ("order_date".to_string(), DataType::Int64),
+            ("amount".to_string(), DataType::Float64),
+            ("region".to_string(), DataType::Utf8),
+        ]
+    );
 
     // Every frame row is served, and WHERE composes around the door.
     let n = table(
@@ -269,8 +325,8 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
     assert!(e.to_string().contains("past the stated cap"), "{e}");
     assert!(e.to_string().contains("sample in the frame SQL"), "{e}");
 
-    // Text plus a constant is no surface: the read abstains with the
-    // reason instead of serving noise.
+    // A category plus a constant is one usable column, not a surface:
+    // the read abstains with the reason instead of serving noise.
     run(
         &session,
         r##"DECLARE ASPECT thin WITH $${"x-kind": "sample"}$$ AS QUERY ON DATASET;
@@ -281,7 +337,7 @@ async fn stated_caps_and_the_surface_abstention_refuse_by_name() {
         .execute("SELECT * FROM misfit.thin();")
         .await
         .unwrap_err();
-    assert!(e.to_string().contains("too little numeric surface"), "{e}");
+    assert!(e.to_string().contains("too little surface"), "{e}");
     assert!(e.to_string().contains("flag (constant)"), "{e}");
 
     // The read's own columns are reserved: a frame aliasing `misfit`

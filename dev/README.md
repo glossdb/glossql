@@ -58,11 +58,13 @@ AZURE_STORAGE_USE_EMULATOR=true \
   cargo test -p glossql-import live_source -- --ignored
 ```
 
-The kernel service, from a glosskernels checkout running `uv run
-glosskernels`:
+The service behind the forecast and misfit points, from a glossthesi
+checkout running `GLOSSTHESI_INSECURE_OPEN=true uv run glossthesi`
+(it does not start with nothing set):
 
 ```bash
-GLOSSQL_E2E_TABICL_URL=http://127.0.0.1:8100 \
+GLOSSQL_E2E_FORECAST_URL=http://127.0.0.1:8100 \
+GLOSSQL_E2E_MISFIT_URL=http://127.0.0.1:8100 \
   cargo test -p glossql-scripts -- --ignored
 ```
 

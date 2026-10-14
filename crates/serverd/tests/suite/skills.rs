@@ -150,7 +150,7 @@ fn missing_table(error: &str) -> bool {
     error.contains("table 'datafusion.")
         || error.contains("No table named")
         || error.contains("table not found")
-        // `read.<metric>()` / `whatif.<lever>()` name a workspace's own
+        // `read.<metric>()` / `misfit.<frame>()` name a workspace's own
         // groundings, which a fresh one has none of. Narrow on purpose:
         // only an undeclared aspect behind a serve door, never a
         // missing column inside one.
@@ -225,15 +225,15 @@ async fn every_skill_function_body_compiles() {
     );
 }
 
-/// A runtime that says it carries a model and serves none: the model
+/// A runtime that says it fills every point and serves none: the point's
 /// doors pass the plan-time gate and stop at their aspect lookup, which
-/// is where an example naming an undeclared scenario or frame belongs.
+/// is where an example naming an undeclared frame belongs.
 #[derive(Debug)]
 struct ModelStub;
 
 #[glossql_session::async_trait]
 impl glossql_session::FunctionRuntime for ModelStub {
-    fn carries_model(&self) -> bool {
+    fn serves(&self, _point: &str) -> bool {
         true
     }
 }

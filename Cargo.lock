@@ -2605,9 +2605,11 @@ dependencies = [
 name = "glossql-scripts"
 version = "0.2.0"
 dependencies = [
+ "arrow-ipc",
  "arrow-json",
  "axum",
  "base64 0.22.1",
+ "bytes",
  "datafusion",
  "faer",
  "futures",

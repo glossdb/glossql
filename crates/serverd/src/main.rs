@@ -81,19 +81,28 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
 
 /// Everything between the runtime's start and the server's stop.
 async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // The native kernels, and the kernel service behind the model reads
-    // when the environment names one (bodies ride their declarations,
-    // fixture 24 — nothing of the runtime's lives in the workspace).
-    let runtime = Arc::new(match &config.kernel {
-        Some(kernel) => KernelRuntime::with_remote(
-            &kernel.url,
-            glossql_scripts::Bearer::from_env(kernel.token.as_deref(), kernel.audience.as_deref()),
-        )?,
-        None => KernelRuntime::native(),
-    });
-    match runtime.kernel_url() {
-        Some(url) => tracing::info!(url, "kernel service"),
-        None => tracing::info!("no kernel service — the model doors refuse by name"),
+    // The native kernels, and the service behind each point the
+    // environment names (bodies ride their declarations, fixture 24 —
+    // nothing of the runtime's lives in the workspace). Every point is
+    // on the record at start-up, named or not.
+    let mut runtime = KernelRuntime::native();
+    for point in &config.points {
+        runtime = runtime.with_point(
+            point.name,
+            &point.url,
+            glossql_scripts::Bearer::from_env(point.token.as_deref(), point.audience.as_deref()),
+        )?;
+    }
+    let runtime = Arc::new(runtime);
+    for point in glossql_session::POINTS {
+        match runtime.url(point) {
+            Some(url) => tracing::info!(point, url, "service"),
+            None => tracing::info!(
+                point,
+                variable = glossql_session::point_variable(point, "URL"),
+                "no service — the point's reads refuse by name"
+            ),
+        }
     }
     let store = Store::open(open_lake(config.catalog).await?).await?;
 

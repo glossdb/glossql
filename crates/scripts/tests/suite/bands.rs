@@ -1,11 +1,12 @@
 //! The band plane end to end: the shipped metric_bands body walked
-//! over synthetic monthly series through a real session — since
-//! stage 5 the walk is the metric_band_walk door and the body is SQL —
-//! and the band_breach detector adjudicating the walk through its
-//! witness at the ATTEST read. Live tests: the model answers from a
-//! running kernel service, so they run under `--ignored` when
-//! `GLOSSQL_E2E_TABICL_URL` names one (its bearer in
-//! `GLOSSQL_E2E_TABICL_TOKEN`) and skip with a message otherwise:
+//! over synthetic monthly series through a real session — the walk is
+//! the metric_band_walk door and the body is SQL — and the band_breach
+//! detector adjudicating the walk through its witness at the ATTEST
+//! read. Live tests: the model answers from a running service, so they
+//! run under `--ignored` when `GLOSSQL_E2E_FORECAST_URL` and
+//! `GLOSSQL_E2E_MISFIT_URL` name one (the bearer in
+//! `GLOSSQL_E2E_FORECAST_TOKEN` and `GLOSSQL_E2E_MISFIT_TOKEN`) and skip
+//! with a message otherwise:
 //! `cargo test -p glossql-scripts bands -- --ignored`. The numeric
 //! fidelity of the model is the service's own suite; here the
 //! contract is shape, ordering, and policy.
@@ -16,19 +17,33 @@ use std::sync::Arc;
 use datafusion::arrow::array::{Float64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_scripts::KernelRuntime;
-use glossql_session::{FunctionRuntime, Matrix};
+use glossql_session::{FORECAST, FunctionRuntime, MISFIT, POINTS};
 use serde_json::{Value, json};
 
-/// The kernel service under test, when the environment names one.
+/// The service under test, when the environment names one per point
+/// (`GLOSSQL_E2E_<POINT>_URL`, the bearer in `_TOKEN`); None when it
+/// names none, and a runtime missing a point refuses that point's test.
 fn live() -> Option<Arc<KernelRuntime>> {
-    let url = std::env::var("GLOSSQL_E2E_TABICL_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty())?;
-    let token = std::env::var("GLOSSQL_E2E_TABICL_TOKEN").ok();
-    let bearer = glossql_scripts::Bearer::from_env(token.as_deref(), None);
-    Some(Arc::new(
-        KernelRuntime::with_remote(&url, bearer).expect("a kernel service address"),
-    ))
+    let mut rt = KernelRuntime::native();
+    let mut named = false;
+    for point in POINTS {
+        let variable = |suffix: &str| {
+            std::env::var(format!(
+                "GLOSSQL_E2E_{}_{suffix}",
+                point.to_ascii_uppercase()
+            ))
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        };
+        if let Some(url) = variable("URL") {
+            let bearer = glossql_scripts::Bearer::from_env(variable("TOKEN").as_deref(), None);
+            rt = rt
+                .with_point(point, &url, bearer)
+                .expect("a service address");
+            named = true;
+        }
+    }
+    named.then(|| Arc::new(rt))
 }
 
 /// Date32 day offsets for each month's first day, 2024-01 through
@@ -128,7 +143,14 @@ async fn walk_session_judged(
            DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
              RETURNS metric_bands;
            DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
-           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;"#
+           DECLARE WITNESS bands_w ON metric_bands DETECTOR band_breach THRESHOLD 0.98;
+           DECLARE ASPECT metric_forecast WITH $${{
+             "type": "object", "required": ["applicable"],
+             "properties": {{"applicable": {{"type": "boolean"}},
+                            "metrics": {{"type": "array"}}}}}}$$ AS MEASUREMENT ON DATASET;
+           DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$metric_forecast.sql$$
+             RETURNS metric_forecast;
+           DECLARE WITNESS forecast_w ON metric_forecast;"#
     ))
     .expect("shipped body splices");
     session.execute(&declarations).await.unwrap();
@@ -155,11 +177,11 @@ pub(super) async fn walked(session: &glossql_session::Session) -> Value {
     serde_json::from_str(&text).unwrap()
 }
 
-#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL / GLOSSQL_E2E_MISFIT_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn metric_bands_walks_and_reads_the_breach() {
-    let Some(rt) = live() else {
-        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
+    let Some(rt) = live().filter(|rt| rt.serves(FORECAST)) else {
+        eprintln!("skipping: GLOSSQL_E2E_FORECAST_URL is not set");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -218,8 +240,8 @@ async fn metric_bands_walks_and_reads_the_breach() {
 
     // The axis the walk took, and whether a verdict named it. `revenue`
     // reads the profiled `lines.date`, `inventory` the unprofiled
-    // `levels.date` — the cadence stays month for both, since the
-    // feature recipe is month-shaped whatever the axis.
+    // `levels.date` — the cadence stays month for both, whatever the
+    // axis.
     assert_eq!(by_name("revenue")["axis"], json!("date"));
     assert_eq!(by_name("revenue")["axis_judged"], json!(true));
     assert_eq!(by_name("inventory")["axis"], json!("date"));
@@ -403,11 +425,11 @@ async fn metric_bands_walks_and_reads_the_breach() {
 /// the month's latest-date SUM, not one arbitrary row. Three product
 /// rows stand at each month's day 25 (sum 1750 + 30·m); a day-5 decoy
 /// snapshot per month must be excluded by the latest-date rank.
-#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL / GLOSSQL_E2E_MISFIT_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_stock_walk_sums_the_months_latest_snapshot() {
-    let Some(rt) = live() else {
-        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
+    let Some(rt) = live().filter(|rt| rt.serves(FORECAST)) else {
+        eprintln!("skipping: GLOSSQL_E2E_FORECAST_URL is not set");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -457,82 +479,27 @@ async fn the_stock_walk_sums_the_months_latest_snapshot() {
     }
 }
 
-#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
-#[tokio::test(flavor = "multi_thread")]
-async fn band_grid_reads_the_replay_frame_with_the_real_ensemble() {
-    // The whatif door's seam against the real model:
-    // the eval's frame shape — (factor, month_index) over bracketing
-    // support worlds, y exactly linear in the factor — read at the
-    // held-out declared point. The numeric fidelity of the ensemble is
-    // the sibling suite's business; here the contract is shape,
-    // monotone quantiles, and a read that lands near the surface.
-    let Some(rt) = live() else {
-        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
-        return;
-    };
-
-    let factors = [1.0, 0.90, 1.05, 1.10, 1.20, 1.30];
-    let months = 6..12;
-    let mut train_x = Vec::new();
-    let mut train_y = Vec::new();
-    for f in factors {
-        for m in months.clone() {
-            train_x.extend([f, m as f64]);
-            train_y.push(1000.0 * f);
-        }
-    }
-    let mut test_x = Vec::new();
-    for m in months {
-        test_x.extend([1.15, m as f64]);
-    }
-    let alphas = [0.05, 0.10, 0.50, 0.90, 0.95];
-    let q = rt
-        .band_grid(
-            Matrix {
-                data: &train_x,
-                rows: train_y.len(),
-                cols: 2,
-            },
-            &train_y,
-            Matrix {
-                data: &test_x,
-                rows: 6,
-                cols: 2,
-            },
-            &alphas,
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(q.len(), 6 * alphas.len());
-    for row in q.chunks(alphas.len()) {
-        for pair in row.windows(2) {
-            assert!(pair[0] <= pair[1] + 1e-6, "monotone quantiles: {row:?}");
-        }
-        let p50 = row[2];
-        assert!(
-            (p50 - 1150.0).abs() / 1150.0 < 0.15,
-            "the declared point reads near the surface: p50 = {p50}"
-        );
-    }
-}
-
-#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL / GLOSSQL_E2E_MISFIT_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
-    // The misfit door's seam (fixture 20) against the
-    // real chain-rule density: a frame whose columns cohere (y ≈ 2x,
-    // z = x + y) with one planted row that betrays the relation while
-    // every marginal value stays in range — the eval's shuffled-pairing
-    // shape. The score's fidelity is the sibling suite's business; here
-    // the contract is shape and that the violator ranks worst.
+    // The misfit door's seam (fixture 20) against the real chain-rule
+    // density: a frame whose columns cohere (y ≈ 2x, z = x + y) with
+    // one planted row that betrays the relation while every marginal
+    // value stays in range — the eval's shuffled-pairing shape. The
+    // score's fidelity is the service's own business; here the
+    // contract is the answer's shape and that the violator ranks
+    // strangest.
     let Some(rt) = live() else {
-        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
+        eprintln!("skipping: no GLOSSQL_E2E_<POINT>_URL is set");
         return;
     };
+    if !rt.serves(MISFIT) {
+        eprintln!("skipping: GLOSSQL_E2E_MISFIT_URL is not set");
+        return;
+    }
 
     let n = 40;
-    let mut x = Vec::with_capacity(n * 3);
+    let (mut xs, mut ys, mut zs) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..n {
         let a = 10.0 + (i as f64) * 37.0 % 90.0;
         let (a, b) = if i == 17 {
@@ -540,36 +507,51 @@ async fn misfit_scores_rank_the_planted_violator_with_the_real_density() {
         } else {
             (a, 2.0 * a + (i as f64 % 5.0))
         };
-        x.extend([a, b, a + b]);
+        xs.push(a);
+        ys.push(b);
+        zs.push(a + b);
     }
-    let scores = rt
-        .misfit_scores(Matrix {
-            data: &x,
-            rows: n,
-            cols: 3,
-        })
+    let frame = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("x", DataType::Float64, false),
+            Field::new("y", DataType::Float64, false),
+            Field::new("z", DataType::Float64, false),
+        ])),
+        vec![
+            Arc::new(Float64Array::from(xs)),
+            Arc::new(Float64Array::from(ys)),
+            Arc::new(Float64Array::from(zs)),
+        ],
+    )
+    .unwrap();
+    let answered = rt
+        .table(MISFIT, frame, json!({"cells": false}))
         .await
         .unwrap();
-
-    assert_eq!(scores.len(), n);
-    let worst = scores
-        .iter()
-        .enumerate()
-        .min_by(|a, b| a.1.total_cmp(b.1))
-        .map(|(i, _)| i)
+    assert_eq!(answered.answer["service"], json!("glossthesi"));
+    assert_eq!(answered.table.num_rows(), n);
+    let score = answered
+        .table
+        .column_by_name("score")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
         .unwrap();
-    assert_eq!(worst, 17, "the violator carries the lowest log density");
+    let worst = (0..n)
+        .min_by(|a, b| score.value(*a).total_cmp(&score.value(*b)))
+        .unwrap();
+    assert_eq!(worst, 17, "the violator is the strangest row");
 }
 
 /// Rows land daily and the extract stops mid-month: the newest month
 /// is partial. Scored, its short sum would read as a breach that is
 /// only the calendar; the walk serves it marked, withholds its PIT,
 /// and the detector scores the month before it.
-#[ignore = "needs a kernel service: GLOSSQL_E2E_TABICL_URL"]
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL / GLOSSQL_E2E_MISFIT_URL"]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
-    let Some(rt) = live() else {
-        eprintln!("skipping: GLOSSQL_E2E_TABICL_URL is not set");
+    let Some(rt) = live().filter(|rt| rt.serves(FORECAST)) else {
+        eprintln!("skipping: GLOSSQL_E2E_FORECAST_URL is not set");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -658,5 +640,107 @@ async fn a_partial_trailing_month_is_withheld_and_the_month_before_scores() {
     assert!(
         (score - displacement).abs() < 1e-6,
         "score {score} against the complete month's displacement {displacement}: {shown}"
+    );
+}
+
+/// The forecast at an origin against the service: the cube's cells and
+/// the periods ahead go as one table, and what lands is the model's
+/// bands per step and span with the service's name on it.
+#[ignore = "needs a service: GLOSSQL_E2E_FORECAST_URL"]
+#[tokio::test(flavor = "multi_thread")]
+async fn metric_forecast_lands_against_the_service() {
+    let Some(rt) = live().filter(|rt| rt.serves(FORECAST)) else {
+        eprintln!("skipping: GLOSSQL_E2E_FORECAST_URL is not set");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    // A year and a half of a rising monthly flow with seasonality, and a
+    // rising stock level.
+    let months = 18usize;
+    let (mut flow, mut stock) = (Vec::new(), Vec::new());
+    for i in 0..months {
+        let seasonal = if i % 12 == 11 { 20.0 } else { 0.0 };
+        flow.push(100.0 + 3.0 * i as f64 + seasonal);
+        stock.push(1000.0 + 5.0 * i as f64);
+    }
+    let dates: Vec<i32> = FIRSTS.iter().map(|f| 19723 + f).collect();
+    let session = walk_session(
+        dir.path(),
+        Arc::clone(&rt),
+        vec![
+            ("lines", dates.clone(), flow),
+            ("levels", dates, stock),
+        ],
+        &[
+            r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#,
+            r#"DECLARE ASPECT inventory WITH $${"title": "Inventory"}$$ AS QUERY ON DATASET;"#,
+            r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value FROM lines"}$$;"#,
+            r#"GLOSS inventory ON fin AS $${"sql": "SELECT date, value FROM levels", "behavior": "stock"}$$;"#,
+            r#"SELECT judge_time() FROM lines.date;"#,
+            r#"SELECT judge_time() FROM levels.date;"#,
+        ],
+    )
+    .await;
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .unwrap();
+    let outcomes = session
+        .execute(
+            "SELECT metric, origin, step, span, to_go, period, p05, p10, p50, p90, p95, served_by \
+             FROM forecast_points() ORDER BY metric, point_seq;",
+        )
+        .await
+        .unwrap();
+    let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
+        panic!("rows")
+    };
+    let text = datafusion::arrow::util::pretty::pretty_format_batches(batches)
+        .unwrap()
+        .to_string();
+    eprintln!("{text}");
+    let rows: Vec<Vec<String>> = text
+        .lines()
+        .filter(|l| l.contains("2025-06-01"))
+        .map(|l| {
+            // Cells by position: an empty span or to_go stays a cell.
+            l.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
+        .collect();
+    // The flow: twelve steps, the quarter and the year to go. The
+    // stock: twelve steps and no total.
+    assert_eq!(
+        rows.iter().filter(|r| r[0] == "revenue").count(),
+        14,
+        "{text}"
+    );
+    assert_eq!(
+        rows.iter().filter(|r| r[0] == "inventory").count(),
+        12,
+        "{text}"
+    );
+    for r in &rows {
+        let q: Vec<f64> = r[6..11].iter().map(|c| c.parse().unwrap()).collect();
+        assert!(
+            q.windows(2).all(|w| w[0] <= w[1]),
+            "ordered quantiles: {r:?}"
+        );
+        assert!(r[11].starts_with("glossthesi"), "{r:?}");
+    }
+    // The first month ahead continues the trend: the median within a
+    // fifth of the line.
+    let first = rows
+        .iter()
+        .find(|r| r[0] == "revenue" && r[2] == "1")
+        .unwrap();
+    assert_eq!(first[5], "2025-07-01");
+    let p50: f64 = first[8].parse().unwrap();
+    assert!(
+        (124.0..=186.0).contains(&p50),
+        "the trend sits near 154: {p50}"
     );
 }

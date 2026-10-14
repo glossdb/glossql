@@ -27,6 +27,7 @@ mod coherence;
 mod collisions;
 mod derivations;
 mod facts;
+mod forecast;
 mod hierarchies;
 mod relationships;
 
@@ -37,6 +38,9 @@ pub(crate) use collisions::{
 };
 pub(crate) use derivations::derivation_candidates;
 pub(crate) use facts::{fact_values, metric_sources};
+pub(crate) use forecast::{
+    forecast_coverage, forecast_points, metric_forecast_ahead, world_cells as forecast_world_cells,
+};
 pub(crate) use hierarchies::hierarchy_candidates;
 pub(crate) use relationships::relationship_candidates;
 

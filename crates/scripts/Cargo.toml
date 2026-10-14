@@ -14,11 +14,13 @@ serde_json.workspace = true
 # The statistical kernels' algebra (reconcile's convention product).
 faer.workspace = true
 thiserror.workspace = true
-# The kernel service behind the three model reads — JSON over HTTP on
-# the rustls reqwest the server already rides. The server carries no
-# model: the reads go to the service `GLOSSQL_TABICL_URL` names.
+# The service behind a point — Arrow IPC over HTTP on the rustls
+# reqwest the server already rides. The server carries no model: a
+# point's table call goes to the service `GLOSSQL_<POINT>_URL` names.
 reqwest.workspace = true
-# The wait a full kernel queue asks for.
+arrow-ipc.workspace = true
+bytes.workspace = true
+# The wait a full service queue asks for.
 tokio = { workspace = true, features = ["time", "sync"] }
 # An ID token's expiry, read off its payload to time the refresh.
 base64.workspace = true
@@ -29,7 +31,7 @@ glossql-catalog = { path = "../catalog" }
 tokio.workspace = true
 tempfile.workspace = true
 futures.workspace = true
-# The suite's stand-in kernel service.
+# The suite's stand-in service.
 axum.workspace = true
 
 [lints]

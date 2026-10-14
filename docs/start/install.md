@@ -2,11 +2,11 @@
 
 `glossql` is one binary serving one workspace — the directory that
 holds your data lake and everything declared over it. The binary
-carries no model. Three doors — the metric-bands walk,
-`whatif.<scenario>()` and `misfit.<frame>()` — are served by the
-kernel service, `glosskernels`, hosted or run beside the server, named
-by `GLOSSQL_TABICL_URL`. Without it those three doors refuse by name
-and everything else serves.
+carries no model. Two points — the forecast behind the metric-bands
+walk, and the misfit behind `misfit.<frame>()` — are served by a
+service the deployment names per point, `GLOSSQL_FORECAST_URL` and
+`GLOSSQL_MISFIT_URL`, hosted or run beside the server. A point left
+unnamed refuses by name and everything else serves.
 
 ## Install
 
@@ -66,7 +66,8 @@ docker run --rm -p 8080:8080 \
   -e GLOSSQL_CATALOG_SQL=postgres://glossql:…@db.example:5432/glossql \
   -e GLOSSQL_WAREHOUSE=abfss://lake@account.dfs.core.windows.net/warehouse \
   -e AZURE_STORAGE_ACCOUNT_NAME=account -e AZURE_STORAGE_ACCOUNT_KEY=… \
-  -e GLOSSQL_TABICL_URL=https://… -e GLOSSQL_TABICL_TOKEN=… \
+  -e GLOSSQL_FORECAST_URL=https://… -e GLOSSQL_FORECAST_TOKEN=… \
+  -e GLOSSQL_MISFIT_URL=https://… -e GLOSSQL_MISFIT_TOKEN=… \
   ghcr.io/glossdb/glossql:0.2.0
 ```
 
@@ -106,9 +107,9 @@ platform injects the variables, secrets included:
 | `GLOSSQL_INSECURE_OPEN` | `true` (the literal) serves every door without authentication — no issuer needed, no login served, every caller recorded as `insecure_dev_mode` with the door's standing. The name is the warning: a laptop trying the server out, never a deployment |
 | `GLOSSQL_CATALOG_SQL` | the workspace's catalog on a Postgres server (`postgres://user:password@host:5432/db`) instead of the workspace directory's own SQLite file — the same catalog in a database that outlives a container. The warehouse stays under `--workspace` unless `GLOSSQL_WAREHOUSE` moves it. Unset, `catalog.sqlite` in the workspace serves |
 | `GLOSSQL_WAREHOUSE` | the lake in an object store instead of under `--workspace`: `s3://bucket/prefix`, `gs://bucket/prefix` or `abfss://container@account.dfs.core.windows.net/prefix`. The store's own conventions carry the credentials (`AWS_*`; `AZURE_STORAGE_ACCOUNT_NAME` and `_KEY`, or the managed identity the client reads on Container Apps with nothing set; `GOOGLE_SERVICE_ACCOUNT_PATH`, or the attached service account the client reads on Cloud Run with nothing set). With both this and `GLOSSQL_CATALOG_SQL` named the server needs no workspace directory |
-| `GLOSSQL_TABICL_URL` | the kernel service behind the metric-bands walk, `whatif.<scenario>()` and `misfit.<frame>()` — the hosted kernel API, or a `glosskernels` service run beside the server. Unset, those three doors refuse by name and everything else serves |
-| `GLOSSQL_TABICL_TOKEN` | the bearer that service expects: a key the hosted API issued, or whatever a service of your own was started with |
-| `GLOSSQL_TABICL_AUDIENCE` | instead of a token, on GCP: the kernel service's URL. The server mints a Google-signed ID token for it from the metadata server, as the service account it runs as, and refreshes it before it expires — no key anywhere. The kernel service verifies the token and the account (its `GLOSSKERNELS_AUDIENCE` and `GLOSSKERNELS_CALLERS`); Cloud Run checks the same token in front when the service requires authentication |
+| `GLOSSQL_FORECAST_URL`, `GLOSSQL_MISFIT_URL` | the service behind each point: the forecast behind the metric-bands walk, the misfit behind `misfit.<frame>()`. Each names the service's address; the point's route is appended. One service may serve both. A point left unnamed refuses by name and everything else serves |
+| `GLOSSQL_FORECAST_TOKEN`, `GLOSSQL_MISFIT_TOKEN` | the bearer that point's service expects: a key it was started with |
+| `GLOSSQL_FORECAST_AUDIENCE`, `GLOSSQL_MISFIT_AUDIENCE` | instead of a token, on GCP: the service's URL. The server mints a Google-signed ID token for it from the metadata server, as the service account it runs as, and refreshes it before it expires — no key anywhere. The service verifies the token and the account; Cloud Run checks the same token in front when the service requires authentication |
 | `AWS_ACCESS_KEY_ID` …, `AZURE_STORAGE_ACCOUNT_NAME` … | storage has no glossql variables of its own: the warehouse is reached through the store's standard conventions, read by the storage layer itself (or the platform's identity, where the deployment attaches one): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ALLOW_HTTP`; `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_USE_EMULATOR` (with `AZURITE_BLOB_STORAGE_URL` when the emulator is not on the loopback) |
 | `GLOSSQL_LOG` | what the server puts on its record — a `tracing` filter. A bare level (`debug`) is this server's crates at that level, the substrate held at `info` and the MCP library at `warn`; directives (`glossql_session=debug,apache_avro=debug`) are taken as written. `RUST_LOG` is honoured when it is unset; `info` when neither is |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where an OpenTelemetry collector listens (`http://127.0.0.1:4318`; `/v1/traces` and `/v1/logs` are appended). Set, the record is also exported there — spans as traces, events as logs, OTLP, batched. Unset, nothing is exported. The exporter's other variables are the SDK's own: `OTEL_EXPORTER_OTLP_PROTOCOL` picks the transport, `http/protobuf` (the default) or `grpc`; `OTEL_EXPORTER_OTLP_HEADERS` carries a hosted collector's credentials; `OTEL_RESOURCE_ATTRIBUTES` names the deployment beyond `service.name=glossql`. A platform's managed collector injects the endpoint and the protocol itself — Container Apps' agent does, and speaks gRPC |

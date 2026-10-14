@@ -155,7 +155,9 @@ serves one dataset's.
 Two table functions over the cube — every grounded metric's cells, a
 query result computed at the read's pin from the grounding and the
 judged verdicts, landed in the catalog under the engine's cache,
-never recorded. One head per metric: its cells at the `cube` aspect's
+never recorded. The forecast world is the exception: it is read from
+the record, the newest `metric_forecast` run, at the metric's own
+resolution. One head per metric: its cells at the `cube` aspect's
 floor grain over the longest window of the aspect's ladder, built
 once and landed. Every grain a read serves is a plan over the head —
 a flow sums, a ratio re-divides its summed halves, a stock takes the
@@ -184,20 +186,31 @@ names), `note`, `actor_kind`, `released_at` (when the serving release
 was written — what a later release names in `at` to return to it).
 The same two collapses as `app_parts`. Workspace-wide.
 
-### metric_series(grain => …)
+### metric_series(grain => …, world => …)
 
-The cells: `metric`, `dimension` (`''` the total, `'alternative'` the
-disclosed rival, anything else a judged dimension column), `member`,
-`period` (a typed timestamp, the bucket's start), `value`, `num` /
-`den` (a ratio's summed halves, NULL elsewhere), `behavior` (the verb
-that made the row — `flow`, `stock` or `ratio`; a rival's may differ
-from the metric's). Without a grain each metric serves its cells at
-its own resolution over its own rung. With one (`minute` … `year`)
-each metric at or below that resolution serves its cells at the
-asked grain over that grain's rung — a plan over its head, the same
-grounding, verb and axes — so a day metric's months span the month
-rung; a metric coarser than the asked grain serves no rows. The one
-argument is the grain; filters ride `WHERE`.
+The cells: `metric`, `world` (which set of numbers the row belongs
+to: `actual` or `forecast`), `dimension` (`''` the total,
+`'alternative'` the disclosed rival, anything else a judged dimension
+column), `member`, `period` (a typed timestamp, the bucket's start),
+`value`, `num` / `den` (a ratio's summed halves, NULL elsewhere),
+`behavior` (the verb that made the row — `flow`, `stock` or `ratio`; a
+rival's may differ from the metric's). Without a grain each metric
+serves its cells at its own resolution over its own rung. With one
+(`minute` … `year`) each metric at or below that resolution serves its
+cells at the asked grain over that grain's rung — a plan over its
+head, the same grounding, verb and axes — so a day metric's months
+span the month rung; a metric coarser than the asked grain serves no
+rows. Without a world, the actual world: what the groundings compute
+from the data. `world => 'forecast'` serves the newest
+`metric_forecast` run per metric as cells — one row per step, the
+median as `value`, `dimension` and `member` `''`, `num` and `den` NULL
+— at the metric's own resolution only; another grain serves no
+forecast rows, and a dataset never forecast serves none. The totals
+are not cells; `forecast_points()` has them. The two worlds' periods
+do not overlap, so a variance of forecast against actual is a join on
+metric and period once the actuals land. The plan and the scenario
+worlds are refused by name until their forms are declared. The two
+arguments are named and come in any order; filters ride `WHERE`.
 
 ### metric_axes()
 
@@ -337,7 +350,8 @@ bound dataset.
 The recorded walk, flattened: what `metric_bands` last landed for the
 bound dataset, one row per metric per walked point — `metric`,
 `applicable`, `reason`, `grain`, `aggregation`, `trained_on`, `axis`,
-`axis_judged`, `point_seq`, `period`, `actual`, `p05`…`p95`, `pit`,
+`axis_judged`, `served_by` (the service that answered and its
+version), `point_seq`, `period`, `actual`, `p05`…`p95`, `pit`,
 `withheld`, `partial`, `displacement` (|2·pit − 1|, what the detector
 scores; none where the PIT is withheld), `computed_at` and `current`
 (whether the measurement stands at this pin). A metric the walk found
@@ -347,6 +361,33 @@ walked serves no rows. The record itself, never a re-run —
 `metric_bands` verdict is diagnosable to its metric and month in one
 read: `SELECT metric, period, displacement FROM band_points() WHERE
 partial = false ORDER BY displacement DESC`. Requires a bound dataset.
+
+### forecast_points()
+
+The recorded forecast, flattened: what `metric_forecast` last landed
+for the bound dataset, one row per metric and point — `seq`, `metric`,
+`applicable`, `reason`, `grain` (the metric's own resolution), `origin`
+(the last period with an actual, as the bucket's first day),
+`served_by`, `point_seq`, `step` (periods past the origin; for a total,
+the span), `span` (set on a total: the steps it sums), `to_go` (what a
+total runs to: `quarter`, `year` or `month`), `period` (the period
+forecast; for a total, the one it ends at), `p05`…`p95`, `actual`
+(joined from the cube at read, where the period has landed; a total's
+is the sum of its periods, where every one is known), `landed`
+(`below`, `low`, `inside`, `high` or `above` against p05, p10, p90 and
+p95), `computed_at` and `current`. A metric the door found inapplicable
+is one row with its reason and no point; a dataset never forecast
+serves no rows. The record itself, never a re-run
+([forecast](../methods/forecast.md)). Requires a bound dataset.
+
+### forecast_coverage()
+
+Over every forecast the record holds for the bound dataset, one
+forecast per metric and origin: `metric` (`''` the dataset as a whole),
+`grain`, `step`, `span`, `to_go`, `points` (whose actual has landed),
+`inside_80` and `inside_90` (the shares inside p10–p90 and p05–p95),
+`forecasts` (the distinct origins the points come from). The table a
+span rule reads. Requires a bound dataset.
 
 ## The sources' read
 

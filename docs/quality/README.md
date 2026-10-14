@@ -64,13 +64,11 @@ judged by the actor):
   aspect's slots, `band_breach` over the walked bands,
   `rate_tolerance` between an authored expectation and its check
   voice.
-- **The band plane** — the TabICL reads behind the runtime seam,
-  served by the `glosskernels` service (the server carries no model),
-  with `metric_bands` and `band_breach` in the library —
-  the walk withholding a partial trailing month where rows land
-  through the month, the detector scoring the newest complete one —
-  and `whatif.<scenario>()` replaying rewritten plans across
-  bracketed band grids.
+- **The band plane** — the forecast behind the runtime seam, served
+  by the service the forecast point names (the server carries no
+  model), with `metric_bands` and `band_breach` in the library — the
+  walk withholding a partial trailing month where rows land through
+  the month, the detector scoring the newest complete one.
 
 Practices established by measurement, taught in skills rather than
 shipped as code:

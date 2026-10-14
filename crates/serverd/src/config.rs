@@ -25,10 +25,11 @@ directory.\n\
 every other flag has a variable named after it, the flag winning: \
 GLOSSQL_ADDR, GLOSSQL_ROW_CAP, GLOSSQL_CUBE_CACHE, GLOSSQL_MEMORY_LIMIT, \
 GLOSSQL_SPILL_LIMIT.\n\
-the band model behind the metric-bands walk, whatif. and misfit. is \
-the kernel service named by GLOSSQL_TABICL_URL (its bearer in \
-GLOSSQL_TABICL_TOKEN, or minted by the platform for GLOSSQL_TABICL_AUDIENCE); \
-unset, those three doors refuse by name and everything else serves.\n\
+the model behind a point — forecast for the metric-bands walk, misfit for \
+misfit. — is a service named per point: GLOSSQL_FORECAST_URL and \
+GLOSSQL_MISFIT_URL (each with its bearer in _TOKEN, or minted by the \
+platform for _AUDIENCE); a point left unnamed refuses by name and \
+everything else serves.\n\
 the authorization arrangement is read from .env or the environment: \
 GLOSSQL_ISSUER, GLOSSQL_CLIENT_ID, GLOSSQL_CLIENT_SECRET, [GLOSSQL_AUDIENCE] \
 — or GLOSSQL_INSECURE_OPEN=true serves the doors without authentication, \
@@ -100,8 +101,8 @@ pub struct Config {
     pub audience: String,
     /// The authorization arrangement; none under the open switch.
     pub auth: Option<Auth>,
-    /// The kernel service, when the environment names one.
-    pub kernel: Option<Kernel>,
+    /// The services the environment names, one per point it fills.
+    pub points: Vec<Point>,
     pub catalog: Catalog,
 }
 
@@ -120,11 +121,13 @@ pub struct Auth {
     pub client_secret: String,
 }
 
-/// The kernel service behind the model reads: `GLOSSQL_TABICL_URL`,
-/// its bearer in `GLOSSQL_TABICL_TOKEN` — or, on a platform that mints
-/// ID tokens for the service account this process runs as, the
-/// audience the service verifies in `GLOSSQL_TABICL_AUDIENCE`.
-pub struct Kernel {
+/// The service behind one point (`glossql_session::POINTS`):
+/// `GLOSSQL_<POINT>_URL`, its bearer in `GLOSSQL_<POINT>_TOKEN` — or,
+/// on a platform that mints ID tokens for the service account this
+/// process runs as, the audience the service verifies in
+/// `GLOSSQL_<POINT>_AUDIENCE`.
+pub struct Point {
+    pub name: &'static str,
     pub url: String,
     pub token: Option<String>,
     pub audience: Option<String>,
@@ -186,11 +189,18 @@ impl Config {
                 Some(mb) => Some(mb),
                 None => sized("GLOSSQL_SPILL_LIMIT")?,
             },
-            kernel: var("GLOSSQL_TABICL_URL").map(|url| Kernel {
-                url,
-                token: var("GLOSSQL_TABICL_TOKEN"),
-                audience: var("GLOSSQL_TABICL_AUDIENCE"),
-            }),
+            points: glossql_session::POINTS
+                .iter()
+                .filter_map(|point| {
+                    let named = |suffix| var(&glossql_session::point_variable(point, suffix));
+                    named("URL").map(|url| Point {
+                        name: point,
+                        url,
+                        token: named("TOKEN"),
+                        audience: named("AUDIENCE"),
+                    })
+                })
+                .collect(),
             catalog: Catalog::from(&var, flags.workspace.as_deref())?,
             addr,
             doors,
@@ -468,5 +478,49 @@ mod tests {
 
         let bad = refusal(read(&[], &[("GLOSSQL_MEMORY_LIMIT", "4g")]));
         assert!(bad.contains("GLOSSQL_MEMORY_LIMIT"), "{bad}");
+    }
+
+    /// A service is named per point, each with its own bearer; a point
+    /// left unnamed is simply not there, and a URL under a name the
+    /// server declares no point for names nothing.
+    #[test]
+    fn a_service_is_named_per_point() {
+        let none = read(&[], &[("GLOSSQL_OTHER_URL", "http://127.0.0.1:8100")]).expect("readable");
+        assert!(
+            none.points.is_empty(),
+            "an undeclared point names no service"
+        );
+
+        let one = read(
+            &[],
+            &[
+                ("GLOSSQL_FORECAST_URL", "http://127.0.0.1:8100"),
+                ("GLOSSQL_FORECAST_TOKEN", "k1"),
+            ],
+        )
+        .expect("readable");
+        assert_eq!(one.points.len(), 1);
+        assert_eq!(one.points[0].name, "forecast");
+        assert_eq!(one.points[0].url, "http://127.0.0.1:8100");
+        assert_eq!(one.points[0].token.as_deref(), Some("k1"));
+        assert_eq!(one.points[0].audience, None);
+
+        let both = read(
+            &[],
+            &[
+                ("GLOSSQL_FORECAST_URL", "https://thesi.example"),
+                ("GLOSSQL_FORECAST_AUDIENCE", "https://thesi.example"),
+                ("GLOSSQL_MISFIT_URL", "https://thesi.example"),
+                ("GLOSSQL_MISFIT_TOKEN", "k2"),
+            ],
+        )
+        .expect("readable");
+        let names: Vec<&str> = both.points.iter().map(|p| p.name).collect();
+        assert_eq!(names, ["forecast", "misfit"]);
+        assert_eq!(
+            both.points[0].audience.as_deref(),
+            Some("https://thesi.example")
+        );
+        assert_eq!(both.points[1].token.as_deref(), Some("k2"));
     }
 }

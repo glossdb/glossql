@@ -1,0 +1,942 @@
+//! The forecast as a measurement at an origin. `metric_forecast_ahead`
+//! is the door behind the `metric_forecast` measurement;
+//! `forecast_points()` and `forecast_coverage()` read what landed.
+//!
+//! Terms. The origin is the last period with an actual. A step is one
+//! period past it. The horizon is how many steps are asked. A span is
+//! the total of the first so many steps. A level is a quantile the
+//! service answers, and the band between two levels is the range the
+//! actual should land in that often. Coverage is the share of actuals
+//! that landed inside a band.
+//!
+//! The door reads each applicable metric as a whole — the cube's
+//! `dimension = ''` cells, not the members of any dimension — at its
+//! own resolution over its rung, so a forecast period is a cube bucket.
+//! It sends one table per grain and totals to the forecast point: the
+//! history as `actual` rows, the horizon's periods ahead as `forecast`
+//! rows with no value. What lands is the model's quantiles per step and
+//! span, the origin and the service that answered; no actual and no
+//! PIT, since neither is known at the origin. `forecast_points()` joins
+//! the actual from the cube at read and says where it landed against
+//! the bands; `forecast_coverage()` counts that over every forecast the
+//! record holds. The PIT stays the walk's (`bands.rs`): the exact
+//! quantile needs the model's distribution, which only the service has
+//! at the time of the call.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use chrono::{Datelike, Days, Months, NaiveDate};
+use datafusion::arrow::array::{
+    Array, Float64Array, Int64Array, RecordBatch, StringArray, TimestampNanosecondArray,
+};
+use datafusion::arrow::compute::{CastOptions, cast_with_options};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::util::display::array_value_to_string;
+use serde_json::{Value, json};
+
+use super::rows_batch;
+use crate::cube::Resolution;
+use crate::reads::Shared;
+use crate::session::{FORECAST, SessionError};
+
+/// The levels asked, the walk's own: the 80% band is p10 to p90, the
+/// 90% band p05 to p95.
+const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
+/// The known values the service needs behind an origin.
+const MIN_PERIODS: usize = 6;
+/// The measurement aspect the door fills and the reads flatten.
+const ASPECT: &str = "metric_forecast";
+
+/// The five quantiles of one point, in the order of [`LEVELS`].
+type Quantiles = [f64; 5];
+/// A point in the answer: the member, the step and, for a total, the span.
+type PointKey = (String, i64, Option<i64>);
+/// One request to the service: the grain and the spans asked, and the
+/// metrics (as indices into the door's rows) that go in it.
+type Group = ((&'static str, Vec<usize>), Vec<usize>);
+/// A coverage row's key: the metric (`''` the dataset), the grain, the
+/// step, the span and what it runs to.
+type TallyKey = (String, String, i64, Option<i64>, Option<String>);
+
+/// The horizon per grain, fixed where the service measured its
+/// coverage: a year of months, a quarter of weeks, a month of days, a
+/// year of quarters. A grain the service does not forecast is the
+/// reason the metric is inapplicable.
+fn horizon_of(resolution: Resolution) -> Result<(&'static str, usize), String> {
+    match resolution {
+        Resolution::Day => Ok(("day", 31)),
+        Resolution::Week => Ok(("week", 13)),
+        Resolution::Month => Ok(("month", 12)),
+        Resolution::Quarter => Ok(("quarter", 4)),
+        Resolution::Minute | Resolution::Hour => Err(format!(
+            "the {} grain is finer than the service forecasts (day, week, month, quarter)",
+            resolution.as_str()
+        )),
+        Resolution::Year => Err("a year grain has too few periods to forecast".into()),
+    }
+}
+
+/// The bucket `k` periods past `origin` at the grain.
+fn step_date(origin: NaiveDate, grain: &str, k: u32) -> Option<NaiveDate> {
+    match grain {
+        "day" => origin.checked_add_days(Days::new(u64::from(k))),
+        "week" => origin.checked_add_days(Days::new(7 * u64::from(k))),
+        "month" => origin.checked_add_months(Months::new(k)),
+        "quarter" => origin.checked_add_months(Months::new(3 * k)),
+        _ => None,
+    }
+}
+
+fn month_end(d: NaiveDate) -> Option<NaiveDate> {
+    d.with_day(1)?
+        .checked_add_months(Months::new(1))?
+        .pred_opt()
+}
+
+fn quarter_end(d: NaiveDate) -> Option<NaiveDate> {
+    let first_month = (d.month0() / 3) * 3 + 1;
+    NaiveDate::from_ymd_opt(d.year(), first_month, 1)?
+        .checked_add_months(Months::new(3))?
+        .pred_opt()
+}
+
+fn year_end(d: NaiveDate) -> Option<NaiveDate> {
+    NaiveDate::from_ymd_opt(d.year(), 12, 31)
+}
+
+/// The totals a flow asks for: the periods left in the quarter and the
+/// year the first period ahead falls in, to their end — a day metric
+/// asks for its month to go — where they fit in the horizon. A step
+/// belongs to a span while its bucket starts on or before the span's
+/// end. A span the horizon cannot reach is not asked. Two spans of one
+/// length are asked once and served under both names.
+fn spans_of(origin: NaiveDate, grain: &str, horizon: usize) -> Vec<(usize, &'static str)> {
+    let Some(first) = step_date(origin, grain, 1) else {
+        return Vec::new();
+    };
+    let ends: Vec<(Option<NaiveDate>, &'static str)> = match grain {
+        "day" => vec![(month_end(first), "month")],
+        "week" => vec![(quarter_end(first), "quarter")],
+        "month" => vec![(quarter_end(first), "quarter"), (year_end(first), "year")],
+        "quarter" => vec![(year_end(first), "year")],
+        _ => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for (end, name) in ends {
+        let Some(end) = end else { continue };
+        let mut n = 0usize;
+        for k in 1..=horizon as u32 {
+            match step_date(origin, grain, k) {
+                Some(d) if d <= end => n = k as usize,
+                _ => break,
+            }
+        }
+        let fits = step_date(origin, grain, n as u32 + 1).is_none_or(|d| d > end);
+        if n >= 1 && fits {
+            out.push((n, name));
+        }
+    }
+    out
+}
+
+fn date_of(ns: i64) -> NaiveDate {
+    chrono::DateTime::from_timestamp_nanos(ns).date_naive()
+}
+
+fn nanos_of(d: NaiveDate) -> Option<i64> {
+    d.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt()
+}
+
+fn iso(d: NaiveDate) -> String {
+    d.format("%Y-%m-%d").to_string()
+}
+
+/// A metric's whole line — the `''` dimension — from the cube's cells
+/// at its own resolution: `(period, value)` in period order. The cells
+/// are the cube's own, bounded by the metric's rung.
+fn whole_series(partitions: &[RecordBatch], metric: &str) -> Vec<(i64, f64)> {
+    let mut out = Vec::new();
+    for batch in partitions {
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        let text = |name: &str| {
+            batch
+                .column_by_name(name)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+        };
+        let (Some(metrics), Some(dimensions)) = (text("metric"), text("dimension")) else {
+            continue;
+        };
+        if metrics.value(0) != metric {
+            continue;
+        }
+        let periods = batch
+            .column_by_name("period")
+            .and_then(|c| c.as_any().downcast_ref::<TimestampNanosecondArray>());
+        let values = batch
+            .column_by_name("value")
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+        let (Some(periods), Some(values)) = (periods, values) else {
+            continue;
+        };
+        for i in 0..batch.num_rows() {
+            if dimensions.value(i).is_empty() && !periods.is_null(i) && !values.is_null(i) {
+                out.push((periods.value(i), values.value(i)));
+            }
+        }
+    }
+    out.sort_by_key(|(p, _)| *p);
+    out.dedup_by_key(|(p, _)| *p);
+    out
+}
+
+/// One metric the door forecasts: what it sends and how it labels the
+/// answer.
+struct Ahead {
+    seq: i64,
+    metric: String,
+    grain: &'static str,
+    horizon: usize,
+    origin: NaiveDate,
+    spans: Vec<(usize, &'static str)>,
+    series: Vec<(NaiveDate, f64)>,
+}
+
+enum Row {
+    Ready(Value),
+    Ahead(Ahead),
+}
+
+/// `metric_forecast_ahead('<dataset>')` — the door behind the
+/// `metric_forecast` measurement: one row per metric and point, the
+/// model's quantiles for the periods ahead from the origin. Reads the
+/// bound dataset's cube, so the argument must be the dataset in use.
+pub(crate) async fn metric_forecast_ahead(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<RecordBatch, SessionError> {
+    let runtime = shared.runtime();
+    if !runtime.serves(FORECAST) {
+        return Err(crate::session::no_model("metric_forecast()", FORECAST));
+    }
+    let bound = shared.dataset.read().expect("state lock").clone();
+    if bound.as_deref() != Some(dataset) {
+        return Err(SessionError::BadSubject(format!(
+            "metric_forecast_ahead('{dataset}') reads the cube of the dataset in use — USE {dataset} first"
+        )));
+    }
+    let cubes = crate::cube::cubes(shared).await?;
+    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
+
+    let mut out: Vec<Row> = Vec::new();
+    for (seq, cube) in cubes.iter().enumerate() {
+        let seq = seq as i64;
+        let fact = &cube.fact;
+        let not_applicable = |reason: String| {
+            Row::Ready(json!({
+                "seq": seq, "metric": fact.metric, "applicable": false, "reason": reason,
+            }))
+        };
+        if !fact.applicable {
+            out.push(not_applicable(
+                fact.reason
+                    .clone()
+                    .unwrap_or_else(|| "the cube admits no series".into()),
+            ));
+            continue;
+        }
+        let Some(resolution) = fact.resolution else {
+            out.push(not_applicable("the cube names no resolution".into()));
+            continue;
+        };
+        let (grain, horizon) = match horizon_of(resolution) {
+            Ok(h) => h,
+            Err(reason) => {
+                out.push(not_applicable(reason));
+                continue;
+            }
+        };
+        let series: Vec<(NaiveDate, f64)> = whole_series(&served.partitions, &fact.metric)
+            .into_iter()
+            .map(|(p, v)| (date_of(p), v))
+            .collect();
+        let n = series.len();
+        if n < MIN_PERIODS {
+            out.push(not_applicable(format!(
+                "{n} {grain}s of history: a forecast needs {MIN_PERIODS}"
+            )));
+            continue;
+        }
+        let origin = series[n - 1].0;
+        // A total is a sum of periods: a flow has one, a stock or a
+        // ratio has none.
+        let spans = if fact.behavior.as_deref() == Some("flow") {
+            spans_of(origin, grain, horizon)
+        } else {
+            Vec::new()
+        };
+        out.push(Row::Ahead(Ahead {
+            seq,
+            metric: fact.metric.clone(),
+            grain,
+            horizon,
+            origin,
+            spans,
+            series,
+        }));
+    }
+
+    // One table per grain and totals: the service applies one
+    // specification to every member of a request, so metrics that ask
+    // for different spans go in different requests.
+    let mut groups: Vec<Group> = Vec::new();
+    for (i, row) in out.iter().enumerate() {
+        if let Row::Ahead(a) = row {
+            let key = (a.grain, a.spans.iter().map(|(n, _)| *n).collect::<Vec<_>>());
+            match groups.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, members)) => members.push(i),
+                None => groups.push((key, vec![i])),
+            }
+        }
+    }
+    let mut points: HashMap<PointKey, Quantiles> = HashMap::new();
+    let mut errors: HashMap<String, Vec<String>> = HashMap::new();
+    let mut served_by: Option<String> = None;
+    for ((grain, spans), members) in &groups {
+        let (mut names, mut periods, mut values, mut status) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for &i in members {
+            let Row::Ahead(a) = &out[i] else { continue };
+            for (d, v) in &a.series {
+                names.push(a.metric.as_str());
+                periods.push(nanos_of(*d));
+                values.push(Some(*v));
+                status.push("actual");
+            }
+            for k in 1..=a.horizon as u32 {
+                names.push(a.metric.as_str());
+                periods.push(step_date(a.origin, grain, k).and_then(nanos_of));
+                values.push(None);
+                status.push("forecast");
+            }
+        }
+        let table = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("member", DataType::Utf8, false),
+                Field::new(
+                    "period",
+                    DataType::Timestamp(TimeUnit::Nanosecond, None),
+                    true,
+                ),
+                Field::new("value", DataType::Float64, true),
+                Field::new("status", DataType::Utf8, false),
+            ])),
+            vec![
+                Arc::new(StringArray::from(names)),
+                Arc::new(TimestampNanosecondArray::from(periods)),
+                Arc::new(Float64Array::from(values)),
+                Arc::new(StringArray::from(status)),
+            ],
+        )
+        .map_err(SessionError::from)?;
+        let horizon = members
+            .iter()
+            .filter_map(|&i| match &out[i] {
+                Row::Ahead(a) => Some(a.horizon),
+                Row::Ready(_) => None,
+            })
+            .max()
+            .unwrap_or(1);
+        let mut spec = json!({
+            "targets": ["value"], "horizon": horizon, "levels": LEVELS, "grain": grain,
+        });
+        if !spans.is_empty() {
+            spec["totals"] = json!(spans);
+        }
+        let answered = runtime
+            .table(FORECAST, table, spec)
+            .await
+            .map_err(SessionError::Runtime)?;
+        points
+            .extend(fold_points(&answered.table).map_err(|e| {
+                SessionError::Runtime(format!("the forecast service answered {e}"))
+            })?);
+        for (member, said) in super::bands::walk_errors(&answered.answer) {
+            errors.entry(member).or_default().extend(said);
+        }
+        served_by.get_or_insert_with(|| {
+            format!(
+                "{} {}",
+                answered.answer["service"].as_str().unwrap_or("?"),
+                answered.answer["version"].as_str().unwrap_or("?")
+            )
+        });
+    }
+
+    let mut rows = Vec::new();
+    for row in out {
+        let a = match row {
+            Row::Ready(value) => {
+                rows.push(value);
+                continue;
+            }
+            Row::Ahead(a) => a,
+        };
+        let mut served: Vec<Value> = Vec::new();
+        let mut point = |step: usize, span: Option<usize>, to_go: Option<&str>| {
+            let key = (a.metric.clone(), step as i64, span.map(|s| s as i64));
+            let Some(q) = points.get(&key) else { return };
+            let Some(period) = step_date(a.origin, a.grain, step as u32) else {
+                return;
+            };
+            served.push(json!({
+                "step": step as i64, "span": span.map(|s| s as i64), "to_go": to_go,
+                "period": iso(period),
+                "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
+            }));
+        };
+        for step in 1..=a.horizon {
+            point(step, None, None);
+        }
+        for (span, name) in &a.spans {
+            point(*span, Some(*span), Some(name));
+        }
+        if served.is_empty() {
+            let reason = match errors.get(&a.metric) {
+                Some(reasons) => reasons.join("; "),
+                None => "the service answered no point for this metric".to_string(),
+            };
+            rows.push(json!({
+                "seq": a.seq, "metric": a.metric, "applicable": false, "reason": reason,
+                "grain": a.grain, "origin": iso(a.origin), "served_by": served_by,
+            }));
+            continue;
+        }
+        for (point_seq, p) in served.iter().enumerate() {
+            let mut row = serde_json::Map::new();
+            row.insert("seq".into(), json!(a.seq));
+            row.insert("metric".into(), json!(a.metric));
+            row.insert("applicable".into(), json!(true));
+            row.insert("grain".into(), json!(a.grain));
+            row.insert("origin".into(), json!(iso(a.origin)));
+            row.insert("served_by".into(), json!(served_by));
+            row.insert("point_seq".into(), json!(point_seq as i64));
+            for (k, val) in p.as_object().expect("point object") {
+                row.insert(k.clone(), val.clone());
+            }
+            rows.push(Value::Object(row));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(json!({}));
+    }
+    rows_batch(rows, forecast_shape())
+}
+
+/// The answer's rows by member, step and span: one row per level
+/// folded into one point. A level nobody asked, or a point missing a
+/// level, is a wrong answer.
+fn fold_points(answer: &RecordBatch) -> Result<HashMap<PointKey, Quantiles>, String> {
+    let column = |name: &str| {
+        answer
+            .column_by_name(name)
+            .ok_or_else(|| format!("no `{name}` column"))
+    };
+    let cast = |name: &str, to: DataType| {
+        cast_with_options(
+            column(name)?,
+            &to,
+            &CastOptions {
+                safe: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("`{name}` does not read as {to}: {e}"))
+    };
+    let member = column("member")?;
+    let step = cast("step", DataType::Int64)?;
+    let span = cast("span", DataType::Int64)?;
+    let level = cast("level", DataType::Float64)?;
+    let value = cast("value", DataType::Float64)?;
+    let (step, span) = (
+        step.as_any().downcast_ref::<Int64Array>().ok_or("`step`")?,
+        span.as_any().downcast_ref::<Int64Array>().ok_or("`span`")?,
+    );
+    let (level, value) = (
+        level
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .ok_or("`level`")?,
+        value
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .ok_or("`value`")?,
+    );
+    let mut out: HashMap<PointKey, [Option<f64>; 5]> = HashMap::new();
+    for i in 0..answer.num_rows() {
+        if member.is_null(i) || step.is_null(i) || level.is_null(i) {
+            continue;
+        }
+        let key = (
+            array_value_to_string(member, i).map_err(|e| e.to_string())?,
+            step.value(i),
+            (!span.is_null(i)).then(|| span.value(i)),
+        );
+        let asked = LEVELS
+            .iter()
+            .position(|l| (l - level.value(i)).abs() < 1e-9)
+            .ok_or_else(|| format!("a level {} nobody asked", level.value(i)))?;
+        out.entry(key).or_default()[asked] = (!value.is_null(i)).then(|| value.value(i));
+    }
+    out.into_iter()
+        .map(|(key, q)| {
+            let mut levels = [0.0; 5];
+            for (slot, v) in levels.iter_mut().zip(q) {
+                *slot = v.ok_or_else(|| {
+                    format!("{} at step {} without every level asked", key.0, key.1)
+                })?;
+            }
+            Ok((key, levels))
+        })
+        .collect()
+}
+
+fn forecast_shape() -> Vec<Field> {
+    vec![
+        Field::new("seq", DataType::Int64, true),
+        Field::new("metric", DataType::Utf8, true),
+        Field::new("applicable", DataType::Boolean, true),
+        Field::new("reason", DataType::Utf8, true),
+        // The metric's own resolution, the grain the forecast is at.
+        Field::new("grain", DataType::Utf8, true),
+        // The last period with an actual, as the bucket's first day.
+        Field::new("origin", DataType::Utf8, true),
+        // The service that answered, and its version.
+        Field::new("served_by", DataType::Utf8, true),
+        Field::new("point_seq", DataType::Int64, true),
+        // Periods past the origin; for a span, the span itself.
+        Field::new("step", DataType::Int64, true),
+        // Set on a total: the number of steps it sums.
+        Field::new("span", DataType::Int64, true),
+        // What a span runs to: `quarter`, `year` or `month`.
+        Field::new("to_go", DataType::Utf8, true),
+        // The period forecast; for a span, the period it ends at.
+        Field::new("period", DataType::Utf8, true),
+        Field::new("p05", DataType::Float64, true),
+        Field::new("p10", DataType::Float64, true),
+        Field::new("p50", DataType::Float64, true),
+        Field::new("p90", DataType::Float64, true),
+        Field::new("p95", DataType::Float64, true),
+    ]
+}
+
+/// Every metric's whole line from the cube at its own resolution, by
+/// metric and period — what a recorded point is checked against at
+/// read. Sized by the cube's rungs, never by the data.
+async fn actuals(
+    shared: &Arc<Shared>,
+) -> Result<HashMap<String, HashMap<NaiveDate, f64>>, SessionError> {
+    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
+    let mut out: HashMap<String, HashMap<NaiveDate, f64>> = HashMap::new();
+    for batch in &served.partitions {
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        let Some(metrics) = batch
+            .column_by_name("metric")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+        else {
+            continue;
+        };
+        let metric = metrics.value(0).to_string();
+        let cells = whole_series(std::slice::from_ref(batch), &metric);
+        out.entry(metric)
+            .or_default()
+            .extend(cells.into_iter().map(|(p, v)| (date_of(p), v)));
+    }
+    Ok(out)
+}
+
+/// A recorded point's actual, from the cube: the cell at the period
+/// for a step; for a span, the sum of its periods' cells where every
+/// one is known.
+fn actual_of(
+    cells: Option<&HashMap<NaiveDate, f64>>,
+    origin: NaiveDate,
+    grain: &str,
+    step: i64,
+    span: Option<i64>,
+) -> Option<f64> {
+    let cells = cells?;
+    let steps: Vec<u32> = match span {
+        Some(span) => (1..=u32::try_from(span).ok()?).collect(),
+        None => vec![u32::try_from(step).ok()?],
+    };
+    let mut total = 0.0;
+    for k in steps {
+        total += cells.get(&step_date(origin, grain, k)?)?;
+    }
+    Some(total)
+}
+
+/// Where an actual fell against the recorded bands.
+fn landed(actual: f64, q: Quantiles) -> &'static str {
+    if actual < q[0] {
+        "below"
+    } else if actual < q[1] {
+        "low"
+    } else if actual <= q[3] {
+        "inside"
+    } else if actual <= q[4] {
+        "high"
+    } else {
+        "above"
+    }
+}
+
+fn quantiles(point: &Value) -> Option<Quantiles> {
+    Some([
+        point["p05"].as_f64()?,
+        point["p10"].as_f64()?,
+        point["p50"].as_f64()?,
+        point["p90"].as_f64()?,
+        point["p95"].as_f64()?,
+    ])
+}
+
+fn parse_date(s: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
+/// `forecast_points()` — the latest forecast, flattened: what
+/// `metric_forecast` last landed for the bound dataset, one row per
+/// metric and point, with the actual joined from the cube at read and
+/// `landed` saying where it fell — `below`, `low`, `inside`, `high`
+/// or `above` against p05, p10, p90 and p95 — where the actual is
+/// known. The record itself, never a re-run. A metric the door found
+/// inapplicable is one row with its reason and no point; a dataset
+/// never forecast serves no rows.
+/// The forecast world's cells for `metric_series(world => 'forecast')`:
+/// per metric, the newest run's grain and its steps as `(period,
+/// median)`, the period as nanoseconds since the epoch. The totals are
+/// not cells. Empty for a dataset never forecast; a metric the run
+/// found inapplicable has no entry.
+pub(crate) async fn world_cells(
+    shared: &Arc<Shared>,
+) -> Result<HashMap<String, (String, Vec<(i64, f64)>)>, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let rctx = shared.read_context().await?;
+    let mut out = HashMap::new();
+    let Some(verdict) = crate::cube::judged_bodies(&rctx, &dataset, ASPECT).remove(&dataset) else {
+        return Ok(out);
+    };
+    for metric in verdict.body["metrics"].as_array().into_iter().flatten() {
+        if metric["applicable"] != Value::Bool(true) {
+            continue;
+        }
+        let (Some(name), Some(grain)) = (metric["metric"].as_str(), metric["grain"].as_str())
+        else {
+            continue;
+        };
+        let mut cells = Vec::new();
+        for point in metric["points"].as_array().into_iter().flatten() {
+            if !point["span"].is_null() {
+                continue;
+            }
+            let period = point["period"]
+                .as_str()
+                .and_then(parse_date)
+                .and_then(nanos_of);
+            let (Some(period), Some(median)) = (period, point["p50"].as_f64()) else {
+                continue;
+            };
+            cells.push((period, median));
+        }
+        if !cells.is_empty() {
+            out.insert(name.to_string(), (grain.to_string(), cells));
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let rctx = shared.read_context().await?;
+    let landed_bodies = crate::cube::judged_bodies(&rctx, &dataset, ASPECT);
+    let mut out = Vec::new();
+    if let Some(verdict) = landed_bodies.get(&dataset) {
+        let computed_at = crate::cube::judged_at(&rctx, &dataset, ASPECT);
+        let cells = actuals(shared).await?;
+        for (seq, metric) in verdict.body["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let head = || {
+                let mut row = serde_json::Map::new();
+                row.insert("seq".into(), json!(seq as i64));
+                for key in [
+                    "metric",
+                    "applicable",
+                    "reason",
+                    "grain",
+                    "origin",
+                    "served_by",
+                ] {
+                    row.insert(key.into(), metric[key].clone());
+                }
+                row.insert("computed_at".into(), json!(computed_at));
+                row.insert("current".into(), json!(verdict.current));
+                row
+            };
+            let points = metric["points"].as_array().filter(|p| !p.is_empty());
+            let Some(points) = points else {
+                out.push(Value::Object(head()));
+                continue;
+            };
+            let name = metric["metric"].as_str().unwrap_or_default();
+            let grain = metric["grain"].as_str().unwrap_or_default();
+            let origin = metric["origin"].as_str().and_then(parse_date);
+            for (point_seq, point) in points.iter().enumerate() {
+                let mut row = head();
+                row.insert("point_seq".into(), json!(point_seq as i64));
+                for (k, v) in point.as_object().into_iter().flatten() {
+                    row.insert(k.clone(), v.clone());
+                }
+                let actual = origin.and_then(|origin| {
+                    actual_of(
+                        cells.get(name),
+                        origin,
+                        grain,
+                        point["step"].as_i64()?,
+                        point["span"].as_i64(),
+                    )
+                });
+                row.insert("actual".into(), json!(actual));
+                row.insert(
+                    "landed".into(),
+                    json!(actual.zip(quantiles(point)).map(|(a, q)| landed(a, q))),
+                );
+                out.push(Value::Object(row));
+            }
+        }
+    }
+    let mut fields = forecast_shape();
+    fields.push(Field::new("actual", DataType::Float64, true));
+    fields.push(Field::new("landed", DataType::Utf8, true));
+    fields.push(Field::new("computed_at", DataType::Utf8, true));
+    fields.push(Field::new("current", DataType::Boolean, true));
+    rows_batch(out, fields)
+}
+
+#[derive(Default)]
+struct Tally {
+    points: i64,
+    inside_80: i64,
+    inside_90: i64,
+    origins: HashSet<String>,
+}
+
+/// `forecast_coverage()` — over every forecast the record holds for the
+/// bound dataset, one row per metric, grain, step and span, and the
+/// same with `metric = ''` for the dataset as a whole: the points whose
+/// actual has landed, the share inside the 80% band (p10 to p90), the
+/// share inside the 90% band (p05 to p95), and how many forecasts the
+/// count comes from. One forecast per metric and origin counts, the
+/// newest run at that origin. This is the table a span rule reads.
+pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let rctx = shared.read_context().await?;
+    let returning: Vec<&str> = rctx
+        .functions
+        .iter()
+        .filter(|f| {
+            f.returns.as_deref() == Some(ASPECT)
+                && f.scope_dataset.as_deref().is_none_or(|s| s == dataset)
+        })
+        .map(|f| f.name.as_str())
+        .collect();
+    // Every run, not the newest: the read context keeps one row per
+    // function and subject, and coverage is read over the history. The
+    // relation's cells in column order: dataset, function, subject, …,
+    // the body at 5 and the clock at 6.
+    let mut runs: Vec<(String, Value)> = shared
+        .store
+        .relation_rows("measurements")
+        .await?
+        .into_iter()
+        .filter(|r| {
+            r.first().and_then(Option::as_deref) == Some(dataset.as_str())
+                && r.get(2).and_then(Option::as_deref) == Some(dataset.as_str())
+                && r.get(1)
+                    .and_then(Option::as_deref)
+                    .is_some_and(|f| returning.contains(&f))
+        })
+        .filter_map(|r| {
+            let body = serde_json::from_str::<Value>(r.get(5)?.as_deref()?).ok()?;
+            Some((r.get(6)?.clone().unwrap_or_default(), body))
+        })
+        .collect();
+    runs.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut out = Vec::new();
+    if !runs.is_empty() {
+        let cells = actuals(shared).await?;
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut tallies: HashMap<TallyKey, Tally> = HashMap::new();
+        for (_, body) in &runs {
+            for metric in body["metrics"].as_array().into_iter().flatten() {
+                if metric["applicable"] != json!(true) {
+                    continue;
+                }
+                let name = metric["metric"].as_str().unwrap_or_default().to_string();
+                let grain = metric["grain"].as_str().unwrap_or_default().to_string();
+                let Some(origin_text) = metric["origin"].as_str() else {
+                    continue;
+                };
+                let Some(origin) = parse_date(origin_text) else {
+                    continue;
+                };
+                if !seen.insert((name.clone(), origin_text.to_string())) {
+                    continue;
+                }
+                for point in metric["points"].as_array().into_iter().flatten() {
+                    let (Some(step), Some(q)) = (point["step"].as_i64(), quantiles(point)) else {
+                        continue;
+                    };
+                    let span = point["span"].as_i64();
+                    let to_go = point["to_go"].as_str().map(str::to_string);
+                    let Some(actual) = actual_of(cells.get(&name), origin, &grain, step, span)
+                    else {
+                        continue;
+                    };
+                    let where_ = landed(actual, q);
+                    for who in [name.as_str(), ""] {
+                        let tally = tallies
+                            .entry((who.to_string(), grain.clone(), step, span, to_go.clone()))
+                            .or_default();
+                        tally.points += 1;
+                        tally.inside_80 += i64::from(where_ == "inside");
+                        tally.inside_90 += i64::from(matches!(where_, "low" | "inside" | "high"));
+                        tally.origins.insert(origin_text.to_string());
+                    }
+                }
+            }
+        }
+        let mut keyed: Vec<_> = tallies.into_iter().collect();
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        for ((metric, grain, step, span, to_go), tally) in keyed {
+            let share = |n: i64| n as f64 / tally.points as f64;
+            out.push(json!({
+                "metric": metric, "grain": grain, "step": step, "span": span, "to_go": to_go,
+                "points": tally.points,
+                "inside_80": share(tally.inside_80), "inside_90": share(tally.inside_90),
+                "forecasts": tally.origins.len() as i64,
+            }));
+        }
+    }
+    rows_batch(
+        out,
+        vec![
+            // `''` is the dataset as a whole, every metric together.
+            Field::new("metric", DataType::Utf8, true),
+            Field::new("grain", DataType::Utf8, true),
+            Field::new("step", DataType::Int64, true),
+            Field::new("span", DataType::Int64, true),
+            Field::new("to_go", DataType::Utf8, true),
+            // Points whose actual has landed.
+            Field::new("points", DataType::Int64, true),
+            // Shares of those points inside p10..p90 and p05..p95.
+            Field::new("inside_80", DataType::Float64, true),
+            Field::new("inside_90", DataType::Float64, true),
+            // Distinct origins the points come from.
+            Field::new("forecasts", DataType::Int64, true),
+        ],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn spans_run_to_the_quarter_and_the_year_the_first_step_falls_in() {
+        // Origin June: July starts Q3, three months to its end and six
+        // to the year's.
+        assert_eq!(
+            spans_of(d(2025, 6, 1), "month", 12),
+            vec![(3, "quarter"), (6, "year")]
+        );
+        // Origin September: October starts Q4; the quarter and the
+        // year end together, so one span, asked once under both names.
+        assert_eq!(
+            spans_of(d(2025, 9, 1), "month", 12),
+            vec![(3, "quarter"), (3, "year")]
+        );
+        // Origin December: a whole quarter and a whole year ahead.
+        assert_eq!(
+            spans_of(d(2025, 12, 1), "month", 12),
+            vec![(3, "quarter"), (12, "year")]
+        );
+        // Quarters: the year to go.
+        assert_eq!(spans_of(d(2025, 4, 1), "quarter", 4), vec![(2, "year")]);
+        // Days: the month to go — 30 days of June after May 31.
+        assert_eq!(spans_of(d(2025, 5, 31), "day", 31), vec![(30, "month")]);
+        // Weeks: the quarter to go; a week belongs to the quarter its
+        // Monday falls in. 2025-06-30 is a Monday: July's first week
+        // starts 2025-07-07 and the quarter's last on 2025-09-29.
+        assert_eq!(spans_of(d(2025, 6, 30), "week", 13), vec![(13, "quarter")]);
+        // A span the horizon cannot reach is not asked: the third
+        // quarter of 2024 starts on a Monday and holds fourteen.
+        assert_eq!(spans_of(d(2024, 6, 24), "week", 13), vec![]);
+    }
+
+    #[test]
+    fn an_actual_lands_against_the_bands() {
+        let q = [90.0, 92.0, 100.0, 108.0, 110.0];
+        assert_eq!(landed(80.0, q), "below");
+        assert_eq!(landed(91.0, q), "low");
+        assert_eq!(landed(100.0, q), "inside");
+        assert_eq!(landed(109.0, q), "high");
+        assert_eq!(landed(120.0, q), "above");
+    }
+
+    #[test]
+    fn a_span_sums_its_periods_only_when_every_one_is_known() {
+        let mut cells = HashMap::new();
+        cells.insert(d(2025, 7, 1), 10.0);
+        cells.insert(d(2025, 8, 1), 20.0);
+        let origin = d(2025, 6, 1);
+        assert_eq!(
+            actual_of(Some(&cells), origin, "month", 2, None),
+            Some(20.0)
+        );
+        assert_eq!(
+            actual_of(Some(&cells), origin, "month", 2, Some(2)),
+            Some(30.0)
+        );
+        assert_eq!(actual_of(Some(&cells), origin, "month", 3, Some(3)), None);
+        assert_eq!(actual_of(None, origin, "month", 1, None), None);
+    }
+}

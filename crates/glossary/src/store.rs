@@ -999,9 +999,11 @@ impl Store {
             .1;
 
         // BY gates actor glosses only — function voices arrive via
-        // RETURNS. Measurements are never glossed, so a witness
-        // on one carries only a detector; a witness naming neither BY nor
-        // DETECTOR declares nothing.
+        // RETURNS. Measurements are never glossed, so a witness on one
+        // carries no speakers: with a detector it bands the measurement,
+        // without one it names the measurement as standing, so a landing
+        // owes it (the forecast). On any other aspect a witness naming
+        // neither BY nor DETECTOR declares nothing.
         let speakers: Vec<Value> = decl
             .speakers
             .iter()
@@ -1013,7 +1015,7 @@ impl Store {
         if kind == "measurement" && !speakers.is_empty() {
             return Err(Error::MeasurementWitnessSpeakers(aspect.into()));
         }
-        if speakers.is_empty() && decl.detector.is_none() {
+        if speakers.is_empty() && decl.detector.is_none() && kind != "measurement" {
             return Err(Error::WitnessNamesNothing(decl.name.value.clone()));
         }
 

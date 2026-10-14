@@ -161,6 +161,28 @@ DECLARE ASPECT metric_bands WITH $${
   }
 }$$ AS MEASUREMENT ON DATASET;
 
+DECLARE ASPECT metric_forecast WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {
+    "applicable": {"type": "boolean"},
+    "metrics": {"type": "array", "items": {"type": "object",
+      "properties": {
+        "metric": {"type": "string"}, "applicable": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "grain": {"type": "string"}, "origin": {"type": "string"},
+        "served_by": {"type": "string"},
+        "points": {"type": "array", "items": {"type": "object",
+          "properties": {
+            "step": {"type": "integer"},
+            "span": {"type": ["integer", "null"]},
+            "to_go": {"type": ["string", "null"]},
+            "period": {"type": "string"},
+            "p05": {"type": "number"}, "p10": {"type": "number"},
+            "p50": {"type": "number"}, "p90": {"type": "number"},
+            "p95": {"type": "number"}}}}}}}
+  }
+}$$ AS MEASUREMENT ON DATASET;
+
 DECLARE FUNCTION profile FOR GLOBAL AS $$profile.sql$$
   RETURNS column_profile;
 
@@ -195,6 +217,9 @@ DECLARE FUNCTION slot_entropy FOR GLOBAL AS $$slot_entropy.sql$$;
 
 DECLARE FUNCTION metric_bands FOR GLOBAL AS $$metric_bands.sql$$
   RETURNS metric_bands;
+
+DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$metric_forecast.sql$$
+  RETURNS metric_forecast;
 
 DECLARE FUNCTION band_breach FOR GLOBAL AS $$band_breach.sql$$;
 

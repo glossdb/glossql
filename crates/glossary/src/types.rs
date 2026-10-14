@@ -36,7 +36,9 @@ pub enum Error {
         "aspect `{aspect}` is already returned by `{existing}` — a MEASUREMENT aspect has one producing function"
     )]
     MeasurementProducerTaken { aspect: String, existing: String },
-    #[error("witness `{0}` names neither BY nor DETECTOR — nothing to declare")]
+    #[error(
+        "witness `{0}` names neither BY nor DETECTOR — nothing to declare (a measurement's witness alone may)"
+    )]
     WitnessNamesNothing(String),
     #[error(
         "function `{function}` RETURNS `{aspect}`, a QUERY aspect — metrics run as their SQL, functions never fill them"
