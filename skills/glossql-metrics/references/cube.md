@@ -41,6 +41,9 @@ flow the quarter and the year to go. `SELECT metric_forecast() FROM
 
 - `forecast_points()` is the latest forecast as rows; `actual` and
   `landed` fill as the periods land.
+- `metric_series(world => 'forecast')` serves the newest run's medians
+  as cells beside the actuals, at the metric's own resolution; the
+  default read is the actual world alone.
 - `forecast_coverage()` counts, over every forecast recorded, how often
   the actual landed inside the 80% and 90% bands per step. Read it
   before you hand a range out as a promise.
@@ -142,7 +145,10 @@ metric's own resolution; a grain finer than a metric's resolution
 serves no rows for it). `dimension = ''` is the metric's own total,
 `'alternative'` the disclosed rival, anything else a served
 dimension; a ratio row carries `num` / `den`, and `behavior` is the
-verb that made the row. This is what an app frame charts:
+verb that made the row. `world` says which set of numbers a row is:
+`actual` unless asked, `world => 'forecast'` the newest
+`metric_forecast` run's medians ahead of the actuals at the metric's
+own resolution. This is what an app frame charts:
 
 ```sql
 SELECT metric, period, value FROM metric_series(grain => 'month')

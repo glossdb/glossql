@@ -69,6 +69,13 @@ metric row is the dataset as a whole. This is the table a span rule
 reads: a number handed out as a range comes with the coverage this
 dataset measured at that step.
 
+`metric_series(world => 'forecast')` serves the newest run as cells
+beside the actuals: per metric, one row per step with the median as
+`value`, at the metric's own resolution. The actual world is the
+default, so a read that names no world sees no forecast rows. A
+variance of forecast against actual is a join of the two worlds on
+metric and period ([reads](../reference/reads.md), `metric_series()`).
+
 ## Why no PIT
 
 The walk ([bands](bands.md)) asks about months that have already
@@ -82,10 +89,20 @@ position. Coverage needs only the band.
 
 The call goes to the service the forecast point names,
 `GLOSSQL_FORECAST_URL` ([install](../start/install.md)), as one Arrow
-IPC stream each way. Without it the measurement refuses by name. The
-service measured its 80% band on held-out monthly data at 0.79 one
-month ahead, 0.74 over the months of a quarter and 0.71 over the
-months of a year; weekly at 0.75, 0.80 and 0.82.
+IPC stream each way. Without it the measurement refuses by name.
+
+The service measured its 80% band on held-out data at every step the
+horizon asks and for the totals it asks:
+
+| Grain | One ahead | At the horizon | The totals |
+|---|---|---|---|
+| month | 0.75 | 0.67 at twelve | quarter 0.72, year 0.67 |
+| week | 0.81 | 0.80 at thirteen | quarter 0.85 |
+| day | 0.79 | 0.74 at thirty-one | the calendar month 0.94 |
+| quarter | 0.81 | 0.80 at four | year 0.84 |
+
+Weeks and quarters hold at every step. Months hold at none. Days hold
+at the nearest three steps and run narrow beyond.
 
 ## Limits
 
@@ -94,7 +111,8 @@ months of a year; weekly at 0.75, 0.80 and 0.82.
   the only measure.
 - The metric is forecast as a whole. Its members per dimension are
   not.
-- Day and quarter grains take the monthly dependence for a total's
-  band; the service has not measured them.
+- A total's band on day grain takes the monthly dependence, so a
+  calendar month of days covers 0.94: too wide. The day's own
+  dependence is not measured.
 - A re-run at the same origin counts once in coverage: the newest run
   at that origin.

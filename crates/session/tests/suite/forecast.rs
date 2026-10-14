@@ -458,3 +458,170 @@ async fn the_door_reads_the_dataset_in_use() {
         .unwrap_err();
     assert!(e.to_string().contains("USE other first"), "{e}");
 }
+
+/// The kit's measurement, declared as the bootstrap does: the aspect at
+/// dataset grain and the function that folds the door's rows into one
+/// body per run.
+fn forecast_kit() -> &'static str {
+    r##"
+DECLARE ASPECT metric_forecast WITH $${
+  "type": "object", "required": ["applicable"],
+  "properties": {
+    "applicable": {"type": "boolean"},
+    "metrics": {"type": "array", "items": {"type": "object",
+      "properties": {
+        "metric": {"type": "string"}, "applicable": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "grain": {"type": "string"}, "origin": {"type": "string"},
+        "served_by": {"type": "string"},
+        "points": {"type": "array", "items": {"type": "object",
+          "properties": {
+            "step": {"type": "integer"},
+            "span": {"type": ["integer", "null"]},
+            "to_go": {"type": ["string", "null"]},
+            "period": {"type": "string"},
+            "p05": {"type": "number"}, "p10": {"type": "number"},
+            "p50": {"type": "number"}, "p90": {"type": "number"},
+            "p95": {"type": "number"}}}}}}}
+  }
+}$$ AS MEASUREMENT ON DATASET;
+DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$
+WITH m AS (
+  SELECT seq, metric, applicable, reason, grain, origin, served_by,
+         CASE WHEN applicable THEN coalesce(array_agg(named_struct(
+           'step', step, 'span', span, 'to_go', to_go, 'period', period,
+           'p05', p05, 'p10', p10, 'p50', p50, 'p90', p90, 'p95', p95
+         ) ORDER BY point_seq) FILTER (WHERE period IS NOT NULL), []) END AS points
+  FROM metric_forecast_ahead($subject)
+  GROUP BY seq, metric, applicable, reason, grain, origin, served_by
+)
+SELECT
+  count(metric) > 0 AS applicable,
+  coalesce(array_agg(named_struct(
+    'metric', metric, 'applicable', applicable, 'reason', reason,
+    'grain', grain, 'origin', origin, 'served_by', served_by,
+    'points', points
+  ) ORDER BY seq) FILTER (WHERE metric IS NOT NULL), []) AS metrics
+FROM m
+$$ RETURNS metric_forecast;
+"##
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_forecast_world_serves_the_newest_run_as_cells() {
+    let session = monthly_session(Arc::new(Flat::default())).await;
+    session
+        .execute(forecast_kit())
+        .await
+        .expect("the measurement is declared");
+
+    // Nothing forecast yet: the forecast world is empty, and the
+    // default read is the actual world alone.
+    let ahead = rows(
+        &session,
+        "SELECT count(*) AS n FROM metric_series(world => 'forecast');",
+    )
+    .await;
+    assert!(ahead.contains("| 0 "), "{ahead}");
+    let worlds = rows(&session, "SELECT DISTINCT world FROM metric_series();").await;
+    assert!(
+        worlds.contains("actual") && !worlds.contains("forecast"),
+        "{worlds}"
+    );
+
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .expect("the forecast lands");
+
+    // The flow and the ratio: twelve steps each as cells, the median
+    // for the value, the metric's own verb, no halves — and no total.
+    let cells = rows(
+        &session,
+        "SELECT metric, world, dimension, member, period, value, num, den, behavior \
+         FROM metric_series(world => 'forecast') ORDER BY metric, period;",
+    )
+    .await;
+    let revenue: Vec<&str> = cells.lines().filter(|l| l.contains("revenue")).collect();
+    assert_eq!(revenue.len(), 12, "{cells}");
+    assert!(
+        revenue[0].contains("2025-07-01") && revenue[0].contains("270.0"),
+        "{}",
+        revenue[0]
+    );
+    assert!(revenue[11].contains("2026-06-01"), "{}", revenue[11]);
+    for line in &revenue {
+        assert!(
+            line.contains("| forecast |") && line.contains("| 270.0 |     |     | flow "),
+            "{line}"
+        );
+    }
+    let win_rate: Vec<&str> = cells.lines().filter(|l| l.contains("win_rate")).collect();
+    assert_eq!(win_rate.len(), 12, "{cells}");
+    assert!(win_rate.iter().all(|l| l.contains("| ratio ")), "{cells}");
+
+    // The default read is unchanged: no forecast row, and the two
+    // worlds' periods are disjoint, so a join on metric and period is
+    // empty until the actuals land.
+    let actual = rows(
+        &session,
+        "SELECT count(*) AS n FROM metric_series() WHERE world <> 'actual';",
+    )
+    .await;
+    assert!(actual.contains("| 0 "), "{actual}");
+    let joined = rows(
+        &session,
+        "SELECT count(*) AS n, max(a.period) < min(f.period) AS ahead \
+         FROM metric_series() a \
+         JOIN metric_series(world => 'forecast') f \
+           ON a.metric = f.metric AND a.period = f.period;",
+    )
+    .await;
+    assert!(joined.contains("| 0 "), "{joined}");
+    let order = rows(
+        &session,
+        "SELECT max(a.period) < min(f.period) AS ahead \
+         FROM metric_series() a, metric_series(world => 'forecast') f \
+         WHERE a.metric = 'revenue' AND f.metric = 'revenue';",
+    )
+    .await;
+    assert!(order.contains("true"), "{order}");
+
+    // The forecast stands at the metric's own grain: asked at the
+    // grain, the same cells; at another, none.
+    let month = rows(
+        &session,
+        "SELECT count(*) AS n FROM metric_series(world => 'forecast', grain => 'month');",
+    )
+    .await;
+    assert!(month.contains("| 24 "), "{month}");
+    let quarter = rows(
+        &session,
+        "SELECT count(*) AS n FROM metric_series(grain => 'quarter', world => 'forecast');",
+    )
+    .await;
+    assert!(quarter.contains("| 0 "), "{quarter}");
+
+    // The worlds not served yet refuse by name; a word that is no
+    // world says what one is.
+    let plan = session
+        .execute("SELECT * FROM metric_series(world => 'plan');")
+        .await
+        .unwrap_err();
+    assert!(
+        plan.to_string()
+            .contains("the plan world is not served yet")
+            && plan.to_string().contains("plan grounding"),
+        "{plan}"
+    );
+    let weather = session
+        .execute("SELECT * FROM metric_series(world => 'weather');")
+        .await
+        .unwrap_err();
+    assert!(
+        weather
+            .to_string()
+            .contains("a world is actual or forecast"),
+        "{weather}"
+    );
+}

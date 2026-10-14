@@ -96,6 +96,36 @@ const NO_JUDGED_TIME: &str = "no judged time column: no served date column carri
      current fact or a derived relation this is the right answer — read.<name>() serves it, and \
      no series is owed";
 
+/// Which set of numbers a cell belongs to. The actual world is what
+/// the groundings compute from the data; the forecast world is the
+/// newest `metric_forecast` run's medians, one cell per step. The plan
+/// and the scenario worlds come with the plan grounding's form and the
+/// scenario's declared form, and are refused by name until then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum World {
+    Actual,
+    Forecast,
+}
+
+impl World {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            World::Actual => "actual",
+            World::Forecast => "forecast",
+        }
+    }
+
+    /// `Ok(None)` for a world the kernel names and does not serve yet.
+    fn parse(s: &str) -> Result<Option<World>, ()> {
+        match s {
+            "actual" => Ok(Some(World::Actual)),
+            "forecast" => Ok(Some(World::Forecast)),
+            "plan" | "scenario" => Ok(None),
+            _ => Err(()),
+        }
+    }
+}
+
 /// A calendar resolution — the rungs of the ladder, finest first, and
 /// the grains a read may ask for. Ordered, so the coarser of two is
 /// `max`.
@@ -520,7 +550,7 @@ fn through_edge(
 
 /// One metric's cube: the fact row and the cells at its resolution, in
 /// the shape `metric_series()` serves —
-/// `(metric, dimension, member, period, value, num, den, behavior)`, dimension
+/// `(metric, world, dimension, member, period, value, num, den, behavior)`, dimension
 /// `''` the total, `'alternative'` the rival, `behavior` the verb that
 /// produced the row (a rival's may differ from the metric's).
 #[derive(Debug)]
@@ -578,7 +608,7 @@ const CUBE_FACT_TAG: &str = "glossql.cube.fact";
 /// The shape of a head, folded into every digest: a head landed under
 /// another shape — cells at the metric's own resolution over its own
 /// rung, once — misses and is built over.
-const HEAD_SHAPE: &str = "floor cells over the longest rung";
+const HEAD_SHAPE: &str = "floor cells over the longest rung, the world named";
 
 /// A `Hasher` over blake3: every `Hash` impl the digest folds writes
 /// its bytes here, so the digest is the same in every process — the
@@ -1535,9 +1565,14 @@ async fn write_fact(
 fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
     use datafusion::arrow::array::AsArray;
     use datafusion::arrow::datatypes::{Float64Type, TimestampNanosecondType};
-    let dimension = cells.column(1).as_string::<i32>();
-    let period = cells.column(3).as_primitive::<TimestampNanosecondType>();
-    let value = cells.column(4).as_primitive::<Float64Type>();
+    let column = |name: &str| {
+        cells
+            .column_by_name(name)
+            .expect("the cells carry the series schema")
+    };
+    let dimension = column("dimension").as_string::<i32>();
+    let period = column("period").as_primitive::<TimestampNanosecondType>();
+    let value = column("value").as_primitive::<Float64Type>();
     (0..cells.num_rows())
         .filter(|&i| dimension.value(i).is_empty())
         .map(|i| (period.value(i), value.value(i)))
@@ -2435,7 +2470,7 @@ async fn build(
             .then_with(|| a.dimension.cmp(&b.dimension))
             .then_with(|| a.member.cmp(&b.member))
     });
-    let cells = cells_batch(&slot.aspect, &cells);
+    let cells = cells_batch(&slot.aspect, World::Actual, &cells);
     // What the data holds at the resolution and the window leaves out:
     // the periods the frame spans less the periods the total series
     // serves inside the metric's own window — counted over the head,
@@ -2636,7 +2671,7 @@ async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<
     fact.resolution = Some(grain);
     fact.window = window.map(str::to_string);
     Ok(Cube {
-        cells: cells_batch(&fact.metric, &cells),
+        cells: cells_batch(&fact.metric, World::Actual, &cells),
         fact,
         version_bound: head.version_bound.clone(),
     })
@@ -2959,11 +2994,11 @@ fn cell_fields() -> Vec<Field> {
     ]
 }
 
-/// The `metric_series()` shape: the cells, each row naming its metric.
-/// One schema for the process — every cube's cells carry it, and every
-/// read hands it on rather than rebuilding it.
+/// The `metric_series()` shape: the cells, each row naming its metric
+/// and its world. One schema for the process — every cube's cells
+/// carry it, and every read hands it on rather than rebuilding it.
 static SERIES: LazyLock<SchemaRef> = LazyLock::new(|| {
-    let mut fields = vec![utf8("metric")];
+    let mut fields = vec![utf8("metric"), utf8("world")];
     fields.extend(cell_fields());
     Arc::new(Schema::new(fields))
 });
@@ -2972,15 +3007,20 @@ fn series_schema() -> SchemaRef {
     Arc::clone(&SERIES)
 }
 
-/// A cube's cells as the read serves them, the metric named on every
-/// row. Built once, at build time: what the cache holds is what a read
-/// hands the planner, so a read allocates nothing for the cells.
-fn cells_batch(metric: &str, cells: &[Cell]) -> RecordBatch {
+/// A cube's cells as the read serves them, the metric and the world
+/// named on every row — one batch is one world. Built once, at build
+/// time: what the cache holds is what a read hands the planner, so a
+/// read allocates nothing for the cells.
+fn cells_batch(metric: &str, world: World, cells: &[Cell]) -> RecordBatch {
     RecordBatch::try_new(
         series_schema(),
         vec![
             Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
                 metric,
+                cells.len(),
+            ))),
+            Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+                world.as_str(),
                 cells.len(),
             ))),
             Arc::new(StringArray::from_iter_values(
@@ -3007,117 +3047,218 @@ fn cells_batch(metric: &str, cells: &[Cell]) -> RecordBatch {
 
 // -- the reads ---------------------------------------------------------
 
-/// The `grain => '<grain>'` argument of `metric_series()`, or none.
-pub(crate) fn grain_arg(args: &[FunctionArg]) -> Result<Option<Resolution>, SessionError> {
+/// The named arguments of `metric_series()`: `grain => '<grain>'` and
+/// `world => '<world>'`, either, both in any order, or none. Absent, a
+/// metric's own resolution and the actual world.
+pub(crate) fn series_args(
+    args: &[FunctionArg],
+) -> Result<(Option<Resolution>, World), SessionError> {
     let refuse = |what: String| SessionError::BadSubject(format!("metric_series({what})"));
-    let names = "minute, hour, day, week, month, quarter, year";
-    match args {
-        [] => Ok(None),
-        [
+    let grains = "minute, hour, day, week, month, quarter, year";
+    let worlds = "actual or forecast";
+    let spelled = || {
+        args.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // Anything but the two named arguments is refused with the read
+    // the caller meant, spelled out: the grain they named, the metric
+    // as a filter.
+    let meant = || {
+        let named = |wanted: &str| {
+            args.iter().find_map(|a| match a {
+                FunctionArg::Named {
+                    name,
+                    arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
+                    ..
+                }
+                | FunctionArg::ExprNamed {
+                    name: SQLExpr::Identifier(name),
+                    arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
+                    ..
+                } if name.value.eq_ignore_ascii_case(wanted) => match &v.value {
+                    SQLValue::SingleQuotedString(s) => Some(s.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+        };
+        let grain = named("grain").unwrap_or_else(|| "month".into());
+        let filter = named("metric")
+            .map(|m| format!(" WHERE metric = '{m}'"))
+            .unwrap_or_default();
+        refuse(format!(
+            "{}): the arguments are the grain and the world — `SELECT metric, period, value FROM \
+             metric_series(grain => '{grain}'){filter}`, `metric_series(world => 'forecast')`; \
+             filters ride WHERE. The columns are metric, world, dimension, member, period, \
+             value, num, den, behavior: the time column is `period`, the total is \
+             `dimension = ''`",
+            spelled()
+        ))
+    };
+    let mut grain = None;
+    let mut world = World::Actual;
+    for arg in args {
+        let (name, value) = match arg {
             FunctionArg::ExprNamed {
                 name: SQLExpr::Identifier(n),
                 arg: FunctionArgExpr::Expr(v),
                 ..
-            },
-        ]
-        | [
-            FunctionArg::Named {
+            }
+            | FunctionArg::Named {
                 name: n,
                 arg: FunctionArgExpr::Expr(v),
                 ..
-            },
-        ] if n.value.eq_ignore_ascii_case("grain") => match v {
+            } => (n.value.to_ascii_lowercase(), v),
+            _ => return Err(meant()),
+        };
+        let (names, example) = match name.as_str() {
+            "grain" => (grains, "month"),
+            "world" => (worlds, "forecast"),
+            _ => return Err(meant()),
+        };
+        let text = match value {
             SQLExpr::Value(v) => match &v.value {
-                SQLValue::SingleQuotedString(s) => Resolution::parse(s)
-                    .map(Some)
-                    .ok_or_else(|| refuse(format!("grain => '{s}'): a grain is one of {names}"))),
-                SQLValue::Placeholder(p) => Err(refuse(format!(
-                    "grain => {p}): the grain is unbound — a frame binds it from its URL, \
-                     a statement spells it: grain => 'month'"
-                ))),
-                other => Err(refuse(format!(
-                    "grain => {other}): the grain is a quoted name — one of {names}"
-                ))),
+                SQLValue::SingleQuotedString(s) => s.clone(),
+                SQLValue::Placeholder(p) => {
+                    return Err(refuse(format!(
+                        "{name} => {p}): the {name} is unbound — a frame binds it from its URL, \
+                         a statement spells it: {name} => '{example}'"
+                    )));
+                }
+                other => {
+                    return Err(refuse(format!(
+                        "{name} => {other}): the {name} is a quoted name — one of {names}"
+                    )));
+                }
             },
-            other => Err(refuse(format!(
-                "grain => {other}): the grain is a quoted name — one of {names}"
-            ))),
-        },
-        // Anything else is refused with the read the caller meant,
-        // spelled out: the grain they named, the metric as a filter.
-        _ => {
-            let named = |wanted: &str| {
-                args.iter().find_map(|a| match a {
-                    FunctionArg::Named {
-                        name,
-                        arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
-                        ..
+            other => {
+                return Err(refuse(format!(
+                    "{name} => {other}): the {name} is a quoted name — one of {names}"
+                )));
+            }
+        };
+        match name.as_str() {
+            "grain" => {
+                grain = Some(Resolution::parse(&text).ok_or_else(|| {
+                    refuse(format!("grain => '{text}'): a grain is one of {grains}"))
+                })?);
+            }
+            _ => {
+                world = match World::parse(&text) {
+                    Ok(Some(w)) => w,
+                    Ok(None) => {
+                        let with = if text == "plan" {
+                            "the plan grounding's form"
+                        } else {
+                            "the scenario's declared form"
+                        };
+                        return Err(refuse(format!(
+                            "world => '{text}'): the {text} world is not served yet — it comes \
+                             with {with}; the worlds served are {worlds}"
+                        )));
                     }
-                    | FunctionArg::ExprNamed {
-                        name: SQLExpr::Identifier(name),
-                        arg: FunctionArgExpr::Expr(SQLExpr::Value(v)),
-                        ..
-                    } if name.value.eq_ignore_ascii_case(wanted) => match &v.value {
-                        SQLValue::SingleQuotedString(s) => Some(s.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                })
-            };
-            let grain = named("grain").unwrap_or_else(|| "month".into());
-            let filter = named("metric")
-                .map(|m| format!(" WHERE metric = '{m}'"))
-                .unwrap_or_default();
-            Err(refuse(format!(
-                "{}): the one argument is the grain — `SELECT metric, period, value FROM \
-                 metric_series(grain => '{grain}'){filter}`; filters ride WHERE. The columns \
-                 are metric, dimension, member, period, value, num, den, behavior: the time \
-                 column is `period`, the total is `dimension = ''`",
-                args.iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )))
+                    Err(()) => {
+                        return Err(refuse(format!("world => '{text}'): a world is {worlds}")));
+                    }
+                };
+            }
         }
+    }
+    Ok((grain, world))
+}
+
+/// The verb as the cells carry it; a word the cube never writes is no
+/// verb.
+fn verb_static(verb: &str) -> &'static str {
+    match verb {
+        "flow" => "flow",
+        "stock" => "stock",
+        "ratio" => "ratio",
+        _ => "",
     }
 }
 
-/// `metric_series(grain => …)` — the cells of every current grounding:
-/// `(metric, dimension, member, period, value, num, den, behavior)`.
-/// Without a grain each metric serves its cells at its own resolution
-/// over its own rung; with one, at the asked grain over that grain's
-/// rung — either a plan over the metric's head, cached beside it. A
-/// metric coarser than the asked grain serves no rows — honest
-/// absence. `period` is the bucket's start, a typed timestamp. A cache
-/// entry is never stale: it is a hit or a miss.
+/// `metric_series(grain => …, world => …)` — the cells of every
+/// current grounding: `(metric, world, dimension, member, period,
+/// value, num, den, behavior)`. Without a grain each metric serves its
+/// cells at its own resolution over its own rung; with one, at the
+/// asked grain over that grain's rung — either a plan over the
+/// metric's head, cached beside it. A metric coarser than the asked
+/// grain serves no rows — honest absence. `period` is the bucket's
+/// start, a typed timestamp. A cache entry is never stale: it is a hit
+/// or a miss.
+///
+/// Without a world, the actual world: every read that stood before
+/// the column serves the same rows. The forecast world is the newest
+/// `metric_forecast` run per metric, its steps as cells with the
+/// median for the value, at the metric's own resolution only — a
+/// median re-bucketed is not a median, so another grain serves no
+/// forecast rows, and a run at a grain the metric no longer has serves
+/// none. Its totals are not cells.
 ///
 /// The cached cube is the table. Its cells are handed to the planner
 /// as they sit in the cache — one batch per metric, `Arc`-shared,
 /// copied into nothing. The only rows a read allocates are the ones
-/// it answers with.
+/// it answers with: the forecast world's, a dozen per metric.
 pub(crate) async fn metric_series_batch(
     shared: &Arc<Shared>,
     grain: Option<Resolution>,
+    world: World,
 ) -> Result<Served, SessionError> {
     let mut partitions = Vec::new();
     if let Some(surface) = Surface::load(shared).await? {
+        let ahead = match world {
+            World::Forecast => crate::search::forecast_world_cells(shared).await?,
+            World::Actual => HashMap::new(),
+        };
         for slot in &surface.slots {
             let head = surface.entry(shared, slot).await;
             // An abstained metric has no resolution and no cells.
             let Some(resolution) = head.fact.resolution else {
                 continue;
             };
-            let asked = grain.unwrap_or(resolution);
-            if asked < resolution {
-                continue;
+            match world {
+                World::Actual => {
+                    let asked = grain.unwrap_or(resolution);
+                    if asked < resolution {
+                        continue;
+                    }
+                    partitions.push(
+                        surface
+                            .at_grain(shared, slot, head, asked)
+                            .await
+                            .cells
+                            .clone(),
+                    );
+                }
+                World::Forecast => {
+                    if grain.is_some_and(|g| g != resolution) {
+                        continue;
+                    }
+                    let Some((run_grain, points)) = ahead.get(&slot.aspect) else {
+                        continue;
+                    };
+                    if run_grain != resolution.as_str() {
+                        continue;
+                    }
+                    let behavior = head.fact.behavior.as_deref().map(verb_static).unwrap_or("");
+                    let cells: Vec<Cell> = points
+                        .iter()
+                        .map(|&(period, value)| Cell {
+                            dimension: String::new(),
+                            member: String::new(),
+                            period,
+                            value,
+                            num: None,
+                            den: None,
+                            behavior,
+                        })
+                        .collect();
+                    partitions.push(cells_batch(&slot.aspect, World::Forecast, &cells));
+                }
             }
-            partitions.push(
-                surface
-                    .at_grain(shared, slot, head, asked)
-                    .await
-                    .cells
-                    .clone(),
-            );
         }
     }
     Ok(Served {
@@ -3356,7 +3497,7 @@ mod tests {
             .collect();
         Arc::new(Cube {
             fact: Fact::abstain("m", String::new()),
-            cells: cells_batch("m", &cells),
+            cells: cells_batch("m", World::Actual, &cells),
             version_bound: None,
         })
     }

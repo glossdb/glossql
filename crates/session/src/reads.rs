@@ -518,7 +518,10 @@ pub const DOORS: &[(&str, &str)] = &[
     ("glossary", "GLOSSARY(<subject>[, all => true])"),
     ("attest", "ATTEST(<dataset>)"),
     ("metric_axes", "metric_axes()"),
-    ("metric_series", "metric_series([grain => '<grain>'])"),
+    (
+        "metric_series",
+        "metric_series([grain => '<grain>'][, world => '<world>'])",
+    ),
     ("fact_values", "fact_values()"),
     ("band_points", "band_points()"),
     ("forecast_points", "forecast_points()"),
@@ -1222,11 +1225,14 @@ pub(crate) async fn compute_batch(
         }
         ("glossary", Some(a)) => Ok(Some((glossary_read(shared, &a.args).await?).into())),
         ("attest", Some(a)) => Ok(Some((attest_read(shared, &a.args).await?).into())),
-        // The cube's two reads (crate::cube): the cells at a grain and
-        // the fact row per metric. Both build what is not built.
+        // The cube's two reads (crate::cube): the cells at a grain in a
+        // world, and the fact row per metric. Both build what is not
+        // built.
         ("metric_series", Some(a)) => {
-            let grain = crate::cube::grain_arg(&a.args)?;
-            Ok(Some(crate::cube::metric_series_batch(shared, grain).await?))
+            let (grain, world) = crate::cube::series_args(&a.args)?;
+            Ok(Some(
+                crate::cube::metric_series_batch(shared, grain, world).await?,
+            ))
         }
         ("metric_axes", Some(a)) => {
             if !a.args.is_empty() {

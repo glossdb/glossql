@@ -155,7 +155,9 @@ serves one dataset's.
 Two table functions over the cube — every grounded metric's cells, a
 query result computed at the read's pin from the grounding and the
 judged verdicts, landed in the catalog under the engine's cache,
-never recorded. One head per metric: its cells at the `cube` aspect's
+never recorded. The forecast world is the exception: it is read from
+the record, the newest `metric_forecast` run, at the metric's own
+resolution. One head per metric: its cells at the `cube` aspect's
 floor grain over the longest window of the aspect's ladder, built
 once and landed. Every grain a read serves is a plan over the head —
 a flow sums, a ratio re-divides its summed halves, a stock takes the
@@ -184,20 +186,31 @@ names), `note`, `actor_kind`, `released_at` (when the serving release
 was written — what a later release names in `at` to return to it).
 The same two collapses as `app_parts`. Workspace-wide.
 
-### metric_series(grain => …)
+### metric_series(grain => …, world => …)
 
-The cells: `metric`, `dimension` (`''` the total, `'alternative'` the
-disclosed rival, anything else a judged dimension column), `member`,
-`period` (a typed timestamp, the bucket's start), `value`, `num` /
-`den` (a ratio's summed halves, NULL elsewhere), `behavior` (the verb
-that made the row — `flow`, `stock` or `ratio`; a rival's may differ
-from the metric's). Without a grain each metric serves its cells at
-its own resolution over its own rung. With one (`minute` … `year`)
-each metric at or below that resolution serves its cells at the
-asked grain over that grain's rung — a plan over its head, the same
-grounding, verb and axes — so a day metric's months span the month
-rung; a metric coarser than the asked grain serves no rows. The one
-argument is the grain; filters ride `WHERE`.
+The cells: `metric`, `world` (which set of numbers the row belongs
+to: `actual` or `forecast`), `dimension` (`''` the total,
+`'alternative'` the disclosed rival, anything else a judged dimension
+column), `member`, `period` (a typed timestamp, the bucket's start),
+`value`, `num` / `den` (a ratio's summed halves, NULL elsewhere),
+`behavior` (the verb that made the row — `flow`, `stock` or `ratio`; a
+rival's may differ from the metric's). Without a grain each metric
+serves its cells at its own resolution over its own rung. With one
+(`minute` … `year`) each metric at or below that resolution serves its
+cells at the asked grain over that grain's rung — a plan over its
+head, the same grounding, verb and axes — so a day metric's months
+span the month rung; a metric coarser than the asked grain serves no
+rows. Without a world, the actual world: what the groundings compute
+from the data. `world => 'forecast'` serves the newest
+`metric_forecast` run per metric as cells — one row per step, the
+median as `value`, `dimension` and `member` `''`, `num` and `den` NULL
+— at the metric's own resolution only; another grain serves no
+forecast rows, and a dataset never forecast serves none. The totals
+are not cells; `forecast_points()` has them. The two worlds' periods
+do not overlap, so a variance of forecast against actual is a join on
+metric and period once the actuals land. The plan and the scenario
+worlds are refused by name until their forms are declared. The two
+arguments are named and come in any order; filters ride `WHERE`.
 
 ### metric_axes()
 

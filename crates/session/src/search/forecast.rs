@@ -228,7 +228,7 @@ pub(crate) async fn metric_forecast_ahead(
         )));
     }
     let cubes = crate::cube::cubes(shared).await?;
-    let served = crate::cube::metric_series_batch(shared, None).await?;
+    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
 
     let mut out: Vec<Row> = Vec::new();
     for (seq, cube) in cubes.iter().enumerate() {
@@ -538,7 +538,7 @@ fn forecast_shape() -> Vec<Field> {
 async fn actuals(
     shared: &Arc<Shared>,
 ) -> Result<HashMap<String, HashMap<NaiveDate, f64>>, SessionError> {
-    let served = crate::cube::metric_series_batch(shared, None).await?;
+    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
     let mut out: HashMap<String, HashMap<NaiveDate, f64>> = HashMap::new();
     for batch in &served.partitions {
         if batch.num_rows() == 0 {
@@ -618,6 +618,54 @@ fn parse_date(s: &str) -> Option<NaiveDate> {
 /// known. The record itself, never a re-run. A metric the door found
 /// inapplicable is one row with its reason and no point; a dataset
 /// never forecast serves no rows.
+/// The forecast world's cells for `metric_series(world => 'forecast')`:
+/// per metric, the newest run's grain and its steps as `(period,
+/// median)`, the period as nanoseconds since the epoch. The totals are
+/// not cells. Empty for a dataset never forecast; a metric the run
+/// found inapplicable has no entry.
+pub(crate) async fn world_cells(
+    shared: &Arc<Shared>,
+) -> Result<HashMap<String, (String, Vec<(i64, f64)>)>, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let rctx = shared.read_context().await?;
+    let mut out = HashMap::new();
+    let Some(verdict) = crate::cube::judged_bodies(&rctx, &dataset, ASPECT).remove(&dataset) else {
+        return Ok(out);
+    };
+    for metric in verdict.body["metrics"].as_array().into_iter().flatten() {
+        if metric["applicable"] != Value::Bool(true) {
+            continue;
+        }
+        let (Some(name), Some(grain)) = (metric["metric"].as_str(), metric["grain"].as_str())
+        else {
+            continue;
+        };
+        let mut cells = Vec::new();
+        for point in metric["points"].as_array().into_iter().flatten() {
+            if !point["span"].is_null() {
+                continue;
+            }
+            let period = point["period"]
+                .as_str()
+                .and_then(parse_date)
+                .and_then(nanos_of);
+            let (Some(period), Some(median)) = (period, point["p50"].as_f64()) else {
+                continue;
+            };
+            cells.push((period, median));
+        }
+        if !cells.is_empty() {
+            out.insert(name.to_string(), (grain.to_string(), cells));
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
     let dataset = shared
         .dataset

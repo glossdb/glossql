@@ -11,18 +11,19 @@ The general service call stands: one table in, one table out per
 point; the walk runs on `/forecast` with origins; the what-if door is
 gone and the plan rewrite stays. The forecast measurement stands on
 it: `metric_forecast` lands the model's quantiles per step and span
-at the origin, and two reads serve them. Everything below rides both.
+at the origin, and two reads serve them. The world stands on the
+measurement: `metric_series()` carries `world`, and the forecast
+world is served from the newest run. Everything below rides the
+three.
 
-1. The futures, in the order of the table below. The world first,
-   because the forecast world reads a measurement that stands while
-   the plan and the scenario worlds wait on their forms.
-2. The cube's widening, its own decision once the world is in.
+1. The futures, in the order of the table below. The plan and the
+   scenario worlds come with their forms.
+2. The cube's widening, its own decision.
 
 ## The table
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| A world on the cube reads: plan and scenario as heads, the forecast from the measurement, variance as a join | Medium, core | cube, the two cube reads, the docket | Next | |
 | Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
 | The scenario read in two passes: replay through the groundings, the estimate from the service | Medium | session, scripts, a point on the general call | Phase 2 | |
 | The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
@@ -62,6 +63,17 @@ at the origin, and two reads serve them. Everything below rides both.
   (`docs/methods/forecast.md`). The kit declares the aspect, the
   function and a witness without a detector; the owed rule admits
   such a witness (`cube.rs`, `wanted`; `owed.sql`).
+- The world on the series read (#106). `metric_series()` carries
+  `world` beside `metric`; `world => 'forecast'` serves the newest
+  `metric_forecast` run's medians as cells at the metric's own
+  resolution, the default read is the actual world alone, and `plan`
+  and `scenario` refuse by name until their forms exist
+  (`crates/session/src/cube.rs`: `World`, `series_args`,
+  `metric_series_batch`; `crates/session/src/search/forecast.rs`:
+  `world_cells`). The head's cells carry the column; `HEAD_SHAPE`
+  names it. The docket's trend frame unions the forecast world as a
+  dashed line named `forecast`. `metric_axes()` is unchanged until the
+  plan grounding.
 - The wire's worlds. A row's `status` is `actual`, `plan`, `forecast`
   or `scenario` (`../glossthesi/docs/contract.md`). `/forecast` takes
   covariates known ahead at any horizon, `origins` for a backtest,
@@ -90,15 +102,28 @@ at the origin, and two reads serve them. Everything below rides both.
   cycle guard (SPEC.md §9, PoC notes). The registry
   (`kpi_kit.glossql:98`) is for drills, and its operands are not
   checked (`docs/reference/kpi-kit.md`).
-- The span evidence. The forecast's 80% span holds 0.78 to 0.80 one
-  period ahead and 0.71 a year ahead on held-out monthly data
-  (`../glossthesi/docs/forecast.md`, GK-28, GK-42). The what-if's size
-  was right in one region: a set lever that explains a fifth or more
-  of the column, pinned by history to within about a third, standing
-  apart from the other inputs; 98% of 597 instances
-  (`../glossthesi/docs/whatif.md`). The under-reaction finding is
-  TabICL's forecaster; the forecast route's response to a covariate
-  change is not measured.
+- The span evidence. The forecast's 80% span, measured per step on
+  held-out data (`../glossthesi/docs/forecast.md`, GK-46): weeks hold
+  0.79 to 0.84 at every step and 0.85 for the quarter's total;
+  quarters 0.79 to 0.82 at every step and 0.84 for the year's total;
+  months 0.75 one ahead down to 0.67 at twelve, 0.72 and 0.67 for the
+  quarter's and the year's total, 0.80 at no step; days 0.79 one
+  ahead, 0.70 to 0.80 out to thirty-one, the calendar month's total
+  0.94 at the monthly dependence. Pooled over the steps the table
+  reproduces GK-28. The what-if's size was right in one region: a set
+  lever that explains a fifth or more of the column, pinned by history
+  to within about a third, standing apart from the other inputs; 98%
+  of 597 instances (`../glossthesi/docs/whatif.md`). A covariate moved
+  ahead on the forecast route (GK-47): the direction holds on 88% and
+  95% of the series whose history shows an effect, against the
+  what-if's 93% and 96%; the size is about half the history's where
+  the what-if had it right, 0.51 and 0.24 of the history's shift
+  against 0.99 and 0.42; the column moves where the history shows no
+  effect in a third to a half of the cases, still on 69% and 49%
+  against 90% and 86%. The plan row is level. The evaluation's
+  recommendation: the scenario's estimate rides `/whatif`, the
+  forecast route carries the plan's world. The decision is this
+  plan's.
 - Counterfactual truth. glosstest ships levers as generator
   parameters: a same-seed pair is an exact counterfactual, recorded
   in `intervention.yaml` with `counterfactual_corpus_id`. Rate levers
@@ -111,22 +136,6 @@ at the origin, and two reads serve them. Everything below rides both.
 In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
 leaves this file.
-
-### A world on the cube reads
-
-- **What it buys.** The same metric, member and period in four
-  worlds. Variance against plan is a join. A scenario is a world the
-  comparison reads. The docket shows actual, plan and forecast on one
-  chart.
-- **What stands.** The cube's head key already distinguishes a frame
-  by digest. `metric_series()` has no world column. The forecast is
-  a measurement, not a query result, and is served from the record.
-- **Done when.** `metric_series()` and `metric_axes()` carry `world`.
-  The actual world is today's rows unchanged. The plan world is a head
-  over the plan grounding. A scenario world is a head over the
-  rewritten frame. The forecast world reads the forecast measurement
-  at the newest origin. The docket's metric page shows the worlds it
-  has. The session suite holds a metric in all four.
 
 ### Levers and the scenario in the kit
 
@@ -176,19 +185,26 @@ leaves this file.
 
 ## For the other repos
 
-- **glossthesi**: `main` at 0.2.0, tagged `v0.2.0`. No work before
-  phase 2. The forecast route takes the lever as a
+- **glossthesi**: `main` is past `v0.2.0` by the forecast page's
+  GK-46 and GK-47 rows and one wire fix: an error on one member's
+  column, in a table with timestamp periods, failed the whole request
+  because its origin was a date the answer could not say; it is said
+  as text now. No tag yet. The forecast route takes the lever as a
   covariate, and the what-if route takes the plan and scenario rows.
   Two futures of one member in one request is a wire convenience for
-  later, if the engine wants one call per comparison. The what-if's
-  estimator may move to the forecast route if the experiment below
-  says so.
-- **glosstheval**: two experiments before the span rule is decided,
-  on its evaluation page under Open. The size of a covariate's effect
-  on `/forecast`, by the what-if's own procedure. The coverage by
-  horizon on the held-out sets, the table the span rule reads.
+  later, if the engine wants one call per comparison. GK-47 says the
+  what-if's estimator stays on `/whatif`.
+- **glosstheval**: the two experiments before the span rule are
+  done, M9 and M10 on its evaluation page: the coverage by horizon
+  per grain and step, the table the span rule reads, and the
+  covariate's effect on `/forecast`; both in the span evidence above.
+  Open there: the dependence for days, the constant under a total's
+  band on daily data.
 - **glossval**: the futures lane, `notes/futures-lane.md` there. The
-  counterfactual truth from the generator's lever pairs, the forecast
-  scored end to end through an import, the plan world, and a planning
-  task for the agent lane.
+  forecast lane runs (`evals/tools/forecast_lane.py`; its record
+  `evals/notes/forecast-lane.md`: two scenarios, the 80% band's
+  coverage within the binomial tolerance at steps 1 and 3 and the
+  quarter to go, every key right, no refusal). Still to come: the
+  counterfactual truth from the generator's lever pairs, the plan
+  world, and a planning task for the agent lane.
 - **glosstest**: nothing. The levers are shipped.
