@@ -78,10 +78,12 @@ The project lead's position, in short.
   arithmetic through the groundings; the estimate of what a lever
   does where no definition reaches is the service's. Both halves
   stay visible on every cell.
-- **A number is served only with its measured coverage.** A span is
-  served where this dataset's own backtest measured its coverage at
-  that horizon and the lever is one with a history of being moved.
-  Elsewhere the read gives a direction and a bracket and says why.
+- **A number is served with its measured coverage beside it.** A
+  span is served at every step with how often a span of its level
+  held at that grain and step: this dataset's own record of forecasts
+  and actuals where it has one, the service's held-out table
+  otherwise. Where the service gives no span, or a lever has no
+  history of being moved, the read gives a direction and says why.
   The number is refused by name, as a missing service is.
 - **One pack grows.** Planning over sales, hiring, stock and
   logistics is the KPI kit with futures, not a second pack. The next
@@ -90,7 +92,7 @@ The project lead's position, in short.
   until the planning goal runs on the eval.
 - The order: the service integration first, in the futures plan. The
   sources plan runs beside it. The architecture docs change once the
-  span rule and the plan grounding's form are decided.
+  plan grounding's form is decided.
 
 ## The tests behind the columns
 
@@ -149,9 +151,6 @@ The project lead's position, in short.
 - **New source types.** Each is a SPEC.md §3 change. Corpus first: one
   real workbook and one real handbook, transcribed, the forms
   presented.
-- **The span rule.** At which horizons and under which measured
-  coverage a span is served, and what the read says instead. Decided
-  after glosstheval's two experiments.
 - **The plan grounding's form.** Recommended: an optional field in
   the standard grounding schema, so one gloss holds the actual and
   the plan and the supersession key does not change. Closes by

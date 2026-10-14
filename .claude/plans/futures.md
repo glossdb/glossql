@@ -24,8 +24,10 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
+| An empty period of a flow is a zero cell, up to the dataset's last period | Easy, core | cube | Next | #108 |
+| The range with how often it held: coverage per grain and step beside the quantiles, the service's held-out coverage as the default | Easy | the forecast reads, the docket, the wire | Phase 2, before the scenario read | |
 | Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
-| The scenario read in two passes: replay through the groundings, the estimate from the service | Medium | session, scripts, a point on the general call | Phase 2 | |
+| The scenario read in two passes: replay through the groundings, the estimate from the what-if call | Medium | session, scripts, the what-if point on the general call | Phase 2 | |
 | The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
 | The planning goal in the next read | Easy, additive | next.sql, window.rs, the skills, the docket | Phase 2, last | |
 | Cube widening: every column, the whole history, measurements warn instead of gate | Medium, core | cube, docket, issue #41 | After the world; its own decision | |
@@ -137,6 +139,31 @@ In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
 leaves this file.
 
+### The range with how often it held
+
+- **What it buys.** Every forecast range is served with how often a
+  range of its level held at that grain and step, so a reader knows
+  what an 80% range is worth a year out. Months hold 0.80 at no step
+  (the span evidence); the number stays and says so.
+- **What stands.** `forecast_points()` serves five quantiles per step
+  and span (`crates/session/src/search/forecast.rs:520`);
+  `forecast_coverage()` serves the shares inside the 80% and 90%
+  bands per metric, grain, step and span over the dataset's own runs
+  (753). The service's held-out coverage per grain and step is prose
+  on the forecast page (`docs/methods/forecast.md`), not on the wire
+  and not in the engine. The docket's trend draws the forecast
+  world's medians, no band.
+- **Done when.** The service's answer carries its held-out coverage
+  per level at each step and span it serves (a wire addition on
+  glossthesi), and `metric_forecast` records it with the quantiles.
+  `forecast_points()` carries, per point and level, the share such a
+  span held: the dataset's own from `forecast_coverage()` where its
+  count at that grain, step and span reaches a floor the issue sets,
+  the service's otherwise, and a column saying which. The docket's
+  trend draws the 80% band ahead with the share in its tooltip. The
+  reference and the forecast page say the rule. The session suite
+  holds both sources on the fixture, with the service stubbed.
+
 ### Levers and the scenario in the kit
 
 - **What it buys.** The engine knows which columns are moves. A
@@ -153,20 +180,26 @@ leaves this file.
 ### The scenario read in two passes
 
 - **What it buys.** Which way the watched metrics move under a
-  scenario, with a span where one is honest and a direction where it
-  is not, every cell saying which half produced it.
-- **What stands.** The plan rewrite (above). `/forecast` with the
-  lever as a covariate known ahead; `/whatif` with the plan and
-  scenario rows. The what-if's "no declared path" refusal.
+  scenario, with a span and how often such a span held, or a
+  direction where the service gives none, every cell saying which
+  half produced it.
+- **What stands.** The plan rewrite (above). The engine has two
+  points on the service call, `FORECAST` and `MISFIT`, and no what-if
+  point. `/whatif` takes the plan and scenario rows; the what-if's
+  "no declared path" refusal. GK-47 (the span evidence): the
+  scenario's estimate rides `/whatif`, the forecast route carries the
+  plan's world.
 - **Done when.** Pass one: where a declared lever reaches a metric
   through its groundings, the engine replays with the scenario's
   values and marks the cell `replayed`. Pass two: where no path
-  reaches it, the service estimates and the cell is `estimated`, with
-  its span and the coverage the dataset measured at that horizon, or
-  a direction and the service's `basis`. A span past the gate is not
-  served and the row says why. The read serves the scenario world.
-  The session and scripts suites hold it on the fixtures, with the
-  service stubbed.
+  reaches it, the what-if call estimates, a third point on the
+  service call, `WHATIF`, one table in and one out like the other
+  two, and the cell is `estimated`, with its span and the coverage
+  measured at that grain and step beside it, the dataset's own where
+  it has one, the service's otherwise; where the service gives no
+  span, a direction and its `basis`. The read serves the scenario
+  world. The session and scripts suites hold it on the fixtures, with
+  the service stubbed.
 
 ### The planning goal
 
@@ -193,7 +226,11 @@ leaves this file.
   covariate, and the what-if route takes the plan and scenario rows.
   Two futures of one member in one request is a wire convenience for
   later, if the engine wants one call per comparison. GK-47 says the
-  what-if's estimator stays on `/whatif`.
+  what-if's estimator stays on `/whatif`; the what-if call returns to
+  the engine as a third point, `WHATIF`. The forecast answer gains the
+  service's held-out coverage per step (the range draft). Once the
+  three points are wired, the model behind each can be tuned per
+  point.
 - **glosstheval**: the two experiments before the span rule are
   done, M9 and M10 on its evaluation page: the coverage by horizon
   per grain and step, the table the span rule reads, and the
