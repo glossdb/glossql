@@ -115,6 +115,12 @@ mark your stocks and serve a ratio's halves; both hold at every grain
 and for the rival too. A day metric asked at the month therefore
 spans the month rung, not its own day rung.
 
+A flow's empty period is a zero cell in its total, from its first
+period to the data's edge — the latest date any judged time column of
+the dataset holds. A sum over no rows is zero, and a forecast for that
+period is checked against it. A member's empty period is no cell, and
+so is a stock's or a ratio's.
+
 Wide axes bucket instead of dropping out: up to 24 members every one
 is named; above that the axis serves its top 23 by weight — summed
 value, a ratio by its denominator — and the rest fold into an

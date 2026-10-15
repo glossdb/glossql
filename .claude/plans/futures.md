@@ -24,7 +24,6 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| An empty period of a flow is a zero cell, up to the dataset's last period | Easy, core | cube | Next | #108 |
 | The range with how often it held: coverage per grain and step beside the quantiles, the service's held-out coverage as the default | Easy | the forecast reads, the docket, the wire | Phase 2, before the scenario read | |
 | Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
 | The scenario read in two passes: replay through the groundings, the estimate from the what-if call | Medium | session, scripts, the what-if point on the general call | Phase 2 | |
