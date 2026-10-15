@@ -168,14 +168,25 @@ the tables the metric's frame scans and everything its build reads
 (the grounding, the verdicts and glosses on the columns it serves,
 the edges on those tables, the cube settings), so a write that
 reaches no build (a ruling, a note, a check's landing, a gloss on
-another metric's column, a landing on another table) keeps the entry
-hot, and a moved input misses the metrics it reaches and no other. A
+another metric's column, a landing on a table no judged time column
+sits on) keeps the entry hot, and a moved input misses the metrics it
+reaches and no other. A
 metric's resolution is its judged cadence (`temporal_profile`), never
 finer than the floor; its own series is served over the rung for that
 resolution, measured back from the data's own edge (see the KPI kit).
 A served date that unions several columns of one table — an interval
 table's start and end dates, `+1` and `−1` — is the axis when every
 one of them is judged, at the coarsest of their cadences.
+
+A flow's empty period is a zero cell. A sum over no rows is zero, so
+a flow's total carries a cell for every period at its resolution,
+from its first to the data's edge: the latest date any judged time
+column of the dataset holds. A forecast for that period is checked
+against the zero. The rival's total carries them too. A member's
+empty period is no cell, and so is a stock's or a ratio's: nothing
+stands, nothing divides. Every flow's series therefore reaches the
+same edge, and its window is measured back from there: a flow whose
+rows stopped early shows its zeros, not an older window.
 
 ### app_releases
 

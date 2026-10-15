@@ -18,11 +18,12 @@
 //! serves, the edges on the tables it scans, the cube settings —
 //! folded to one number ([`metric_digest`]). A write that cannot
 //! reach the build — a ruling, a note, a check's landing, a gloss on
-//! another metric's column, a landing on another table — changes
-//! neither, and the entry stays a hit; a moved input is a miss, never
-//! an invalidation. The one exception is a frame that itself scans a
-//! workspace relation: its entry binds to those relations' versions
-//! on top ([`workspace_reads`]). The fill is lazy and single-flight
+//! another metric's column, a landing on a table no judged time
+//! column sits on — changes neither, and the entry stays a hit; a
+//! moved input is a miss, never an invalidation. The one exception is
+//! a frame that itself scans a workspace relation: its entry binds to
+//! those relations' versions on top ([`workspace_reads`]). The fill is
+//! lazy and single-flight
 //! (moka's `get_with`): concurrent readers of one key share one
 //! build, nothing recomputes eagerly, and the build runs where the
 //! triggering read runs. The cache is the Plane's, handed to each
@@ -36,6 +37,19 @@
 //! latest floor cell in the bucket — and cached as their own entry
 //! beside the head. A read at the metric's own resolution is the same
 //! derivation; a grain finer than that resolution serves no rows.
+//!
+//! A flow's empty period is a zero cell: a sum over no rows is zero,
+//! so the head carries one for every period at the metric's own
+//! resolution, from the total's first to the data's edge — the latest
+//! date any judged time column of the dataset holds at the pin — and
+//! a forecast for that period is checked against it. The total and
+//! the rival carry them; a member's gap stays a gap. A stock's or a
+//! ratio's empty period stays a gap too: nothing stands, nothing
+//! divides. Every flow's series reaches the same edge, and its window
+//! is measured back from there. The edge is a build input,
+//! so the key carries the legs of the tables the judged time columns
+//! sit on and the digest their subjects: a landing that moves the
+//! edge misses every head.
 //!
 //! Resolution, floor and windows come from the `cube` FACT aspect the
 //! KPI kit declares on the dataset: a metric's own resolution is its
@@ -60,7 +74,7 @@
 //! row names the bucketed dimensions so `'other'` is never read as a
 //! business member.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
@@ -608,7 +622,8 @@ const CUBE_FACT_TAG: &str = "glossql.cube.fact";
 /// The shape of a head, folded into every digest: a head landed under
 /// another shape — cells at the metric's own resolution over its own
 /// rung, once — misses and is built over.
-const HEAD_SHAPE: &str = "floor cells over the longest rung, the world named";
+const HEAD_SHAPE: &str =
+    "floor cells over the longest rung, the world named, a flow's empty periods zero to the edge";
 
 /// A `Hasher` over blake3: every `Hash` impl the digest folds writes
 /// its bytes here, so the digest is the same in every process — the
@@ -689,8 +704,10 @@ fn reads_of(
 /// Stable across processes, so a head landed by one instance serves
 /// another.
 /// Completeness is checkable in one file: `plan` and `build` read
-/// nothing of the store beyond (slot, judged, settings) — the frame's
-/// own scans are [`workspace_reads`]'s to catch.
+/// nothing of the store beyond (slot, judged, settings) and the data's
+/// edge over the judged time columns, whose subjects fold in here and
+/// whose tables are key legs — the frame's own scans are
+/// [`workspace_reads`]'s to catch.
 fn metric_digest(
     slot: &QuerySlot,
     probe: Option<&datafusion::logical_expr::LogicalPlan>,
@@ -698,6 +715,7 @@ fn metric_digest(
     judged: &Judged,
     settings: &Settings,
     shapes: &HashMap<String, glossql_catalog::Shape>,
+    edge_subjects: &[String],
 ) -> String {
     use std::hash::{Hash, Hasher};
     fn verdict(h: &mut impl Hasher, m: &HashMap<String, Verdict>, subject: &str) {
@@ -718,6 +736,9 @@ fn metric_digest(
     }
     let mut h = Digest(blake3::Hasher::new());
     HEAD_SHAPE.hash(&mut h);
+    for s in edge_subjects {
+        s.hash(&mut h);
+    }
     slot.subject.hash(&mut h);
     slot.aspect.hash(&mut h);
     slot.body.hash(&mut h);
@@ -1186,6 +1207,91 @@ impl Surface {
         }))
     }
 
+    /// The judged time columns of the dataset at this pin, as
+    /// `table.column` subjects: every applicable `temporal_profile`
+    /// verdict on a column a table of the dataset carries. The data's
+    /// edge is their latest date; the key carries their tables.
+    fn edge_subjects(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .judged
+            .temporal
+            .iter()
+            .filter(|(_, v)| v.body["applicable"].as_bool() == Some(true))
+            .filter(|(s, _)| {
+                s.split_once('.')
+                    .and_then(|(t, c)| {
+                        self.shapes
+                            .get(t)
+                            .map(|shape| shape.columns.contains_key(c))
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|(s, _)| s.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The data's edge at a resolution: the bucket holding the latest
+    /// date any judged time column carries at the pin, as the cells
+    /// carry periods. None where no date column is judged, or every
+    /// judged one is empty. Each column is planned as the frames are,
+    /// so a column that is not a date is passed over; one small plan
+    /// per build.
+    async fn data_edge(
+        &self,
+        shared: &Arc<Shared>,
+        resolution: Resolution,
+    ) -> Result<Option<i64>, Abstain> {
+        let mut arms = Vec::new();
+        for subject in self.edge_subjects() {
+            let Some((table, column)) = subject.split_once('.') else {
+                continue;
+            };
+            let probe = format!("SELECT {} FROM {}", qi(column), qi(table));
+            let Ok(plan) = crate::plan::build_plan(shared, &self.ctx, &probe).await else {
+                continue;
+            };
+            let dated = plan
+                .schema()
+                .fields()
+                .first()
+                .is_some_and(|f| crate::plan::is_temporal(f.data_type()));
+            if dated {
+                arms.push(format!(
+                    "SELECT CAST(max({}) AS TIMESTAMP) AS edge FROM {}",
+                    qi(column),
+                    qi(table)
+                ));
+            }
+        }
+        if arms.is_empty() {
+            return Ok(None);
+        }
+        let q = format!(
+            "SELECT {} AS edge FROM ({})",
+            period_expr("max(edge)", resolution),
+            arms.join(" UNION ALL ")
+        );
+        let batches = run(shared, &self.ctx, &q).await?;
+        let Some(b) = batches.iter().find(|b| b.num_rows() > 0) else {
+            return Ok(None);
+        };
+        let col = b
+            .column_by_name("edge")
+            .ok_or_else(|| Abstain("the edge served no edge".into()))?;
+        if col.is_null(0) {
+            return Ok(None);
+        }
+        let ts = cast(col, &DataType::Timestamp(TimeUnit::Nanosecond, None))
+            .map_err(|e| Abstain(e.to_string()))?;
+        let ts = ts
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .ok_or_else(|| Abstain("the edge did not read as a timestamp".into()))?;
+        Ok(Some(ts.value(0)))
+    }
+
     /// One metric's key at this surface, with the frame as planned.
     /// The key is cut from the plan — planning scans nothing, and the
     /// build takes the plan along rather than planning twice; a frame
@@ -1205,11 +1311,24 @@ impl Surface {
             .as_ref()
             .map(|p| reads_of(p, &self.dataset, &self.judged.pointers))
             .unwrap_or_default();
+        // The data's edge is a build input of every flow, so the legs
+        // carry the tables the judged time columns sit on and the
+        // digest their subjects: a landing that moves the edge misses.
+        let edge_subjects = self.edge_subjects();
+        let mut tables = reads.tables.clone();
+        tables.extend(
+            edge_subjects
+                .iter()
+                .filter_map(|s| s.split_once('.'))
+                .map(|(t, _)| t.to_string()),
+        );
+        tables.sort();
+        tables.dedup();
         let key = CubeKey {
             dataset: self.dataset.clone(),
             metric: slot.aspect.clone(),
             grain,
-            pin: glossql_glossary::table_legs(&self.pin_text, &self.dataset, &reads.tables),
+            pin: glossql_glossary::table_legs(&self.pin_text, &self.dataset, &tables),
             digest: metric_digest(
                 slot,
                 probe.as_ref(),
@@ -1217,6 +1336,7 @@ impl Surface {
                 &self.judged,
                 &self.settings,
                 &self.shapes,
+                &edge_subjects,
             ),
         };
         (key, probe)
@@ -2408,6 +2528,26 @@ async fn build(
         push(&mut cells, &dcol, rows, verb);
     }
 
+    // What the data holds inside the metric's own window, counted
+    // before the zeros below: a zero cell is no period of data.
+    let inside = periods_inside(
+        &cells_batch(metric, World::Actual, &cells),
+        resolution,
+        since_own.as_deref(),
+    )
+    .await?;
+    // A flow's empty periods are zero cells, from the total's first
+    // period at the metric's resolution to the data's edge: a sum over
+    // no rows is zero, and a forecast for that period is checked
+    // against it. A stock's or a ratio's stay gaps — nothing stands,
+    // nothing divides.
+    let edge = surface.data_edge(shared, resolution).await?;
+    if verb == "flow"
+        && let Some(edge) = edge
+    {
+        zero_fill(&mut cells, resolution, edge);
+    }
+
     // The named rival, when a grounding assumption discloses one. The
     // rival SQL is authored but never admission-validated: it runs
     // behind a guard and a refusal is reported in the fact row, never
@@ -2435,13 +2575,12 @@ async fn build(
                     foreign.extend(rival_foreign);
                     foreign.sort();
                     foreign.dedup();
-                    alternative_divergence = Some(divergence(
-                        &cells,
-                        &rows,
-                        a.get("tolerance").and_then(Value::as_f64),
-                    ));
-                    for (period, _, value, num, den) in rows {
-                        cells.push(Cell {
+                    // The rival's cells at its own verb, its empty
+                    // periods zero where it is a flow, so the two
+                    // lines compare like with like.
+                    let mut rival_cells: Vec<Cell> = rows
+                        .into_iter()
+                        .map(|(period, _, value, num, den)| Cell {
                             dimension: "alternative".into(),
                             member: rival.to_string(),
                             period,
@@ -2449,8 +2588,19 @@ async fn build(
                             num,
                             den,
                             behavior: rival_verb,
-                        });
+                        })
+                        .collect();
+                    if rival_verb == "flow"
+                        && let Some(edge) = edge
+                    {
+                        zero_fill(&mut rival_cells, resolution, edge);
                     }
+                    alternative_divergence = Some(divergence(
+                        &cells,
+                        &rival_cells,
+                        a.get("tolerance").and_then(Value::as_f64),
+                    ));
+                    cells.extend(rival_cells);
                     alternative = Some(rival.to_string());
                 }
                 Err(Abstain(why)) => {
@@ -2472,10 +2622,8 @@ async fn build(
     });
     let cells = cells_batch(&slot.aspect, World::Actual, &cells);
     // What the data holds at the resolution and the window leaves out:
-    // the periods the frame spans less the periods the total series
-    // serves inside the metric's own window — counted over the head,
-    // which holds every bucket the window could keep.
-    let inside = periods_inside(&cells, resolution, since_own.as_deref()).await?;
+    // the periods the frame spans less the periods of data the total
+    // series serves inside the metric's own window.
     let outside = (spanned - inside).max(0);
 
     Ok(Cube {
@@ -2683,7 +2831,7 @@ async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<
 /// relative, scaled by the larger magnitude, so it reads as a share of
 /// the number itself. Agreement is a zero divergence, never silence;
 /// no shared periods is its own answer.
-fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> String {
+fn divergence(cells: &[Cell], rival: &[Cell], tolerance: Option<f64>) -> String {
     let total: std::collections::HashMap<i64, f64> = cells
         .iter()
         .filter(|c| c.dimension.is_empty())
@@ -2697,7 +2845,8 @@ fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> St
     let mut shared = 0usize;
     let mut breaches = 0usize;
     let mut max: Option<(f64, i64)> = None;
-    for (p, _, v, _, _) in rival {
+    for c in rival {
+        let (p, v) = (&c.period, &c.value);
         let Some(t) = total.get(p) else { continue };
         shared += 1;
         let scale = t.abs().max(v.abs());
@@ -2727,6 +2876,95 @@ fn divergence(cells: &[Cell], rival: &[SeriesRow], tolerance: Option<f64>) -> St
             day(at)
         ),
     }
+}
+
+/// A flow's empty periods as zero cells, for the total series and the
+/// rival's (`dimension` `''` or `'alternative'`): every period at the
+/// metric's resolution from the series' first to `to` that no floor
+/// cell falls in gets one cell at the period's start, at zero — a sum
+/// over no rows. The head stays at the floor: one zero cell per empty
+/// period folds to zero at the resolution and above, and the floor is
+/// never served below the resolution. A member's gap stays a gap, and
+/// so does a stock's or a ratio's; the caller filters by verb.
+fn zero_fill(cells: &mut Vec<Cell>, resolution: Resolution, to: i64) {
+    let mut groups: HashMap<(String, String), HashSet<i64>> = HashMap::new();
+    for c in cells.iter().filter(|c| {
+        c.behavior == "flow" && (c.dimension.is_empty() || c.dimension == "alternative")
+    }) {
+        groups
+            .entry((c.dimension.clone(), c.member.clone()))
+            .or_default()
+            .insert(bucket_start(c.period, resolution));
+    }
+    for ((dimension, member), present) in groups {
+        let Some(mut period) = present.iter().min().copied() else {
+            continue;
+        };
+        while period <= to {
+            if !present.contains(&period) {
+                cells.push(Cell {
+                    dimension: dimension.clone(),
+                    member: member.clone(),
+                    period,
+                    value: 0.0,
+                    num: None,
+                    den: None,
+                    behavior: "flow",
+                });
+            }
+            let Some(next) = next_period(period, resolution) else {
+                break;
+            };
+            period = next;
+        }
+    }
+}
+
+/// The start of the bucket a period falls in at a resolution — what
+/// `date_trunc` gives the cells, weeks starting Monday.
+fn bucket_start(period: i64, resolution: Resolution) -> i64 {
+    use chrono::{Datelike, Days, NaiveDate, NaiveTime, Timelike};
+    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
+    let date = at.date();
+    let midnight = |d: Option<NaiveDate>| d.map(|d| d.and_time(NaiveTime::MIN));
+    let start = match resolution {
+        Resolution::Minute => at.with_second(0).and_then(|t| t.with_nanosecond(0)),
+        Resolution::Hour => at
+            .with_minute(0)
+            .and_then(|t| t.with_second(0))
+            .and_then(|t| t.with_nanosecond(0)),
+        Resolution::Day => midnight(Some(date)),
+        Resolution::Week => midnight(
+            date.checked_sub_days(Days::new(u64::from(date.weekday().num_days_from_monday()))),
+        ),
+        Resolution::Month => midnight(NaiveDate::from_ymd_opt(date.year(), date.month(), 1)),
+        Resolution::Quarter => midnight(NaiveDate::from_ymd_opt(
+            date.year(),
+            (date.month0() / 3) * 3 + 1,
+            1,
+        )),
+        Resolution::Year => midnight(NaiveDate::from_ymd_opt(date.year(), 1, 1)),
+    };
+    start
+        .and_then(|s| s.and_utc().timestamp_nanos_opt())
+        .unwrap_or(period)
+}
+
+/// The bucket after `period` at a resolution, as the cells carry them:
+/// calendar steps for months, quarters and years, fixed ones below.
+fn next_period(period: i64, resolution: Resolution) -> Option<i64> {
+    use chrono::{Days, Months, TimeDelta};
+    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
+    let next = match resolution {
+        Resolution::Minute => at.checked_add_signed(TimeDelta::minutes(1))?,
+        Resolution::Hour => at.checked_add_signed(TimeDelta::hours(1))?,
+        Resolution::Day => at.checked_add_days(Days::new(1))?,
+        Resolution::Week => at.checked_add_days(Days::new(7))?,
+        Resolution::Month => at.checked_add_months(Months::new(1))?,
+        Resolution::Quarter => at.checked_add_months(Months::new(3))?,
+        Resolution::Year => at.checked_add_months(Months::new(12))?,
+    };
+    next.and_utc().timestamp_nanos_opt()
 }
 
 /// The rival's series at the metric's resolution and window, at its

@@ -1223,7 +1223,7 @@ async fn the_metrics_faces_serve_the_cube() {
     assert_eq!(
         row_count(slices).await,
         3,
-        "two members over two months, one sparse"
+        "two members over two months, one sparse: a member's gap stays a gap"
     );
 
     let trend = get(

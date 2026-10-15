@@ -1700,9 +1700,12 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
         Vec::new(),
         Vec::new(),
     );
+    // The signing days sit in the data's last half year, inside the
+    // day rung measured from its edge; the booking days stay at the
+    // start.
     for (i, start) in MONTH_STARTS.iter().enumerate() {
         for r in ["r1", "r2", "r3"] {
-            signed.push(19723 + (i as i32 % 28));
+            signed.push(19723 + 731 + (i as i32 % 28));
             booked.push(19723 + (i as i32 % 28));
             dates.push(19723 + start);
             values.push(1.0);
@@ -1802,17 +1805,25 @@ async fn the_axes_come_from_judged_verdicts_never_from_the_datas_shape() {
     );
 
     // the irregular column alone anchors at the floor: day cells over
-    // the day rung — twenty-eight signing days, not one month
+    // the day rung — twenty-eight signing days among the days to the
+    // edge, every other day a zero, not one month
     let floor = grid(
         &session,
-        "SELECT resolution, window, (SELECT count(*) FROM metric_series() \
-         WHERE metric = 'signings' AND dimension = '') AS n \
+        "SELECT resolution, window, \
+         (SELECT count(*) FILTER (WHERE value <> 0) FROM metric_series() \
+          WHERE metric = 'signings' AND dimension = '') AS signed, \
+         (SELECT count(*) FROM metric_series() \
+          WHERE metric = 'signings' AND dimension = '') AS n \
          FROM metric_axes() WHERE metric = 'signings';",
     )
     .await;
     assert!(
         floor.contains("| day ") && floor.contains("| 18 months ") && floor.contains("| 28 "),
         "{floor}"
+    );
+    assert!(
+        !floor.contains("| 28     | 28 "),
+        "the empty days are zero cells: {floor}"
     );
 
     // a frame whose date column carries no verdict abstains with the
@@ -1973,11 +1984,13 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
             .await
         }
     };
-    // The day rung from the data's edge: 2025-12-30 less 18 months is
-    // 2024-06-30, and the buckets after it number 548.
+    // The day rung from the data's edge — the minute table's, 2026-03-03,
+    // two months past the day table's last row; the day flow carries
+    // zeros to it. 2026-03-03 less 18 months is 2024-09-03, and the
+    // buckets after it number 546: 483 days of rows and 63 zeros.
     near(
         cells("by_day", "").await,
-        548.0,
+        546.0,
         "day cells under the day rung",
     );
     // Minutes held at the floor: three day cells of 1,440 minutes.
@@ -2001,22 +2014,26 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
     );
 
     // A coarser grain is its own build over that grain's rung: the day
-    // metric's 730 days are 24 months, all inside the month rung (48),
-    // where its own day cells span the day rung's 18. Where both stand
-    // the months equal the day cells summed month by month. A grain
-    // finer than a metric's resolution serves nothing — honest absence.
+    // metric's 730 days and its zeros to the edge are 27 months, all
+    // inside the month rung (48), where its own day cells span the day
+    // rung's 18. Where both stand the months equal the day cells summed
+    // month by month. A grain finer than a metric's resolution serves
+    // nothing — honest absence.
     near(
         cells("by_day", "month").await,
-        24.0,
+        27.0,
         "the day metric at month grain",
     );
+    // Over the whole months inside the day rung: the rung's start cuts
+    // September 2024, so the comparison runs from October.
     assert_eq!(
         cell(
             &session,
             "SELECT bool_and(m.value = d.s) FROM metric_series(grain => 'month') m \
              JOIN (SELECT date_trunc('month', period) AS p, sum(value) AS s FROM metric_series() \
                    WHERE metric = 'by_day' AND dimension = '' GROUP BY 1) d ON d.p = m.period \
-             WHERE m.metric = 'by_day' AND m.dimension = '';",
+             WHERE m.metric = 'by_day' AND m.dimension = '' \
+               AND m.period > TIMESTAMP '2024-09-30';",
         )
         .await,
         "true"
@@ -2026,17 +2043,19 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         0.0,
         "a month metric at day grain",
     );
-    // The month metric's 60 months are five years under the year rung
-    // (20), where its own cells hold the month rung's 48.
+    // The month metric's 60 months are five years, and its zeros to
+    // the edge a sixth at zero, under the year rung (20), where its own
+    // cells hold the month rung's 48.
     near(
         cells("by_month", "year").await,
-        5.0,
+        6.0,
         "a month metric at year grain",
     );
     assert_eq!(
         cell(
             &session,
-            "SELECT min(value) = 12.0 AND max(value) = 12.0 FROM metric_series(grain => 'year') WHERE metric = 'by_month';",
+            "SELECT count(*) FILTER (WHERE value = 12.0) = 5 AND min(value) = 0.0 \
+             FROM metric_series(grain => 'year') WHERE metric = 'by_month';",
         )
         .await,
         "true"
@@ -2084,7 +2103,7 @@ async fn the_resolution_is_the_coarser_of_cadence_and_floor_and_the_window_its_r
         12.0,
         "the shortened month rung",
     );
-    near(cells("by_day", "").await, 548.0, "the day rung stands");
+    near(cells("by_day", "").await, 546.0, "the day rung stands");
 
     // The floor reaches the top of the ladder: a season-grained dataset
     // stands at the year, under the year rung.
@@ -3191,19 +3210,22 @@ async fn a_wide_dimension_is_bucketed_never_refused() {
             regions.push(Some(format!("r{r:02}")));
         }
     }
+    // The wide table's three months stand at the data's edge, where
+    // the window measured from it holds them.
     let events = dated(
         vec![
             Field::new("value", DataType::Float64, false),
             Field::new("region", DataType::Utf8, true),
         ],
-        dates.clone(),
+        dates.iter().map(|d| d + 31 * 57).collect(),
         vec![
             Arc::new(Float64Array::from(values.clone())),
             Arc::new(StringArray::from(regions.clone())),
         ],
     );
-    // The same rows, then two years of rows with no region: the
-    // window measured from the data's edge holds only those.
+    // The same rows five years earlier, then two years of rows with no
+    // region: the window measured from the data's edge holds only
+    // those.
     for m in 0..24 {
         dates.push(19723 + 31 * (36 + m));
         values.push(1.0);

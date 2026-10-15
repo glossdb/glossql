@@ -59,7 +59,8 @@ point. For every point whose actual the cube now holds, it joins the
 actual and says where it landed: `below` p05, `low` between p05 and
 p10, `inside` p10 to p90, `high` between p90 and p95, `above` p95. A
 span's actual is the sum of its periods' actuals, where every one is
-known.
+known. A flow's empty period is a zero cell up to the data's edge
+([reads](../reference/reads.md)), so its point lands on zero.
 
 `forecast_coverage()` counts over every run the record holds, one
 forecast per metric and origin: per grain, step and span, the points
