@@ -239,7 +239,7 @@ pub struct Answered {
 /// The points a deployment fills with a service, by name. A point's
 /// name is the route the service serves and the stem of its variables:
 /// `GLOSSQL_<POINT>_URL`, `_TOKEN`, `_AUDIENCE`, the name in capitals.
-pub const POINTS: [&str; 2] = [FORECAST, MISFIT];
+pub const POINTS: [&str; 3] = [FORECAST, MISFIT, WHATIF];
 
 /// The forecast point: the metric-bands walk sends every metric's
 /// monthly series and reads bands, actual and PIT per walked period.
@@ -248,6 +248,10 @@ pub const FORECAST: &str = "forecast";
 /// The misfit point: `misfit.<frame>()` sends the frame and reads a
 /// score per row.
 pub const MISFIT: &str = "misfit";
+
+/// The what-if point: the scenario read sends a metric's series with a
+/// lever's, as planned and under the scenario, and reads the estimate.
+pub const WHATIF: &str = "whatif";
 
 /// The variable that names a point's service.
 pub fn point_variable(point: &str, suffix: &str) -> String {
@@ -1510,6 +1514,15 @@ impl Session {
             .aspect(aspect)
             .await?
             .is_some_and(|(_, kind, _)| kind == "query");
+        // A scenario (fixture 19) names declared levers: refused by name
+        // before it lands where its body is not a scenario's, or a
+        // column it names carries no current `lever` gloss.
+        if let Some((schema, _, _)) = self.shared.store.aspect(aspect).await?
+            && schema["x-kind"].as_str() == Some("scenario")
+        {
+            crate::scenario::check(&self.shared, &resolved.dataset, aspect, &gloss.body.value)
+                .await?;
+        }
         // A grounding is a view in the catalog under the metric's name
         // (SPEC.md §5.2), and a dataset's schema is one name space: a
         // metric and a landed table never share a name. Refused before

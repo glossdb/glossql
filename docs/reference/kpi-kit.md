@@ -31,6 +31,7 @@ asks judgment only.
 | `behavior` | FACT ON COLUMN WHEN `role = 'measure'` | `stock` / `flow` / `none`, with `grounds` |
 | `unit` | FACT ON COLUMN WHEN `role = 'measure'` | the unit, optional `source_column` |
 | `dimension` | FACT ON COLUMN WHEN `role = 'dimension'` | `primary` / `supporting` / `none`, with `grounds` |
+| `lever` | FACT ON COLUMN | `value` true: a column someone sets — a list price, a discount rate, a promotion flag — the input a scenario moves ([the scenario world](../methods/scenario.md)); false: examined, none. `grounds` says who sets it. Not conditioned on `role`: a lever may be a measure or a flag. Witness-free: who sets a number is the business's word, not a claim the data can settle |
 | `entity` | FACT ON TABLE | what the table is: `value`, `role` (fact/dimension), `grain`, `time_axis`, `identity_columns` |
 | `conventions` | FACT ON SOURCE | fiscal calendar, sign conventions, what an export's nulls mean — read and superseded workspace-wide |
 | `formulas` | FACT ON DATASET | registry keyed by concept name: window-generic expressions over sibling concepts (`revenue[w] - expenses[w]`), the window `w` the one free variable — what a drill re-scopes from. Known gap: operands are not checked against declared concepts, so a typo is silent |

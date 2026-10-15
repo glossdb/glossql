@@ -10,3 +10,4 @@ statistic, the measured verdict, the stated limits.
 - [`behavior.md`](behavior.md) — the stock/flow evidence and its reconciliation.
 - [`bands.md`](bands.md) — expectation bands from a forecast service.
 - [`forecast.md`](forecast.md) — the periods ahead from a forecast service, and the coverage the record learns.
+- [`scenario.md`](scenario.md) — a declared scenario in two passes: the arithmetic through the groundings, the estimate from the what-if point.

@@ -31,6 +31,7 @@ mod provenance;
 mod reads;
 pub mod replay;
 pub mod rulings;
+mod scenario;
 mod search;
 mod session;
 mod subject;
@@ -44,6 +45,6 @@ pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
 pub use reads::{DOORS, DoorPage};
 pub use session::{
     Answered, CallShape, FORECAST, FunctionRuntime, MISFIT, NoRuntime, Outcome, POINTS, Registered,
-    Session, SessionError, call_shape, detector_functions, no_model, point_variable,
+    Session, SessionError, WHATIF, call_shape, detector_functions, no_model, point_variable,
     reader_functions,
 };

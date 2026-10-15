@@ -53,6 +53,30 @@ flow the quarter and the year to go. `SELECT metric_forecast() FROM
 - No PIT: a forecast is written before the actual exists, and five
   quantiles say the band it fell in, not its exact place.
 
+## The scenario world
+
+A lever is a column someone sets, declared on it: `GLOSS lever ON
+sales.unit_price AS $${"value": true, "grounds": "the list price, set
+by sales"}$$`. A scenario is one FACT aspect per scenario with
+`x-kind: scenario`, glossed with `levers`: per lever the column, a
+factor per period (`"2027-01": 1.15`; `YYYY-MM` a month, `YYYY-MM-DD`
+a day) and the basis. A scenario naming a column nobody declared a
+lever on is refused when it is glossed.
+
+- `metric_series(world => 'scenario', scenario => 'price_hike')`
+  serves the scenario's cells beside the actual and the forecast
+  worlds: over the data, the grounding replayed with the factors where
+  the lever's table is scanned; ahead of the last actual, the what-if's
+  estimate for every metric.
+- `scenario_points(scenario => 'price_hike')` says which per cell —
+  `pass` is `replayed` or `estimated` — with the estimate's 80% band
+  (`low`, `high`), how often such a band held (`held_80`, `held_from`)
+  and the service's `sign` and `basis`. A replayed cell is arithmetic;
+  hand an estimate out with its band and its share.
+- One lever estimates. Several levers replay and do not estimate, and
+  the cells say so. Without a what-if service the arithmetic is served
+  and the cells say what to set.
+
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,
 the disclosed rival — computed at read, landed in the catalog under

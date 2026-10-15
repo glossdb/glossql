@@ -180,7 +180,7 @@ CROSS JOIN (VALUES
   ('functions', 'run one as a measurement, or DECLARE FUNCTION your own — statistics are the functions'' work, never a human question'),
   ('metrics', 'GLOSS a QUERY aspect with its SQL and its assumptions — its name then serves it as a view'),
   ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
-  ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its overrides and their basis — the declared form is the record; the read that serves a scenario is planned'),
+  ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its levers — a factor per period on columns glossed lever, with the basis; metric_series(world => ''scenario'', scenario => ''<name>'') and scenario_points() serve it'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')

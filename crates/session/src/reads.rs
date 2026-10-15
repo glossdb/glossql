@@ -520,12 +520,13 @@ pub const DOORS: &[(&str, &str)] = &[
     ("metric_axes", "metric_axes()"),
     (
         "metric_series",
-        "metric_series([grain => '<grain>'][, world => '<world>'])",
+        "metric_series([grain => '<grain>'][, world => '<world>'][, scenario => '<name>'])",
     ),
     ("fact_values", "fact_values()"),
     ("band_points", "band_points()"),
     ("forecast_points", "forecast_points()"),
     ("forecast_coverage", "forecast_coverage()"),
+    ("scenario_points", "scenario_points(scenario => '<name>')"),
     ("metric_sources", "metric_sources()"),
     ("metric_band_walk", "metric_band_walk('<dataset>')"),
     (
@@ -907,6 +908,7 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "metric_forecast_ahead"
                 | "forecast_points"
                 | "forecast_coverage"
+                | "scenario_points"
                 | "metric_axes"
                 | "metric_sources"
                 | "behavior_anchors"
@@ -1175,6 +1177,14 @@ pub(crate) async fn compute_batch(
                 (crate::search::forecast_coverage(shared).await?).into(),
             ))
         }
+        // The scenario world cell by cell (crate::scenario), the
+        // scenario named.
+        ("scenario_points", Some(a)) => {
+            let name = crate::scenario::name_arg("scenario_points", &a.args)?;
+            Ok(Some(
+                (Box::pin(crate::scenario::scenario_points(shared, &name)).await?).into(),
+            ))
+        }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {
                 SessionError::BadSubject(
@@ -1229,9 +1239,9 @@ pub(crate) async fn compute_batch(
         // world, and the fact row per metric. Both build what is not
         // built.
         ("metric_series", Some(a)) => {
-            let (grain, world) = crate::cube::series_args(&a.args)?;
+            let (grain, world, scenario) = crate::cube::series_args(&a.args)?;
             Ok(Some(
-                crate::cube::metric_series_batch(shared, grain, world).await?,
+                crate::cube::metric_series_batch(shared, grain, world, scenario.as_deref()).await?,
             ))
         }
         ("metric_axes", Some(a)) => {

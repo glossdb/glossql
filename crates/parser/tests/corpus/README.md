@@ -40,7 +40,7 @@ simplified language.
 | 16 | flow: performance framework (scorecard target) | TRANSCRIBES (extracts + formulas; windows are read policy; `read.` value-at-read ruled, bind deferred to UI) |
 | 17 | relational spine (sqlite run) | TRANSCRIBES (existing surface end to end) · temporal type INFORMATION LOST on this dialect (read-time cast carries it) |
 | 18 | app authoring (model app) | GRAMMAR GAP (`$$`-carried app artifacts, per-artifact form) · publish verb SEMANTICS UNDEFINED |
-| 19 | what-if scenario (evaluation runs) | TRANSCRIBES (scenario = FACT aspect per scenario; `whatif.` door; replay grid is machinery) |
+| 19 | what-if scenario (evaluation runs) | TRANSCRIBES (lever = FACT aspect on the column; scenario = FACT aspect per scenario, a factor per period; the scenario world on `metric_series`; the two passes are machinery) |
 | 20 | misfit sample frame (evaluation runs) | TRANSCRIBES (frame = QUERY aspect + `x-kind`; `misfit.` door; self-fit density is machinery) |
 | 21 | source conventions (both halves run) | TRANSCRIBES (`AS FACT ON SOURCE`; deposit → read-before-probe → workspace-wide supersede) |
 | 22 | question loop (pin-queue run + elicitation spike) | RULED: no question object — GLOSS + actor kind is the whole record; questions are ephemeral transport · `ASK` GRAMMAR GAP kept as evidence · pin_questions DROPPED BY DESIGN |

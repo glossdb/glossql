@@ -31,7 +31,7 @@ mod forecast;
 mod hierarchies;
 mod relationships;
 
-pub(crate) use bands::{band_points, metric_band_walk, monthly_sql};
+pub(crate) use bands::{band_points, metric_band_walk, monthly_sql, walk_errors};
 pub(crate) use coherence::relationship_checks;
 pub(crate) use collisions::{
     QuerySlot, current_fact_values, current_query_slots, grounding_collisions,
@@ -39,7 +39,8 @@ pub(crate) use collisions::{
 pub(crate) use derivations::derivation_candidates;
 pub(crate) use facts::{fact_values, metric_sources};
 pub(crate) use forecast::{
-    forecast_coverage, forecast_points, metric_forecast_ahead, world_cells as forecast_world_cells,
+    date_of, forecast_coverage, forecast_points, held_table, iso, metric_forecast_ahead, nanos_of,
+    step_date, whole_series, world_cells as forecast_world_cells,
 };
 pub(crate) use hierarchies::hierarchy_candidates;
 pub(crate) use relationships::relationship_candidates;

@@ -94,7 +94,7 @@ fn horizon_of(resolution: Resolution) -> Result<(&'static str, usize), String> {
 }
 
 /// The bucket `k` periods past `origin` at the grain.
-fn step_date(origin: NaiveDate, grain: &str, k: u32) -> Option<NaiveDate> {
+pub(crate) fn step_date(origin: NaiveDate, grain: &str, k: u32) -> Option<NaiveDate> {
     match grain {
         "day" => origin.checked_add_days(Days::new(u64::from(k))),
         "week" => origin.checked_add_days(Days::new(7 * u64::from(k))),
@@ -156,22 +156,22 @@ fn spans_of(origin: NaiveDate, grain: &str, horizon: usize) -> Vec<(usize, &'sta
     out
 }
 
-fn date_of(ns: i64) -> NaiveDate {
+pub(crate) fn date_of(ns: i64) -> NaiveDate {
     chrono::DateTime::from_timestamp_nanos(ns).date_naive()
 }
 
-fn nanos_of(d: NaiveDate) -> Option<i64> {
+pub(crate) fn nanos_of(d: NaiveDate) -> Option<i64> {
     d.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt()
 }
 
-fn iso(d: NaiveDate) -> String {
+pub(crate) fn iso(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()
 }
 
 /// A metric's whole line — the `''` dimension — from the cube's cells
 /// at its own resolution: `(period, value)` in period order. The cells
 /// are the cube's own, bounded by the metric's rung.
-fn whole_series(partitions: &[RecordBatch], metric: &str) -> Vec<(i64, f64)> {
+pub(crate) fn whole_series(partitions: &[RecordBatch], metric: &str) -> Vec<(i64, f64)> {
     let mut out = Vec::new();
     for batch in partitions {
         if batch.num_rows() == 0 {
@@ -244,7 +244,8 @@ pub(crate) async fn metric_forecast_ahead(
         )));
     }
     let cubes = crate::cube::cubes(shared).await?;
-    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
+    let served =
+        crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual, None).await?;
 
     let mut out: Vec<Row> = Vec::new();
     for (seq, cube) in cubes.iter().enumerate() {
@@ -615,7 +616,8 @@ fn forecast_shape() -> Vec<Field> {
 async fn actuals(
     shared: &Arc<Shared>,
 ) -> Result<HashMap<String, HashMap<NaiveDate, f64>>, SessionError> {
-    let served = crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual).await?;
+    let served =
+        crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual, None).await?;
     let mut out: HashMap<String, HashMap<NaiveDate, f64>> = HashMap::new();
     for batch in &served.partitions {
         if batch.num_rows() == 0 {
@@ -683,7 +685,7 @@ fn quantiles(point: &Value) -> Option<Quantiles> {
     ])
 }
 
-fn parse_date(s: &str) -> Option<NaiveDate> {
+pub(crate) fn parse_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
 }
 
@@ -941,6 +943,68 @@ async fn tallies(
     let mut keyed: Vec<_> = tallies.into_iter().collect();
     keyed.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(keyed)
+}
+
+/// How often a band held at a grain and step, for a cell outside the
+/// forecast record — the scenario's estimates: the metric's record, the
+/// dataset's, else the service's share as the newest forecast run
+/// recorded it for that grain and step. Built once per read.
+pub(crate) struct HeldTable {
+    record: HashMap<TallyKey, Tally>,
+    service: HashMap<(String, i64), Held>,
+}
+
+impl HeldTable {
+    pub(crate) fn at(
+        &self,
+        metric: &str,
+        grain: &str,
+        step: i64,
+    ) -> (Option<f64>, Option<f64>, Option<&'static str>) {
+        let key = |who: &str| (who.to_string(), grain.to_string(), step, None, None);
+        let service = self
+            .service
+            .get(&(grain.to_string(), step))
+            .copied()
+            .unwrap_or_default();
+        held(
+            self.record.get(&key(metric)),
+            self.record.get(&key("")),
+            service,
+        )
+    }
+}
+
+pub(crate) async fn held_table(
+    shared: &Arc<Shared>,
+    dataset: &str,
+) -> Result<HeldTable, SessionError> {
+    let cells = actuals(shared).await?;
+    let record: HashMap<TallyKey, Tally> = tallies(shared, dataset, &cells)
+        .await?
+        .into_iter()
+        .collect();
+    let rctx = shared.read_context().await?;
+    let mut service = HashMap::new();
+    if let Some(verdict) = crate::cube::judged_bodies(&rctx, dataset, ASPECT).remove(dataset) {
+        for metric in verdict.body["metrics"].as_array().into_iter().flatten() {
+            let Some(grain) = metric["grain"].as_str() else {
+                continue;
+            };
+            for point in metric["points"].as_array().into_iter().flatten() {
+                if !point["span"].is_null() {
+                    continue;
+                }
+                if let Some(step) = point["step"].as_i64() {
+                    service.insert(
+                        (grain.to_string(), step),
+                        (point["service_80"].as_f64(), point["service_90"].as_f64()),
+                    );
+                }
+            }
+        }
+    }
+    Ok(HeldTable { record, service })
 }
 
 /// `forecast_coverage()` — over every forecast the record holds for the
