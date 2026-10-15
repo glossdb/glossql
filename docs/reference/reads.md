@@ -200,7 +200,7 @@ The same two collapses as `app_parts`. Workspace-wide.
 ### metric_series(grain => …, world => …)
 
 The cells: `metric`, `world` (which set of numbers the row belongs
-to: `actual` or `forecast`), `dimension` (`''` the total,
+to: `actual`, `forecast` or `scenario`), `dimension` (`''` the total,
 `'alternative'` the disclosed rival, anything else a judged dimension
 column), `member`, `period` (a typed timestamp, the bucket's start),
 `value`, `num` / `den` (a ratio's summed halves, NULL elsewhere),
@@ -219,8 +219,13 @@ median as `value`, `dimension` and `member` `''`, `num` and `den` NULL
 forecast rows, and a dataset never forecast serves none. The totals
 are not cells; `forecast_points()` has them. The two worlds' periods
 do not overlap, so a variance of forecast against actual is a join on
-metric and period once the actuals land. The plan and the scenario
-worlds are refused by name until their forms are declared. The two
+metric and period once the actuals land. `world => 'scenario',
+scenario => '<name>'` serves the named scenario's cells ([the scenario
+world](../methods/scenario.md)): the grounding replayed with the
+scenario's factors over the data where a lever's table is scanned,
+and the what-if's estimated medians ahead of the last actual, at the
+metric's own resolution only; `scenario_points()` has the detail. The
+plan world is refused by name until its form is declared. The
 arguments are named and come in any order; filters ride `WHERE`.
 
 ### metric_axes()
@@ -406,6 +411,23 @@ forecast per metric and origin: `metric` (`''` the dataset as a whole),
 `forecasts` (the distinct origins the points come from). The table
 `forecast_points()` serves a point's `held_80` and `held_90` from once
 a row reaches 30 points. Requires a bound dataset.
+
+### scenario_points(scenario => '<name>')
+
+The scenario world cell by cell ([the scenario
+world](../methods/scenario.md)): `scenario`, `metric`, `grain`,
+`period`, `step` (periods past the last actual; NULL on a replayed
+cell), `pass` (`replayed`: the grounding replayed over the data with
+the scenario's factors; `estimated`: the what-if's estimate ahead),
+`value` (the replayed value, or the estimate's median), `num` / `den`
+(a replayed ratio's halves), `low` / `high` (the model's 80% band on
+an estimate), `held_80`, `held_90` and `held_from` (how often such a
+band held at that grain and step, and whose count — `metric`,
+`dataset` or `service` — by `forecast_points()`'s rule), `sign` and
+`basis` (the service's word on the estimate, or why there is none),
+`served_by`. The one argument is the scenario's name. Computed at
+read, nothing recorded: the service is called at each read. Requires
+a bound dataset.
 
 ## The sources' read
 

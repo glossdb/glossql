@@ -60,6 +60,21 @@ DECLARE ASPECT dimension WITH $${
   }
 }$$ AS FACT ON COLUMN WHEN role = 'dimension';
 
+-- A lever: a column someone sets — a list price, a discount rate, a
+-- promotion flag — the input a scenario moves (fixture 19). `value`
+-- true declares it, false says a column was examined and is none;
+-- `grounds` says who sets it and how. Not conditioned on `role`: a
+-- lever may be a measure or a flag. Witness-free: who sets a number is
+-- the business's word, not a claim the data can settle, so it owes no
+-- backlog row. A scenario naming a column without a current lever
+-- gloss is refused when it is glossed.
+
+DECLARE ASPECT lever WITH $${
+  "type": "object", "required": ["value"],
+  "properties": {"value": {"type": "boolean"},
+                 "grounds": {"type": "string"}}
+}$$ AS FACT ON COLUMN;
+
 -- Table identity — the entity verdict every aggregate stands on.
 
 DECLARE ASPECT entity WITH $${

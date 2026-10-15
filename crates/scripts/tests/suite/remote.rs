@@ -21,7 +21,7 @@ use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch, Str
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use glossql_scripts::{Bearer, KernelRuntime};
-use glossql_session::{FORECAST, FunctionRuntime, MISFIT};
+use glossql_session::{FORECAST, FunctionRuntime, MISFIT, WHATIF};
 use serde_json::{Value, json};
 
 const ARROW: &str = "application/vnd.apache.arrow.stream";
@@ -418,11 +418,121 @@ async fn misfit(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Re
     )
 }
 
+/// `/whatif` as the stand-in answers it: per member, the scenario rows
+/// at the three levels asked, the median the last actual times the
+/// scenario input over the planned one, the band at half and one and a
+/// half of it; the sign `+` with its basis on every row.
+async fn whatif(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Response {
+    let (table, spec) = match parse(&headers, &body) {
+        Ok(parsed) => parsed,
+        Err(e) => return refuse(StatusCode::BAD_REQUEST, json!({"error": e})),
+    };
+    seen.0.lock().unwrap().push((
+        "whatif".into(),
+        json!({"rows": rows_of(&table), "spec": spec}),
+    ));
+    let Some(levels) = spec["levels"].as_array() else {
+        return refuse(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error": "the specification does not fit",
+                   "errors": [{"field": "levels", "error": "a non-empty list of quantile levels"}]}),
+        );
+    };
+    let names: Vec<String> = table
+        .schema()
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect();
+    let input = names
+        .iter()
+        .find(|n| !["member", "period", "status", "value"].contains(&n.as_str()))
+        .expect("one input")
+        .clone();
+    let member = table.column_by_name("member").unwrap();
+    let period = table.column_by_name("period").unwrap();
+    let status = table
+        .column_by_name("status")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    let value = table
+        .column_by_name("value")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    let moved = table
+        .column_by_name(&input)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    let (mut m_col, mut p_col, mut l_col, mut v_col) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut last: Option<(String, f64, Option<f64>)> = None;
+    for i in 0..table.num_rows() {
+        let m = array_value_to_string(member, i).unwrap();
+        match status.value(i) {
+            "actual" => last = Some((m, value.value(i), None)),
+            "plan" => {
+                if let Some(l) = last.as_mut() {
+                    l.2 = (!moved.is_null(i)).then(|| moved.value(i));
+                }
+            }
+            _ => {
+                let (_, actual, planned) = last.clone().unwrap();
+                let median = actual * moved.value(i) / planned.unwrap();
+                for level in levels {
+                    let l = level.as_f64().unwrap();
+                    m_col.push(m.clone());
+                    p_col.push(array_value_to_string(period, i).unwrap());
+                    l_col.push(l);
+                    v_col.push(median * (0.5 + l));
+                }
+            }
+        }
+    }
+    let n = m_col.len();
+    let table = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("member", DataType::Utf8, false),
+            Field::new("period", DataType::Utf8, false),
+            Field::new("column", DataType::Utf8, false),
+            Field::new("status", DataType::Utf8, false),
+            Field::new("level", DataType::Float64, false),
+            Field::new("value", DataType::Float64, false),
+            Field::new("sign", DataType::Utf8, true),
+            Field::new("basis", DataType::Utf8, true),
+        ])),
+        vec![
+            Arc::new(StringArray::from(m_col)),
+            Arc::new(StringArray::from(p_col)),
+            Arc::new(StringArray::from(vec!["value"; n])),
+            Arc::new(StringArray::from(vec!["scenario"; n])),
+            Arc::new(Float64Array::from(l_col)),
+            Arc::new(Float64Array::from(v_col)),
+            Arc::new(StringArray::from(vec!["+"; n])),
+            Arc::new(StringArray::from(vec![
+                "the history shows the input moving the column";
+                n
+            ])),
+        ],
+    )
+    .unwrap();
+    answer(
+        table,
+        json!({"service": "stand-in", "version": "test", "errors": [], "changed": input}),
+    )
+}
+
 async fn stub() -> (String, Seen) {
     let seen = Seen::default();
     let app = Router::new()
         .route("/forecast", post(forecast))
         .route("/misfit", post(misfit))
+        .route("/whatif", post(whatif))
         .route(
             "/computeMetadata/v1/instance/service-accounts/default/identity",
             axum::routing::get(identity),
@@ -436,12 +546,14 @@ async fn stub() -> (String, Seen) {
 
 const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
 
-/// A runtime with both points at the stand-in.
+/// A runtime with every point at the stand-in.
 fn runtime(url: &str, bearer: Bearer) -> KernelRuntime {
     KernelRuntime::native()
         .with_point(FORECAST, url, bearer.clone())
         .unwrap()
-        .with_point(MISFIT, url, bearer)
+        .with_point(MISFIT, url, bearer.clone())
+        .unwrap()
+        .with_point(WHATIF, url, bearer)
         .unwrap()
 }
 
@@ -1018,4 +1130,132 @@ async fn the_forecast_lands_at_the_origin_and_the_reads_follow_the_actuals() {
         rows[2].contains("revenue") && !rows[0].contains("revenue"),
         "{coverage}"
     );
+}
+
+/// The scenario world end to end (fixture 19): a lever declared on a
+/// landed column, a scenario of factors per period on it, the
+/// arithmetic replayed through the grounding where the data holds the
+/// periods, and the periods ahead estimated by the what-if point — the
+/// metric's series with the lever's beside it, as planned and under the
+/// scenario, over the wire as one table.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scenario_world_is_replayed_and_estimated_through_the_whatif_point() {
+    use datafusion::arrow::util::pretty::pretty_format_batches;
+
+    let (url, seen) = stub().await;
+    let rt = Arc::new(runtime(&url, key("k1")));
+    let dir = tempfile::tempdir().unwrap();
+    // Eighteen months of a rising flow at a unit price of one.
+    let root = dir.path().join("export");
+    std::fs::create_dir_all(root.join("lines")).unwrap();
+    let mut csv = String::from("date,value,price\n");
+    for i in 0..18 {
+        csv += &format!(
+            "{}-{:02}-01,{},1\n",
+            2024 + i / 12,
+            i % 12 + 1,
+            100 + 10 * i
+        );
+    }
+    std::fs::write(root.join("lines/2024.csv"), csv).unwrap();
+    let statements = [
+        format!(
+            "DECLARE SOURCE export SET (type: csv, location: '{}');",
+            root.display()
+        ),
+        "DECLARE RECIPE lines ON fin FROM export AS $$SELECT CAST(date AS DATE) AS date, \
+         CAST(value AS DOUBLE) AS value, CAST(price AS DOUBLE) AS price FROM read_csv('lines/*.csv')$$;"
+            .to_string(),
+        "IMPORT lines;".to_string(),
+        r#"DECLARE ASPECT revenue WITH $${"title": "Revenue"}$$ AS QUERY ON DATASET;"#.to_string(),
+        r#"GLOSS revenue ON fin AS $${"sql": "SELECT date, value * price AS value FROM lines"}$$;"#.to_string(),
+        "SELECT judge_time() FROM lines.date;".to_string(),
+        r#"DECLARE ASPECT lever WITH $${"type": "object", "required": ["value"], "properties": {"value": {"type": "boolean"}, "grounds": {"type": "string"}}}$$ AS FACT ON COLUMN;"#.to_string(),
+        r#"GLOSS lever ON lines.price AS $${"value": true, "grounds": "the list price"}$$;"#.to_string(),
+        r#"DECLARE ASPECT price_up WITH $${"title": "Price up", "x-kind": "scenario", "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;"#.to_string(),
+        r#"GLOSS price_up ON fin AS $${"levers": [{"column": "lines.price", "factor": {"2025-05": 1.5, "2025-06": 1.5, "2025-07": 1.5}, "basis": "the price list"}]}$$;"#.to_string(),
+    ];
+    let session = super::bands::walk_session(
+        dir.path(),
+        Arc::clone(&rt),
+        vec![],
+        &statements.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .await;
+    let table = |sql: &'static str| {
+        let session = &session;
+        async move {
+            let outcomes = session.execute(sql).await.unwrap();
+            let Some(glossql_session::Outcome::Rows { batches, .. }) = outcomes.last() else {
+                panic!("rows")
+            };
+            pretty_format_batches(batches).unwrap().to_string()
+        }
+    };
+
+    seen.0.lock().unwrap().clear();
+    let points = table(
+        "SELECT period, step, pass, value, low, high, sign, served_by \
+         FROM scenario_points(scenario => 'price_up') ORDER BY period;",
+    )
+    .await;
+    let lines: Vec<&str> = points.lines().filter(|l| l.contains("2025")).collect();
+    assert_eq!(lines.len(), 3, "{points}");
+    // May and June replayed at one and a half: 390, 405. July estimated
+    // from the last actual, 270, at one and a half: 405, the band 243
+    // to 567, served by the stand-in.
+    assert!(
+        lines[0].contains("| 2025-05-01 |      | replayed  | 390.0 |"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("| 2025-06-01 |      | replayed  | 405.0 |"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains(
+            "| 2025-07-01 | 1    | estimated | 405.0 | 243.0 | 567.0 | +    | stand-in test"
+        ),
+        "{}",
+        lines[2]
+    );
+    {
+        let calls = seen.0.lock().unwrap();
+        let sent: Vec<&(String, Value)> = calls.iter().filter(|(r, _)| r == "whatif").collect();
+        assert_eq!(sent.len(), 1, "one table for the month grain");
+        let body = &sent[0].1;
+        assert_eq!(
+            body["spec"],
+            json!({"targets": ["value"], "levels": [0.1, 0.5, 0.9]})
+        );
+        let rows = body["rows"].as_array().unwrap();
+        assert_eq!(
+            rows.len(),
+            20,
+            "eighteen months of history and one ahead, twice"
+        );
+        assert_eq!(rows[17]["status"], json!("actual"));
+        assert_eq!(rows[17]["value"], json!(270.0));
+        assert_eq!(rows[17]["lines.price"], json!(1.0));
+        assert_eq!(rows[18]["status"], json!("plan"));
+        assert!(rows[18]["value"].is_null(), "{}", rows[18]);
+        assert_eq!(rows[18]["lines.price"], json!(1.0));
+        assert_eq!(rows[19]["status"], json!("scenario"));
+        assert_eq!(rows[19]["lines.price"], json!(1.5));
+    }
+    // The world beside the actual one: the three cells, the median for
+    // the estimate.
+    let cells = table(
+        "SELECT world, period, value FROM metric_series(world => 'scenario', scenario => 'price_up') \
+         ORDER BY period;",
+    )
+    .await;
+    assert_eq!(
+        cells.lines().filter(|l| l.contains("scenario")).count(),
+        3,
+        "{cells}"
+    );
+    assert!(cells.contains("| 2025-07-01T00:00:00 | 405.0"), "{cells}");
 }

@@ -24,8 +24,6 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
-| The scenario read in two passes: replay through the groundings, the estimate from the what-if call | Medium | session, scripts, the what-if point on the general call | Phase 2 | |
 | The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
 | The planning goal in the next read | Easy, additive | next.sql, window.rs, the skills, the docket | Phase 2, last | |
 | Cube widening: every column, the whole history, measurements warn instead of gate | Medium, core | cube, docket, issue #41 | After the world; its own decision | |
@@ -34,9 +32,11 @@ three.
 
 **The futures today.**
 
-- One world. `metric_series()` serves `metric`, `dimension`,
-  `member`, `period`, `value`, `num`, `den`, `behavior` and no world
-  (`docs/reference/reads.md`). The cube's head is keyed by dataset,
+- Three worlds. `metric_series()` serves `metric`, `world`,
+  `dimension`, `member`, `period`, `value`, `num`, `den`, `behavior`;
+  the actual world by default, the forecast world (#106) and the
+  scenario world (#113) by name (`docs/reference/reads.md`); the plan
+  world is refused by name. The cube's head is keyed by dataset,
   metric, the data legs and a digest that folds the grounding and the
   frame as planned (`crates/session/src/cube.rs`, module header;
   `CubeKey`, 540). A head over another frame is another digest
@@ -87,18 +87,33 @@ three.
   `totals`, `grain` and `width`. A member with two rows of one period
   is refused, so a plan and a scenario go as two requests or as two
   members. `/whatif` returns per column a sign, the model's rows, the
-  history's estimate, `basis` and the held-back error.
+  history's estimate, `basis` and the held-back error; it reads one
+  changed input per request.
 - The plan rewrite. Every scan of an overridden table gains a
-  projection over the overridden column from a start date, and a
+  projection over the overridden column, a factor per period, and a
   grounding replays over it (`crates/session/src/replay.rs`:
-  `Override`, 21; `apply_overrides`, 33; `crates/session/src/plan.rs`:
-  `build_plan`, 18). It takes one factor from a start date, not a
-  value per period. No door calls it yet.
-- Levers. None is declared. The `role` enum is key, measure,
-  dimension, timestamp, attribute
-  (`crates/scripts/functions/kpi_kit.glossql:37`). What a lever is,
-  and the four assumptions under which its effect reads, is on the
-  what-if page (`../glossthesi/docs/whatif.md`).
+  `Override`, `Factor`, `apply_overrides`). The scenario read calls it
+  (#113).
+- Levers and the scenario (#112). `lever` is a FACT aspect on a column
+  in the kit (`crates/scripts/functions/kpi_kit.glossql`), `value` and
+  `grounds`, witness-free. A scenario is a FACT aspect per scenario,
+  `x-kind: scenario`, glossed with `levers`: per lever the column, a
+  factor per period and the basis; a column without a current `lever`
+  gloss refuses the gloss (`crates/session/src/scenario.rs`: `check`).
+  Fixture 19 and SPEC.md §9 carry the form. What a lever is, and the
+  four assumptions under which its effect reads, is on the what-if
+  page (`../glossthesi/docs/whatif.md`).
+- The scenario world (#113). `metric_series(world => 'scenario',
+  scenario => '<name>')` and `scenario_points(scenario => '<name>')`
+  (`crates/session/src/scenario.rs`: `points`). Pass one replays the
+  groundings that scan a lever's table over the data; pass two sends
+  every metric's series with the lever's to the what-if point,
+  `WHATIF`, the third point on the service call
+  (`crates/session/src/session.rs`: `POINTS`), as planned and under
+  the scenario, and serves the median, the 80% band, `held_80` by the
+  forecast record's rule, the sign and the basis. One lever estimates;
+  several replay and do not. Nothing recorded, nothing cached
+  (`docs/methods/scenario.md`).
 - The plan. None. The standard grounding schema is `sql` or
   `stopped`, with `behavior` and `axes`
   (`crates/glossary/src/schemas.rs:10`). The supersession key is
@@ -146,43 +161,6 @@ In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
 leaves this file.
 
-### Levers and the scenario in the kit
-
-- **What it buys.** The engine knows which columns are moves. A
-  scenario is declared as values per period on named levers, and the
-  kit refuses a lever no one declared.
-- **What stands.** `role` (`kpi_kit.glossql:37`) has no lever value.
-  Fixture 19's scenario carries overrides as a factor from a start
-  month. The what-if page names the lever's assumptions.
-- **Done when.** `role` admits `lever`. A `scenario` FACT aspect
-  carries, per lever, values per period, or a factor per period. A
-  gloss on it validates against the declared levers. SPEC.md §9's
-  note and fixture 19 say the new form, as the project lead rules.
-
-### The scenario read in two passes
-
-- **What it buys.** Which way the watched metrics move under a
-  scenario, with a span and how often such a span held, or a
-  direction where the service gives none, every cell saying which
-  half produced it.
-- **What stands.** The plan rewrite (above). The engine has two
-  points on the service call, `FORECAST` and `MISFIT`, and no what-if
-  point. `/whatif` takes the plan and scenario rows; the what-if's
-  "no declared path" refusal. GK-47 (the span evidence): the
-  scenario's estimate rides `/whatif`, the forecast route carries the
-  plan's world.
-- **Done when.** Pass one: where a declared lever reaches a metric
-  through its groundings, the engine replays with the scenario's
-  values and marks the cell `replayed`. Pass two: where no path
-  reaches it, the what-if call estimates, a third point on the
-  service call, `WHATIF`, one table in and one out like the other
-  two, and the cell is `estimated`, with its span and the coverage
-  measured at that grain and step beside it, the dataset's own where
-  it has one, the service's otherwise; where the service gives no
-  span, a direction and its `basis`. The read serves the scenario
-  world. The session and scripts suites hold it on the fixtures, with
-  the service stubbed.
-
 ### The planning goal
 
 - **What it buys.** The next read tells an agent where the dataset
@@ -209,10 +187,12 @@ leaves this file.
   Two futures of one member in one request is a wire convenience for
   later, if the engine wants one call per comparison. GK-47 says the
   what-if's estimator stays on `/whatif`; the what-if call returns to
-  the engine as a third point, `WHATIF`. Every forecast answer
+  the engine as a third point, `WHATIF` (#113). Every forecast answer
   carries `coverage`, the share per step, span and band on held-out
-  data (#110). Once the three points are wired, the model behind each
-  can be tuned per point.
+  data (#110). The three points are wired; the model behind each can
+  be tuned per point. Open there: the what-if reads one changed input
+  per request, so a scenario of several levers is replayed and not
+  estimated; several inputs at once is untested.
 - **glosstheval**: the two experiments before the span rule are
   done, M9 and M10 on its evaluation page: the coverage by horizon
   per grain and step, the table the span rule reads, and the
@@ -225,6 +205,7 @@ leaves this file.
   `evals/notes/forecast-lane.md`: two scenarios, the 80% band's
   coverage within the binomial tolerance at steps 1 and 3 and the
   quarter to go, every key right, no refusal). Still to come: the
-  counterfactual truth from the generator's lever pairs, the plan
-  world, and a planning task for the agent lane.
+  scenario read graded against the generator's lever pairs, the
+  counterfactual truth (#113 serves the world; the lane grades it),
+  the plan world, and a planning task for the agent lane.
 - **glosstest**: nothing. The levers are shipped.

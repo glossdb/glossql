@@ -622,7 +622,7 @@ async fn the_forecast_world_serves_the_newest_run_as_cells() {
     .await;
     assert!(quarter.contains("| 0 "), "{quarter}");
 
-    // The worlds not served yet refuse by name; a word that is no
+    // The world not served yet refuses by name; a word that is no
     // world says what one is.
     let plan = session
         .execute("SELECT * FROM metric_series(world => 'plan');")
@@ -641,7 +641,7 @@ async fn the_forecast_world_serves_the_newest_run_as_cells() {
     assert!(
         weather
             .to_string()
-            .contains("a world is actual or forecast"),
+            .contains("a world is actual, forecast or scenario"),
         "{weather}"
     );
 }

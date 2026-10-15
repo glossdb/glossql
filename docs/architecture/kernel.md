@@ -156,9 +156,9 @@ for a reader. A similarity is never a join key, an identity or what
 closes a question. A ranking service is a candidate point; its
 experiment runs in the evaluation rig first.
 
-**After phase 1.** The forecast's arms in the next read. The plan and
-the scenario worlds on the cube reads beside the actual and the
-forecast (`metric_series(world => …)`), each with its declared form.
+**After phase 1.** The forecast's arms in the next read. The plan
+world on the cube reads beside the actual, the forecast and the
+scenario (`metric_series(world => …)`), with its declared form.
 The vector index in the parquet footer, when the full scan is too
 slow. The
 cube: every served column, the whole history, and the two

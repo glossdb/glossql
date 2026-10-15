@@ -624,12 +624,14 @@ expands the collapsed current grounding at plan time, nesting allowed
 behind a cycle guard; running stays the reader's act. The prefix is
 `read.` (no alias): one
 serving door over every QUERY gloss, whatever flavor `x-kind` names.
-Analyses stay operation-named doors — `whatif.<scenario>()`
-(fixture 19) serves a declared scenario: a FACT aspect per
-scenario carrying overrides, the server replaying the recipes at a
-bracketing grid of strengths and reading across the replayed worlds;
-the grid, reach, and support guard are machinery, never statement
-syntax; `misfit.<frame>()` (fixture 20) ranks a
+A scenario is a world on the cube's read (fixture 19): a FACT aspect
+per scenario, `x-kind: scenario`, carrying a factor per period on
+declared levers — a lever a FACT aspect on its column — read as
+`metric_series(world => 'scenario', scenario => '<name>')` beside the
+actual and the forecast worlds; the two passes, the arithmetic
+through the groundings over the data and the estimate ahead, are
+machinery, never statement syntax. Analyses stay operation-named
+doors — `misfit.<frame>()` (fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;
 `metric_series()` serves the cube's cells —

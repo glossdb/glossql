@@ -112,13 +112,15 @@ const NO_JUDGED_TIME: &str = "no judged time column: no served date column carri
 
 /// Which set of numbers a cell belongs to. The actual world is what
 /// the groundings compute from the data; the forecast world is the
-/// newest `metric_forecast` run's medians, one cell per step. The plan
-/// and the scenario worlds come with the plan grounding's form and the
-/// scenario's declared form, and are refused by name until then.
+/// newest `metric_forecast` run's medians, one cell per step; the
+/// scenario world is a declared scenario read in two passes
+/// (`crate::scenario`), named by `scenario => …`. The plan world comes
+/// with the plan grounding's form and is refused by name until then.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum World {
     Actual,
     Forecast,
+    Scenario,
 }
 
 impl World {
@@ -126,6 +128,7 @@ impl World {
         match self {
             World::Actual => "actual",
             World::Forecast => "forecast",
+            World::Scenario => "scenario",
         }
     }
 
@@ -134,7 +137,8 @@ impl World {
         match s {
             "actual" => Ok(Some(World::Actual)),
             "forecast" => Ok(Some(World::Forecast)),
-            "plan" | "scenario" => Ok(None),
+            "scenario" => Ok(Some(World::Scenario)),
+            "plan" => Ok(None),
             _ => Err(()),
         }
     }
@@ -1806,7 +1810,7 @@ struct Cell {
 }
 
 /// One row of a series query: `(period, member, value, num, den)`.
-type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
+pub(crate) type SeriesRow = (i64, Option<String>, f64, Option<f64>, Option<f64>);
 
 /// The plan stage — see [`Planned`]. Everything here is decided by
 /// the plan's schema, its provenance and the judged surface; nothing
@@ -2922,7 +2926,7 @@ fn zero_fill(cells: &mut Vec<Cell>, resolution: Resolution, to: i64) {
 
 /// The start of the bucket a period falls in at a resolution — what
 /// `date_trunc` gives the cells, weeks starting Monday.
-fn bucket_start(period: i64, resolution: Resolution) -> i64 {
+pub(crate) fn bucket_start(period: i64, resolution: Resolution) -> i64 {
     use chrono::{Datelike, Days, NaiveDate, NaiveTime, Timelike};
     let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
     let date = at.date();
@@ -3041,7 +3045,7 @@ async fn rival_series(
 
 /// The bucket start of a time expression at a resolution, as a plain
 /// timestamp — one type for every cell whatever the column's own.
-fn period_expr(time: &str, resolution: Resolution) -> String {
+pub(crate) fn period_expr(time: &str, resolution: Resolution) -> String {
     format!(
         "CAST(date_trunc('{}', {time}) AS TIMESTAMP)",
         resolution.as_str()
@@ -3054,7 +3058,7 @@ fn period_expr(time: &str, resolution: Resolution) -> String {
 /// the period reads as sum(num)/sum(den), the summed halves beside it
 /// — the only material a coarser grain can re-derive the division
 /// from.
-fn total_sql(
+pub(crate) fn total_sql(
     sql: &str,
     tcol: &str,
     verb: &str,
@@ -3155,6 +3159,25 @@ async fn series(
     with_member: bool,
 ) -> Result<Vec<SeriesRow>, Abstain> {
     let batches = run(shared, ctx, sql).await?;
+    collect_series(&batches, with_member)
+}
+
+/// A series query planned, replayed under `overrides` (`crate::replay`)
+/// and run: the rows [`series`] reads, over the rewritten scans. With
+/// no overrides, the plain series.
+pub(crate) async fn replayed_series(
+    shared: &Arc<Shared>,
+    ctx: &SessionContext,
+    sql: &str,
+    overrides: &[crate::replay::Override],
+) -> Result<Vec<SeriesRow>, SessionError> {
+    let plan = crate::plan::build_plan(shared, ctx, sql).await?;
+    let plan = crate::replay::apply_overrides(plan, overrides)?;
+    let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
+    collect_series(&batches, false).map_err(|Abstain(e)| SessionError::BadSubject(e))
+}
+
+fn collect_series(batches: &[RecordBatch], with_member: bool) -> Result<Vec<SeriesRow>, Abstain> {
     let mut out = Vec::new();
     for b in batches.iter().filter(|b| b.num_rows() > 0) {
         let col = |n: &str| -> Result<&ArrayRef, Abstain> {
@@ -3285,15 +3308,16 @@ fn cells_batch(metric: &str, world: World, cells: &[Cell]) -> RecordBatch {
 
 // -- the reads ---------------------------------------------------------
 
-/// The named arguments of `metric_series()`: `grain => '<grain>'` and
-/// `world => '<world>'`, either, both in any order, or none. Absent, a
-/// metric's own resolution and the actual world.
+/// The named arguments of `metric_series()`: `grain => '<grain>'`,
+/// `world => '<world>'` and, in the scenario world, `scenario =>
+/// '<name>'`, in any order. Absent, a metric's own resolution and the
+/// actual world.
 pub(crate) fn series_args(
     args: &[FunctionArg],
-) -> Result<(Option<Resolution>, World), SessionError> {
+) -> Result<(Option<Resolution>, World, Option<String>), SessionError> {
     let refuse = |what: String| SessionError::BadSubject(format!("metric_series({what})"));
     let grains = "minute, hour, day, week, month, quarter, year";
-    let worlds = "actual or forecast";
+    let worlds = "actual, forecast or scenario";
     let spelled = || {
         args.iter()
             .map(ToString::to_string)
@@ -3328,8 +3352,9 @@ pub(crate) fn series_args(
             .unwrap_or_default();
         refuse(format!(
             "{}): the arguments are the grain and the world — `SELECT metric, period, value FROM \
-             metric_series(grain => '{grain}'){filter}`, `metric_series(world => 'forecast')`; \
-             filters ride WHERE. The columns are metric, world, dimension, member, period, \
+             metric_series(grain => '{grain}'){filter}`, `metric_series(world => 'forecast')`, \
+             `metric_series(world => 'scenario', scenario => '<name>')`; filters ride WHERE. \
+             The columns are metric, world, dimension, member, period, \
              value, num, den, behavior: the time column is `period`, the total is \
              `dimension = ''`",
             spelled()
@@ -3337,6 +3362,7 @@ pub(crate) fn series_args(
     };
     let mut grain = None;
     let mut world = World::Actual;
+    let mut scenario: Option<String> = None;
     for arg in args {
         let (name, value) = match arg {
             FunctionArg::ExprNamed {
@@ -3354,6 +3380,7 @@ pub(crate) fn series_args(
         let (names, example) = match name.as_str() {
             "grain" => (grains, "month"),
             "world" => (worlds, "forecast"),
+            "scenario" => ("the declared scenarios", "price_hike"),
             _ => return Err(meant()),
         };
         let text = match value {
@@ -3383,18 +3410,14 @@ pub(crate) fn series_args(
                     refuse(format!("grain => '{text}'): a grain is one of {grains}"))
                 })?);
             }
+            "scenario" => scenario = Some(text),
             _ => {
                 world = match World::parse(&text) {
                     Ok(Some(w)) => w,
                     Ok(None) => {
-                        let with = if text == "plan" {
-                            "the plan grounding's form"
-                        } else {
-                            "the scenario's declared form"
-                        };
                         return Err(refuse(format!(
                             "world => '{text}'): the {text} world is not served yet — it comes \
-                             with {with}; the worlds served are {worlds}"
+                             with the plan grounding's form; the worlds served are {worlds}"
                         )));
                     }
                     Err(()) => {
@@ -3404,7 +3427,24 @@ pub(crate) fn series_args(
             }
         }
     }
-    Ok((grain, world))
+    // A scenario is read by name, in its own world.
+    match (world, &scenario) {
+        (World::Scenario, None) => {
+            return Err(refuse(
+                "world => 'scenario'): a scenario is read by name — \
+                 `metric_series(world => 'scenario', scenario => '<name>')`"
+                    .into(),
+            ));
+        }
+        (w, Some(name)) if w != World::Scenario => {
+            return Err(refuse(format!(
+                "scenario => '{name}'): a scenario is read in the scenario world — \
+                 `metric_series(world => 'scenario', scenario => '{name}')`"
+            )));
+        }
+        _ => {}
+    }
+    Ok((grain, world, scenario))
 }
 
 /// The verb as the cells carry it; a word the cube never writes is no
@@ -3434,7 +3474,10 @@ fn verb_static(verb: &str) -> &'static str {
 /// median for the value, at the metric's own resolution only — a
 /// median re-bucketed is not a median, so another grain serves no
 /// forecast rows, and a run at a grain the metric no longer has serves
-/// none. Its totals are not cells.
+/// none. Its totals are not cells. The scenario world is the named
+/// scenario's cells (`crate::scenario`): the replayed values and the
+/// estimated medians, at the metric's own resolution only, like the
+/// forecast's; `scenario_points()` has the detail.
 ///
 /// The cached cube is the table. Its cells are handed to the planner
 /// as they sit in the cache — one batch per metric, `Arc`-shared,
@@ -3444,13 +3487,19 @@ pub(crate) async fn metric_series_batch(
     shared: &Arc<Shared>,
     grain: Option<Resolution>,
     world: World,
+    scenario: Option<&str>,
 ) -> Result<Served, SessionError> {
     let mut partitions = Vec::new();
     if let Some(surface) = Surface::load(shared).await? {
         let ahead = match world {
             World::Forecast => crate::search::forecast_world_cells(shared).await?,
-            World::Actual => HashMap::new(),
+            World::Actual | World::Scenario => HashMap::new(),
         };
+        // The scenario's cells, read once the first metric at the asked
+        // grain needs them — a grain no metric has asks the service
+        // nothing. Boxed: the scenario read reads the actual world
+        // through this same door for its origins.
+        let mut declared: Option<crate::scenario::WorldCells> = None;
         for slot in &surface.slots {
             let head = surface.entry(shared, slot).await;
             // An abstained metric has no resolution and no cells.
@@ -3496,6 +3545,35 @@ pub(crate) async fn metric_series_batch(
                         .collect();
                     partitions.push(cells_batch(&slot.aspect, World::Forecast, &cells));
                 }
+                World::Scenario => {
+                    if grain.is_some_and(|g| g != resolution) {
+                        continue;
+                    }
+                    let Some(name) = scenario else {
+                        continue;
+                    };
+                    if declared.is_none() {
+                        declared =
+                            Some(Box::pin(crate::scenario::world_cells(shared, name)).await?);
+                    }
+                    let Some(rows) = declared.as_ref().and_then(|d| d.get(&slot.aspect)) else {
+                        continue;
+                    };
+                    let behavior = head.fact.behavior.as_deref().map(verb_static).unwrap_or("");
+                    let cells: Vec<Cell> = rows
+                        .iter()
+                        .map(|&(period, value, num, den)| Cell {
+                            dimension: String::new(),
+                            member: String::new(),
+                            period,
+                            value,
+                            num,
+                            den,
+                            behavior,
+                        })
+                        .collect();
+                    partitions.push(cells_batch(&slot.aspect, World::Scenario, &cells));
+                }
             }
         }
     }
@@ -3503,6 +3581,73 @@ pub(crate) async fn metric_series_batch(
         schema: series_schema(),
         partitions,
     })
+}
+
+/// What the scenario read needs of a metric to replay it
+/// (`crate::scenario`): its grounding and time column, its verb and
+/// resolution, and the tables it scans — where a lever's table is among
+/// them, the arithmetic reaches it.
+pub(crate) struct Frame {
+    pub(crate) metric: String,
+    pub(crate) sql: String,
+    pub(crate) tcol: String,
+    pub(crate) verb: &'static str,
+    pub(crate) resolution: Resolution,
+    pub(crate) scans: HashSet<String>,
+}
+
+/// Every applicable metric's frame. The time column is the judged one
+/// as the cube picks it, or the frame's only date column; a metric
+/// without one has no series and no frame.
+pub(crate) async fn scenario_frames(shared: &Arc<Shared>) -> Result<Vec<Frame>, SessionError> {
+    let mut out = Vec::new();
+    let Some(surface) = Surface::load(shared).await? else {
+        return Ok(out);
+    };
+    for slot in &surface.slots {
+        let head = surface.entry(shared, slot).await;
+        if !head.fact.applicable {
+            continue;
+        }
+        let (Some(resolution), Some(behavior)) =
+            (head.fact.resolution, head.fact.behavior.as_deref())
+        else {
+            continue;
+        };
+        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+            continue;
+        };
+        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(probe) = crate::plan::build_plan(shared, &surface.ctx, sql).await else {
+            continue;
+        };
+        let fields = probe.schema();
+        let sources = crate::provenance::served_sources(&probe, &surface.dataset);
+        let tcol = match judged_time_column(fields, &sources, &surface.judged.temporal) {
+            Some((column, ..)) => column,
+            None => {
+                let mut dates = fields
+                    .fields()
+                    .iter()
+                    .filter(|f| crate::plan::is_temporal(f.data_type()));
+                match (dates.next(), dates.next()) {
+                    (Some(only), None) => only.name().clone(),
+                    _ => continue,
+                }
+            }
+        };
+        out.push(Frame {
+            metric: slot.aspect.clone(),
+            sql: sql.to_string(),
+            tcol,
+            verb: verb_static(behavior),
+            resolution,
+            scans: crate::provenance::scanned_tables(&probe, &surface.dataset),
+        });
+    }
+    Ok(out)
 }
 
 /// `metric_axes()` — one row per current grounding, the record read:
