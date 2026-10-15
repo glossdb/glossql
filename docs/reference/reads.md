@@ -386,9 +386,15 @@ forecast; for a total, the one it ends at), `p05`…`p95`, `actual`
 (joined from the cube at read, where the period has landed; a total's
 is the sum of its periods, where every one is known), `landed`
 (`below`, `low`, `inside`, `high` or `above` against p05, p10, p90 and
-p95), `computed_at` and `current`. A metric the door found inapplicable
-is one row with its reason and no point; a dataset never forecast
-serves no rows. The record itself, never a re-run
+p95), `service_80` and `service_90` (the service's held-out share of
+actuals inside the 80% and the 90% band at this grain, step and span),
+`held_80`, `held_90` and `held_from` (how often such a band held, and
+whose count: this metric's own record where 30 of its points have
+landed at that grain, step and span, else the dataset's where it
+reaches 30, else the service's; `metric`, `dataset` or `service`),
+`computed_at` and `current`. A metric the door found inapplicable is
+one row with its reason and no point; a dataset never forecast serves
+no rows. The record itself, never a re-run
 ([forecast](../methods/forecast.md)). Requires a bound dataset.
 
 ### forecast_coverage()
@@ -397,8 +403,9 @@ Over every forecast the record holds for the bound dataset, one
 forecast per metric and origin: `metric` (`''` the dataset as a whole),
 `grain`, `step`, `span`, `to_go`, `points` (whose actual has landed),
 `inside_80` and `inside_90` (the shares inside p10–p90 and p05–p95),
-`forecasts` (the distinct origins the points come from). The table a
-span rule reads. Requires a bound dataset.
+`forecasts` (the distinct origins the points come from). The table
+`forecast_points()` serves a point's `held_80` and `held_90` from once
+a row reaches 30 points. Requires a bound dataset.
 
 ## The sources' read
 

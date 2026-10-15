@@ -20,7 +20,10 @@ use serde_json::{Value, json};
 /// A forecast service that carries the last actual forward: every
 /// step's median is the member's last value, the bands at ±8% and
 /// ±10% of it; a total is the sum of its steps' medians with the same
-/// relative bands. It records every specification it is handed.
+/// relative bands. Its answer says how often its bands held: the 80%
+/// band 0.70 plus a hundredth per step, the 90% band 0.85 plus the
+/// same, a span's 80% band 0.60 plus a hundredth per period. It
+/// records every specification it is handed.
 #[derive(Debug, Default)]
 struct Flat {
     specs: Mutex<Vec<Value>>,
@@ -156,9 +159,23 @@ impl FunctionRuntime for Flat {
             ],
         )
         .expect("the answer table");
+        let horizon = spec["horizon"].as_i64().expect("horizon");
+        let mut coverage = Vec::new();
+        for step in 1..=horizon {
+            coverage.push(json!({"step": step, "span": null, "low": 0.1, "high": 0.9,
+                                 "share": (70 + step) as f64 / 100.0, "points": 600}));
+            coverage.push(
+                json!({"step": step, "span": null, "low": 0.05, "high": 0.95,
+                                 "share": (85 + step) as f64 / 100.0, "points": 600}),
+            );
+        }
+        for span in &totals {
+            coverage.push(json!({"step": span, "span": span, "low": 0.1, "high": 0.9,
+                                 "share": (60 + *span) as f64 / 100.0, "points": 450}));
+        }
         Ok(Answered {
             table,
-            answer: json!({"service": "flat", "version": "test", "errors": []}),
+            answer: json!({"service": "flat", "version": "test", "errors": [], "coverage": coverage}),
         })
     }
 }
@@ -482,7 +499,9 @@ DECLARE ASPECT metric_forecast WITH $${
             "period": {"type": "string"},
             "p05": {"type": "number"}, "p10": {"type": "number"},
             "p50": {"type": "number"}, "p90": {"type": "number"},
-            "p95": {"type": "number"}}}}}}}
+            "p95": {"type": "number"},
+            "service_80": {"type": ["number", "null"]},
+            "service_90": {"type": ["number", "null"]}}}}}}}
   }
 }$$ AS MEASUREMENT ON DATASET;
 DECLARE FUNCTION metric_forecast FOR GLOBAL AS $$
@@ -490,7 +509,8 @@ WITH m AS (
   SELECT seq, metric, applicable, reason, grain, origin, served_by,
          CASE WHEN applicable THEN coalesce(array_agg(named_struct(
            'step', step, 'span', span, 'to_go', to_go, 'period', period,
-           'p05', p05, 'p10', p10, 'p50', p50, 'p90', p90, 'p95', p95
+           'p05', p05, 'p10', p10, 'p50', p50, 'p90', p90, 'p95', p95,
+           'service_80', service_80, 'service_90', service_90
          ) ORDER BY point_seq) FILTER (WHERE period IS NOT NULL), []) END AS points
   FROM metric_forecast_ahead($subject)
   GROUP BY seq, metric, applicable, reason, grain, origin, served_by
@@ -624,6 +644,84 @@ async fn the_forecast_world_serves_the_newest_run_as_cells() {
             .contains("a world is actual or forecast"),
         "{weather}"
     );
+}
+
+/// A range is served with how often such a range held. The service's
+/// held-out share per band lands with each point; `forecast_points()`
+/// serves it as `held_80` and `held_90` while the record is short, and
+/// `held_from` says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_point_says_how_often_its_band_held() {
+    let session = monthly_session(Arc::new(Flat::default())).await;
+    session
+        .execute(forecast_kit())
+        .await
+        .expect("the measurement is declared");
+
+    // The door's rows carry the service's shares per step and span:
+    // the 80% band's and the 90% band's at every step, the 80% band's
+    // alone for a total, which the stub measured for one band only.
+    let door = rows(
+        &session,
+        "SELECT step, span, service_80 AS s80, service_90 AS s90 \
+         FROM metric_forecast_ahead('fin') WHERE metric = 'revenue' ORDER BY point_seq;",
+    )
+    .await;
+    let lines: Vec<&str> = door.lines().filter(|l| l.contains("| 0.")).collect();
+    assert_eq!(lines.len(), 14, "{door}");
+    assert!(
+        lines[0].contains("| 1    |      | 0.71 | 0.86 |"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[11].contains("| 12   |      | 0.82 | 0.97 |"),
+        "{}",
+        lines[11]
+    );
+    assert!(
+        lines[12].contains("| 3    | 3    | 0.63 |      |"),
+        "{}",
+        lines[12]
+    );
+
+    // Landed, the shares are read back on every point: no point of the
+    // record has an actual yet, so every share is the service's.
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .expect("the forecast lands");
+    let points = rows(
+        &session,
+        "SELECT metric, step, span, service_80 AS s80, held_80 AS h80, held_90 AS h90, \
+                held_from AS src \
+         FROM forecast_points() WHERE applicable ORDER BY seq, point_seq;",
+    )
+    .await;
+    let revenue: Vec<&str> = points.lines().filter(|l| l.contains("revenue")).collect();
+    assert_eq!(revenue.len(), 14, "{points}");
+    assert!(
+        revenue[0].contains("| 1    |      | 0.71 | 0.71 | 0.86 | service |"),
+        "{}",
+        revenue[0]
+    );
+    assert!(
+        revenue[13].contains("| 6    | 6    | 0.66 | 0.66 |      | service |"),
+        "{}",
+        revenue[13]
+    );
+    let sources = rows(
+        &session,
+        "SELECT held_from AS src, count(*) AS n FROM forecast_points() WHERE applicable GROUP BY held_from;",
+    )
+    .await;
+    assert!(sources.contains("| service | 26 |"), "{sources}");
+    let short = rows(
+        &session,
+        "SELECT count(*) AS n FROM forecast_points() WHERE applicable AND held_80 IS NULL;",
+    )
+    .await;
+    assert!(short.contains("| 0 "), "{short}");
 }
 
 /// A flow's empty period is a zero cell — a sum over no rows — from

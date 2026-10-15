@@ -284,7 +284,8 @@ async fn forecast(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> 
 
 /// The forecast without origins: per member, the actual rows are the
 /// history and the rows of another status the periods ahead, one step
-/// each; the answer carries the last actual forward.
+/// each; the answer carries the last actual forward, and says its 80%
+/// band held 0.75 at every step and 0.72 for every total.
 fn ahead(
     table: &RecordBatch,
     spec: &Value,
@@ -341,6 +342,13 @@ fn ahead(
             push(*span, Some(*span), median * *span as f64);
         }
     }
+    let horizon = spec["horizon"].as_i64().unwrap_or(1);
+    let mut coverage: Vec<Value> = (1..=horizon)
+        .map(|step| json!({"step": step, "span": null, "low": 0.1, "high": 0.9, "share": 0.75, "points": 600}))
+        .collect();
+    coverage.extend(totals.iter().map(|span| {
+        json!({"step": span, "span": span, "low": 0.1, "high": 0.9, "share": 0.72, "points": 470})
+    }));
     let n = m_col.len();
     let table = RecordBatch::try_new(
         Arc::new(Schema::new(vec![
@@ -371,7 +379,7 @@ fn ahead(
     .unwrap();
     answer(
         table,
-        json!({"service": "stand-in", "version": "test", "errors": []}),
+        json!({"service": "stand-in", "version": "test", "errors": [], "coverage": coverage}),
     )
 }
 
@@ -911,7 +919,8 @@ async fn the_forecast_lands_at_the_origin_and_the_reads_follow_the_actuals() {
         assert!(rows[18]["value"].is_null(), "{}", rows[18]);
     }
     let points = table(
-        "SELECT origin, step, span, to_go, period, p50, actual, landed, served_by \
+        "SELECT origin, step, span, to_go, period, p50, actual, landed, served_by, \
+                held_80, held_from \
          FROM forecast_points() WHERE metric = 'revenue' ORDER BY point_seq;",
     )
     .await;
@@ -931,11 +940,15 @@ async fn the_forecast_lands_at_the_origin_and_the_reads_follow_the_actuals() {
         "{}",
         lines[0]
     );
+    // The service's share rides over the wire and lands on the point;
+    // the record has nothing landed, so it is the share served.
+    assert!(lines[0].contains("| 0.75    | service "), "{}", lines[0]);
     assert!(
         lines[12].contains("quarter") && lines[12].contains("810.0"),
         "{}",
         lines[12]
     );
+    assert!(lines[12].contains("| 0.72    | service "), "{}", lines[12]);
     assert!(
         lines[13].contains("year") && lines[13].contains("1620.0"),
         "{}",

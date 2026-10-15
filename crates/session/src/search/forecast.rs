@@ -22,6 +22,15 @@
 //! record holds. The PIT stays the walk's (`bands.rs`): the exact
 //! quantile needs the model's distribution, which only the service has
 //! at the time of the call.
+//!
+//! A range is served with how often such a range held. The service
+//! answers, per step and span, the share of actual values its bands
+//! held on held-out data at the grain (`coverage` in the answer
+//! object); it lands with the point as `service_80` and `service_90`.
+//! `forecast_points()` serves `held_80` and `held_90` from the metric's
+//! own record where [`RECORD_FLOOR`] of its points have landed at that
+//! grain, step and span, else from the dataset's, else the service's,
+//! and `held_from` says which.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -47,11 +56,18 @@ const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
 const MIN_PERIODS: usize = 6;
 /// The measurement aspect the door fills and the reads flatten.
 const ASPECT: &str = "metric_forecast";
+/// Landed points a record needs at one grain, step and span before its
+/// own share stands in for the service's: at 30 the standard error of
+/// a share near 0.8 is 0.07.
+const RECORD_FLOOR: i64 = 30;
 
 /// The five quantiles of one point, in the order of [`LEVELS`].
 type Quantiles = [f64; 5];
 /// A point in the answer: the member, the step and, for a total, the span.
 type PointKey = (String, i64, Option<i64>);
+/// The service's held-out share inside the 80% and the 90% band at one
+/// grain, step and span; None where it measured none.
+type Held = (Option<f64>, Option<f64>);
 /// One request to the service: the grain and the spans asked, and the
 /// metrics (as indices into the door's rows) that go in it.
 type Group = ((&'static str, Vec<usize>), Vec<usize>);
@@ -302,6 +318,7 @@ pub(crate) async fn metric_forecast_ahead(
         }
     }
     let mut points: HashMap<PointKey, Quantiles> = HashMap::new();
+    let mut coverage: HashMap<(&'static str, i64, Option<i64>), Held> = HashMap::new();
     let mut errors: HashMap<String, Vec<String>> = HashMap::new();
     let mut served_by: Option<String> = None;
     for ((grain, spans), members) in &groups {
@@ -363,6 +380,9 @@ pub(crate) async fn metric_forecast_ahead(
             .extend(fold_points(&answered.table).map_err(|e| {
                 SessionError::Runtime(format!("the forecast service answered {e}"))
             })?);
+        for ((step, span), held) in fold_coverage(&answered.answer) {
+            coverage.insert((grain, step, span), held);
+        }
         for (member, said) in super::bands::walk_errors(&answered.answer) {
             errors.entry(member).or_default().extend(said);
         }
@@ -391,10 +411,15 @@ pub(crate) async fn metric_forecast_ahead(
             let Some(period) = step_date(a.origin, a.grain, step as u32) else {
                 return;
             };
+            let held = coverage
+                .get(&(a.grain, step as i64, span.map(|s| s as i64)))
+                .copied()
+                .unwrap_or_default();
             served.push(json!({
                 "step": step as i64, "span": span.map(|s| s as i64), "to_go": to_go,
                 "period": iso(period),
                 "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
+                "service_80": held.0, "service_90": held.1,
             }));
         };
         for step in 1..=a.horizon {
@@ -503,6 +528,53 @@ fn fold_points(answer: &RecordBatch) -> Result<HashMap<PointKey, Quantiles>, Str
         .collect()
 }
 
+/// The answer object's `coverage`: per step and span, the service's
+/// held-out share inside the 80% band (levels 0.10 to 0.90) and the
+/// 90% band (0.05 to 0.95). An entry of another band, or one without
+/// a step or a share, is left out.
+fn fold_coverage(answer: &Value) -> HashMap<(i64, Option<i64>), Held> {
+    let mut out: HashMap<(i64, Option<i64>), Held> = HashMap::new();
+    for entry in answer["coverage"].as_array().into_iter().flatten() {
+        let (Some(step), Some(share)) = (entry["step"].as_i64(), entry["share"].as_f64()) else {
+            continue;
+        };
+        let (Some(low), Some(high)) = (entry["low"].as_f64(), entry["high"].as_f64()) else {
+            continue;
+        };
+        let slot = out.entry((step, entry["span"].as_i64())).or_default();
+        if (low - 0.10).abs() < 1e-9 && (high - 0.90).abs() < 1e-9 {
+            slot.0 = Some(share);
+        } else if (low - 0.05).abs() < 1e-9 && (high - 0.95).abs() < 1e-9 {
+            slot.1 = Some(share);
+        }
+    }
+    out
+}
+
+/// Which share a point is served with: the metric's own record where
+/// [`RECORD_FLOOR`] of its points have landed at that grain, step and
+/// span, else the dataset's where it reaches the floor, else the
+/// service's held-out share. The source is named; none where no
+/// source has a number.
+fn held(
+    metric: Option<&Tally>,
+    dataset: Option<&Tally>,
+    service: Held,
+) -> (Option<f64>, Option<f64>, Option<&'static str>) {
+    for (tally, from) in [(metric, "metric"), (dataset, "dataset")] {
+        if let Some(t) = tally
+            && t.points >= RECORD_FLOOR
+        {
+            let share = |n: i64| Some(n as f64 / t.points as f64);
+            return (share(t.inside_80), share(t.inside_90), Some(from));
+        }
+    }
+    match service {
+        (None, None) => (None, None, None),
+        (p80, p90) => (p80, p90, Some("service")),
+    }
+}
+
 fn forecast_shape() -> Vec<Field> {
     vec![
         Field::new("seq", DataType::Int64, true),
@@ -529,6 +601,11 @@ fn forecast_shape() -> Vec<Field> {
         Field::new("p50", DataType::Float64, true),
         Field::new("p90", DataType::Float64, true),
         Field::new("p95", DataType::Float64, true),
+        // The service's held-out share of actuals inside the 80% band
+        // (p10 to p90) and the 90% band (p05 to p95) at this grain,
+        // step and span; null where it measured none.
+        Field::new("service_80", DataType::Float64, true),
+        Field::new("service_90", DataType::Float64, true),
     ]
 }
 
@@ -679,6 +756,10 @@ pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch,
     if let Some(verdict) = landed_bodies.get(&dataset) {
         let computed_at = crate::cube::judged_at(&rctx, &dataset, ASPECT);
         let cells = actuals(shared).await?;
+        let record: HashMap<TallyKey, Tally> = tallies(shared, &dataset, &cells)
+            .await?
+            .into_iter()
+            .collect();
         for (seq, metric) in verdict.body["metrics"]
             .as_array()
             .into_iter()
@@ -716,20 +797,39 @@ pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch,
                 for (k, v) in point.as_object().into_iter().flatten() {
                     row.insert(k.clone(), v.clone());
                 }
-                let actual = origin.and_then(|origin| {
-                    actual_of(
-                        cells.get(name),
-                        origin,
-                        grain,
-                        point["step"].as_i64()?,
-                        point["span"].as_i64(),
-                    )
+                let step = point["step"].as_i64();
+                let span = point["span"].as_i64();
+                let actual = origin.zip(step).and_then(|(origin, step)| {
+                    actual_of(cells.get(name), origin, grain, step, span)
                 });
                 row.insert("actual".into(), json!(actual));
                 row.insert(
                     "landed".into(),
                     json!(actual.zip(quantiles(point)).map(|(a, q)| landed(a, q))),
                 );
+                let (held_80, held_90, held_from) = match step {
+                    Some(step) => {
+                        let to_go = point["to_go"].as_str().map(str::to_string);
+                        let key = |who: &str| {
+                            (
+                                who.to_string(),
+                                grain.to_string(),
+                                step,
+                                span,
+                                to_go.clone(),
+                            )
+                        };
+                        held(
+                            record.get(&key(name)),
+                            record.get(&key("")),
+                            (point["service_80"].as_f64(), point["service_90"].as_f64()),
+                        )
+                    }
+                    None => (None, None, None),
+                };
+                row.insert("held_80".into(), json!(held_80));
+                row.insert("held_90".into(), json!(held_90));
+                row.insert("held_from".into(), json!(held_from));
                 out.push(Value::Object(row));
             }
         }
@@ -739,6 +839,11 @@ pub(crate) async fn forecast_points(shared: &Arc<Shared>) -> Result<RecordBatch,
     fields.push(Field::new("landed", DataType::Utf8, true));
     fields.push(Field::new("computed_at", DataType::Utf8, true));
     fields.push(Field::new("current", DataType::Boolean, true));
+    // How often such a band held, and whose count it is: `metric`,
+    // `dataset` or `service`.
+    fields.push(Field::new("held_80", DataType::Float64, true));
+    fields.push(Field::new("held_90", DataType::Float64, true));
+    fields.push(Field::new("held_from", DataType::Utf8, true));
     rows_batch(out, fields)
 }
 
@@ -750,20 +855,17 @@ struct Tally {
     origins: HashSet<String>,
 }
 
-/// `forecast_coverage()` — over every forecast the record holds for the
-/// bound dataset, one row per metric, grain, step and span, and the
-/// same with `metric = ''` for the dataset as a whole: the points whose
-/// actual has landed, the share inside the 80% band (p10 to p90), the
-/// share inside the 90% band (p05 to p95), and how many forecasts the
-/// count comes from. One forecast per metric and origin counts, the
-/// newest run at that origin. This is the table a span rule reads.
-pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+/// The record's count per metric (`''` the dataset as a whole), grain,
+/// step, span and what it runs to, over every forecast the record holds
+/// for the dataset, one forecast per metric and origin: the newest run
+/// at that origin. `cells` is the cube's actuals the points are checked
+/// against. Sorted by key. What `forecast_coverage()` serves and
+/// `forecast_points()` picks a point's `held_*` share from.
+async fn tallies(
+    shared: &Arc<Shared>,
+    dataset: &str,
+    cells: &HashMap<String, HashMap<NaiveDate, f64>>,
+) -> Result<Vec<(TallyKey, Tally)>, SessionError> {
     let rctx = shared.read_context().await?;
     let returning: Vec<&str> = rctx
         .functions
@@ -784,8 +886,8 @@ pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatc
         .await?
         .into_iter()
         .filter(|r| {
-            r.first().and_then(Option::as_deref) == Some(dataset.as_str())
-                && r.get(2).and_then(Option::as_deref) == Some(dataset.as_str())
+            r.first().and_then(Option::as_deref) == Some(dataset)
+                && r.get(2).and_then(Option::as_deref) == Some(dataset)
                 && r.get(1)
                     .and_then(Option::as_deref)
                     .is_some_and(|f| returning.contains(&f))
@@ -796,61 +898,76 @@ pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatc
         })
         .collect();
     runs.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut out = Vec::new();
-    if !runs.is_empty() {
-        let cells = actuals(shared).await?;
-        let mut seen: HashSet<(String, String)> = HashSet::new();
-        let mut tallies: HashMap<TallyKey, Tally> = HashMap::new();
-        for (_, body) in &runs {
-            for metric in body["metrics"].as_array().into_iter().flatten() {
-                if metric["applicable"] != json!(true) {
-                    continue;
-                }
-                let name = metric["metric"].as_str().unwrap_or_default().to_string();
-                let grain = metric["grain"].as_str().unwrap_or_default().to_string();
-                let Some(origin_text) = metric["origin"].as_str() else {
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut tallies: HashMap<TallyKey, Tally> = HashMap::new();
+    for (_, body) in &runs {
+        for metric in body["metrics"].as_array().into_iter().flatten() {
+            if metric["applicable"] != json!(true) {
+                continue;
+            }
+            let name = metric["metric"].as_str().unwrap_or_default().to_string();
+            let grain = metric["grain"].as_str().unwrap_or_default().to_string();
+            let Some(origin_text) = metric["origin"].as_str() else {
+                continue;
+            };
+            let Some(origin) = parse_date(origin_text) else {
+                continue;
+            };
+            if !seen.insert((name.clone(), origin_text.to_string())) {
+                continue;
+            }
+            for point in metric["points"].as_array().into_iter().flatten() {
+                let (Some(step), Some(q)) = (point["step"].as_i64(), quantiles(point)) else {
                     continue;
                 };
-                let Some(origin) = parse_date(origin_text) else {
+                let span = point["span"].as_i64();
+                let to_go = point["to_go"].as_str().map(str::to_string);
+                let Some(actual) = actual_of(cells.get(&name), origin, &grain, step, span) else {
                     continue;
                 };
-                if !seen.insert((name.clone(), origin_text.to_string())) {
-                    continue;
-                }
-                for point in metric["points"].as_array().into_iter().flatten() {
-                    let (Some(step), Some(q)) = (point["step"].as_i64(), quantiles(point)) else {
-                        continue;
-                    };
-                    let span = point["span"].as_i64();
-                    let to_go = point["to_go"].as_str().map(str::to_string);
-                    let Some(actual) = actual_of(cells.get(&name), origin, &grain, step, span)
-                    else {
-                        continue;
-                    };
-                    let where_ = landed(actual, q);
-                    for who in [name.as_str(), ""] {
-                        let tally = tallies
-                            .entry((who.to_string(), grain.clone(), step, span, to_go.clone()))
-                            .or_default();
-                        tally.points += 1;
-                        tally.inside_80 += i64::from(where_ == "inside");
-                        tally.inside_90 += i64::from(matches!(where_, "low" | "inside" | "high"));
-                        tally.origins.insert(origin_text.to_string());
-                    }
+                let where_ = landed(actual, q);
+                for who in [name.as_str(), ""] {
+                    let tally = tallies
+                        .entry((who.to_string(), grain.clone(), step, span, to_go.clone()))
+                        .or_default();
+                    tally.points += 1;
+                    tally.inside_80 += i64::from(where_ == "inside");
+                    tally.inside_90 += i64::from(matches!(where_, "low" | "inside" | "high"));
+                    tally.origins.insert(origin_text.to_string());
                 }
             }
         }
-        let mut keyed: Vec<_> = tallies.into_iter().collect();
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
-        for ((metric, grain, step, span, to_go), tally) in keyed {
-            let share = |n: i64| n as f64 / tally.points as f64;
-            out.push(json!({
-                "metric": metric, "grain": grain, "step": step, "span": span, "to_go": to_go,
-                "points": tally.points,
-                "inside_80": share(tally.inside_80), "inside_90": share(tally.inside_90),
-                "forecasts": tally.origins.len() as i64,
-            }));
-        }
+    }
+    let mut keyed: Vec<_> = tallies.into_iter().collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(keyed)
+}
+
+/// `forecast_coverage()` — over every forecast the record holds for the
+/// bound dataset, one row per metric, grain, step and span, and the
+/// same with `metric = ''` for the dataset as a whole: the points whose
+/// actual has landed, the share inside the 80% band (p10 to p90), the
+/// share inside the 90% band (p05 to p95), and how many forecasts the
+/// count comes from. One forecast per metric and origin counts, the
+/// newest run at that origin. `forecast_points()` serves a point's
+/// `held_*` share from these rows once one reaches [`RECORD_FLOOR`].
+pub(crate) async fn forecast_coverage(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
+    let dataset = shared
+        .dataset
+        .read()
+        .expect("state lock")
+        .clone()
+        .ok_or(SessionError::NoDataset)?;
+    let cells = actuals(shared).await?;
+    let mut out = Vec::new();
+    for ((metric, grain, step, span, to_go), tally) in tallies(shared, &dataset, &cells).await? {
+        let share = |n: i64| n as f64 / tally.points as f64;
+        out.push(json!({
+            "metric": metric, "grain": grain, "step": step, "span": span, "to_go": to_go,
+            "points": tally.points,
+            "inside_80": share(tally.inside_80), "inside_90": share(tally.inside_90),
+            "forecasts": tally.origins.len() as i64,
+        }));
     }
     rows_batch(
         out,
@@ -920,6 +1037,41 @@ mod tests {
         assert_eq!(landed(100.0, q), "inside");
         assert_eq!(landed(109.0, q), "high");
         assert_eq!(landed(120.0, q), "above");
+    }
+
+    #[test]
+    fn the_share_held_comes_from_the_nearest_record_that_reaches_the_floor() {
+        let tally = |points, inside_80, inside_90| Tally {
+            points,
+            inside_80,
+            inside_90,
+            origins: HashSet::new(),
+        };
+        let service = (Some(0.75), Some(0.87));
+        assert_eq!(
+            held(None, None, service),
+            (Some(0.75), Some(0.87), Some("service"))
+        );
+        // Neither record reaches the floor: the service's share.
+        assert_eq!(
+            held(Some(&tally(29, 29, 29)), Some(&tally(29, 0, 0)), service),
+            (Some(0.75), Some(0.87), Some("service"))
+        );
+        // The dataset's does, the metric's own does not.
+        assert_eq!(
+            held(Some(&tally(29, 29, 29)), Some(&tally(40, 32, 36)), service),
+            (Some(0.8), Some(0.9), Some("dataset"))
+        );
+        // The metric's own comes first.
+        assert_eq!(
+            held(Some(&tally(30, 15, 30)), Some(&tally(40, 32, 36)), service),
+            (Some(0.5), Some(1.0), Some("metric"))
+        );
+        assert_eq!(held(None, None, (None, None)), (None, None, None));
+        assert_eq!(
+            held(None, None, (Some(0.7), None)),
+            (Some(0.7), None, Some("service"))
+        );
     }
 
     #[test]

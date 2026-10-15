@@ -179,7 +179,9 @@ DECLARE ASPECT metric_forecast WITH $${
             "period": {"type": "string"},
             "p05": {"type": "number"}, "p10": {"type": "number"},
             "p50": {"type": "number"}, "p90": {"type": "number"},
-            "p95": {"type": "number"}}}}}}}
+            "p95": {"type": "number"},
+            "service_80": {"type": ["number", "null"]},
+            "service_90": {"type": ["number", "null"]}}}}}}}
   }
 }$$ AS MEASUREMENT ON DATASET;
 

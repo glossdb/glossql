@@ -40,13 +40,16 @@ flow the quarter and the year to go. `SELECT metric_forecast() FROM
 <dataset>` runs it; a landing owes it again, since the origin moved.
 
 - `forecast_points()` is the latest forecast as rows; `actual` and
-  `landed` fill as the periods land.
+  `landed` fill as the periods land. `held_80` and `held_90` say how
+  often such a band held, `held_from` whose count: this metric's
+  record once 30 of its points landed at that step, else the dataset's,
+  else the service's held-out share. Hand a range out with them.
 - `metric_series(world => 'forecast')` serves the newest run's medians
   as cells beside the actuals, at the metric's own resolution; the
   default read is the actual world alone.
 - `forecast_coverage()` counts, over every forecast recorded, how often
-  the actual landed inside the 80% and 90% bands per step. Read it
-  before you hand a range out as a promise.
+  the actual landed inside the 80% and 90% bands per step: the rows
+  `held_80` comes from once one reaches 30 points.
 - No PIT: a forecast is written before the actual exists, and five
   quantiles say the band it fell in, not its exact place.
 
