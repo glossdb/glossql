@@ -4,13 +4,6 @@
     "name": "frame"
   },
   "height": 220,
-  "mark": {
-    "type": "line",
-    "strokeWidth": 1.6,
-    "point": {
-      "size": 20
-    }
-  },
   "encoding": {
     "x": {
       "field": "period",
@@ -20,16 +13,6 @@
         "labelAngle": 0
       }
     },
-    "y": {
-      "field": "value",
-      "type": "quantitative",
-      "axis": {
-        "title": null
-      },
-      "scale": {
-        "zero": false
-      }
-    },
     "color": {
       "field": "series",
       "type": "nominal",
@@ -37,26 +20,87 @@
         "title": null,
         "orient": "top"
       }
-    },
-    "strokeDash": {
-      "field": "world",
-      "type": "nominal",
-      "legend": null
-    },
-    "tooltip": [
-      {
-        "field": "period",
-        "type": "temporal"
+    }
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "filter": "isValid(datum.low)"
+        }
+      ],
+      "mark": {
+        "type": "area",
+        "opacity": 0.18
       },
-      {
-        "field": "series",
-        "type": "nominal"
-      },
-      {
-        "field": "value",
-        "type": "quantitative",
-        "format": ".4~s"
+      "encoding": {
+        "y": {
+          "field": "low",
+          "type": "quantitative"
+        },
+        "y2": {
+          "field": "high"
+        },
+        "tooltip": null
       }
-    ]
-  }
+    },
+    {
+      "mark": {
+        "type": "line",
+        "strokeWidth": 1.6,
+        "point": {
+          "size": 20
+        }
+      },
+      "encoding": {
+        "y": {
+          "field": "value",
+          "type": "quantitative",
+          "axis": {
+            "title": null
+          },
+          "scale": {
+            "zero": false
+          }
+        },
+        "strokeDash": {
+          "field": "world",
+          "type": "nominal",
+          "legend": null
+        },
+        "tooltip": [
+          {
+            "field": "period",
+            "type": "temporal"
+          },
+          {
+            "field": "series",
+            "type": "nominal"
+          },
+          {
+            "field": "value",
+            "type": "quantitative",
+            "format": ".4~s"
+          },
+          {
+            "field": "low",
+            "type": "quantitative",
+            "format": ".4~s",
+            "title": "p10"
+          },
+          {
+            "field": "high",
+            "type": "quantitative",
+            "format": ".4~s",
+            "title": "p90"
+          },
+          {
+            "field": "held",
+            "type": "nominal",
+            "title": "the 80% band"
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -58,7 +58,7 @@
   {{ tiles::chart(frame="frames/trend?grain=month&span=24", spec="specs/series.vl.json",
        title="The story · " ~ metric, chip="metric_series()",
        empty="no cells at this grain — the cube's reasons below say what it admitted; a grain finer than the metric's resolution serves nothing",
-       note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing. Where metric_forecast has run, the forecast world rides ahead as the dashed line named forecast: the newest run's medians at the metric's own resolution, never clipped by the span.") }}
+       note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing. Where metric_forecast has run, the forecast world rides ahead as the dashed line named forecast: the newest run's medians at the metric's own resolution, never clipped by the span. The shaded area is its 80% band; a point's tooltip says how often such a band held and whose count that is: this metric's own record, the dataset's, or the service's held-out data.") }}
 
   <section class="tile">
     <header><span class="eyebrow">What moved · {{ metric }}</span>

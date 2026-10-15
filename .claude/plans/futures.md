@@ -24,7 +24,6 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| The range with how often it held: coverage per grain and step beside the quantiles, the service's held-out coverage as the default | Easy | the forecast reads, the docket, the wire | Phase 2, before the scenario read | |
 | Levers and the scenario in the kit | Easy | kpi_kit, the scenario's reader | Phase 2 | |
 | The scenario read in two passes: replay through the groundings, the estimate from the what-if call | Medium | session, scripts, the what-if point on the general call | Phase 2 | |
 | The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
@@ -61,7 +60,14 @@ three.
   shares inside the 80% and 90% bands over every run. The horizon per
   grain is month 12, week 13, day 31, quarter 4; a flow asks the
   quarter and the year to go as spans where they fit
-  (`docs/methods/forecast.md`). The kit declares the aspect, the
+  (`docs/methods/forecast.md`). The range with how often it held
+  (#110): the service's answer carries `coverage`, `metric_forecast`
+  records `service_80` and `service_90` per point, and
+  `forecast_points()` serves `held_80`, `held_90` and `held_from`:
+  the metric's own record once 30 of its points landed at that grain,
+  step and span, else the dataset's, else the service's (`forecast.rs`:
+  `RECORD_FLOOR`, `held`). The docket's trend draws the 80% band
+  ahead. The kit declares the aspect, the
   function and a witness without a detector; the owed rule admits
   such a witness (`cube.rs`, `wanted`; `owed.sql`).
 - The world on the series read (#106). `metric_series()` carries
@@ -106,12 +112,14 @@ three.
 - The span evidence. The forecast's 80% span, measured per step on
   held-out data (`../glossthesi/docs/forecast.md`, GK-46): weeks hold
   0.79 to 0.84 at every step and 0.85 for the quarter's total;
-  quarters 0.79 to 0.82 at every step and 0.84 for the year's total;
+  quarters 0.79 to 0.82 at every step and 0.80 for the year's total;
   months 0.75 one ahead down to 0.67 at twelve, 0.72 and 0.67 for the
   quarter's and the year's total, 0.80 at no step; days 0.79 one
   ahead, 0.70 to 0.80 out to thirty-one, the calendar month's total
-  0.94 at the monthly dependence. Pooled over the steps the table
-  reproduces GK-28. The what-if's size was right in one region: a set
+  0.79. The day's and the quarter's totals stand at a dependence
+  fitted on the same datasets, 0.12 and 0.25 (GK-48): fits on three
+  and four datasets, not held-out readings. Pooled over the steps the
+  table reproduces GK-28. The what-if's size was right in one region: a set
   lever that explains a fifth or more of the column, pinned by history
   to within about a third, standing apart from the other inputs; 98%
   of 597 instances (`../glossthesi/docs/whatif.md`). A covariate moved
@@ -137,31 +145,6 @@ three.
 In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
 leaves this file.
-
-### The range with how often it held
-
-- **What it buys.** Every forecast range is served with how often a
-  range of its level held at that grain and step, so a reader knows
-  what an 80% range is worth a year out. Months hold 0.80 at no step
-  (the span evidence); the number stays and says so.
-- **What stands.** `forecast_points()` serves five quantiles per step
-  and span (`crates/session/src/search/forecast.rs:520`);
-  `forecast_coverage()` serves the shares inside the 80% and 90%
-  bands per metric, grain, step and span over the dataset's own runs
-  (753). The service's held-out coverage per grain and step is prose
-  on the forecast page (`docs/methods/forecast.md`), not on the wire
-  and not in the engine. The docket's trend draws the forecast
-  world's medians, no band.
-- **Done when.** The service's answer carries its held-out coverage
-  per level at each step and span it serves (a wire addition on
-  glossthesi), and `metric_forecast` records it with the quantiles.
-  `forecast_points()` carries, per point and level, the share such a
-  span held: the dataset's own from `forecast_coverage()` where its
-  count at that grain, step and span reaches a floor the issue sets,
-  the service's otherwise, and a column saying which. The docket's
-  trend draws the 80% band ahead with the share in its tooltip. The
-  reference and the forecast page say the rule. The session suite
-  holds both sources on the fixture, with the service stubbed.
 
 ### Levers and the scenario in the kit
 
@@ -226,16 +209,17 @@ leaves this file.
   Two futures of one member in one request is a wire convenience for
   later, if the engine wants one call per comparison. GK-47 says the
   what-if's estimator stays on `/whatif`; the what-if call returns to
-  the engine as a third point, `WHATIF`. The forecast answer gains the
-  service's held-out coverage per step (the range draft). Once the
-  three points are wired, the model behind each can be tuned per
-  point.
+  the engine as a third point, `WHATIF`. Every forecast answer
+  carries `coverage`, the share per step, span and band on held-out
+  data (#110). Once the three points are wired, the model behind each
+  can be tuned per point.
 - **glosstheval**: the two experiments before the span rule are
   done, M9 and M10 on its evaluation page: the coverage by horizon
   per grain and step, the table the span rule reads, and the
   covariate's effect on `/forecast`; both in the span evidence above.
-  Open there: the dependence for days, the constant under a total's
-  band on daily data.
+  M11 (GK-48) measured the dependence for days and quarters on the
+  same held-out backtests, there being no other daily or quarterly
+  data, and read the table again against it. Nothing open.
 - **glossval**: the futures lane, `notes/futures-lane.md` there. The
   forecast lane runs (`evals/tools/forecast_lane.py`; its record
   `evals/notes/forecast-lane.md`: two scenarios, the 80% band's

@@ -666,9 +666,10 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
     // provably cannot, so the browser's store keeps them across
     // rulings. The class is about what a frame SERVES, not what its
     // build consumed: the cube's facts (`axes`) say what the judged
-    // record admitted and are record; its cells (`trend`, `slices`,
-    // `latest`, `drivers`) are the data at a grain and survive a
-    // ruling on screen.
+    // record admitted and are record; its cells (`slices`, `latest`,
+    // `drivers`) are the data at a grain and survive a ruling on
+    // screen. The trend joins the forecast record for the band and how
+    // often it held, so it is record and is read again after a ruling.
     let (app, plane, _dir) = workspace().await;
     seed_model_shapes(&plane).await;
 
@@ -681,7 +682,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("axes", "record"),
         ("remeasure", "record"),
         ("metric", "record"),
-        ("trend", "data"),
+        ("trend", "record"),
         ("slices", "data"),
         ("dims", "data"),
         ("drivers", "data"),

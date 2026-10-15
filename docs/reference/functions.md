@@ -176,8 +176,9 @@ period with an actual: the band quantiles (p05–p95) per step over a
 horizon fixed per grain — month 12, week 13, day 31, quarter 4 — and
 for a flow the totals of the quarter and the year to go. Each metric
 is read as a whole from the cube at its own resolution. The run lands
-with its origin and `served_by`; no actual and no PIT, since neither
-is known at the origin. `forecast_points()` joins the actuals as they
+with its origin and `served_by`, and with each point the service's
+held-out share inside the 80% and the 90% band at that grain, step
+and span; no actual and no PIT, since neither is known at the origin. `forecast_points()` joins the actuals as they
 land and `forecast_coverage()` counts the coverage ([reads](reads.md),
 [forecast](../methods/forecast.md)). A metric finer than day, coarser
 than quarter, or shorter than six periods is inapplicable with the
