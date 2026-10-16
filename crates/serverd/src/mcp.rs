@@ -33,7 +33,7 @@ workspace's data and its context, behind one tool, `glossql`, which runs stateme
 plain SQL; its description is the contract for every call. Start here, in this order. \
 1. Read the two skill pages through the tool: `SELECT body FROM pages() WHERE uri IN \
 ('skill://glossql/SKILL.md', 'skill://glossql-metrics/SKILL.md')` — the door and the \
-language, then the seven goals; each names its references (`skill://<name>/references/…`) \
+language, then the eight goals; each names its references (`skill://<name>/references/…`) \
 for the moment they matter, and every page the door serves is a row of `pages()`. \
 2. `SELECT * FROM datasets`, then what the brief below names. \
 The objects: a dataset holds tables, landed by recipes from sources; an aspect is a named \

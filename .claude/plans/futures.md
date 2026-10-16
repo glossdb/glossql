@@ -138,8 +138,11 @@ three.
   plan's assumption under `plan-<year>`, blocked while the question
   stands, done on the ruling. `workspace_next` carries `plans`; the
   docket's metric page carries the plan tile (`frames/plan.sql`) and
-  the plan world on the trend. The edge of a metric's head leaves out
-  the tables only plans scan (#118, `Surface::edge_subjects`).
+  the plan world on the trend. The data's edge is the latest period
+  the metrics' frames serve, measured on the frames (#118, #120,
+  `Surface::edges`, `Surface::data_edge`): a plan's table and a
+  calendar dimension running ahead move nothing; a plan's head takes
+  its own frame's edge.
 - Propagation. Rides the groundings, not the `formulas` registry: a
   metric over another metric nests as `read.<metric>()` behind a
   cycle guard (SPEC.md §9, PoC notes). The registry

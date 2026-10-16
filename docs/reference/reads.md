@@ -180,8 +180,10 @@ one of them is judged, at the coarsest of their cadences.
 
 A flow's empty period is a zero cell. A sum over no rows is zero, so
 a flow's total carries a cell for every period at its resolution,
-from its first to the data's edge: the latest date any judged time
-column of the dataset holds. A forecast for that period is checked
+from its first to the data's edge: the latest period any metric's
+grounding serves at the pin, measured on the groundings' frames and
+never on a column of a table, so a calendar dimension running decades
+ahead moves nothing, and nor does a plan's table. A forecast for that period is checked
 against the zero. The rival's total carries them too. A member's
 empty period is no cell, and so is a stock's or a ratio's: nothing
 stands, nothing divides. Every flow's series therefore reaches the
