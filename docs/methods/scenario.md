@@ -1,10 +1,12 @@
 # The scenario world
 
-A scenario asks what the metrics do if a lever moves. The engine
-answers in two passes and says, cell by cell, which pass answered.
-`metric_series(world => 'scenario', scenario => '<name>')` serves the
-cells beside the actual and the forecast worlds;
-`scenario_points(scenario => '<name>')` serves the detail.
+A scenario asks what the metrics do if a lever moves, or several. The
+engine answers in two passes and says, cell by cell, which pass
+answered. `metric_series(world => 'scenario', scenario => '<name>')`
+serves the cells beside the actual and the forecast worlds;
+`scenario_points(scenario => '<name>')` serves the detail;
+`scenario_levers(scenario => '<name>')` serves what each lever does
+alone.
 
 ## What a scenario is
 
@@ -57,11 +59,11 @@ Ahead of a metric's last actual there are no rows to replay. For the
 periods ahead, up to the last period the scenario names, the engine
 asks the what-if point, `WHATIF`, the third point on the service call,
 for every metric. It sends one table per grain: each metric's series
-with the lever's series beside it, the lever as the mean of its column
-per period, and each period ahead twice, as planned, the lever's last
-value held, and under the scenario, that value times the period's
-factor. The service answers the model's quantiles under the scenario,
-a sign and a basis.
+with every lever's series beside it, a lever as the mean of its column
+per period, and each period ahead twice, as planned, each lever's last
+value held, and under the scenario, that value times the lever's
+factor for the period. The service answers the model's quantiles under
+the scenario, a sign and a basis.
 
 The cell is `estimated`. Its value is the median, `low` and `high` the
 model's 80% band, and `held_80` and `held_from` say how often such a
@@ -70,10 +72,18 @@ metric's own record, the dataset's or the service's, by the rule
 `forecast_points()` applies ([forecast](forecast.md)). Where the
 service gives no band, the sign and its basis stand alone.
 
-The what-if reads one changed input. A scenario of several levers is
-replayed and not estimated, and each estimated cell carries the
-reason. Without a what-if service the arithmetic is served and each
-estimated cell says what to set.
+Several levers are read as one change. The service's reading of the
+history adds what each lever does, from the one regression that holds
+every lever, and states the sign for the joint change; a lever that
+fails a check, or a combination of levers the history never held
+together, is named in the basis and no sign is stated.
+`scenario_levers(scenario => '<name>')` serves the parts: per metric
+and lever, what that lever alone does over the periods ahead as the
+mean shift with its 90% interval, from the same regression, so the
+parts add up to the joint estimate and two levers that cancel show as
+two parts of opposite sign. A scenario of one lever serves its one
+part per metric. Without a what-if service the arithmetic is served,
+and each estimated cell and each part says what to set.
 
 ## The measured verdict
 
@@ -96,5 +106,9 @@ effect reads.
   arithmetic reaches too. The estimate is the model's reading of the
   metric's history against the lever's; the definition pass one
   applies does not ride ahead.
+- An interaction between levers is not read: a promotion working
+  differently at a lower price. The history's reading adds the levers'
+  effects; a model that read an interaction would disagree with it,
+  and the route states no sign.
 - Nothing is recorded and nothing is cached. The service is called at
   each read.

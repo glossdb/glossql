@@ -441,6 +441,21 @@ band held at that grain and step, and whose count — `metric`,
 read, nothing recorded: the service is called at each read. Requires
 a bound dataset.
 
+### scenario_levers(scenario => '<name>')
+
+What each lever of the scenario does alone, by the service's reading
+of the history ([the scenario world](../methods/scenario.md)): one row
+per estimated metric and lever — `scenario`, `metric`, `lever` (the
+declared `table.column`), `shift` (the lever's own effect on the
+metric over the periods ahead, the mean), `low` and `high` (its 90%
+interval, from the same regression as the joint estimate, so the
+parts add up to it), `basis` (why there is no part, where there is
+none: no service, a lever with no series, the service's word on the
+member), `served_by`. A scenario of one lever serves its one part per
+metric; two levers that cancel show as two parts of opposite sign.
+Computed at read beside `scenario_points()`, nothing recorded.
+Requires a bound dataset.
+
 ### plan_points()
 
 Every served plan against the actual and the forecast ([the plan

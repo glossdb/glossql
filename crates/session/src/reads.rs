@@ -527,6 +527,7 @@ pub const DOORS: &[(&str, &str)] = &[
     ("forecast_points", "forecast_points()"),
     ("forecast_coverage", "forecast_coverage()"),
     ("scenario_points", "scenario_points(scenario => '<name>')"),
+    ("scenario_levers", "scenario_levers(scenario => '<name>')"),
     ("plan_points", "plan_points()"),
     ("metric_sources", "metric_sources()"),
     ("metric_band_walk", "metric_band_walk('<dataset>')"),
@@ -910,6 +911,7 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "forecast_points"
                 | "forecast_coverage"
                 | "scenario_points"
+                | "scenario_levers"
                 | "plan_points"
                 | "metric_axes"
                 | "metric_sources"
@@ -1185,6 +1187,13 @@ pub(crate) async fn compute_batch(
             let name = crate::scenario::name_arg("scenario_points", &a.args)?;
             Ok(Some(
                 (Box::pin(crate::scenario::scenario_points(shared, &name)).await?).into(),
+            ))
+        }
+        // Each lever's part of the estimate, the scenario named.
+        ("scenario_levers", Some(a)) => {
+            let name = crate::scenario::name_arg("scenario_levers", &a.args)?;
+            Ok(Some(
+                (Box::pin(crate::scenario::scenario_levers(shared, &name)).await?).into(),
             ))
         }
         // Every plan against the actual and the forecast

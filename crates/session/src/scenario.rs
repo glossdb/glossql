@@ -6,17 +6,22 @@
 //! reaches. Pass two, the estimate: for the periods ahead of the
 //! metric's last actual, up to the last period the scenario names, the
 //! what-if point (`WHATIF`) estimates every metric from its own series
-//! and the lever's, as planned and under the scenario; the model's 80%
-//! band rides with how often such a band held at that grain and step,
-//! by the forecast record's rule, and the sign and its basis where the
-//! service gives no band. Nothing is recorded and nothing is cached: a
-//! scenario is read, and the service is called at each read.
+//! and the levers', every lever an input column, as planned and under
+//! the scenario; the model's 80% band rides with how often such a band
+//! held at that grain and step, by the forecast record's rule, and the
+//! sign and its basis where the service gives no band. Several levers
+//! are read as one change, and the answer's `parts` say what each
+//! lever alone does, so the parts add up to the joint estimate; an
+//! interaction between levers is not read. Nothing is recorded and
+//! nothing is cached: a scenario is read, and the service is called at
+//! each read.
 //!
 //! `metric_series(world => 'scenario', scenario => '<name>')` serves
 //! the cells; `scenario_points(scenario => '<name>')` the detail per
 //! cell: the pass, the band, the share and its source, the sign, the
-//! basis. The gloss-time check ([`check`]) refuses a scenario naming a
-//! column without a current `lever` gloss, before it lands.
+//! basis; `scenario_levers(scenario => '<name>')` each lever's part per
+//! metric. The gloss-time check ([`check`]) refuses a scenario naming
+//! a column without a current `lever` gloss, before it lands.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -295,8 +300,36 @@ struct Ask {
     ahead: Vec<NaiveDate>,
 }
 
-/// The two passes over the bound dataset for the named scenario.
+/// What one lever alone does to one metric over the periods ahead, by
+/// the service's reading of the history: the mean shift with its 90%
+/// interval, from the same regression as the joint estimate, so the
+/// parts add up to it. A part the service did not give carries why in
+/// `basis`.
+pub(crate) struct Part {
+    pub metric: String,
+    pub lever: String,
+    pub shift: Option<f64>,
+    pub low: Option<f64>,
+    pub high: Option<f64>,
+    pub basis: Option<String>,
+    pub served_by: Option<String>,
+}
+
+/// The scenario world as read: the cells with their detail, and each
+/// lever's part per estimated metric.
+pub(crate) struct Read {
+    pub points: Vec<Point>,
+    pub parts: Vec<Part>,
+}
+
+/// The two passes over the bound dataset for the named scenario, the
+/// cells alone.
 pub(crate) async fn points(shared: &Arc<Shared>, name: &str) -> Result<Vec<Point>, SessionError> {
+    Ok(read(shared, name).await?.points)
+}
+
+/// The two passes over the bound dataset for the named scenario.
+pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, SessionError> {
     let dataset = shared
         .dataset
         .read()
@@ -321,7 +354,10 @@ pub(crate) async fn points(shared: &Arc<Shared>, name: &str) -> Result<Vec<Point
         last = Some(last.map_or(until, |l| l.max(until)));
     }
     let (Some(first), Some(last)) = (first, last) else {
-        return Ok(Vec::new());
+        return Ok(Read {
+            points: Vec::new(),
+            parts: Vec::new(),
+        });
     };
     let tables: HashSet<&str> = scenario.levers.iter().map(|l| l.table.as_str()).collect();
     // What a replayed cell rests on: the arithmetic, and the author's
@@ -399,37 +435,43 @@ pub(crate) async fn points(shared: &Arc<Shared>, name: &str) -> Result<Vec<Point
             ahead,
         });
     }
-    out.extend(estimate(shared, &ctx, &dataset, &scenario, asks).await?);
+    let (estimated, mut parts) = estimate(shared, &ctx, &dataset, &scenario, asks).await?;
+    out.extend(estimated);
     out.sort_by(|a, b| (&a.metric, a.period, a.pass).cmp(&(&b.metric, b.period, b.pass)));
-    Ok(out)
+    parts.sort_by(|a, b| (&a.metric, &a.lever).cmp(&(&b.metric, &b.lever)));
+    Ok(Read { points: out, parts })
 }
 
 /// Pass two: one table per grain to the what-if point, every asked
-/// metric a member, the lever the one input, as planned (its last value
-/// held) and under the scenario (that value times the period's factor).
-/// Where the estimate cannot come — several levers, no service, a lever
-/// with no series, the service's refusal — every cell says why.
+/// metric a member, every lever an input column, as planned (its last
+/// value held) and under the scenario (that value times the lever's
+/// factor for the period). Several levers are read as one change; the
+/// answer's `parts` say what each does alone. Where the estimate cannot
+/// come — no service, a lever with no series, the service's refusal —
+/// every cell and every part says why.
 async fn estimate(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
     scenario: &Scenario,
     asks: Vec<Ask>,
-) -> Result<Vec<Point>, SessionError> {
+) -> Result<(Vec<Point>, Vec<Part>), SessionError> {
     let mut out = Vec::new();
+    let mut parts = Vec::new();
     if asks.is_empty() {
-        return Ok(out);
+        return Ok((out, parts));
     }
     let runtime = shared.runtime();
     let held = crate::search::held_table(shared, dataset).await?;
-    let lever = &scenario.levers[0];
     let mut by_grain: BTreeMap<&'static str, Vec<usize>> = BTreeMap::new();
     for (i, a) in asks.iter().enumerate() {
         by_grain.entry(a.grain).or_default().push(i);
     }
-    // Every asked cell of a grain, valueless, with one reason.
-    let unanswered = |idx: &[usize], why: &str| -> Vec<Point> {
+    // Every asked cell of a grain, valueless, with one reason — and
+    // every lever's part the same way.
+    let unanswered = |idx: &[usize], why: &str| -> (Vec<Point>, Vec<Part>) {
         let mut rows = Vec::new();
+        let mut blanks = Vec::new();
         for &i in idx {
             let a = &asks[i];
             for (k, d) in a.ahead.iter().enumerate() {
@@ -453,25 +495,28 @@ async fn estimate(
                     served_by: None,
                 });
             }
+            for lever in &scenario.levers {
+                blanks.push(Part {
+                    metric: a.metric.clone(),
+                    lever: lever.column.clone(),
+                    shift: None,
+                    low: None,
+                    high: None,
+                    basis: Some(why.to_string()),
+                    served_by: None,
+                });
+            }
         }
-        rows
+        (rows, blanks)
+    };
+    let refuse = |idx: &[usize], why: &str, out: &mut Vec<Point>, parts: &mut Vec<Part>| {
+        let (rows, blanks) = unanswered(idx, why);
+        out.extend(rows);
+        parts.extend(blanks);
     };
     for (grain, idx) in &by_grain {
-        if scenario.levers.len() > 1 {
-            let named: Vec<&str> = scenario.levers.iter().map(|l| l.column.as_str()).collect();
-            out.extend(unanswered(
-                idx,
-                &format!(
-                    "the what-if reads one changed input, and this scenario moves {} levers \
-                     ({}) — declare one scenario per lever to estimate",
-                    named.len(),
-                    named.join(", ")
-                ),
-            ));
-            continue;
-        }
         if !runtime.serves(WHATIF) {
-            out.extend(unanswered(
+            refuse(
                 idx,
                 &crate::session::no_model(
                     &format!(
@@ -481,78 +526,109 @@ async fn estimate(
                     WHATIF,
                 )
                 .to_string(),
-            ));
+                &mut out,
+                &mut parts,
+            );
             continue;
         }
         let resolution = asks[idx[0]].resolution;
-        let input = match lever_series(shared, ctx, lever, resolution).await {
-            Ok(input) => input,
-            Err(why) => {
-                out.extend(unanswered(idx, &format!("no estimate: {why}")));
-                continue;
+        // Every lever's series at the grain, placed in time by its table.
+        let mut inputs: Vec<HashMap<NaiveDate, f64>> = Vec::with_capacity(scenario.levers.len());
+        let mut failed = None;
+        for lever in &scenario.levers {
+            match lever_series(shared, ctx, lever, resolution).await {
+                Ok(input) => inputs.push(input.into_iter().collect()),
+                Err(why) => {
+                    failed = Some(format!("no estimate: `{}`: {why}", lever.column));
+                    break;
+                }
             }
-        };
-        let input_at: HashMap<NaiveDate, f64> = input.iter().copied().collect();
-        // One table: the members' histories with the lever beside them,
-        // then each period ahead twice.
-        let (mut members, mut periods, mut status, mut values, mut inputs) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let mut planned_of: HashMap<String, Option<f64>> = HashMap::new();
+        }
+        if let Some(why) = failed {
+            refuse(idx, &why, &mut out, &mut parts);
+            continue;
+        }
+        // One table: the members' histories with every lever beside
+        // them, then each period ahead twice.
+        let (mut members, mut periods, mut status, mut values) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut columns: Vec<Vec<Option<f64>>> = vec![Vec::new(); scenario.levers.len()];
+        // Per metric, each lever's value held as planned: its last
+        // value at or before the metric's origin.
+        let mut planned_of: HashMap<String, Vec<Option<f64>>> = HashMap::new();
         for &i in idx {
             let a = &asks[i];
             let origin = a.series.last().map(|(d, _)| *d);
-            let planned = input
+            let planned: Vec<Option<f64>> = inputs
                 .iter()
-                .filter(|(d, _)| origin.is_some_and(|o| *d <= o))
-                .map(|(_, v)| *v)
-                .next_back();
-            planned_of.insert(a.metric.clone(), planned);
+                .map(|input| {
+                    let mut dated: Vec<(&NaiveDate, &f64)> = input
+                        .iter()
+                        .filter(|(d, _)| origin.is_some_and(|o| **d <= o))
+                        .collect();
+                    dated.sort_by_key(|(d, _)| **d);
+                    dated.last().map(|(_, v)| **v)
+                })
+                .collect();
+            planned_of.insert(a.metric.clone(), planned.clone());
             for (d, v) in &a.series {
                 members.push(a.metric.as_str());
                 periods.push(nanos_of(*d));
                 status.push("actual");
                 values.push(Some(*v));
-                inputs.push(input_at.get(d).copied());
+                for (l, input) in inputs.iter().enumerate() {
+                    columns[l].push(input.get(d).copied());
+                }
             }
             for d in &a.ahead {
-                for (s, factor) in [("plan", 1.0), ("scenario", factor_at(lever, *d))] {
+                for s in ["plan", "scenario"] {
                     members.push(a.metric.as_str());
                     periods.push(nanos_of(*d));
                     status.push(s);
                     values.push(None);
-                    inputs.push(planned.map(|p| p * factor));
+                    for (l, lever) in scenario.levers.iter().enumerate() {
+                        let factor = if s == "plan" {
+                            1.0
+                        } else {
+                            factor_at(lever, *d)
+                        };
+                        columns[l].push(planned[l].map(|p| p * factor));
+                    }
                 }
             }
         }
-        let table = RecordBatch::try_new(
-            Arc::new(Schema::new(vec![
-                Field::new("member", DataType::Utf8, false),
-                Field::new(
-                    "period",
-                    DataType::Timestamp(TimeUnit::Nanosecond, None),
-                    true,
-                ),
-                Field::new("status", DataType::Utf8, false),
-                Field::new("value", DataType::Float64, true),
-                Field::new(&lever.column, DataType::Float64, true),
-            ])),
-            vec![
-                Arc::new(StringArray::from(members)),
-                Arc::new(TimestampNanosecondArray::from(periods)),
-                Arc::new(StringArray::from(status)),
-                Arc::new(Float64Array::from(values)),
-                Arc::new(Float64Array::from(inputs)),
-            ],
-        )
-        .map_err(SessionError::from)?;
+        let mut fields = vec![
+            Field::new("member", DataType::Utf8, false),
+            Field::new(
+                "period",
+                DataType::Timestamp(TimeUnit::Nanosecond, None),
+                true,
+            ),
+            Field::new("status", DataType::Utf8, false),
+            Field::new("value", DataType::Float64, true),
+        ];
+        let mut arrays: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(members)),
+            Arc::new(TimestampNanosecondArray::from(periods)),
+            Arc::new(StringArray::from(status)),
+            Arc::new(Float64Array::from(values)),
+        ];
+        for (lever, column) in scenario.levers.iter().zip(columns) {
+            fields.push(Field::new(&lever.column, DataType::Float64, true));
+            arrays.push(Arc::new(Float64Array::from(column)));
+        }
+        let table = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
+            .map_err(SessionError::from)?;
         let spec = json!({"targets": ["value"], "levels": LEVELS});
         let answered = match runtime.table(WHATIF, table, spec).await {
             Ok(answered) => answered,
             Err(e) => {
-                out.extend(unanswered(
+                refuse(
                     idx,
                     &format!("not served: the what-if service refused — {e}"),
-                ));
+                    &mut out,
+                    &mut parts,
+                );
                 continue;
             }
         };
@@ -564,25 +640,48 @@ async fn estimate(
         let errors = crate::search::walk_errors(&answered.answer);
         let folded = fold(&answered.table)
             .map_err(|e| SessionError::Runtime(format!("the what-if service answered {e}")))?;
+        let given = answered.answer["parts"].as_array();
         for &i in idx {
             let a = &asks[i];
             let said = folded.get(&a.metric);
+            // The levers with no value to hold as planned, by name.
+            let unheld: Vec<&str> = planned_of
+                .get(&a.metric)
+                .map(|p| {
+                    scenario
+                        .levers
+                        .iter()
+                        .zip(p)
+                        .filter(|(_, v)| v.is_none())
+                        .map(|(l, _)| l.column.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Why a cell or a part has no number: the service's word on
+            // the member first, then its errors, then a lever with no
+            // value to hold, then the default.
+            let reason = |default: &str| -> Option<String> {
+                said.and_then(|s| s.basis.clone())
+                    .or_else(|| errors.get(&a.metric).map(|errs| errs.join("; ")))
+                    .or_else(|| {
+                        (!unheld.is_empty()).then(|| {
+                            format!(
+                                "no estimate: `{}` has no value at or before the last actual to \
+                                 hold as planned",
+                                unheld.join("`, `")
+                            )
+                        })
+                    })
+                    .or_else(|| Some(default.to_string()))
+            };
             for (k, d) in a.ahead.iter().enumerate() {
                 let Some(period) = nanos_of(*d) else { continue };
                 let step = k as i64 + 1;
                 let point = said.and_then(|s| s.points.get(d));
                 let (held_80, held_90, held_from) = held.at(&a.metric, grain, step);
-                let basis = match (point, said, errors.get(&a.metric)) {
-                    (_, Some(s), _) if s.basis.is_some() => s.basis.clone(),
-                    (None, _, Some(errs)) => Some(errs.join("; ")),
-                    (None, _, None) if planned_of.get(&a.metric).copied().flatten().is_none() => {
-                        Some(format!(
-                            "no estimate: `{}` has no value at or before the last actual to hold as planned",
-                            lever.column
-                        ))
-                    }
-                    (None, ..) => Some("the service answered no estimate for this period".into()),
-                    (Some(_), ..) => None,
+                let basis = match point {
+                    Some(_) => said.and_then(|s| s.basis.clone()),
+                    None => reason("the service answered no estimate for this period"),
                 };
                 out.push(Point {
                     metric: a.metric.clone(),
@@ -603,9 +702,30 @@ async fn estimate(
                     served_by: Some(served_by.clone()),
                 });
             }
+            // Each lever's part, as the service gave it for this member
+            // and the `value` column; a part not given carries why.
+            for lever in &scenario.levers {
+                let part = given.into_iter().flatten().find(|p| {
+                    p["member"].as_str() == Some(a.metric.as_str())
+                        && p["column"].as_str().is_none_or(|c| c == "value")
+                        && p["input"].as_str() == Some(lever.column.as_str())
+                });
+                parts.push(Part {
+                    metric: a.metric.clone(),
+                    lever: lever.column.clone(),
+                    shift: part.and_then(|p| p["history_shift"].as_f64()),
+                    low: part.and_then(|p| p["history_low"].as_f64()),
+                    high: part.and_then(|p| p["history_high"].as_f64()),
+                    basis: match part {
+                        Some(_) => None,
+                        None => reason("the service answered no part for this lever"),
+                    },
+                    served_by: Some(served_by.clone()),
+                });
+            }
         }
     }
-    Ok(out)
+    Ok((out, parts))
 }
 
 /// The lever's series at a resolution: the mean of the column per
@@ -806,6 +926,45 @@ pub(crate) async fn scenario_points(
     crate::search::rows_batch(rows, fields)
 }
 
+/// `scenario_levers(scenario => '<name>')` — each lever's part of the
+/// scenario world's estimate, one row per estimated metric and lever:
+/// `scenario`, `metric`, `lever` (the declared `table.column`), `shift`
+/// (what the lever alone does to the metric over the periods ahead, by
+/// the service's reading of the history, the mean), `low` and `high`
+/// (its 90% interval), `basis` (why there is no part, where there is
+/// none), `served_by`. The parts add up to the joint estimate; a
+/// scenario of one lever serves its one part per metric.
+pub(crate) async fn scenario_levers(
+    shared: &Arc<Shared>,
+    name: &str,
+) -> Result<RecordBatch, SessionError> {
+    let rows: Vec<Value> = read(shared, name)
+        .await?
+        .parts
+        .into_iter()
+        .map(|p| {
+            json!({
+                "scenario": name, "metric": p.metric, "lever": p.lever,
+                "shift": p.shift, "low": p.low, "high": p.high,
+                "basis": p.basis, "served_by": p.served_by,
+            })
+        })
+        .collect();
+    let utf8 = |n: &str, nullable: bool| Field::new(n, DataType::Utf8, nullable);
+    let f64n = |n: &str| Field::new(n, DataType::Float64, true);
+    let fields = vec![
+        utf8("scenario", false),
+        utf8("metric", false),
+        utf8("lever", false),
+        f64n("shift"),
+        f64n("low"),
+        f64n("high"),
+        utf8("basis", true),
+        utf8("served_by", true),
+    ];
+    crate::search::rows_batch(rows, fields)
+}
+
 /// A period as text: the date where the bucket starts at midnight, the
 /// full timestamp where it does not.
 fn period_text(period: i64) -> String {
@@ -817,8 +976,8 @@ fn period_text(period: i64) -> String {
     }
 }
 
-/// The one argument of `scenario_points`, and of `metric_series` in the
-/// scenario world: `scenario => '<name>'`.
+/// The one argument of `scenario_points` and `scenario_levers`, and of
+/// `metric_series` in the scenario world: `scenario => '<name>'`.
 pub(crate) fn name_arg(door: &str, args: &[FunctionArg]) -> Result<String, SessionError> {
     let refuse = |what: String| SessionError::BadSubject(format!("{door}({what})"));
     let meant =

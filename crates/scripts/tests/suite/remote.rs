@@ -419,9 +419,11 @@ async fn misfit(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Re
 }
 
 /// `/whatif` as the stand-in answers it: per member, the scenario rows
-/// at the three levels asked, the median the last actual times the
-/// scenario input over the planned one, the band at half and one and a
-/// half of it; the sign `+` with its basis on every row.
+/// at the three levels asked, the median the last actual times one plus
+/// the sum over the inputs of the scenario input over the planned one
+/// less one, the band at half and one and a half of it; the sign `+`
+/// with its basis on every row; the inputs changed as a list and, per
+/// member and input, the part each does alone.
 async fn whatif(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Response {
     let (table, spec) = match parse(&headers, &body) {
         Ok(parsed) => parsed,
@@ -444,11 +446,12 @@ async fn whatif(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Re
         .iter()
         .map(|f| f.name().clone())
         .collect();
-    let input = names
+    let inputs: Vec<String> = names
         .iter()
-        .find(|n| !["member", "period", "status", "value"].contains(&n.as_str()))
-        .expect("one input")
-        .clone();
+        .filter(|n| !["member", "period", "status", "value"].contains(&n.as_str()))
+        .cloned()
+        .collect();
+    assert!(!inputs.is_empty(), "an input");
     let member = table.column_by_name("member").unwrap();
     let period = table.column_by_name("period").unwrap();
     let status = table
@@ -463,27 +466,50 @@ async fn whatif(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Re
         .as_any()
         .downcast_ref::<Float64Array>()
         .unwrap();
-    let moved = table
-        .column_by_name(&input)
-        .unwrap()
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
+    let moved: Vec<&Float64Array> = inputs
+        .iter()
+        .map(|c| {
+            table
+                .column_by_name(c)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+        })
+        .collect();
     let (mut m_col, mut p_col, mut l_col, mut v_col) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut last: Option<(String, f64, Option<f64>)> = None;
+    let mut parts: Vec<Value> = Vec::new();
+    let mut last: Option<(String, f64, Vec<Option<f64>>)> = None;
     for i in 0..table.num_rows() {
         let m = array_value_to_string(member, i).unwrap();
         match status.value(i) {
-            "actual" => last = Some((m, value.value(i), None)),
+            "actual" => last = Some((m, value.value(i), Vec::new())),
             "plan" => {
                 if let Some(l) = last.as_mut() {
-                    l.2 = (!moved.is_null(i)).then(|| moved.value(i));
+                    l.2 = moved
+                        .iter()
+                        .map(|c| (!c.is_null(i)).then(|| c.value(i)))
+                        .collect();
                 }
             }
             _ => {
                 let (_, actual, planned) = last.clone().unwrap();
-                let median = actual * moved.value(i) / planned.unwrap();
+                let ratios: Vec<f64> = moved
+                    .iter()
+                    .zip(&planned)
+                    .map(|(c, p)| c.value(i) / p.unwrap())
+                    .collect();
+                let median = actual * (1.0 + ratios.iter().map(|r| r - 1.0).sum::<f64>());
+                if !parts.iter().any(|p| p["member"] == m) {
+                    for (c, r) in inputs.iter().zip(&ratios) {
+                        let shift = actual * (r - 1.0);
+                        parts.push(json!({
+                            "member": m, "column": "value", "input": c,
+                            "history_shift": shift, "history_low": 0.5 * shift, "history_high": 1.5 * shift,
+                        }));
+                    }
+                }
                 for level in levels {
                     let l = level.as_f64().unwrap();
                     m_col.push(m.clone());
@@ -523,7 +549,8 @@ async fn whatif(State(seen): State<Seen>, headers: HeaderMap, body: Bytes) -> Re
     .unwrap();
     answer(
         table,
-        json!({"service": "stand-in", "version": "test", "errors": [], "changed": input}),
+        json!({"service": "stand-in", "version": "test", "errors": [],
+               "changed": inputs, "parts": parts}),
     )
 }
 

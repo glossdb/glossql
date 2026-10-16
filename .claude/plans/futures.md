@@ -86,7 +86,7 @@ three.
   is refused, so a plan and a scenario go as two requests or as two
   members. `/whatif` returns per column a sign, the model's rows, the
   history's estimate, `basis` and the held-back error; it reads one
-  changed input per request.
+  or several changed inputs per request, with `parts` per input.
 - The plan rewrite. Every scan of an overridden table gains a
   projection over the overridden column, a factor per period, and a
   grounding replays over it (`crates/session/src/replay.rs`:
@@ -109,9 +109,10 @@ three.
   `WHATIF`, the third point on the service call
   (`crates/session/src/session.rs`: `POINTS`), as planned and under
   the scenario, and serves the median, the 80% band, `held_80` by the
-  forecast record's rule, the sign and the basis. One lever estimates;
-  several replay and do not. Nothing recorded, nothing cached
-  (`docs/methods/scenario.md`).
+  forecast record's rule, the sign and the basis. Several levers
+  estimate as one change, every lever an input column, and
+  `scenario_levers()` serves each lever's part (#121). Nothing
+  recorded, nothing cached (`docs/methods/scenario.md`).
 - The plan world (#115). A plan is its own QUERY aspect, `x-kind:
   plan` with `x-plan-of` naming its metric, its body the standard
   grounding schema unchanged (fixture 27,
@@ -199,9 +200,10 @@ leaves this file. None drafted.
   the engine as a third point, `WHATIF` (#113). Every forecast answer
   carries `coverage`, the share per step, span and band on held-out
   data (#110). The three points are wired; the model behind each can
-  be tuned per point. Open there: the what-if reads one changed input
-  per request, so a scenario of several levers is replayed and not
-  estimated; several inputs at once is untested.
+  be tuned per point. Several inputs changed at once are read as one change on its
+  `timestral-candidate` branch (GK-50, `parts` per input, the
+  combination checked against what the history held together); #121
+  reads them, and lands with the branch.
 - **glosstheval**: the two experiments before the span rule are
   done, M9 and M10 on its evaluation page: the coverage by horizon
   per grain and step, the table the span rule reads, and the
