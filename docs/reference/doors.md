@@ -225,8 +225,8 @@ what a build serves is what its suite tested.
   closes with two lines. `situation:` says whether the call's last
   statement landed or was refused, and for a grounding what its fact
   row said. `next:` names one act per goal the record affords from
-  there — structure, metrics, slices, bands, checks, app, rulings —
-  with a link beside it; a blocked goal says what blocks it, a done
+  there — structure, metrics, slices, bands, checks, app, plan,
+  rulings — with a link beside it; a blocked goal says what blocks it, a done
   goal says so. The link, `next://<dataset>/<goal>`, is a resource
   template; `SELECT * FROM next WHERE surface = '<goal>'` serves the
   same rows through the tool. Its answer carries the statement to

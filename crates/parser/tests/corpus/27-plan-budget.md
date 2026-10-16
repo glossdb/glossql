@@ -254,9 +254,19 @@ about what the read does:
   plan is refused before the declaration lands. A metric stopped
   later leaves its plan standing; the stop is the metric's own
   `metric_axes()` row.
-- The planning goal in the next read (the futures plan) waits on the
-  form: the plan landed, the variance beyond the band, the forecast
-  against the plan.
+- `plan_points()` (`crates/session/src/plan_world.rs`) serves every
+  plan against the actual and the forecast, one row per plan and
+  period at the plan's own resolution and at the year — the plan's
+  cell, the actual where the period has begun, the variance where it
+  is complete, the forecast's band where it covers the rest, and where
+  the plan stands against it. The next read's eighth goal, `plan`
+  (`crates/session/reads/next.sql`), routes the plan: declared,
+  grounded, the forecast run, every year the band does not hold judged
+  — a scenario on a lever, or the gap recorded under `plan-<year>` in
+  the plan's body for the human to rule. A plan's table is no edge of
+  the actuals: the edge of a metric's head is measured over the tables
+  the metrics' groundings scan (`Surface::edge_subjects`), a plan's
+  over its own.
 - The evaluation side: the generator writes a budget table per corpus
   from its own levers, a planned value per metric and month, with a
   truth file; the eval runs a plan lane beside the forecast lane. The

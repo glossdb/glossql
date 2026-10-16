@@ -24,7 +24,6 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| The planning goal in the next read | Easy, additive | next.sql, window.rs, the skills, the docket | Phase 2, last | |
 | Cube widening: every column, the whole history, measurements warn instead of gate | Medium, core | cube, docket, issue #41 | After the world; its own decision | |
 
 ## What stands
@@ -72,14 +71,14 @@ three.
 - The world on the series read (#106). `metric_series()` carries
   `world` beside `metric`; `world => 'forecast'` serves the newest
   `metric_forecast` run's medians as cells at the metric's own
-  resolution, the default read is the actual world alone, and `plan`
-  and `scenario` refuse by name until their forms exist
+  resolution, the default read is the actual world alone, and the
+  scenario (#113) and plan (#115) worlds are read by name
   (`crates/session/src/cube.rs`: `World`, `series_args`,
   `metric_series_batch`; `crates/session/src/search/forecast.rs`:
   `world_cells`). The head's cells carry the column; `HEAD_SHAPE`
   names it. The docket's trend frame unions the forecast world as a
-  dashed line named `forecast`. `metric_axes()` is unchanged until the
-  plan grounding.
+  dashed line named `forecast`. `metric_axes()` carries `plan_of` as
+  its last column (#115).
 - The wire's worlds. A row's `status` is `actual`, `plan`, `forecast`
   or `scenario` (`../glossthesi/docs/contract.md`). `/forecast` takes
   covariates known ahead at any horizon, `origins` for a backtest,
@@ -129,6 +128,18 @@ three.
   own. The real artifact: the Baton Rouge expense budget, public
   domain, the plan two columns of the fact table at year grain beside
   a monthly actual, 106 months, 8 complete years, no lever.
+- The planning goal (#117). `plan_points()`
+  (`crates/session/src/plan_world.rs`) serves every plan against the
+  actual and the forecast at the plan's grain and at the year, from
+  the cube (`crates/session/src/cube.rs`, `plan_series`) and the
+  forecast record; the next read's eighth goal, `plan`
+  (`crates/session/reads/next.sql`), routes the plan to a judged year:
+  declare, ground, forecast, then per gap a scenario or the gap as the
+  plan's assumption under `plan-<year>`, blocked while the question
+  stands, done on the ruling. `workspace_next` carries `plans`; the
+  docket's metric page carries the plan tile (`frames/plan.sql`) and
+  the plan world on the trend. The edge of a metric's head leaves out
+  the tables only plans scan (#118, `Surface::edge_subjects`).
 - Propagation. Rides the groundings, not the `formulas` registry: a
   metric over another metric nests as `read.<metric>()` behind a
   cycle guard (SPEC.md §9, PoC notes). The registry
@@ -169,22 +180,7 @@ three.
 
 In the repo's form: what it buys, what stands, done-when. Facts only.
 When one is opened, its number goes into the table and the draft
-leaves this file.
-
-### The planning goal
-
-- **What it buys.** The next read tells an agent where the dataset
-  stands toward a plan: the plan landed, the forecast at the current
-  origin, a variance beyond the band, a scenario declared, its levers
-  checked against history, the comparison read, the decision as a
-  ruling.
-- **What stands.** Seven goals, each a chain of arms in
-  `crates/session/reads/next.sql`; `window.rs` carries the line;
-  the skills name the seven.
-- **Done when.** An eighth goal's arms serve from the reads above.
-  The door's line and the skills name it. The eval's planning
-  scenario runs through it. The suite holds every statement the arms
-  hand out.
+leaves this file. None drafted.
 
 ## For the other repos
 

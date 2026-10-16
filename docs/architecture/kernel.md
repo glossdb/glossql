@@ -33,7 +33,7 @@ sees a declaration in the kit, an arm in the next read, and a page.
 - **The doors and the docket.** The two agent doors, the Arrow door,
   the app door with the built-in docket and the glossed apps
   ([doors](../reference/doors.md)).
-- **The next read.** Seven goals, one hand-written arm per step
+- **The next read.** Eight goals, one hand-written arm per step
   (`crates/session/reads/next.sql`), and the two lines on every result.
 - **The kits.** Below.
 
@@ -156,9 +156,8 @@ for a reader. A similarity is never a join key, an identity or what
 closes a question. A ranking service is a candidate point; its
 experiment runs in the evaluation rig first.
 
-**After phase 1.** The forecast's arms in the next read. The planning
-goal in the next read, over the plan world. The vector index in the
-parquet footer, when the full scan is too slow. The
+**After phase 1.** The forecast's arms in the next read. The vector
+index in the parquet footer, when the full scan is too slow. The
 cube: every served column, the whole history, and the two
 measurements order the columns and warn instead of deciding. Whether
 the cube's limits fit the forecast's use cases is analysed once phase

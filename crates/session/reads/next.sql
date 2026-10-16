@@ -2,7 +2,7 @@
 -- dataset, and the one act that moves it, as a statement to send.
 --
 -- One row per goal — structure, metrics, slices, bands, checks, app,
--- rulings, `goal` their place in that order, since a read's own
+-- plan, rulings, `goal` their place in that order, since a read's own
 -- ORDER BY is not a caller's: `surface`, `step`, `state` (`next`,
 -- `blocked`, `done`),
 -- `act` (the statement kind, function or read), `say` (the act in a
@@ -29,7 +29,10 @@
 -- arms are the cube's own fact rows and the record's relations.
 WITH
 ds AS (SELECT dataset FROM current_dataset),
-axes AS (SELECT * FROM metric_axes()),
+-- the metrics' fact rows; a plan aspect's row (fixture 27) is the plan
+-- goal's and no other's
+axes AS (SELECT * FROM metric_axes() WHERE plan_of IS NULL),
+plan_axes AS (SELECT * FROM metric_axes() WHERE plan_of IS NOT NULL),
 
 -- the standing grounding of each metric, as written
 bodies AS (
@@ -202,6 +205,33 @@ red AS (
 ),
 reds AS (SELECT subject, witness FROM ATTEST() WHERE witness = 'bands_w' AND band = 'red'),
 
+-- the plan aspects declared on this dataset's metrics (fixture 27):
+-- the tie is the declaration's, the grounding is this dataset's
+plan_aspects AS (
+  SELECT a.name AS plan, json_get_str(a.schema, 'x-plan-of') AS metric
+  FROM aspects a
+  WHERE a.kind = 'query' AND json_get_str(a.schema, 'x-kind') = 'plan'
+    AND json_get_str(a.schema, 'x-plan-of') IN (SELECT name FROM metric_surfaces)
+),
+-- the plan years the forecast's 80% band does not hold: the plan
+-- against the actual to date and the year to go, from the plan read —
+-- a budget means something at the year, whatever the month it was
+-- booked in
+gaps AS (
+  SELECT plan, metric, label, value, low, high, stands
+  FROM plan_points() WHERE grain = 'year' AND stands IN ('below', 'above')
+),
+-- the scenarios glossed on the dataset, and the levers declared on it
+scenarios AS (
+  SELECT a.name FROM aspects a
+  WHERE a.kind = 'fact' AND json_get_str(a.schema, 'x-kind') = 'scenario'
+    AND EXISTS (SELECT 1 FROM GLOSSARY() g WHERE g.aspect = a.name AND g.state = 'current')
+),
+levers AS (
+  SELECT array_to_string(array_agg(subject ORDER BY subject), ', ') AS columns
+  FROM GLOSSARY() WHERE aspect = 'lever' AND state = 'current' AND json_get_bool(value, 'value')
+),
+
 steps AS (
 
 -- ---- structure: the tables landed, the join structure declared and checked
@@ -263,7 +293,8 @@ SELECT 'metrics', 1, 'next', 'GLOSS definitions',
        $f$GLOSS definitions ON $f$ || ds.dataset || $f$ AS $${"definitions": {"$f$ || a.name || $f$": {"unit": "<unit>", "meaning": "<what it measures, in the business's words>"}}}$$;$f$,
        $f$GLOSS $f$ || a.name || $f$ ON $f$ || ds.dataset || $f$ AS $${"sql": "<the grounding>"}$$;$f$
 FROM aspects a CROSS JOIN ds
-WHERE a.kind = 'query' AND NOT EXISTS (SELECT 1 FROM metric_surfaces)
+WHERE a.kind = 'query' AND coalesce(json_get_str(a.schema, 'x-kind'), '') <> 'plan'
+  AND NOT EXISTS (SELECT 1 FROM metric_surfaces)
 
 UNION ALL
 SELECT 'metrics', 2, 'next', 'DECLARE ASPECT query',
@@ -284,7 +315,7 @@ SELECT 'metrics', 3, 'next', 'GLOSS query',
 -- or, where no number should be served: GLOSS $f$ || s.name || $f$ ON $f$ || ds.dataset || $f$ AS $${"stopped": "<what is missing, and why no number is served>"}$$;$f$,
        ''
 FROM metric_surfaces s CROSS JOIN ds
-WHERE NOT s.grounded AND s.stopped = ''
+WHERE NOT s.grounded AND s.stopped = '' AND s.kind <> 'plan'
 
 -- a measure the cube refuses holds the goal with the cube's reason; a
 -- relation and a fact serve no number by design, and a stop is the
@@ -574,6 +605,137 @@ UNION ALL
 SELECT 'app', 5, 'done', '', '', 'an app stands', '', ''
 FROM ds
 
+-- ---- plan: the plan served, the forecast at the current origin, every gap judged
+
+UNION ALL
+SELECT 'plan', 1, 'blocked', '', '', 'no applicable metric stands', '', ''
+FROM ds
+WHERE NOT EXISTS (SELECT 1 FROM axes WHERE applicable)
+
+-- the plan's numbers are a landed table; which metrics it covers and
+-- what it is called are the human's
+UNION ALL
+SELECT 'plan', 2, 'next', 'DECLARE ASPECT plan',
+       'declare the first plan',
+       'no plan is declared on ' || m.metrics || ': a plan is a QUERY aspect with x-kind plan and x-plan-of naming the metric it plans, grounded by SQL over the landed budget table, one aspect per edition; which metrics the budget covers, and its name, are the human''s',
+       $f$DECLARE ASPECT <name> WITH $${"title": "<Budget>", "x-kind": "plan", "x-plan-of": "<metric>"}$$ AS QUERY ON DATASET;$f$,
+       $f$GLOSS <name> ON $f$ || ds.dataset || $f$ AS $${"sql": "SELECT <date column> AS date, <planned value> AS value FROM <budget table>", "behavior": "flow"}$$;$f$
+FROM applicable m CROSS JOIN ds
+WHERE m.n > 0 AND NOT EXISTS (SELECT 1 FROM plan_aspects)
+
+UNION ALL
+SELECT 'plan', 3, 'next', 'GLOSS plan',
+       'ground ' || p.plan || ', or stop it',
+       p.plan || ' plans ' || p.metric || ' and is not grounded: its SQL over the landed budget table serves the plan world, or a stop says why no number is served',
+       $f$GLOSS $f$ || p.plan || $f$ ON $f$ || ds.dataset || $f$ AS $${"sql": "SELECT <date column> AS date, <planned value> AS value FROM <budget table>", "behavior": "flow"}$$;
+-- or, where no number should be served: GLOSS $f$ || p.plan || $f$ ON $f$ || ds.dataset || $f$ AS $${"stopped": "<what is missing, and why no number is served>"}$$;$f$,
+       ''
+FROM plan_aspects p
+LEFT JOIN metric_surfaces s ON s.name = p.plan
+CROSS JOIN ds
+WHERE NOT coalesce(s.grounded, false) AND coalesce(s.stopped, '') = ''
+
+-- a plan the cube refuses holds the goal with the cube's reason
+UNION ALL
+SELECT 'plan', 4, 'next', 'GLOSS plan',
+       're-record ' || a.metric || ' — ' || split_part(split_part(a.reason, '. ', 1), ': ', 1),
+       a.metric || ' is grounded and the cube refuses the grounding — ' || a.reason || '. Re-record it, or stop it with the reason no number is served',
+       $f$GLOSS $f$ || a.metric || $f$ ON $f$ || ds.dataset || $f$ AS $$$f$ || b.body || $f$$$;
+-- or, where no number should be served: GLOSS $f$ || a.metric || $f$ ON $f$ || ds.dataset || $f$ AS $${"stopped": "<what is missing, and why no number is served>"}$$;$f$,
+       ''
+FROM plan_axes a
+JOIN metric_surfaces s ON s.name = a.metric
+JOIN bodies b ON b.metric = a.metric
+CROSS JOIN ds
+WHERE NOT a.applicable AND cardinality(a.wanted) = 0
+  AND s.stopped = '' AND coalesce(a.reason, '') <> ''
+
+-- the plan's time column carries no verdict: the cube reads it and no
+-- function has landed
+UNION ALL
+SELECT 'plan', 5, 'next', 'EXTRACT',
+       'run ' || a.wanted[1] || ' over ' || a.wanted_over[1],
+       a.metric || ' reads ' || a.wanted_over[1] || ' and no verdict stands on it',
+       'SELECT ' || a.wanted[1] || '() FROM ' || ds.dataset || '.' || a.wanted_over[1],
+       ''
+FROM plan_axes a CROSS JOIN ds
+WHERE cardinality(a.wanted) > 0
+
+-- the forecast at the current origin: owed while it never ran, or ran
+-- before the last change
+UNION ALL
+SELECT 'plan', 6, 'next', 'metric_forecast', 'run the forecast', o.why,
+       'SELECT metric_forecast() FROM ' || ds.dataset, ''
+FROM owed o CROSS JOIN ds
+WHERE o.kind = 'never measured' AND o.subject = 'metric_forecast'
+  AND EXISTS (SELECT 1 FROM plan_axes WHERE applicable)
+
+UNION ALL
+SELECT 'plan', 7, 'next', 'metric_forecast', 'run the forecast again', o.why,
+       'SELECT metric_forecast() FROM ' || ds.dataset, ''
+FROM owed o CROSS JOIN ds
+WHERE o.kind = 're-measure' AND o.subject = 'metric_forecast'
+  AND EXISTS (SELECT 1 FROM plan_axes WHERE applicable)
+
+-- a plan period the band does not hold, nothing recorded on it: a
+-- scenario on a lever says what closes the gap; without one the gap
+-- is the plan's assumption under its key, and the docket asks
+UNION ALL
+SELECT 'plan', 8, 'next', 'GLOSS scenario',
+       'judge ' || g.plan || ' at ' || g.label || ': declare a scenario, or record the gap',
+       g.plan || ' at ' || g.label || ' is ' || CAST(round(g.value, 2) AS VARCHAR)
+         || ' and the forecast''s 80% band for ' || g.metric || ' runs ' || CAST(round(g.low, 2) AS VARCHAR) || ' to ' || CAST(round(g.high, 2) AS VARCHAR)
+         || ': the plan lies ' || g.stands || ' it' || coalesce(' (levers glossed: ' || l.columns || ')', '')
+         || '. A scenario on a lever says what closes the gap; without one, record the gap as the plan''s assumption under plan-' || g.label || ', and the docket asks',
+       $f$GLOSS lever ON <table>.<column> AS $${"value": true, "grounds": "<who sets it>"}$$;
+DECLARE ASPECT <scenario> WITH $${"title": "<what moves>", "x-kind": "scenario", "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;
+GLOSS <scenario> ON $f$ || ds.dataset || $f$ AS $${"levers": [{"column": "<table>.<column>", "factor": {"<YYYY-MM>": <factor>}, "basis": "<what it rests on>"}]}$$;$f$,
+       $f$-- append to "assumptions" of the plan's standing body: {"dimension": "definition", "key": "plan-$f$ || g.label || $f$", "assumption": "<the gap at $f$ || g.label || $f$ and what closes it, in the business's words — a lever moved, or the plan held>", "basis": "<what it rests on>", "confidence": 0.7}
+GLOSS $f$ || g.plan || $f$ ON $f$ || ds.dataset || $f$ AS $$$f$ || coalesce(b.body, '<the standing body>') || $f$$$;$f$
+FROM gaps g
+LEFT JOIN bodies b ON b.metric = g.plan
+CROSS JOIN levers l
+CROSS JOIN ds
+WHERE NOT EXISTS (SELECT 1 FROM scenarios)
+  AND NOT EXISTS (SELECT 1 FROM ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
+  AND NOT EXISTS (SELECT 1 FROM open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
+
+-- a scenario stands: read it against the plan, and record the decision
+UNION ALL
+SELECT 'plan', 9, 'next', 'scenario_points',
+       'read ' || sc.name || ' against ' || g.plan || ' at ' || g.label || ', and record the decision',
+       g.plan || ' at ' || g.label || ' is ' || CAST(round(g.value, 2) AS VARCHAR)
+         || ' and the forecast''s 80% band for ' || g.metric || ' runs ' || CAST(round(g.low, 2) AS VARCHAR) || ' to ' || CAST(round(g.high, 2) AS VARCHAR)
+         || ': the plan lies ' || g.stands || ' it, and ' || sc.name || ' stands. Read the scenario''s cells over the period beside the plan''s row — the sign and the basis are the service''s word on the lever against history — and record the decision as the plan''s assumption under plan-' || g.label || '; the docket asks',
+       $f$SELECT plan, label, value AS planned, actual, expected, low, high, stands, held_80, held_from FROM plan_points() WHERE plan = '$f$ || g.plan || $f$' AND label = '$f$ || g.label || $f$';
+SELECT metric, period, step, pass, value, low, high, sign, basis FROM scenario_points(scenario => '$f$ || sc.name || $f$') WHERE metric = '$f$ || g.metric || $f$' ORDER BY period$f$,
+       $f$-- append to "assumptions" of the plan's standing body: {"dimension": "definition", "key": "plan-$f$ || g.label || $f$", "assumption": "<the gap at $f$ || g.label || $f$ and what closes it, in the business's words — $f$ || sc.name || $f$, or the plan held>", "basis": "<what it rests on>", "confidence": 0.7}
+GLOSS $f$ || g.plan || $f$ ON $f$ || ds.dataset || $f$ AS $$$f$ || coalesce(b.body, '<the standing body>') || $f$$$;$f$
+FROM gaps g
+CROSS JOIN scenarios sc
+LEFT JOIN bodies b ON b.metric = g.plan
+CROSS JOIN ds
+WHERE NOT EXISTS (SELECT 1 FROM ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
+  AND NOT EXISTS (SELECT 1 FROM open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
+
+UNION ALL
+SELECT 'plan', 10, 'blocked', '', '',
+       g.plan || ' at ' || g.label || ' lies ' || g.stands || ' the forecast''s band and the question stands for the human',
+       '', ''
+FROM gaps g CROSS JOIN ds
+WHERE EXISTS (SELECT 1 FROM open_questions q WHERE q.dataset = ds.dataset AND q.aspect = g.plan AND q.key = 'plan-' || g.label)
+
+UNION ALL
+SELECT 'plan', 11, 'done', '', '',
+       'the plan stands; the gap on ' || g.plan || ' at ' || g.label || ' carries the human''s ruling',
+       '', ''
+FROM gaps g CROSS JOIN ds
+WHERE EXISTS (SELECT 1 FROM ruling_entries r WHERE r.dataset = ds.dataset AND r.aspect = g.plan AND r.key = 'plan-' || g.label)
+
+UNION ALL
+SELECT 'plan', 12, 'done', '', '', 'every plan is served and no plan period lies outside the forecast''s band, or the gap carries a question or a ruling', '', ''
+FROM ds
+
 -- ---- rulings: every ruling folded in, nothing owed
 
 UNION ALL
@@ -618,7 +780,7 @@ first AS (
 )
 SELECT CASE surface
          WHEN 'structure' THEN 1 WHEN 'metrics' THEN 2 WHEN 'slices' THEN 3 WHEN 'bands' THEN 4
-         WHEN 'checks' THEN 5 WHEN 'app' THEN 6 ELSE 7 END AS goal,
+         WHEN 'checks' THEN 5 WHEN 'app' THEN 6 WHEN 'plan' THEN 7 ELSE 8 END AS goal,
        surface, step, state, act, say, why, statement, then
 FROM first
 WHERE rn = 1

@@ -13,7 +13,7 @@ reconstruct them. Every `skill://` and `doc://` name is a row of
 `pages()` — `SELECT body FROM pages() WHERE uri = '…'` reads one — and
 a resource for a client with a reader. Everything live — the
 vocabulary, the tables, the record — is read through the language,
-never assumed. The work itself — the seven goals and the judgment
+never assumed. The work itself — the eight goals and the judgment
 inside each — is `skill://glossql-metrics/SKILL.md`.
 
 ## The door
@@ -38,7 +38,7 @@ per statement:
 - two closing lines on every result. `situation:` says whether your
   last statement landed or was refused, and for a grounding what its
   fact row said. `next:` names one act per goal — structure, metrics,
-  slices, bands, checks, app, rulings — each with a link. To move a
+  slices, bands, checks, app, plan, rulings — each with a link. To move a
   goal, read its link — `next://<dataset>/<goal>` as a resource, or
   `SELECT * FROM next WHERE surface = '<goal>'` through the tool — and
   send the statement it hands you, edited to your judgment; `<…>`
@@ -150,6 +150,7 @@ a guessed column costs a refusal.
 | `forecast_points()` | the recorded `metric_forecast`, one row per metric and point — `seq`, `metric`, `applicable`, `reason`, `grain`, `origin`, `served_by`, `point_seq`, `step`, `span`, `to_go`, `period`, `p05`, `p10`, `p50`, `p90`, `p95`, `service_80`, `service_90`, `actual`, `landed`, `computed_at`, `current`, `held_80`, `held_90`, `held_from`; `actual` and `landed` fill as the periods land; `held_80` is how often such a band held — this metric's record once 30 of its points landed at that step, else the dataset's, else the service's held-out share — and `held_from` says which; hand a range out with it |
 | `forecast_coverage()` | over every recorded forecast: `metric` (`''` the dataset as a whole), `grain`, `step`, `span`, `to_go`, `points`, `inside_80`, `inside_90`, `forecasts` — the rows `held_80` comes from once one reaches 30 points |
 | `scenario_points(scenario => 'name')` | the scenario world cell by cell — `scenario`, `metric`, `grain`, `period`, `step`, `pass` (`replayed`: the grounding replayed over the data with the scenario's factors; `estimated`: the what-if's estimate ahead of the last actual), `value`, `num`, `den`, `low`, `high`, `held_80`, `held_90`, `held_from`, `sign`, `basis`, `served_by`; a lever is declared with `GLOSS lever ON table.column AS $${"value": true, "grounds": "…"}$$`, a scenario is a FACT aspect with `x-kind: scenario` glossed with `levers` — per lever the column, a factor per period (`"2027-01": 1.15`) and a basis; hand an estimate out with its band and `held_80` |
+| `plan_points()` | every plan against the actual and the forecast, one row per plan and period at the plan's own grain and at the year — `plan`, `metric`, `grain`, `period`, `label`, `value` (the plan's), `actual` (where the period has begun; the actual to date for the current one), `variance` (actual minus plan, on a complete period), `low`, `expected`, `high` (the forecast's 80% band and median: the step's at the metric's grain, at the year the actual to date plus the year to go), `stands` (`landed`, `inside`, `below`, `above`, `open`, `ahead`), `held_80`, `held_from`, `origin`; the plan goal judges the year rows — a `below` or `above` year is the gap to record under `plan-<year>` on the plan's body |
 | `metric_sources()` | what feeds each grounding — `metric`, `field`, `source` (`table.column`), `table_name`, `reason`: per served field the column it descends from, and every table it scans |
 | `source_files('erp')` | every file under a source's location — `path`, `size`, `modified`; needs no dataset |
 | `app_parts` | apps authored as glosses, one row per file (`glossql-apps`) |

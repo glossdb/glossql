@@ -347,3 +347,298 @@ async fn the_plan_read_is_refused_without_its_name_or_its_world() {
     .await;
     assert!(e.contains("nothing serves it on `fin`"), "{e}");
 }
+
+// -- the plan against the actual and the forecast ------------------------
+
+/// The planning fixture: the same spend, a monthly budget landed
+/// through 2025 — 120 a month in 2024, 130 from 2025-01 to 2025-06,
+/// 110 after — and a yearly budget of 1440 for 2024 and 1560 for 2025,
+/// judged at the year by the one cadence judge, which names the year
+/// for the yearly table. The forecast service stubbed flat, the lever
+/// aspect declared as the kit declares it.
+fn planning_setup() -> &'static str {
+    r##"
+DECLARE DATASET fin SET (purpose: 'the planning goal');
+USE fin;
+DECLARE ASPECT cube WITH $${"type": "object", "properties": {
+  "resolution": {"default": "month"},
+  "windows": {"type": "object", "properties": {
+    "day": {"default": "18 months"}, "month": {"default": "48 months"},
+    "quarter": {"default": "10 years"}, "year": {"default": "20 years"}}}}}$$
+AS FACT ON DATASET;
+DECLARE ASPECT temporal_profile WITH $${"type": "object", "required": ["applicable"],
+  "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
+DECLARE FUNCTION judge_time FOR GLOBAL AS
+  $$SELECT true AS applicable,
+           CASE WHEN CAST($subject AS VARCHAR) LIKE '%yearly%' THEN 'year' ELSE 'month' END AS granularity,
+           named_struct('ratio', 1.0) AS completeness$$
+  RETURNS temporal_profile;
+DECLARE ASPECT lever WITH $${"type": "object", "properties": {
+  "value": {"type": "boolean"}, "grounds": {"type": "string"}}}$$ AS FACT ON COLUMN;
+DECLARE ASPECT expense WITH $${"title": "Operating expense", "x-kind": "measure"}$$ AS QUERY ON DATASET;
+GLOSS expense ON fin AS $${"sql": "SELECT month, amount AS value FROM spend"}$$;
+DECLARE ASPECT revised_budget WITH $${
+  "title": "Revised budget", "x-kind": "plan", "x-plan-of": "expense"
+}$$ AS QUERY ON DATASET;
+DECLARE ASPECT annual_budget WITH $${
+  "title": "Annual budget", "x-kind": "plan", "x-plan-of": "expense"
+}$$ AS QUERY ON DATASET;
+GLOSS revised_budget ON fin AS $${"sql": "SELECT month, revised AS value FROM budget"}$$;
+GLOSS annual_budget ON fin AS $${"sql": "SELECT year, planned AS value FROM yearly"}$$;
+"##
+}
+
+async fn planning_session(stub: Arc<crate::forecast::Flat>) -> Session {
+    let dir = tempfile::tempdir().expect("a scratch dir");
+    let lake = glossql_catalog::Lake::open(
+        &dir.path().join("catalog.sqlite"),
+        &dir.path().join("warehouse"),
+    )
+    .await
+    .expect("a lake");
+    let store = Store::open(lake).await.expect("a store");
+    let session = Session::new(
+        store,
+        Actor {
+            kind: ActorKind::Agent,
+            id: "agent-1".into(),
+        },
+    )
+    .expect("a session")
+    .with_runtime(stub);
+    session
+        .execute(planning_setup())
+        .await
+        .expect("the setup lands");
+    std::mem::forget(dir);
+    let months = |n: usize| -> Vec<i32> {
+        (0..n)
+            .map(|i| day(2024 + (i / 12) as i32, (i % 12 + 1) as u32, 1))
+            .collect()
+    };
+    let spend = Arc::new(Schema::new(vec![
+        Field::new("month", DataType::Date32, false),
+        Field::new("amount", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&spend),
+        vec![
+            Arc::new(Date32Array::from(months(18))),
+            Arc::new(Float64Array::from(
+                (0..18).map(|i| 100.0 + i as f64).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "spend", spend, batch).await;
+    let budget = Arc::new(Schema::new(vec![
+        Field::new("month", DataType::Date32, false),
+        Field::new("revised", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&budget),
+        vec![
+            Arc::new(Date32Array::from(months(24))),
+            Arc::new(Float64Array::from(
+                (0..24)
+                    .map(|i| match i {
+                        0..=11 => 120.0,
+                        12..=17 => 130.0,
+                        _ => 110.0,
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "budget", budget, batch).await;
+    let yearly = Arc::new(Schema::new(vec![
+        Field::new("year", DataType::Date32, false),
+        Field::new("planned", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&yearly),
+        vec![
+            Arc::new(Date32Array::from(vec![day(2024, 1, 1), day(2025, 1, 1)])),
+            Arc::new(Float64Array::from(vec![1440.0, 1560.0])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "yearly", yearly, batch).await;
+    session
+        .execute(
+            "SELECT judge_time() FROM spend.month; SELECT judge_time() FROM budget.month; \
+             SELECT judge_time() FROM yearly.year;",
+        )
+        .await
+        .expect("the cadences are judged");
+    session
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plan_landed_past_the_actuals_moves_no_edge() {
+    // The budget runs to 2025-12 and the spend to 2025-06: the actual
+    // world ends with the spend — eighteen cells, no zero to December —
+    // while the plan's own cells reach the budget's end.
+    let session = planning_session(Arc::new(crate::forecast::Flat::default())).await;
+    let edge = rows(
+        &session,
+        "SELECT CAST(max(period) AS DATE) AS edge, count(*) AS n \
+         FROM metric_series() WHERE metric = 'expense' AND dimension = '';",
+    )
+    .await;
+    assert!(edge.contains("| 2025-06-01 | 18 "), "{edge}");
+    let plan = rows(
+        &session,
+        "SELECT count(*) AS n FROM metric_series(world => 'plan', plan => 'revised_budget');",
+    )
+    .await;
+    assert!(plan.contains("| 24 "), "{plan}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plan_points_serves_every_plan_against_the_actual_and_the_forecast() {
+    let stub = Arc::new(crate::forecast::Flat::default());
+    let session = planning_session(Arc::clone(&stub)).await;
+
+    // Before any forecast: every month through the origin is landed
+    // with its variance (actual minus plan), the months ahead stand
+    // ahead, and the year rows — the plan's own for the yearly budget,
+    // the monthly budget summed — are landed for 2024 and open for
+    // 2025 with the actual to date.
+    let points = rows(
+        &session,
+        "SELECT plan, grain, label, value, actual, variance, stands \
+         FROM plan_points() ORDER BY plan, grain, period;",
+    )
+    .await;
+    for want in [
+        "| annual_budget  | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
+        "| annual_budget  | year  | 2025    | 1560.0 | 687.0  |          | open   |",
+        "| revised_budget | month | 2024-01 | 120.0  | 100.0  | -20.0    | landed |",
+        "| revised_budget | month | 2025-06 | 130.0  | 117.0  | -13.0    | landed |",
+        "| revised_budget | month | 2025-07 | 110.0  |        |          | ahead  |",
+        "| revised_budget | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
+        "| revised_budget | year  | 2025    | 1440.0 | 687.0  |          | open   |",
+    ] {
+        assert!(points.contains(want), "missing {want}\n{points}");
+    }
+    let n = points.lines().filter(|l| l.contains("_budget")).count();
+    assert_eq!(n, 2 + 24 + 2, "{points}");
+    // No forecast and nothing owed: the plan goal is done.
+    let goal = rows(
+        &session,
+        "SELECT state, why FROM next WHERE surface = 'plan';",
+    )
+    .await;
+    assert!(goal.contains("| done "), "{goal}");
+
+    // The forecast, flat at the last actual: 117 a month ahead with an
+    // 80% band of ±8%, the year to go 702 with the same band. The
+    // months ahead of the monthly budget sit inside their bands; the
+    // yearly budget's 2025 lies above the band on the actual to date
+    // plus the year to go, 1332.84 to 1445.16.
+    session
+        .execute(crate::forecast::forecast_kit())
+        .await
+        .expect("the measurement is declared");
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .expect("the forecast lands");
+    let points = rows(
+        &session,
+        "SELECT plan, grain, label, value, actual, round(low, 2) AS low, expected, round(high, 2) AS high, \
+                stands, held_80, held_from, origin \
+         FROM plan_points() WHERE stands NOT IN ('landed') ORDER BY plan, grain, period;",
+    )
+    .await;
+    let year = line(&points, "| annual_budget  | year  | 2025");
+    assert!(
+        year.contains("| 1560.0 | 687.0  | 1332.84")
+            && year.contains("| 1389.0")
+            && year.contains("| 1445.16")
+            && year.contains("| above  | 0.66    | service   | 2025-06-01 |"),
+        "{points}"
+    );
+    let month = line(&points, "| revised_budget | month | 2025-07");
+    assert!(
+        month.contains("| 110.0  |        | 107.64")
+            && month.contains("| 117.0")
+            && month.contains("| 126.36")
+            && month.contains("| inside |")
+            && month.contains("| 0.71    | service"),
+        "{points}"
+    );
+    let monthly_year = line(&points, "| revised_budget | year  | 2025");
+    assert!(
+        monthly_year.contains("| 1440.0 | 687.0") && monthly_year.contains("| inside |"),
+        "{points}"
+    );
+
+    // The plan goal: the year the band does not hold is the gap. With
+    // no scenario declared, the act is a scenario or the gap recorded
+    // under the plan's key; with one, the comparison read and the
+    // decision; recorded as the plan's assumption, the question stands
+    // for the human and the goal is blocked.
+    let goal = rows(
+        &session,
+        "SELECT state, act, say, why, statement, then FROM next WHERE surface = 'plan';",
+    )
+    .await;
+    assert!(
+        goal.contains("| next  | GLOSS scenario")
+            && goal.contains("judge annual_budget at 2025: declare a scenario, or record the gap")
+            && goal.contains("annual_budget at 2025 is 1560.0 and the forecast's 80% band for expense runs 1332.84 to 1445.16: the plan lies above it.")
+            && goal.contains("\"key\": \"plan-2025\""),
+        "{goal}"
+    );
+    session
+        .execute(
+            r##"GLOSS lever ON spend.amount AS $${"value": true, "grounds": "spend is set by the budget holders"}$$;
+DECLARE ASPECT cut WITH $${"title": "Spend -10% from July", "x-kind": "scenario",
+  "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}}$$ AS FACT ON DATASET;
+GLOSS cut ON fin AS $${"levers": [{"column": "spend.amount",
+  "factor": {"2025-07": 0.9, "2025-08": 0.9, "2025-09": 0.9, "2025-10": 0.9, "2025-11": 0.9, "2025-12": 0.9},
+  "basis": "the savings plan"}]}$$;"##,
+        )
+        .await
+        .expect("the lever and the scenario land");
+    let goal = rows(
+        &session,
+        "SELECT state, act, say, statement FROM next WHERE surface = 'plan';",
+    )
+    .await;
+    assert!(
+        goal.contains("| next  | scenario_points")
+            && goal.contains("read cut against annual_budget at 2025, and record the decision")
+            && goal.contains("plan_points() WHERE plan = 'annual_budget' AND label = '2025'")
+            && goal.contains("scenario_points(scenario => 'cut') WHERE metric = 'expense'"),
+        "{goal}"
+    );
+    session
+        .execute(
+            r##"GLOSS annual_budget ON fin AS $${"sql": "SELECT year, planned AS value FROM yearly",
+  "assumptions": [{"dimension": "definition", "key": "plan-2025",
+    "assumption": "2025 is budgeted 1560 against an expected 1389; the cut closes a third of the gap",
+    "basis": "plan_points() and the cut scenario", "confidence": 0.7}]}$$;"##,
+        )
+        .await
+        .expect("the gap is recorded");
+    let goal = rows(
+        &session,
+        "SELECT state, why FROM next WHERE surface = 'plan';",
+    )
+    .await;
+    assert!(
+        goal.contains("| blocked |")
+            && goal.contains("annual_budget at 2025 lies above the forecast's band and the question stands for the human"),
+        "{goal}"
+    );
+    let asked = rows(
+        &session,
+        "SELECT aspect, key FROM open_questions WHERE aspect = 'annual_budget';",
+    )
+    .await;
+    assert!(asked.contains("| plan-2025 |"), "{asked}");
+}

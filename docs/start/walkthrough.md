@@ -267,11 +267,12 @@ lands; a person who stepped away has a way back into the record.
 Every tool result closed with two lines, and the last one reads:
 
 ```text
-next: structure: done · metrics: done · slices: done · bands → run the walk (next://ops/bands) · checks: done · app → write the first page over 1 metric (next://ops/app) · rulings: done
+next: structure: done · metrics: done · slices: done · bands → run the walk (next://ops/bands) · checks: done · app → write the first page over 1 metric (next://ops/app) · plan → declare the first plan (next://ops/plan) · rulings: done
 ```
 
 One act per goal — structure, metrics, slices, bands, checks, app,
-rulings — and the work is done when every goal is done or blocked.
+plan, rulings — and the work is done when every goal is done or
+blocked.
 The link is a resource on the MCP door; the same rows come through
 the tool, with the statement to send filled from the record:
 

@@ -1,15 +1,15 @@
 ---
 name: glossql-metrics
-description: Take a glossql workspace from raw exports to a workspace someone can use — the seven goals the door's next: line tracks: structure, metrics, slices, bands, checks, a page, rulings folded in; done when every goal is done or blocked. Use for any substantive work in a workspace: onboarding a source, declaring relationships, grounding a metric, authoring a check or a page.
+description: Take a glossql workspace from raw exports to a workspace someone can use — the eight goals the door's next: line tracks: structure, metrics, slices, bands, checks, a page, the plan judged against the forecast, rulings folded in; done when every goal is done or blocked. Use for any substantive work in a workspace: onboarding a source, declaring relationships, grounding a metric, authoring a check or a page.
 ---
 
 # From files to numbers someone trusts
 
-The deliverable is a workspace someone can use, and it has seven
+The deliverable is a workspace someone can use, and it has eight
 goals: the join structure, the metrics the business trusts, the axes
 they slice on, the bands that watch them, the checks that say why a
-number holds, a page to look at them, and every ruling the human made
-folded in. The `glossql` skill teaches the language and the reads;
+number holds, a page to look at them, the plan judged against the
+forecast, and every ruling the human made folded in. The `glossql` skill teaches the language and the reads;
 this one teaches the judgment inside each goal — what to decide, what
 to measure, what to ask.
 
@@ -17,15 +17,15 @@ to measure, what to ask.
 says where you stand on each after every call, on the `next:` line:
 
 ```text
-next: structure: done · metrics → ground churn (next://ops/metrics) · slices → re-record churn serving one of region, channel (next://ops/slices) · bands → blocked: no applicable metric stands · checks → run metric_bands (next://ops/checks) · app → write the first page over 3 metrics (next://ops/app) · rulings: done
+next: structure: done · metrics → ground churn (next://ops/metrics) · slices → re-record churn serving one of region, channel (next://ops/slices) · bands → blocked: no applicable metric stands · checks → run metric_bands (next://ops/checks) · app → write the first page over 3 metrics (next://ops/app) · plan → declare the first plan (next://ops/plan) · rulings: done
 ```
 
 A goal that is neither done nor blocked is yours to move. Read its
 link — `next://<dataset>/<goal>` as a resource, or `SELECT * FROM
 next WHERE surface = '<goal>'` through the tool — and send the statement
 it hands you, edited to your judgment. A metric list is one goal of
-seven, not the deliverable: the metrics the human names are the ones
-to ground first, and the other six goals stand whether or not anyone
+eight, not the deliverable: the metrics the human names are the ones
+to ground first, and the other seven goals stand whether or not anyone
 named them. The human's ask sets the order and can close a goal ("no
 page this round"); nothing else does. Beyond that there is no fixed
 order, and the line is never one.
@@ -38,6 +38,7 @@ order, and the line is never one.
 | `bands` | the walk ran and no band is red, or the red carries your question or a ruling | `references/cube.md` |
 | `checks` | a check of your own stands, every check ran, none is red | `references/validate.md` |
 | `app` | a page stands over the grounded metrics | the `glossql-apps` skill |
+| `plan` | every plan is served, the forecast stands at the current origin, and no plan year lies outside the forecast's band — or the gap carries your question or a ruling | `references/cube.md`, the plan world |
 | `rulings` | every ruling is folded in and nothing is owed | `skill://glossql/references/rulings.md` |
 
 **When every goal is done or blocked, offer one next step of each

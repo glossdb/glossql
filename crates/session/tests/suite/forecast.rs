@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// same, a span's 80% band 0.60 plus a hundredth per period. It
 /// records every specification it is handed.
 #[derive(Debug, Default)]
-struct Flat {
+pub(crate) struct Flat {
     specs: Mutex<Vec<Value>>,
 }
 
@@ -479,7 +479,7 @@ async fn the_door_reads_the_dataset_in_use() {
 /// The kit's measurement, declared as the bootstrap does: the aspect at
 /// dataset grain and the function that folds the door's rows into one
 /// body per run.
-fn forecast_kit() -> &'static str {
+pub(crate) fn forecast_kit() -> &'static str {
     r##"
 DECLARE ASPECT metric_forecast WITH $${
   "type": "object", "required": ["applicable"],

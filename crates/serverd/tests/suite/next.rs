@@ -189,13 +189,14 @@ async fn goal(session: &Session, surface: &str) -> Value {
     answers.pop().unwrap()
 }
 
-const SURFACES: [&str; 7] = [
+const SURFACES: [&str; 8] = [
     "structure",
     "metrics",
     "slices",
     "bands",
     "checks",
     "app",
+    "plan",
     "rulings",
 ];
 
@@ -224,6 +225,7 @@ async fn the_routes_answer_from_the_record() {
     assert_eq!(fresh["slices"]["state"], "blocked");
     assert_eq!(fresh["bands"]["state"], "blocked");
     assert_eq!(fresh["app"]["state"], "blocked");
+    assert_eq!(fresh["plan"]["state"], "blocked");
     assert_eq!(fresh["metrics"]["state"], "next", "{fresh:?}");
     assert_eq!(fresh["metrics"]["act"], "DECLARE ASPECT query");
     assert_eq!(fresh["metrics"]["say"], "declare the first concept");
@@ -442,6 +444,79 @@ async fn the_routes_answer_from_the_record() {
             let stands = goal(&session, "app").await;
             assert_eq!(stands["state"], "done", "{stands:?}");
             assert_eq!(stands["why"], "an app stands: /fin/app/fin", "{stands:?}");
+
+            // The plan goal: no plan is declared on the applicable
+            // metric, so the first plan is the act, its form filled
+            // with the dataset and the names left to the author;
+            // declared, its grounding is; grounded over a judged date,
+            // the forecast at the current origin — owed while it never
+            // ran. A plan is no metric: the metrics goal stays done.
+            let first = goal(&session, "plan").await;
+            assert_eq!(first["state"], "next", "{first:?}");
+            assert_eq!(first["act"], "DECLARE ASPECT plan", "{first:?}");
+            assert_eq!(first["say"], "declare the first plan", "{first:?}");
+            assert!(
+                first["why"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("no plan is declared on takings:"),
+                "{first:?}"
+            );
+            assert!(
+                first["statement"]
+                    .as_str()
+                    .unwrap()
+                    .contains("\"x-kind\": \"plan\", \"x-plan-of\": \"<metric>\""),
+                "{first:?}"
+            );
+            assert!(
+                first["then"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("GLOSS <name> ON fin AS $${\"sql\":"),
+                "{first:?}"
+            );
+            session
+                .execute(
+                    "DECLARE ASPECT takings_budget WITH $${\"title\": \"Budget\", \"x-kind\": \"plan\", \"x-plan-of\": \"takings\"}$$ AS QUERY ON DATASET",
+                )
+                .await
+                .unwrap();
+            let declared = goal(&session, "plan").await;
+            assert_eq!(declared["act"], "GLOSS plan", "{declared:?}");
+            assert_eq!(
+                declared["say"], "ground takings_budget, or stop it",
+                "{declared:?}"
+            );
+            assert!(
+                declared["statement"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("GLOSS takings_budget ON fin AS $${\"sql\":"),
+                "{declared:?}"
+            );
+            session
+                .execute(
+                    "GLOSS takings_budget ON fin AS $${\"sql\": \"SELECT race_date, takings * 1.2 AS value FROM races\"}$$",
+                )
+                .await
+                .unwrap();
+            let grounded = goal(&session, "plan").await;
+            assert_eq!(grounded["act"], "metric_forecast", "{grounded:?}");
+            assert_eq!(grounded["say"], "run the forecast", "{grounded:?}");
+            assert_eq!(
+                grounded["statement"], "SELECT metric_forecast() FROM fin",
+                "{grounded:?}"
+            );
+            let metrics = goal(&session, "metrics").await;
+            assert_eq!(metrics["state"], "done", "{metrics:?}");
+            let axes = rows(
+                &session,
+                "SELECT metric, plan_of FROM metric_axes() WHERE plan_of IS NOT NULL",
+            )
+            .await;
+            assert_eq!(axes.len(), 1, "{axes:?}");
+            assert_eq!(axes[0]["metric"], "takings_budget", "{axes:?}");
         }
         Err(e) => {
             eprintln!(

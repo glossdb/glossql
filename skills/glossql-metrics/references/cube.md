@@ -102,6 +102,21 @@ budget and the amended one both stand.
 - A year's budget beside monthly actuals reads at the year: the month
   cells are what the ledger booked that month. The engine spreads
   nothing; a phased budget is the planner's own table.
+- `plan_points()` serves every plan against the actual and the
+  forecast, one row per plan and period at the plan's own grain and at
+  the year: the plan's number, the actual where the period has begun,
+  the variance where it is complete, and the forecast's median with
+  its 80% band where it covers the rest — at the year, the actual to
+  date plus the year to go. `stands` says where the plan lies:
+  `landed`, `inside`, `below` or `above` the band, `open` or `ahead`.
+- The plan goal on the `next:` line judges the year. Its route: the
+  first plan to declare, a declared plan to ground, the forecast to
+  run while owed, then per plan year the band does not hold — a
+  scenario on a lever that closes the gap, or the gap recorded as an
+  assumption under `plan-<year>` in the plan's body for the human to
+  rule; `next://<dataset>/plan` hands the statements filled. A plan's
+  table is no edge of the actuals: a budget landed through the year's
+  end stretches no metric's series.
 
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,

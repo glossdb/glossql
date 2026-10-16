@@ -57,6 +57,7 @@ pub const BUILTINS: &[BuiltinApp] = &[BuiltinApp {
         docket!("frames/metric.sql"),
         docket!("frames/open.sql"),
         docket!("frames/owed.sql"),
+        docket!("frames/plan.sql"),
         docket!("frames/pulse.sql"),
         docket!("frames/reads.sql"),
         docket!("frames/remeasure.sql"),
