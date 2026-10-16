@@ -118,6 +118,45 @@ means something; the read asks the year. A phased budget, a twelfth a
 month or a seasonal curve, is a planner's own table, read at month
 grain. The engine spreads nothing.
 
+## Behaviour and grain
+
+A metric's temporal behaviour is how its number combines over time. A
+flow adds up: spend, revenue. A stock is a level at a moment: headcount,
+inventory; at a coarser grain the cube takes the latest level. A ratio
+is a quotient: margin, win rate; at a coarser grain the cube re-divides
+the summed halves. The forecast runs at the metric's own grain and
+gives a band for every period ahead, whatever the behaviour. It asks
+for a total to go, the quarter or the year, only on a flow: a total of
+a stock or a ratio is not a number ([forecast](forecast.md)). That
+decides what a plan compares to.
+
+| metric's grain | behaviour | plan at the metric's grain | plan at a coarser grain, or the year row |
+|---|---|---|---|
+| day | flow | a band per day, 31 ahead | the month to go only |
+| day | stock, ratio | a band per day | no band |
+| week | flow | a band per week, 13 ahead | the quarter to go only |
+| week | stock, ratio | a band per week | no band |
+| month | flow | a band per month, 12 ahead | the quarter and the year to go |
+| month | stock, ratio | a band per month | no band |
+| quarter | flow | a band per quarter, 4 ahead | the year to go |
+| quarter | stock, ratio | a band per quarter | no band |
+| year, hour, minute | any | no forecast | no band |
+
+A plan at the metric's own grain compares to the band for that period,
+for every behaviour. A plan at a coarser grain compares to the actual
+to date plus the total to go, on the flow rows above. Where the table
+says no band, `plan_points()` still serves the row with the actual and
+the variance, and `stands` says `open` or `ahead`. The planning goal
+reads the year rows, so it finds a gap on a flow at month or quarter
+grain and nowhere else. A headcount target or a margin target is
+landed as one row for the month it is due, and the read compares it to
+that month's band.
+
+The read compares totals. A budget split by department gives the plan
+member cells, and `metric_series(world => 'plan', …)` serves them; a
+department's variance is a join of the plan world and the actual world
+on metric, dimension, member and period.
+
 ## Limits
 
 - One plan aspect serves one metric's numbers. A budget file of many
