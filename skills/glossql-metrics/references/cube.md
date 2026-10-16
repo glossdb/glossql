@@ -77,6 +77,32 @@ lever on is refused when it is glossed.
   the cells say so. Without a what-if service the arithmetic is served
   and the cells say what to set.
 
+## The plan world
+
+A plan — a budget, a reforecast, a target — arrives as a landed table,
+and the glossary holds how to read it. A plan is one QUERY aspect per
+plan, declared with `x-kind: plan` and `x-plan-of: <metric>`, the
+metric it plans, and grounded by SQL like a metric: `DECLARE ASPECT
+revised_budget WITH $${"title": "Revised budget", "x-kind": "plan",
+"x-plan-of": "expense"}$$ AS QUERY ON DATASET;` then `GLOSS
+revised_budget ON fin AS $${"sql": "SELECT month, revised AS value FROM
+budget"}$$;`. The declaration is refused where `x-plan-of` names no
+declared metric, or another plan. One aspect per edition: the adopted
+budget and the amended one both stand.
+
+- `metric_series(world => 'plan', plan => 'revised_budget')` serves the
+  plan's cells under the metric it plans, `metric` the metric and
+  `world` `plan`, at the plan's own resolution or any coarser grain
+  asked, over the plan's own axes. The actual world never carries
+  them; `read.revised_budget()` serves the rows as any grounding's.
+- A variance against the plan is a join of two worlds on `metric` and
+  `period` at the plan's grain or coarser; a forecast against the plan
+  is the same join with `world => 'forecast'`; two editions are a join
+  of two plan reads.
+- A year's budget beside monthly actuals reads at the year: the month
+  cells are what the ledger booked that month. The engine spreads
+  nothing; a phased budget is the planner's own table.
+
 The cube is the sibling read and feeds the app: every grounded
 metric's cells — the total, the slices along its judged dimensions,
 the disclosed rival — computed at read, landed in the catalog under

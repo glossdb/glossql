@@ -11,5 +11,6 @@ mod forecast;
 mod lake_flows;
 mod memo;
 mod misfit;
+mod plan_world;
 mod question_scope;
 mod scenario;

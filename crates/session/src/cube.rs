@@ -114,13 +114,15 @@ const NO_JUDGED_TIME: &str = "no judged time column: no served date column carri
 /// the groundings compute from the data; the forecast world is the
 /// newest `metric_forecast` run's medians, one cell per step; the
 /// scenario world is a declared scenario read in two passes
-/// (`crate::scenario`), named by `scenario => …`. The plan world comes
-/// with the plan grounding's form and is refused by name until then.
+/// (`crate::scenario`), named by `scenario => …`; the plan world is a
+/// plan aspect's own cells served under the metric it names
+/// (`crate::plan_world`, fixture 27), named by `plan => …`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum World {
     Actual,
     Forecast,
     Scenario,
+    Plan,
 }
 
 impl World {
@@ -129,17 +131,17 @@ impl World {
             World::Actual => "actual",
             World::Forecast => "forecast",
             World::Scenario => "scenario",
+            World::Plan => "plan",
         }
     }
 
-    /// `Ok(None)` for a world the kernel names and does not serve yet.
-    fn parse(s: &str) -> Result<Option<World>, ()> {
+    fn parse(s: &str) -> Option<World> {
         match s {
-            "actual" => Ok(Some(World::Actual)),
-            "forecast" => Ok(Some(World::Forecast)),
-            "scenario" => Ok(Some(World::Scenario)),
-            "plan" => Ok(None),
-            _ => Err(()),
+            "actual" => Some(World::Actual),
+            "forecast" => Some(World::Forecast),
+            "scenario" => Some(World::Scenario),
+            "plan" => Some(World::Plan),
+            _ => None,
         }
     }
 }
@@ -268,6 +270,11 @@ async fn settings(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Fact {
     pub metric: String,
+    /// The metric this row plans, for a plan aspect (`x-kind: plan`,
+    /// fixture 27): its cells are served in the plan world under that
+    /// name and in no other world. None for a metric.
+    #[serde(default)]
+    pub plan_of: Option<String>,
     pub applicable: bool,
     /// Whether every verdict the build admitted on stands at this pin.
     /// False after a write or an import moved the pin since the
@@ -374,6 +381,7 @@ impl Fact {
     fn abstain(metric: &str, reason: String) -> Fact {
         Fact {
             metric: metric.to_string(),
+            plan_of: None,
             applicable: false,
             judged_current: true,
             reason: Some(reason),
@@ -488,6 +496,7 @@ impl Planned {
         let (unadmitted, unadmitted_why, unadmitted_act) = split_unadmitted(unadmitted);
         Fact {
             metric: metric.to_string(),
+            plan_of: None,
             applicable: true,
             judged_current,
             reason: None,
@@ -1168,7 +1177,11 @@ pub(crate) fn verb_of(
 struct Surface {
     dataset: String,
     version: String,
+    /// The metrics' groundings — the heads of the actual world.
     slots: Vec<QuerySlot>,
+    /// The plan aspects' groundings (fixture 27): a head each, served
+    /// in the plan world under the metric each names and in no other.
+    plans: Vec<QuerySlot>,
     judged: Judged,
     settings: Settings,
     /// The bound dataset's tables and their columns at the pin — what
@@ -1192,8 +1205,13 @@ impl Surface {
             .clone()
             .ok_or(SessionError::NoDataset)?;
         let rctx = shared.read_context().await?;
-        let slots = current_query_slots(&rctx, &dataset).await?;
-        if slots.is_empty() {
+        // The plan aspects apart (fixture 27): a plan is a grounding
+        // with a head of its own and no metric of the actual world.
+        let (plans, slots): (Vec<QuerySlot>, Vec<QuerySlot>) = current_query_slots(&rctx, &dataset)
+            .await?
+            .into_iter()
+            .partition(QuerySlot::is_plan);
+        if slots.is_empty() && plans.is_empty() {
             return Ok(None);
         }
         let (judged, settings) = judged_surface(shared, &rctx, &dataset).await?;
@@ -1201,6 +1219,7 @@ impl Surface {
             dataset,
             version: rctx.version.clone(),
             slots,
+            plans,
             judged,
             settings,
             shapes: rctx.shapes.clone(),
@@ -1428,11 +1447,15 @@ impl Surface {
             .get_with(key, async {
                 match derive(&head, grain, window.as_deref()).await {
                     Ok(cube) => Arc::new(cube),
-                    Err(Abstain(reason)) => Arc::new(Cube {
-                        fact: Fact::abstain(&slot.aspect, reason),
-                        cells: RecordBatch::new_empty(series_schema()),
-                        version_bound: head.version_bound.clone(),
-                    }),
+                    Err(Abstain(reason)) => {
+                        let mut fact = Fact::abstain(&slot.aspect, reason);
+                        fact.plan_of = slot.plan_of.clone();
+                        Arc::new(Cube {
+                            fact,
+                            cells: RecordBatch::new_empty(series_schema()),
+                            version_bound: head.version_bound.clone(),
+                        })
+                    }
                 }
             })
             .await
@@ -1544,15 +1567,16 @@ impl Surface {
     }
 }
 
-/// Every metric's head — what `metric_axes()` describes. A landing
-/// calls it to rebuild and land the heads over the tables it moved:
-/// every other entry is a hit, and every grain follows from its head.
+/// Every metric's head, and every plan's — what `metric_axes()`
+/// describes. A landing calls it to rebuild and land the heads over
+/// the tables it moved: every other entry is a hit, and every grain
+/// follows from its head.
 pub(crate) async fn cubes(shared: &Arc<Shared>) -> Result<Vec<Arc<Cube>>, SessionError> {
     let Some(surface) = Surface::load(shared).await? else {
         return Ok(Vec::new());
     };
-    let mut out = Vec::with_capacity(surface.slots.len());
-    for slot in &surface.slots {
+    let mut out = Vec::with_capacity(surface.slots.len() + surface.plans.len());
+    for slot in surface.slots.iter().chain(&surface.plans) {
         out.push(surface.entry(shared, slot).await);
     }
     Ok(out)
@@ -1625,9 +1649,12 @@ async fn write_fact(
     }
     let withheld = || Abstain("no serving grounding: the slot is withheld as contested".into());
     let surface = Surface::load(shared).await?.ok_or_else(withheld)?;
+    // A metric's slot or a plan's: a plan's grounding write is judged
+    // as a metric's is (fixture 27).
     let slot = surface
         .slots
         .iter()
+        .chain(&surface.plans)
         .find(|s| s.subject == subject && s.aspect == aspect)
         .ok_or_else(withheld)?;
     let planned = Box::pin(plan(shared, &surface, slot, None)).await?;
@@ -1662,6 +1689,7 @@ async fn write_fact(
             aspect: aspect.to_string(),
             body: other.body.clone(),
             rank: if other.actor_kind == "human" { 0 } else { 1 },
+            plan_of: slot.plan_of.clone(),
         };
         let now = Box::pin(build_metric(shared, &surface, slot, None)).await;
         let before = Box::pin(build_metric(shared, &surface, &before, None)).await;
@@ -1775,7 +1803,7 @@ async fn build_metric(
     slot: &QuerySlot,
     probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Cube {
-    match build(shared, surface, slot, probe).await {
+    let mut cube = match build(shared, surface, slot, probe).await {
         Ok(cube) => cube,
         // An abstention binds to no version: its reasons derive from
         // the plan over the digest-covered surface, so no write flips
@@ -1786,7 +1814,11 @@ async fn build_metric(
             cells: RecordBatch::new_empty(series_schema()),
             version_bound: None,
         },
-    }
+    };
+    // A plan's row names the metric it plans (fixture 27): the build
+    // is a metric's build, and the tie rides the slot.
+    cube.fact.plan_of = slot.plan_of.clone();
+    cube
 }
 
 /// Why a metric's cube is not built — the text the fact row carries.
@@ -2633,6 +2665,7 @@ async fn build(
     Ok(Cube {
         fact: Fact {
             metric: metric.to_string(),
+            plan_of: None,
             applicable: true,
             judged_current,
             reason: None,
@@ -3306,18 +3339,36 @@ fn cells_batch(metric: &str, world: World, cells: &[Cell]) -> RecordBatch {
     .expect("column shapes match the schema")
 }
 
+/// A cube's cells under another name and world: a plan aspect's cells
+/// served as the plan world of the metric it names (fixture 27). The
+/// cell columns are shared, never copied; only the two labels are new.
+fn relabel(cells: &RecordBatch, metric: &str, world: World) -> RecordBatch {
+    let n = cells.num_rows();
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(cells.num_columns());
+    columns.push(Arc::new(StringArray::from_iter_values(
+        std::iter::repeat_n(metric, n),
+    )));
+    columns.push(Arc::new(StringArray::from_iter_values(
+        std::iter::repeat_n(world.as_str(), n),
+    )));
+    columns.extend(cells.columns()[2..].iter().cloned());
+    RecordBatch::try_new(series_schema(), columns).expect("the cells carry the series schema")
+}
+
 // -- the reads ---------------------------------------------------------
 
 /// The named arguments of `metric_series()`: `grain => '<grain>'`,
 /// `world => '<world>'` and, in the scenario world, `scenario =>
-/// '<name>'`, in any order. Absent, a metric's own resolution and the
-/// actual world.
+/// '<name>'`, in the plan world `plan => '<name>'`, in any order.
+/// Absent, a metric's own resolution and the actual world. The third
+/// of the answer is the named world's name — the scenario's or the
+/// plan's, the world says which.
 pub(crate) fn series_args(
     args: &[FunctionArg],
 ) -> Result<(Option<Resolution>, World, Option<String>), SessionError> {
     let refuse = |what: String| SessionError::BadSubject(format!("metric_series({what})"));
     let grains = "minute, hour, day, week, month, quarter, year";
-    let worlds = "actual, forecast or scenario";
+    let worlds = "actual, forecast, scenario or plan";
     let spelled = || {
         args.iter()
             .map(ToString::to_string)
@@ -3353,7 +3404,8 @@ pub(crate) fn series_args(
         refuse(format!(
             "{}): the arguments are the grain and the world — `SELECT metric, period, value FROM \
              metric_series(grain => '{grain}'){filter}`, `metric_series(world => 'forecast')`, \
-             `metric_series(world => 'scenario', scenario => '<name>')`; filters ride WHERE. \
+             `metric_series(world => 'scenario', scenario => '<name>')`, \
+             `metric_series(world => 'plan', plan => '<name>')`; filters ride WHERE. \
              The columns are metric, world, dimension, member, period, \
              value, num, den, behavior: the time column is `period`, the total is \
              `dimension = ''`",
@@ -3363,6 +3415,7 @@ pub(crate) fn series_args(
     let mut grain = None;
     let mut world = World::Actual;
     let mut scenario: Option<String> = None;
+    let mut plan: Option<String> = None;
     for arg in args {
         let (name, value) = match arg {
             FunctionArg::ExprNamed {
@@ -3381,6 +3434,7 @@ pub(crate) fn series_args(
             "grain" => (grains, "month"),
             "world" => (worlds, "forecast"),
             "scenario" => ("the declared scenarios", "price_hike"),
+            "plan" => ("the declared plans", "revised_budget"),
             _ => return Err(meant()),
         };
         let text = match value {
@@ -3411,40 +3465,51 @@ pub(crate) fn series_args(
                 })?);
             }
             "scenario" => scenario = Some(text),
+            "plan" => plan = Some(text),
             _ => {
-                world = match World::parse(&text) {
-                    Ok(Some(w)) => w,
-                    Ok(None) => {
-                        return Err(refuse(format!(
-                            "world => '{text}'): the {text} world is not served yet — it comes \
-                             with the plan grounding's form; the worlds served are {worlds}"
-                        )));
-                    }
-                    Err(()) => {
-                        return Err(refuse(format!("world => '{text}'): a world is {worlds}")));
-                    }
-                };
+                world = World::parse(&text)
+                    .ok_or_else(|| refuse(format!("world => '{text}'): a world is {worlds}")))?;
             }
         }
     }
-    // A scenario is read by name, in its own world.
-    match (world, &scenario) {
-        (World::Scenario, None) => {
+    // A scenario and a plan are read by name, each in its own world.
+    let name = match (world, scenario, plan) {
+        (_, Some(s), Some(p)) => {
+            return Err(refuse(format!(
+                "scenario => '{s}', plan => '{p}'): one name — a scenario is read in the \
+                 scenario world, a plan in the plan world"
+            )));
+        }
+        (World::Scenario, Some(name), None) | (World::Plan, None, Some(name)) => Some(name),
+        (_, Some(name), None) => {
+            return Err(refuse(format!(
+                "scenario => '{name}'): a scenario is read in the scenario world — \
+                 `metric_series(world => 'scenario', scenario => '{name}')`"
+            )));
+        }
+        (_, None, Some(name)) => {
+            return Err(refuse(format!(
+                "plan => '{name}'): a plan is read in the plan world — \
+                 `metric_series(world => 'plan', plan => '{name}')`"
+            )));
+        }
+        (World::Scenario, None, None) => {
             return Err(refuse(
                 "world => 'scenario'): a scenario is read by name — \
                  `metric_series(world => 'scenario', scenario => '<name>')`"
                     .into(),
             ));
         }
-        (w, Some(name)) if w != World::Scenario => {
-            return Err(refuse(format!(
-                "scenario => '{name}'): a scenario is read in the scenario world — \
-                 `metric_series(world => 'scenario', scenario => '{name}')`"
-            )));
+        (World::Plan, None, None) => {
+            return Err(refuse(
+                "world => 'plan'): a plan is read by name — \
+                 `metric_series(world => 'plan', plan => '<name>')`"
+                    .into(),
+            ));
         }
-        _ => {}
-    }
-    Ok((grain, world, scenario))
+        (_, None, None) => None,
+    };
+    Ok((grain, world, name))
 }
 
 /// The verb as the cells carry it; a word the cube never writes is no
@@ -3477,23 +3542,54 @@ fn verb_static(verb: &str) -> &'static str {
 /// none. Its totals are not cells. The scenario world is the named
 /// scenario's cells (`crate::scenario`): the replayed values and the
 /// estimated medians, at the metric's own resolution only, like the
-/// forecast's; `scenario_points()` has the detail.
+/// forecast's; `scenario_points()` has the detail. The plan world is
+/// the named plan aspect's own head (`crate::plan_world`, fixture 27),
+/// a metric's head in every way, served under the metric the plan
+/// names at the plan's resolution or any coarser grain asked — a plan
+/// is a landed table's numbers, so its grains derive as a metric's do.
 ///
 /// The cached cube is the table. Its cells are handed to the planner
 /// as they sit in the cache — one batch per metric, `Arc`-shared,
 /// copied into nothing. The only rows a read allocates are the ones
-/// it answers with: the forecast world's, a dozen per metric.
+/// it answers with: the forecast world's, a dozen per metric, and the
+/// plan world's two label columns over shared cells.
 pub(crate) async fn metric_series_batch(
     shared: &Arc<Shared>,
     grain: Option<Resolution>,
     world: World,
-    scenario: Option<&str>,
+    name: Option<&str>,
 ) -> Result<Served, SessionError> {
     let mut partitions = Vec::new();
-    if let Some(surface) = Surface::load(shared).await? {
+    let surface = Surface::load(shared).await?;
+    // The plan world (fixture 27): one plan aspect's cells, served
+    // under the metric it names. The plan's head is a metric's head,
+    // read at the plan's own resolution or any coarser grain asked;
+    // a finer grain serves no rows, as for a metric.
+    if world == World::Plan {
+        let name = name.expect("series_args pairs the plan world with its name");
+        let Some((surface, slot)) = surface
+            .as_ref()
+            .and_then(|s| s.plans.iter().find(|p| p.aspect == name).map(|p| (s, p)))
+        else {
+            return Err(crate::plan_world::unknown(shared, name).await);
+        };
+        let head = surface.entry(shared, slot).await;
+        if let (Some(resolution), Some(metric)) = (head.fact.resolution, slot.plan_of.as_deref()) {
+            let asked = grain.unwrap_or(resolution);
+            if asked >= resolution {
+                let cells = surface.at_grain(shared, slot, head, asked).await;
+                partitions.push(relabel(&cells.cells, metric, World::Plan));
+            }
+        }
+        return Ok(Served {
+            schema: series_schema(),
+            partitions,
+        });
+    }
+    if let Some(surface) = surface {
         let ahead = match world {
             World::Forecast => crate::search::forecast_world_cells(shared).await?,
-            World::Actual | World::Scenario => HashMap::new(),
+            World::Actual | World::Scenario | World::Plan => HashMap::new(),
         };
         // The scenario's cells, read once the first metric at the asked
         // grain needs them — a grain no metric has asks the service
@@ -3545,11 +3641,12 @@ pub(crate) async fn metric_series_batch(
                         .collect();
                     partitions.push(cells_batch(&slot.aspect, World::Forecast, &cells));
                 }
+                World::Plan => unreachable!("the plan world is served above"),
                 World::Scenario => {
                     if grain.is_some_and(|g| g != resolution) {
                         continue;
                     }
-                    let Some(name) = scenario else {
+                    let Some(name) = name else {
                         continue;
                     };
                     if declared.is_none() {
@@ -3655,7 +3752,8 @@ pub(crate) async fn scenario_frames(shared: &Arc<Shared>) -> Result<Vec<Frame>, 
 /// behavior_basis, grain, resolution, window, outside, dims, basis,
 /// admitted_by, bucketed, unadmitted, unadmitted_why, unadmitted_act, wanted,
 /// wanted_over, unserved, alternative, alternative_divergence,
-/// alternative_error)`. What the cube
+/// alternative_error, superseded_divergence, plan_of)`. A plan aspect's
+/// row names the metric it plans in `plan_of`. What the cube
 /// admitted and why not, and
 /// whether the verdicts it admitted on stand at this pin; served from
 /// the entry's fact row, so it builds what is not built.
@@ -3820,6 +3918,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
         Field::new("alternative_divergence", DataType::Utf8, true),
         Field::new("alternative_error", DataType::Utf8, true),
         Field::new("superseded_divergence", DataType::Utf8, true),
+        Field::new("plan_of", DataType::Utf8, true),
     ]));
     RecordBatch::try_new(
         schema,
@@ -3857,6 +3956,7 @@ pub(crate) fn fact_batch(facts: &[&Fact]) -> Result<RecordBatch, SessionError> {
             text(|f| f.alternative_divergence.as_deref()),
             text(|f| f.alternative_error.as_deref()),
             text(|f| f.superseded_divergence.as_deref()),
+            text(|f| f.plan_of.as_deref()),
         ],
     )
     .map_err(SessionError::from)

@@ -24,7 +24,6 @@ three.
 
 | Element | Difficulty | What it touches | When | Issue |
 |---|---|---|---|---|
-| The plan grounding's form | Language | SPEC §5.2 or §9; one corpus fixture, a real budget beside its actuals | Phase 2, the lead's | |
 | The planning goal in the next read | Easy, additive | next.sql, window.rs, the skills, the docket | Phase 2, last | |
 | Cube widening: every column, the whole history, measurements warn instead of gate | Medium, core | cube, docket, issue #41 | After the world; its own decision | |
 
@@ -32,11 +31,11 @@ three.
 
 **The futures today.**
 
-- Three worlds. `metric_series()` serves `metric`, `world`,
+- Four worlds. `metric_series()` serves `metric`, `world`,
   `dimension`, `member`, `period`, `value`, `num`, `den`, `behavior`;
-  the actual world by default, the forecast world (#106) and the
-  scenario world (#113) by name (`docs/reference/reads.md`); the plan
-  world is refused by name. The cube's head is keyed by dataset,
+  the actual world by default, the forecast world (#106), the
+  scenario world (#113) and the plan world (#115) by name
+  (`docs/reference/reads.md`). The cube's head is keyed by dataset,
   metric, the data legs and a digest that folds the grounding and the
   frame as planned (`crates/session/src/cube.rs`, module header;
   `CubeKey`, 540). A head over another frame is another digest
@@ -114,11 +113,22 @@ three.
   forecast record's rule, the sign and the basis. One lever estimates;
   several replay and do not. Nothing recorded, nothing cached
   (`docs/methods/scenario.md`).
-- The plan. None. The standard grounding schema is `sql` or
-  `stopped`, with `behavior` and `axes`
-  (`crates/glossary/src/schemas.rs:10`). The supersession key is
-  subject, aspect and actor kind (`grammar.ebnf`, `gloss`), so a
-  second QUERY gloss on the same aspect supersedes the actual.
+- The plan world (#115). A plan is its own QUERY aspect, `x-kind:
+  plan` with `x-plan-of` naming its metric, its body the standard
+  grounding schema unchanged (fixture 27,
+  `crates/parser/tests/corpus/27-plan-budget.md`; SPEC.md §9;
+  `docs/methods/plan.md`). The slot carries the tie
+  (`crates/session/src/search/collisions.rs`, `QuerySlot::plan_of`);
+  the cube keeps the plans apart from the metrics' heads
+  (`crates/session/src/cube.rs`, `Surface::plans`) and serves a plan's
+  cells relabelled under its metric, `metric_series(world => 'plan',
+  plan => '<name>')`, at the plan's resolution or coarser; the walk,
+  the forecast and the collision pass skip plan slots; `metric_axes()`
+  carries `plan_of`; the declaration is checked in
+  `crates/session/src/plan_world.rs`. An edition is an aspect of its
+  own. The real artifact: the Baton Rouge expense budget, public
+  domain, the plan two columns of the fact table at year grain beside
+  a monthly actual, 106 months, 8 complete years, no lever.
 - Propagation. Rides the groundings, not the `formulas` registry: a
   metric over another metric nests as `read.<metric>()` behind a
   cycle guard (SPEC.md §9, PoC notes). The registry
@@ -207,5 +217,8 @@ leaves this file.
   quarter to go, every key right, no refusal). Still to come: the
   scenario read graded against the generator's lever pairs, the
   counterfactual truth (#113 serves the world; the lane grades it),
-  the plan world, and a planning task for the agent lane.
-- **glosstest**: nothing. The levers are shipped.
+  the plan world (#115 serves it; the lane grades it against the generator's budget, with the Baton Rouge file as the ungraded real-data check), and a planning task for the agent lane.
+- **glosstest**: a budget table per corpus from its own levers, a
+  planned value per metric and month in at least two editions, with
+  a truth file; the plan lane reads it through one plan aspect per
+  metric and edition. The levers are shipped.

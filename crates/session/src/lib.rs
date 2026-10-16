@@ -25,6 +25,7 @@ mod measure;
 mod memo;
 mod misfit;
 mod plan;
+mod plan_world;
 mod plane;
 mod prepass;
 mod provenance;

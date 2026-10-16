@@ -48,3 +48,4 @@ simplified language.
 | 24 | functions in a table (run 4) | RULED: a function's body is data — `AS $$…$$` replaces `FROM 'path'`, the `functions/` directory retires, and the shipped library reads back as examples · body-in-a-file INFORMATION LOST |
 | 25 | mixed-case names (avito run) | RULED: an unquoted name folds to lowercase at the declaration and at the read; a double-quoted name keeps its case |
 | 26 | grounding grain / stock serving shape (finance integration run) | TRANSCRIBES (grain key, standard grounding schema) |
+| 27 | plan: a budget beside its actuals (Baton Rouge expense budget) | RULED: a plan is its own QUERY aspect, `x-kind: plan`, tied to its metric by name in the declaration; the plan world on `metric_series`, read by name |

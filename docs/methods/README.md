@@ -11,3 +11,4 @@ statistic, the measured verdict, the stated limits.
 - [`bands.md`](bands.md) — expectation bands from a forecast service.
 - [`forecast.md`](forecast.md) — the periods ahead from a forecast service, and the coverage the record learns.
 - [`scenario.md`](scenario.md) — a declared scenario in two passes: the arithmetic through the groundings, the estimate from the what-if point.
+- [`plan.md`](plan.md) — a plan as its own QUERY aspect over a landed budget, served as a world under the metric it plans.

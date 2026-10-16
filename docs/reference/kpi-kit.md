@@ -7,7 +7,7 @@ shipped witnesses (`witnesses.glossql`) last. The kit ships the
 questions — what a column means, how a number behaves, its unit, which
 axes slice, what a table is, where definitions and formulas live, how
 a correction travels. The answers — the company's own metrics,
-validations, scenarios — stay authored in the flows. The kit is
+validations, scenarios, plans — stay authored in the flows. The kit is
 statements, so adapting it is an edit.
 
 An unwritten witnessed claim is owed: `unassessed` disclosure, the

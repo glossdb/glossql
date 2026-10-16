@@ -248,7 +248,10 @@ pub(crate) async fn metric_forecast_ahead(
         crate::cube::metric_series_batch(shared, None, crate::cube::World::Actual, None).await?;
 
     let mut out: Vec<Row> = Vec::new();
-    for (seq, cube) in cubes.iter().enumerate() {
+    // A plan is forecast by nobody (fixture 27): its cells are the plan
+    // world of the metric it names, not a metric.
+    let metrics = cubes.iter().filter(|c| c.fact.plan_of.is_none());
+    for (seq, cube) in metrics.enumerate() {
         let seq = seq as i64;
         let fact = &cube.fact;
         let not_applicable = |reason: String| {
