@@ -931,6 +931,9 @@ impl Session {
                 )
             }
             Declaration::Aspect(d) => {
+                // A plan names the metric it plans (fixture 27): refused
+                // before it is declared where the tie does not hold.
+                crate::plan_world::check_declaration(&self.shared, d).await?;
                 store.declare_aspect(d).await?;
                 format!("DECLARE ASPECT {}", d.name.value)
             }

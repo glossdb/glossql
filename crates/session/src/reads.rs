@@ -520,7 +520,7 @@ pub const DOORS: &[(&str, &str)] = &[
     ("metric_axes", "metric_axes()"),
     (
         "metric_series",
-        "metric_series([grain => '<grain>'][, world => '<world>'][, scenario => '<name>'])",
+        "metric_series([grain => '<grain>'][, world => '<world>'][, scenario => '<name>'][, plan => '<name>'])",
     ),
     ("fact_values", "fact_values()"),
     ("band_points", "band_points()"),
@@ -1239,9 +1239,9 @@ pub(crate) async fn compute_batch(
         // world, and the fact row per metric. Both build what is not
         // built.
         ("metric_series", Some(a)) => {
-            let (grain, world, scenario) = crate::cube::series_args(&a.args)?;
+            let (grain, world, name) = crate::cube::series_args(&a.args)?;
             Ok(Some(
-                crate::cube::metric_series_batch(shared, grain, world, scenario.as_deref()).await?,
+                crate::cube::metric_series_batch(shared, grain, world, name.as_deref()).await?,
             ))
         }
         ("metric_axes", Some(a)) => {

@@ -200,7 +200,7 @@ The same two collapses as `app_parts`. Workspace-wide.
 ### metric_series(grain => …, world => …)
 
 The cells: `metric`, `world` (which set of numbers the row belongs
-to: `actual`, `forecast` or `scenario`), `dimension` (`''` the total,
+to: `actual`, `forecast`, `scenario` or `plan`), `dimension` (`''` the total,
 `'alternative'` the disclosed rival, anything else a judged dimension
 column), `member`, `period` (a typed timestamp, the bucket's start),
 `value`, `num` / `den` (a ratio's summed halves, NULL elsewhere),
@@ -224,13 +224,22 @@ scenario => '<name>'` serves the named scenario's cells ([the scenario
 world](../methods/scenario.md)): the grounding replayed with the
 scenario's factors over the data where a lever's table is scanned,
 and the what-if's estimated medians ahead of the last actual, at the
-metric's own resolution only; `scenario_points()` has the detail. The
-plan world is refused by name until its form is declared. The
+metric's own resolution only; `scenario_points()` has the detail.
+`world => 'plan', plan => '<name>'` serves the named plan's cells
+under the metric it plans ([the plan world](../methods/plan.md)): a
+plan is its own QUERY aspect, `x-kind: plan` with `x-plan-of` naming
+the metric, grounded by SQL over a landed table; its cells are read at
+the plan's own resolution or any coarser grain asked, over its own
+axes, and appear in no other world. An edition of a plan is an aspect
+of its own, so a variance against the plan and a comparison of two
+editions are both joins on metric and period. The
 arguments are named and come in any order; filters ride `WHERE`.
 
 ### metric_axes()
 
-One row per current grounding — what the cube admitted and why not:
+One row per current grounding, a metric's or a plan's — what the cube
+admitted and why not; a plan's row names the metric it plans in
+`plan_of`, the last column, NULL on a metric's row:
 `metric`, `applicable`, `judged_current`, `reason` (the road out when
 it abstains — no judged time column, no value column, a grounding the
 engine refused, a frame that breaks its declared grain — or, for a

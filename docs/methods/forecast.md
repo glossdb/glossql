@@ -86,6 +86,9 @@ beside the actuals: per metric, one row per step with the median as
 default, so a read that names no world sees no forecast rows. A
 variance of forecast against actual is a join of the two worlds on
 metric and period ([reads](../reference/reads.md), `metric_series()`).
+The plan world sits beside them ([the plan world](plan.md)): a
+forecast against the plan is the same join, `world => 'plan', plan =>
+'<name>'` on the plan's side, at the plan's grain or coarser.
 
 ## Why no PIT
 

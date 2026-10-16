@@ -630,7 +630,14 @@ declared levers — a lever a FACT aspect on its column — read as
 `metric_series(world => 'scenario', scenario => '<name>')` beside the
 actual and the forecast worlds; the two passes, the arithmetic
 through the groundings over the data and the estimate ahead, are
-machinery, never statement syntax. Analyses stay operation-named
+machinery, never statement syntax. A plan is a world on the same read
+(fixture 27): one QUERY aspect per plan, `x-kind: plan`, tied to its
+metric by `x-plan-of` in the declaration, its body the standard
+grounding schema — a plan's numbers are a landed table, read by SQL
+as the actual's are — read as `metric_series(world => 'plan', plan =>
+'<name>')` under the metric it names, at the plan's own resolution;
+an edition of a plan is an aspect of its own, and a plan aspect is no
+head of the actual world. Analyses stay operation-named
 doors — `misfit.<frame>()` (fixture 20) ranks a
 declared frame's rows against the frame itself — the frame is an
 ordinary QUERY gloss, the density kernel and its caps machinery;

@@ -281,6 +281,10 @@ pub(crate) async fn metric_band_walk(
     let mut out: Vec<Row> = Vec::new();
     let mut seq = 0i64;
     for slot in current_query_slots(&rctx, dataset).await? {
+        // A plan is walked by nobody: it is not a metric (fixture 27).
+        if slot.is_plan() {
+            continue;
+        }
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };

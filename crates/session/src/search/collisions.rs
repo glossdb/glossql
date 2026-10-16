@@ -48,6 +48,11 @@ pub(crate) async fn grounding_collisions(
     let mut groundings = 0i64;
     let mut grounded: Vec<(&QuerySlot, Value, String)> = Vec::new();
     for slot in &slots {
+        // A plan is no metric: two editions of one budget agreeing is
+        // not a collision (fixture 27).
+        if slot.is_plan() {
+            continue;
+        }
         let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
             continue;
         };
@@ -153,13 +158,28 @@ pub(crate) struct QuerySlot {
     /// The serving voice's rank — 0 human, 1 agent — whose word the
     /// body's `axes` are.
     pub rank: u8,
+    /// The metric this grounding plans, where its aspect is declared
+    /// `x-kind: plan` with `x-plan-of` (fixture 27). A plan is a
+    /// grounding like any other — a view in the catalog, `read.<plan>()`,
+    /// a head of its own — and no metric of the actual world: the cube
+    /// serves its cells in the plan world under the metric it names,
+    /// and the walk, the forecast and the collision pass pass it over.
+    /// None for a metric.
+    pub plan_of: Option<String>,
+}
+
+impl QuerySlot {
+    pub fn is_plan(&self) -> bool {
+        self.plan_of.is_some()
+    }
 }
 
 /// The current QUERY groundings the metric doors run — the store's own
 /// collapsed read (supersession, human over agent, contested withheld,
 /// SPEC.md §5.3), narrowed to QUERY aspects: one slot per
-/// (subject, aspect) that serves a value. A contested grounding never
-/// enters a cube, a walk, or a collision bucket. In slot-key order.
+/// (subject, aspect) that serves a value, a plan aspect's carrying the
+/// metric it plans. A contested grounding never enters a cube, a walk,
+/// or a collision bucket. In slot-key order.
 /// One FACT aspect's collapsed values across the dataset, keyed by
 /// subject, each with the serving voice's rank (0 human, 1 agent) — the
 /// read policy's view of what was said, human over agent, contested
@@ -192,6 +212,17 @@ pub(crate) async fn current_query_slots(
         .filter(|a| a.kind == "query")
         .map(|a| a.name.as_str())
         .collect();
+    // The plan aspects and the metric each names, from the declaration.
+    let plans: HashMap<&str, String> = rctx
+        .aspects
+        .iter()
+        .filter(|a| a.kind == "query")
+        .filter_map(|a| {
+            let schema: Value = serde_json::from_str(&a.schema).ok()?;
+            let of = crate::plan_world::plan_of(&schema)?;
+            Some((a.name.as_str(), of.to_string()))
+        })
+        .collect();
     let scope = glossql_glossary::Scope::Dataset;
     let verdicts = crate::reads::verdicts(rctx, dataset, &scope, None).await?;
     let mut slots: Vec<QuerySlot> =
@@ -199,11 +230,13 @@ pub(crate) async fn current_query_slots(
             .into_iter()
             .filter(|r| query_aspects.contains(r.aspect.as_str()))
             .filter_map(|r| {
+                let plan_of = plans.get(r.aspect.as_str()).cloned();
                 r.value.map(|body| QuerySlot {
                     subject: r.subject,
                     aspect: r.aspect,
                     body,
                     rank: r.rank.unwrap_or(1),
+                    plan_of,
                 })
             })
             .collect();
