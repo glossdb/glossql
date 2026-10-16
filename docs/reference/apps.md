@@ -145,6 +145,6 @@ landing account, the standing checks, the column coverage), the
 column lineage, and every table and read as a file. Pages
 `index.html`, `metrics.html`, `quality.html`, `lineage.html`,
 `export.html`; frames
-over the shipped reads, the cube's two reads, `metric_sources()` and
-`imports`; one spec. Every built-in frame executes under the test
+over the shipped reads, the cube's two reads, `forecast_points()`,
+`plan_points()`, `metric_sources()` and `imports`; one spec. Every built-in frame executes under the test
 suite.

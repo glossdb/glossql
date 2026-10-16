@@ -683,6 +683,7 @@ async fn frames_declare_their_class_and_data_frames_never_read_the_glossary() {
         ("remeasure", "record"),
         ("metric", "record"),
         ("trend", "record"),
+        ("plan", "record"),
         ("slices", "data"),
         ("dims", "data"),
         ("drivers", "data"),
@@ -1331,6 +1332,64 @@ async fn the_metrics_faces_serve_the_cube() {
     )
     .await;
     assert_eq!(row_count(trend).await, 4, "and the numbers stand");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plan_stands_beside_its_metric() {
+    // A plan declared on dso over the same ledger (fixture 27): the
+    // pulse lists no plan as a metric; the plan frame serves it period
+    // by period at its own grain and at the year — two months landed
+    // with their variance, the year open with the actual to date and
+    // no forecast behind it; the trend carries its cells as the plan
+    // world at the viewer's grain beside the reading and the rival.
+    let (app, plane, _dir) = workspace().await;
+    seed_model_shapes(&plane).await;
+    plane
+        .channel(
+            Actor {
+                kind: ActorKind::Agent,
+                id: "builder".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .execute(
+            r#"USE perf;
+               DECLARE ASPECT dso_budget WITH $${"title": "DSO budget", "x-kind": "plan", "x-plan-of": "dso"}$$ AS QUERY ON DATASET;
+               GLOSS dso_budget ON perf AS $${"sql": "SELECT month, value * 2 AS value FROM ledger"}$$;"#,
+        )
+        .await
+        .unwrap();
+    let pulse = get(&app, "/perf/app/docket/frames/pulse").await;
+    assert_eq!(row_count(pulse).await, 1, "the plan is no metric surface");
+    let plan = get(&app, "/perf/app/docket/frames/plan?metric=dso").await;
+    assert_eq!(plan.status(), StatusCode::OK);
+    let text = body_text(plan).await;
+    assert!(text.contains("landed") && text.contains("open"), "{text}");
+    assert!(text.contains("-12.5") && text.contains("2026"), "{text}");
+    let plan = get(&app, "/perf/app/docket/frames/plan?metric=dso").await;
+    assert_eq!(row_count(plan).await, 3, "two months and the year");
+    let trend = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=month&span=24",
+    )
+    .await;
+    assert_eq!(
+        row_count(trend).await,
+        6,
+        "the reading, the rival and the plan, two months each"
+    );
+    let yearly = get(
+        &app,
+        "/perf/app/docket/frames/trend?metric=dso&grain=year&span=24",
+    )
+    .await;
+    assert_eq!(
+        row_count(yearly).await,
+        3,
+        "one year: the reading, the rival and the plan"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

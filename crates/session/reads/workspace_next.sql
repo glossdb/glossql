@@ -100,15 +100,15 @@ counts AS (
          -- A function is never "open": it is called, and computes when a
          -- read needs it — so this surface owes 0.
          (SELECT count(*) FROM functions) AS n_functions,
-         -- A sample frame is a QUERY aspect too, and would count as a
-         -- metric here — the two doors have their own surfaces.
+         -- A sample frame and a plan are QUERY aspects too, and would
+         -- count as metrics here — each has its own surface below.
          -- Narrowed by exclusion, not by requiring
          -- `x-kind = 'metric'`: a grounding declared without the tag is
          -- still a metric, and dropping it from the map would be worse
          -- than the miscount this fixes.
          (SELECT count(*) FROM aspects
           WHERE kind = 'query'
-            AND coalesce(json_get_str(schema, 'x-kind'), '') <> 'sample') AS n_metrics,
+            AND coalesce(json_get_str(schema, 'x-kind'), '') NOT IN ('sample', 'plan')) AS n_metrics,
          (SELECT metrics FROM asked) AS open_metrics,
          -- A validation stands when its witness is declared; it is
          -- open while nobody has spoken on the witnessed aspect — no
@@ -139,6 +139,16 @@ counts AS (
           WHERE a.kind = 'query'
             AND json_get_str(a.schema, 'x-kind') = 'sample'
             AND NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = a.name)) AS open_samples,
+         -- The plans (fixture 27): a QUERY aspect with x-kind plan,
+         -- tied to its metric by x-plan-of; open while declared and
+         -- never glossed, as a scenario is.
+         (SELECT count(*) FROM aspects
+          WHERE kind = 'query'
+            AND json_get_str(schema, 'x-kind') = 'plan') AS n_plans,
+         (SELECT count(*) FROM aspects a
+          WHERE a.kind = 'query'
+            AND json_get_str(a.schema, 'x-kind') = 'plan'
+            AND NOT EXISTS (SELECT 1 FROM glossary g WHERE g.aspect = a.name)) AS open_plans,
          (SELECT n FROM ruled) AS n_rulings,
          (SELECT owed FROM ruled) AS open_rulings,
          (SELECT n FROM apps) AS n_apps
@@ -156,6 +166,7 @@ SELECT s.surface AS surface,
          WHEN 'validations' THEN c.n_validations
          WHEN 'scenarios' THEN c.n_scenarios
          WHEN 'samples' THEN c.n_samples
+         WHEN 'plans' THEN c.n_plans
          WHEN 'rulings' THEN c.n_rulings
          ELSE c.n_apps
        END AS stands,
@@ -167,6 +178,7 @@ SELECT s.surface AS surface,
          WHEN 'validations' THEN c.open_validations
          WHEN 'scenarios' THEN c.open_scenarios
          WHEN 'samples' THEN c.open_samples
+         WHEN 'plans' THEN c.open_plans
          WHEN 'rulings' THEN c.open_rulings
          ELSE 0
        END AS open
@@ -182,6 +194,7 @@ CROSS JOIN (VALUES
   ('validations', 'GLOSS the expectation on a FACT aspect, DECLARE FUNCTION the check that RETURNS it, DECLARE WITNESS with a DETECTOR banding them — ATTEST() serves the verdicts; a reconciliation run by hand becomes a standing check'),
   ('scenarios', 'DECLARE ASPECT ... AS FACT with x-kind scenario, GLOSS its levers — a factor per period on columns glossed lever, with the basis; metric_series(world => ''scenario'', scenario => ''<name>'') and scenario_points() serve it'),
   ('samples', 'DECLARE ASPECT ... AS QUERY with x-kind sample, GLOSS one SELECT holding known-good history and the suspects together — misfit.<name>() then ranks the rows'),
+  ('plans', 'DECLARE ASPECT ... AS QUERY with x-kind plan and x-plan-of the metric it plans, GLOSS its SQL over the landed budget table — one aspect per edition; metric_series(world => ''plan'', plan => ''<name>'') serves the plan world and plan_points() every plan against the actual and the forecast'),
   ('rulings', 'a human rules a disclosed assumption; the agent owes the re-record that folds it in'),
   ('apps', 'GLOSS app, app_page, app_frame, app_spec — one gloss per part, so a surface is written like anything else')
 ) AS s(surface, how)

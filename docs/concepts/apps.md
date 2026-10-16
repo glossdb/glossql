@@ -73,7 +73,8 @@ frame's job in a place nobody can test.
 
 One app ships in the binary, and it is the dataset's own page: the
 docket — what is open for a human to judge, what is settled, what
-waits on an act, with the metric surfaces, how well the data is held
+waits on an act, with the metric surfaces, each metric's story with
+its forecast and its plan beside it, how well the data is held
 (what each landing dropped and nulled, the checks and their bands,
 the column coverage), the column lineage (the landed tables along their declared key edges
 and the columns each served metric reads), and under Export every

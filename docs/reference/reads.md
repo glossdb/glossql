@@ -43,7 +43,7 @@ The map of surfaces: what kind of thing can be declared or written
 here, how much of it stands, what is open on it. Not a task queue and
 not an order — judgment about what to do next stays the agent's.
 Columns: `surface` (sources, tables, relationships, aspects, claims,
-functions, metrics, scenarios, samples, rulings, apps) · `how` (the
+functions, metrics, scenarios, samples, plans, rulings, apps) · `how` (the
 statement that extends the surface) · `stands` (what exists) · `open`
 (what is unfinished; 0 where nothing can be owed — a function is never
 "open", it computes when a read needs it). A table is open while its
@@ -232,7 +232,8 @@ the metric, grounded by SQL over a landed table; its cells are read at
 the plan's own resolution or any coarser grain asked, over its own
 axes, and appear in no other world. An edition of a plan is an aspect
 of its own, so a variance against the plan and a comparison of two
-editions are both joins on metric and period. The
+editions are both joins on metric and period; `plan_points()` serves
+every plan against the actual and the forecast without the join. The
 arguments are named and come in any order; filters ride `WHERE`.
 
 ### metric_axes()
@@ -438,6 +439,31 @@ band held at that grain and step, and whose count — `metric`,
 read, nothing recorded: the service is called at each read. Requires
 a bound dataset.
 
+### plan_points()
+
+Every served plan against the actual and the forecast ([the plan
+world](../methods/plan.md)), one row per plan and period at the plan's
+own resolution and, where that is finer, at the year — a budget booked
+by the month means something at the year: `plan`, `metric` (the metric
+it plans), `grain`, `period` (a typed timestamp, the bucket's start),
+`label` (the period as text at its grain: `2026`, `2026-Q3`, `2026-07`,
+`2026-07-13`), `value` (the plan's cell), `actual` (the actual world's
+cell at that grain where the period has begun; for the current period,
+the actual to date), `variance` (actual minus plan, on a complete
+period), `low`, `expected` and `high` (the newest forecast's 80% band
+and median for the period: at the metric's own resolution the step's;
+at a coarser grain the actual to date plus the total that runs to the
+period's end, where the forecast asked one), `stands` (`landed`: the
+period is complete and its actual stands; `inside`, `below`, `above`:
+where the plan lies against the band; `open`: begun, and no band
+covers the rest; `ahead`: not begun, no band), `held_80` and
+`held_from` (how often such a band held and whose count, by
+`forecast_points()`'s rule), `origin` (the forecast's, where one was
+read). A plan finer than its metric compares to nothing. Computed at
+read from the cube and the forecast record, nothing recorded. The
+next read's plan goal reads the year rows; the docket's plan tile
+reads them all. Requires a bound dataset.
+
 ## The sources' read
 
 ### source_files('source')
@@ -467,15 +493,16 @@ reads one. Needs no dataset.
 
 Where the record stands toward each goal on the bound dataset, and
 the one act that moves it. One row per goal — `structure`,
-`metrics`, `slices`, `bands`, `checks`, `app`, `rulings` — or the one
-named by `WHERE surface = '…'`: `goal` (the goal's place in that
+`metrics`, `slices`, `bands`, `checks`, `app`, `plan`, `rulings` — or
+the one named by `WHERE surface = '…'`: `goal` (the goal's place in that
 order, to `ORDER BY`), `surface`, `step`, `state` (`next`,
 `blocked`, `done`), `act` (the statement kind, function or read),
 `say` (the act in a clause), `why` (what on the record decided),
 `statement` (the act as a statement, filled from the record — the
 dataset, the metric, the table its value comes from, the standing
 body, the unserved columns a verdict or a `dimension` gloss admits,
-the metric and period a red band names; `<…>` marks what only the
+the metric and period a red band names, the plan and year the
+forecast's band does not hold; `<…>` marks what only the
 author can fill, and a step the record cannot fill hands none) and
 `then` (what follows it). A goal's route is its steps in order, one
 query arm each in the shipped read: an arm serves a row when its

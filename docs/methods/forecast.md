@@ -88,7 +88,10 @@ variance of forecast against actual is a join of the two worlds on
 metric and period ([reads](../reference/reads.md), `metric_series()`).
 The plan world sits beside them ([the plan world](plan.md)): a
 forecast against the plan is the same join, `world => 'plan', plan =>
-'<name>'` on the plan's side, at the plan's grain or coarser.
+'<name>'` on the plan's side, at the plan's grain or coarser, and
+`plan_points()` serves it for every plan at once — the plan's year
+against the actual to date plus the year to go, with how often such a
+band held.
 
 ## Why no PIT
 

@@ -2537,6 +2537,7 @@ async fn the_workspace_says_what_it_affords() {
         "claims",
         "functions",
         "metrics",
+        "plans",
         "relationships",
         "rulings",
         "samples",

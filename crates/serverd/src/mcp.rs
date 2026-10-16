@@ -43,7 +43,7 @@ aspect's name — a \
 metric, a current fact, or a derived relation, which the metrics skill tells apart; \
 functions measure, and their measurements are the evidence; witnesses adjudicate the \
 voices on a slot; a human's ruling outranks every agent gloss. Live state is read through \
-the tool, never assumed. Every result closes with `next:`, one act per goal — structure, metrics, slices, bands, checks, app, rulings — and the work is done when every goal is done or blocked; a goal's link hands you the statement that moves it. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
+the tool, never assumed. Every result closes with `next:`, one act per goal — structure, metrics, slices, bands, checks, app, plan, rulings — and the work is done when every goal is done or blocked; a goal's link hands you the statement that moves it. The docs pages are `doc://docs/…`, the language `doc://SPEC.md` \
 and `doc://grammar.ebnf` — rows of `pages()` too.";
 
 /// What the brief is decided on: the store's counts plus the open
@@ -909,8 +909,8 @@ impl ServerHandler for GlossqlMcp {
                 ResourceTemplate::new("next://{dataset}/{surface}", "next")
                     .with_description(
                         "Where the record stands toward one goal on a dataset — structure, \
-                         metrics, slices, bands, checks, app, rulings — and the one act that \
-                         moves it, as a statement to send. `next://{dataset}` serves every \
+                         metrics, slices, bands, checks, app, plan, rulings — and the one act \
+                         that moves it, as a statement to send. `next://{dataset}` serves every \
                          goal; the same rows through the tool are \
                          `SELECT * FROM next WHERE surface = '<surface>'`.",
                     )

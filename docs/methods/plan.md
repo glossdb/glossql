@@ -63,6 +63,49 @@ is a join of two plan reads. `world => 'plan'` without a name, a name
 that is no plan aspect, and `plan => …` in another world are refused
 with the spelling.
 
+`plan_points()` serves the comparison without the join, for every
+plan at once: one row per plan and period at the plan's own grain and
+at the year, the plan's number, the actual where the period has begun,
+the variance where it is complete, and where the forecast covers the
+rest its median with the 80% band — at the metric's own grain the
+step's band, at the year the actual to date plus the year to go. The
+row says where the plan stands: `landed`, `inside`, `below` or `above`
+the band, `open` or `ahead` where no band covers it
+([reads](../reference/reads.md)).
+
+```sql
+SELECT plan, label, value, actual, expected, low, high, stands
+FROM plan_points() WHERE grain = 'year' ORDER BY plan, period
+```
+
+## The planning goal
+
+The next read carries the plan as its own goal, `plan`, beside the
+seven others ([reads](../reference/reads.md), `next`). Its route is the
+plan's preconditions in order: an applicable metric, else blocked; the
+first plan to declare, its form filled with the dataset and the names
+left to the author; a declared plan to ground or stop; a plan the cube
+refuses to re-record; the verdict its time column wants; the forecast
+to run while `owed` names it, never run or run before the last change.
+Then every plan year whose band does not hold the plan is a gap. For a
+gap with nothing recorded on it the act is a scenario on a lever, the
+lever glossed and the scenario declared with its factors, or the gap
+recorded at once; with a scenario standing, the act is the comparison
+read, `plan_points()` for the plan's row beside `scenario_points()` for
+the scenario's cells and the service's word on the lever against
+history, and the decision. Either way what follows is the same
+statement: the decision as an assumption under the key `plan-<year>` in
+the plan's own grounding body, at confidence 0.7. The docket asks the
+human; while the question stands the goal is blocked, and a ruling
+under that key closes it. With no gap, the goal is done.
+
+The goal judges the year. A budget booked by the month, the adoption
+in January and an amendment in May, means nothing month by month and
+something at the year, and the year to go is the total the forecast
+asks for a month or a quarter metric. A plan on a week or a day metric
+has no year to go; its year rows stand open, and the goal has no gap
+to judge.
+
 ## Grain
 
 A budget often comes at a coarser grain than the actual: a year's
@@ -84,6 +127,12 @@ grain. The engine spreads nothing.
   a `stock` metric is served as declared; the join is the reader's.
 - A metric whose grounding is stopped leaves its plans standing. The
   stop is the metric's own `metric_axes()` row.
+- A plan's table is no edge of the actuals. A flow's empty periods are
+  zero cells up to the data's edge, and that edge is measured over the
+  tables the metrics' groundings scan; a budget landed through the
+  year's end stretches no metric, and the forecast's origin stays the
+  last period with an actual. The plan's own cells reach its own
+  table's end.
 - Nothing is recorded: the plan's cells are a cube head under the
   cache, like a metric's, and move when the plan's table or its
   grounding does.

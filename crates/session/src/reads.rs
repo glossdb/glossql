@@ -527,6 +527,7 @@ pub const DOORS: &[(&str, &str)] = &[
     ("forecast_points", "forecast_points()"),
     ("forecast_coverage", "forecast_coverage()"),
     ("scenario_points", "scenario_points(scenario => '<name>')"),
+    ("plan_points", "plan_points()"),
     ("metric_sources", "metric_sources()"),
     ("metric_band_walk", "metric_band_walk('<dataset>')"),
     (
@@ -909,6 +910,7 @@ pub(crate) fn reads_the_record(idents: &IdentNormalizer, f: &TableFactor) -> boo
                 | "forecast_points"
                 | "forecast_coverage"
                 | "scenario_points"
+                | "plan_points"
                 | "metric_axes"
                 | "metric_sources"
                 | "behavior_anchors"
@@ -1184,6 +1186,16 @@ pub(crate) async fn compute_batch(
             Ok(Some(
                 (Box::pin(crate::scenario::scenario_points(shared, &name)).await?).into(),
             ))
+        }
+        // Every plan against the actual and the forecast
+        // (crate::plan_world, #117).
+        ("plan_points", Some(a)) => {
+            if !a.args.is_empty() {
+                return Err(SessionError::BadSubject(
+                    "plan_points() takes no arguments — filters ride WHERE".into(),
+                ));
+            }
+            Ok(Some((crate::plan_world::plan_points(shared).await?).into()))
         }
         ("relationship_checks", Some(a)) => {
             let dataset = single_string_arg(a).ok_or_else(|| {

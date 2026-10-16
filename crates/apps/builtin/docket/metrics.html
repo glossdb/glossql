@@ -61,6 +61,24 @@
        note="The cube's total series at the grounding's own verb, re-bucketed to the viewer's grain on the server — a flow sums, a stock takes the bucket's last period, a ratio divides its summed halves — and the disclosed rival beside it where the grounding names one. A grain finer than the metric's resolution serves nothing. Where metric_forecast has run, the forecast world rides ahead as the dashed line named forecast: the newest run's medians at the metric's own resolution, never clipped by the span. The shaded area is its 80% band; a point's tooltip says how often such a band held and whose count that is: this metric's own record, the dataset's, or the service's held-out data.") }}
 
   <section class="tile">
+    <header><span class="eyebrow">The plan · {{ metric }}</span>
+      <code class="chip" title="Every plan declared on this metric — a QUERY aspect with x-kind plan and x-plan-of naming it, grounded by SQL over the landed budget table, one aspect per edition — period by period at the plan's own grain: the planned number, the actual where the period has begun, the variance (actual minus plan) where the period is complete, and where the forecast covers the rest its median with the 80% band and how often such a band held. Below or above: the band does not hold the plan, and the next read's plan goal asks for the judgment.">plan_points()</code></header>
+    <gl-rows frame="frames/plan" empty="no plan is declared on this metric — a budget lands as a table and is glossed as a plan aspect, one per edition; the next read's plan goal hands the form">
+      <template>
+        <div class="rrow" style="grid-template-columns:9rem 6rem 7rem 7rem 7rem 13rem 1fr">
+          <span class="r-subj asp">{plan}</span>
+          <span class="r-meta">{label}</span>
+          <span class="r-num">{planned}</span>
+          <span class="r-num">{actual}</span>
+          <span class="r-num">{variance}</span>
+          <span class="r-meta">{expected}</span>
+          <span class="r-meta"><code class="chip {scls}">{stands}</code> {held}</span>
+        </div>
+      </template>
+    </gl-rows>
+  </section>
+
+  <section class="tile">
     <header><span class="eyebrow">What moved · {{ metric }}</span>
       <code class="chip" title="Each admitted dimension's members ranked by their own move between the newest two periods at the viewer's grain — the cube's cells, ranked in the frame's SQL. A member's move is at the metric's verb, never a share of the total.">metric_series()</code></header>
     <gl-rows frame="frames/drivers?grain=month" empty="no member moves at this grain — the cube holds fewer than two periods here, or no axis was admitted">

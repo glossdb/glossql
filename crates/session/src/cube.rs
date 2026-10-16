@@ -1182,6 +1182,14 @@ struct Surface {
     /// The plan aspects' groundings (fixture 27): a head each, served
     /// in the plan world under the metric each names and in no other.
     plans: Vec<QuerySlot>,
+    /// The tables each grounding scans, by aspect, where a plan stands
+    /// beside the metrics: what the data's edge is measured over. Empty
+    /// without a plan — the edge is then every judged time column's.
+    scans: HashMap<String, HashSet<String>>,
+    /// The tables only plan groundings scan. A budget landed to the
+    /// period's end is no edge of the actuals: a metric's flow is
+    /// zero-filled to the metrics' own edge, a plan's to its own.
+    plan_only: HashSet<String>,
     judged: Judged,
     settings: Settings,
     /// The bound dataset's tables and their columns at the pin — what
@@ -1215,26 +1223,66 @@ impl Surface {
             return Ok(None);
         }
         let (judged, settings) = judged_surface(shared, &rctx, &dataset).await?;
+        let ctx = shared.session_ctx();
+        // Which tables each grounding scans, planned once per surface
+        // and only where a plan stands: the edge of a metric's head
+        // leaves out the tables only plans scan, a plan's head takes
+        // its own. Planning scans nothing.
+        let mut scans: HashMap<String, HashSet<String>> = HashMap::new();
+        if !plans.is_empty() {
+            for slot in slots.iter().chain(&plans) {
+                let Some(sql) = frame_sql(&slot.body) else {
+                    continue;
+                };
+                if let Ok(plan) = crate::plan::build_plan(shared, &ctx, &sql).await {
+                    scans.insert(
+                        slot.aspect.clone(),
+                        crate::provenance::scanned_tables(&plan, &dataset),
+                    );
+                }
+            }
+        }
+        let by_metrics: HashSet<&String> = slots
+            .iter()
+            .filter_map(|s| scans.get(&s.aspect))
+            .flatten()
+            .collect();
+        let plan_only: HashSet<String> = plans
+            .iter()
+            .filter_map(|p| scans.get(&p.aspect))
+            .flatten()
+            .filter(|t| !by_metrics.contains(t))
+            .cloned()
+            .collect();
         Ok(Some(Surface {
             dataset,
             version: rctx.version.clone(),
             slots,
             plans,
+            scans,
+            plan_only,
             judged,
             settings,
             shapes: rctx.shapes.clone(),
             pin_text: rctx.pin.text.clone(),
             cache: shared.cube(),
-            ctx: shared.session_ctx(),
+            ctx,
             lake: shared.lake(),
         }))
     }
 
-    /// The judged time columns of the dataset at this pin, as
-    /// `table.column` subjects: every applicable `temporal_profile`
-    /// verdict on a column a table of the dataset carries. The data's
-    /// edge is their latest date; the key carries their tables.
-    fn edge_subjects(&self) -> Vec<String> {
+    /// The judged time columns the data's edge is measured over for
+    /// one grounding's head, as `table.column` subjects: every
+    /// applicable `temporal_profile` verdict on a column a table of
+    /// the dataset carries — for a metric's head leaving out the
+    /// tables only plan groundings scan, for a plan's head its own
+    /// tables alone. The data's edge is their latest date; the key
+    /// carries their tables.
+    fn edge_subjects(&self, slot: &QuerySlot) -> Vec<String> {
+        let own = slot
+            .is_plan()
+            .then(|| self.scans.get(&slot.aspect))
+            .flatten();
         let mut out: Vec<String> = self
             .judged
             .temporal
@@ -1248,6 +1296,13 @@ impl Surface {
                             .map(|shape| shape.columns.contains_key(c))
                     })
                     .unwrap_or(false)
+            })
+            .filter(|(s, _)| {
+                let table = s.split_once('.').map(|(t, _)| t).unwrap_or("");
+                match own {
+                    Some(own) => own.contains(table),
+                    None => slot.is_plan() || !self.plan_only.contains(table),
+                }
             })
             .map(|(s, _)| s.clone())
             .collect();
@@ -1265,9 +1320,10 @@ impl Surface {
         &self,
         shared: &Arc<Shared>,
         resolution: Resolution,
+        slot: &QuerySlot,
     ) -> Result<Option<i64>, Abstain> {
         let mut arms = Vec::new();
-        for subject in self.edge_subjects() {
+        for subject in self.edge_subjects(slot) {
             let Some((table, column)) = subject.split_once('.') else {
                 continue;
             };
@@ -1337,7 +1393,7 @@ impl Surface {
         // The data's edge is a build input of every flow, so the legs
         // carry the tables the judged time columns sit on and the
         // digest their subjects: a landing that moves the edge misses.
-        let edge_subjects = self.edge_subjects();
+        let edge_subjects = self.edge_subjects(slot);
         let mut tables = reads.tables.clone();
         tables.extend(
             edge_subjects
@@ -2577,7 +2633,7 @@ async fn build(
     // no rows is zero, and a forecast for that period is checked
     // against it. A stock's or a ratio's stay gaps — nothing stands,
     // nothing divides.
-    let edge = surface.data_edge(shared, resolution).await?;
+    let edge = surface.data_edge(shared, resolution, slot).await?;
     if verb == "flow"
         && let Some(edge) = edge
     {
@@ -2989,7 +3045,7 @@ pub(crate) fn bucket_start(period: i64, resolution: Resolution) -> i64 {
 
 /// The bucket after `period` at a resolution, as the cells carry them:
 /// calendar steps for months, quarters and years, fixed ones below.
-fn next_period(period: i64, resolution: Resolution) -> Option<i64> {
+pub(crate) fn next_period(period: i64, resolution: Resolution) -> Option<i64> {
     use chrono::{Days, Months, TimeDelta};
     let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
     let next = match resolution {
@@ -3678,6 +3734,115 @@ pub(crate) async fn metric_series_batch(
         schema: series_schema(),
         partitions,
     })
+}
+
+/// One plan's series beside its metric's, for `plan_points()`
+/// (`crate::plan_world`): per grain the plan's total cells and the
+/// metric's at that grain where the metric is as fine or finer, and
+/// the metric's origin — the last period of its own series at its own
+/// resolution, the data's edge. Two grains stand: the plan's own
+/// resolution, and the year where the resolution is finer — a budget
+/// booked by the month means something at the year.
+pub(crate) struct PlanSeries {
+    pub plan: String,
+    pub metric: String,
+    pub metric_resolution: Option<Resolution>,
+    pub origin: Option<i64>,
+    pub grains: Vec<PlanGrain>,
+}
+
+pub(crate) struct PlanGrain {
+    pub resolution: Resolution,
+    /// The plan's total cells `(period, value)`, sorted.
+    pub cells: Vec<(i64, f64)>,
+    /// The metric's total cells at this grain, sorted; empty where the
+    /// metric is coarser than the grain or serves no cells.
+    pub actual: Vec<(i64, f64)>,
+}
+
+/// The total cells of a cube's batch, `(period, value)` sorted by
+/// period, whatever name the batch carries.
+fn totals_of(cells: &RecordBatch) -> Vec<(i64, f64)> {
+    let dimensions = cells
+        .column_by_name("dimension")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+    let periods = cells
+        .column_by_name("period")
+        .and_then(|c| c.as_any().downcast_ref::<TimestampNanosecondArray>());
+    let values = cells
+        .column_by_name("value")
+        .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+    let (Some(dimensions), Some(periods), Some(values)) = (dimensions, periods, values) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(i64, f64)> = (0..cells.num_rows())
+        .filter(|&i| dimensions.value(i).is_empty() && !periods.is_null(i) && !values.is_null(i))
+        .map(|i| (periods.value(i), values.value(i)))
+        .collect();
+    out.sort_by_key(|(p, _)| *p);
+    out
+}
+
+/// Every served plan's series beside its metric's (fixture 27, #117).
+/// A plan whose head abstains, or whose metric has no serving head,
+/// has no entry.
+pub(crate) async fn plan_series(shared: &Arc<Shared>) -> Result<Vec<PlanSeries>, SessionError> {
+    let mut out = Vec::new();
+    let Some(surface) = Surface::load(shared).await? else {
+        return Ok(out);
+    };
+    for slot in &surface.plans {
+        let head = surface.entry(shared, slot).await;
+        let (Some(resolution), Some(metric)) = (head.fact.resolution, slot.plan_of.clone()) else {
+            continue;
+        };
+        let Some(mslot) = surface.slots.iter().find(|s| s.aspect == metric) else {
+            continue;
+        };
+        let mhead = surface.entry(shared, mslot).await;
+        let metric_resolution = mhead.fact.resolution;
+        let mut origin = None;
+        if let Some(mres) = metric_resolution {
+            let own = surface
+                .at_grain(shared, mslot, Arc::clone(&mhead), mres)
+                .await;
+            origin = totals_of(&own.cells).last().map(|(p, _)| *p);
+        }
+        let mut grains = Vec::new();
+        for grain in [resolution, Resolution::Year] {
+            if grain == Resolution::Year && resolution == Resolution::Year && !grains.is_empty() {
+                break;
+            }
+            let cells = totals_of(
+                &surface
+                    .at_grain(shared, slot, Arc::clone(&head), grain)
+                    .await
+                    .cells,
+            );
+            let actual = match metric_resolution {
+                Some(mres) if grain >= mres => totals_of(
+                    &surface
+                        .at_grain(shared, mslot, Arc::clone(&mhead), grain)
+                        .await
+                        .cells,
+                ),
+                _ => Vec::new(),
+            };
+            grains.push(PlanGrain {
+                resolution: grain,
+                cells,
+                actual,
+            });
+        }
+        out.push(PlanSeries {
+            plan: slot.aspect.clone(),
+            metric,
+            metric_resolution,
+            origin,
+            grains,
+        });
+    }
+    Ok(out)
 }
 
 /// What the scenario read needs of a metric to replay it

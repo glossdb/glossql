@@ -16,9 +16,16 @@
 -- says how often such a band held and whose count that is; an actual
 -- row carries none.
 --
+-- The plan world rides beside them where a plan stands on the metric
+-- at the viewer's grain: every plan's cells from `plan_points()`, one
+-- series per plan, the periods ahead never clipped by the span. A plan
+-- at a coarser grain than the viewer's shows none here; the plan tile
+-- carries it at its own grain.
+--
 -- The series carry their own names: the chosen one wears the metric's
--- title, the rival says it is one, the forecast says `forecast`; the
--- world tells the chart which stroke to draw.
+-- title, the rival says it is one, the forecast says `forecast`, a
+-- plan says `plan: <name>`; the world tells the chart which stroke to
+-- draw.
 WITH story AS (
   SELECT period, dimension, member, value, num, den, behavior, world,
          dense_rank() OVER (ORDER BY period DESC) AS recency
@@ -35,6 +42,13 @@ ahead AS (
     ON p.metric = CAST($metric AS VARCHAR) AND p.span IS NULL
    AND CAST(p.period AS TIMESTAMP) = f.period
   WHERE f.metric = CAST($metric AS VARCHAR) AND f.dimension = ''
+),
+planned AS (
+  SELECT p.period, arrow_cast('plan: ' || p.plan, 'Utf8') AS series, p.value
+  FROM plan_points() p
+  WHERE p.metric = CAST($metric AS VARCHAR) AND p.grain = CAST($grain AS VARCHAR)
+    AND (CAST($span AS VARCHAR) = 'all'
+         OR p.period >= (SELECT min(period) FROM story WHERE recency <= TRY_CAST($span AS INT)))
 )
 SELECT s.period,
   arrow_cast(CASE WHEN s.dimension = ''
@@ -49,4 +63,9 @@ UNION ALL
 SELECT period, arrow_cast('forecast', 'Utf8') AS series, value, num, den, behavior, world,
        low, high, held
 FROM ahead
+UNION ALL
+SELECT period, series, value, CAST(NULL AS DOUBLE) AS num, CAST(NULL AS DOUBLE) AS den,
+       arrow_cast('', 'Utf8') AS behavior, arrow_cast('plan', 'Utf8') AS world,
+       CAST(NULL AS DOUBLE) AS low, CAST(NULL AS DOUBLE) AS high, arrow_cast(NULL, 'Utf8') AS held
+FROM planned
 ORDER BY period, series
