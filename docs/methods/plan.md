@@ -133,22 +133,30 @@ decides what a plan compares to.
 | metric's grain | behaviour | plan at the metric's grain | plan at a coarser grain, or the year row |
 |---|---|---|---|
 | day | flow | a band per day, 31 ahead | the month to go only |
-| day | stock, ratio | a band per day | no band |
+| day | stock | a band per day | the period's last day's band, within 31 days |
+| day | ratio | a band per day | no band |
 | week | flow | a band per week, 13 ahead | the quarter to go only |
-| week | stock, ratio | a band per week | no band |
+| week | stock | a band per week | the period's last week's band, within 13 weeks |
+| week | ratio | a band per week | no band |
 | month | flow | a band per month, 12 ahead | the quarter and the year to go |
-| month | stock, ratio | a band per month | no band |
+| month | stock | a band per month | the period's last month's band, within 12 months |
+| month | ratio | a band per month | no band |
 | quarter | flow | a band per quarter, 4 ahead | the year to go |
-| quarter | stock, ratio | a band per quarter | no band |
+| quarter | stock | a band per quarter | the year's last quarter's band, within 4 quarters |
+| quarter | ratio | a band per quarter | no band |
 | year, hour, minute | any | no forecast | no band |
 
 A plan at the metric's own grain compares to the band for that period,
-for every behaviour. A plan at a coarser grain compares to the actual
-to date plus the total to go, on the flow rows above. Where the table
-says no band, `plan_points()` still serves the row with the actual and
-the variance, and `stands` says `open` or `ahead`. The planning goal
-reads the year rows, so it finds a gap on a flow at month or quarter
-grain and nowhere else. A headcount target or a margin target is
+for every behaviour. A plan at a coarser grain compares, on a flow, to
+the actual to date plus the total to go, and on a stock to the band
+for the last period of the metric's own grain inside it: a year-end
+headcount against December's forecast, with nothing added, where the
+horizon reaches it. A ratio at a coarser grain has no band: a year's
+margin is neither a sum nor a last level. Where the table says no
+band, `plan_points()` still serves the row with the actual and the
+variance, and `stands` says `open` or `ahead`. The planning goal reads
+the year rows, so it finds a gap on a flow at month or quarter grain
+and on a stock whose year end the forecast reaches. A margin target is
 landed as one row for the month it is due, and the read compares it to
 that month's band.
 

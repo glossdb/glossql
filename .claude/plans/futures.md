@@ -111,8 +111,13 @@ three.
   the scenario, and serves the median, the 80% band, `held_80` by the
   forecast record's rule, the sign and the basis. Several levers
   estimate as one change, every lever an input column, and
-  `scenario_levers()` serves each lever's part (#121). Nothing
-  recorded, nothing cached (`docs/methods/scenario.md`).
+  `scenario_levers()` serves each lever's part (#121). A lever's rows
+  are placed in time by its table's date column or by a declared edge
+  to a dated table, the key against the period's keys, in both passes;
+  a lever placed nowhere is refused at gloss time, and the rewrite
+  refuses an override it cannot anchor (#124, `scenario.rs`:
+  `Placement`; `replay.rs`: `KeyAnchor`). Nothing recorded, nothing
+  cached (`docs/methods/scenario.md`).
 - The plan world (#115). A plan is its own QUERY aspect, `x-kind:
   plan` with `x-plan-of` naming its metric, its body the standard
   grounding schema unchanged (fixture 27,
@@ -139,7 +144,9 @@ three.
   plan's assumption under `plan-<year>`, blocked while the question
   stands, done on the ruling. `workspace_next` carries `plans`; the
   docket's metric page carries the plan tile (`frames/plan.sql`) and
-  the plan world on the trend. The data's edge is the latest period
+  the plan world on the trend. A stock's coarse row takes the band of
+  the period's last bucket at the metric's grain (#125). The data's
+  edge is the latest period
   the metrics' frames serve, measured on the frames (#118, #120,
   `Surface::edges`, `Surface::data_edge`): a plan's table and a
   calendar dimension running ahead move nothing; a plan's head takes

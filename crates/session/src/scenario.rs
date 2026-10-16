@@ -3,7 +3,12 @@
 //! declared lever's table, the grounding is replayed with the
 //! scenario's factors per period over the rows it holds, through the
 //! plan rewrite (`crate::replay`) — exact, and only as far as the data
-//! reaches. Pass two, the estimate: for the periods ahead of the
+//! reaches. A lever's rows are placed in time by its table's own date
+//! column, else by a declared edge from the table to one that carries
+//! a date — a fact table keyed into a date dimension — the key against
+//! the keys whose dates fall in each period ([`Placement`]); a lever
+//! placed neither way is refused when the scenario is glossed. Pass
+//! two, the estimate: for the periods ahead of the
 //! metric's last actual, up to the last period the scenario names, the
 //! what-if point (`WHATIF`) estimates every metric from its own series
 //! and the levers', every lever an input column, as planned and under
@@ -33,6 +38,7 @@ use datafusion::arrow::array::{
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::common::ScalarValue;
 use datafusion::sql::sqlparser::ast::{
     Expr as SQLExpr, FunctionArg, FunctionArgExpr, Value as SQLValue,
 };
@@ -41,7 +47,7 @@ use serde_json::{Value, json};
 
 use crate::cube::{Resolution, World};
 use crate::reads::Shared;
-use crate::replay::{Factor, Override};
+use crate::replay::{Factor, KeyAnchor, Override};
 use crate::search::{date_of, iso, nanos_of, step_date, whole_series};
 use crate::session::{SessionError, WHATIF};
 use crate::subject::qi;
@@ -69,6 +75,85 @@ pub(crate) struct Lever {
 pub(crate) struct Scenario {
     pub name: String,
     pub levers: Vec<Lever>,
+}
+
+/// Where a lever's rows stand in time: by the table's own date column;
+/// by a declared edge from the table to one that carries a date, the
+/// key column against the dated table's key; or nowhere, with the
+/// reason — such a scenario is refused when it is glossed, and a
+/// standing one serves its cells without a value and with the reason.
+#[derive(Debug, Clone)]
+pub(crate) enum Placement {
+    Date(String),
+    Edge {
+        key: String,
+        table: String,
+        dim_key: String,
+        date: String,
+    },
+    Nowhere(String),
+}
+
+/// One lever's placement, from the table's schema and the dataset's
+/// declared edges. The table and the dated one are planned by their
+/// qualified names, so the check holds from any channel.
+async fn place(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
+    pointers: &[crate::behavior::Pointer],
+    lever: &Lever,
+) -> Placement {
+    let whole = |table: &str| format!("SELECT * FROM {}.{}", qi(dataset), qi(table));
+    let fields = match crate::plan::build_plan(shared, ctx, &whole(&lever.table)).await {
+        Ok(plan) => plan.schema().fields().clone(),
+        Err(e) => return Placement::Nowhere(format!("`{}` does not plan: {e}", lever.table)),
+    };
+    if let Some(column) = crate::plan::date_column(&fields) {
+        return Placement::Date(column);
+    }
+    let mut edges: Vec<&crate::behavior::Pointer> = pointers
+        .iter()
+        .filter(|p| p.src_t == lever.table && p.src_cols.len() == 1 && p.dst_cols.len() == 1)
+        .collect();
+    edges.sort_by(|a, b| (&a.dst_t, &a.src_cols[0]).cmp(&(&b.dst_t, &b.src_cols[0])));
+    for edge in edges {
+        let Ok(dim) = crate::plan::build_plan(shared, ctx, &whole(&edge.dst_t)).await else {
+            continue;
+        };
+        if let Some(date) = crate::plan::date_column(dim.schema().fields()) {
+            return Placement::Edge {
+                key: edge.src_cols[0].clone(),
+                table: edge.dst_t.clone(),
+                dim_key: edge.dst_cols[0].clone(),
+                date,
+            };
+        }
+    }
+    Placement::Nowhere(format!(
+        "`{t}` carries no date column, and no declared edge reaches a table that does — \
+         `DECLARE RELATIONSHIP {t}.<key> -> <dates>.<key>` places its rows in time",
+        t = lever.table
+    ))
+}
+
+/// Every lever's placement, by its `table.column`.
+async fn placements(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
+    scenario: &Scenario,
+) -> Result<HashMap<String, Placement>, SessionError> {
+    let rows = shared.store.relation_rows("relationships").await?;
+    let pointers = crate::behavior::declared_pointers(&rows, dataset);
+    let mut out = HashMap::new();
+    for lever in &scenario.levers {
+        out.insert(
+            lever.column.clone(),
+            place(shared, ctx, dataset, &pointers, lever).await,
+        );
+    }
+    Ok(out)
 }
 
 /// A period as a scenario writes it: `YYYY-MM` a calendar month,
@@ -180,6 +265,19 @@ pub(crate) async fn check(
             )));
         }
     }
+    // Every lever's rows can be placed in time, or the scenario is
+    // refused with the edge to declare.
+    let ctx = shared.session_ctx();
+    let mut placed: Vec<(String, Placement)> = placements(shared, &ctx, dataset, &scenario)
+        .await?
+        .into_iter()
+        .collect();
+    placed.sort_by(|a, b| a.0.cmp(&b.0));
+    for (column, placement) in placed {
+        if let Placement::Nowhere(why) = placement {
+            return Err(bad(format!("`{column}`: {why}")));
+        }
+    }
     Ok(())
 }
 
@@ -230,28 +328,88 @@ pub(crate) async fn load(
     parse(name, &body).map_err(bad)
 }
 
-/// The scenario's levers as the plan rewrite takes them.
-fn overrides(scenario: &Scenario) -> Vec<Override> {
-    scenario
-        .levers
-        .iter()
-        .map(|l| Override {
-            table: l.table.clone(),
-            column: l.name.clone(),
-            factors: l
-                .factor
-                .iter()
-                .filter_map(|(period, f)| {
-                    let (from, until) = period_bounds(period)?;
-                    Some(Factor {
-                        from: iso(from),
-                        until: Some(iso(until)),
-                        factor: *f,
-                    })
-                })
-                .collect(),
-        })
-        .collect()
+/// The scenario's levers as the plan rewrite takes them, each placed in
+/// time: a dated table by its date column, a table dated through an
+/// edge by its key against the dated table's keys per factor period,
+/// read here. The levers placed nowhere come back by table with the
+/// reason, and the frames that scan such a table are not replayed.
+async fn overrides(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
+    scenario: &Scenario,
+    placements: &HashMap<String, Placement>,
+) -> Result<(Vec<Override>, HashMap<String, String>), SessionError> {
+    let mut out = Vec::new();
+    let mut unplaced = HashMap::new();
+    for l in &scenario.levers {
+        let placement = placements.get(&l.column);
+        let mut factors = Vec::new();
+        let mut keys: Vec<Vec<ScalarValue>> = Vec::new();
+        for (period, f) in &l.factor {
+            let Some((from, until)) = period_bounds(period) else {
+                continue;
+            };
+            if let Some(Placement::Edge {
+                table,
+                dim_key,
+                date,
+                ..
+            }) = placement
+            {
+                // The keys whose dates fall in the period.
+                let sql = format!(
+                    "SELECT DISTINCT {k} AS key FROM {ds}.{t} \
+                     WHERE {d} >= TIMESTAMP '{from}' AND {d} < TIMESTAMP '{until}'",
+                    k = qi(dim_key),
+                    ds = qi(dataset),
+                    t = qi(table),
+                    d = qi(date),
+                    from = iso(from),
+                    until = iso(until),
+                );
+                let plan = crate::plan::build_plan(shared, ctx, &sql).await?;
+                let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
+                let mut found = Vec::new();
+                for b in &batches {
+                    if let Some(col) = b.column_by_name("key") {
+                        for i in 0..b.num_rows() {
+                            if !col.is_null(i) {
+                                found.push(ScalarValue::try_from_array(col, i)?);
+                            }
+                        }
+                    }
+                }
+                keys.push(found);
+            }
+            factors.push(Factor {
+                from: iso(from),
+                until: Some(iso(until)),
+                factor: *f,
+            });
+        }
+        match placement {
+            Some(Placement::Nowhere(why)) => {
+                unplaced.insert(l.table.clone(), why.clone());
+            }
+            Some(Placement::Edge { key, .. }) => out.push(Override {
+                table: l.table.clone(),
+                column: l.name.clone(),
+                factors,
+                anchor: Some(KeyAnchor {
+                    column: key.clone(),
+                    keys,
+                }),
+            }),
+            _ => out.push(Override {
+                table: l.table.clone(),
+                column: l.name.clone(),
+                factors,
+                anchor: None,
+            }),
+        }
+    }
+    Ok((out, unplaced))
 }
 
 /// The lever's factor at a date: the period that holds it, else one.
@@ -340,7 +498,8 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
     let frames = crate::cube::scenario_frames(shared).await?;
     let actual = crate::cube::metric_series_batch(shared, None, World::Actual, None).await?;
     let ctx = shared.session_ctx();
-    let overrides = overrides(&scenario);
+    let placements = placements(shared, &ctx, &dataset, &scenario).await?;
+    let (overrides, unplaced) = overrides(shared, &ctx, &dataset, &scenario, &placements).await?;
     // The first date the scenario touches and the one past the last.
     let mut first: Option<NaiveDate> = None;
     let mut last: Option<NaiveDate> = None;
@@ -375,15 +534,55 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
     let mut asks: Vec<Ask> = Vec::new();
     for frame in &frames {
         let grain = frame.resolution.as_str();
-        // Pass one: the arithmetic, where a lever's table is scanned.
+        // Pass one: the arithmetic, where a lever's table is scanned. A
+        // frame that scans a table placed nowhere, or a replay the
+        // rewrite refuses, serves its cells without a value and with
+        // the reason: a replay that changed nothing is no replay.
         if frame.scans.iter().any(|t| tables.contains(t.as_str())) {
-            let sql =
-                crate::cube::total_sql(&frame.sql, &frame.tcol, frame.verb, frame.resolution, None);
-            let rows = crate::cube::replayed_series(shared, &ctx, &sql, &overrides).await?;
             let Some(first_ns) = nanos_of(first) else {
                 continue;
             };
             let since = crate::cube::bucket_start(first_ns, frame.resolution);
+            let blank = |why: String, out: &mut Vec<Point>| {
+                for (period, _) in whole_series(&actual.partitions, &frame.metric) {
+                    if period < since {
+                        continue;
+                    }
+                    out.push(Point {
+                        metric: frame.metric.clone(),
+                        grain,
+                        period,
+                        step: None,
+                        pass: "replayed",
+                        value: None,
+                        num: None,
+                        den: None,
+                        low: None,
+                        high: None,
+                        held_80: None,
+                        held_90: None,
+                        held_from: None,
+                        sign: None,
+                        basis: Some(why.clone()),
+                        served_by: None,
+                    });
+                }
+            };
+            let sql =
+                crate::cube::total_sql(&frame.sql, &frame.tcol, frame.verb, frame.resolution, None);
+            let rows = match frame.scans.iter().find_map(|t| unplaced.get(t)) {
+                Some(why) => Err(format!("not replayed: {why}")),
+                None => crate::cube::replayed_series(shared, &ctx, &sql, &overrides)
+                    .await
+                    .map_err(|e| format!("not replayed: {e}")),
+            };
+            let rows = match rows {
+                Ok(rows) => rows,
+                Err(why) => {
+                    blank(why, &mut out);
+                    Vec::new()
+                }
+            };
             for (period, _, value, num, den) in rows {
                 if period < since {
                     continue;
@@ -435,7 +634,8 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
             ahead,
         });
     }
-    let (estimated, mut parts) = estimate(shared, &ctx, &dataset, &scenario, asks).await?;
+    let (estimated, mut parts) =
+        estimate(shared, &ctx, &dataset, &scenario, &placements, asks).await?;
     out.extend(estimated);
     out.sort_by(|a, b| (&a.metric, a.period, a.pass).cmp(&(&b.metric, b.period, b.pass)));
     parts.sort_by(|a, b| (&a.metric, &a.lever).cmp(&(&b.metric, &b.lever)));
@@ -454,6 +654,7 @@ async fn estimate(
     ctx: &datafusion::prelude::SessionContext,
     dataset: &str,
     scenario: &Scenario,
+    placements: &HashMap<String, Placement>,
     asks: Vec<Ask>,
 ) -> Result<(Vec<Point>, Vec<Part>), SessionError> {
     let mut out = Vec::new();
@@ -536,7 +737,11 @@ async fn estimate(
         let mut inputs: Vec<HashMap<NaiveDate, f64>> = Vec::with_capacity(scenario.levers.len());
         let mut failed = None;
         for lever in &scenario.levers {
-            match lever_series(shared, ctx, lever, resolution).await {
+            let placement = placements
+                .get(&lever.column)
+                .cloned()
+                .unwrap_or_else(|| Placement::Nowhere("the lever is not placed".into()));
+            match lever_series(shared, ctx, dataset, lever, &placement, resolution).await {
                 Ok(input) => inputs.push(input.into_iter().collect()),
                 Err(why) => {
                     failed = Some(format!("no estimate: `{}`: {why}", lever.column));
@@ -729,30 +934,45 @@ async fn estimate(
 }
 
 /// The lever's series at a resolution: the mean of the column per
-/// period of its table, placed by the table's first date column.
+/// period of its table, placed in time as the lever is — by the
+/// table's own date column, or through the declared edge to a dated
+/// table.
 async fn lever_series(
     shared: &Arc<Shared>,
     ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
     lever: &Lever,
+    placement: &Placement,
     resolution: Resolution,
 ) -> Result<Vec<(NaiveDate, f64)>, String> {
-    let probe =
-        crate::plan::build_plan(shared, ctx, &format!("SELECT * FROM {}", qi(&lever.table)))
-            .await
-            .map_err(|e| e.to_string())?;
-    let Some(tcol) = crate::plan::date_column(probe.schema().fields()) else {
-        return Err(format!(
-            "`{}` has no date column to place the lever's values in time",
-            lever.table
-        ));
+    let sql = match placement {
+        Placement::Date(tcol) => format!(
+            "SELECT {p} AS period, avg(CAST({c} AS DOUBLE)) AS value FROM {ds}.{t} \
+             WHERE {c} IS NOT NULL GROUP BY 1 ORDER BY 1",
+            p = crate::cube::period_expr(&qi(tcol), resolution),
+            c = qi(&lever.name),
+            ds = qi(dataset),
+            t = qi(&lever.table),
+        ),
+        Placement::Edge {
+            key,
+            table,
+            dim_key,
+            date,
+        } => format!(
+            "SELECT {p} AS period, avg(CAST(l.{c} AS DOUBLE)) AS value \
+             FROM {ds}.{t} l JOIN {ds}.{dim} d ON l.{k} = d.{dk} \
+             WHERE l.{c} IS NOT NULL GROUP BY 1 ORDER BY 1",
+            p = crate::cube::period_expr(&format!("d.{}", qi(date)), resolution),
+            c = qi(&lever.name),
+            ds = qi(dataset),
+            t = qi(&lever.table),
+            dim = qi(table),
+            k = qi(key),
+            dk = qi(dim_key),
+        ),
+        Placement::Nowhere(why) => return Err(why.clone()),
     };
-    let sql = format!(
-        "SELECT {p} AS period, avg(CAST({c} AS DOUBLE)) AS value FROM {t} \
-         WHERE {c} IS NOT NULL GROUP BY 1 ORDER BY 1",
-        p = crate::cube::period_expr(&qi(&tcol), resolution),
-        c = qi(&lever.name),
-        t = qi(&lever.table),
-    );
     let rows = crate::cube::replayed_series(shared, ctx, &sql, &[])
         .await
         .map_err(|e| e.to_string())?;

@@ -113,11 +113,11 @@ budget and the amended one both stand.
   its 80% band where it covers the rest — at the year, the actual to
   date plus the year to go. `stands` says where the plan lies:
   `landed`, `inside`, `below` or `above` the band, `open` or `ahead`.
-  A band at a coarser grain exists only on a flow at day, week, month
-  or quarter grain, where the forecast asks a total to go; a stock's or
-  a ratio's plan is landed at the metric's own grain, one row for the
-  month it is due, and compares to that month's band (the plan page's
-  table).
+  A band at a coarser grain exists on a flow where the forecast asks a
+  total to go, and on a stock as the band of the period's last month
+  — a year-end headcount against December's forecast; a ratio's plan
+  is landed at the metric's own grain, one row for the month it is
+  due, and compares to that month's band (the plan page's table).
 - The plan goal on the `next:` line judges the year. Its route: the
   first plan to declare, a declared plan to ground, the forecast to
   run while owed, then per plan year the band does not hold — a

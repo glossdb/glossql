@@ -170,6 +170,11 @@ does:
 - **Reach is a scan.** An override moves the concepts whose groundings
   scan the overridden table, through any view they nest; the
   arithmetic never crosses to a concept that does not.
+- **Placed in time.** A lever's rows are placed by its table's own
+  date column, else by a declared edge to a table that carries one —
+  a fact table keyed into a date dimension — the key against the keys
+  whose dates fall in each period; a lever placed neither way is
+  refused when the scenario is glossed.
 - **Several changed inputs as one change.** The what-if reads every
   lever of the scenario in one request, the history adding what each
   does; `scenario_levers()` serves each lever's part, and an

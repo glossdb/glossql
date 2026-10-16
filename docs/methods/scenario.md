@@ -53,6 +53,15 @@ The result is exact, what the definitions say, and reaches as far as
 the rows do. The cells are `replayed`: from the first period the
 scenario names to the last row the data holds.
 
+A lever's rows are placed in time by its table's own date column.
+A table without one, a fact table keyed into a date dimension, is
+placed by a declared edge from the table to one that carries a date:
+the key column against the keys whose dates fall in each period. Both
+passes use the same placement. A lever that can be placed neither way
+is refused when the scenario is glossed, with the edge to declare as
+the road out; a standing scenario whose lever lost its placement
+serves its replayed cells without a value and with the reason.
+
 ## Pass two: the estimate
 
 Ahead of a metric's last actual there are no rows to replay. For the
@@ -101,7 +110,9 @@ effect reads.
   whose meaning is a sum reads as a mean; the factor scales both the
   same way.
 - The arithmetic reaches a metric through a scan of the lever's
-  table, in the grounding or in a view it nests.
+  table, in the grounding or in a view it nests, and places the
+  table's rows in time by its date column or by one declared edge to a
+  dated table.
 - Ahead of the data every metric is estimated, the ones the
   arithmetic reaches too. The estimate is the model's reading of the
   metric's history against the lever's; the definition pass one

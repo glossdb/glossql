@@ -9,7 +9,7 @@
 
 use datafusion::arrow::datatypes::DataType;
 use datafusion::common::tree_node::{Transformed, TreeNode};
-use datafusion::common::{Column, Result as DFResult};
+use datafusion::common::{Column, DataFusionError, Result as DFResult, ScalarValue};
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, cast, lit, when};
 
 use crate::plan::date_column;
@@ -24,14 +24,27 @@ pub struct Factor {
     pub factor: f64,
 }
 
+/// A table dated through a key: the column of the table that keys into
+/// a dated table, and per factor — at the factor's index — the keys
+/// whose dates fall in its period. A factor with no key applies to no
+/// row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyAnchor {
+    pub column: String,
+    pub keys: Vec<Vec<ScalarValue>>,
+}
+
 /// One override: a real column of a landed table and its factors per
 /// period. A period no factor names is unchanged; where two periods
-/// overlap, the later listed wins.
+/// overlap, the later listed wins. The rows a period holds are placed
+/// by the table's first date column, or by `anchor` where the table is
+/// dated through a key.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Override {
     pub table: String,
     pub column: String,
     pub factors: Vec<Factor>,
+    pub anchor: Option<KeyAnchor>,
 }
 
 fn moves(f: &Factor) -> bool {
@@ -40,10 +53,12 @@ fn moves(f: &Factor) -> bool {
 
 /// Every `TableScan` of an overridden table gains a projection scaling
 /// the overridden columns over the periods named, under the condition
-/// of the table's first date column. A table without a date column is
-/// left as it is: there is nothing to anchor a period to. A factor of
-/// one changes nothing and adds no arm; an override of none adds no
-/// projection.
+/// of the table's first date column, or of its key column against the
+/// period's keys where the override carries an anchor. An override of
+/// a table that has no date column and no anchor is refused: there is
+/// nothing to place a period by, and a replay that changed nothing
+/// must not pass for one. A factor of one changes nothing and adds no
+/// arm; an override of none adds no projection.
 pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<LogicalPlan> {
     plan.transform_up(|node| {
         let (table_name, fields) = match &node {
@@ -61,15 +76,27 @@ pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<Lo
         if active.is_empty() {
             return Ok(Transformed::no(node));
         }
-        let Some(tcol) = date_column(&fields) else {
-            return Ok(Transformed::no(node));
-        };
-        let tcol_type: DataType = fields
-            .iter()
-            .find(|f| f.name() == &tcol)
-            .expect("date column found above")
-            .data_type()
-            .clone();
+        let dated = date_column(&fields);
+        if dated.is_none() && active.iter().any(|o| o.anchor.is_none()) {
+            let columns: Vec<&str> = active
+                .iter()
+                .filter(|o| o.anchor.is_none())
+                .map(|o| o.column.as_str())
+                .collect();
+            return Err(DataFusionError::Plan(format!(
+                "`{table}` carries no date column to place the factors in time, and the \
+                 override of `{}` names no key to place them by",
+                columns.join("`, `")
+            )));
+        }
+        let tcol_type: Option<DataType> = dated.as_ref().map(|tcol| {
+            fields
+                .iter()
+                .find(|f| f.name() == tcol)
+                .expect("date column found above")
+                .data_type()
+                .clone()
+        });
         let qualified =
             |name: &str| Expr::Column(Column::new(Some(table_name.clone()), name.to_string()));
         let exprs: DFResult<Vec<Expr>> = fields
@@ -81,13 +108,27 @@ pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<Lo
                     if o.column != *field.name() {
                         continue;
                     }
-                    for f in o.factors.iter().filter(|f| moves(f)) {
-                        let start = cast(lit(f.from.clone()), tcol_type.clone());
-                        let mut inside = qualified(&tcol).gt_eq(start);
-                        if let Some(until) = &f.until {
-                            let end = cast(lit(until.clone()), tcol_type.clone());
-                            inside = inside.and(qualified(&tcol).lt(end));
-                        }
+                    for (i, f) in o.factors.iter().enumerate().filter(|(_, f)| moves(f)) {
+                        let inside = match (&o.anchor, &dated, &tcol_type) {
+                            (Some(anchor), _, _) => {
+                                let keys = anchor.keys.get(i).cloned().unwrap_or_default();
+                                if keys.is_empty() {
+                                    continue;
+                                }
+                                qualified(&anchor.column)
+                                    .in_list(keys.into_iter().map(lit).collect(), false)
+                            }
+                            (None, Some(tcol), Some(tcol_type)) => {
+                                let start = cast(lit(f.from.clone()), tcol_type.clone());
+                                let mut inside = qualified(tcol).gt_eq(start);
+                                if let Some(until) = &f.until {
+                                    let end = cast(lit(until.clone()), tcol_type.clone());
+                                    inside = inside.and(qualified(tcol).lt(end));
+                                }
+                                inside
+                            }
+                            (None, ..) => unreachable!("refused above"),
+                        };
                         let scaled = cast(raw.clone() * lit(f.factor), field.data_type().clone());
                         expr = when(inside, scaled).otherwise(expr)?;
                     }
@@ -178,7 +219,101 @@ mod tests {
             table: "sales".into(),
             column: "unit_price".into(),
             factors,
+            anchor: None,
         }
+    }
+
+    /// A table dated through a key: twelve rows keyed 1 to 12, no date
+    /// column. An override anchored on the key with July's key scales
+    /// July alone; the same override without an anchor is refused, not
+    /// passed through unchanged.
+    #[tokio::test]
+    async fn a_table_dated_through_a_key_is_placed_by_its_keys_or_refused() {
+        use datafusion::arrow::array::Int64Array;
+        use datafusion::common::ScalarValue;
+
+        use super::KeyAnchor;
+
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("date_sk", DataType::Int64, false),
+            Field::new("units", DataType::Float64, false),
+            Field::new("unit_price", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from((1..=12).collect::<Vec<i64>>())),
+                Arc::new(Float64Array::from(vec![10.0; 12])),
+                Arc::new(Float64Array::from(vec![100.0; 12])),
+            ],
+        )
+        .expect("a batch");
+        ctx.register_table(
+            "facts",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("a table")),
+        )
+        .expect("registers");
+        let sql =
+            "SELECT date_sk, sum(units * unit_price) AS value FROM facts GROUP BY 1 ORDER BY 1";
+        let july = Factor {
+            from: "2026-07-01".into(),
+            until: Some("2026-08-01".into()),
+            factor: 1.15,
+        };
+        let plan = ctx.state().create_logical_plan(sql).await.expect("plans");
+        let anchored = apply_overrides(
+            plan.clone(),
+            &[Override {
+                table: "facts".into(),
+                column: "unit_price".into(),
+                factors: vec![july.clone()],
+                anchor: Some(KeyAnchor {
+                    column: "date_sk".into(),
+                    keys: vec![vec![ScalarValue::Int64(Some(7))]],
+                }),
+            }],
+        )
+        .expect("rewrites");
+        let batches = ctx
+            .execute_logical_plan(anchored)
+            .await
+            .expect("executes")
+            .collect()
+            .await
+            .expect("collects");
+        let batch = datafusion::arrow::compute::concat_batches(&batches[0].schema(), &batches)
+            .expect("one");
+        let values = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("floats");
+        for row in 0..12 {
+            let expected = if row == 6 { 1150.0 } else { 1000.0 };
+            assert!(
+                (values.value(row) - expected).abs() < 1e-9,
+                "key {}: {} against {expected}",
+                row + 1,
+                values.value(row)
+            );
+        }
+        let refused = apply_overrides(
+            plan,
+            &[Override {
+                table: "facts".into(),
+                column: "unit_price".into(),
+                factors: vec![july],
+                anchor: None,
+            }],
+        )
+        .expect_err("no date column, no anchor");
+        assert!(
+            refused
+                .to_string()
+                .contains("`facts` carries no date column"),
+            "{refused}"
+        );
     }
 
     /// One grounding replayed with the price scaled by 1.15 from July
