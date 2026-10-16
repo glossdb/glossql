@@ -170,8 +170,9 @@ does:
 - **Reach is a scan.** An override moves the concepts whose groundings
   scan the overridden table, through any view they nest; the
   arithmetic never crosses to a concept that does not.
-- **One changed input.** The what-if reads one lever per request; a
-  scenario of several levers is replayed and not estimated, and the
-  cells say so.
+- **Several changed inputs as one change.** The what-if reads every
+  lever of the scenario in one request, the history adding what each
+  does; `scenario_levers()` serves each lever's part, and an
+  interaction between levers is not read.
 - **Nothing recorded, nothing cached.** The scenario is a read; the
   service is called at each one.

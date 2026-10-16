@@ -73,9 +73,13 @@ lever on is refused when it is glossed.
   (`low`, `high`), how often such a band held (`held_80`, `held_from`)
   and the service's `sign` and `basis`. A replayed cell is arithmetic;
   hand an estimate out with its band and its share.
-- One lever estimates. Several levers replay and do not estimate, and
-  the cells say so. Without a what-if service the arithmetic is served
-  and the cells say what to set.
+- Several levers are read as one change: the history adds what each
+  does, and `scenario_levers(scenario => 'price_hike')` serves each
+  lever's part per metric, so the single levers and the pair read as
+  one picture. A combination the history never held together states
+  no sign, and an interaction between levers is not read. Without a
+  what-if service the arithmetic is served and the cells and the parts
+  say what to set.
 
 ## The plan world
 

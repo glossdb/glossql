@@ -19,11 +19,15 @@ use glossql_glossary::{Actor, ActorKind, Store};
 use glossql_session::{Answered, FunctionRuntime, Outcome, Session, WHATIF};
 use serde_json::{Value, json};
 
-/// A what-if service that moves the target with the input: under the
-/// scenario a member's median is its last actual times the scenario
-/// input over the planned one, the 80% band at half and one and a half
-/// of it; the sign is `+` and the basis says the history showed it. It
-/// records every table it is handed as rows.
+/// A what-if service that moves the target with the inputs: under the
+/// scenario a member's median is its last actual times one plus the sum
+/// over the inputs of the scenario input over the planned one less one
+/// — one input, the ratio itself — the 80% band at half and one and a
+/// half of it; the sign is `+` and the basis says the history showed
+/// it. The answer object names the inputs changed and, per member and
+/// input, the part each does alone: the last actual times the ratio
+/// less one, read on the first period ahead, its interval at half and
+/// one and a half. It records every table it is handed as rows.
 #[derive(Debug)]
 struct WhatIf {
     serve: bool,
@@ -60,10 +64,9 @@ impl FunctionRuntime for WhatIf {
             .iter()
             .map(|f| f.name().clone())
             .collect();
-        assert_eq!(
-            names.len(),
-            5,
-            "member, period, status, value and the one input: {names:?}"
+        assert!(
+            names.len() >= 5,
+            "member, period, status, value and the inputs: {names:?}"
         );
         let mut rows = Vec::new();
         for i in 0..table.num_rows() {
@@ -81,9 +84,10 @@ impl FunctionRuntime for WhatIf {
             rows.push(Value::Object(row));
         }
         self.sent.lock().unwrap().push((rows.clone(), spec));
-        let input = &names[4];
-        // Per member: the last actual, the planned input, then each
-        // scenario row answered at the three levels.
+        let inputs: Vec<&String> = names[4..].iter().collect();
+        // Per member: the last actual, the planned inputs, then each
+        // scenario row answered at the three levels, and the parts
+        // from the first scenario row.
         let member = table.column_by_name("member").unwrap();
         let period = table
             .column_by_name("period")
@@ -93,21 +97,36 @@ impl FunctionRuntime for WhatIf {
             .unwrap();
         let (mut m_col, mut p_col, mut s_col, mut l_col, mut v_col) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let mut last: Option<(String, f64, Option<f64>)> = None;
+        let mut parts: Vec<Value> = Vec::new();
+        let mut last: Option<(String, f64, Vec<Option<f64>>)> = None;
         for (i, row) in rows.iter().enumerate() {
             let m = array_value_to_string(member, i).unwrap();
             match row["status"].as_str().unwrap() {
-                "actual" => last = Some((m, row["value"].as_f64().unwrap(), None)),
+                "actual" => last = Some((m, row["value"].as_f64().unwrap(), Vec::new())),
                 "plan" => {
                     if let Some(l) = last.as_mut() {
-                        l.2 = row[input].as_f64();
+                        l.2 = inputs.iter().map(|c| row[c.as_str()].as_f64()).collect();
                     }
                 }
                 "scenario" => {
-                    let (ref name, actual, planned) = *last.as_ref().unwrap();
+                    let (ref name, actual, ref planned) = *last.as_ref().unwrap();
                     assert_eq!(*name, m);
-                    let ratio = row[input].as_f64().unwrap() / planned.unwrap();
-                    let median = actual * ratio;
+                    let ratios: Vec<f64> = inputs
+                        .iter()
+                        .zip(planned)
+                        .map(|(c, p)| row[c.as_str()].as_f64().unwrap() / p.unwrap())
+                        .collect();
+                    let median = actual * (1.0 + ratios.iter().map(|r| r - 1.0).sum::<f64>());
+                    if !parts.iter().any(|p| p["member"] == m) {
+                        for (c, r) in inputs.iter().zip(&ratios) {
+                            let shift = actual * (r - 1.0);
+                            parts.push(json!({
+                                "member": m, "column": "value", "input": c,
+                                "history_shift": shift,
+                                "history_low": 0.5 * shift, "history_high": 1.5 * shift,
+                            }));
+                        }
+                    }
                     for (level, factor) in [(0.1, 0.5), (0.5, 1.0), (0.9, 1.5)] {
                         m_col.push(m.clone());
                         p_col.push(period.value(i));
@@ -152,7 +171,8 @@ impl FunctionRuntime for WhatIf {
         .unwrap();
         Ok(Answered {
             table: answer,
-            answer: json!({"service": "stub", "version": "test", "errors": [], "changed": input}),
+            answer: json!({"service": "stub", "version": "test", "errors": [],
+                           "changed": inputs, "parts": parts}),
         })
     }
 }
@@ -511,16 +531,39 @@ async fn the_world_is_replayed_where_the_lever_reaches_and_estimated_ahead() {
     )
     .await;
     assert!(known.contains("| 0 | 0 |"), "{known}");
+    // Each lever's part: one lever, one part per estimated metric — the
+    // stub's shift is the last actual times the first period's ratio
+    // less one, 270 at one and a half, 0.5 for the win rate.
+    let levers = rows(
+        &session,
+        "SELECT metric, lever, shift, low, high, basis, served_by \
+         FROM scenario_levers(scenario => 'price_up') ORDER BY metric;",
+    )
+    .await;
+    let lines: Vec<&str> = levers
+        .lines()
+        .filter(|l| l.contains("sales.price"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{levers}");
+    assert!(
+        lines[0].contains("| revenue  | sales.price | 135.0 | 67.5  | 202.5 |")
+            && lines[0].contains("| stub test |"),
+        "{levers}"
+    );
+    assert!(
+        lines[1].contains("| win_rate | sales.price | 0.25 "),
+        "{levers}"
+    );
 
     // What the service was handed: one table at the month grain, both
     // metrics as members, the lever beside each series as its monthly
     // mean, the three periods ahead twice — as planned, the last price
     // held at 27, and under the scenario, 40.5, 40.5 and 54.
     // A call per read that served a cell — the cells, the points, the
-    // count; the quarter grain served none and asked none.
+    // count, the levers; the quarter grain served none and asked none.
     let sent = stub.sent.lock().unwrap().clone();
     let tables: Vec<&(Vec<Value>, Value)> = sent.iter().collect();
-    assert_eq!(tables.len(), 3, "{}", tables.len());
+    assert_eq!(tables.len(), 4, "{}", tables.len());
     let (table, spec) = tables[0];
     assert_eq!(
         spec,
@@ -554,8 +597,9 @@ async fn the_world_is_replayed_where_the_lever_reaches_and_estimated_ahead() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn several_levers_are_replayed_and_not_estimated_and_no_service_says_so() {
-    let session = session(WhatIf::new(true)).await;
+async fn several_levers_are_replayed_and_estimated_as_one_change_and_no_service_says_so() {
+    let stub = WhatIf::new(true);
+    let session = session(Arc::clone(&stub)).await;
     session
         .execute(
             r##"
@@ -576,15 +620,16 @@ GLOSS two ON fin AS $${"levers": [
     .await;
     let lines: Vec<&str> = points.lines().filter(|l| l.contains("2025")).collect();
     assert_eq!(lines.len(), 4, "{points}");
-    // Both replayed in June — price doubled, starts doubled — and
-    // neither estimated in July: the what-if reads one changed input.
+    // Both replayed in June — price doubled, starts doubled — and both
+    // estimated in July as one change of two levers: the stub adds the
+    // two ratios' excess, 270 to 810 and 0.5 to 1.5.
     assert!(
         lines[0].contains("| 2025-06-01 | replayed  | 540.0"),
         "{}",
         lines[0]
     );
     assert!(
-        lines[1].contains("| 2025-07-01 | estimated |") && lines[1].contains("reads one changed input, and this scenario moves 2 levers (sales.price, races.starts)"),
+        lines[1].contains("| 2025-07-01 | estimated | 810.0"),
         "{}",
         lines[1]
     );
@@ -594,20 +639,77 @@ GLOSS two ON fin AS $${"levers": [
         lines[2]
     );
     assert!(
-        lines[3].contains("| 2025-07-01 | estimated |") && !lines[3].contains("0."),
+        lines[3].contains("| 2025-07-01 | estimated | 1.5"),
         "{}",
         lines[3]
     );
+    // The parts: per metric and lever, what each does alone, adding up
+    // to the joint estimate's shift — 270 and 270 for revenue, 0.5 and
+    // 0.5 for the win rate.
+    let levers = rows(
+        &session,
+        "SELECT metric, lever, shift, low, high, served_by \
+         FROM scenario_levers(scenario => 'two') ORDER BY metric, lever;",
+    )
+    .await;
+    let lines: Vec<&str> = levers
+        .lines()
+        .filter(|l| l.contains("| stub test"))
+        .collect();
+    assert_eq!(lines.len(), 4, "{levers}");
+    assert!(
+        lines[0].contains("| revenue  | races.starts | 270.0 | 135.0 | 405.0 |"),
+        "{levers}"
+    );
+    assert!(
+        lines[1].contains("| revenue  | sales.price  | 270.0 |"),
+        "{levers}"
+    );
+    assert!(
+        lines[2].contains("| win_rate | races.starts | 0.5 "),
+        "{levers}"
+    );
+    assert!(
+        lines[3].contains("| win_rate | sales.price  | 0.5 "),
+        "{levers}"
+    );
+    // What the service was handed: both levers as input columns, each
+    // held as planned — the price at 27, the starts at 10 — and doubled
+    // by its own factor under the scenario.
+    let sent = stub.sent.lock().unwrap().clone();
+    let (table, _) = sent.last().expect("a call");
+    let july: Vec<&Value> = table
+        .iter()
+        .filter(|r| r["member"] == "revenue" && r["status"] == "scenario")
+        .collect();
+    assert_eq!(july.len(), 1, "{july:?}");
+    assert_eq!(july[0]["sales.price"], json!(54.0), "{}", july[0]);
+    assert_eq!(july[0]["races.starts"], json!(20.0), "{}", july[0]);
     let cells = rows(
         &session,
         "SELECT count(*) AS n FROM metric_series(world => 'scenario', scenario => 'two');",
     )
     .await;
-    assert!(cells.contains("| 2 "), "{cells}");
+    assert!(cells.contains("| 4 "), "{cells}");
 
-    // Without a what-if service the arithmetic is served and the
-    // estimate says what to set.
+    // Without a what-if service the arithmetic is served, the estimate
+    // says what to set, and so does every lever's part.
     let session = session_without_service().await;
+    let levers = rows(
+        &session,
+        "SELECT metric, lever, shift, basis FROM scenario_levers(scenario => 'price_up') ORDER BY metric;",
+    )
+    .await;
+    let lines: Vec<&str> = levers
+        .lines()
+        .filter(|l| l.contains("sales.price"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{levers}");
+    assert!(
+        lines[0].contains("| revenue  | sales.price |       |")
+            && lines[0].contains("GLOSSQL_WHATIF_URL"),
+        "{levers}"
+    );
     let points = rows(
         &session,
         "SELECT period, pass, value, basis FROM scenario_points(scenario => 'price_up') \
