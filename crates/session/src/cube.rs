@@ -41,15 +41,17 @@
 //! A flow's empty period is a zero cell: a sum over no rows is zero,
 //! so the head carries one for every period at the metric's own
 //! resolution, from the total's first to the data's edge — the latest
-//! date any judged time column of the dataset holds at the pin — and
-//! a forecast for that period is checked against it. The total and
-//! the rival carry them; a member's gap stays a gap. A stock's or a
-//! ratio's empty period stays a gap too: nothing stands, nothing
-//! divides. Every flow's series reaches the same edge, and its window
-//! is measured back from there. The edge is a build input,
-//! so the key carries the legs of the tables the judged time columns
-//! sit on and the digest their subjects: a landing that moves the
-//! edge misses every head.
+//! period any metric grounding's frame serves at the pin, measured on
+//! the frames and never on a column of a table, so a calendar
+//! dimension that runs decades ahead moves nothing — and a forecast
+//! for that period is checked against it. The total and the rival
+//! carry them; a member's gap stays a gap. A stock's or a ratio's
+//! empty period stays a gap too: nothing stands, nothing divides.
+//! Every flow's series reaches the same edge, and its window is
+//! measured back from there; a plan's head (fixture 27) takes its own
+//! frame's edge. The edge is a build input, so the key carries the
+//! legs of every table the metrics' frames scan and the digest the
+//! frames' names: a landing that moves the edge misses every head.
 //!
 //! Resolution, floor and windows come from the `cube` FACT aspect the
 //! KPI kit declares on the dataset: a metric's own resolution is its
@@ -718,8 +720,8 @@ fn reads_of(
 /// another.
 /// Completeness is checkable in one file: `plan` and `build` read
 /// nothing of the store beyond (slot, judged, settings) and the data's
-/// edge over the judged time columns, whose subjects fold in here and
-/// whose tables are key legs — the frame's own scans are
+/// edge over the metrics' frames, whose names fold in here and whose
+/// tables are key legs — the frame's own scans are
 /// [`workspace_reads`]'s to catch.
 fn metric_digest(
     slot: &QuerySlot,
@@ -728,7 +730,7 @@ fn metric_digest(
     judged: &Judged,
     settings: &Settings,
     shapes: &HashMap<String, glossql_catalog::Shape>,
-    edge_subjects: &[String],
+    edge_frames: &[String],
 ) -> String {
     use std::hash::{Hash, Hasher};
     fn verdict(h: &mut impl Hasher, m: &HashMap<String, Verdict>, subject: &str) {
@@ -749,7 +751,7 @@ fn metric_digest(
     }
     let mut h = Digest(blake3::Hasher::new());
     HEAD_SHAPE.hash(&mut h);
-    for s in edge_subjects {
+    for s in edge_frames {
         s.hash(&mut h);
     }
     slot.subject.hash(&mut h);
@@ -1174,6 +1176,19 @@ pub(crate) fn verb_of(
 /// cache the entries live in. Loaded before any key, not on a miss —
 /// in-memory work over a context already in hand, which is what buys
 /// the hit on every write that cannot reach a build.
+/// A value filled once per surface behind an async lock, shared by
+/// every reader after: the frames and their edges.
+type Once<T> = futures::lock::Mutex<Option<Arc<T>>>;
+
+/// One grounding's frame as planned at a surface: the plan the build
+/// takes along, the dataset tables it scans, and its judged time column
+/// where the frame serves a judged date.
+struct FrameInfo {
+    probe: Option<datafusion::logical_expr::LogicalPlan>,
+    scans: Vec<String>,
+    tcol: Option<String>,
+}
+
 struct Surface {
     dataset: String,
     version: String,
@@ -1182,14 +1197,13 @@ struct Surface {
     /// The plan aspects' groundings (fixture 27): a head each, served
     /// in the plan world under the metric each names and in no other.
     plans: Vec<QuerySlot>,
-    /// The tables each grounding scans, by aspect, where a plan stands
-    /// beside the metrics: what the data's edge is measured over. Empty
-    /// without a plan — the edge is then every judged time column's.
-    scans: HashMap<String, HashSet<String>>,
-    /// The tables only plan groundings scan. A budget landed to the
-    /// period's end is no edge of the actuals: a metric's flow is
-    /// zero-filled to the metrics' own edge, a plan's to its own.
-    plan_only: HashSet<String>,
+    /// Every grounding's frame as planned at this surface, once: what
+    /// the key legs and the data's edge are measured over. Filled on
+    /// first use behind an async lock, as [`Surface::edges`] is.
+    frames: Once<HashMap<String, FrameInfo>>,
+    /// The last period each frame serves, once per surface, read when
+    /// the first head builds: the data's edge is their latest.
+    edges: Once<HashMap<String, Option<i64>>>,
     judged: Judged,
     settings: Settings,
     /// The bound dataset's tables and their columns at the pin — what
@@ -1223,152 +1237,163 @@ impl Surface {
             return Ok(None);
         }
         let (judged, settings) = judged_surface(shared, &rctx, &dataset).await?;
-        let ctx = shared.session_ctx();
-        // Which tables each grounding scans, planned once per surface
-        // and only where a plan stands: the edge of a metric's head
-        // leaves out the tables only plans scan, a plan's head takes
-        // its own. Planning scans nothing.
-        let mut scans: HashMap<String, HashSet<String>> = HashMap::new();
-        if !plans.is_empty() {
-            for slot in slots.iter().chain(&plans) {
-                let Some(sql) = frame_sql(&slot.body) else {
-                    continue;
-                };
-                if let Ok(plan) = crate::plan::build_plan(shared, &ctx, &sql).await {
-                    scans.insert(
-                        slot.aspect.clone(),
-                        crate::provenance::scanned_tables(&plan, &dataset),
-                    );
-                }
-            }
-        }
-        let by_metrics: HashSet<&String> = slots
-            .iter()
-            .filter_map(|s| scans.get(&s.aspect))
-            .flatten()
-            .collect();
-        let plan_only: HashSet<String> = plans
-            .iter()
-            .filter_map(|p| scans.get(&p.aspect))
-            .flatten()
-            .filter(|t| !by_metrics.contains(t))
-            .cloned()
-            .collect();
         Ok(Some(Surface {
             dataset,
             version: rctx.version.clone(),
             slots,
             plans,
-            scans,
-            plan_only,
+            frames: futures::lock::Mutex::new(None),
+            edges: futures::lock::Mutex::new(None),
             judged,
             settings,
             shapes: rctx.shapes.clone(),
             pin_text: rctx.pin.text.clone(),
             cache: shared.cube(),
-            ctx,
+            ctx: shared.session_ctx(),
             lake: shared.lake(),
         }))
     }
 
-    /// The judged time columns the data's edge is measured over for
-    /// one grounding's head, as `table.column` subjects: every
-    /// applicable `temporal_profile` verdict on a column a table of
-    /// the dataset carries — for a metric's head leaving out the
-    /// tables only plan groundings scan, for a plan's head its own
-    /// tables alone. The data's edge is their latest date; the key
-    /// carries their tables.
-    fn edge_subjects(&self, slot: &QuerySlot) -> Vec<String> {
-        let own = slot
-            .is_plan()
-            .then(|| self.scans.get(&slot.aspect))
-            .flatten();
+    /// Every grounding's frame planned once at this surface: the plan
+    /// the build takes along, the dataset tables it scans, and its
+    /// judged time column. Planning scans nothing; a frame that does
+    /// not plan has no plan and no time column, and its build abstains
+    /// with the planner's reason.
+    async fn frames(&self, shared: &Arc<Shared>) -> Arc<HashMap<String, FrameInfo>> {
+        let mut slot_guard = self.frames.lock().await;
+        if let Some(frames) = slot_guard.as_ref() {
+            return Arc::clone(frames);
+        }
+        let frames = Arc::new({
+            let mut out = HashMap::new();
+            for slot in self.slots.iter().chain(&self.plans) {
+                let probe = match frame_sql(&slot.body) {
+                    Some(sql) => crate::plan::build_plan(shared, &self.ctx, &sql).await.ok(),
+                    None => None,
+                };
+                let (scans, tcol) = match &probe {
+                    Some(plan) => {
+                        let mut scans: Vec<String> =
+                            crate::provenance::scanned_tables(plan, &self.dataset)
+                                .into_iter()
+                                .collect();
+                        scans.sort();
+                        let sources = crate::provenance::served_sources(plan, &self.dataset);
+                        let tcol =
+                            judged_time_column(plan.schema(), &sources, &self.judged.temporal)
+                                .map(|(column, ..)| column)
+                                .filter(|c| {
+                                    plan.schema().fields().iter().any(|f| {
+                                        f.name() == c && crate::plan::is_temporal(f.data_type())
+                                    })
+                                });
+                        (scans, tcol)
+                    }
+                    None => (Vec::new(), None),
+                };
+                out.insert(slot.aspect.clone(), FrameInfo { probe, scans, tcol });
+            }
+            out
+        });
+        *slot_guard = Some(Arc::clone(&frames));
+        frames
+    }
+
+    /// The frames the data's edge of one head is measured over: the
+    /// metrics' for a metric's head, its own for a plan's (fixture 27:
+    /// a budget landed to the period's end is no edge of the actuals).
+    fn edge_slots<'a>(&'a self, slot: &'a QuerySlot) -> Vec<&'a QuerySlot> {
+        if slot.is_plan() {
+            vec![slot]
+        } else {
+            self.slots.iter().collect()
+        }
+    }
+
+    /// The tables the edge's frames scan, sorted: key legs beside the
+    /// frame's own, since a landing on any of them may move the edge.
+    async fn edge_tables(&self, shared: &Arc<Shared>, slot: &QuerySlot) -> Vec<String> {
+        let frames = self.frames(shared).await;
         let mut out: Vec<String> = self
-            .judged
-            .temporal
-            .iter()
-            .filter(|(_, v)| v.body["applicable"].as_bool() == Some(true))
-            .filter(|(s, _)| {
-                s.split_once('.')
-                    .and_then(|(t, c)| {
-                        self.shapes
-                            .get(t)
-                            .map(|shape| shape.columns.contains_key(c))
-                    })
-                    .unwrap_or(false)
-            })
-            .filter(|(s, _)| {
-                let table = s.split_once('.').map(|(t, _)| t).unwrap_or("");
-                match own {
-                    Some(own) => own.contains(table),
-                    None => slot.is_plan() || !self.plan_only.contains(table),
-                }
-            })
-            .map(|(s, _)| s.clone())
+            .edge_slots(slot)
+            .into_iter()
+            .filter_map(|s| frames.get(&s.aspect))
+            .flat_map(|f| f.scans.iter().cloned())
             .collect();
         out.sort();
+        out.dedup();
         out
     }
 
-    /// The data's edge at a resolution: the bucket holding the latest
-    /// date any judged time column carries at the pin, as the cells
-    /// carry periods. None where no date column is judged, or every
-    /// judged one is empty. Each column is planned as the frames are,
-    /// so a column that is not a date is passed over; one small plan
-    /// per build.
+    /// The last period each frame serves, as nanoseconds since the
+    /// epoch — `max` of its judged time column over the frame itself,
+    /// so a calendar row no fact joins counts for nothing. Read once
+    /// per surface, when the first head builds; one aggregate per
+    /// frame. None for a frame without a judged time column, one that
+    /// does not run, or one that serves no row.
+    async fn edges(&self, shared: &Arc<Shared>) -> Arc<HashMap<String, Option<i64>>> {
+        let mut guard = self.edges.lock().await;
+        if let Some(edges) = guard.as_ref() {
+            return Arc::clone(edges);
+        }
+        let frames = self.frames(shared).await;
+        let edges = Arc::new({
+            let mut out = HashMap::new();
+            for slot in self.slots.iter().chain(&self.plans) {
+                let edge = match (frames.get(&slot.aspect), frame_sql(&slot.body)) {
+                    (
+                        Some(FrameInfo {
+                            tcol: Some(tcol), ..
+                        }),
+                        Some(sql),
+                    ) => {
+                        let q = format!(
+                            "SELECT CAST(max({}) AS TIMESTAMP) AS edge FROM ({sql}) AS frame",
+                            qi(tcol)
+                        );
+                        match run(shared, &self.ctx, &q).await {
+                            Ok(batches) => batches
+                                .iter()
+                                .find(|b| b.num_rows() > 0)
+                                .and_then(|b| b.column_by_name("edge").cloned())
+                                .filter(|c| !c.is_null(0))
+                                .and_then(|c| {
+                                    cast(&c, &DataType::Timestamp(TimeUnit::Nanosecond, None)).ok()
+                                })
+                                .and_then(|c| {
+                                    c.as_any()
+                                        .downcast_ref::<TimestampNanosecondArray>()
+                                        .map(|a| a.value(0))
+                                }),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                };
+                out.insert(slot.aspect.clone(), edge);
+            }
+            out
+        });
+        *guard = Some(Arc::clone(&edges));
+        edges
+    }
+
+    /// The data's edge for one head at a resolution: the bucket holding
+    /// the latest period the edge's frames serve, as the cells carry
+    /// periods. None where no frame serves a judged date.
     async fn data_edge(
         &self,
         shared: &Arc<Shared>,
         resolution: Resolution,
         slot: &QuerySlot,
     ) -> Result<Option<i64>, Abstain> {
-        let mut arms = Vec::new();
-        for subject in self.edge_subjects(slot) {
-            let Some((table, column)) = subject.split_once('.') else {
-                continue;
-            };
-            let probe = format!("SELECT {} FROM {}", qi(column), qi(table));
-            let Ok(plan) = crate::plan::build_plan(shared, &self.ctx, &probe).await else {
-                continue;
-            };
-            let dated = plan
-                .schema()
-                .fields()
-                .first()
-                .is_some_and(|f| crate::plan::is_temporal(f.data_type()));
-            if dated {
-                arms.push(format!(
-                    "SELECT CAST(max({}) AS TIMESTAMP) AS edge FROM {}",
-                    qi(column),
-                    qi(table)
-                ));
-            }
-        }
-        if arms.is_empty() {
-            return Ok(None);
-        }
-        let q = format!(
-            "SELECT {} AS edge FROM ({})",
-            period_expr("max(edge)", resolution),
-            arms.join(" UNION ALL ")
-        );
-        let batches = run(shared, &self.ctx, &q).await?;
-        let Some(b) = batches.iter().find(|b| b.num_rows() > 0) else {
-            return Ok(None);
-        };
-        let col = b
-            .column_by_name("edge")
-            .ok_or_else(|| Abstain("the edge served no edge".into()))?;
-        if col.is_null(0) {
-            return Ok(None);
-        }
-        let ts = cast(col, &DataType::Timestamp(TimeUnit::Nanosecond, None))
-            .map_err(|e| Abstain(e.to_string()))?;
-        let ts = ts
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| Abstain("the edge did not read as a timestamp".into()))?;
-        Ok(Some(ts.value(0)))
+        let edges = self.edges(shared).await;
+        Ok(self
+            .edge_slots(slot)
+            .into_iter()
+            .filter_map(|s| edges.get(&s.aspect).copied().flatten())
+            .max()
+            .map(|ns| bucket_start(ns, resolution)))
     }
 
     /// One metric's key at this surface, with the frame as planned.
@@ -1382,25 +1407,27 @@ impl Surface {
         slot: &QuerySlot,
         grain: Option<Resolution>,
     ) -> (CubeKey, Option<datafusion::logical_expr::LogicalPlan>) {
-        let probe = match frame_sql(&slot.body) {
-            Some(sql) => crate::plan::build_plan(shared, &self.ctx, &sql).await.ok(),
-            None => None,
-        };
+        let probe = self
+            .frames(shared)
+            .await
+            .get(&slot.aspect)
+            .and_then(|f| f.probe.clone());
         let reads = probe
             .as_ref()
             .map(|p| reads_of(p, &self.dataset, &self.judged.pointers))
             .unwrap_or_default();
         // The data's edge is a build input of every flow, so the legs
-        // carry the tables the judged time columns sit on and the
-        // digest their subjects: a landing that moves the edge misses.
-        let edge_subjects = self.edge_subjects(slot);
+        // carry every table the edge's frames scan and the digest the
+        // frames' names: a landing that moves the edge misses, and so
+        // does a grounding declared or retired. A re-record of another
+        // frame that moves the edge is caught by the next landing.
+        let edge_frames: Vec<String> = self
+            .edge_slots(slot)
+            .into_iter()
+            .map(|s| s.aspect.clone())
+            .collect();
         let mut tables = reads.tables.clone();
-        tables.extend(
-            edge_subjects
-                .iter()
-                .filter_map(|s| s.split_once('.'))
-                .map(|(t, _)| t.to_string()),
-        );
+        tables.extend(self.edge_tables(shared, slot).await);
         tables.sort();
         tables.dedup();
         let key = CubeKey {
@@ -1415,7 +1442,7 @@ impl Surface {
                 &self.judged,
                 &self.settings,
                 &self.shapes,
-                &edge_subjects,
+                &edge_frames,
             ),
         };
         (key, probe)

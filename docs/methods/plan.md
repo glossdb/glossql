@@ -167,11 +167,10 @@ on metric, dimension, member and period.
 - A metric whose grounding is stopped leaves its plans standing. The
   stop is the metric's own `metric_axes()` row.
 - A plan's table is no edge of the actuals. A flow's empty periods are
-  zero cells up to the data's edge, and that edge is measured over the
-  tables the metrics' groundings scan; a budget landed through the
-  year's end stretches no metric, and the forecast's origin stays the
-  last period with an actual. The plan's own cells reach its own
-  table's end.
+  zero cells up to the data's edge, the latest period the metrics'
+  groundings serve; a budget landed through the year's end stretches no
+  metric, and the forecast's origin stays the last period with an
+  actual. The plan's own cells reach its own frame's end.
 - Nothing is recorded: the plan's cells are a cube head under the
   cache, like a metric's, and move when the plan's table or its
   grounding does.

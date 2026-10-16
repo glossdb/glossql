@@ -189,8 +189,9 @@ and for the rival too. A day metric asked at the month therefore
 spans the month rung, not its own day rung.
 
 A flow's empty period is a zero cell in its total, from its first
-period to the data's edge — the latest date any judged time column of
-the dataset holds. A sum over no rows is zero, and a forecast for that
+period to the data's edge — the latest period any metric's grounding
+serves; a calendar table's rows no fact joins, and a plan's table,
+move it nowhere. A sum over no rows is zero, and a forecast for that
 period is checked against it. A member's empty period is no cell, and
 so is a stock's or a ratio's.
 

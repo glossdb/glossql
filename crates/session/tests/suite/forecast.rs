@@ -724,10 +724,11 @@ async fn a_point_says_how_often_its_band_held() {
 }
 
 /// A flow's empty period is a zero cell — a sum over no rows — from
-/// its first period to the data's edge, the latest date any judged
-/// time column holds, so a forecast for it is checked against zero. A
-/// stock's and a ratio's empty periods stay gaps. A landing that moves
-/// the edge rebuilds the flow's head, and its points land.
+/// its first period to the data's edge, the latest period any metric's
+/// grounding serves, so a forecast for it is checked against zero. A
+/// stock's and a ratio's empty periods stay gaps. A grounding that
+/// moves the edge rebuilds the flow's head, and its points land; a
+/// judged table no grounding reads moves nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_flows_empty_periods_are_zero_cells_to_the_datas_edge() {
     let stub = Arc::new(Flat::default());
@@ -891,9 +892,11 @@ GLOSS signups ON fin AS $${{"sql": "SELECT signed_on, amount AS value FROM regis
         "{origin}"
     );
 
-    // Three more months of data on another table move the edge: the
-    // stopped flow's head is built over, its zeros reach September,
-    // and the points for July to September land on zero.
+    // Three more months of data on another table, judged and read by
+    // no grounding, move nothing: the edge is the metrics', not a
+    // column's. Grounded, the table's months are the edge: the stopped
+    // flow's head is built over, its zeros reach September, and the
+    // points for July to September land on zero.
     let late: Vec<(i32, u32)> = [(2025, 7), (2025, 8), (2025, 9)].to_vec();
     let (schema, batch) = dated("shipped_on", &late);
     register(&session, "shipments", schema, batch).await;
@@ -901,6 +904,23 @@ GLOSS signups ON fin AS $${{"sql": "SELECT signed_on, amount AS value FROM regis
         .execute("SELECT judge_time() FROM shipments.shipped_on;")
         .await
         .expect("the cadence is judged");
+    let unread = rows(
+        &session,
+        "SELECT count(*) AS n, max(period) AS last FROM metric_series() \
+         WHERE metric = 'signups' AND dimension = '';",
+    )
+    .await;
+    assert!(
+        unread.contains("| 18 ") && unread.contains("2025-06-01"),
+        "{unread}"
+    );
+    session
+        .execute(
+            r##"DECLARE ASPECT shipped WITH $${"title": "Shipped"}$$ AS QUERY ON DATASET;
+GLOSS shipped ON fin AS $${"sql": "SELECT shipped_on, amount AS value FROM shipments"}$$;"##,
+        )
+        .await
+        .expect("the grounding lands");
     let moved = rows(
         &session,
         "SELECT count(*) AS n, max(period) AS last FROM metric_series() \
@@ -922,4 +942,83 @@ GLOSS signups ON fin AS $${{"sql": "SELECT signed_on, amount AS value FROM regis
         assert!(l.contains("| 0.0 ") && l.contains("inside"), "{landed}");
     }
     assert!(!line(&landed, "| 4 ").contains("inside"), "{landed}");
+}
+
+/// A calendar dimension that runs decades ahead, joined by the
+/// grounding for its date and judged as its time column, is no edge:
+/// the flow's cells end where the facts end, and the forecast's origin
+/// stays there. The edge is measured on what the frame serves, never
+/// on a column of a table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_calendar_dimension_running_ahead_is_no_edge() {
+    let stub = Arc::new(Flat::default());
+    let setup = format!(
+        r##"
+DECLARE DATASET fin SET (purpose: 'a calendar dimension');
+USE fin;
+DECLARE ASPECT cube WITH $${{"type": "object", "properties": {{
+  "resolution": {{"default": "month"}},
+  "windows": {{"type": "object", "properties": {{"month": {{"default": "48 months"}}}}}}}}}}$$
+AS FACT ON DATASET;
+{judged}
+DECLARE ASPECT spend WITH $${{"title": "Spend"}}$$ AS QUERY ON DATASET;
+GLOSS spend ON fin AS $${{"sql": "SELECT c.day AS month, s.amount AS value FROM spending s JOIN calendar c ON c.day = s.on_day"}}$$;
+{kit}
+"##,
+        judged = judged("month"),
+        kit = forecast_kit()
+    );
+    let session = session(Arc::clone(&stub), &setup).await;
+    // Eighteen months of spend, 2024-01 to 2025-06, on the first of
+    // each month; a calendar of every month's first day to 2100-12.
+    let months: Vec<(i32, u32)> = (0..18)
+        .map(|i| (2024 + i / 12, (i % 12 + 1) as u32))
+        .collect();
+    let (schema, batch) = dated_values(
+        "on_day",
+        months.iter().map(|(y, m)| day(*y, *m, 1)).collect(),
+        (0..18).map(|i| 100.0 + i as f64).collect(),
+    );
+    register(&session, "spending", schema, batch).await;
+    let calendar = Arc::new(Schema::new(vec![Field::new(
+        "day",
+        DataType::Date32,
+        false,
+    )]));
+    let days: Vec<i32> = (0..(77 * 12))
+        .map(|i| day(2024 + i / 12, (i % 12 + 1) as u32, 1))
+        .collect();
+    let batch = RecordBatch::try_new(
+        Arc::clone(&calendar),
+        vec![Arc::new(Date32Array::from(days))],
+    )
+    .expect("a batch");
+    register(&session, "calendar", calendar, batch).await;
+    session
+        .execute("SELECT judge_time() FROM calendar.day; SELECT judge_time() FROM spending.on_day;")
+        .await
+        .expect("the cadences are judged");
+    let cells = rows(
+        &session,
+        "SELECT count(*) AS n, CAST(max(period) AS DATE) AS last, count(*) FILTER (WHERE value = 0) AS zeros \
+         FROM metric_series() WHERE metric = 'spend' AND dimension = '';",
+    )
+    .await;
+    assert!(
+        cells.contains("| 18 ") && cells.contains("| 2025-06-01 |") && cells.contains("| 0 "),
+        "{cells}"
+    );
+    session
+        .execute("SELECT metric_forecast() FROM fin;")
+        .await
+        .expect("the forecast lands");
+    let origin = rows(
+        &session,
+        "SELECT origin, p50 FROM forecast_points() WHERE metric = 'spend' AND step = 1;",
+    )
+    .await;
+    assert!(
+        origin.contains("| 2025-06-01 |") && origin.contains("| 117.0 "),
+        "{origin}"
+    );
 }

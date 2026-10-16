@@ -264,9 +264,8 @@ about what the read does:
   grounded, the forecast run, every year the band does not hold judged
   — a scenario on a lever, or the gap recorded under `plan-<year>` in
   the plan's body for the human to rule. A plan's table is no edge of
-  the actuals: the edge of a metric's head is measured over the tables
-  the metrics' groundings scan (`Surface::edge_subjects`), a plan's
-  over its own.
+  the actuals: the edge of a metric's head is the latest period the
+  metrics' frames serve (`Surface::data_edge`), a plan's its own.
 - The evaluation side: the generator writes a budget table per corpus
   from its own levers, a planned value per metric and month, with a
   truth file; the eval runs a plan lane beside the forecast lane. The
