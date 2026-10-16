@@ -9,7 +9,8 @@
 use std::sync::{Arc, Mutex};
 
 use datafusion::arrow::array::{
-    Array, Date32Array, Float64Array, RecordBatch, StringArray, TimestampNanosecondArray,
+    Array, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
+    TimestampNanosecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::util::display::array_value_to_string;
@@ -733,4 +734,146 @@ async fn session_without_service() -> Session {
         .await
         .expect("the scenario lands");
     session
+}
+
+/// A fact table dated through a key into a date dimension — every star
+/// schema: the lever's rows are placed in time by the declared edge,
+/// the replay doubles June through the keys whose dates fall in it,
+/// and the estimate reads the lever's series through the same edge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lever_dated_through_a_declared_edge_is_replayed_and_estimated() {
+    let stub = WhatIf::new(true);
+    let session = session(Arc::clone(&stub)).await;
+    let months: Vec<(i32, u32)> = (0..18)
+        .map(|i| (2024 + i / 12, (i % 12 + 1) as u32))
+        .collect();
+    let orders = Arc::new(Schema::new(vec![
+        Field::new("date_sk", DataType::Int64, false),
+        Field::new("units", DataType::Float64, false),
+        Field::new("price", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&orders),
+        vec![
+            Arc::new(Int64Array::from((1..=18).collect::<Vec<i64>>())),
+            Arc::new(Float64Array::from(vec![10.0; 18])),
+            Arc::new(Float64Array::from(
+                (0..18).map(|i| 10.0 + i as f64).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "orders", orders, batch).await;
+    let days = Arc::new(Schema::new(vec![
+        Field::new("date_sk", DataType::Int64, false),
+        Field::new("day", DataType::Date32, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&days),
+        vec![
+            Arc::new(Int64Array::from((1..=18).collect::<Vec<i64>>())),
+            Arc::new(Date32Array::from(
+                months
+                    .iter()
+                    .map(|(y, m)| day(*y, *m, 1))
+                    .collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "days", days, batch).await;
+    session
+        .execute(
+            r##"DECLARE RELATIONSHIP orders.date_sk -> days.date_sk;
+SELECT judge_time() FROM days.day;
+DECLARE ASPECT keyed WITH $${"title": "Keyed revenue"}$$ AS QUERY ON DATASET;
+GLOSS keyed ON fin AS $${"sql": "SELECT d.day, o.units * o.price AS value FROM orders o JOIN days d ON d.date_sk = o.date_sk"}$$;
+GLOSS lever ON orders.price AS $${"value": true, "grounds": "the list price"}$$;
+DECLARE ASPECT keyed_up WITH $${
+  "title": "Keyed price up", "x-kind": "scenario",
+  "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}
+}$$ AS FACT ON DATASET;
+GLOSS keyed_up ON fin AS $${"levers": [{"column": "orders.price",
+  "factor": {"2025-06": 2.0, "2025-07": 2.0}, "basis": "the price list"}]}$$;"##,
+        )
+        .await
+        .expect("the edge, the grounding, the lever and the scenario land");
+    // June replayed: the price doubled on the rows whose key dates in
+    // June, 270 to 540; July estimated from the lever's series read
+    // through the edge, 27 held and 54 under the scenario.
+    let points = rows(
+        &session,
+        "SELECT period, pass, value, low, high, basis FROM scenario_points(scenario => 'keyed_up') \
+         WHERE metric = 'keyed' ORDER BY period;",
+    )
+    .await;
+    let lines: Vec<&str> = points.lines().filter(|l| l.contains("2025")).collect();
+    assert_eq!(lines.len(), 2, "{points}");
+    assert!(
+        lines[0].contains("| 2025-06-01 | replayed  | 540.0 |")
+            && lines[0].contains("replayed through the grounding"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("| 2025-07-01 | estimated | 540.0 | 270.0 | 810.0 |"),
+        "{}",
+        lines[1]
+    );
+    let sent = stub.sent.lock().unwrap().clone();
+    let (table, _) = sent.last().expect("a call");
+    let july: Vec<&Value> = table
+        .iter()
+        .filter(|r| r["member"] == "keyed" && r["status"] == "scenario")
+        .collect();
+    assert_eq!(july.len(), 1, "{july:?}");
+    assert_eq!(july[0]["orders.price"], json!(54.0), "{}", july[0]);
+}
+
+/// A lever on a table with no date column and no declared edge to a
+/// dated table can be placed nowhere in time: the scenario is refused
+/// when it is glossed, with the edge to declare as the road out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lever_placed_nowhere_in_time_is_refused() {
+    let session = session(WhatIf::new(true)).await;
+    let raw = Arc::new(Schema::new(vec![
+        Field::new("units", DataType::Float64, false),
+        Field::new("price", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&raw),
+        vec![
+            Arc::new(Float64Array::from(vec![10.0; 3])),
+            Arc::new(Float64Array::from(vec![1.0; 3])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "raw", raw, batch).await;
+    session
+        .execute(
+            r##"GLOSS lever ON raw.price AS $${"value": true, "grounds": "set by hand"}$$;
+DECLARE ASPECT raw_up WITH $${
+  "title": "Raw price up", "x-kind": "scenario",
+  "type": "object", "required": ["levers"], "properties": {"levers": {"type": "array"}}
+}$$ AS FACT ON DATASET;"##,
+        )
+        .await
+        .expect("the lever and the aspect land");
+    let e = refused(
+        &session,
+        r##"GLOSS raw_up ON fin AS $${"levers": [{"column": "raw.price", "factor": {"2025-07": 1.5}, "basis": "x"}]}$$;"##,
+    )
+    .await;
+    assert!(
+        e.contains("GLOSS raw_up ON fin")
+            && e.contains("`raw.price`: `raw` carries no date column, and no declared edge reaches a table that does")
+            && e.contains("DECLARE RELATIONSHIP raw.<key> -> <dates>.<key>"),
+        "{e}"
+    );
+    let glossed = rows(
+        &session,
+        "SELECT count(*) AS n FROM GLOSSARY(fin) WHERE aspect = 'raw_up';",
+    )
+    .await;
+    assert!(glossed.contains("| 0 "), "{glossed}");
 }

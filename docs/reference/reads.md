@@ -469,8 +469,10 @@ cell at that grain where the period has begun; for the current period,
 the actual to date), `variance` (actual minus plan, on a complete
 period), `low`, `expected` and `high` (the newest forecast's 80% band
 and median for the period: at the metric's own resolution the step's;
-at a coarser grain the actual to date plus the total that runs to the
-period's end, where the forecast asked one), `stands` (`landed`: the
+at a coarser grain, for a flow the actual to date plus the total that
+runs to the period's end, where the forecast asked one, for a stock
+the band of the last period of the metric's own resolution inside it,
+where the horizon reaches it), `stands` (`landed`: the
 period is complete and its actual stands; `inside`, `below`, `above`:
 where the plan lies against the band; `open`: begun, and no band
 covers the rest; `ahead`: not begun, no band), `held_80` and

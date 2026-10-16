@@ -3774,6 +3774,9 @@ pub(crate) struct PlanSeries {
     pub plan: String,
     pub metric: String,
     pub metric_resolution: Option<Resolution>,
+    /// The metric's verb — `flow`, `stock` or `ratio` — which decides
+    /// what a plan at a coarser grain compares to.
+    pub metric_behavior: Option<String>,
     pub origin: Option<i64>,
     pub grains: Vec<PlanGrain>,
 }
@@ -3828,6 +3831,7 @@ pub(crate) async fn plan_series(shared: &Arc<Shared>) -> Result<Vec<PlanSeries>,
         };
         let mhead = surface.entry(shared, mslot).await;
         let metric_resolution = mhead.fact.resolution;
+        let metric_behavior = mhead.fact.behavior.clone();
         let mut origin = None;
         if let Some(mres) = metric_resolution {
             let own = surface
@@ -3865,6 +3869,7 @@ pub(crate) async fn plan_series(shared: &Arc<Shared>) -> Result<Vec<PlanSeries>,
             plan: slot.aspect.clone(),
             metric,
             metric_resolution,
+            metric_behavior,
             origin,
             grains,
         });

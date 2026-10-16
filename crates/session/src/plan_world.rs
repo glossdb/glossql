@@ -251,10 +251,13 @@ fn label(period: i64, grain: Resolution) -> String {
 /// `variance` (actual minus plan, on a complete period), `low`,
 /// `expected`, `high` (the newest forecast's 80% band and median for
 /// the period: the step's at the metric's own resolution; at a coarser
-/// grain the actual to date plus the total that runs to the period's
-/// end), `stands` (`landed`: the period is complete; `inside`, `below`,
-/// `above`: where the plan lies against the band; `open`: begun, no
-/// band covers the rest; `ahead`: not begun, no band), `held_80` and
+/// grain, for a flow the actual to date plus the total that runs to the
+/// period's end, for a stock the band of the last period of the
+/// metric's own grain inside it — a year-end headcount against
+/// December's band — where the horizon reaches it), `stands`
+/// (`landed`: the period is complete; `inside`, `below`, `above`: where
+/// the plan lies against the band; `open`: begun, no band covers the
+/// rest; `ahead`: not begun, no band), `held_80` and
 /// `held_from` (how often such a band held, and whose count), `origin`
 /// (the forecast's, where one was read). A plan finer than its metric
 /// compares to nothing. Computed at read from the cube and the
@@ -312,10 +315,28 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
                     // The band covering the period: a step's at the metric's
                     // own grain; at a coarser grain the total running to the
                     // period's end, on top of the actual to date.
+                    let stock = s.metric_behavior.as_deref() == Some("stock");
                     let band = metric_bands.and_then(|bs| {
                         if Some(resolution) == s.metric_resolution {
                             bs.iter()
                                 .find(|b| b.span.is_none() && b.period == period)
+                                .map(|b| (b, 0.0))
+                        } else if stock {
+                            // A level: the period's last bucket at the
+                            // metric's own grain, where the forecast
+                            // reaches it; nothing to add.
+                            let mut last = period;
+                            if let Some(mres) = s.metric_resolution {
+                                while let Some(n) = next_period(last, mres) {
+                                    if end.is_some_and(|e| n < e) {
+                                        last = n;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            bs.iter()
+                                .find(|b| b.span.is_none() && b.period == last)
                                 .map(|b| (b, 0.0))
                         } else if begun {
                             a.and_then(|to_date| {

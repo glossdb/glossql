@@ -151,15 +151,5 @@ The project lead's position, in short.
 - **New source types.** Each is a SPEC.md §3 change. Corpus first: one
   real workbook and one real handbook, transcribed, the forms
   presented.
-- **The plan grounding's form.** Recommended: an optional field in
-  the standard grounding schema, so one gloss holds the actual and
-  the plan and the supersession key does not change. Closes by
-  transcription of a real budget beside its actuals; the budget's
-  table lands from any source, the workbook reader is not needed for
-  it.
-- **The scenario's form.** Values per period on declared levers, in
-  place of fixture 19's factor from a start month. The §9 note and
-  fixture 19 change with it.
-- **The planning goal's name** on the door's line.
 - **The wire.** Recommended: Arrow IPC, column names and types with
   the rows.

@@ -354,8 +354,10 @@ async fn the_plan_read_is_refused_without_its_name_or_its_world() {
 /// through 2025 — 120 a month in 2024, 130 from 2025-01 to 2025-06,
 /// 110 after — and a yearly budget of 1440 for 2024 and 1560 for 2025,
 /// judged at the year by the one cadence judge, which names the year
-/// for the yearly table. The forecast service stubbed flat, the lever
-/// aspect declared as the kit declares it.
+/// for the yearly tables; a headcount of 100 rising by one a month, a
+/// stock, with a yearly target of 115 for 2024 and 120 for 2025. The
+/// forecast service stubbed flat, the lever aspect declared as the kit
+/// declares it.
 fn planning_setup() -> &'static str {
     r##"
 DECLARE DATASET fin SET (purpose: 'the planning goal');
@@ -370,7 +372,8 @@ DECLARE ASPECT temporal_profile WITH $${"type": "object", "required": ["applicab
   "properties": {"applicable": {"type": "boolean"}}}$$ AS MEASUREMENT ON COLUMN;
 DECLARE FUNCTION judge_time FOR GLOBAL AS
   $$SELECT true AS applicable,
-           CASE WHEN CAST($subject AS VARCHAR) LIKE '%yearly%' THEN 'year' ELSE 'month' END AS granularity,
+           CASE WHEN CAST($subject AS VARCHAR) LIKE '%yearly%' OR CAST($subject AS VARCHAR) LIKE '%targets%'
+                THEN 'year' ELSE 'month' END AS granularity,
            named_struct('ratio', 1.0) AS completeness$$
   RETURNS temporal_profile;
 DECLARE ASPECT lever WITH $${"type": "object", "properties": {
@@ -385,6 +388,12 @@ DECLARE ASPECT annual_budget WITH $${
 }$$ AS QUERY ON DATASET;
 GLOSS revised_budget ON fin AS $${"sql": "SELECT month, revised AS value FROM budget"}$$;
 GLOSS annual_budget ON fin AS $${"sql": "SELECT year, planned AS value FROM yearly"}$$;
+DECLARE ASPECT headcount WITH $${"title": "Headcount", "x-kind": "measure"}$$ AS QUERY ON DATASET;
+GLOSS headcount ON fin AS $${"sql": "SELECT month, heads AS value FROM staff", "behavior": "stock"}$$;
+DECLARE ASPECT headcount_target WITH $${
+  "title": "Headcount target", "x-kind": "plan", "x-plan-of": "headcount"
+}$$ AS QUERY ON DATASET;
+GLOSS headcount_target ON fin AS $${"sql": "SELECT year, heads AS value FROM targets", "behavior": "stock"}$$;
 "##
 }
 
@@ -465,10 +474,39 @@ async fn planning_session(stub: Arc<crate::forecast::Flat>) -> Session {
     )
     .expect("a batch");
     register(&session, "yearly", yearly, batch).await;
+    let staff = Arc::new(Schema::new(vec![
+        Field::new("month", DataType::Date32, false),
+        Field::new("heads", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&staff),
+        vec![
+            Arc::new(Date32Array::from(months(18))),
+            Arc::new(Float64Array::from(
+                (0..18).map(|i| 100.0 + i as f64).collect::<Vec<_>>(),
+            )),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "staff", staff, batch).await;
+    let targets = Arc::new(Schema::new(vec![
+        Field::new("year", DataType::Date32, false),
+        Field::new("heads", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&targets),
+        vec![
+            Arc::new(Date32Array::from(vec![day(2024, 1, 1), day(2025, 1, 1)])),
+            Arc::new(Float64Array::from(vec![115.0, 120.0])),
+        ],
+    )
+    .expect("a batch");
+    register(&session, "targets", targets, batch).await;
     session
         .execute(
             "SELECT judge_time() FROM spend.month; SELECT judge_time() FROM budget.month; \
-             SELECT judge_time() FROM yearly.year;",
+             SELECT judge_time() FROM yearly.year; SELECT judge_time() FROM staff.month; \
+             SELECT judge_time() FROM targets.year;",
         )
         .await
         .expect("the cadences are judged");
@@ -513,18 +551,25 @@ async fn plan_points_serves_every_plan_against_the_actual_and_the_forecast() {
     )
     .await;
     for want in [
-        "| annual_budget  | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
-        "| annual_budget  | year  | 2025    | 1560.0 | 687.0  |          | open   |",
-        "| revised_budget | month | 2024-01 | 120.0  | 100.0  | -20.0    | landed |",
-        "| revised_budget | month | 2025-06 | 130.0  | 117.0  | -13.0    | landed |",
-        "| revised_budget | month | 2025-07 | 110.0  |        |          | ahead  |",
-        "| revised_budget | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
-        "| revised_budget | year  | 2025    | 1440.0 | 687.0  |          | open   |",
+        "| annual_budget    | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
+        "| annual_budget    | year  | 2025    | 1560.0 | 687.0  |          | open   |",
+        "| revised_budget   | month | 2024-01 | 120.0  | 100.0  | -20.0    | landed |",
+        "| revised_budget   | month | 2025-06 | 130.0  | 117.0  | -13.0    | landed |",
+        "| revised_budget   | month | 2025-07 | 110.0  |        |          | ahead  |",
+        "| revised_budget   | year  | 2024    | 1440.0 | 1266.0 | -174.0   | landed |",
+        "| revised_budget   | year  | 2025    | 1440.0 | 687.0  |          | open   |",
+        // A stock's year is its last level: 111 at the end of 2024
+        // against a target of 115, 117 so far in 2025.
+        "| headcount_target | year  | 2024    | 115.0  | 111.0  | -4.0     | landed |",
+        "| headcount_target | year  | 2025    | 120.0  | 117.0  |          | open   |",
     ] {
         assert!(points.contains(want), "missing {want}\n{points}");
     }
-    let n = points.lines().filter(|l| l.contains("_budget")).count();
-    assert_eq!(n, 2 + 24 + 2, "{points}");
+    let n = points
+        .lines()
+        .filter(|l| l.contains("_budget") || l.contains("_target"))
+        .count();
+    assert_eq!(n, 2 + 24 + 2 + 2, "{points}");
     // No forecast and nothing owed: the plan goal is done.
     let goal = rows(
         &session,
@@ -553,7 +598,7 @@ async fn plan_points_serves_every_plan_against_the_actual_and_the_forecast() {
          FROM plan_points() WHERE stands NOT IN ('landed') ORDER BY plan, grain, period;",
     )
     .await;
-    let year = line(&points, "| annual_budget  | year  | 2025");
+    let year = line(&points, "| annual_budget    | year  | 2025");
     assert!(
         year.contains("| 1560.0 | 687.0  | 1332.84")
             && year.contains("| 1389.0")
@@ -561,7 +606,7 @@ async fn plan_points_serves_every_plan_against_the_actual_and_the_forecast() {
             && year.contains("| above  | 0.66    | service   | 2025-06-01 |"),
         "{points}"
     );
-    let month = line(&points, "| revised_budget | month | 2025-07");
+    let month = line(&points, "| revised_budget   | month | 2025-07");
     assert!(
         month.contains("| 110.0  |        | 107.64")
             && month.contains("| 117.0")
@@ -570,9 +615,19 @@ async fn plan_points_serves_every_plan_against_the_actual_and_the_forecast() {
             && month.contains("| 0.71    | service"),
         "{points}"
     );
-    let monthly_year = line(&points, "| revised_budget | year  | 2025");
+    let monthly_year = line(&points, "| revised_budget   | year  | 2025");
     assert!(
         monthly_year.contains("| 1440.0 | 687.0") && monthly_year.contains("| inside |"),
+        "{points}"
+    );
+    // A stock's year row takes December's band, nothing added: the flat
+    // forecast's 117 at ±8%, six steps out, holds the target of 120.
+    let target = line(&points, "| headcount_target | year  | 2025");
+    assert!(
+        target.contains("| 120.0  | 117.0  | 107.64")
+            && target.contains("| 117.0")
+            && target.contains("| 126.36")
+            && target.contains("| inside | 0.76    | service   | 2025-06-01 |"),
         "{points}"
     );
 
