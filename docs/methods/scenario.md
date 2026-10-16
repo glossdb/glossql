@@ -50,8 +50,10 @@ the grounding with the factors. Every scan of the table gains a
 projection that multiplies the column over the periods named, and the
 grounding's SQL runs over it unchanged (`crates/session/src/replay.rs`).
 The result is exact, what the definitions say, and reaches as far as
-the rows do. The cells are `replayed`: from the first period the
-scenario names to the last row the data holds.
+the rows do: a scaled column is read as a real number, so an integer
+quantity at a factor of 1.02 is not floored on every row and a decimal
+amount is not rounded per line. The cells are `replayed`: from the
+first period the scenario names to the last row the data holds.
 
 A lever's rows are placed in time by its table's own date column.
 A table without one, a fact table keyed into a date dimension, is

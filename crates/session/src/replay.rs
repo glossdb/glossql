@@ -58,7 +58,11 @@ fn moves(f: &Factor) -> bool {
 /// a table that has no date column and no anchor is refused: there is
 /// nothing to place a period by, and a replay that changed nothing
 /// must not pass for one. A factor of one changes nothing and adds no
-/// arm; an override of none adds no projection.
+/// arm; an override of none adds no projection. A scaled column is
+/// read as a real number — a double under the table's name, inside and
+/// outside the periods named — never cast back to its own type: an
+/// integer quantity at ×1.02 is not floored on every row, a decimal
+/// amount not rounded per line.
 pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<LogicalPlan> {
     plan.transform_up(|node| {
         let (table_name, fields) = match &node {
@@ -108,6 +112,11 @@ pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<Lo
                     if o.column != *field.name() {
                         continue;
                     }
+                    // The column reads as a double once a factor names
+                    // it, in every period: the arithmetic is exact and
+                    // the type is one along the whole series.
+                    let real = cast(raw.clone(), DataType::Float64);
+                    expr = real.clone();
                     for (i, f) in o.factors.iter().enumerate().filter(|(_, f)| moves(f)) {
                         let inside = match (&o.anchor, &dated, &tcol_type) {
                             (Some(anchor), _, _) => {
@@ -129,7 +138,7 @@ pub fn apply_overrides(plan: LogicalPlan, overrides: &[Override]) -> DFResult<Lo
                             }
                             (None, ..) => unreachable!("refused above"),
                         };
-                        let scaled = cast(raw.clone() * lit(f.factor), field.data_type().clone());
+                        let scaled = real.clone() * lit(f.factor);
                         expr = when(inside, scaled).otherwise(expr)?;
                     }
                 }
@@ -221,6 +230,71 @@ mod tests {
             factors,
             anchor: None,
         }
+    }
+
+    /// An integer quantity scaled by a factor that is no integer reads
+    /// as the real product, not the sum of per-row floors: ten units a
+    /// month at 1.15 is 11.5 a month, 115 over ten rows, never 110.
+    #[tokio::test]
+    async fn an_integer_quantity_scaled_is_a_real_number_not_a_floor_per_row() {
+        use datafusion::arrow::array::Int64Array;
+
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("order_date", DataType::Date32, false),
+            Field::new("units", DataType::Int64, false),
+        ]));
+        let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+        let july = chrono::NaiveDate::from_ymd_opt(2026, 7, 15).expect("a date");
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Date32Array::from(vec![
+                    (july - epoch).num_days() as i32;
+                    10
+                ])),
+                Arc::new(Int64Array::from(vec![10i64; 10])),
+            ],
+        )
+        .expect("a batch");
+        ctx.register_table(
+            "lines",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("a table")),
+        )
+        .expect("registers");
+        let plan = ctx
+            .state()
+            .create_logical_plan("SELECT sum(units) AS units FROM lines")
+            .await
+            .expect("plans");
+        let replayed = apply_overrides(
+            plan,
+            &[Override {
+                table: "lines".into(),
+                column: "units".into(),
+                factors: vec![Factor {
+                    from: "2026-07-01".into(),
+                    until: None,
+                    factor: 1.15,
+                }],
+                anchor: None,
+            }],
+        )
+        .expect("rewrites");
+        let batches = ctx
+            .execute_logical_plan(replayed)
+            .await
+            .expect("executes")
+            .collect()
+            .await
+            .expect("collects");
+        let total = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("a double, not the column's integer")
+            .value(0);
+        assert!((total - 115.0).abs() < 1e-9, "{total}");
     }
 
     /// A table dated through a key: twelve rows keyed 1 to 12, no date
