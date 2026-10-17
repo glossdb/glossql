@@ -17,7 +17,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{Answered, FunctionRuntime, MISFIT, Outcome, Session};
+use glossql_session::{Answered, FunctionRuntime, MISFIT, Outcome, Session, SessionError};
 use serde_json::{Value, json};
 
 /// The answer table of the misfit point: `row` and `score`, one per
@@ -65,7 +65,7 @@ impl FunctionRuntime for MeanKernel {
         point: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, glossql_session::RuntimeRefusal> {
         assert_eq!(point, MISFIT);
         assert_eq!(spec, json!({"cells": false}));
         self.fits.fetch_add(1, Ordering::SeqCst);
@@ -117,7 +117,7 @@ impl FunctionRuntime for NanKernel {
         _point: &str,
         table: RecordBatch,
         _spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, glossql_session::RuntimeRefusal> {
         Ok(scored(vec![f64::NAN; table.num_rows()]))
     }
 }
@@ -262,6 +262,10 @@ async fn the_door_refuses_what_is_not_a_frame() {
         .execute("SELECT * FROM misfit.nothing();")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::UnknownName { name, .. } if name == "nothing"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("no aspect"), "{e}");
 
     let e = session
@@ -280,6 +284,10 @@ async fn the_door_refuses_what_is_not_a_frame() {
         .execute("SELECT * FROM misfit.suspects('x');")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::BadShape { subject, .. } if subject == "misfit.suspects"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("takes no arguments"), "{e}");
 }
 

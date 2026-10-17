@@ -77,18 +77,25 @@ type TallyKey = (String, String, i64, Option<i64>, Option<String>);
 /// coverage: a year of months, a quarter of weeks, a month of days, a
 /// year of quarters. A grain the service does not forecast is the
 /// reason the metric is inapplicable.
-fn horizon_of(resolution: Resolution) -> Result<(&'static str, usize), String> {
+fn horizon_of(resolution: Resolution) -> Result<(&'static str, usize), Unforecast> {
     match resolution {
         Resolution::Day => Ok(("day", 31)),
         Resolution::Week => Ok(("week", 13)),
         Resolution::Month => Ok(("month", 12)),
         Resolution::Quarter => Ok(("quarter", 4)),
-        Resolution::Minute | Resolution::Hour => Err(format!(
-            "the {} grain is finer than the service forecasts (day, week, month, quarter)",
-            resolution.as_str()
-        )),
-        Resolution::Year => Err("a year grain has too few periods to forecast".into()),
+        Resolution::Minute | Resolution::Hour => Err(Unforecast::TooFine(resolution.as_str())),
+        Resolution::Year => Err(Unforecast::TooFew),
     }
+}
+
+/// Why a grain is not forecast: finer than the grains the service
+/// measured its coverage at, or a year, with too few periods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum Unforecast {
+    #[error("the {0} grain is finer than the service forecasts (day, week, month, quarter)")]
+    TooFine(&'static str),
+    #[error("a year grain has too few periods to forecast")]
+    TooFew,
 }
 
 /// The totals a flow asks for: the periods left in the quarter and the
@@ -223,9 +230,12 @@ pub(crate) async fn metric_forecast_ahead(
     }
     let bound = shared.dataset.read().expect("state lock").clone();
     if bound.as_deref() != Some(dataset) {
-        return Err(SessionError::BadSubject(format!(
-            "metric_forecast_ahead('{dataset}') reads the cube of the dataset in use — USE {dataset} first"
-        )));
+        return Err(SessionError::shape(
+            dataset,
+            format!(
+                "metric_forecast_ahead('{dataset}') reads the cube of the dataset in use — USE {dataset} first"
+            ),
+        ));
     }
     let cubes = crate::cube::cubes(shared).await?;
     let served =
@@ -258,7 +268,7 @@ pub(crate) async fn metric_forecast_ahead(
         let (grain, horizon) = match horizon_of(resolution) {
             Ok(h) => h,
             Err(reason) => {
-                out.push(not_applicable(reason));
+                out.push(not_applicable(reason.to_string()));
                 continue;
             }
         };
@@ -358,10 +368,7 @@ pub(crate) async fn metric_forecast_ahead(
         if !spans.is_empty() {
             spec["totals"] = json!(spans);
         }
-        let answered = runtime
-            .table(FORECAST, table, spec)
-            .await
-            .map_err(SessionError::Runtime)?;
+        let answered = runtime.table(FORECAST, table, spec).await?;
         answers.take(shared, grain, &answered).await?;
     }
     let Answers {

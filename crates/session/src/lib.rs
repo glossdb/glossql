@@ -61,5 +61,5 @@ pub use session::{
 };
 pub use shared::{
     Answered, DoorPage, FORECAST, FunctionRuntime, MISFIT, NoRuntime, Outcome, POINTS,
-    SessionError, WHATIF, no_model, point_variable,
+    RuntimeRefusal, SessionError, WHATIF, no_model, point_variable,
 };

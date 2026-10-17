@@ -52,7 +52,10 @@ pub(crate) async fn check_declaration(
     let name = d.name.value.as_str();
     let schema = &d.schema.value;
     let bad = |detail: String| {
-        SessionError::BadSubject(format!("DECLARE ASPECT {name}: {detail} (fixture 27)"))
+        SessionError::shape(
+            name,
+            format!("DECLARE ASPECT {name}: {detail} (fixture 27)"),
+        )
     };
     let is_plan = schema["x-kind"].as_str() == Some("plan");
     let of = schema.get("x-plan-of");
@@ -101,7 +104,7 @@ pub(crate) async fn check_declaration(
 /// a plan with no serving grounding on the dataset in use.
 pub(crate) async fn unknown(shared: &Arc<Shared>, name: &str) -> SessionError {
     let bad = |detail: String| {
-        SessionError::BadSubject(format!("metric_series(plan => '{name}'): {detail}"))
+        SessionError::unknown(name, format!("metric_series(plan => '{name}'): {detail}"))
     };
     match shared.store.aspect(name).await {
         Err(e) => SessionError::from(e),

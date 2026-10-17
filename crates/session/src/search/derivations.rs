@@ -41,10 +41,13 @@ pub(crate) async fn derivation_candidates(
     table: &str,
 ) -> Result<RecordBatch, SessionError> {
     let bad =
-        |d: String| SessionError::BadSubject(format!("derivation_candidates('{table}'): {d}"));
-    let provider = resolved
-        .pin(table)
-        .ok_or_else(|| bad("no such table in the bound dataset".into()))?;
+        |d: String| SessionError::shape(table, format!("derivation_candidates('{table}'): {d}"));
+    let provider = resolved.pin(table).ok_or_else(|| {
+        SessionError::unknown(
+            table,
+            format!("derivation_candidates('{table}'): no such table in the bound dataset"),
+        )
+    })?;
     let schema = provider.schema();
 
     // Numeric columns in schema order, capped at 12.

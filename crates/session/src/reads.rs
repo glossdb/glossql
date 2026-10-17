@@ -551,15 +551,19 @@ pub(crate) async fn served_grounding(
         .clone()
         .ok_or(SessionError::NoDataset)?;
     let Some((_, kind, _)) = shared.store.aspect(aspect).await? else {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): no aspect `{aspect}` is declared"
-        )));
+        return Err(SessionError::unknown(
+            aspect,
+            format!("read.{aspect}(): no aspect `{aspect}` is declared"),
+        ));
     };
     if kind != "query" {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): `{aspect}` is a {kind} aspect — GLOSSARY() reads it; \
+        return Err(SessionError::shape(
+            aspect,
+            format!(
+                "read.{aspect}(): `{aspect}` is a {kind} aspect — GLOSSARY() reads it; \
              read. serves QUERY groundings"
-        )));
+            ),
+        ));
     }
     let scope = Scope::Subject(dataset.clone());
     let ctx = shared.read_context().await?;
@@ -570,35 +574,47 @@ pub(crate) async fn served_grounding(
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == aspect && r.state != "unassessed");
     let Some(row) = row else {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): no current grounding of `{aspect}` on `{dataset}` — \
+        return Err(SessionError::unknown(
+            aspect,
+            format!(
+                "read.{aspect}(): no current grounding of `{aspect}` on `{dataset}` — \
              `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$` grounds it"
-        )));
+            ),
+        ));
     };
     let value = row.value.ok_or_else(|| {
-        SessionError::BadSubject(format!(
-            "read.{aspect}(): the current grounding carries no value"
-        ))
+        SessionError::shape(
+            aspect,
+            format!("read.{aspect}(): the current grounding carries no value"),
+        )
     })?;
     let body: Value = serde_json::from_str(&value).map_err(|e| {
-        SessionError::BadSubject(format!("read.{aspect}(): the grounding is not JSON: {e}"))
+        SessionError::shape(
+            aspect,
+            format!("read.{aspect}(): the grounding is not JSON: {e}"),
+        )
     })?;
     if let Some(why) = body["stopped"].as_str() {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): stopped — {why}"
-        )));
+        return Err(SessionError::shape(
+            aspect,
+            format!("read.{aspect}(): stopped — {why}"),
+        ));
     }
     if body["sql"].as_str().is_none() {
-        return Err(SessionError::BadSubject(format!(
-            "read.{aspect}(): the grounding carries no `sql`"
-        )));
+        return Err(SessionError::shape(
+            aspect,
+            format!("read.{aspect}(): the grounding carries no `sql`"),
+        ));
     }
     // The record serves a grounding the catalog does not list: its
     // view did not land with the gloss. The gloss is the road.
-    Err(SessionError::BadSubject(format!(
-        "read.{aspect}(): the grounding on `{dataset}` has no view in the catalog — \
+    Err(SessionError::shape(
+        aspect,
+        format!(
+            "read.{aspect}(): the grounding on `{dataset}` has no view in the catalog — \
          `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$` lands it"
-    )))
+        ),
+    ))
 }
 
 // -- argument decoding ---------------------------------------------------
@@ -705,9 +721,10 @@ fn split_args<'a>(
                 all = true;
             }
             other => {
-                return Err(SessionError::BadSubject(format!(
-                    "unsupported read argument `{other}`"
-                )));
+                return Err(SessionError::shape(
+                    other.to_string(),
+                    format!("unsupported read argument `{other}`"),
+                ));
             }
         }
     }
@@ -759,9 +776,12 @@ async fn decode_scope(
                 None => false,
             };
             if !landed {
-                return Err(SessionError::BadSubject(format!(
-                    "`{only}` names an aspect, not a subject — read it as `subject::{only}`"
-                )));
+                return Err(SessionError::shape(
+                    only,
+                    format!(
+                        "`{only}` names an aspect, not a subject — read it as `subject::{only}`"
+                    ),
+                ));
             }
         }
         let mut resolved = resolve_path(store, use_dataset, &segments).await?;
@@ -785,10 +805,12 @@ async fn decode_scope(
             ) => (unnest(inner), Some(aspect_name(store, data_type).await?)),
             (other, aspect) => (other, aspect),
         };
-        let left_segments = path_segments(left)
-            .ok_or_else(|| SessionError::BadSubject(format!("`{left}` in a pair path")))?;
-        let right_segments = path_segments(right)
-            .ok_or_else(|| SessionError::BadSubject(format!("`{right}` in a pair path")))?;
+        let left_segments = path_segments(left).ok_or_else(|| {
+            SessionError::shape(left.to_string(), format!("`{left}` in a pair path"))
+        })?;
+        let right_segments = path_segments(right).ok_or_else(|| {
+            SessionError::shape(right.to_string(), format!("`{right}` in a pair path"))
+        })?;
         let l = resolve_column_endpoint(store, use_dataset, &left_segments).await?;
         let r = resolve_column_endpoint(store, use_dataset, &right_segments).await?;
         let pair = pair_subject(&l, op, &r);
@@ -804,9 +826,10 @@ async fn decode_scope(
         }
         _ => "",
     };
-    Err(SessionError::BadSubject(format!(
-        "`{expr}` is not a subject{road}"
-    )))
+    Err(SessionError::unknown(
+        expr.to_string(),
+        format!("`{expr}` is not a subject{road}"),
+    ))
 }
 
 /// Every landed spelling that differs from `missing` only by case —
@@ -840,10 +863,13 @@ pub(crate) fn landed_column(
     }
     match case_matches(column, pin.columns.iter().map(String::as_str)).as_slice() {
         [one] => Ok((*one).to_string()),
-        [] => Err(SessionError::BadSubject(format!(
-            "`{table}.{column}`: `{table}` has no column `{column}` — columns: {}",
-            pin.columns.join(", ")
-        ))),
+        [] => Err(SessionError::unknown(
+            format!("{table}.{column}"),
+            format!(
+                "`{table}.{column}`: `{table}` has no column `{column}` — columns: {}",
+                pin.columns.join(", ")
+            ),
+        )),
         many => Err(SessionError::AmbiguousName(format!(
             "`{table}.{column}`: {} columns of `{table}` differ from `{column}` only by case: {} — quote the one you mean",
             many.len(),
@@ -888,18 +914,20 @@ pub(crate) async fn respell_column_subject(
 /// The `::aspect` name: a bare custom "type" naming a declared aspect.
 async fn aspect_name(store: &Store, data_type: &SQLDataType) -> Result<String, SessionError> {
     let SQLDataType::Custom(name, _) = data_type else {
-        return Err(SessionError::BadSubject(format!(
-            "`::{data_type}` — the part after `::` must name a declared aspect"
-        )));
+        return Err(SessionError::unknown(
+            data_type.to_string(),
+            format!("`::{data_type}` — the part after `::` must name a declared aspect"),
+        ));
     };
     let ident = match name.0.as_slice() {
         [part] => part.as_ident(),
         _ => None,
     };
     let Some(aspect) = ident.map(|i| i.value.clone()) else {
-        return Err(SessionError::BadSubject(format!(
-            "`::{name}` — the part after `::` must name a declared aspect"
-        )));
+        return Err(SessionError::unknown(
+            name.to_string(),
+            format!("`::{name}` — the part after `::` must name a declared aspect"),
+        ));
     };
     if store.aspect(&aspect).await?.is_none() {
         return Err(SessionError::Store(glossql_glossary::Error::Unknown {

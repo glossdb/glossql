@@ -47,7 +47,11 @@ pub(crate) async fn misfit_batch(
         .expect("state lock")
         .clone()
         .ok_or(SessionError::NoDataset)?;
-    let bad = |detail: String| SessionError::BadSubject(format!("misfit.{frame}(): {detail}"));
+    let bad = |detail: String| SessionError::shape(frame, format!("misfit.{frame}(): {detail}"));
+    let unknown =
+        |detail: String| SessionError::unknown(frame, format!("misfit.{frame}(): {detail}"));
+    let unserved =
+        |detail: String| SessionError::unserved(frame, format!("misfit.{frame}(): {detail}"));
     if !shared.runtime().serves(MISFIT) {
         return Err(crate::shared::no_model(
             &format!("misfit.{frame}()"),
@@ -56,7 +60,7 @@ pub(crate) async fn misfit_batch(
     }
 
     let Some((_, kind, _)) = shared.store.aspect(frame).await? else {
-        return Err(bad(format!("no aspect `{frame}` is declared")));
+        return Err(unknown(format!("no aspect `{frame}` is declared")));
     };
     if kind != "query" {
         return Err(bad(format!(
@@ -75,7 +79,7 @@ pub(crate) async fn misfit_batch(
     let current = collapsed
         .into_iter()
         .find(|r| r.subject == dataset && r.aspect == frame)
-        .ok_or_else(|| bad(format!("no frame is glossed on `{dataset}`")))?;
+        .ok_or_else(|| unknown(format!("no frame is glossed on `{dataset}`")))?;
     if current.state != "current" {
         return Err(bad(format!(
             "the frame on `{dataset}` is {}",
@@ -192,13 +196,13 @@ pub(crate) async fn misfit_batch(
         .runtime()
         .table(MISFIT, sent, json!({ "cells": false }))
         .await
-        .map_err(|e| bad(format!("not served: the misfit service refused — {e}")))?;
+        .map_err(|e| unserved(format!("not served: the misfit service refused — {e}")))?;
     // One row per frame row, placed by `row`: the score is how far the
     // row's strangest cell lies below what is typical for its column,
     // lower stranger; the door serves it negated, so a higher misfit
     // fits the frame worse (fixture 20).
     let scores = scores_by_row(&answered.table, rows)
-        .map_err(|e| bad(format!("not served: the misfit service answered {e}")))?;
+        .map_err(|e| unserved(format!("not served: the misfit service answered {e}")))?;
     // A score the service could not read — a column whose null pattern
     // leaves no common support — comes back missing or non-finite, and
     // a non-finite score carries no ranking, so the read refuses (the

@@ -829,8 +829,7 @@ async fn reconciled(
     // The discriminator in one kernel call.
     let rec = shared
         .runtime()
-        .reconcile(&aligned, n_common, at.terms_pool)
-        .map_err(SessionError::Runtime)?;
+        .reconcile(&aligned, n_common, at.terms_pool)?;
     let mut summaries: Vec<Value> = rec["summaries"].as_array().cloned().unwrap_or_default();
     for s in &mut summaries {
         let winners = s["winners"].as_f64().unwrap_or(0.0);

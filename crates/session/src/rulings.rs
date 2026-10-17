@@ -107,9 +107,10 @@ pub async fn land(human: &Session, ruling: Ruling<'_>) -> Result<String, Session
         note,
     } = ruling;
     if !ident_path(subject, 3) {
-        return Err(SessionError::BadSubject(format!(
-            "`{subject}` is not a path subject (identifier segments, dots between)"
-        )));
+        return Err(SessionError::shape(
+            subject,
+            format!("`{subject}` is not a path subject (identifier segments, dots between)"),
+        ));
     }
     if !ident_path(aspect, 1) {
         return Err(SessionError::BadAspectName(aspect.to_string()));

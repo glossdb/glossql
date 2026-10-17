@@ -13,7 +13,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{Outcome, Session};
+use glossql_session::{Outcome, Session, SessionError};
 
 async fn session_with(actor_kind: ActorKind, id: &str, store: &Store) -> Session {
     Session::new(
@@ -221,6 +221,10 @@ async fn a_grounding_is_a_view_in_the_catalog() {
         .execute(r#"GLOSS orders ON fin AS $${"sql": "SELECT amount AS value FROM orders"}$$;"#)
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::NameTaken { name, .. } if name == "orders"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("never share a name"), "{e}");
     run(
         &session,
@@ -1061,6 +1065,10 @@ async fn the_serve_door_runs_the_current_grounding() {
         .execute("SELECT * FROM read.dso();")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::UnknownName { name, .. } if name == "dso"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("no current grounding"), "{e}");
 }
 
@@ -1290,6 +1298,10 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
         .execute("SELECT count(*) FROM metric_series();")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::UnknownName { name, .. } if name == "cube"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("no `cube` aspect"), "{e}");
     run(
         &session,
@@ -1332,6 +1344,10 @@ async fn the_cube_reads_compute_under_the_declared_cube_aspect() {
         .execute("SELECT * FROM metric_axes('revenue');")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::BadShape { subject, .. } if subject == "metric_axes"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("no arguments"), "{e}");
 }
 
@@ -1867,15 +1883,23 @@ async fn a_relationship_endpoint_must_be_a_landed_column() {
     let e = session
         .execute("DECLARE RELATIONSHIP orders.nope -> customers.id;")
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::UnknownName { name, .. } if name == "orders.nope"),
+        "{e:?}"
+    );
+    let e = e.to_string();
     assert!(e.contains("`orders` has no column `nope`"), "{e}");
     assert!(e.contains("columns: id, customer_id, amount"), "{e}");
     let e = session
         .execute("DECLARE RELATIONSHIP orders.customer_id -> parties.id;")
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::UnknownName { name, .. } if name == "parties"),
+        "{e:?}"
+    );
+    let e = e.to_string();
     assert!(
         e.contains("`parties` is not a landed table in `fin`"),
         "{e}"

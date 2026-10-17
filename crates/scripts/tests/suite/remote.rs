@@ -21,6 +21,7 @@ use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch, Str
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use glossql_scripts::{Bearer, KernelRuntime};
+use glossql_session::RuntimeRefusal;
 use glossql_session::{FORECAST, FunctionRuntime, MISFIT, WHATIF};
 use serde_json::{Value, json};
 
@@ -722,6 +723,8 @@ async fn a_wrong_bearer_is_a_refusal_by_text() {
         )
         .await
         .unwrap_err();
+    assert!(matches!(e, RuntimeRefusal::Refused(_)), "{e:?}");
+    let e = e.to_string();
     assert!(
         e.contains("refused (401") && e.contains("unauthorized"),
         "{e}"
@@ -740,6 +743,8 @@ async fn a_refusal_names_the_fields_to_repair() {
         )
         .await
         .unwrap_err();
+    assert!(matches!(e, RuntimeRefusal::Refused(_)), "{e:?}");
+    let e = e.to_string();
     assert!(e.contains("refused (422"), "{e}");
     assert!(e.contains("the specification does not fit"), "{e}");
     assert!(
@@ -790,6 +795,8 @@ async fn misfit_nulls_come_back_null_and_a_4xx_is_its_text() {
         .table(MISFIT, frame(2), json!({"cells": false}))
         .await
         .unwrap_err();
+    assert!(matches!(e, RuntimeRefusal::Refused(_)), "{e:?}");
+    let e = e.to_string();
     assert!(
         e.contains("refused (422") && e.contains("three rows"),
         "{e}"
@@ -805,6 +812,8 @@ async fn a_service_that_does_not_answer_is_reported_by_address() {
         .table(MISFIT, series(&[("m", "2026-01", Some(1.0))]), json!({}))
         .await
         .unwrap_err();
+    assert!(matches!(e, RuntimeRefusal::Unanswered(_)), "{e:?}");
+    let e = e.to_string();
     assert!(
         e.contains("did not answer") && e.contains("127.0.0.1:9"),
         "{e}"
@@ -826,7 +835,11 @@ async fn a_service_that_does_not_answer_is_reported_by_address() {
         .table(FORECAST, series(&[("m", "2026-01", Some(1.0))]), json!({}))
         .await
         .unwrap_err();
-    assert!(e.contains("fills no forecast point"), "{e}");
+    assert!(
+        matches!(&e, RuntimeRefusal::NoPoint(point) if point == "forecast"),
+        "{e:?}"
+    );
+    assert!(e.to_string().contains("fills no forecast point"), "{e}");
 }
 
 /// The walk sends every metric's monthly series as one table — member

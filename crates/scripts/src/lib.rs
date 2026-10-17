@@ -26,7 +26,7 @@ use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::compute::{CastOptions, cast_with_options, partition};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::util::display::array_value_to_string;
-use glossql_session::{Answered, FunctionRuntime, POINTS};
+use glossql_session::{Answered, FunctionRuntime, POINTS, RuntimeRefusal};
 use serde_json::{Value, json};
 
 pub use remote::{Bearer, GOOGLE_METADATA, Remote};
@@ -104,12 +104,14 @@ impl FunctionRuntime for KernelRuntime {
         point: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, RuntimeRefusal> {
         let Some(remote) = self.remotes.get(point) else {
-            return Err(format!("this runtime fills no {point} point"));
+            return Err(RuntimeRefusal::NoPoint(point.to_string()));
         };
         if table.num_rows() == 0 {
-            return Err(format!("{point}: the table holds no rows"));
+            return Err(RuntimeRefusal::Refused(format!(
+                "{point}: the table holds no rows"
+            )));
         }
         remote.table(point, table, spec).await
     }
@@ -121,8 +123,8 @@ impl FunctionRuntime for KernelRuntime {
         aligned: &[RecordBatch],
         n_common: i64,
         terms: &[String],
-    ) -> Result<Value, String> {
-        reconcile_kernel(aligned, n_common, terms.to_vec())
+    ) -> Result<Value, RuntimeRefusal> {
+        reconcile_kernel(aligned, n_common, terms.to_vec()).map_err(RuntimeRefusal::Refused)
     }
 }
 

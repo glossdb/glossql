@@ -195,60 +195,86 @@ pub(crate) async fn period_bounds(
     Ok(out)
 }
 
+/// What a scenario's body lacks: the `levers` list, a lever's
+/// `column`, `factor` or `basis`, a period or a factor it writes
+/// wrong. Each names the lever it is about — by index where the
+/// column is what is missing.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub(crate) enum ScenarioFault {
+    #[error("the body carries no `levers` list")]
+    NoLevers,
+    #[error("`levers` is empty — a scenario moves at least one declared lever")]
+    NoLever,
+    #[error("lever {0}: no `column` — a declared lever as `table.column`")]
+    NoColumn(usize),
+    #[error("lever {index}: `{column}` is not `table.column`")]
+    NotAColumn { index: usize, column: String },
+    #[error("lever `{0}`: no `factor` — an object of period to number, {{\"2027-01\": 1.15}}")]
+    NoFactor(String),
+    #[error("lever `{0}`: `factor` names no period")]
+    NoPeriod(String),
+    #[error("lever `{column}`: `{period}` is not a period — `YYYY-MM` a month, `YYYY-MM-DD` a day")]
+    NotAPeriod { column: String, period: String },
+    #[error("lever `{column}`: the factor at {period} is not a number of zero or more")]
+    NotAFactor { column: String, period: String },
+    #[error("lever `{0}`: no `basis` — why these factors")]
+    NoBasis(String),
+}
+
 /// The scenario's body, checked for shape: `levers`, each with `column`
 /// (`table.column`), `factor` (an object of period to number) and
-/// `basis`. The message names what is wrong.
-pub(crate) fn parse(name: &str, body: &Value) -> Result<Scenario, String> {
+/// `basis`. The fault names what is wrong.
+pub(crate) fn parse(name: &str, body: &Value) -> Result<Scenario, ScenarioFault> {
     let levers = body
         .get("levers")
         .and_then(Value::as_array)
-        .ok_or("the body carries no `levers` list")?;
+        .ok_or(ScenarioFault::NoLevers)?;
     if levers.is_empty() {
-        return Err("`levers` is empty — a scenario moves at least one declared lever".into());
+        return Err(ScenarioFault::NoLever);
     }
     let mut out = Vec::new();
     for (i, lever) in levers.iter().enumerate() {
-        let column = lever.get("column").and_then(Value::as_str).ok_or_else(|| {
-            format!("lever {i}: no `column` — a declared lever as `table.column`")
-        })?;
+        let column = lever
+            .get("column")
+            .and_then(Value::as_str)
+            .ok_or(ScenarioFault::NoColumn(i))?;
         let (table, col) = match column.split_once('.') {
             Some((t, c)) if !t.is_empty() && !c.is_empty() && !c.contains('.') => (t, c),
-            _ => return Err(format!("lever {i}: `{column}` is not `table.column`")),
+            _ => {
+                return Err(ScenarioFault::NotAColumn {
+                    index: i,
+                    column: column.to_string(),
+                });
+            }
         };
         let factors = lever
             .get("factor")
             .and_then(Value::as_object)
-            .ok_or_else(|| {
-                format!(
-                    "lever `{column}`: no `factor` — an object of period to number, \
-                     {{\"2027-01\": 1.15}}"
-                )
-            })?;
+            .ok_or_else(|| ScenarioFault::NoFactor(column.to_string()))?;
         if factors.is_empty() {
-            return Err(format!("lever `{column}`: `factor` names no period"));
+            return Err(ScenarioFault::NoPeriod(column.to_string()));
         }
         let mut factor = BTreeMap::new();
         for (period, f) in factors {
             if period_key(period).is_none() {
-                return Err(format!(
-                    "lever `{column}`: `{period}` is not a period — `YYYY-MM` a month, \
-                     `YYYY-MM-DD` a day"
-                ));
+                return Err(ScenarioFault::NotAPeriod {
+                    column: column.to_string(),
+                    period: period.clone(),
+                });
             }
             let f = f
                 .as_f64()
                 .filter(|f| f.is_finite() && *f >= 0.0)
-                .ok_or_else(|| {
-                    format!(
-                        "lever `{column}`: the factor at {period} is not a number of zero or more"
-                    )
+                .ok_or_else(|| ScenarioFault::NotAFactor {
+                    column: column.to_string(),
+                    period: period.clone(),
                 })?;
             factor.insert(period.clone(), f);
         }
         let basis = lever
             .get("basis")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("lever `{column}`: no `basis` — why these factors"))?;
+            .ok_or_else(|| ScenarioFault::NoBasis(column.to_string()))?;
         out.push(Lever {
             column: column.to_string(),
             table: table.to_string(),
@@ -271,9 +297,10 @@ pub(crate) async fn check(
     aspect: &str,
     body: &Value,
 ) -> Result<(), SessionError> {
-    let bad =
-        |detail: String| SessionError::BadSubject(format!("GLOSS {aspect} ON {dataset}: {detail}"));
-    let scenario = parse(aspect, body).map_err(bad)?;
+    let bad = |detail: String| {
+        SessionError::shape(aspect, format!("GLOSS {aspect} ON {dataset}: {detail}"))
+    };
+    let scenario = parse(aspect, body).map_err(|e| bad(e.to_string()))?;
     let rctx = shared.read_context().await?;
     let levers = crate::search::current_fact_values(&rctx, dataset, "lever").await?;
     for lever in &scenario.levers {
@@ -310,9 +337,11 @@ pub(crate) async fn load(
     dataset: &str,
     name: &str,
 ) -> Result<Scenario, SessionError> {
-    let bad = |detail: String| SessionError::BadSubject(format!("scenario '{name}': {detail}"));
+    let bad = |detail: String| SessionError::shape(name, format!("scenario '{name}': {detail}"));
+    let unknown =
+        |detail: String| SessionError::unknown(name, format!("scenario '{name}': {detail}"));
     let Some((schema, kind, _)) = shared.store.aspect(name).await? else {
-        return Err(bad(
+        return Err(unknown(
             "no aspect of that name is declared — a scenario is a FACT aspect declared with \
              `x-kind: scenario` (fixture 19)"
                 .into(),
@@ -332,7 +361,7 @@ pub(crate) async fn load(
             .into_iter()
             .find(|r| r.subject == dataset && r.aspect == name)
             .ok_or_else(|| {
-                bad(format!(
+                unknown(format!(
                     "nothing is glossed on `{dataset}` — `GLOSS {name} ON {dataset} AS \
                      $${{\"levers\": [...]}}$$`"
                 ))
@@ -348,7 +377,7 @@ pub(crate) async fn load(
         .as_deref()
         .and_then(|v| serde_json::from_str(v).ok())
         .ok_or_else(|| bad("the body is not JSON".into()))?;
-    parse(name, &body).map_err(bad)
+    parse(name, &body).map_err(|e| bad(e.to_string()))
 }
 
 /// The scenario's levers as the plan rewrite takes them, each placed in
@@ -1246,7 +1275,7 @@ pub(crate) async fn scenario_levers(
 /// The one argument of `scenario_points` and `scenario_levers`, and of
 /// `metric_series` in the scenario world: `scenario => '<name>'`.
 pub(crate) fn name_arg(door: &str, args: &[FunctionArg]) -> Result<String, SessionError> {
-    let refuse = |what: String| SessionError::BadSubject(format!("{door}({what})"));
+    let refuse = |what: String| SessionError::shape(door, format!("{door}({what})"));
     let meant =
         || refuse("…): the one argument is the scenario by name — `scenario => '<name>'`".into());
     let [arg] = args else {
@@ -1350,7 +1379,7 @@ mod tests {
         ];
         for (body, said) in faults {
             let e = parse("s", &body).expect_err("refused");
-            assert!(e.contains(said), "{body}: {e}");
+            assert!(e.to_string().contains(said), "{body}: {e}");
         }
     }
 
