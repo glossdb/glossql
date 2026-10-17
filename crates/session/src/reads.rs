@@ -87,6 +87,10 @@ pub(crate) struct Shared {
     /// `pages()`. The Plane hands them in (the binary embeds them); a
     /// session built without one serves none.
     pub pages: RwLock<Arc<[DoorPage]>>,
+    /// Whether a source may be a path on this machine — the laptop's
+    /// shape. A deployment has no directory and refuses one: its
+    /// filesystem is the process's own, the environment among it.
+    pub local_sources: std::sync::atomic::AtomicBool,
 }
 
 /// One dataset's tables loaded by name, each as its pinned provider.

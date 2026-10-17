@@ -614,6 +614,16 @@ enum Root {
     },
 }
 
+/// Whether a source location is a path on this machine: no scheme, or
+/// `file://`. Everything else is a location in an object store or a
+/// relational URI.
+pub fn local_location(location: &str) -> bool {
+    match location.trim().split_once("://") {
+        None => true,
+        Some((scheme, _)) => scheme.eq_ignore_ascii_case("file"),
+    }
+}
+
 impl Root {
     fn of(spec: &SourceSpec) -> Result<Self> {
         let bad = |detail: String| Error::BadSource {
@@ -621,17 +631,18 @@ impl Root {
             detail,
         };
         let location = spec.location.trim();
-        let dir = match location.split_once("://") {
-            None => PathBuf::from(location),
-            Some((scheme, path)) if scheme.eq_ignore_ascii_case("file") => PathBuf::from(path),
-            Some(_) => {
-                let (store, key) = glossql_catalog::storage::environment_store(location)
-                    .map_err(|e| bad(format!("location {location}: {e}")))?;
-                let url = Url::parse(&format!("{}/", location.trim_end_matches('/')))
-                    .map_err(|e| bad(format!("location {location}: {e}")))?;
-                return Ok(Root::Remote { url, store, key });
-            }
-        };
+        if !local_location(location) {
+            let (store, key) = glossql_catalog::storage::environment_store(location)
+                .map_err(|e| bad(format!("location {location}: {e}")))?;
+            let url = Url::parse(&format!("{}/", location.trim_end_matches('/')))
+                .map_err(|e| bad(format!("location {location}: {e}")))?;
+            return Ok(Root::Remote { url, store, key });
+        }
+        let dir = PathBuf::from(
+            location
+                .split_once("://")
+                .map_or(location, |(_, path)| path),
+        );
         let dir = dir
             .canonicalize()
             .map_err(|e| bad(format!("location {}: {e}", dir.display())))?;

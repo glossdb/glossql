@@ -97,6 +97,12 @@ pub enum SessionError {
     DropRefused { table: String, reason: String },
     #[error("streaming takes exactly one query — everything else answers through execute")]
     NotOneRead,
+    #[error(
+        "source `{name}`: `{location}` is a path on the server's own filesystem — on a deployment \
+         a source is a location in an object store (s3://…, gs://…, abfss://…) or a relational \
+         URI; a path is the laptop's shape, under --workspace"
+    )]
+    LocalSource { name: String, location: String },
     #[error("statement {index} of {total} refused: {source} — {context}")]
     Sequence {
         index: usize,
@@ -463,6 +469,7 @@ impl Session {
             shipped: RwLock::new(crate::memo::ShippedCache::new()),
             normalize_idents: config.options().sql_parser.enable_ident_normalization,
             pages: RwLock::new(Arc::from(Vec::new())),
+            local_sources: std::sync::atomic::AtomicBool::new(true),
         });
         let state = SessionStateBuilder::new()
             .with_default_features()
@@ -541,6 +548,32 @@ impl Session {
     pub fn with_pages(self, pages: Arc<[crate::reads::DoorPage]>) -> Self {
         *self.shared.pages.write().expect("pages lock") = pages;
         self
+    }
+
+    /// Whether a source may be a path on this machine. The laptop's
+    /// shape allows it; a deployment refuses it.
+    pub fn with_local_sources(self, allowed: bool) -> Self {
+        self.shared
+            .local_sources
+            .store(allowed, std::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    /// A source this server may read from: on a deployment, one in an
+    /// object store or behind a relational URI, never a path on the
+    /// server's own filesystem.
+    fn admit_source(&self, name: &str, location: &str) -> Result<(), SessionError> {
+        let local = self
+            .shared
+            .local_sources
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if !local && glossql_import::local_location(location) {
+            return Err(SessionError::LocalSource {
+                name: name.to_string(),
+                location: location.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Re-measure: re-run every measurement whose newest landing no
@@ -788,14 +821,16 @@ impl Session {
                 // SPEC.md §3 rules the `type` vocabulary; a spelling
                 // outside it is refused here, where the typo is, rather
                 // than at the first recipe against the source.
-                let spelled =
+                let setting = |key: &str| {
                     d.settings
                         .iter()
-                        .find(|s| s.key.value == "type")
+                        .find(|s| s.key.value == key)
                         .map(|s| match &s.value {
                             SettingValue::Name(n) => n.value.clone(),
                             SettingValue::String(t) | SettingValue::Number(t) => t.clone(),
-                        });
+                        })
+                };
+                let spelled = setting("type");
                 if spelled
                     .as_deref()
                     .and_then(glossql_import::SourceKind::parse)
@@ -811,6 +846,9 @@ impl Session {
                     }
                     .into());
                 }
+                // Where it lives is judged here too, before the record
+                // holds a source no recipe could read.
+                self.admit_source(&d.name.value, &setting("location").unwrap_or_default())?;
                 store.declare_source(d).await?;
                 format!("DECLARE SOURCE {}", d.name.value)
             }
@@ -1337,7 +1375,9 @@ impl Session {
                     what: "source",
                     name: source.into(),
                 }))?;
-        Ok(SourceSpec::from_settings(source, &settings)?)
+        let spec = SourceSpec::from_settings(source, &settings)?;
+        self.admit_source(&spec.name, &spec.location)?;
+        Ok(spec)
     }
 
     /// The dataset's namespace as a schema in the session's default catalog
