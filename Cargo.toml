@@ -155,4 +155,4 @@ opentelemetry-appender-tracing = "0.32"
 # becoming its parent. tower-http is in the tree through reqwest.
 tower-http = { version = "0.6", features = ["trace"] }
 opentelemetry-http = "0.32"
-tracing-opentelemetry = "0.33"
+tracing-opentelemetry = "0.34"
