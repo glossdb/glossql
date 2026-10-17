@@ -63,7 +63,7 @@ tower.workspace = true
 tempfile.workspace = true
 # Tests mint their own tokens with a key made at test time; the server
 # only ever verifies. Already in the tree through jsonwebtoken.
-ed25519-dalek = { version = "2", features = ["pkcs8"] }
+ed25519-dalek = { version = "3", features = ["pkcs8"] }
 
 [lints]
 workspace = true
