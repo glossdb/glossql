@@ -244,23 +244,10 @@ async fn month_end(period: &str) -> Result<Option<String>, SessionError> {
 /// quantile at which the actual landed, 0..1 and ordinal by
 /// construction. The band_breach detector adjudicates PITs; this door
 /// only reports.
-#[expect(
-    clippy::too_many_lines,
-    reason = "an orchestrator above the threshold; #136 extracts its phases"
-)]
 pub(crate) async fn metric_band_walk(
     shared: &Arc<Shared>,
     dataset: &str,
 ) -> Result<RecordBatch, SessionError> {
-    const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
-    /// Origins walked per metric: the last six months, each the end of
-    /// the history the month after it is forecast from.
-    const ORIGINS: usize = 6;
-    /// The months a metric needs to walk at all: one origin with the
-    /// six known values the service needs behind it. A metric with
-    /// fewer months than a full walk walks the origins it has.
-    const MIN_MONTHS: usize = 7;
-
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let anchors = crate::cube::Anchors::at(&rctx, dataset).await?;
@@ -273,149 +260,18 @@ pub(crate) async fn metric_band_walk(
     // loop has read them all: one table answers a workspace, and the
     // service forecasts the series of one request together. A metric's
     // rows are built after the answer, in the loop's order.
-    struct Walked {
-        seq: i64,
-        aspect: String,
-        aggregation: &'static str,
-        tcol: String,
-        axis_judged: bool,
-        /// The monthly series, periods as `YYYY-MM`, a NULL where the
-        /// verb could not value the month.
-        series: Vec<(String, Option<f64>)>,
-        /// The extract's last day, where its rows land finer than
-        /// monthly.
-        horizon: Option<String>,
-    }
-    enum Row {
-        Ready(Value),
-        Walked(Walked),
-    }
-
     let mut out: Vec<Row> = Vec::new();
-    let mut seq = 0i64;
     for slot in current_query_slots(&rctx, dataset).await? {
         // A plan is walked by nobody: it is not a metric (fixture 27).
         if slot.is_plan() {
             continue;
         }
-        let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
-            continue;
-        };
-        let Some(sql) = body.get("sql").and_then(Value::as_str) else {
-            continue;
-        };
-
-        // The grounding is a grain-free extract with a time axis and a
-        // `value` column; the time column by dtype, as any reader finds
-        // it. A grounding that does not plan fails the walk whole.
-        let probe = crate::plan::build_plan(shared, &ctx, sql).await?;
-        let fields = probe.schema();
-        let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
-        if !has("value") {
-            continue;
+        let seq = out.len() as i64;
+        if let Some(row) = walk_metric(shared, &ctx, dataset, &anchors, &slot, seq).await? {
+            out.push(row);
         }
-        // The judged column where a verdict stands, the first date
-        // column by dtype where none does. Only the *column* is judged:
-        // the walk's cadence stays month, the grain the service's
-        // intervals are measured at. The measurement names the axis it
-        // took, so a walk anchored on an unjudged column says so rather
-        // than reading like the cube's.
-        let sources = crate::provenance::served_sources(&probe, dataset);
-        let judged = crate::cube::judged_time_column(fields, &sources, &anchors.temporal);
-        let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
-        let Some(tcol) = judged_axis
-            .clone()
-            .or_else(|| crate::plan::date_column(fields.fields()))
-        else {
-            continue;
-        };
-        let axis_judged = judged_axis.is_some();
-        let is_ratio = has("num") && has("den");
-        let verb = crate::cube::verb_of(
-            &body,
-            is_ratio,
-            &probe,
-            dataset,
-            &anchors.behavior,
-            &anchors.behavior_gloss,
-        )
-        .verb;
-        // What one period's value is, named as the arithmetic: a flow
-        // sums, a marked stock sums the rows at its latest date, a
-        // ratio divides its summed halves — `grain_sql`'s three arms.
-        let aggregation = match verb {
-            "stock" => "latest-sum",
-            "ratio" => "ratio-of-sums",
-            _ => "sum",
-        };
-        // The series and the extract's shape, through the engine. A
-        // grounding the engine refuses at execution — a timestamp its
-        // month bucketing cannot hold, a column it cannot truncate —
-        // abstains on this metric with the engine's reason; the other
-        // metrics walk. Only a plan that does not build fails the
-        // walk whole, above.
-        let served = async {
-            let series = run_monthly(shared, &ctx, sql, &tcol, verb).await?;
-            let (horizon, sub_monthly) = extract_shape(shared, &ctx, sql, &tcol).await?;
-            Ok::<_, SessionError>((series, horizon, sub_monthly))
-        }
-        .await;
-        let (series, horizon, sub_monthly) = match served {
-            Ok(served) => served,
-            Err(e) => {
-                let Some(reason) = e.abstention() else {
-                    return Err(e);
-                };
-                out.push(Row::Ready(json!({
-                    "seq": seq, "metric": slot.aspect, "applicable": false,
-                    "reason": reason,
-                })));
-                seq += 1;
-                continue;
-            }
-        };
-        let n = series.len();
-        if n < MIN_MONTHS {
-            out.push(Row::Ready(json!({
-                "seq": seq, "metric": slot.aspect, "applicable": false,
-                "reason": format!("{n} months, need {MIN_MONTHS}"),
-            })));
-            seq += 1;
-            continue;
-        }
-        // Rows landing through the month stop mid-month when the
-        // extract does; a monthly-dated series is whole at its one
-        // row, and its horizon says nothing.
-        let horizon = horizon.filter(|_| sub_monthly);
-        // The YYYY-MM head: periods arrive in the column's display
-        // form, and a shorter one is no period the walk can read.
-        let mut monthly = Vec::with_capacity(n);
-        for (period, value) in series {
-            let Some(month) = period.get(..7) else {
-                return Err(SessionError::Runtime(format!(
-                    "period {period:?} has no month"
-                )));
-            };
-            monthly.push((month.to_string(), value));
-        }
-        out.push(Row::Walked(Walked {
-            seq,
-            aspect: slot.aspect.clone(),
-            aggregation,
-            tcol,
-            axis_judged,
-            series: monthly,
-            horizon,
-        }));
-        seq += 1;
     }
 
-    // The one table, as the contract has the walk send it: `member`
-    // the metric, `period` the month, one value column, every row
-    // actual. The service walks the last six months of every member
-    // and answers one row per member, walked month and level, with the
-    // actual and the PIT; a member it cannot walk fails alone, in the
-    // answer's `errors`.
     let walked: Vec<&Walked> = out
         .iter()
         .filter_map(|row| match row {
@@ -426,33 +282,12 @@ pub(crate) async fn metric_band_walk(
     let answered = if walked.is_empty() {
         None
     } else {
-        let (mut members, mut periods, mut values) = (Vec::new(), Vec::new(), Vec::new());
-        for w in &walked {
-            for (period, value) in &w.series {
-                members.push(w.aspect.as_str());
-                periods.push(period.as_str());
-                values.push(*value);
-            }
-        }
-        let table = RecordBatch::try_new(
-            Arc::new(Schema::new(vec![
-                Field::new("member", DataType::Utf8, false),
-                Field::new("period", DataType::Utf8, false),
-                Field::new("value", DataType::Float64, true),
-            ])),
-            vec![
-                Arc::new(StringArray::from(members)),
-                Arc::new(StringArray::from(periods)),
-                Arc::new(Float64Array::from(values)),
-            ],
-        )
-        .map_err(SessionError::from)?;
         let spec = json!({
             "targets": ["value"], "origins": ORIGINS, "horizon": 1, "levels": LEVELS,
         });
         Some(
             runtime
-                .table(FORECAST, table, spec)
+                .table(FORECAST, walk_table(&walked)?, spec)
                 .await
                 .map_err(SessionError::Runtime)?,
         )
@@ -461,127 +296,318 @@ pub(crate) async fn metric_band_walk(
 
     let mut rows = Vec::new();
     for row in out {
-        let walked = match row {
-            Row::Ready(value) => {
-                rows.push(value);
-                continue;
+        match row {
+            Row::Ready(value) => rows.push(value),
+            Row::Walked(walked) => {
+                let served = served_points(&walked, &points).await?;
+                rows.extend(metric_rows(walked, served, &errors, served_by.as_deref()));
             }
-            Row::Walked(walked) => walked,
-        };
-        let Walked {
-            seq,
-            aspect,
-            aggregation,
-            tcol,
-            axis_judged,
-            series,
-            horizon,
-        } = walked;
-        let n = series.len();
-        let mut served: Vec<Value> = Vec::new();
-        for (t, (period, value)) in series.iter().enumerate() {
-            let Some(actual) = *value else { continue };
-            let Some(point) = points.get(&(aspect.clone(), period.clone())) else {
-                continue;
-            };
-            let q = point.levels;
-            // The newest month is partial while the extract's horizon
-            // falls inside it: a short sum against a corridor fitted
-            // on whole months reads as a breach that is only the
-            // calendar. The point serves its bands and its actual so
-            // far, withholds the PIT, and says so — the detector
-            // scores the newest complete month instead.
-            let partial =
-                match (t == n - 1, horizon.as_deref()) {
-                    (true, Some(h)) => month_end(period).await?.filter(|end| h < end.as_str()).map(
-                        |end| {
-                            format!(
-                                "partial: the extract ends {h}, before the period's last day {end}"
-                            )
-                        },
-                    ),
-                    _ => None,
-                };
-            // A series that repeats values moves on a grid (a ratio over
-            // a fixed field, a count). A corridor narrower than the
-            // grid's step, with the actual inside a step of the median,
-            // is the model's noise around a value the series takes
-            // exactly: the PIT read against it says nothing, so the
-            // point serves its band and actual and withholds the PIT
-            // with the reason. An actual further off than a step is a
-            // real move whatever the corridor; a series that never
-            // repeats has no grid, and a tight corridor on it is earned.
-            let history: Vec<f64> = series[..t].iter().filter_map(|(_, v)| *v).collect();
-            let corridor = q[4] - q[0];
-            let withheld = match resolution_of(&history) {
-                _ if partial.is_some() => partial.clone(),
-                Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
-                    Some(format!(
-                        "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
-                    ))
-                }
-                Some(res) if res == 0.0 && history.first() == Some(&actual) => {
-                    Some("the training series is constant and the actual equals it".to_string())
-                }
-                _ => None,
-            };
-            served.push(json!({
-                "period": period, "actual": actual,
-                "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
-                "pit": withheld.is_none().then_some(point.pit).flatten(),
-                "withheld": withheld,
-                // Always present: the detector reads it as a struct
-                // field, and a field no point carries is not in the
-                // body's struct at all.
-                "partial": partial.is_some(),
-            }));
-        }
-
-        // A metric the service walked nowhere, and said why, is
-        // inapplicable with its reasons; one it walked nowhere without
-        // a word (every recent month unvalued) serves its head alone.
-        if served.is_empty()
-            && let Some(reasons) = errors.get(&aspect)
-        {
-            rows.push(json!({
-                "seq": seq, "metric": aspect, "applicable": false,
-                "reason": reasons.join("; "),
-                "served_by": served_by,
-            }));
-            continue;
-        }
-        for (point_seq, p) in served.iter().enumerate() {
-            let mut row = serde_json::Map::new();
-            row.insert("seq".into(), json!(seq));
-            row.insert("metric".into(), json!(aspect));
-            row.insert("applicable".into(), json!(true));
-            row.insert("grain".into(), json!("month"));
-            row.insert("aggregation".into(), json!(aggregation));
-            row.insert("trained_on".into(), json!(n as i64));
-            row.insert("axis".into(), json!(tcol));
-            row.insert("axis_judged".into(), json!(axis_judged));
-            row.insert("served_by".into(), json!(served_by));
-            row.insert("point_seq".into(), json!(point_seq as i64));
-            for (k, val) in p.as_object().expect("point object") {
-                row.insert(k.clone(), val.clone());
-            }
-            rows.push(Value::Object(row));
-        }
-        if served.is_empty() {
-            rows.push(json!({
-                "seq": seq, "metric": aspect, "applicable": true,
-                "grain": "month",
-                "aggregation": aggregation,
-                "trained_on": n as i64,
-                "axis": tcol, "axis_judged": axis_judged,
-                "served_by": served_by,
-            }));
         }
     }
     if rows.is_empty() {
         rows.push(json!({}));
     }
     rows_batch(rows, band_shape())
+}
+
+const LEVELS: [f64; 5] = [0.05, 0.10, 0.50, 0.90, 0.95];
+/// Origins walked per metric: the last six months, each the end of
+/// the history the month after it is forecast from.
+const ORIGINS: usize = 6;
+/// The months a metric needs to walk at all: one origin with the
+/// six known values the service needs behind it. A metric with
+/// fewer months than a full walk walks the origins it has.
+const MIN_MONTHS: usize = 7;
+
+/// One metric read for the walk, before the service answers.
+struct Walked {
+    seq: i64,
+    aspect: String,
+    aggregation: &'static str,
+    tcol: String,
+    axis_judged: bool,
+    /// The monthly series, periods as `YYYY-MM`, a NULL where the
+    /// verb could not value the month.
+    series: Vec<(String, Option<f64>)>,
+    /// The extract's last day, where its rows land finer than
+    /// monthly.
+    horizon: Option<String>,
+}
+
+/// One metric's place in the answer: a row already decided — an
+/// abstention with its reason — or a series the service walks.
+enum Row {
+    Ready(Value),
+    Walked(Walked),
+}
+
+/// One grounding read for the walk: its series and the extract's
+/// shape, through the engine. The grounding is a grain-free extract
+/// with a time axis and a `value` column — the judged column where a
+/// verdict stands, the first date column by dtype where none does;
+/// only the column is judged, the walk's cadence stays month, the
+/// grain the service's intervals are measured at, and the measurement
+/// names the axis it took. A grounding that does not plan fails the
+/// walk whole; one the engine refuses at execution — a timestamp its
+/// month bucketing cannot hold, a column it cannot truncate — abstains
+/// with the engine's reason, and the other metrics walk. None for a
+/// grounding the walk passes over: no body, no `value`, no time axis.
+async fn walk_metric(
+    shared: &Arc<Shared>,
+    ctx: &datafusion::prelude::SessionContext,
+    dataset: &str,
+    anchors: &crate::cube::Anchors,
+    slot: &crate::search::QuerySlot,
+    seq: i64,
+) -> Result<Option<Row>, SessionError> {
+    let Ok(body) = serde_json::from_str::<Value>(&slot.body) else {
+        return Ok(None);
+    };
+    let Some(sql) = body.get("sql").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let probe = crate::plan::build_plan(shared, ctx, sql).await?;
+    let fields = probe.schema();
+    let has = |name: &str| fields.fields().iter().any(|f| f.name() == name);
+    if !has("value") {
+        return Ok(None);
+    }
+    let sources = crate::provenance::served_sources(&probe, dataset);
+    let judged = crate::cube::judged_time_column(fields, &sources, &anchors.temporal);
+    let judged_axis = judged.as_ref().map(|(column, ..)| column.clone());
+    let Some(tcol) = judged_axis
+        .clone()
+        .or_else(|| crate::plan::date_column(fields.fields()))
+    else {
+        return Ok(None);
+    };
+    let axis_judged = judged_axis.is_some();
+    let is_ratio = has("num") && has("den");
+    let verb = crate::cube::verb_of(
+        &body,
+        is_ratio,
+        &probe,
+        dataset,
+        &anchors.behavior,
+        &anchors.behavior_gloss,
+    )
+    .verb;
+    // What one period's value is, named as the arithmetic: a flow
+    // sums, a marked stock sums the rows at its latest date, a
+    // ratio divides its summed halves — `grain_sql`'s three arms.
+    let aggregation = match verb {
+        "stock" => "latest-sum",
+        "ratio" => "ratio-of-sums",
+        _ => "sum",
+    };
+    let abstain = |reason: String| {
+        Row::Ready(json!({
+            "seq": seq, "metric": slot.aspect, "applicable": false, "reason": reason,
+        }))
+    };
+    let served = async {
+        let series = run_monthly(shared, ctx, sql, &tcol, verb).await?;
+        let (horizon, sub_monthly) = extract_shape(shared, ctx, sql, &tcol).await?;
+        Ok::<_, SessionError>((series, horizon, sub_monthly))
+    }
+    .await;
+    let (series, horizon, sub_monthly) = match served {
+        Ok(served) => served,
+        Err(e) => {
+            let Some(reason) = e.abstention() else {
+                return Err(e);
+            };
+            return Ok(Some(abstain(reason)));
+        }
+    };
+    let n = series.len();
+    if n < MIN_MONTHS {
+        return Ok(Some(abstain(format!("{n} months, need {MIN_MONTHS}"))));
+    }
+    // Rows landing through the month stop mid-month when the
+    // extract does; a monthly-dated series is whole at its one
+    // row, and its horizon says nothing.
+    let horizon = horizon.filter(|_| sub_monthly);
+    // The YYYY-MM head: periods arrive in the column's display
+    // form, and a shorter one is no period the walk can read.
+    let mut monthly = Vec::with_capacity(n);
+    for (period, value) in series {
+        let Some(month) = period.get(..7) else {
+            return Err(SessionError::Runtime(format!(
+                "period {period:?} has no month"
+            )));
+        };
+        monthly.push((month.to_string(), value));
+    }
+    Ok(Some(Row::Walked(Walked {
+        seq,
+        aspect: slot.aspect.clone(),
+        aggregation,
+        tcol,
+        axis_judged,
+        series: monthly,
+        horizon,
+    })))
+}
+
+/// The one table, as the contract has the walk send it: `member` the
+/// metric, `period` the month, one value column, every row actual.
+/// The service walks the last six months of every member and answers
+/// one row per member, walked month and level, with the actual and
+/// the PIT; a member it cannot walk fails alone, in the answer's
+/// `errors`.
+fn walk_table(walked: &[&Walked]) -> Result<RecordBatch, SessionError> {
+    let (mut members, mut periods, mut values) = (Vec::new(), Vec::new(), Vec::new());
+    for w in walked {
+        for (period, value) in &w.series {
+            members.push(w.aspect.as_str());
+            periods.push(period.as_str());
+            values.push(*value);
+        }
+    }
+    RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("member", DataType::Utf8, false),
+            Field::new("period", DataType::Utf8, false),
+            Field::new("value", DataType::Float64, true),
+        ])),
+        vec![
+            Arc::new(StringArray::from(members)),
+            Arc::new(StringArray::from(periods)),
+            Arc::new(Float64Array::from(values)),
+        ],
+    )
+    .map_err(SessionError::from)
+}
+
+/// One metric's walked points as the rows carry them: each known
+/// month the service answered, with its bands, its actual and its
+/// PIT — withheld, with the reason, where the point says nothing.
+/// The newest month is partial while the extract's horizon falls
+/// inside it: a short sum against a corridor fitted on whole months
+/// reads as a breach that is only the calendar, so the point serves
+/// its bands and its actual so far and the detector scores the newest
+/// complete month instead. A series that repeats values moves on a
+/// grid (a ratio over a fixed field, a count): a corridor narrower
+/// than the grid's step, with the actual inside a step of the median,
+/// is the model's noise around a value the series takes exactly, and
+/// the PIT read against it says nothing. An actual further off than a
+/// step is a real move whatever the corridor; a series that never
+/// repeats has no grid, and a tight corridor on it is earned.
+async fn served_points(
+    walked: &Walked,
+    points: &HashMap<(String, String), Point>,
+) -> Result<Vec<Value>, SessionError> {
+    let Walked {
+        aspect,
+        series,
+        horizon,
+        ..
+    } = walked;
+    let n = series.len();
+    let mut served: Vec<Value> = Vec::new();
+    for (t, (period, value)) in series.iter().enumerate() {
+        let Some(actual) = *value else { continue };
+        let Some(point) = points.get(&(aspect.clone(), period.clone())) else {
+            continue;
+        };
+        let q = point.levels;
+        let partial = match (t == n - 1, horizon.as_deref()) {
+            (true, Some(h)) => month_end(period)
+                .await?
+                .filter(|end| h < end.as_str())
+                .map(|end| {
+                    format!("partial: the extract ends {h}, before the period's last day {end}")
+                }),
+            _ => None,
+        };
+        let history: Vec<f64> = series[..t].iter().filter_map(|(_, v)| *v).collect();
+        let corridor = q[4] - q[0];
+        let withheld = match resolution_of(&history) {
+            _ if partial.is_some() => partial.clone(),
+            Some(res) if res > 0.0 && corridor < res && (actual - q[2]).abs() <= res => {
+                Some(format!(
+                    "corridor {corridor:.3e} is narrower than the series' resolution {res:.3e} and the actual sits within it"
+                ))
+            }
+            Some(res) if res == 0.0 && history.first() == Some(&actual) => {
+                Some("the training series is constant and the actual equals it".to_string())
+            }
+            _ => None,
+        };
+        served.push(json!({
+            "period": period, "actual": actual,
+            "p05": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p95": q[4],
+            "pit": withheld.is_none().then_some(point.pit).flatten(),
+            "withheld": withheld,
+            // Always present: the detector reads it as a struct
+            // field, and a field no point carries is not in the
+            // body's struct at all.
+            "partial": partial.is_some(),
+        }));
+    }
+    Ok(served)
+}
+
+/// One metric's rows: a point each where the service walked it; its
+/// head alone where it walked nowhere without a word (every recent
+/// month unvalued); inapplicable with its reasons where it walked
+/// nowhere and said why.
+fn metric_rows(
+    walked: Walked,
+    served: Vec<Value>,
+    errors: &HashMap<String, Vec<String>>,
+    served_by: Option<&str>,
+) -> Vec<Value> {
+    let Walked {
+        seq,
+        aspect,
+        aggregation,
+        tcol,
+        axis_judged,
+        series,
+        ..
+    } = walked;
+    let n = series.len();
+    let mut rows = Vec::new();
+    if served.is_empty()
+        && let Some(reasons) = errors.get(&aspect)
+    {
+        rows.push(json!({
+            "seq": seq, "metric": aspect, "applicable": false,
+            "reason": reasons.join("; "),
+            "served_by": served_by,
+        }));
+        return rows;
+    }
+    for (point_seq, p) in served.iter().enumerate() {
+        let mut row = serde_json::Map::new();
+        row.insert("seq".into(), json!(seq));
+        row.insert("metric".into(), json!(aspect));
+        row.insert("applicable".into(), json!(true));
+        row.insert("grain".into(), json!("month"));
+        row.insert("aggregation".into(), json!(aggregation));
+        row.insert("trained_on".into(), json!(n as i64));
+        row.insert("axis".into(), json!(tcol));
+        row.insert("axis_judged".into(), json!(axis_judged));
+        row.insert("served_by".into(), json!(served_by));
+        row.insert("point_seq".into(), json!(point_seq as i64));
+        for (k, val) in p.as_object().expect("point object") {
+            row.insert(k.clone(), val.clone());
+        }
+        rows.push(Value::Object(row));
+    }
+    if served.is_empty() {
+        rows.push(json!({
+            "seq": seq, "metric": aspect, "applicable": true,
+            "grain": "month",
+            "aggregation": aggregation,
+            "trained_on": n as i64,
+            "axis": tcol, "axis_judged": axis_judged,
+            "served_by": served_by,
+        }));
+    }
+    rows
 }
 
 /// One walked point as the service answered it: the band value per
