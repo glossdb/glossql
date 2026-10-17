@@ -1,0 +1,58 @@
+---
+source: crates/session/src/cube.rs
+expression: shown
+---
+-- total flow
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("") AS dimension, Utf8("") AS member, period, CAST(value AS Float64) AS value, CAST(NULL AS Float64) AS num, CAST(NULL AS Float64) AS den, Utf8("flow") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: date_trunc(Utf8("month"),t.d) AS period, sum(t.value) AS value
+      Aggregate: groupBy=[[CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs))]], aggr=[[sum(t.value)]]
+        Filter: CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+          Projection: t.d, t.value, t.num, t.den, t.r
+            TableScan: t
+-- member flow
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("r") AS dimension, member, period, CAST(value AS Float64) AS value, CAST(NULL AS Float64) AS num, CAST(NULL AS Float64) AS den, Utf8("flow") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: date_trunc(Utf8("month"),t.d) AS period, t.r AS member, sum(t.value) AS value
+      Aggregate: groupBy=[[CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)), CAST(t.r AS Utf8View)]], aggr=[[sum(t.value)]]
+        Filter: t.r IS NOT NULL AND CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+          Projection: t.d, t.value, t.num, t.den, t.r
+            TableScan: t
+-- total ratio
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("") AS dimension, Utf8("") AS member, period, CAST(value AS Float64) AS value, CAST(num AS Float64) AS num, CAST(den AS Float64) AS den, Utf8("ratio") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: date_trunc(Utf8("month"),t.d) AS period, sum(t.num) / nullif(sum(t.den), Int64(0)) AS value, sum(t.num) AS num, sum(t.den) AS den
+      Aggregate: groupBy=[[CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs))]], aggr=[[sum(t.num), sum(t.den)]]
+        Filter: CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+          Projection: t.d, t.value, t.num, t.den, t.r
+            TableScan: t
+-- member ratio
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("r") AS dimension, member, period, CAST(value AS Float64) AS value, CAST(num AS Float64) AS num, CAST(den AS Float64) AS den, Utf8("ratio") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: date_trunc(Utf8("month"),t.d) AS period, t.r AS member, sum(t.num) / nullif(sum(t.den), Int64(0)) AS value, sum(t.num) AS num, sum(t.den) AS den
+      Aggregate: groupBy=[[CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)), CAST(t.r AS Utf8View)]], aggr=[[sum(t.num), sum(t.den)]]
+        Filter: t.r IS NOT NULL AND CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+          Projection: t.d, t.value, t.num, t.den, t.r
+            TableScan: t
+-- total stock
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("") AS dimension, Utf8("") AS member, period, CAST(value AS Float64) AS value, CAST(NULL AS Float64) AS num, CAST(NULL AS Float64) AS den, Utf8("stock") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: period, sum(t.value) AS value
+      Aggregate: groupBy=[[period]], aggr=[[sum(t.value)]]
+        Filter: rk = Int64(1)
+          Projection: CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) AS period, t.value, rank() PARTITION BY [date_trunc(Utf8("month"),t.d)] ORDER BY [t.d DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW AS rk
+            WindowAggr: windowExpr=[[rank() PARTITION BY [CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs))] ORDER BY [t.d DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW]]
+              Filter: CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+                Projection: t.d, t.value, t.num, t.den, t.r
+                  TableScan: t
+-- member stock
+Projection: Utf8("m") AS metric, Utf8("actual") AS world, Utf8("r") AS dimension, member, period, CAST(value AS Float64) AS value, CAST(NULL AS Float64) AS num, CAST(NULL AS Float64) AS den, Utf8("stock") AS behavior
+  Filter: value IS NOT NULL AND period IS NOT NULL
+    Projection: period, member, sum(t.value) AS value
+      Aggregate: groupBy=[[period, member]], aggr=[[sum(t.value)]]
+        Filter: rk = Int64(1)
+          Projection: CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) AS period, CAST(t.r AS Utf8View) AS member, t.value, rank() PARTITION BY [date_trunc(Utf8("month"),t.d), t.r] ORDER BY [t.d DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW AS rk
+            WindowAggr: windowExpr=[[rank() PARTITION BY [CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)), t.r] ORDER BY [t.d DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW]]
+              Filter: t.r IS NOT NULL AND CAST(date_trunc(Utf8("month"), t.d) AS Timestamp(µs)) > CAST(Utf8("2024-12-15T00:00:00") AS Timestamp(ns))
+                Projection: t.d, t.value, t.num, t.den, t.r
+                  TableScan: t

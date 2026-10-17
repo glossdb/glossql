@@ -14,8 +14,11 @@
 //! that unit in a plan; [`TYPE`] spells it.
 
 use datafusion::arrow::array::{Array, ArrayRef, RecordBatch, TimestampMicrosecondArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
+use datafusion::common::ScalarValue;
 use datafusion::error::DataFusionError;
+use datafusion::functions::expr_fn::date_trunc;
+use datafusion::logical_expr::{Expr, cast, lit};
 use datafusion::prelude::SessionContext;
 use std::sync::Arc;
 
@@ -43,6 +46,26 @@ pub(crate) fn bucket(time: &str, resolution: Resolution) -> String {
         "CAST(date_trunc('{}', {time}) AS {TYPE})",
         resolution.as_str()
     )
+}
+
+/// [`bucket`] as an expression, for a plan built rather than parsed.
+pub(crate) fn bucket_expr(time: Expr, resolution: Resolution) -> Expr {
+    cast(date_trunc(lit(resolution.as_str()), time), data_type())
+}
+
+/// A period as an expression.
+pub(crate) fn scalar(period: i64) -> Expr {
+    lit(ScalarValue::TimestampMicrosecond(Some(period), None))
+}
+
+/// A window's rung as the engine's interval expression — `48 months`,
+/// `3 years`, `13 weeks` as the cube aspect writes them.
+pub(crate) fn rung(text: &str) -> Result<Expr, DataFusionError> {
+    ScalarValue::try_from_string(
+        text.to_string(),
+        &DataType::Interval(IntervalUnit::MonthDayNano),
+    )
+    .map(lit)
 }
 
 /// `k` periods at a resolution as the engine's interval: calendar
@@ -310,6 +333,42 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn the_expression_twins_agree_with_the_text() {
+        use datafusion::arrow::array::RecordBatch;
+        use datafusion::datasource::{MemTable, provider_as_source};
+        use datafusion::logical_expr::{LogicalPlanBuilder, col};
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![field("p", false)])),
+            vec![Arc::new(TimestampMicrosecondArray::from(vec![at(
+                "2026-01-04",
+            )]))],
+        )
+        .unwrap();
+        let table = MemTable::try_new(batch.schema(), vec![vec![batch]]).unwrap();
+        let plan = LogicalPlanBuilder::scan("p", provider_as_source(Arc::new(table)), None)
+            .unwrap()
+            .project(vec![
+                bucket_expr(col("p"), Resolution::Week).alias("w"),
+                (bucket_expr(col("p"), Resolution::Month) - rung("2 months").unwrap()).alias("m"),
+                scalar(at("2024-02-29")).alias("s"),
+            ])
+            .unwrap()
+            .build()
+            .unwrap();
+        let batches = SessionContext::new()
+            .execute_logical_plan(plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let got: Vec<String> = (0..3)
+            .map(|i| date(column(batches[0].column(i)).unwrap().value(0)))
+            .collect();
+        assert_eq!(got, ["2025-12-29", "2025-11-01", "2024-02-29"]);
     }
 
     #[test]

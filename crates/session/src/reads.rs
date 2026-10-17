@@ -313,6 +313,15 @@ impl Shared {
         self.session_ctx().runtime_env()
     }
 
+    /// A scratch context on the plane's pool and spill space, with the
+    /// session's configuration and none of its catalog: what a plan
+    /// over a batch the session already holds — a cube's cells, a
+    /// service's answer — runs through.
+    pub fn scratch_ctx(&self) -> SessionContext {
+        let session = self.session_ctx();
+        SessionContext::new_with_config_rt(session.copied_config(), session.runtime_env())
+    }
+
     /// The session's own context — set right after construction, so
     /// absence is a construction bug, never a runtime state.
     pub fn session_ctx(&self) -> SessionContext {

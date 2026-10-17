@@ -38,16 +38,16 @@ use std::sync::Arc;
 use datafusion::arrow::array::{
     Array, Float64Array, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
-use datafusion::arrow::compute::{CastOptions, cast_with_options};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
+use datafusion::logical_expr::{col, try_cast};
 use serde_json::{Value, json};
 
 use super::rows_batch;
 use crate::cube::Resolution;
 use crate::period;
 use crate::reads::Shared;
-use crate::session::{FORECAST, SessionError};
+use crate::session::{Answered, FORECAST, SessionError};
 
 /// The levels asked, the walk's own: the 80% band is p10 to p90, the
 /// 90% band p05 to p95.
@@ -312,10 +312,7 @@ pub(crate) async fn metric_forecast_ahead(
             }
         }
     }
-    let mut points: HashMap<PointKey, Quantiles> = HashMap::new();
-    let mut coverage: HashMap<(&'static str, i64, Option<i64>), Held> = HashMap::new();
-    let mut errors: HashMap<String, Vec<String>> = HashMap::new();
-    let mut served_by: Option<String> = None;
+    let mut answers = Answers::default();
     for ((grain, spans), members) in &groups {
         let (mut names, mut periods, mut values, mut status) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -367,24 +364,14 @@ pub(crate) async fn metric_forecast_ahead(
             .table(FORECAST, table, spec)
             .await
             .map_err(SessionError::Runtime)?;
-        points
-            .extend(fold_points(&answered.table).map_err(|e| {
-                SessionError::Runtime(format!("the forecast service answered {e}"))
-            })?);
-        for ((step, span), held) in fold_coverage(&answered.answer) {
-            coverage.insert((grain, step, span), held);
-        }
-        for (member, said) in super::bands::walk_errors(&answered.answer) {
-            errors.entry(member).or_default().extend(said);
-        }
-        served_by.get_or_insert_with(|| {
-            format!(
-                "{} {}",
-                answered.answer["service"].as_str().unwrap_or("?"),
-                answered.answer["version"].as_str().unwrap_or("?")
-            )
-        });
+        answers.take(shared, grain, &answered).await?;
     }
+    let Answers {
+        points,
+        coverage,
+        errors,
+        served_by,
+    } = answers;
 
     let mut rows = Vec::new();
     for row in out {
@@ -451,72 +438,108 @@ pub(crate) async fn metric_forecast_ahead(
     rows_batch(rows, forecast_shape())
 }
 
-/// The answer's rows by member, step and span: one row per level
-/// folded into one point. A level nobody asked, or a point missing a
-/// level, is a wrong answer.
-fn fold_points(answer: &RecordBatch) -> Result<HashMap<PointKey, Quantiles>, String> {
-    let column = |name: &str| {
-        answer
-            .column_by_name(name)
-            .ok_or_else(|| format!("no `{name}` column"))
-    };
-    let cast = |name: &str, to: DataType| {
-        cast_with_options(
-            column(name)?,
-            &to,
-            &CastOptions {
-                safe: true,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| format!("`{name}` does not read as {to}: {e}"))
-    };
-    let member = column("member")?;
-    let step = cast("step", DataType::Int64)?;
-    let span = cast("span", DataType::Int64)?;
-    let level = cast("level", DataType::Float64)?;
-    let value = cast("value", DataType::Float64)?;
-    let (step, span) = (
-        step.as_any().downcast_ref::<Int64Array>().ok_or("`step`")?,
-        span.as_any().downcast_ref::<Int64Array>().ok_or("`span`")?,
-    );
-    let (level, value) = (
-        level
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .ok_or("`level`")?,
-        value
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .ok_or("`value`")?,
-    );
-    let mut out: HashMap<PointKey, [Option<f64>; 5]> = HashMap::new();
-    for i in 0..answer.num_rows() {
-        if member.is_null(i) || step.is_null(i) || level.is_null(i) {
-            continue;
-        }
-        let key = (
-            array_value_to_string(member, i).map_err(|e| e.to_string())?,
-            step.value(i),
-            (!span.is_null(i)).then(|| span.value(i)),
+/// What the service's answers add up to across the requests: the
+/// points by member, step and span; the coverage by grain, step and
+/// span; each member's errors; and who served.
+#[derive(Default)]
+struct Answers {
+    points: HashMap<PointKey, Quantiles>,
+    coverage: HashMap<(&'static str, i64, Option<i64>), Held>,
+    errors: HashMap<String, Vec<String>>,
+    served_by: Option<String>,
+}
+
+impl Answers {
+    async fn take(
+        &mut self,
+        shared: &Arc<Shared>,
+        grain: &'static str,
+        answered: &Answered,
+    ) -> Result<(), SessionError> {
+        self.points.extend(
+            fold_points(shared, &answered.table)
+                .await
+                .map_err(|e| SessionError::Runtime(format!("the forecast service answered {e}")))?,
         );
-        let asked = LEVELS
-            .iter()
-            .position(|l| (l - level.value(i)).abs() < 1e-9)
-            .ok_or_else(|| format!("a level {} nobody asked", level.value(i)))?;
-        out.entry(key).or_default()[asked] = (!value.is_null(i)).then(|| value.value(i));
+        for ((step, span), held) in fold_coverage(&answered.answer) {
+            self.coverage.insert((grain, step, span), held);
+        }
+        for (member, said) in super::bands::walk_errors(&answered.answer) {
+            self.errors.entry(member).or_default().extend(said);
+        }
+        self.served_by.get_or_insert_with(|| {
+            format!(
+                "{} {}",
+                answered.answer["service"].as_str().unwrap_or("?"),
+                answered.answer["version"].as_str().unwrap_or("?")
+            )
+        });
+        Ok(())
     }
-    out.into_iter()
-        .map(|(key, q)| {
-            let mut levels = [0.0; 5];
-            for (slot, v) in levels.iter_mut().zip(q) {
-                *slot = v.ok_or_else(|| {
-                    format!("{} at step {} without every level asked", key.0, key.1)
-                })?;
-            }
-            Ok((key, levels))
+}
+
+/// The answer's rows by member, step and span, one row per level
+/// folded into one point: an aggregate over the answer batch — each
+/// asked level's value its own column — run on the plane's pool. A
+/// level nobody asked, or a point missing a level, is a wrong answer.
+async fn fold_points(
+    shared: &Arc<Shared>,
+    answer: &RecordBatch,
+) -> Result<HashMap<PointKey, Quantiles>, String> {
+    let keys = || {
+        vec![
+            col("member"),
+            try_cast(col("step"), DataType::Int64).alias("step"),
+            try_cast(col("span"), DataType::Int64).alias("span"),
+        ]
+    };
+    let plan = super::answer_source(answer)
+        .and_then(|a| {
+            let mut columns = keys();
+            columns.extend([col("level"), col("value")]);
+            a.project(columns)?
+                .filter(
+                    col("member")
+                        .is_not_null()
+                        .and(col("step").is_not_null())
+                        .and(col("level").is_not_null()),
+                )?
+                .aggregate(
+                    vec![col("member"), col("step"), col("span")],
+                    super::level_columns(&LEVELS)?,
+                )?
+                .build()
         })
-        .collect()
+        .map_err(|e| e.to_string())?;
+    let mut out = HashMap::new();
+    for b in super::run_answer(shared, plan)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let column = |name: &str| {
+            b.column_by_name(name)
+                .ok_or_else(|| format!("the fold served no `{name}`"))
+        };
+        let member = column("member")?;
+        let ints = |name: &str| {
+            column(name)?
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| format!("`{name}` did not read as a number"))
+        };
+        let (step, span) = (ints("step")?, ints("span")?);
+        for i in 0..b.num_rows() {
+            let member = array_value_to_string(member, i).map_err(|e| e.to_string())?;
+            let who = format!("{member} at step {}", step.value(i));
+            let key = (
+                member,
+                step.value(i),
+                (!span.is_null(i)).then(|| span.value(i)),
+            );
+            out.insert(key, super::levels_of::<5>(&b, i, &who)?);
+        }
+    }
+    Ok(out)
 }
 
 /// The answer object's `coverage`: per step and span, the service's
