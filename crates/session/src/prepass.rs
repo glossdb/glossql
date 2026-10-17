@@ -155,11 +155,11 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashMap<String, Str
 pub(crate) fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
     let mut parser = Parser::new(&PostgreSqlDialect {})
         .try_with_sql(sql)
-        .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))?;
+        .map_err(|e| SessionError::shape(what, format!("{what} does not parse: {e}")))?;
     let query = parser
         .parse_query()
         .map(|q| *q)
-        .map_err(|e| SessionError::BadSubject(format!("{what} does not parse: {e}")))?;
+        .map_err(|e| SessionError::shape(what, format!("{what} does not parse: {e}")))?;
     // `parse_query` stops at the end of one query and says nothing about
     // what follows, so a body of `SELECT 1; DROP TABLE t` planned as
     // `SELECT 1` and dropped the rest in silence. A door serves one
@@ -172,10 +172,13 @@ pub(crate) fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
     // Refusing it would refuse the ordinary way a body is written.
     while parser.consume_token(&Token::SemiColon) {}
     if parser.peek_token().token != Token::EOF {
-        return Err(SessionError::BadSubject(format!(
-            "{what} is more than one query — a door serves one, and \
+        return Err(SessionError::shape(
+            what,
+            format!(
+                "{what} is more than one query — a door serves one, and \
              what follows it would not run"
-        )));
+            ),
+        ));
     }
     Ok(query)
 }
@@ -190,7 +193,7 @@ async fn body_of(
         Door::Serve(aspect) => served_grounding(shared, &resolved.views, aspect).await,
         Door::Shipped(name) => crate::library::read_sql(name)
             .map(str::to_string)
-            .ok_or_else(|| SessionError::BadSubject(format!("no shipped read `{name}`"))),
+            .ok_or_else(|| SessionError::unknown(name, format!("no shipped read `{name}`"))),
         // Both replay a declared grounding; a body that is not SQL names
         // no doors and walks to nothing.
         Door::Replay(_, name) => Ok(served_grounding(shared, &resolved.views, name)
@@ -224,13 +227,16 @@ fn refuse_subject_relations(q: &mut Query, resolved: &Resolved) -> Result<(), Se
             continue;
         };
         if pin.schema().field_with_name(&c.value).is_ok() {
-            return Err(SessionError::BadSubject(format!(
-                "`{t}.{c}` is a subject, not a table: an extraction \
+            return Err(SessionError::shape(
+                format!("{t}.{c}"),
+                format!(
+                    "`{t}.{c}` is a subject, not a table: an extraction \
                  (SELECT fn() FROM {t}.{c}) is its own statement — run it, then \
                  compose its measurement through GLOSSARY({t}.{c}::aspect)",
-                t = t.value,
-                c = c.value
-            )));
+                    t = t.value,
+                    c = c.value
+                ),
+            ));
         }
     }
     Ok(())
@@ -290,10 +296,10 @@ async fn resolve_door(
     if path.iter().any(|p| p == &key) {
         // The path IS the error message; a set of everything expanded
         // would refuse a diamond, which is legitimate.
-        return Err(SessionError::BadSubject(format!(
-            "read cycle: {} -> {key}",
-            path.join(" -> ")
-        )));
+        return Err(SessionError::shape(
+            key.clone(),
+            format!("read cycle: {} -> {key}", path.join(" -> ")),
+        ));
     }
     if done.contains(&key) {
         return Ok(());
@@ -312,19 +318,23 @@ async fn resolve_door(
     // table, aliased `v`, built right here.
     if let Door::Column(subject) = &door {
         let Some((table, column)) = subject.split_once('.') else {
-            return Err(SessionError::BadSubject(format!(
-                "subject_column wants 'table.column', got '{subject}'"
-            )));
+            return Err(SessionError::shape(
+                subject,
+                format!("subject_column wants 'table.column', got '{subject}'"),
+            ));
         };
         let provider = resolved.pins.get(table).cloned().ok_or_else(|| {
-            SessionError::BadSubject(format!(
-                "subject_column: no table `{table}` in the bound dataset"
-            ))
+            SessionError::unknown(
+                table,
+                format!("subject_column: no table `{table}` in the bound dataset"),
+            )
         })?;
         let plan = LogicalPlanBuilder::scan(table, provider_as_source(provider), None)
             .and_then(|b| b.project(vec![ident(column).alias("v")]))
             .and_then(|b| b.build())
-            .map_err(|e| SessionError::BadSubject(format!("subject_column('{subject}'): {e}")))?;
+            .map_err(|e| {
+                SessionError::unknown(subject, format!("subject_column('{subject}'): {e}"))
+            })?;
         done.insert(key.clone());
         resolved.plans.insert(key, Arc::new(plan));
         return Ok(());
@@ -398,7 +408,7 @@ async fn memo_shipped(
             ))
             .await?;
             let plan = scratch.plan(&door.key()).ok_or_else(|| {
-                SessionError::BadSubject(format!("{} was not planned", door.what()))
+                SessionError::shape(door.what(), format!("{} was not planned", door.what()))
             })?;
             let frame = ctx.execute_logical_plan((*plan).clone()).await?;
             let physical = crate::execution::physical(frame).await?;
@@ -468,7 +478,10 @@ async fn expand(
     let plan = state
         .statement_to_plan(stmt)
         .await
-        .map_err(|e| SessionError::BadSubject(format!("not served: {}: {e}", door.what())))?;
+        .map_err(|e| SessionError::Engine {
+            context: format!("not served: {}: ", door.what()),
+            source: e,
+        })?;
 
     done.insert(key.clone());
     match door {

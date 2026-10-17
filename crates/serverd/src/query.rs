@@ -76,7 +76,21 @@ pub async fn query(
                 }
             }
         }
-        Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+        Err(e) => fail(status_of(&e), e.to_string()),
+    }
+}
+
+/// The status a refusal answers with, by its class: a name the record
+/// does not hold is not found; a door whose service refused, did not
+/// answer or is not named is unavailable; everything else is the
+/// statement's own fault.
+fn status_of(e: &SessionError) -> StatusCode {
+    match e {
+        SessionError::UnknownName { .. } => StatusCode::NOT_FOUND,
+        SessionError::NotServed { .. } | SessionError::Service(_) => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
     }
 }
 

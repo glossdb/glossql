@@ -169,7 +169,10 @@ struct Check<'a> {
 
 impl Check<'_> {
     fn bad(&self, d: String) -> SessionError {
-        SessionError::BadSubject(format!("relationship_checks('{}'): {d}", self.dataset))
+        SessionError::shape(
+            self.dataset,
+            format!("relationship_checks('{}'): {d}", self.dataset),
+        )
     }
 
     fn pin(&self, t: &str) -> Result<Arc<dyn TableProvider>, SessionError> {

@@ -285,12 +285,7 @@ pub(crate) async fn metric_band_walk(
         let spec = json!({
             "targets": ["value"], "origins": ORIGINS, "horizon": 1, "levels": LEVELS,
         });
-        Some(
-            runtime
-                .table(FORECAST, walk_table(&walked)?, spec)
-                .await
-                .map_err(SessionError::Runtime)?,
-        )
+        Some(runtime.table(FORECAST, walk_table(&walked)?, spec).await?)
     };
     let (points, errors, served_by) = answer_of(shared, answered.as_ref(), &LEVELS).await?;
 

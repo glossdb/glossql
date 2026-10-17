@@ -162,7 +162,7 @@ async fn column_shapes(
     resolved: &crate::shared::Resolved,
     door: &str,
 ) -> Result<(Vec<ColShape>, HashMap<String, i64>), SessionError> {
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut tables: Vec<String> = resolved.tables();
     tables.sort();
     let mut cols: Vec<ColShape> = Vec::new();
@@ -689,7 +689,7 @@ fn passes(
     door: &str,
     arms: &[Arm],
 ) -> Result<Vec<Pass>, SessionError> {
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut groups: Vec<Pass> = Vec::new();
     for (i, arm) in arms.iter().enumerate() {
         let provider = resolved
@@ -736,7 +736,7 @@ fn distinct_values(
     use datafusion::functions_nested::expr_fn::make_array;
     use datafusion::logical_expr::col;
 
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let width = shape.len();
     let mut tables: Vec<&str> = Vec::new();
     for &i in members {
@@ -802,7 +802,7 @@ fn shared_counts(
     use datafusion::common::{Column, NullEquality};
     use datafusion::logical_expr::{JoinType, col};
 
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let keys: (Vec<Column>, Vec<Column>) = (
         (0..width)
             .map(|k| Column::from_qualified_name(format!("a.v{k}")))
@@ -849,7 +849,7 @@ async fn pair_counts(
 ) -> Result<Counts, SessionError> {
     use datafusion::logical_expr::col;
 
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut counts = Counts::new(arms.len());
     for (shape, members) in passes(resolved, door, arms)?
         .iter()
@@ -894,7 +894,7 @@ async fn arm_distinct(
 ) -> Result<Vec<i64>, SessionError> {
     use datafusion::logical_expr::col;
 
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut out = vec![0i64; arms.len()];
     for (shape, members) in passes(resolved, door, arms)? {
         let members: Vec<usize> = members.into_iter().filter(|i| wanted.contains(i)).collect();
@@ -938,7 +938,7 @@ async fn cross_counts(
     from: &HashSet<usize>,
     to: &HashSet<usize>,
 ) -> Result<HashMap<(usize, usize), i64>, SessionError> {
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut out = HashMap::new();
     for (shape, members) in passes(resolved, door, arms)? {
         let f: Vec<usize> = members
@@ -986,7 +986,7 @@ async fn combo_filled(
 ) -> Result<Vec<i64>, SessionError> {
     use datafusion::logical_expr::when;
 
-    let bad = |d: String| SessionError::BadSubject(format!("{door}: {d}"));
+    let bad = |d: String| SessionError::shape(door, format!("{door}: {d}"));
     let mut out = vec![0i64; combos.len()];
     let mut tables: Vec<&str> = Vec::new();
     for (table, _, _) in combos {

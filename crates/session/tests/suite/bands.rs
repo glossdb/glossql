@@ -38,7 +38,7 @@ impl FunctionRuntime for ThinKernel {
         point: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, glossql_session::RuntimeRefusal> {
         assert_eq!(point, FORECAST);
         assert_eq!(spec["targets"], json!(["value"]));
         assert_eq!(spec["horizon"], json!(1));

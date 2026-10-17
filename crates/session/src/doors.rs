@@ -248,6 +248,38 @@ pub(crate) fn door_reads(idents: &IdentNormalizer, f: &TableFactor, reads: &mut 
     }
 }
 
+/// The one quoted string a door takes — `door('<what>')` — or the
+/// refusal that spells the call.
+fn one_quoted(
+    a: &datafusion::sql::sqlparser::ast::TableFunctionArgs,
+    door: &str,
+    what: &str,
+    example: &str,
+) -> Result<String, SessionError> {
+    single_string_arg(a).ok_or_else(|| {
+        SessionError::shape(
+            door,
+            format!("{door} takes one quoted {what}: {door}('{example}')"),
+        )
+    })
+}
+
+/// A door that takes no arguments, with where its narrowing rides.
+fn no_arguments(
+    a: &datafusion::sql::sqlparser::ast::TableFunctionArgs,
+    door: &str,
+    road: &str,
+) -> Result<(), SessionError> {
+    if a.args.is_empty() {
+        Ok(())
+    } else {
+        Err(SessionError::shape(
+            door,
+            format!("{door}() takes no arguments — {road}"),
+        ))
+    }
+}
+
 /// The one quoted string argument of a door, if that is what the args
 /// hold.
 fn single_string_arg(a: &datafusion::sql::sqlparser::ast::TableFunctionArgs) -> Option<String> {
@@ -278,11 +310,14 @@ pub(crate) async fn compute_batch(
         if shared.idents().normalize(prefix.clone()) == "misfit" {
             let Some(a) = args else { return Ok(None) };
             if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(format!(
-                    "misfit.{}() takes no arguments — the frame is the aspect's \
+                return Err(SessionError::shape(
+                    format!("misfit.{}", door.value),
+                    format!(
+                        "misfit.{}() takes no arguments — the frame is the aspect's \
                      grounding (fixture 20)",
-                    door.value
-                )));
+                        door.value
+                    ),
+                ));
             }
             return Ok(Some(
                 (Box::pin(crate::misfit::misfit_batch(shared, &door.value)).await?).into(),
@@ -304,37 +339,19 @@ pub(crate) async fn compute_batch(
         // columns, computed here because a static SQL body cannot spell
         // a schema it does not know.
         ("derivation_candidates", Some(a)) => {
-            let table = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "derivation_candidates takes one quoted table: \
-                     derivation_candidates('table')"
-                        .into(),
-                )
-            })?;
+            let table = one_quoted(a, "derivation_candidates", "table", "table")?;
             Ok(Some(
                 (crate::search::derivation_candidates(shared, resolved, &table).await?).into(),
             ))
         }
         ("behavior_anchors", Some(a)) => {
-            let subject = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "behavior_anchors takes one quoted subject: \
-                     behavior_anchors('table.column')"
-                        .into(),
-                )
-            })?;
+            let subject = one_quoted(a, "behavior_anchors", "subject", "table.column")?;
             Ok(Some(
                 (crate::behavior::behavior_anchors(shared, resolved, &subject).await?).into(),
             ))
         }
         ("metric_band_walk", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_band_walk takes one quoted dataset: \
-                     metric_band_walk('dataset')"
-                        .into(),
-                )
-            })?;
+            let dataset = one_quoted(a, "metric_band_walk", "dataset", "dataset")?;
             Ok(Some(
                 (crate::search::metric_band_walk(shared, &dataset).await?).into(),
             ))
@@ -344,8 +361,9 @@ pub(crate) async fn compute_batch(
         // needs no door but this one.
         ("source_files", Some(a)) => {
             let source = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "source_files takes one quoted source: source_files('erp')".into(),
+                SessionError::shape(
+                    "source_files",
+                    "source_files takes one quoted source: source_files('erp')".to_string(),
                 )
             })?;
             let settings =
@@ -369,62 +387,36 @@ pub(crate) async fn compute_batch(
         // The groundings the cube does not chart — facts and relations
         // — served whole, the value where the frame is one row.
         ("fact_values", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "fact_values() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "fact_values", "filters ride WHERE")?;
             Ok(Some((crate::search::fact_values(shared).await?).into()))
         }
         // What feeds each grounding: the served fields and the table
         // columns they descend from — the cube's provenance walk as
         // rows, for a page that draws lineage.
         ("metric_sources", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "metric_sources() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "metric_sources", "filters ride WHERE")?;
             Ok(Some((crate::search::metric_sources(shared).await?).into()))
         }
         // The recorded walk, flattened: what `metric_bands` landed for
         // the bound dataset, one row per metric per point.
         ("band_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "band_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "band_points", "filters ride WHERE")?;
             Ok(Some((crate::search::band_points(shared).await?).into()))
         }
         // The forecast at an origin: the door behind `metric_forecast`,
         // and the two reads over what it landed.
         ("metric_forecast_ahead", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "metric_forecast_ahead takes one quoted dataset: \
-                     metric_forecast_ahead('dataset')"
-                        .into(),
-                )
-            })?;
+            let dataset = one_quoted(a, "metric_forecast_ahead", "dataset", "dataset")?;
             Ok(Some(
                 (crate::search::metric_forecast_ahead(shared, &dataset).await?).into(),
             ))
         }
         ("forecast_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "forecast_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "forecast_points", "filters ride WHERE")?;
             Ok(Some((crate::search::forecast_points(shared).await?).into()))
         }
         ("forecast_coverage", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "forecast_coverage() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "forecast_coverage", "filters ride WHERE")?;
             Ok(Some(
                 (crate::search::forecast_coverage(shared).await?).into(),
             ))
@@ -447,57 +439,29 @@ pub(crate) async fn compute_batch(
         // Every plan against the actual and the forecast
         // (crate::plan_world, #117).
         ("plan_points", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "plan_points() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "plan_points", "filters ride WHERE")?;
             Ok(Some((crate::plan_world::plan_points(shared).await?).into()))
         }
         ("relationship_checks", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "relationship_checks takes one quoted dataset: \
-                     relationship_checks('dataset')"
-                        .into(),
-                )
-            })?;
+            let dataset = one_quoted(a, "relationship_checks", "dataset", "dataset")?;
             Ok(Some(
                 (crate::search::relationship_checks(shared, &dataset).await?).into(),
             ))
         }
         ("grounding_collisions", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "grounding_collisions takes one quoted dataset: \
-                     grounding_collisions('dataset')"
-                        .into(),
-                )
-            })?;
+            let dataset = one_quoted(a, "grounding_collisions", "dataset", "dataset")?;
             Ok(Some(
                 (crate::search::grounding_collisions(shared, &dataset).await?).into(),
             ))
         }
         ("relationship_candidates", Some(a)) => {
-            let dataset = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "relationship_candidates takes one quoted dataset: \
-                     relationship_candidates('dataset')"
-                        .into(),
-                )
-            })?;
+            let dataset = one_quoted(a, "relationship_candidates", "dataset", "dataset")?;
             Ok(Some(
                 (crate::search::relationship_candidates(shared, &dataset).await?).into(),
             ))
         }
         ("hierarchy_candidates", Some(a)) => {
-            let table = single_string_arg(a).ok_or_else(|| {
-                SessionError::BadSubject(
-                    "hierarchy_candidates takes one quoted table: \
-                     hierarchy_candidates('table')"
-                        .into(),
-                )
-            })?;
+            let table = one_quoted(a, "hierarchy_candidates", "table", "table")?;
             Ok(Some(
                 (crate::search::hierarchy_candidates(shared, resolved, &table).await?).into(),
             ))
@@ -514,11 +478,7 @@ pub(crate) async fn compute_batch(
             ))
         }
         ("metric_axes", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "metric_axes() takes no arguments — filters ride WHERE".into(),
-                ));
-            }
+            no_arguments(a, "metric_axes", "filters ride WHERE")?;
             Ok(Some((crate::cube::metric_axes_batch(shared).await?).into()))
         }
         // The `USE`'d dataset, as a relation — the one thing a read
@@ -530,11 +490,7 @@ pub(crate) async fn compute_batch(
         // its MCP resources, for a client that has the statement tool
         // and nothing else.
         ("pages", Some(a)) => {
-            if !a.args.is_empty() {
-                return Err(SessionError::BadSubject(
-                    "pages() takes no arguments — `WHERE uri = '…'` reads one".into(),
-                ));
-            }
+            no_arguments(a, "pages", "`WHERE uri = '…'` reads one")?;
             Ok(Some(pages_batch(shared).into()))
         }
         // The store's relations, readable as plain tables. Which names

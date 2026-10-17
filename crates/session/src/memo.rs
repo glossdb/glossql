@@ -99,13 +99,14 @@ impl ShippedCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Memo, SessionError>>,
     {
+        let read = key.read.clone();
         self.inner
             .try_get_with(key, async {
                 self.runs.fetch_add(1, Ordering::Relaxed);
                 run().await.map(Arc::new)
             })
             .await
-            .map_err(|e: Arc<SessionError>| SessionError::BadSubject(e.to_string()))
+            .map_err(|e: Arc<SessionError>| SessionError::unserved(read, e.to_string()))
     }
 }
 

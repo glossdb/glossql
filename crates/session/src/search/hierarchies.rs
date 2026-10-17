@@ -54,10 +54,14 @@ pub(crate) async fn hierarchy_candidates(
     resolved: &crate::shared::Resolved,
     table: &str,
 ) -> Result<RecordBatch, SessionError> {
-    let bad = |d: String| SessionError::BadSubject(format!("hierarchy_candidates('{table}'): {d}"));
-    let provider = resolved
-        .pin(table)
-        .ok_or_else(|| bad("no such table in the bound dataset".into()))?;
+    let bad =
+        |d: String| SessionError::shape(table, format!("hierarchy_candidates('{table}'): {d}"));
+    let provider = resolved.pin(table).ok_or_else(|| {
+        SessionError::unknown(
+            table,
+            format!("hierarchy_candidates('{table}'): no such table in the bound dataset"),
+        )
+    })?;
     let ctx = shared.session_ctx();
     let state = detector_state(&ctx);
     let run = |plan| async {

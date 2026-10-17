@@ -84,11 +84,14 @@ pub async fn resolve_path(
             })
         }
         [_, _] => relative(segments.join(".")),
-        _ => Err(SessionError::BadSubject(format!(
-            "`{}` — up to dataset.table.column, and `{}` is not a declared dataset",
-            segments.join("."),
-            segments[0]
-        ))),
+        _ => Err(SessionError::unknown(
+            segments[0].clone(),
+            format!(
+                "`{}` — up to dataset.table.column, and `{}` is not a declared dataset",
+                segments.join("."),
+                segments[0]
+            ),
+        )),
     }
 }
 
@@ -110,17 +113,21 @@ pub async fn resolve_endpoint(
             (dataset.clone(), table.clone())
         }
         _ => {
-            return Err(SessionError::BadSubject(format!(
-                "relationship endpoint `{}` must be [dataset.]table.column or [dataset.]table.(a, b)",
-                table_segments.join(".")
-            )));
+            return Err(SessionError::shape(
+                table_segments.join("."),
+                format!(
+                    "relationship endpoint `{}` must be [dataset.]table.column or [dataset.]table.(a, b)",
+                    table_segments.join(".")
+                ),
+            ));
         }
     };
     let key = match columns {
         [] => {
-            return Err(SessionError::BadSubject(format!(
-                "relationship endpoint `{table}` names no key column"
-            )));
+            return Err(SessionError::shape(
+                table.to_string(),
+                format!("relationship endpoint `{table}` names no key column"),
+            ));
         }
         [one] => one.clone(),
         many => format!("({})", many.join(", ")),
@@ -149,10 +156,13 @@ pub async fn resolve_column_endpoint(
             )
             .await
         }
-        _ => Err(SessionError::BadSubject(format!(
-            "relationship endpoint `{}` must be table.column",
-            segments.join(".")
-        ))),
+        _ => Err(SessionError::shape(
+            segments.join("."),
+            format!(
+                "relationship endpoint `{}` must be table.column",
+                segments.join(".")
+            ),
+        )),
     }
 }
 
@@ -200,8 +210,9 @@ pub(crate) fn subject_column_arg(
     {
         return Some(Ok(subject.clone()));
     }
-    Some(Err(SessionError::BadSubject(
-        "subject_column takes one quoted subject: subject_column('table.column')".into(),
+    Some(Err(SessionError::shape(
+        "subject_column",
+        "subject_column takes one quoted subject: subject_column('table.column')".to_string(),
     )))
 }
 

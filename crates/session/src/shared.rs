@@ -37,8 +37,24 @@ pub enum SessionError {
     DataFusion(#[from] DataFusionError),
     #[error("no dataset in use — USE one first")]
     NoDataset,
-    #[error("not a subject: {0}")]
-    BadSubject(String),
+    /// A name the record does not hold — an aspect, a table, a column,
+    /// a dataset, a grounding, a shipped read — with what stands
+    /// instead where the refusal can say.
+    #[error("not a subject: {detail}")]
+    UnknownName { name: String, detail: String },
+    /// A name the record holds under another kind: a metric and a
+    /// table of one dataset never share a name.
+    #[error("not a subject: {detail}")]
+    NameTaken { name: String, detail: String },
+    /// A door's service refused the call, did not answer, or is not
+    /// named: `door` the door, `detail` the service's word or the road.
+    #[error("not a subject: {detail}")]
+    NotServed { door: String, detail: String },
+    /// A shape the statement cannot take — a door's arguments, a body
+    /// that is no scenario's, a grounding with no SQL, a path that is
+    /// no subject — `subject` as it was spelled.
+    #[error("not a subject: {detail}")]
+    BadShape { subject: String, detail: String },
     /// The planner's `table '…' not found`, carrying what the name could
     /// have been. The engine's text is kept whole in front.
     #[error("{0}")]
@@ -57,6 +73,11 @@ pub enum SessionError {
     DetectorNotExtractable(String),
     #[error("function runtime: {0}")]
     Runtime(String),
+    /// The runtime behind the seam did not answer a call
+    /// ([`RuntimeRefusal`]): no service at the point, a service that
+    /// refused or did not answer, a kernel it does not carry.
+    #[error("function runtime: {0}")]
+    Service(#[from] RuntimeRefusal),
     /// Arrow refused an array operation inside a door — a cast, a
     /// concatenation, a cell's rendering.
     #[error("function runtime: {0}")]
@@ -126,11 +147,46 @@ impl SessionError {
     /// statement's failure and has none.
     pub(crate) fn abstention(&self) -> Option<String> {
         match self {
-            SessionError::BadSubject(reason) => Some(reason.clone()),
+            SessionError::UnknownName { detail, .. }
+            | SessionError::NameTaken { detail, .. }
+            | SessionError::NotServed { detail, .. }
+            | SessionError::BadShape { detail, .. } => Some(detail.clone()),
             SessionError::Engine { context, source } => {
                 Some(format!("{context}{}", memory_road(source)))
             }
             _ => None,
+        }
+    }
+
+    /// A name the record does not hold.
+    pub(crate) fn unknown(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        SessionError::UnknownName {
+            name: name.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// A name the record holds under another kind.
+    pub(crate) fn taken(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        SessionError::NameTaken {
+            name: name.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// A door whose service refused, did not answer or is not named.
+    pub(crate) fn unserved(door: impl Into<String>, detail: impl Into<String>) -> Self {
+        SessionError::NotServed {
+            door: door.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// A shape the statement cannot take.
+    pub(crate) fn shape(subject: impl Into<String>, detail: impl Into<String>) -> Self {
+        SessionError::BadShape {
+            subject: subject.into(),
+            detail: detail.into(),
         }
     }
 
@@ -241,13 +297,32 @@ pub fn point_variable(point: &str, suffix: &str) -> String {
 /// by name, with what to set. The server itself never carries a model;
 /// a service the deployment names answers the point.
 pub fn no_model(door: &str, point: &str) -> SessionError {
-    SessionError::BadSubject(format!(
-        "not served: {door} needs the {point} service and this server names none — \
-         set {} (and {} or {}) to a service that serves /{point}",
-        point_variable(point, "URL"),
-        point_variable(point, "TOKEN"),
-        point_variable(point, "AUDIENCE"),
-    ))
+    SessionError::unserved(
+        door,
+        format!(
+            "not served: {door} needs the {point} service and this server names none — \
+             set {} (and {} or {}) to a service that serves /{point}",
+            point_variable(point, "URL"),
+            point_variable(point, "TOKEN"),
+            point_variable(point, "AUDIENCE"),
+        ),
+    )
+}
+
+/// Why a runtime did not answer a call: the point has no service, the
+/// runtime carries no such kernel, the service refused in its own
+/// words, or it did not answer — no address, no connection, an answer
+/// that did not arrive whole or does not read.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum RuntimeRefusal {
+    #[error("this runtime fills no {0} point")]
+    NoPoint(String),
+    #[error("this runtime carries no reconcile kernel")]
+    NoKernel,
+    #[error("{0}")]
+    Refused(String),
+    #[error("{0}")]
+    Unanswered(String),
 }
 
 #[async_trait::async_trait]
@@ -281,8 +356,8 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         point: &str,
         _table: RecordBatch,
         _spec: Value,
-    ) -> Result<Answered, String> {
-        Err(format!("this runtime fills no {point} point"))
+    ) -> Result<Answered, RuntimeRefusal> {
+        Err(RuntimeRefusal::NoPoint(point.to_string()))
     }
 
     /// The stock/flow discriminator behind the behavior-evidence door:
@@ -302,8 +377,8 @@ pub trait FunctionRuntime: Send + Sync + std::fmt::Debug {
         _aligned: &[RecordBatch],
         _n_common: i64,
         _terms: &[String],
-    ) -> Result<Value, String> {
-        Err("this runtime carries no reconcile kernel".into())
+    ) -> Result<Value, RuntimeRefusal> {
+        Err(RuntimeRefusal::NoKernel)
     }
 }
 

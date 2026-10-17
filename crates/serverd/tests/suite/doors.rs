@@ -124,6 +124,51 @@ async fn a_dataset_the_workspace_does_not_hold_is_a_404() {
     assert!(body["error"].as_str().unwrap().contains("fin"), "{body}");
 }
 
+/// A refusal answers by its class: a name the record does not hold is
+/// not found, a door whose service is not named is unavailable, and
+/// the statement's own fault is unprocessable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refusal_answers_by_its_class() {
+    let (app, _dir) = app_on_fin().await;
+    let ask = |sql: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::post("/fin/query")
+                        .header(header::AUTHORIZATION, common::bearer("dev-human"))
+                        .body(Body::from(sql))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            (status, body_json(response).await)
+        }
+    };
+    let (status, body) = ask("SELECT * FROM read.nope()").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("no aspect `nope`"),
+        "{body}"
+    );
+    let (status, body) = ask("SELECT * FROM metric_forecast_ahead('fin')").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("names none"),
+        "{body}"
+    );
+    let (status, body) = ask("SELECT * FROM metric_axes('revenue')").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("takes no arguments"),
+        "{body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_query_door_streams_arrow_ipc() {
     let (app, _dir) = app_on_fin().await;

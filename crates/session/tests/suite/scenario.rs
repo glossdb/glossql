@@ -55,7 +55,7 @@ impl FunctionRuntime for WhatIf {
         point: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, glossql_session::RuntimeRefusal> {
         assert_eq!(point, WHATIF);
         assert_eq!(spec["targets"], json!(["value"]));
         assert_eq!(spec["levels"], json!([0.1, 0.5, 0.9]));

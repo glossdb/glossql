@@ -175,10 +175,11 @@ async fn settings(
         .iter()
         .find(|a| a.name == "cube")
         .ok_or_else(|| {
-            SessionError::BadSubject(
+            SessionError::unknown(
+                "cube",
                 "no `cube` aspect is declared — the KPI kit ships it: the resolution \
                  floor and the window ladder the cube is computed under"
-                    .into(),
+                    .to_string(),
             )
         })?;
     let schema: Value = serde_json::from_str(&aspect.schema).unwrap_or(Value::Null);
@@ -1486,8 +1487,8 @@ impl Surface {
             .get_with(key, async {
                 match derive(shared, &head, grain, window.as_deref()).await {
                     Ok(cube) => Arc::new(cube),
-                    Err(Abstain(reason)) => {
-                        let mut fact = Fact::abstain(&slot.aspect, reason);
+                    Err(abstained) => {
+                        let mut fact = Fact::abstain(&slot.aspect, abstained.text());
                         fact.plan_of = slot.plan_of.clone();
                         Arc::new(Cube {
                             fact,
@@ -1668,7 +1669,7 @@ pub(crate) async fn fact_at_write(
 ) -> Result<Fact, SessionError> {
     Ok(match write_fact(shared, dataset, subject, aspect).await {
         Ok(fact) => fact,
-        Err(Abstain(reason)) => Fact::abstain(aspect, reason),
+        Err(abstained) => Fact::abstain(aspect, abstained.text()),
     })
 }
 
@@ -1681,12 +1682,20 @@ async fn write_fact(
     let bound = shared.dataset.read().expect("state lock").clone();
     if bound.as_deref() != Some(dataset) {
         let here = bound.map_or("no dataset".to_string(), |b| format!("`{b}`"));
-        return Err(Abstain(format!(
-            "not judged from here: the call is bound to {here} — `USE {dataset};` and \
-             metric_axes() judges it"
-        )));
+        return Err(Abstain::shape(
+            aspect,
+            format!(
+                "not judged from here: the call is bound to {here} — `USE {dataset};` and \
+                 metric_axes() judges it"
+            ),
+        ));
     }
-    let withheld = || Abstain("no serving grounding: the slot is withheld as contested".into());
+    let withheld = || {
+        Abstain::shape(
+            aspect,
+            "no serving grounding: the slot is withheld as contested",
+        )
+    };
     let surface = Surface::load(shared).await?.ok_or_else(withheld)?;
     // A metric's slot or a plan's: a plan's grounding write is judged
     // as a metric's is (fixture 27).
@@ -1887,8 +1896,8 @@ async fn build_metric(
         // the plan over the digest-covered surface, so no write flips
         // one without missing the key. The grain check is the one
         // data-derived abstention, and `build` binds it itself.
-        Err(Abstain(reason)) => Cube {
-            fact: Fact::abstain(&slot.aspect, reason),
+        Err(abstained) => Cube {
+            fact: Fact::abstain(&slot.aspect, abstained.text()),
             cells: RecordBatch::new_empty(series_schema()),
             version_bound: None,
         },
@@ -1900,17 +1909,31 @@ async fn build_metric(
 }
 
 /// Why a metric's cube is not built — the text the fact row carries.
-struct Abstain(String);
+struct Abstain(SessionError);
+
+impl Abstain {
+    /// A grounding whose shape the cube cannot build on: `subject` the
+    /// metric or the part of its frame the reason is about.
+    fn shape(subject: impl Into<String>, detail: impl Into<String>) -> Self {
+        Abstain(SessionError::shape(subject, detail))
+    }
+
+    /// The reason as the fact row carries it: the refusal's own text
+    /// where it is about one subject, the whole refusal otherwise.
+    fn text(&self) -> String {
+        self.0.abstention().unwrap_or_else(|| self.0.to_string())
+    }
+}
 
 impl From<SessionError> for Abstain {
     fn from(e: SessionError) -> Self {
-        Abstain(e.to_string())
+        Abstain(e)
     }
 }
 
 impl From<DataFusionError> for Abstain {
     fn from(e: DataFusionError) -> Self {
-        Abstain(e.to_string())
+        Abstain(SessionError::DataFusion(e))
     }
 }
 
@@ -1944,7 +1967,7 @@ async fn plan(
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
-        return Err(Abstain("no value column".into()));
+        return Err(Abstain::shape(&slot.aspect, "no value column"));
     }
     let grain = declared_grain(&body, fields)?;
     // Which table columns each served field descends from — the judged
@@ -2053,14 +2076,14 @@ async fn frame(
     probe: Option<datafusion::logical_expr::LogicalPlan>,
 ) -> Result<(Value, String, datafusion::logical_expr::LogicalPlan), Abstain> {
     let body: Value = serde_json::from_str(&slot.body)
-        .map_err(|e| Abstain(format!("the grounding is not JSON: {e}")))?;
+        .map_err(|e| Abstain::shape(&slot.aspect, format!("the grounding is not JSON: {e}")))?;
     if let Some(why) = body.get("stopped").and_then(Value::as_str) {
-        return Err(Abstain(format!("stopped: {why}")));
+        return Err(Abstain::shape(&slot.aspect, format!("stopped: {why}")));
     }
     let sql = body
         .get("sql")
         .and_then(Value::as_str)
-        .ok_or_else(|| Abstain("the grounding carries no `sql`".into()))?
+        .ok_or_else(|| Abstain::shape(&slot.aspect, "the grounding carries no `sql`"))?
         .to_string();
     let probe = match probe {
         Some(p) => p,
@@ -2069,7 +2092,7 @@ async fn frame(
     ctx.state()
         .create_physical_plan(&probe)
         .await
-        .map_err(|e| Abstain(format!("not served: {e}")))?;
+        .map_err(SessionError::not_served)?;
     Ok((body, sql, probe))
 }
 
@@ -2093,10 +2116,13 @@ fn declared_grain(
         .iter()
         .find(|c| !fields.fields().iter().any(|f| f.name() == *c))
     {
-        return Err(Abstain(format!(
-            "the declared grain names `{missing}`, which the frame does not serve — \
-             serve the column, or fix the declaration"
-        )));
+        return Err(Abstain::shape(
+            missing,
+            format!(
+                "the declared grain names `{missing}`, which the frame does not serve — \
+                 serve the column, or fix the declaration"
+            ),
+        ));
     }
     Ok(grain)
 }
@@ -2981,9 +3007,9 @@ async fn bucketed_member(
     {
         let col = b
             .column_by_name("mc_member")
-            .ok_or_else(|| Abstain("the member pass served no mc_member".into()))?;
+            .ok_or_else(|| Abstain::shape(dcol, "the member pass served no mc_member"))?;
         for i in 0..b.num_rows() {
-            let m = array_value_to_string(col, i).map_err(|e| Abstain(e.to_string()))?;
+            let m = array_value_to_string(col, i).map_err(SessionError::from)?;
             named.push(ql(&m));
         }
     }
@@ -3073,8 +3099,8 @@ async fn rival(
             out.alternative = Some(name.to_string());
             out.foreign = Some(rival_foreign);
         }
-        Err(Abstain(why)) => {
-            out.alternative_error = Some(format!("the rival is not served: {why}"));
+        Err(why) => {
+            out.alternative_error = Some(format!("the rival is not served: {}", why.text()));
         }
     }
     Ok(out)
@@ -3567,7 +3593,7 @@ async fn rival_series(
     let fields = probe.schema();
     let has = |n: &str| fields.fields().iter().any(|f| f.name() == n);
     if !has("value") {
-        return Err(Abstain("it serves no `value` column".into()));
+        return Err(Abstain::shape(s.metric, "it serves no `value` column"));
     }
     let sources = crate::provenance::served_sources(&probe, dataset);
     let tcol = match judged_time_column(fields, &sources, &judged.temporal) {
@@ -3587,12 +3613,13 @@ async fn rival_series(
             match (dates.next(), dates.next()) {
                 (Some(only), None) => only.name().clone(),
                 (Some(_), Some(_)) => {
-                    return Err(Abstain(
-                        "it carries several date columns and none of them is judged, so its                          time axis beside a judged series would be a guess"
-                            .into(),
+                    return Err(Abstain::shape(
+                        s.metric,
+                        "it carries several date columns and none of them is judged, so its \
+                         time axis beside a judged series would be a guess",
                     ));
                 }
-                _ => return Err(Abstain("it serves no date column".into())),
+                _ => return Err(Abstain::shape(s.metric, "it serves no date column")),
             }
         }
     };
@@ -3707,12 +3734,14 @@ async fn run(
     sql: &str,
 ) -> Result<Vec<RecordBatch>, Abstain> {
     let plan = crate::plan::build_plan(shared, ctx, sql).await?;
-    ctx.execute_logical_plan(plan)
+    let batches = ctx
+        .execute_logical_plan(plan)
         .await
-        .map_err(|e| Abstain(format!("not served: {e}")))?
+        .map_err(SessionError::not_served)?
         .collect()
         .await
-        .map_err(|e| Abstain(format!("not served: {e}")))
+        .map_err(SessionError::not_served)?;
+    Ok(batches)
 }
 
 /// A series plan's rows as cells: planned through the session's own
@@ -3769,7 +3798,7 @@ pub(crate) async fn replayed_series(
     let plan = crate::plan::build_plan(shared, ctx, sql).await?;
     let plan = crate::replay::apply_overrides(plan, overrides)?;
     let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
-    collect_series(&batches, false).map_err(|Abstain(e)| SessionError::BadSubject(e))
+    collect_series(&batches, false).map_err(|Abstain(e)| e)
 }
 
 fn collect_series(batches: &[RecordBatch], with_member: bool) -> Result<Vec<SeriesRow>, Abstain> {
@@ -3777,27 +3806,30 @@ fn collect_series(batches: &[RecordBatch], with_member: bool) -> Result<Vec<Seri
     for b in batches.iter().filter(|b| b.num_rows() > 0) {
         let col = |n: &str| -> Result<&ArrayRef, Abstain> {
             b.column_by_name(n)
-                .ok_or_else(|| Abstain(format!("the series served no {n}")))
+                .ok_or_else(|| Abstain::shape("the series", format!("the series served no {n}")))
         };
         let floats = |n: &str| -> Result<Option<Float64Array>, Abstain> {
             let Some(c) = b.column_by_name(n) else {
                 return Ok(None);
             };
-            let c = cast(c, &DataType::Float64).map_err(|e| Abstain(e.to_string()))?;
+            let c = cast(c, &DataType::Float64).map_err(SessionError::from)?;
             c.as_any()
                 .downcast_ref::<Float64Array>()
                 .cloned()
                 .map(Some)
-                .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
+                .ok_or_else(|| {
+                    Abstain::shape("the series", format!("{n} did not read as a number"))
+                })
         };
         let period = period::column(col("period")?)
-            .ok_or_else(|| Abstain("period did not read as a period".into()))?;
+            .ok_or_else(|| Abstain::shape("the series", "period did not read as a period"))?;
         let member = if with_member {
             Some(col("member")?)
         } else {
             None
         };
-        let value = floats("value")?.ok_or_else(|| Abstain("the series served no value".into()))?;
+        let value = floats("value")?
+            .ok_or_else(|| Abstain::shape("the series", "the series served no value"))?;
         let num = floats("num")?;
         let den = floats("den")?;
         let at = |c: &Option<Float64Array>, i: usize| {
@@ -3808,7 +3840,7 @@ fn collect_series(batches: &[RecordBatch], with_member: bool) -> Result<Vec<Seri
                 continue;
             }
             let m = match member {
-                Some(m) => Some(array_value_to_string(m, i).map_err(|e| Abstain(e.to_string()))?),
+                Some(m) => Some(array_value_to_string(m, i).map_err(SessionError::from)?),
                 None => None,
             };
             out.push((period.value(i), m, value.value(i), at(&num, i), at(&den, i)));
@@ -3896,7 +3928,8 @@ fn world_batch(
 pub(crate) fn series_args(
     args: &[FunctionArg],
 ) -> Result<(Option<Resolution>, World, Option<String>), SessionError> {
-    let refuse = |what: String| SessionError::BadSubject(format!("metric_series({what})"));
+    let refuse =
+        |what: String| SessionError::shape("metric_series", format!("metric_series({what})"));
     let grains = "minute, hour, day, week, month, quarter, year";
     let worlds = "actual, forecast, scenario or plan";
     let spelled = || {

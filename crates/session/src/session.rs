@@ -416,10 +416,13 @@ impl Session {
         let lake = self.lake();
         lake.ensure_dataset(dataset).await?;
         if lake.view_exists(dataset, table).await? {
-            return Err(SessionError::BadSubject(format!(
-                "`{dataset}.{table}`: the grounded metric `{table}` holds the name — a metric \
+            return Err(SessionError::taken(
+                table,
+                format!(
+                    "`{dataset}.{table}`: the grounded metric `{table}` holds the name — a metric \
                  and a table of one dataset never share a name"
-            )));
+                ),
+            ));
         }
         let rows = Box::pin(RecordBatchStreamAdapter::new(
             Arc::clone(&schema),
@@ -609,11 +612,14 @@ impl Session {
         // lands under a grounded metric's name. Refused before
         // the source is read.
         if lake.view_exists(dataset, table).await? {
-            return Err(SessionError::BadSubject(format!(
-                "DECLARE RECIPE {table} ON {dataset}: the grounded metric `{table}` holds \
+            return Err(SessionError::taken(
+                table,
+                format!(
+                    "DECLARE RECIPE {table} ON {dataset}: the grounded metric `{table}` holds \
                  the name — a metric and a table of one dataset never share a name; \
                  name the table differently"
-            )));
+                ),
+            ));
         }
         let done = if admission == RecipeAdmission::Unchanged
             && lake.table_exists(dataset, table).await?
@@ -1246,9 +1252,10 @@ impl Session {
             } else {
                 names.join(", ")
             };
-            return Err(SessionError::BadSubject(format!(
-                "`{table}` is not a landed table in `{dataset}`{fold} — tables: {tables}"
-            )));
+            return Err(SessionError::unknown(
+                table,
+                format!("`{table}` is not a landed table in `{dataset}`{fold} — tables: {tables}"),
+            ));
         };
         columns
             .iter()
@@ -1296,12 +1303,15 @@ impl Session {
                 .any(|p| p.name == aspect)
         {
             let dataset = &resolved.dataset;
-            return Err(SessionError::BadSubject(format!(
-                "GLOSS {aspect} ON {dataset}: the landed table `{dataset}.{aspect}` holds the \
+            return Err(SessionError::taken(
+                aspect,
+                format!(
+                    "GLOSS {aspect} ON {dataset}: the landed table `{dataset}.{aspect}` holds the \
                  name — a metric and a table of one dataset never share a name; the metric's \
                  view would stand beside the table in the catalog. Name the metric \
                  differently, or drop the table"
-            )));
+                ),
+            ));
         }
         self.write_gloss(&resolved, aspect, &gloss.body, is_grounding)
             .await?;
@@ -1379,10 +1389,13 @@ impl Session {
             && is_grounding
         {
             let dataset = &resolved.dataset;
-            return Err(SessionError::BadSubject(format!(
-                "{e} — a metric is grounded on the dataset: \
+            return Err(SessionError::shape(
+                aspect,
+                format!(
+                    "{e} — a metric is grounded on the dataset: \
                  `GLOSS {aspect} ON {dataset} AS $${{\"sql\": …}}$$`"
-            )));
+                ),
+            ));
         }
         if let Err(
             e @ glossql_glossary::Error::GrainRefused {
@@ -1397,11 +1410,14 @@ impl Session {
                 .any(|p| p.name == resolved.subject)
         {
             let table = &resolved.subject;
-            return Err(SessionError::BadSubject(format!(
-                "{e} — the table `{table}` shares its dataset's name: the bare name is the \
+            return Err(SessionError::shape(
+                table.as_str(),
+                format!(
+                    "{e} — the table `{table}` shares its dataset's name: the bare name is the \
                  dataset, its columns are reached as `{table}.<column>` under `USE {table}`, \
                  and the table itself has no table-grain subject"
-            )));
+                ),
+            ));
         }
         written?;
         Ok(())
@@ -2188,10 +2204,13 @@ impl Session {
         let l = resolve_endpoint(store, use_dataset, &lt, &lc).await?;
         let r = resolve_endpoint(store, use_dataset, &rt, &rc).await?;
         if l.dataset != r.dataset {
-            return Err(SessionError::BadSubject(format!(
-                "pair path spans datasets `{}` and `{}`",
-                l.dataset, r.dataset
-            )));
+            return Err(SessionError::shape(
+                format!("{} <-> {}", l.subject, r.subject),
+                format!(
+                    "pair path spans datasets `{}` and `{}`",
+                    l.dataset, r.dataset
+                ),
+            ));
         }
         let op = match op {
             RelOp::ManyToOne => "->",

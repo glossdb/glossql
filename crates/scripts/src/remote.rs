@@ -20,7 +20,7 @@ use arrow_ipc::reader::StreamReader;
 use arrow_ipc::writer::StreamWriter;
 use base64::Engine;
 use datafusion::arrow::array::RecordBatch;
-use glossql_session::Answered;
+use glossql_session::{Answered, RuntimeRefusal};
 use serde_json::Value;
 
 /// The media type of an Arrow IPC stream, both ways.
@@ -196,14 +196,17 @@ impl Remote {
         route: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
-        let body =
-            encode(table, &spec).map_err(|e| format!("the {route} table does not encode: {e}"))?;
+    ) -> Result<Answered, RuntimeRefusal> {
+        let body = encode(table, &spec).map_err(|e| {
+            RuntimeRefusal::Unanswered(format!("the {route} table does not encode: {e}"))
+        })?;
         let bytes = self.post(route, body).await?;
-        decode(&bytes).map_err(|e| format!("the {route} service's answer does not read: {e}"))
+        decode(&bytes).map_err(|e| {
+            RuntimeRefusal::Unanswered(format!("the {route} service's answer does not read: {e}"))
+        })
     }
 
-    async fn post(&self, route: &str, body: Vec<u8>) -> Result<bytes::Bytes, String> {
+    async fn post(&self, route: &str, body: Vec<u8>) -> Result<bytes::Bytes, RuntimeRefusal> {
         let url = format!("{}/{route}", self.base);
         let deadline = std::time::Instant::now() + CALL_TIMEOUT;
         let mut backoff = std::time::Duration::from_secs(1);
@@ -230,7 +233,11 @@ impl Remote {
                 .header(reqwest::header::CONTENT_TYPE, ARROW_STREAM)
                 .header(reqwest::header::ACCEPT, ARROW_STREAM)
                 .body(body.clone());
-            if let Some(token) = self.bearer(false).await? {
+            if let Some(token) = self
+                .bearer(false)
+                .await
+                .map_err(RuntimeRefusal::Unanswered)?
+            {
                 request = request.bearer_auth(token);
             }
             let response = match request.send().await {
@@ -248,15 +255,15 @@ impl Remote {
                     dropped += 1;
                     pause(backoff, "kept dropping the connection")
                         .await
-                        .map_err(|why| format!("{why}: {e}"))?;
+                        .map_err(|why| RuntimeRefusal::Unanswered(format!("{why}: {e}")))?;
                     backoff = (backoff * 2).min(BACKOFF_CAP);
                     continue;
                 }
                 Err(e) => {
-                    return Err(format!(
+                    return Err(RuntimeRefusal::Unanswered(format!(
                         "the {route} service at {} did not answer: {e}",
                         self.base
-                    ));
+                    )));
                 }
             };
             let status = response.status();
@@ -277,7 +284,9 @@ impl Remote {
                 } else {
                     " kept stopping"
                 };
-                pause(said.unwrap_or(backoff), why).await?;
+                pause(said.unwrap_or(backoff), why)
+                    .await
+                    .map_err(RuntimeRefusal::Unanswered)?;
                 if said.is_none() {
                     backoff = (backoff * 2).min(BACKOFF_CAP);
                 }
@@ -289,18 +298,21 @@ impl Remote {
                 && !reminted
             {
                 reminted = true;
-                self.bearer(true).await?;
+                self.bearer(true)
+                    .await
+                    .map_err(RuntimeRefusal::Unanswered)?;
                 continue;
             }
-            let bytes = response
-                .bytes()
-                .await
-                .map_err(|e| format!("the {route} service's answer did not arrive whole: {e}"))?;
+            let bytes = response.bytes().await.map_err(|e| {
+                RuntimeRefusal::Unanswered(format!(
+                    "the {route} service's answer did not arrive whole: {e}"
+                ))
+            })?;
             if !status.is_success() {
-                return Err(format!(
+                return Err(RuntimeRefusal::Refused(format!(
                     "the {route} service refused ({status}): {}",
                     refusal(&bytes)
-                ));
+                )));
             }
             return Ok(bytes);
         }

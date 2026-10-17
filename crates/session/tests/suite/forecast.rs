@@ -14,7 +14,7 @@ use datafusion::arrow::util::display::array_value_to_string;
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::MemTable;
 use glossql_glossary::{Actor, ActorKind, Store};
-use glossql_session::{Answered, FORECAST, FunctionRuntime, Outcome, Session};
+use glossql_session::{Answered, FORECAST, FunctionRuntime, Outcome, Session, SessionError};
 use serde_json::{Value, json};
 
 /// A forecast service that carries the last actual forward: every
@@ -40,7 +40,7 @@ impl FunctionRuntime for Flat {
         point: &str,
         table: RecordBatch,
         spec: Value,
-    ) -> Result<Answered, String> {
+    ) -> Result<Answered, glossql_session::RuntimeRefusal> {
         assert_eq!(point, FORECAST);
         assert!(
             spec.get("origins").is_none(),
@@ -473,6 +473,10 @@ async fn the_door_reads_the_dataset_in_use() {
         .execute("SELECT * FROM metric_forecast_ahead('other');")
         .await
         .unwrap_err();
+    assert!(
+        matches!(&e, SessionError::BadShape { subject, .. } if subject == "other"),
+        "{e:?}"
+    );
     assert!(e.to_string().contains("USE other first"), "{e}");
 }
 
