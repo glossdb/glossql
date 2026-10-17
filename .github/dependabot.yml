@@ -1,0 +1,32 @@
+# What moves on its own: the actions by commit, the image bases by
+# digest, the crates on their lines, and the browser libraries through
+# the manifest beside the vendor table. The engine's lockstep set —
+# arrow, datafusion, parquet, object_store, adbc — moves by hand, at a
+# pin move, with the vendored SQL guide refreshed (Cargo.toml).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "arrow*"
+      - dependency-name: "datafusion*"
+      - dependency-name: "parquet"
+      - dependency-name: "object_store"
+      - dependency-name: "adbc*"
+    groups:
+      crates:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: npm
+    directory: /crates/apps/assets/vendor
+    schedule:
+      interval: weekly

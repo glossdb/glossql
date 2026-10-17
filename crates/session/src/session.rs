@@ -814,6 +814,10 @@ impl Session {
         Ok(outcomes)
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "an orchestrator above the threshold; #136 extracts its phases"
+    )]
     async fn declare(&self, declaration: Declaration) -> Result<Outcome, SessionError> {
         let store = &self.shared.store;
         let done = match &declaration {
@@ -1521,6 +1525,10 @@ impl Session {
             .collect()
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "an orchestrator above the threshold; #136 extracts its phases"
+    )]
     async fn gloss(&self, gloss: Gloss) -> Result<Outcome, SessionError> {
         let aspect = gloss.aspect.value.as_str();
         // An app part's subject is `<app>.<part>` under the bound

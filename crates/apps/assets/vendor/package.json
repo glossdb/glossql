@@ -1,0 +1,14 @@
+{
+  "name": "glossql-apps-vendor",
+  "private": true,
+  "description": "The browser libraries vendored beside this file, at their pinned versions. Dependabot watches it; the copy into the tree is the README's step.",
+  "dependencies": {
+    "@dagrejs/dagre": "3.1.1",
+    "apache-arrow": "21.2.0",
+    "htmx.org": "2.0.11",
+    "vega": "6.4.0",
+    "vega-embed": "7.3.0",
+    "vega-interpreter": "2.3.2",
+    "vega-lite": "6.5.0"
+  }
+}

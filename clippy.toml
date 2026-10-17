@@ -2,3 +2,9 @@
 # code may not — see `[workspace.lints.clippy]` in Cargo.toml.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+# A function's size, two ways: lines, and the cognitive complexity
+# clippy counts (branches, nesting). Set at the ceiling the long
+# orchestrators sit under today, so the lints hold the line and the
+# `#[expect]` attributes name the ones still above it.
+too-many-lines-threshold = 250
+cognitive-complexity-threshold = 30

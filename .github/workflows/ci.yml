@@ -1,0 +1,67 @@
+# The standing invariant, checked by a machine on every push to main
+# and every pull request: the format, clippy with warnings denied, the
+# suite, the dependency rules (deny.toml) and the unused dependencies —
+# on the target the image is built for, which the laptop is not. The
+# live job stands the dev rig up (dev/compose.yaml) and runs the
+# ignored tests it serves. Nothing here publishes: release.yml does, at
+# a tag, from a commit this ran green on.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # rustup reads rust-toolchain.toml; the runner ships rustup.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: ci
+          cache-on-failure: true
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: cargo-nextest,cargo-deny,cargo-machete
+      - run: cargo fmt --all --check
+      - run: cargo deny check
+      - run: cargo machete
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo nextest run --workspace --locked
+
+  live:
+    runs-on: ubuntu-24.04
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: ci
+      # The rig as a laptop runs it, loopback ports and all; the init
+      # container makes the `lake` container and exits.
+      - run: docker compose -f dev/compose.yaml up -d --wait postgres azurite
+      - run: docker compose -f dev/compose.yaml run --rm azurite-init
+      - name: Postgres as the catalog, the warehouse on the local disk
+        run: cargo test -p glossql-catalog -p glossql-serverd live_sql --locked -- --ignored
+        env:
+          GLOSSQL_E2E_CATALOG_SQL: postgres://glossql:glossql@127.0.0.1:5432/glossql
+      - name: Postgres as the catalog, the warehouse on Azurite
+        run: cargo test -p glossql-catalog -p glossql-serverd live_sql --locked -- --ignored
+        env:
+          GLOSSQL_E2E_CATALOG_SQL: postgres://glossql:glossql@127.0.0.1:5432/glossql_az
+          GLOSSQL_E2E_WAREHOUSE: abfss://lake@devstoreaccount1.dfs.core.windows.net/warehouse
+          AZURE_STORAGE_USE_EMULATOR: "true"
+      - name: A file source in the emulator
+        run: cargo test -p glossql-import live_source --locked -- --ignored
+        env:
+          GLOSSQL_E2E_SOURCE: abfss://lake@devstoreaccount1.dfs.core.windows.net/sources/finance
+          AZURE_STORAGE_USE_EMULATOR: "true"

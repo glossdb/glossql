@@ -1,0 +1,6 @@
+# The toolchain every build runs on — the laptop, the ci workflow and
+# the image's rust base (Dockerfile), at one version. rustup reads this
+# file; the image's base carries this version already.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

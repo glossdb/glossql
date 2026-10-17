@@ -141,3 +141,36 @@ fn the_ratchet_reports_where_it_stands() {
     // Nothing to assert: the first test is the gate. This one exists so
     // `cargo test -- --nocapture` shows the number without reading code.
 }
+
+/// The lockstep rule as a check: arrow, datafusion and parquet are one
+/// version each in the lock. adbc's own arrow requirement spans two
+/// majors, so a bare `cargo update` can split the tree (the workspace
+/// `Cargo.toml` says how to converge it); a split does not compile at
+/// the import seam, but only on the target that builds it.
+#[test]
+fn one_arrow_one_datafusion_one_parquet_in_the_lock() {
+    let lock = std::fs::read_to_string(crates_dir().join("../Cargo.lock")).expect("Cargo.lock");
+    let mut versions: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut name = None;
+    for line in lock.lines() {
+        if let Some(n) = line.strip_prefix("name = ") {
+            name = Some(n.trim_matches('"'));
+        } else if let Some(v) = line.strip_prefix("version = ")
+            && let Some(n) = name.take()
+            && (n.starts_with("arrow") || n.starts_with("datafusion") || n == "parquet")
+        {
+            versions.entry(n).or_default().push(v.trim_matches('"'));
+        }
+    }
+    assert!(!versions.is_empty(), "the lock names the engine");
+    let split: Vec<String> = versions
+        .iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(n, v)| format!("{n}: {}", v.join(", ")))
+        .collect();
+    assert!(
+        split.is_empty(),
+        "the arrow tree split: {}",
+        split.join("; ")
+    );
+}

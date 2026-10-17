@@ -235,6 +235,10 @@ fn month_end(period: &str) -> Option<String> {
 /// quantile at which the actual landed, 0..1 and ordinal by
 /// construction. The band_breach detector adjudicates PITs; this door
 /// only reports.
+#[expect(
+    clippy::too_many_lines,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 pub(crate) async fn metric_band_walk(
     shared: &Arc<Shared>,
     dataset: &str,

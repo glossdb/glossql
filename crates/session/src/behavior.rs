@@ -248,6 +248,11 @@ fn cols_label(cols: &[String]) -> String {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 pub(crate) async fn behavior_anchors(
     shared: &Arc<Shared>,
     resolved: &crate::prepass::Resolved,

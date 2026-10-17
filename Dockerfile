@@ -4,10 +4,16 @@
 # ghcr.io/glossdb/glossql; `docker build .` builds the same image from
 # any checkout. The build context is what the binary compiles and
 # embeds (.dockerignore).
-FROM rust:1-trixie AS build
+# Both bases by digest, moved by Dependabot; the rust base carries the
+# toolchain rust-toolchain.toml names. The registry and the target are
+# cache mounts, so a rebuild compiles the workspace alone.
+FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --locked --release -p glossql-serverd
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked --release -p glossql-serverd \
+    && cp target/release/glossql /glossql
 
 # What the binary links is glibc, libm and libgcc (`ldd` on it), and
 # what it needs beside them is the root certificates — the issuer's
@@ -15,8 +21,8 @@ RUN cargo build --locked --release -p glossql-serverd
 # all reached over https — and a /tmp for the engine's spill files.
 # The distroless C-runtime image is exactly that, with an unprivileged
 # user and no shell or package manager.
-FROM gcr.io/distroless/cc-debian13:nonroot
-COPY --from=build /src/target/release/glossql /usr/local/bin/glossql
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+COPY --from=build /glossql /usr/local/bin/glossql
 USER nonroot
 EXPOSE 8080
 # No workspace, no directory, no file: the state is the catalog and the

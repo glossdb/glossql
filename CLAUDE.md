@@ -28,7 +28,9 @@ follow the corpus-first process below.
   `methods/`, `architecture/`, and the concern pages). For agents and
   humans alike; enterprise-customer quality, constantly current.
   Never normative language prose.
-- `.github/` — the release machinery: `workflows/release.yml` builds
+- `.github/` — `workflows/ci.yml` checks the standing invariant on
+  every push and pull request, with `deny.toml` and the dev rig's
+  live tests; the release machinery: `workflows/release.yml` builds
   the image on a `v*` tag, `release-macos.sh` is the laptop half, the
   rendered tap formula sits beside them. The order and its sharp
   edges: the glossql-release skill.

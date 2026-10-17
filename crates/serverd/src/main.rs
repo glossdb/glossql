@@ -80,6 +80,10 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error + Send + 
 }
 
 /// Everything between the runtime's start and the server's stop.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "an orchestrator above the threshold; #136 extracts its phases"
+)]
 async fn doors(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The native kernels, and the service behind each point the
     // environment names (bodies ride their declarations, fixture 24 —
