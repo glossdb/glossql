@@ -1022,3 +1022,174 @@ GLOSS spend ON fin AS $${{"sql": "SELECT c.day AS month, s.amount AS value FROM 
         "{origin}"
     );
 }
+
+/// The period calendar is the engine's `date_trunc`: a week starts on
+/// Monday wherever the cube names a period, and the year boundary is
+/// no boundary of a week. A flow's missing weeks are zero cells the
+/// plan fills — the dense grid is a series over the period range, not
+/// a loop — and a day in the week that holds New Year lands in the
+/// week of the Monday before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_week_series_crosses_the_year_on_mondays() {
+    let stub = Arc::new(Flat::default());
+    let setup = format!(
+        r##"
+DECLARE DATASET fin SET (purpose: 'weekly');
+USE fin;
+DECLARE ASPECT cube WITH $${{"type": "object", "properties": {{
+  "resolution": {{"default": "week"}},
+  "windows": {{"type": "object", "properties": {{"week": {{"default": "3 years"}}}}}}}}}}$$
+AS FACT ON DATASET;
+{judged}
+DECLARE ASPECT visits WITH $${{"title": "Visits"}}$$ AS QUERY ON DATASET;
+GLOSS visits ON fin AS $${{"sql": "SELECT visit_date, amount AS value FROM visit_log"}}$$;
+"##,
+        judged = judged("week")
+    );
+    let session = session(Arc::clone(&stub), &setup).await;
+    // Mondays from 2024-12-02 to 2025-01-20, the weeks of 2024-12-23
+    // and 2025-01-13 missing, and New Year's Day — a Wednesday — in
+    // the week of 2024-12-30.
+    let mondays = [
+        day(2024, 12, 2),
+        day(2024, 12, 9),
+        day(2024, 12, 16),
+        day(2024, 12, 30),
+        day(2025, 1, 6),
+        day(2025, 1, 20),
+    ];
+    let mut dates = mondays.to_vec();
+    dates.push(day(2025, 1, 1));
+    let mut values: Vec<f64> = (1..=6).map(f64::from).collect();
+    values.push(100.0);
+    let (schema, batch) = dated_values("visit_date", dates, values);
+    register(&session, "visit_log", schema, batch).await;
+    session
+        .execute("SELECT judge_time() FROM visit_log.visit_date;")
+        .await
+        .expect("the cadence is judged");
+    let served = rows(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'visits' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    let cells: Vec<&str> = served.lines().filter(|l| l.contains("202")).collect();
+    assert_eq!(cells.len(), 8, "{served}");
+    let expected = [
+        ("2024-12-02", "1.0"),
+        ("2024-12-09", "2.0"),
+        ("2024-12-16", "3.0"),
+        ("2024-12-23", "0.0"),
+        ("2024-12-30", "104.0"),
+        ("2025-01-06", "5.0"),
+        ("2025-01-13", "0.0"),
+        ("2025-01-20", "6.0"),
+    ];
+    for (line, (monday, value)) in cells.iter().zip(expected) {
+        assert!(
+            line.contains(&format!("| {monday}T00:00:00 | {value} ")),
+            "{monday} {value}: {line}"
+        );
+    }
+    // The month grain folds the weeks by the Monday each starts on:
+    // the week of 2024-12-30 is December's.
+    let months = rows(
+        &session,
+        "SELECT period, value FROM metric_series(grain => 'month') \
+         WHERE metric = 'visits' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    assert!(
+        months.contains("| 2024-12-01T00:00:00 | 110.0 "),
+        "{months}"
+    );
+    assert!(months.contains("| 2025-01-01T00:00:00 | 11.0 "), "{months}");
+}
+
+/// A day series holds the leap day as a period of its own — missing,
+/// it is a zero cell between the 28th and March — and the quarter
+/// grain folds February and March into the quarter that starts on
+/// New Year's Day, whatever the year's length.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_day_series_holds_the_leap_day_and_folds_to_quarters() {
+    let stub = Arc::new(Flat::default());
+    let setup = format!(
+        r##"
+DECLARE DATASET fin SET (purpose: 'daily');
+USE fin;
+DECLARE ASPECT cube WITH $${{"type": "object", "properties": {{
+  "resolution": {{"default": "day"}},
+  "windows": {{"type": "object", "properties": {{"day": {{"default": "3 years"}}}}}}}}}}$$
+AS FACT ON DATASET;
+{judged}
+DECLARE ASPECT sales WITH $${{"title": "Sales"}}$$ AS QUERY ON DATASET;
+GLOSS sales ON fin AS $${{"sql": "SELECT sale_date, amount AS value FROM sale_log"}}$$;
+"##,
+        judged = judged("day")
+    );
+    let session = session(Arc::clone(&stub), &setup).await;
+    // Around the leap day of 2024, the 29th missing, then the quarter's
+    // last day and the next quarter's first.
+    let dates = vec![
+        day(2024, 2, 27),
+        day(2024, 2, 28),
+        day(2024, 3, 1),
+        day(2024, 3, 2),
+        day(2024, 3, 31),
+        day(2024, 4, 1),
+    ];
+    let (schema, batch) = dated_values("sale_date", dates, vec![1.0, 2.0, 4.0, 8.0, 16.0, 32.0]);
+    register(&session, "sale_log", schema, batch).await;
+    session
+        .execute("SELECT judge_time() FROM sale_log.sale_date;")
+        .await
+        .expect("the cadence is judged");
+    let days = rows(
+        &session,
+        "SELECT period, value FROM metric_series() \
+         WHERE metric = 'sales' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    let cells: Vec<&str> = days.lines().filter(|l| l.contains("2024")).collect();
+    // 2024-02-27 to 2024-04-01: thirty-five days, six with a sale.
+    assert_eq!(cells.len(), 35, "{days}");
+    assert!(
+        cells[1].contains("| 2024-02-28T00:00:00 | 2.0 "),
+        "{}",
+        cells[1]
+    );
+    assert!(
+        cells[2].contains("| 2024-02-29T00:00:00 | 0.0 "),
+        "{}",
+        cells[2]
+    );
+    assert!(
+        cells[3].contains("| 2024-03-01T00:00:00 | 4.0 "),
+        "{}",
+        cells[3]
+    );
+    assert!(
+        cells[34].contains("| 2024-04-01T00:00:00 | 32.0 "),
+        "{}",
+        cells[34]
+    );
+    let quarters = rows(
+        &session,
+        "SELECT period, value FROM metric_series(grain => 'quarter') \
+         WHERE metric = 'sales' AND dimension = '' ORDER BY period;",
+    )
+    .await;
+    let cells: Vec<&str> = quarters.lines().filter(|l| l.contains("2024")).collect();
+    assert_eq!(cells.len(), 2, "{quarters}");
+    assert!(
+        cells[0].contains("| 2024-01-01T00:00:00 | 31.0 "),
+        "{}",
+        cells[0]
+    );
+    assert!(
+        cells[1].contains("| 2024-04-01T00:00:00 | 32.0 "),
+        "{}",
+        cells[1]
+    );
+}

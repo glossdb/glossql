@@ -39,8 +39,8 @@ pub(crate) use collisions::{
 pub(crate) use derivations::derivation_candidates;
 pub(crate) use facts::{fact_values, metric_sources};
 pub(crate) use forecast::{
-    date_of, forecast_coverage, forecast_points, held_table, iso, metric_forecast_ahead, nanos_of,
-    parse_date, step_date, whole_series, world_cells as forecast_world_cells,
+    forecast_coverage, forecast_points, held_table, metric_forecast_ahead, whole_series,
+    world_cells as forecast_world_cells,
 };
 pub(crate) use hierarchies::hierarchy_candidates;
 pub(crate) use relationships::relationship_candidates;

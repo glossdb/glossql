@@ -20,13 +20,14 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray,
-    TimestampNanosecondArray,
+    TimestampMicrosecondArray,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use glossql_parser::{AspectDecl, AspectKind};
 use serde_json::Value;
 
 use crate::cube::Resolution;
+use crate::period;
 use crate::reads::Shared;
 use crate::session::SessionError;
 
@@ -136,8 +137,8 @@ pub(crate) async fn unknown(shared: &Arc<Shared>, name: &str) -> SessionError {
 
 /// One recorded forecast point as the plan read uses it: a step's band
 /// at the metric's own grain (`span` none), or a total's that runs to
-/// a period's end (`span` set, `to_go` the period's grain). Periods as
-/// nanoseconds since the epoch, the bucket's start.
+/// a period's end (`span` set, `to_go` the period's grain). Periods in
+/// the period unit, the bucket's start.
 struct Band {
     origin: i64,
     span: Option<i64>,
@@ -194,9 +195,8 @@ async fn bands(shared: &Arc<Shared>) -> Result<HashMap<String, Vec<Band>>, Sessi
     };
     let date = |a: &StringArray, i: usize| {
         (!a.is_null(i))
-            .then(|| crate::search::parse_date(a.value(i)))
+            .then(|| period::parse_date(a.value(i)))
             .flatten()
-            .and_then(crate::search::nanos_of)
     };
     for i in 0..batch.num_rows() {
         if applicable.is_null(i) || !applicable.value(i) || step.is_null(i) {
@@ -230,7 +230,9 @@ async fn bands(shared: &Arc<Shared>) -> Result<HashMap<String, Vec<Band>>, Sessi
 /// an hour or a minute. What a key names a plan period by.
 fn label(period: i64, grain: Resolution) -> String {
     use chrono::Datelike;
-    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
+    let Some(at) = period::civil(period) else {
+        return period.to_string();
+    };
     match grain {
         Resolution::Year => at.format("%Y").to_string(),
         Resolution::Quarter => format!("{}-Q{}", at.year(), (at.month() - 1) / 3 + 1),
@@ -263,7 +265,6 @@ fn label(period: i64, grain: Resolution) -> String {
 /// compares to nothing. Computed at read from the cube and the
 /// forecast record, nothing recorded.
 pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    use crate::cube::next_period;
     let series = crate::cube::plan_series(shared).await?;
     let bands = if series.is_empty() {
         HashMap::new()
@@ -289,15 +290,32 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         let metric_bands = bands.get(&s.metric);
         // The origin's bucket end: a plan period ending at or before
         // it is complete, its actual stands.
-        let origin_end = s
-            .origin
-            .zip(s.metric_resolution)
-            .and_then(|(o, r)| next_period(o, r));
+        let origin_end = match s.origin.zip(s.metric_resolution) {
+            Some((o, r)) => Some(period::next(o, r).await.map_err(period::refused)?),
+            None => None,
+        };
         for g in &s.grains {
             let actual: HashMap<i64, f64> = g.actual.iter().copied().collect();
             let resolution = g.resolution;
-            for &(period, value) in &g.cells {
-                let end = next_period(period, resolution);
+            // Each plan period's end and, for a stock at a coarser
+            // grain, the bucket at the metric's own grain that holds
+            // the period's last instant: one pass of the calendar per
+            // grain.
+            let periods: Vec<i64> = g.cells.iter().map(|(p, _)| *p).collect();
+            let step = period::interval(resolution, 1);
+            let mut exprs = vec![format!("p + {step}")];
+            if let Some(mres) = s.metric_resolution {
+                exprs.push(period::bucket(
+                    &format!("p + {step} - INTERVAL '1 microsecond'"),
+                    mres,
+                ));
+            }
+            let calendar = period::over(&periods, &exprs)
+                .await
+                .map_err(period::refused)?;
+            for (i, &(period, value)) in g.cells.iter().enumerate() {
+                let end = calendar[0][i];
+                let last_inside = calendar.get(1).and_then(|c| c[i]);
                 let begun = s.origin.is_some_and(|o| period <= o);
                 let complete = end.zip(origin_end).is_some_and(|(e, oe)| e <= oe);
                 let a = if begun {
@@ -325,19 +343,11 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
                             // A level: the period's last bucket at the
                             // metric's own grain, where the forecast
                             // reaches it; nothing to add.
-                            let mut last = period;
-                            if let Some(mres) = s.metric_resolution {
-                                while let Some(n) = next_period(last, mres) {
-                                    if end.is_some_and(|e| n < e) {
-                                        last = n;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            }
-                            bs.iter()
-                                .find(|b| b.span.is_none() && b.period == last)
-                                .map(|b| (b, 0.0))
+                            last_inside.and_then(|last| {
+                                bs.iter()
+                                    .find(|b| b.span.is_none() && b.period == last)
+                                    .map(|b| (b, 0.0))
+                            })
                         } else if begun {
                             a.and_then(|to_date| {
                                 bs.iter()
@@ -360,7 +370,7 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
                             high = Some(base + b.p90);
                             held_80 = b.held_80;
                             held_from = b.held_from.clone();
-                            origin = Some(crate::search::iso(crate::search::date_of(b.origin)));
+                            origin = Some(period::date(b.origin));
                             if value < base + b.p10 {
                                 "below"
                             } else if value > base + b.p90 {
@@ -397,11 +407,7 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         utf8("plan", false),
         utf8("metric", false),
         utf8("grain", false),
-        Field::new(
-            "period",
-            DataType::Timestamp(TimeUnit::Nanosecond, None),
-            false,
-        ),
+        period::field("period", false),
         utf8("label", false),
         float("value", false),
         float("actual", true),
@@ -418,7 +424,7 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         Arc::new(StringArray::from(plan_col)),
         Arc::new(StringArray::from(metric_col)),
         Arc::new(StringArray::from(grain_col)),
-        Arc::new(TimestampNanosecondArray::from_iter_values(period_col)),
+        Arc::new(TimestampMicrosecondArray::from_iter_values(period_col)),
         Arc::new(StringArray::from(label_col)),
         Arc::new(Float64Array::from(value_col)),
         Arc::new(Float64Array::from(actual_col)),
