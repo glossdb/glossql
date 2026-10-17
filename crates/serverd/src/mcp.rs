@@ -23,7 +23,7 @@ use rmcp::{ErrorData as McpError, ServerHandler};
 use glossql_glossary::{Actor, ActorKind};
 use glossql_session::Caller;
 
-use glossql_session::{Plane, Session, SessionError};
+use glossql_session::{CallShape, Plane, Session, SessionError};
 
 use crate::window;
 use crate::wire;
@@ -990,10 +990,6 @@ impl ServerHandler for GlossqlMcp {
         )
     }
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "an orchestrator above the threshold; #136 extracts its phases"
-    )]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -1005,9 +1001,10 @@ impl ServerHandler for GlossqlMcp {
                 None,
             ));
         }
-        let arguments = request.arguments.unwrap_or_default();
-        let statements = arguments
-            .get("statements")
+        let statements = request
+            .arguments
+            .as_ref()
+            .and_then(|arguments| arguments.get("statements"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| McpError::invalid_params("`statements` (string) is required", None))?;
 
@@ -1034,96 +1031,164 @@ impl ServerHandler for GlossqlMcp {
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        // The question round rides ahead of execution as an MRTR
-        // `input_required` result (SEP-2322): the ask is the result,
-        // and the answer arrives on the client's retry of this same
-        // call. There is no other mechanism — the spec is explicit that
-        // a server "MUST send server-to-client requests using the MRTR
-        // pattern", and the older server-initiated request is gone.
-        //
-        // Cadence: forms ride only calls that read the record — a
-        // metadata read, no writes — so the brief sweep and the stage
-        // read-backs carry the round while landings and judging queries
-        // run uninterrupted. A writing call re-opens what a decline
-        // deferred. One question per call, only while the workspace
-        // derives open items; the capability must come from the
-        // request's own stamp, since the transport's peer_info is
-        // synthetic when every request stands alone.
         let shape = glossql_session::call_shape(statements);
-        let mut probed = None;
-        if let Some(responses) = &request.input_responses {
-            let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
-                "question-round: a retry without the echoed state".to_string()
-            } else if !responses.is_empty() {
-                // A round is a batch, so a retry carries a batch. Each
-                // answer is digested against its own re-derived
-                // question; one that no longer stands is said and
-                // skipped, never taken as a verdict on another.
-                let mut notes = Vec::new();
-                for (key, raw) in responses.iter() {
-                    notes.push(match serde_json::from_value::<ElicitResult>(raw.clone()) {
-                        Ok(answer) => Box::pin(self.digest_round(key, answer, &session)).await,
-                        Err(e) => format!("question-round: the answer does not parse: {e}"),
-                    });
-                }
-                notes.join("\n")
-            } else {
-                "question-round: the retry carries no answer".into()
-            };
-            // The account can carry the human's typed words and a
-            // rival's prose, so it is a `debug` event like a call's
-            // text; `info` says only that a round was digested.
-            tracing::info!(subject = %id, "question-round: digested");
-            tracing::debug!(subject = %id, note = %note, "question-round");
-            probed = Some(note);
-        } else if shape.reviews
+        let probed = match self
+            .question_round(&request, &context, &shape, &session, &id)
+            .await
+        {
+            Round::Ask(forms) => return Ok(*forms),
+            Round::Digested(note) => note,
+        };
+        let (rendered, landed) = self
+            .run_statements(&session, &actor, bound.as_deref(), statements)
+            .await;
+        let brief_moved = self.brief_moved(shape.writes || probed.is_some()).await;
+        // Where the call left the agent and one act per goal from there,
+        // on every call (`window`). It rides the result, never the
+        // instructions, so the stable prefix holds.
+        let window = self
+            .situation_block(
+                &actor,
+                shape.dataset.as_deref().or(bound.as_deref()),
+                &rendered,
+            )
+            .await;
+        Ok(call_result(&id, rendered, probed, landed, window, brief_moved).into())
+    }
+}
+
+/// What the question round decided for a call: the batch of forms,
+/// returned in place of a result, or the account of a retry's answers
+/// — none where no round rode the call.
+enum Round {
+    Ask(Box<CallToolResponse>),
+    Digested(Option<String>),
+}
+
+impl GlossqlMcp {
+    /// The question round rides ahead of execution as an MRTR
+    /// `input_required` result (SEP-2322): the ask is the result, and
+    /// the answer arrives on the client's retry of this same call.
+    /// There is no other mechanism — the spec is explicit that a server
+    /// "MUST send server-to-client requests using the MRTR pattern",
+    /// and the older server-initiated request is gone.
+    ///
+    /// Cadence: forms ride only calls that read the record — a metadata
+    /// read, no writes — so the brief sweep and the stage read-backs
+    /// carry the round while landings and judging queries run
+    /// uninterrupted. A writing call re-opens what a decline deferred.
+    /// One question per call, only while the workspace derives open
+    /// items; the capability must come from the request's own stamp,
+    /// since the transport's peer_info is synthetic when every request
+    /// stands alone.
+    async fn question_round(
+        &self,
+        request: &CallToolRequestParams,
+        context: &RequestContext<RoleServer>,
+        shape: &CallShape,
+        session: &Session,
+        id: &str,
+    ) -> Round {
+        if let Some(note) = self.digest_retry(request, session, id).await {
+            return Round::Digested(Some(note));
+        }
+        if shape.reviews
             && context
                 .client_capabilities()
                 .and_then(|caps| caps.elicitation)
                 .is_some()
+            && let Some(forms) = self.ask_round(session, id).await
         {
-            // The whole batch travels in one result. The call ends
-            // normally, the client fulfils every entry before it
-            // retries, and nothing on the server waits: the round
-            // costs the agent no time whether or not a person is
-            // there.
-            let (round, total) = self.derive_round(&session).await;
-            let mut asks = InputRequests::new();
-            let mut ids = Vec::new();
-            for (rank, q) in &round {
-                match q.params(*rank, total) {
-                    Ok(params) => {
-                        ids.push(q.id());
-                        asks.insert(
-                            q.id(),
-                            InputRequest::Elicitation(ElicitRequest::new(params)),
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(subject = %id, error = %e, "question-round: form refused")
-                    }
+            return Round::Ask(Box::new(forms));
+        }
+        Round::Digested(None)
+    }
+
+    /// A retry's answers, digested: a round is a batch, so a retry
+    /// carries a batch. Each answer is digested against its own
+    /// re-derived question; one that no longer stands is said and
+    /// skipped, never taken as a verdict on another. None for a call
+    /// that is no retry.
+    async fn digest_retry(
+        &self,
+        request: &CallToolRequestParams,
+        session: &Session,
+        id: &str,
+    ) -> Option<String> {
+        let responses = request.input_responses.as_ref()?;
+        let note = if request.request_state.as_deref() != Some(ROUND_STATE) {
+            "question-round: a retry without the echoed state".to_string()
+        } else if !responses.is_empty() {
+            let mut notes = Vec::new();
+            for (key, raw) in responses.iter() {
+                notes.push(match serde_json::from_value::<ElicitResult>(raw.clone()) {
+                    Ok(answer) => Box::pin(self.digest_round(key, answer, session)).await,
+                    Err(e) => format!("question-round: the answer does not parse: {e}"),
+                });
+            }
+            notes.join("\n")
+        } else {
+            "question-round: the retry carries no answer".into()
+        };
+        // The account can carry the human's typed words and a rival's
+        // prose, so it is a `debug` event like a call's text; `info`
+        // says only that a round was digested.
+        tracing::info!(subject = %id, "question-round: digested");
+        tracing::debug!(subject = %id, note = %note, "question-round");
+        Some(note)
+    }
+
+    /// The round's forms as one result: the whole batch travels in it,
+    /// the call ends normally, the client fulfils every entry before it
+    /// retries, and nothing on the server waits — the round costs the
+    /// agent no time whether or not a person is there. None where no
+    /// form stands.
+    async fn ask_round(&self, session: &Session, id: &str) -> Option<CallToolResponse> {
+        let (round, total) = self.derive_round(session).await;
+        let mut asks = InputRequests::new();
+        let mut ids = Vec::new();
+        for (rank, q) in &round {
+            match q.params(*rank, total) {
+                Ok(params) => {
+                    ids.push(q.id());
+                    asks.insert(
+                        q.id(),
+                        InputRequest::Elicitation(ElicitRequest::new(params)),
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(subject = %id, error = %e, "question-round: form refused")
                 }
             }
-            if !asks.is_empty() {
-                tracing::info!(
-                    subject = %id,
-                    asking = ids.len(),
-                    open = total,
-                    ids = %ids.join(", "),
-                    "question-round"
-                );
-                return Ok(InputRequiredResult::new(Some(asks), Some(ROUND_STATE.into())).into());
-            }
         }
+        if asks.is_empty() {
+            return None;
+        }
+        tracing::info!(
+            subject = %id,
+            asking = ids.len(),
+            open = total,
+            ids = %ids.join(", "),
+            "question-round"
+        );
+        Some(InputRequiredResult::new(Some(asks), Some(ROUND_STATE.into())).into())
+    }
 
-        // A single query streams from the engine; everything else runs
-        // through execute. Either way the session pages a data read —
-        // its plan carries the cap, so what the agent won't see is
-        // never computed — and serves a metadata read (GLOSSARY(),
-        // ATTEST(), the store relations) whole: the map must be whole,
-        // and the store bounds it.
-        // What a refused sequence had already landed rides beside the
-        // refusal, in the usual shape — the writes stood.
+    /// The statements, run: a single query streams from the engine;
+    /// everything else runs through execute. Either way the session
+    /// pages a data read — its plan carries the cap, so what the agent
+    /// won't see is never computed — and serves a metadata read
+    /// (GLOSSARY(), ATTEST(), the store relations) whole: the map must
+    /// be whole, and the store bounds it. What a refused sequence had
+    /// already landed rides beside the refusal, in the usual shape —
+    /// the writes stood.
+    async fn run_statements(
+        &self,
+        session: &Session,
+        actor: &Actor,
+        bound: Option<&str>,
+        statements: &str,
+    ) -> (Result<serde_json::Value, String>, Option<serde_json::Value>) {
         let mut landed_json: Option<serde_json::Value> = None;
         let rendered = match session.query_page(statements).await {
             Ok(query) => wire::stream_json(query.stream, query.cap)
@@ -1133,11 +1198,7 @@ impl ServerHandler for GlossqlMcp {
             // statements after it onto another channel for the rest of
             // this call, and never rebinds a session.
             Err(SessionError::NotOneRead) => {
-                match self
-                    .plane
-                    .execute(actor.clone(), bound.as_deref(), statements)
-                    .await
-                {
+                match self.plane.execute(actor.clone(), bound, statements).await {
                     Ok(outcomes) => wire::outcomes_json(&outcomes),
                     Err(e) => {
                         if let SessionError::Sequence { landed, .. } = &e
@@ -1151,69 +1212,70 @@ impl ServerHandler for GlossqlMcp {
             }
             Err(e) => Err(e.to_string()),
         };
-        // The brief travels on the call that moved it: initialize
-        // instructions are fetched once per connection, so a
-        // long-lived session would never
-        // see the counts change. Two rules hold it honest:
-        // movement is decided on the COUNTS, never on the rendered
-        // line (a rendered string is display, not identity); and the
-        // The baseline is the facts as they stood before this call.
-        // One shared baseline, so the mover hears it: a second agent
-        // watching the same workspace does not, and that is the known
-        // cost of not keeping per-actor state the run has never asked
-        // for.
-        // Scoped to the cause: only a write (or a landed ruling) can
-        // move the counts, so a pure read never pays the recomposition.
-        let brief_moved = if shape.writes || probed.is_some() {
-            let before = self.brief.facts.read().ok().and_then(|f| f.clone());
-            Self::refresh_brief(&self.plane, &self.brief).await;
-            let after = self.brief.facts.read().ok().and_then(|f| f.clone());
-            (after.is_some() && after != before).then(|| format!("brief: {}", self.brief.line()))
-        } else {
-            None
-        };
-        // Where the call left the agent and one act per goal from there,
-        // on every call (`window`). It rides the result, never the
-        // instructions, so the stable prefix holds.
-        let window = self
-            .situation_block(
-                &actor,
-                shape.dataset.as_deref().or(bound.as_deref()),
-                &rendered,
-            )
-            .await;
-        Ok(match rendered {
-            Ok(body) => {
-                let mut blocks = vec![ContentBlock::text(body.to_string())];
-                if let Some(note) = probed {
-                    blocks.push(ContentBlock::text(note));
-                }
-                blocks.push(ContentBlock::text(window));
-                if let Some(brief) = brief_moved {
-                    blocks.push(ContentBlock::text(brief));
-                }
-                CallToolResult::success(blocks)
-            }
-            // A failed statement is the agent's business, not the
-            // transport's: an error result, never a protocol error —
-            // and the brief still travels: an input_responses ruling
-            // may have landed even when the statement then refused.
-            Err(e) => {
-                tracing::warn!(subject = %id, error = %e, "refused");
-                let mut blocks = vec![ContentBlock::text(e)];
-                if let Some(landed) = landed_json {
-                    blocks.push(ContentBlock::text(
-                        serde_json::json!({ "landed": landed }).to_string(),
-                    ));
-                }
-                blocks.push(ContentBlock::text(window));
-                if let Some(brief) = brief_moved {
-                    blocks.push(ContentBlock::text(brief));
-                }
-                CallToolResult::error(blocks)
-            }
+        (rendered, landed_json)
+    }
+
+    /// The brief travels on the call that moved it: initialize
+    /// instructions are fetched once per connection, so a long-lived
+    /// session would never see the counts change. Two rules hold it
+    /// honest: movement is decided on the COUNTS, never on the rendered
+    /// line (a rendered string is display, not identity); and the
+    /// baseline is the facts as they stood before this call. One shared
+    /// baseline, so the mover hears it: a second agent watching the
+    /// same workspace does not, and that is the known cost of not
+    /// keeping per-actor state the run has never asked for. Scoped to
+    /// the cause: only a write (or a landed ruling) can move the
+    /// counts, so a pure read never pays the recomposition.
+    async fn brief_moved(&self, moved: bool) -> Option<String> {
+        if !moved {
+            return None;
         }
-        .into())
+        let before = self.brief.facts.read().ok().and_then(|f| f.clone());
+        Self::refresh_brief(&self.plane, &self.brief).await;
+        let after = self.brief.facts.read().ok().and_then(|f| f.clone());
+        (after.is_some() && after != before).then(|| format!("brief: {}", self.brief.line()))
+    }
+}
+
+/// The call's result: the rows, the round's account, the window and
+/// the brief where it moved. A failed statement is the agent's
+/// business, not the transport's: an error result, never a protocol
+/// error — and the brief still travels: an input_responses ruling may
+/// have landed even when the statement then refused.
+fn call_result(
+    id: &str,
+    rendered: Result<serde_json::Value, String>,
+    probed: Option<String>,
+    landed: Option<serde_json::Value>,
+    window: String,
+    brief_moved: Option<String>,
+) -> CallToolResult {
+    match rendered {
+        Ok(body) => {
+            let mut blocks = vec![ContentBlock::text(body.to_string())];
+            if let Some(note) = probed {
+                blocks.push(ContentBlock::text(note));
+            }
+            blocks.push(ContentBlock::text(window));
+            if let Some(brief) = brief_moved {
+                blocks.push(ContentBlock::text(brief));
+            }
+            CallToolResult::success(blocks)
+        }
+        Err(e) => {
+            tracing::warn!(subject = %id, error = %e, "refused");
+            let mut blocks = vec![ContentBlock::text(e)];
+            if let Some(landed) = landed {
+                blocks.push(ContentBlock::text(
+                    serde_json::json!({ "landed": landed }).to_string(),
+                ));
+            }
+            blocks.push(ContentBlock::text(window));
+            if let Some(brief) = brief_moved {
+                blocks.push(ContentBlock::text(brief));
+            }
+            CallToolResult::error(blocks)
+        }
     }
 }
 
