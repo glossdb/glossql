@@ -21,153 +21,23 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use datafusion::catalog::TableProvider;
 use datafusion::catalog::view::ViewTable;
 use datafusion::datasource::provider_as_source;
-use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder, ident};
+use datafusion::logical_expr::{LogicalPlanBuilder, ident};
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::planner::IdentNormalizer;
 use datafusion::sql::resolve::resolve_table_references;
 use datafusion::sql::sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, Ident, Query, SelectItem, SetExpr,
-    Statement as SQLStatement, TableFactor, Value as SqlValue, VisitMut, VisitorMut,
+    Expr, Ident, Query, SelectItem, SetExpr, Statement as SQLStatement, TableFactor, VisitMut,
+    VisitorMut,
 };
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
 use datafusion::sql::sqlparser::tokenizer::Token;
 
-use crate::reads::{Shared, served_grounding};
-use crate::session::SessionError;
-
-/// What a statement resolved before planning: the bound dataset's tables
-/// pinned at one snapshot each, every SQL-bodied door as a plan, and
-/// every compute door as a batch. Immutable once built and handed to a
-/// planner that only reads it — planning fetches nothing, computes
-/// nothing, and never re-enters.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Resolved {
-    plans: HashMap<String, Arc<LogicalPlan>>,
-    pins: HashMap<String, Arc<dyn TableProvider>>,
-    batches: HashMap<String, crate::reads::Served>,
-    ctes: HashSet<String>,
-    /// Whether anything this statement resolved — at any expansion
-    /// depth — reads the glossary: the relation itself, the GLOSSARY/
-    /// ATTEST doors, a served grounding, or a compute door over slots.
-    /// Derived here because resolution is the one place every name
-    /// passes through; nothing curates a list of frames. The app door
-    /// serves it as the frame class (`record`/`data`): a `record`
-    /// frame can change under a glossary write
-    /// (a ruling), a `data` frame provably cannot.
-    record: bool,
-    /// What resolution read beyond the plans' own scans — compute
-    /// doors and store relations, accumulated for the measurement
-    /// record's `reads` legs (the currency rule). Derived here for the
-    /// same reason as `record`; the data tables a body scans directly
-    /// come from the executed plan instead.
-    pub(crate) reads: ReadSet,
-    /// The bound dataset's groundings as the catalog lists them: each
-    /// view under its metric's name, with its definition. A bare or
-    /// dataset-qualified name among them is the grounding; a shipped
-    /// read's name and a CTE's stand over it.
-    views: HashMap<String, String>,
-    /// The groundings this statement names, each planned at its pins
-    /// and held as a `ViewTable` over that plan — served under the
-    /// metric's name as a pinned table is, and by `read.<name>()`.
-    served: HashMap<String, Arc<dyn TableProvider>>,
-}
-
-/// What a statement's resolution read, named against the pin's legs:
-/// data tables, store relations, or the whole dataset when a door
-/// sweeps it. `everything` is the conservative floor — a door whose
-/// reads cannot be enumerated records nothing, and the measurement
-/// stands only at its exact pin.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct ReadSet {
-    pub(crate) tables: HashSet<String>,
-    pub(crate) relations: HashSet<String>,
-    pub(crate) all_tables: bool,
-    pub(crate) everything: bool,
-}
-
-impl ReadSet {
-    /// Everything `other` read, added to this set.
-    pub(crate) fn extend(&mut self, other: &ReadSet) {
-        self.tables.extend(other.tables.iter().cloned());
-        self.relations.extend(other.relations.iter().cloned());
-        self.all_tables |= other.all_tables;
-        self.everything |= other.everything;
-    }
-}
-
-impl Resolved {
-    /// A resolution holding only the given pins — what a door that
-    /// names its own dataset reads, the statement's binding aside.
-    pub(crate) fn over(pins: HashMap<String, Arc<dyn TableProvider>>) -> Self {
-        Self {
-            pins,
-            ..Self::default()
-        }
-    }
-
-    pub(crate) fn plan(&self, key: &str) -> Option<Arc<LogicalPlan>> {
-        self.plans.get(key).cloned()
-    }
-
-    pub(crate) fn pin(&self, table: &str) -> Option<Arc<dyn TableProvider>> {
-        self.pins.get(table).cloned()
-    }
-
-    /// The pinned tables' names — the bound dataset's tables as this
-    /// statement sees them.
-    pub(crate) fn tables(&self) -> Vec<String> {
-        self.pins.keys().cloned().collect()
-    }
-
-    pub(crate) fn batch(&self, key: &str) -> Option<&crate::reads::Served> {
-        self.batches.get(key)
-    }
-
-    /// The grounding of that name as this statement serves it — its
-    /// view over the definition planned at the statement's pins — once
-    /// resolved; `None` for a name that is no grounding of the bound
-    /// dataset.
-    pub(crate) fn view(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
-        self.served.get(name).cloned()
-    }
-
-    /// Whether this factor is a name the statement binds as a CTE — see
-    /// [`shadowed`].
-    pub(crate) fn shadowed(&self, idents: &IdentNormalizer, f: &TableFactor) -> bool {
-        shadowed(idents, &self.ctes, f)
-    }
-
-    /// Whether the statement reads the glossary anywhere in its
-    /// expansion — the frame class, derived during resolution.
-    pub(crate) fn touches_record(&self) -> bool {
-        self.record
-    }
-}
-
-/// Whether the factor is a bare reference to one of the statement's CTE
-/// names — the planner leaves it alone so DataFusion's CTE lookup serves
-/// it. Shipped read names stay reserved over both tables and CTEs.
-fn shadowed(idents: &IdentNormalizer, ctes: &HashSet<String>, f: &TableFactor) -> bool {
-    let TableFactor::Table {
-        name, args: None, ..
-    } = f
-    else {
-        return false;
-    };
-    let [part] = name.0.as_slice() else {
-        return false;
-    };
-    let Some(ident) = part.as_ident() else {
-        return false;
-    };
-    let name = idents.normalize(ident.clone());
-    ctes.contains(&name) && crate::library::read_sql(&name).is_none()
-}
+use crate::reads::served_grounding;
+use crate::shared::{Resolved, Served, SessionError, Shared};
 
 /// A door reference this pass knows how to resolve ahead of planning:
 /// something whose body is SQL. Compute doors build batches and are
@@ -266,7 +136,7 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashMap<String, Str
                         // The malformed-argument case is left uncollected
                         // on purpose: the planner meets the factor, calls
                         // the same reader, and reports it.
-                        if let Some(Ok(subject)) = subject_column_arg(self.1, f) {
+                        if let Some(Ok(subject)) = crate::subject::subject_column_arg(self.1, f) {
                             self.0.push(Door::Column(subject));
                         }
                     }
@@ -280,43 +150,6 @@ fn doors_in(idents: &IdentNormalizer, q: &mut Query, views: &HashMap<String, Str
     c.0.sort_by_key(Door::key);
     c.0.dedup();
     c.0
-}
-
-/// Reads a factor as the `subject_column` door: `None` if it is
-/// something else (including a bare `subject_column` table, which stays
-/// a table), `Some(Err)` if it is the door with anything but one quoted
-/// subject. Both sides of the seam call this — the pre-pass to collect,
-/// the planner to serve or refuse — so the two cannot disagree on what
-/// the door accepts.
-pub(crate) fn subject_column_arg(
-    idents: &IdentNormalizer,
-    f: &TableFactor,
-) -> Option<Result<String, SessionError>> {
-    let TableFactor::Table {
-        name,
-        args: Some(a),
-        ..
-    } = f
-    else {
-        return None;
-    };
-    let [part] = name.0.as_slice() else {
-        return None;
-    };
-    if !part
-        .as_ident()
-        .is_some_and(|i| idents.normalize(i.clone()) == "subject_column")
-    {
-        return None;
-    }
-    if let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))] = a.args.as_slice()
-        && let SqlValue::SingleQuotedString(subject) = &v.value
-    {
-        return Some(Ok(subject.clone()));
-    }
-    Some(Err(SessionError::BadSubject(
-        "subject_column takes one quoted subject: subject_column('table.column')".into(),
-    )))
 }
 
 pub(crate) fn parse(sql: &str, what: &str) -> Result<Query, SessionError> {
@@ -431,14 +264,14 @@ async fn compute_batches(
     let idents = shared.idents();
     for factor in &factors_in(q) {
         let key = factor.to_string();
-        if resolved.batches.contains_key(&key) || shadowed(&idents, &resolved.ctes, factor) {
+        if resolved.batches.contains_key(&key) || resolved.shadowed(&idents, factor) {
             continue;
         }
-        if let Some(batch) = crate::reads::compute_batch(shared, factor, resolved).await? {
-            if crate::reads::reads_the_record(&idents, factor) {
+        if let Some(batch) = crate::doors::compute_batch(shared, factor, resolved).await? {
+            if crate::doors::reads_the_record(&idents, factor) {
                 resolved.record = true;
             }
-            crate::reads::door_reads(&idents, factor, &mut resolved.reads);
+            crate::doors::door_reads(&idents, factor, &mut resolved.reads);
             resolved.batches.insert(key, batch);
         }
     }
@@ -572,7 +405,7 @@ async fn memo_shipped(
             let schema = physical.schema();
             let partitions = datafusion::physical_plan::collect(physical, ctx.task_ctx()).await?;
             Ok(crate::memo::Memo {
-                served: crate::reads::Served { schema, partitions },
+                served: Served { schema, partitions },
                 record: scratch.record,
                 reads: scratch.reads,
             })
@@ -629,6 +462,7 @@ async fn expand(
         .1
         .iter()
         .map(|c| c.table().to_string())
+        .filter(|c| crate::library::read_sql(c).is_none())
         .collect();
     let state = crate::reads::state_with(ctx, shared, scoped);
     let plan = state
@@ -682,9 +516,14 @@ pub(crate) async fn resolve(
         Some(named) => named,
         None => shared.statement_pins().await?,
     };
+    // A shipped read's name stays reserved over a CTE of that name.
     let mut resolved = Resolved {
         pins,
-        ctes: ctes.iter().map(|c| c.table().to_string()).collect(),
+        ctes: ctes
+            .iter()
+            .map(|c| c.table().to_string())
+            .filter(|c| crate::library::read_sql(c).is_none())
+            .collect(),
         views: shared.views().await?,
         ..Resolved::default()
     };

@@ -10,8 +10,7 @@ use datafusion::functions_aggregate::expr_fn::count;
 use datafusion::logical_expr::{Expr, ExprFunctionExt, LogicalPlanBuilder, ident, lit};
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::{dataset_pins, int_column, rows_batch};
 

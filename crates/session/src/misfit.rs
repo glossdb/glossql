@@ -26,8 +26,8 @@ use datafusion::arrow::util::display::array_value_to_string;
 use glossql_glossary::Scope;
 use serde_json::{Value, json};
 
-use crate::reads::{Shared, verdicts};
-use crate::session::{MISFIT, SessionError};
+use crate::reads::verdicts;
+use crate::shared::{MISFIT, SessionError, Shared};
 
 /// Stated caps (fixture 20 §6): refused by name, never silently cut.
 /// The row cap bounds the model's context — a bigger population is
@@ -49,7 +49,7 @@ pub(crate) async fn misfit_batch(
         .ok_or(SessionError::NoDataset)?;
     let bad = |detail: String| SessionError::BadSubject(format!("misfit.{frame}(): {detail}"));
     if !shared.runtime().serves(MISFIT) {
-        return Err(crate::session::no_model(
+        return Err(crate::shared::no_model(
             &format!("misfit.{frame}()"),
             MISFIT,
         ));

@@ -44,12 +44,11 @@ use datafusion::sql::sqlparser::ast::{
 use glossql_glossary::Scope;
 use serde_json::{Value, json};
 
-use crate::cube::{Resolution, World};
-use crate::period;
-use crate::reads::Shared;
+use crate::cube::World;
+use crate::period::{self, Resolution};
 use crate::replay::{Factor, KeyAnchor, Override};
 use crate::search::whole_series;
-use crate::session::{SessionError, WHATIF};
+use crate::shared::{SessionError, Shared, WHATIF};
 use crate::subject::qi;
 
 /// The levels asked of the what-if: the 80% band around the median.
@@ -751,7 +750,7 @@ async fn estimate(
         if !runtime.serves(WHATIF) {
             refuse(
                 idx,
-                &crate::session::no_model(
+                &crate::shared::no_model(
                     &format!(
                         "metric_series(world => 'scenario', scenario => '{}')",
                         scenario.name

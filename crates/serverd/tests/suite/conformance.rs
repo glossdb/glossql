@@ -184,6 +184,91 @@ fn the_period_calendar_is_the_engines() {
     );
 }
 
+/// The session crate's modules depend on each other in one direction,
+/// with these exceptions: pairs that import each other, counted from
+/// the `crate::` paths each module's source names. `shared.rs` is the
+/// leaf every module reads — the refusal, the state, the served shape,
+/// the resolution — so a module that only refuses or reads state
+/// depends on nothing else, and `reads.rs` plans the record while
+/// `doors.rs` answers the doors by name. What remains is the cube and
+/// the three readers over it, the two search doors that read each
+/// other, the shipped library and the pre-pass that parses it, and
+/// the plane that builds sessions. A pair that closes lowers the
+/// ceiling; a new one is a module that should have read the leaf.
+const MUTUAL_PAIRS: usize = 7;
+
+#[test]
+fn the_session_modules_depend_one_way() {
+    let root = crates_dir().join("session").join("src");
+    let mut edges: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let modules: std::collections::BTreeSet<String> = sources()
+        .into_iter()
+        .filter_map(|p| p.strip_prefix(&root).ok().map(|rel| rel.to_path_buf()))
+        .filter(|rel| rel.as_os_str() != "lib.rs")
+        .filter_map(|rel| {
+            rel.iter()
+                .next()
+                .map(|m| m.to_string_lossy().trim_end_matches(".rs").to_string())
+        })
+        .collect();
+    for path in sources() {
+        let Ok(rel) = path.strip_prefix(&root) else {
+            continue;
+        };
+        let Some(module) = rel
+            .iter()
+            .next()
+            .map(|m| m.to_string_lossy().trim_end_matches(".rs").to_string())
+        else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for (i, _) in line.match_indices("crate::") {
+                let rest = &line[i + "crate::".len()..];
+                let target: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if modules.contains(&target) && target != module {
+                    edges.entry(module.clone()).or_default().insert(target);
+                }
+            }
+        }
+    }
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (a, targets) in &edges {
+        for b in targets {
+            if a < b && edges.get(b).is_some_and(|t| t.contains(a)) {
+                pairs.push((a.clone(), b.clone()));
+            }
+        }
+    }
+    assert!(
+        edges.get("shared").is_none_or(|t| t.is_empty()),
+        "shared.rs is the leaf and imports no module: {:?}",
+        edges.get("shared")
+    );
+    assert!(
+        pairs.len() <= MUTUAL_PAIRS,
+        "the session crate's mutual imports rose to {} pairs, ceiling {MUTUAL_PAIRS}:\n    {}\n\n\
+         A module that refuses, reads state or serves a shape imports `shared`, never the \
+         module that happens to hold the caller. If the new pair is genuinely right, raise the \
+         ceiling in this file WITH the reason.",
+        pairs.len(),
+        pairs
+            .iter()
+            .map(|(a, b)| format!("{a} <-> {b}"))
+            .collect::<Vec<_>>()
+            .join("\n    ")
+    );
+}
+
 /// The counts are the roadmap's gate: stage 2 takes the session's
 /// blocking and the thread-local to zero. This records where they stand
 /// so a drop is visible in the diff rather than only in a passing test.

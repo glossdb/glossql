@@ -9,8 +9,7 @@ use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::arrow::util::display::array_value_to_string;
 use serde_json::{Value, json};
 
-use crate::reads::Shared;
-use crate::session::SessionError;
+use crate::shared::{SessionError, Shared};
 
 use super::{monthly_sql, rows_batch};
 

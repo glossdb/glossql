@@ -12,6 +12,15 @@
 //! (datafusion-sql `relation/mod.rs`, `create_relation`).
 //!
 //! [`RelationPlanner`]: datafusion::logical_expr::planner::RelationPlanner
+//!
+//! The modules read one way: `shared` is the leaf — the refusal, the
+//! outcome, the runtime seam, the session's state, the served shape and
+//! a statement's resolution — and imports none of the others; `reads`
+//! plans the record and `doors` answers the doors by name; `prepass`
+//! resolves a statement ahead of planning; `cube`, `search`, `scenario`,
+//! `plan_world`, `misfit`, `behavior` and `period` are the doors' work;
+//! `session` routes statements and `plane` builds sessions. The
+//! conformance suite in serverd holds the mutual imports at a ceiling.
 
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
@@ -19,6 +28,7 @@
 
 mod behavior;
 mod cube;
+mod doors;
 mod execution;
 mod library;
 mod measure;
@@ -36,17 +46,20 @@ pub mod rulings;
 mod scenario;
 mod search;
 mod session;
+mod shared;
 mod subject;
 
 /// The attribute a [`FunctionRuntime`] implementation carries — the
 /// table call is an async trait method.
 pub use async_trait::async_trait;
 pub use cube::{CubeCache, DEFAULT_CUBE_CACHE_MB};
+pub use doors::DOORS;
 pub use memo::ShippedCache;
 pub use plane::{Caller, DEFAULT_MEMORY_LIMIT_MB, Plane};
-pub use reads::{DOORS, DoorPage};
 pub use session::{
-    Answered, CallShape, FORECAST, FunctionRuntime, MISFIT, NoRuntime, Outcome, POINTS, Registered,
-    Session, SessionError, WHATIF, call_shape, detector_functions, no_model, point_variable,
-    reader_functions,
+    CallShape, Registered, Session, call_shape, detector_functions, reader_functions,
+};
+pub use shared::{
+    Answered, DoorPage, FORECAST, FunctionRuntime, MISFIT, NoRuntime, Outcome, POINTS,
+    SessionError, WHATIF, no_model, point_variable,
 };

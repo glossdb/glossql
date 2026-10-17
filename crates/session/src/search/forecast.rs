@@ -44,10 +44,8 @@ use datafusion::logical_expr::{col, try_cast};
 use serde_json::{Value, json};
 
 use super::rows_batch;
-use crate::cube::Resolution;
-use crate::period;
-use crate::reads::Shared;
-use crate::session::{Answered, FORECAST, SessionError};
+use crate::period::{self, Resolution};
+use crate::shared::{Answered, FORECAST, SessionError, Shared};
 
 /// The levels asked, the walk's own: the 80% band is p10 to p90, the
 /// 90% band p05 to p95.
@@ -221,7 +219,7 @@ pub(crate) async fn metric_forecast_ahead(
 ) -> Result<RecordBatch, SessionError> {
     let runtime = shared.runtime();
     if !runtime.serves(FORECAST) {
-        return Err(crate::session::no_model("metric_forecast()", FORECAST));
+        return Err(crate::shared::no_model("metric_forecast()", FORECAST));
     }
     let bound = shared.dataset.read().expect("state lock").clone();
     if bound.as_deref() != Some(dataset) {
