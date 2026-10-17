@@ -200,9 +200,74 @@ const SURFACES: [&str; 8] = [
     "rulings",
 ];
 
+/// A session on a fresh dataset `fin`, with the races table landed.
+async fn fin() -> (tempfile::TempDir, Arc<Plane>, Arc<Session>) {
+    let (dir, plane) = scratch_plane().await;
+    plane
+        .execute(
+            human(),
+            None,
+            "DECLARE DATASET fin SET (purpose: 'next test')",
+        )
+        .await
+        .unwrap();
+    let session = plane.channel(human(), Some("fin")).await.unwrap();
+    let (schema, batch) = races();
+    session
+        .register_table(
+            "races",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+        )
+        .await
+        .unwrap();
+    (dir, plane, session)
+}
+
+/// Takings declared, claimed and grounded on the session, and the
+/// race date judged: the state every goal past the metrics goal
+/// reads. The judgment is the caller's to check — under `NoRuntime`
+/// the detector may not run, and the goals then stand blocked.
+async fn grounded_takings(session: &Session) -> Result<(), String> {
+    session
+        .execute("DECLARE ASPECT takings WITH $${\"title\": \"Takings\"}$$ AS QUERY ON DATASET")
+        .await
+        .unwrap();
+    session
+        .execute("GLOSS definitions ON fin AS $${\"definitions\": {\"takings\": {\"unit\": \"GBP\", \"meaning\": \"gate takings per race\"}}}$$")
+        .await
+        .unwrap();
+    session
+        .execute(
+            "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\"}$$",
+        )
+        .await
+        .unwrap();
+    session
+        .execute("SELECT temporal() FROM fin.races.race_date")
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Whether the judged path is covered: where `temporal()` did not run
+/// under `NoRuntime`, the slices goal stands blocked and the test
+/// says so instead of walking on.
+async fn judged(session: &Session, judged: Result<(), String>) -> bool {
+    match judged {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "temporal() did not run under NoRuntime ({e}); the judged path is not covered here"
+            );
+            let answers = by_surface(&rows(session, "SELECT * FROM next ORDER BY goal").await);
+            assert_eq!(answers["slices"]["state"], "blocked", "{answers:?}");
+            false
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[expect(clippy::too_many_lines, reason = "one door walked end to end")]
-async fn the_routes_answer_from_the_record() {
+async fn a_fresh_dataset_routes_every_goal() {
     let (_dir, plane) = scratch_plane().await;
     plane
         .execute(
@@ -250,17 +315,13 @@ async fn the_routes_answer_from_the_record() {
             .await
             .is_empty()
     );
+}
 
-    // A declared metric the dataset claims (its definitions entry
-    // stands) and nobody grounded: its grounding is the next act.
-    let (schema, batch) = races();
-    session
-        .register_table(
-            "races",
-            Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
-        )
-        .await
-        .unwrap();
+/// A declared metric the dataset claims (its definitions entry
+/// stands) and nobody grounded: its grounding is the next act.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_declared_metric_asks_for_its_claim_then_its_grounding() {
+    let (_dir, _plane, session) = fin().await;
     // Declared and claimed by nobody: the claim is the act, with the
     // name filled — the declare counts on the declare.
     session
@@ -295,241 +356,256 @@ async fn the_routes_answer_from_the_record() {
         ),
         "{statement}"
     );
+}
 
-    // Grounded: the narrow frame asks for a dimension column, the
-    // walk is owed, the app is admissible — once the date is judged.
+/// Grounded over a judged date, the narrow frame asks for a dimension
+/// column: the detector is the act, then the axis, until the author's
+/// word closes the goal.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grounded_metric_asks_to_judge_its_columns_then_an_axis() {
+    let (_dir, _plane, session) = fin().await;
+    let judged_at = grounded_takings(&session).await;
+    if !judged(&session, judged_at).await {
+        return;
+    }
+    // Nobody judged a column of races: the detector is the act, one
+    // statement per unserved column, filled.
+    let slices = goal(&session, "slices").await;
+    assert_eq!(slices["state"], "next", "{slices:?}");
+    assert_eq!(slices["act"], "dimension_relevance", "{slices:?}");
+    assert_eq!(
+        slices["say"], "judge the unserved columns of races, none is judged",
+        "{slices:?}"
+    );
+    assert_eq!(
+        slices["statement"], "SELECT dimension_relevance() FROM fin.races.track",
+        "{slices:?}"
+    );
+    // A role names track a dimension and no verdict stands on it: the
+    // detector's form is filled with the column.
+    session
+        .execute("GLOSS role ON fin.races.track AS $${\"value\": \"dimension\"}$$")
+        .await
+        .unwrap();
+    let roled = goal(&session, "slices").await;
+    assert_eq!(roled["say"], "judge track of races", "{roled:?}");
+    assert_eq!(
+        roled["statement"], "SELECT dimension_relevance() FROM fin.races.track",
+        "{roled:?}"
+    );
+    // A gloss admits track: the wider frame names it, and nothing a
+    // verdict or a gloss did not admit.
+    session
+        .execute("GLOSS dimension ON fin.races.track AS $${\"value\": \"supporting\"}$$")
+        .await
+        .unwrap();
+    let slices = goal(&session, "slices").await;
+    assert_eq!(
+        slices["say"], "re-record takings serving one of races.track",
+        "{slices:?}"
+    );
+    let statement = slices["statement"].as_str().unwrap();
+    assert!(
+        statement.contains("GLOSS takings ON fin AS $$"),
+        "{statement}"
+    );
+    assert!(
+        statement.contains("SELECT race_date, takings AS value FROM races"),
+        "{statement}"
+    );
+    // The empty list on a flow does not hold — takings add up to their
+    // total by any column — so the goal still asks for the axis; on a
+    // distinct count it does, and the author's word closes the goal
+    // for that metric.
     session
         .execute(
-            "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\"}$$",
+            "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\", \"axes\": []}$$",
         )
         .await
         .unwrap();
-    let judged = session
-        .execute("SELECT temporal() FROM fin.races.race_date")
-        .await;
-    let answers = by_surface(&rows(&session, "SELECT * FROM next ORDER BY goal").await);
-    match judged {
-        Ok(_) => {
-            // Nobody judged a column of races: the detector is the act,
-            // one statement per unserved column, filled.
-            let slices = &answers["slices"];
-            assert_eq!(slices["state"], "next", "{answers:?}");
-            assert_eq!(slices["act"], "dimension_relevance", "{answers:?}");
-            assert_eq!(
-                slices["say"], "judge the unserved columns of races, none is judged",
-                "{answers:?}"
-            );
-            assert_eq!(
-                slices["statement"], "SELECT dimension_relevance() FROM fin.races.track",
-                "{answers:?}"
-            );
-            // A role names track a dimension and no verdict stands on
-            // it: the detector's form is filled with the column.
-            session
-                .execute("GLOSS role ON fin.races.track AS $${\"value\": \"dimension\"}$$")
-                .await
-                .unwrap();
-            let roled = goal(&session, "slices").await;
-            assert_eq!(roled["say"], "judge track of races", "{roled:?}");
-            assert_eq!(
-                roled["statement"], "SELECT dimension_relevance() FROM fin.races.track",
-                "{roled:?}"
-            );
-            // A gloss admits track: the wider frame names it, and
-            // nothing a verdict or a gloss did not admit.
-            session
-                .execute("GLOSS dimension ON fin.races.track AS $${\"value\": \"supporting\"}$$")
-                .await
-                .unwrap();
-            let slices = goal(&session, "slices").await;
-            assert_eq!(
-                slices["say"], "re-record takings serving one of races.track",
-                "{slices:?}"
-            );
-            let statement = slices["statement"].as_str().unwrap();
-            assert!(
-                statement.contains("GLOSS takings ON fin AS $$"),
-                "{statement}"
-            );
-            assert!(
-                statement.contains("SELECT race_date, takings AS value FROM races"),
-                "{statement}"
-            );
-            // The empty list on a flow does not hold — takings add up
-            // to their total by any column — so the goal still asks
-            // for the axis; on a distinct count it does, and the
-            // author's word closes the goal for that metric.
-            session
-                .execute(
-                    "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, takings AS value FROM races\", \"axes\": []}$$",
-                )
-                .await
-                .unwrap();
-            let held = goal(&session, "slices").await;
-            assert_eq!(held["state"], "next", "{held:?}");
-            assert_eq!(
-                held["say"], "re-record takings serving one of races.track",
-                "{held:?}"
-            );
-            session
-                .execute(
-                    "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, CAST(count(DISTINCT track) AS DOUBLE) AS value FROM races GROUP BY race_date\", \"axes\": []}$$",
-                )
-                .await
-                .unwrap();
-            let closed = goal(&session, "slices").await;
-            assert_eq!(closed["state"], "done", "{closed:?}");
-            assert_eq!(answers["bands"]["act"], "metric_bands", "{answers:?}");
-            assert_eq!(answers["bands"]["say"], "run the walk", "{answers:?}");
-            assert_eq!(answers["app"]["state"], "next", "{answers:?}");
-            assert_eq!(
-                answers["app"]["say"], "write the first page over 1 metric",
-                "{answers:?}"
-            );
-            let app = answers["app"]["statement"].as_str().unwrap();
-            assert!(
-                app.contains("GLOSS app ON review AS $${\"title\": \"fin review\"}$$;"),
-                "{app}"
-            );
-            assert!(app.contains("metric IN ('takings')"), "{app}");
-            assert!(app.contains("\\\"$schema\\\":"), "{app}");
-            assert!(app.contains("GLOSS app_page ON review.index AS"), "{app}");
-            assert_eq!(answers["app"]["then"], "-- serves at /fin/app/review");
-            // The manifest alone is not an app: the door serves
-            // index.html, so the page is the act until it stands.
-            session
-                .execute("GLOSS app ON review AS $${\"title\": \"fin review\"}$$")
-                .await
-                .unwrap();
-            let paged = goal(&session, "app").await;
-            assert_eq!(paged["state"], "next", "{paged:?}");
-            assert_eq!(paged["act"], "GLOSS app_page", "{paged:?}");
-            assert_eq!(paged["say"], "write the page of review", "{paged:?}");
-            assert!(
-                paged["statement"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("GLOSS app_page ON review.index AS $${\"html\":"),
-                "{paged:?}"
-            );
-            session
-                .execute(
-                    "GLOSS app_page ON review.index AS $${\"html\": \"{% extends \\\"shell.html\\\" %}{% block main %}<p>fin</p>{% endblock %}\"}$$",
-                )
-                .await
-                .unwrap();
-            let stands = goal(&session, "app").await;
-            assert_eq!(stands["state"], "done", "{stands:?}");
-            assert_eq!(
-                stands["why"], "an app stands: /fin/app/review",
-                "{stands:?}"
-            );
-            // An app named like its dataset: the part's subject is the
-            // app's, not a dataset path, so the page lands on the app
-            // and the goal closes on it.
-            session
-                .execute("GLOSS app ON fin AS $${\"title\": \"fin\"}$$")
-                .await
-                .unwrap();
-            session
-                .execute("GLOSS app_page ON fin.index AS $${\"html\": \"<p>fin</p>\"}$$")
-                .await
-                .unwrap();
-            let parts = rows(
-                &session,
-                "SELECT path FROM app_parts WHERE dataset = 'fin' AND app = 'fin' ORDER BY path",
-            )
-            .await;
-            let paths: Vec<&str> = parts.iter().map(|r| r["path"].as_str().unwrap()).collect();
-            assert_eq!(paths, ["app", "index.html"], "{parts:?}");
-            let stands = goal(&session, "app").await;
-            assert_eq!(stands["state"], "done", "{stands:?}");
-            assert_eq!(stands["why"], "an app stands: /fin/app/fin", "{stands:?}");
+    let held = goal(&session, "slices").await;
+    assert_eq!(held["state"], "next", "{held:?}");
+    assert_eq!(
+        held["say"], "re-record takings serving one of races.track",
+        "{held:?}"
+    );
+    session
+        .execute(
+            "GLOSS takings ON fin AS $${\"sql\": \"SELECT race_date, CAST(count(DISTINCT track) AS DOUBLE) AS value FROM races GROUP BY race_date\", \"axes\": []}$$",
+        )
+        .await
+        .unwrap();
+    let closed = goal(&session, "slices").await;
+    assert_eq!(closed["state"], "done", "{closed:?}");
+}
 
-            // The plan goal: no plan is declared on the applicable
-            // metric, so the first plan is the act, its form filled
-            // with the dataset and the names left to the author;
-            // declared, its grounding is; grounded over a judged date,
-            // the forecast at the current origin — owed while it never
-            // ran. A plan is no metric: the metrics goal stays done.
-            let first = goal(&session, "plan").await;
-            assert_eq!(first["state"], "next", "{first:?}");
-            assert_eq!(first["act"], "DECLARE ASPECT plan", "{first:?}");
-            assert_eq!(first["say"], "declare the first plan", "{first:?}");
-            assert!(
-                first["why"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("no plan is declared on takings:"),
-                "{first:?}"
-            );
-            assert!(
-                first["statement"]
-                    .as_str()
-                    .unwrap()
-                    .contains("\"x-kind\": \"plan\", \"x-plan-of\": \"<metric>\""),
-                "{first:?}"
-            );
-            assert!(
-                first["then"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("GLOSS <name> ON fin AS $${\"sql\":"),
-                "{first:?}"
-            );
-            session
-                .execute(
-                    "DECLARE ASPECT takings_budget WITH $${\"title\": \"Budget\", \"x-kind\": \"plan\", \"x-plan-of\": \"takings\"}$$ AS QUERY ON DATASET",
-                )
-                .await
-                .unwrap();
-            let declared = goal(&session, "plan").await;
-            assert_eq!(declared["act"], "GLOSS plan", "{declared:?}");
-            assert_eq!(
-                declared["say"], "ground takings_budget, or stop it",
-                "{declared:?}"
-            );
-            assert!(
-                declared["statement"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("GLOSS takings_budget ON fin AS $${\"sql\":"),
-                "{declared:?}"
-            );
-            session
-                .execute(
-                    "GLOSS takings_budget ON fin AS $${\"sql\": \"SELECT race_date, takings * 1.2 AS value FROM races\"}$$",
-                )
-                .await
-                .unwrap();
-            let grounded = goal(&session, "plan").await;
-            assert_eq!(grounded["act"], "metric_forecast", "{grounded:?}");
-            assert_eq!(grounded["say"], "run the forecast", "{grounded:?}");
-            assert_eq!(
-                grounded["statement"], "SELECT metric_forecast() FROM fin",
-                "{grounded:?}"
-            );
-            let metrics = goal(&session, "metrics").await;
-            assert_eq!(metrics["state"], "done", "{metrics:?}");
-            let axes = rows(
-                &session,
-                "SELECT metric, plan_of FROM metric_axes() WHERE plan_of IS NOT NULL",
-            )
-            .await;
-            assert_eq!(axes.len(), 1, "{axes:?}");
-            assert_eq!(axes[0]["metric"], "takings_budget", "{axes:?}");
-        }
-        Err(e) => {
-            eprintln!(
-                "temporal() did not run under NoRuntime ({e}); the judged path is not covered here"
-            );
-            assert_eq!(answers["slices"]["state"], "blocked", "{answers:?}");
-        }
+/// Grounded over a judged date, the walk is owed and the app is
+/// admissible: the manifest alone is not an app — the door serves
+/// index.html, so the page is the act until it stands — and an app
+/// named like its dataset lands its parts on the app.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grounded_metric_owes_the_walk_and_admits_the_app() {
+    let (_dir, _plane, session) = fin().await;
+    let judged_at = grounded_takings(&session).await;
+    if !judged(&session, judged_at).await {
+        return;
     }
-    // A measure the cube refuses holds the metrics goal with the
-    // cube's reason and the standing body to re-record; a relation
-    // serves no number by design and a stop is the author's word, so
-    // neither does.
+    let answers = by_surface(&rows(&session, "SELECT * FROM next ORDER BY goal").await);
+    assert_eq!(answers["bands"]["act"], "metric_bands", "{answers:?}");
+    assert_eq!(answers["bands"]["say"], "run the walk", "{answers:?}");
+    assert_eq!(answers["app"]["state"], "next", "{answers:?}");
+    assert_eq!(
+        answers["app"]["say"], "write the first page over 1 metric",
+        "{answers:?}"
+    );
+    let app = answers["app"]["statement"].as_str().unwrap();
+    assert!(
+        app.contains("GLOSS app ON review AS $${\"title\": \"fin review\"}$$;"),
+        "{app}"
+    );
+    assert!(app.contains("metric IN ('takings')"), "{app}");
+    assert!(app.contains("\\\"$schema\\\":"), "{app}");
+    assert!(app.contains("GLOSS app_page ON review.index AS"), "{app}");
+    assert_eq!(answers["app"]["then"], "-- serves at /fin/app/review");
+    session
+        .execute("GLOSS app ON review AS $${\"title\": \"fin review\"}$$")
+        .await
+        .unwrap();
+    let paged = goal(&session, "app").await;
+    assert_eq!(paged["state"], "next", "{paged:?}");
+    assert_eq!(paged["act"], "GLOSS app_page", "{paged:?}");
+    assert_eq!(paged["say"], "write the page of review", "{paged:?}");
+    assert!(
+        paged["statement"]
+            .as_str()
+            .unwrap()
+            .starts_with("GLOSS app_page ON review.index AS $${\"html\":"),
+        "{paged:?}"
+    );
+    session
+        .execute(
+            "GLOSS app_page ON review.index AS $${\"html\": \"{% extends \\\"shell.html\\\" %}{% block main %}<p>fin</p>{% endblock %}\"}$$",
+        )
+        .await
+        .unwrap();
+    let stands = goal(&session, "app").await;
+    assert_eq!(stands["state"], "done", "{stands:?}");
+    assert_eq!(
+        stands["why"], "an app stands: /fin/app/review",
+        "{stands:?}"
+    );
+    // An app named like its dataset: the part's subject is the app's,
+    // not a dataset path, so the page lands on the app and the goal
+    // closes on it.
+    session
+        .execute("GLOSS app ON fin AS $${\"title\": \"fin\"}$$")
+        .await
+        .unwrap();
+    session
+        .execute("GLOSS app_page ON fin.index AS $${\"html\": \"<p>fin</p>\"}$$")
+        .await
+        .unwrap();
+    let parts = rows(
+        &session,
+        "SELECT path FROM app_parts WHERE dataset = 'fin' AND app = 'fin' ORDER BY path",
+    )
+    .await;
+    let paths: Vec<&str> = parts.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["app", "index.html"], "{parts:?}");
+    let stands = goal(&session, "app").await;
+    assert_eq!(stands["state"], "done", "{stands:?}");
+    assert_eq!(stands["why"], "an app stands: /fin/app/fin", "{stands:?}");
+}
+
+/// The plan goal: no plan is declared on the applicable metric, so the
+/// first plan is the act, its form filled with the dataset and the
+/// names left to the author; declared, its grounding is; grounded over
+/// a judged date, the forecast at the current origin — owed while it
+/// never ran. A plan is no metric: the metrics goal stays done.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plan_goal_runs_from_the_first_plan_to_the_forecast() {
+    let (_dir, _plane, session) = fin().await;
+    let judged_at = grounded_takings(&session).await;
+    if !judged(&session, judged_at).await {
+        return;
+    }
+    let first = goal(&session, "plan").await;
+    assert_eq!(first["state"], "next", "{first:?}");
+    assert_eq!(first["act"], "DECLARE ASPECT plan", "{first:?}");
+    assert_eq!(first["say"], "declare the first plan", "{first:?}");
+    assert!(
+        first["why"]
+            .as_str()
+            .unwrap()
+            .starts_with("no plan is declared on takings:"),
+        "{first:?}"
+    );
+    assert!(
+        first["statement"]
+            .as_str()
+            .unwrap()
+            .contains("\"x-kind\": \"plan\", \"x-plan-of\": \"<metric>\""),
+        "{first:?}"
+    );
+    assert!(
+        first["then"]
+            .as_str()
+            .unwrap()
+            .starts_with("GLOSS <name> ON fin AS $${\"sql\":"),
+        "{first:?}"
+    );
+    session
+        .execute(
+            "DECLARE ASPECT takings_budget WITH $${\"title\": \"Budget\", \"x-kind\": \"plan\", \"x-plan-of\": \"takings\"}$$ AS QUERY ON DATASET",
+        )
+        .await
+        .unwrap();
+    let declared = goal(&session, "plan").await;
+    assert_eq!(declared["act"], "GLOSS plan", "{declared:?}");
+    assert_eq!(
+        declared["say"], "ground takings_budget, or stop it",
+        "{declared:?}"
+    );
+    assert!(
+        declared["statement"]
+            .as_str()
+            .unwrap()
+            .starts_with("GLOSS takings_budget ON fin AS $${\"sql\":"),
+        "{declared:?}"
+    );
+    session
+        .execute(
+            "GLOSS takings_budget ON fin AS $${\"sql\": \"SELECT race_date, takings * 1.2 AS value FROM races\"}$$",
+        )
+        .await
+        .unwrap();
+    let grounded = goal(&session, "plan").await;
+    assert_eq!(grounded["act"], "metric_forecast", "{grounded:?}");
+    assert_eq!(grounded["say"], "run the forecast", "{grounded:?}");
+    assert_eq!(
+        grounded["statement"], "SELECT metric_forecast() FROM fin",
+        "{grounded:?}"
+    );
+    let metrics = goal(&session, "metrics").await;
+    assert_eq!(metrics["state"], "done", "{metrics:?}");
+    let axes = rows(
+        &session,
+        "SELECT metric, plan_of FROM metric_axes() WHERE plan_of IS NOT NULL",
+    )
+    .await;
+    assert_eq!(axes.len(), 1, "{axes:?}");
+    assert_eq!(axes[0]["metric"], "takings_budget", "{axes:?}");
+}
+
+/// A measure the cube refuses holds the metrics goal with the cube's
+/// reason and the standing body to re-record; a relation serves no
+/// number by design and a stop is the author's word, so neither does.
+/// The done row names what the record left unused, as facts: a table
+/// no grounding reads, a judged column none serves.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_measure_holds_the_metrics_goal_and_a_stop_closes_it() {
+    let (_dir, _plane, session) = fin().await;
+    let _judged = grounded_takings(&session).await;
     session
         .execute("DECLARE ASPECT gate WITH $${\"title\": \"Gate\"}$$ AS QUERY ON DATASET")
         .await
@@ -572,8 +648,6 @@ async fn the_routes_answer_from_the_record() {
         .unwrap();
     let stopped = goal(&session, "metrics").await;
     assert_eq!(stopped["state"], "done", "{stopped:?}");
-    // The done row names what the record left unused, as facts: a
-    // table no grounding reads, a judged column none serves.
     let (schema, batch) = races();
     session
         .register_table(
