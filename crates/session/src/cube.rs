@@ -82,10 +82,10 @@ use std::sync::{Arc, LazyLock};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, ListBuilder, RecordBatch, StringArray,
-    StringBuilder, TimestampNanosecondArray,
+    StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::compute::cast;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::util::display::array_value_to_string;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser::ast::{
@@ -93,6 +93,7 @@ use datafusion::sql::sqlparser::ast::{
 };
 use serde_json::Value;
 
+use crate::period;
 use crate::reads::{Served, Shared};
 use crate::search::{QuerySlot, current_query_slots, int_column};
 use crate::session::SessionError;
@@ -1325,8 +1326,8 @@ impl Surface {
         out
     }
 
-    /// The last period each frame serves, as nanoseconds since the
-    /// epoch — `max` of its judged time column over the frame itself,
+    /// The last period each frame serves, in the period unit —
+    /// `max` of its judged time column over the frame itself,
     /// so a calendar row no fact joins counts for nothing. Read once
     /// per surface, when the first head builds; one aggregate per
     /// frame. None for a frame without a judged time column, one that
@@ -1348,8 +1349,9 @@ impl Surface {
                         Some(sql),
                     ) => {
                         let q = format!(
-                            "SELECT CAST(max({}) AS TIMESTAMP) AS edge FROM ({sql}) AS frame",
-                            qi(tcol)
+                            "SELECT CAST(max({}) AS {}) AS edge FROM ({sql}) AS frame",
+                            qi(tcol),
+                            period::TYPE
                         );
                         match run(shared, &self.ctx, &q).await {
                             Ok(batches) => batches
@@ -1357,14 +1359,7 @@ impl Surface {
                                 .find(|b| b.num_rows() > 0)
                                 .and_then(|b| b.column_by_name("edge").cloned())
                                 .filter(|c| !c.is_null(0))
-                                .and_then(|c| {
-                                    cast(&c, &DataType::Timestamp(TimeUnit::Nanosecond, None)).ok()
-                                })
-                                .and_then(|c| {
-                                    c.as_any()
-                                        .downcast_ref::<TimestampNanosecondArray>()
-                                        .map(|a| a.value(0))
-                                }),
+                                .and_then(|c| period::column(&c).map(|a| a.value(0))),
                             Err(_) => None,
                         }
                     }
@@ -1378,22 +1373,15 @@ impl Surface {
         edges
     }
 
-    /// The data's edge for one head at a resolution: the bucket holding
-    /// the latest period the edge's frames serve, as the cells carry
-    /// periods. None where no frame serves a judged date.
-    async fn data_edge(
-        &self,
-        shared: &Arc<Shared>,
-        resolution: Resolution,
-        slot: &QuerySlot,
-    ) -> Result<Option<i64>, Abstain> {
+    /// The data's edge for one head: the latest period the edge's
+    /// frames serve; the plan that fills a flow's empty periods buckets
+    /// it at the resolution. None where no frame serves a judged date.
+    async fn data_edge(&self, shared: &Arc<Shared>, slot: &QuerySlot) -> Option<i64> {
         let edges = self.edges(shared).await;
-        Ok(self
-            .edge_slots(slot)
+        self.edge_slots(slot)
             .into_iter()
             .filter_map(|s| edges.get(&s.aspect).copied().flatten())
             .max()
-            .map(|ns| bucket_start(ns, resolution)))
     }
 
     /// One metric's key at this surface, with the frame as planned.
@@ -1799,14 +1787,14 @@ async fn write_fact(
 /// The totals of a cube's cells by period — the undimensioned rows.
 fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
     use datafusion::arrow::array::AsArray;
-    use datafusion::arrow::datatypes::{Float64Type, TimestampNanosecondType};
+    use datafusion::arrow::datatypes::{Float64Type, TimestampMicrosecondType};
     let column = |name: &str| {
         cells
             .column_by_name(name)
             .expect("the cells carry the series schema")
     };
     let dimension = column("dimension").as_string::<i32>();
-    let period = column("period").as_primitive::<TimestampNanosecondType>();
+    let period = column("period").as_primitive::<TimestampMicrosecondType>();
     let value = column("value").as_primitive::<Float64Type>();
     (0..cells.num_rows())
         .filter(|&i| dimension.value(i).is_empty())
@@ -1819,11 +1807,7 @@ fn totals(cells: &RecordBatch) -> HashMap<i64, f64> {
 /// other does not. Agreement is a zero gap, never silence.
 fn drift(now: &RecordBatch, before: &RecordBatch) -> String {
     let (now, before) = (totals(now), totals(before));
-    let day = |p: i64| {
-        chrono::DateTime::from_timestamp_nanos(p)
-            .format("%Y-%m-%d")
-            .to_string()
-    };
+    let day = period::date;
     let mut shared = 0usize;
     let mut max: Option<(f64, i64)> = None;
     for (p, v) in &now {
@@ -2505,7 +2489,7 @@ async fn build(
     // bucket after the earliest window of the grains from the
     // resolution up, so each of them derives from it whole. A grain
     // without a rung is unbounded, and so is the head.
-    let p_own = period_expr(&qi(tcol), resolution);
+    let p_own = period::bucket(&qi(tcol), resolution);
     let served: Vec<Resolution> = Resolution::ALL
         .into_iter()
         .filter(|r| *r >= resolution)
@@ -2517,7 +2501,7 @@ async fn build(
         .map(|(r, w)| {
             format!(
                 ", {} - INTERVAL '{}' AS \"since_{}\"",
-                period_expr("edge", *r),
+                period::bucket("edge", *r),
                 w.replace('\'', "''"),
                 r.as_str()
             )
@@ -2669,11 +2653,11 @@ async fn build(
     // no rows is zero, and a forecast for that period is checked
     // against it. A stock's or a ratio's stay gaps — nothing stands,
     // nothing divides.
-    let edge = surface.data_edge(shared, resolution, slot).await?;
+    let edge = surface.data_edge(shared, slot).await;
     if verb == "flow"
         && let Some(edge) = edge
     {
-        zero_fill(&mut cells, resolution, edge);
+        zero_fill(&mut cells, resolution, edge).await?;
     }
 
     // The named rival, when a grounding assumption discloses one. The
@@ -2721,7 +2705,7 @@ async fn build(
                     if rival_verb == "flow"
                         && let Some(edge) = edge
                     {
-                        zero_fill(&mut rival_cells, resolution, edge);
+                        zero_fill(&mut rival_cells, resolution, edge).await?;
                     }
                     alternative_divergence = Some(divergence(
                         &cells,
@@ -2816,7 +2800,7 @@ async fn periods_inside(
         return Ok(0);
     }
     let ctx = over_cells(cells)?;
-    let p = period_expr("period", resolution);
+    let p = period::bucket("period", resolution);
     let w = since.map_or(String::new(), |s| format!(" AND {p} > {s}"));
     let batches = ctx
         .sql(&format!(
@@ -2856,12 +2840,12 @@ async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<
                 .map_err(|e| Abstain(e.to_string()))
         }
     };
-    let p = period_expr("period", grain);
+    let p = period::bucket("period", grain);
     let since = match window {
         Some(w) if head.cells.num_rows() > 0 => {
             let edge = sql(format!(
                 "SELECT {} - INTERVAL '{}' AS since FROM h",
-                period_expr("max(period)", grain),
+                period::bucket("max(period)", grain),
                 w.replace('\'', "''")
             ))
             .await?;
@@ -2910,15 +2894,8 @@ async fn derive(head: &Cube, grain: Resolution, window: Option<&str>) -> Result<
                 .cloned()
                 .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
         };
-        let period = cast(
-            col("period")?,
-            &DataType::Timestamp(TimeUnit::Nanosecond, None),
-        )
-        .map_err(|e| Abstain(e.to_string()))?;
-        let period = period
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| Abstain("period did not read as a timestamp".into()))?;
+        let period = period::column(col("period")?)
+            .ok_or_else(|| Abstain("period did not read as a period".into()))?;
         let (dimension, member, behavior) = (col("dimension")?, col("member")?, col("behavior")?);
         let (value, num, den) = (floats("value")?, floats("num")?, floats("den")?);
         let at = |c: &Float64Array, i: usize| (!c.is_null(i)).then(|| c.value(i));
@@ -2966,11 +2943,7 @@ fn divergence(cells: &[Cell], rival: &[Cell], tolerance: Option<f64>) -> String 
         .filter(|c| c.dimension.is_empty())
         .map(|c| (c.period, c.value))
         .collect();
-    let day = |p: i64| {
-        chrono::DateTime::from_timestamp_nanos(p)
-            .format("%Y-%m-%d")
-            .to_string()
-    };
+    let day = period::date;
     let mut shared = 0usize;
     let mut breaches = 0usize;
     let mut max: Option<(f64, i64)> = None;
@@ -3009,91 +2982,74 @@ fn divergence(cells: &[Cell], rival: &[Cell], tolerance: Option<f64>) -> String 
 
 /// A flow's empty periods as zero cells, for the total series and the
 /// rival's (`dimension` `''` or `'alternative'`): every period at the
-/// metric's resolution from the series' first to `to` that no floor
-/// cell falls in gets one cell at the period's start, at zero — a sum
-/// over no rows. The head stays at the floor: one zero cell per empty
+/// metric's resolution from the series' first to the edge's bucket
+/// that no floor cell falls in gets one cell at the period's start,
+/// at zero — a sum over no rows. The grid is the engine's: a series
+/// over the period range at the resolution's step, joined to the
+/// buckets the cells hold, and the periods the join leaves empty are
+/// the zeros. The head stays at the floor: one zero cell per empty
 /// period folds to zero at the resolution and above, and the floor is
 /// never served below the resolution. A member's gap stays a gap, and
 /// so does a stock's or a ratio's; the caller filters by verb.
-fn zero_fill(cells: &mut Vec<Cell>, resolution: Resolution, to: i64) {
-    let mut groups: HashMap<(String, String), HashSet<i64>> = HashMap::new();
-    for c in cells.iter().filter(|c| {
-        c.behavior == "flow" && (c.dimension.is_empty() || c.dimension == "alternative")
-    }) {
-        groups
-            .entry((c.dimension.clone(), c.member.clone()))
-            .or_default()
-            .insert(bucket_start(c.period, resolution));
+async fn zero_fill(
+    cells: &mut Vec<Cell>,
+    resolution: Resolution,
+    edge: i64,
+) -> Result<(), Abstain> {
+    if cells.is_empty() {
+        return Ok(());
     }
-    for ((dimension, member), present) in groups {
-        let Some(mut period) = present.iter().min().copied() else {
-            continue;
+    let ctx = over_cells(&cells_batch("", World::Actual, cells))?;
+    let q = format!(
+        "WITH present AS (\
+            SELECT dimension, member, {p} AS period FROM h \
+            WHERE behavior = 'flow' AND dimension IN ('', 'alternative') GROUP BY 1, 2, 3), \
+         grid AS (\
+            SELECT dimension, member, CAST(period AS {ty}) AS period FROM (\
+                SELECT dimension, member, unnest(generate_series(first, {to}, {step})) AS period \
+                FROM (SELECT dimension, member, min(period) AS first FROM present GROUP BY 1, 2))) \
+         SELECT g.dimension, g.member, g.period FROM grid g \
+         LEFT JOIN present ON present.dimension = g.dimension \
+                          AND present.member = g.member AND present.period = g.period \
+         WHERE present.period IS NULL ORDER BY 1, 2, 3",
+        p = period::bucket("period", resolution),
+        ty = period::TYPE,
+        to = period::bucket(&period::literal(edge), resolution),
+        step = period::interval(resolution, 1),
+    );
+    let batches = ctx
+        .sql(&q)
+        .await
+        .map_err(|e| Abstain(e.to_string()))?
+        .collect()
+        .await
+        .map_err(|e| Abstain(e.to_string()))?;
+    for b in batches.iter().filter(|b| b.num_rows() > 0) {
+        let col = |n: &str| -> Result<&ArrayRef, Abstain> {
+            b.column_by_name(n)
+                .ok_or_else(|| Abstain(format!("the grid served no {n}")))
         };
-        while period <= to {
-            if !present.contains(&period) {
-                cells.push(Cell {
-                    dimension: dimension.clone(),
-                    member: member.clone(),
-                    period,
-                    value: 0.0,
-                    num: None,
-                    den: None,
-                    behavior: "flow",
-                });
+        let (dimension, member) = (col("dimension")?, col("member")?);
+        let period = period::column(col("period")?)
+            .ok_or_else(|| Abstain("the grid's period did not read as a period".into()))?;
+        for i in 0..b.num_rows() {
+            if period.is_null(i) {
+                continue;
             }
-            let Some(next) = next_period(period, resolution) else {
-                break;
-            };
-            period = next;
+            let text =
+                |c: &ArrayRef| array_value_to_string(c, i).map_err(|e| Abstain(e.to_string()));
+            cells.push(Cell {
+                dimension: text(dimension)?,
+                member: text(member)?,
+                period: period.value(i),
+                value: 0.0,
+                num: None,
+                den: None,
+                behavior: "flow",
+            });
         }
     }
-}
-
-/// The start of the bucket a period falls in at a resolution — what
-/// `date_trunc` gives the cells, weeks starting Monday.
-pub(crate) fn bucket_start(period: i64, resolution: Resolution) -> i64 {
-    use chrono::{Datelike, Days, NaiveDate, NaiveTime, Timelike};
-    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
-    let date = at.date();
-    let midnight = |d: Option<NaiveDate>| d.map(|d| d.and_time(NaiveTime::MIN));
-    let start = match resolution {
-        Resolution::Minute => at.with_second(0).and_then(|t| t.with_nanosecond(0)),
-        Resolution::Hour => at
-            .with_minute(0)
-            .and_then(|t| t.with_second(0))
-            .and_then(|t| t.with_nanosecond(0)),
-        Resolution::Day => midnight(Some(date)),
-        Resolution::Week => midnight(
-            date.checked_sub_days(Days::new(u64::from(date.weekday().num_days_from_monday()))),
-        ),
-        Resolution::Month => midnight(NaiveDate::from_ymd_opt(date.year(), date.month(), 1)),
-        Resolution::Quarter => midnight(NaiveDate::from_ymd_opt(
-            date.year(),
-            (date.month0() / 3) * 3 + 1,
-            1,
-        )),
-        Resolution::Year => midnight(NaiveDate::from_ymd_opt(date.year(), 1, 1)),
-    };
-    start
-        .and_then(|s| s.and_utc().timestamp_nanos_opt())
-        .unwrap_or(period)
-}
-
-/// The bucket after `period` at a resolution, as the cells carry them:
-/// calendar steps for months, quarters and years, fixed ones below.
-pub(crate) fn next_period(period: i64, resolution: Resolution) -> Option<i64> {
-    use chrono::{Days, Months, TimeDelta};
-    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
-    let next = match resolution {
-        Resolution::Minute => at.checked_add_signed(TimeDelta::minutes(1))?,
-        Resolution::Hour => at.checked_add_signed(TimeDelta::hours(1))?,
-        Resolution::Day => at.checked_add_days(Days::new(1))?,
-        Resolution::Week => at.checked_add_days(Days::new(7))?,
-        Resolution::Month => at.checked_add_months(Months::new(1))?,
-        Resolution::Quarter => at.checked_add_months(Months::new(3))?,
-        Resolution::Year => at.checked_add_months(Months::new(12))?,
-    };
-    next.and_utc().timestamp_nanos_opt()
+    Ok(())
 }
 
 /// The rival's series at the metric's resolution and window, at its
@@ -3168,15 +3124,6 @@ async fn rival_series(
     Ok((rows, verb, workspace_reads(&probe)))
 }
 
-/// The bucket start of a time expression at a resolution, as a plain
-/// timestamp — one type for every cell whatever the column's own.
-pub(crate) fn period_expr(time: &str, resolution: Resolution) -> String {
-    format!(
-        "CAST(date_trunc('{}', {time}) AS TIMESTAMP)",
-        resolution.as_str()
-    )
-}
-
 /// The three verbs at a resolution, the window applied on the bucket:
 /// flows sum per period; a marked stock sums the rows standing at the
 /// period's LATEST observed date; a ratio serves `num` and `den` and
@@ -3190,7 +3137,7 @@ pub(crate) fn total_sql(
     resolution: Resolution,
     since: Option<&str>,
 ) -> String {
-    let p = period_expr(&qi(tcol), resolution);
+    let p = period::bucket(&qi(tcol), resolution);
     let w = since.map_or(String::new(), |s| format!(" WHERE {p} > {s}"));
     match verb {
         "ratio" => format!(
@@ -3228,7 +3175,7 @@ fn member_sql(
     resolution: Resolution,
     since: Option<&str>,
 ) -> String {
-    let p = period_expr(&qi(tcol), resolution);
+    let p = period::bucket(&qi(tcol), resolution);
     let w = since.map_or(String::new(), |s| format!(" AND {p} > {s}"));
     match verb {
         "ratio" => format!(
@@ -3275,8 +3222,8 @@ async fn run(
 }
 
 /// A series query's rows — NULL values dropped (a period the verb
-/// could not value is no cell), periods as nanoseconds since the
-/// epoch, halves where the query served them.
+/// could not value is no cell), periods in the period unit, halves
+/// where the query served them.
 async fn series(
     shared: &Arc<Shared>,
     ctx: &SessionContext,
@@ -3320,15 +3267,8 @@ fn collect_series(batches: &[RecordBatch], with_member: bool) -> Result<Vec<Seri
                 .map(Some)
                 .ok_or_else(|| Abstain(format!("{n} did not read as a number")))
         };
-        let period = cast(
-            col("period")?,
-            &DataType::Timestamp(TimeUnit::Nanosecond, None),
-        )
-        .map_err(|e| Abstain(e.to_string()))?;
-        let period = period
-            .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
-            .ok_or_else(|| Abstain("period did not read as a timestamp".into()))?;
+        let period = period::column(col("period")?)
+            .ok_or_else(|| Abstain("period did not read as a period".into()))?;
         let member = if with_member {
             Some(col("member")?)
         } else {
@@ -3361,11 +3301,7 @@ fn utf8(name: &str) -> Field {
 }
 
 fn period_field() -> Field {
-    Field::new(
-        "period",
-        DataType::Timestamp(TimeUnit::Nanosecond, None),
-        false,
-    )
+    period::field("period", false)
 }
 
 fn cell_fields() -> Vec<Field> {
@@ -3415,7 +3351,7 @@ fn cells_batch(metric: &str, world: World, cells: &[Cell]) -> RecordBatch {
             Arc::new(StringArray::from_iter_values(
                 cells.iter().map(|c| c.member.as_str()),
             )),
-            Arc::new(TimestampNanosecondArray::from_iter_values(
+            Arc::new(TimestampMicrosecondArray::from_iter_values(
                 cells.iter().map(|c| c.period),
             )),
             Arc::new(Float64Array::from_iter_values(
@@ -3805,9 +3741,7 @@ fn totals_of(cells: &RecordBatch) -> Vec<(i64, f64)> {
     let dimensions = cells
         .column_by_name("dimension")
         .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-    let periods = cells
-        .column_by_name("period")
-        .and_then(|c| c.as_any().downcast_ref::<TimestampNanosecondArray>());
+    let periods = cells.column_by_name("period").and_then(period::column);
     let values = cells
         .column_by_name("value")
         .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
@@ -4242,7 +4176,7 @@ mod tests {
             Some("TIMESTAMP '2024-12-15T00:00:00'"),
         );
         assert!(
-            q.contains("WHERE CAST(date_trunc('day', \"d\") AS TIMESTAMP) > TIMESTAMP '2024-12-15T00:00:00'"),
+            q.contains("WHERE CAST(date_trunc('day', \"d\") AS TIMESTAMP(6)) > TIMESTAMP '2024-12-15T00:00:00'"),
             "{q}"
         );
         let q = member_sql(
@@ -4255,7 +4189,7 @@ mod tests {
             None,
         );
         assert!(
-            q.contains("PARTITION BY CAST(date_trunc('month', \"d\") AS TIMESTAMP), \"r\""),
+            q.contains("PARTITION BY CAST(date_trunc('month', \"d\") AS TIMESTAMP(6)), \"r\""),
             "{q}"
         );
         assert!(!q.contains(" AND "), "{q}");

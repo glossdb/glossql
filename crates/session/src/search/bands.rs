@@ -209,16 +209,25 @@ async fn extract_shape(
     Ok((Some(shown.chars().take(10).collect()), sub_monthly))
 }
 
-/// The last day of a `YYYY-MM` period, `YYYY-MM-DD`.
-fn month_end(period: &str) -> Option<String> {
-    let (y, m) = period.split_once('-')?;
-    let (y, m): (i32, u32) = (y.parse().ok()?, m.parse().ok()?);
-    let next = if m == 12 {
-        chrono::NaiveDate::from_ymd_opt(y + 1, 1, 1)
-    } else {
-        chrono::NaiveDate::from_ymd_opt(y, m + 1, 1)
-    }?;
-    Some((next - chrono::Duration::days(1)).to_string())
+/// The last day of a `YYYY-MM` period, `YYYY-MM-DD`, from the
+/// calendar; None for text that is no month.
+async fn month_end(period: &str) -> Result<Option<String>, SessionError> {
+    let Some(first) = crate::period::parse_date(&format!("{period}-01")) else {
+        return Ok(None);
+    };
+    let last = crate::period::over(
+        &[first],
+        &[format!(
+            "p + {} - INTERVAL '1 day'",
+            crate::period::interval(crate::cube::Resolution::Month, 1)
+        )],
+    )
+    .await
+    .map_err(crate::period::refused)?;
+    Ok(last
+        .first()
+        .and_then(|c| c.first().copied().flatten())
+        .map(crate::period::date))
 }
 
 /// `metric_band_walk('dataset')` — for every grounded metric, walk the
@@ -494,13 +503,17 @@ pub(crate) async fn metric_band_walk(
             // calendar. The point serves its bands and its actual so
             // far, withholds the PIT, and says so — the detector
             // scores the newest complete month instead.
-            let partial = (t == n - 1)
-                .then(|| horizon.as_deref().zip(month_end(period)))
-                .flatten()
-                .filter(|(h, end)| *h < end.as_str())
-                .map(|(h, end)| {
-                    format!("partial: the extract ends {h}, before the period's last day {end}")
-                });
+            let partial =
+                match (t == n - 1, horizon.as_deref()) {
+                    (true, Some(h)) => month_end(period).await?.filter(|end| h < end.as_str()).map(
+                        |end| {
+                            format!(
+                                "partial: the extract ends {h}, before the period's last day {end}"
+                            )
+                        },
+                    ),
+                    _ => None,
+                };
             // A series that repeats values moves on a grid (a ratio over
             // a fixed field, a count). A corridor narrower than the
             // grid's step, with the actual inside a step of the median,

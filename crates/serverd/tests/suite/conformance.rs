@@ -126,6 +126,64 @@ fn the_substrate_ratchet_only_turns_down() {
     );
 }
 
+/// The period calendar is the engine's: `date_trunc` and interval
+/// arithmetic in a plan say where a bucket starts and what the next
+/// one is, and a period travels in the lake's unit (`crates/session/
+/// src/period.rs`). Calendar arithmetic by hand in the session crate —
+/// a month added, a week stepped, a bucket floored in Rust — is a
+/// second calendar, and a nanosecond period is a cast between a landed
+/// column and a cell. Each stays at zero.
+const CALENDAR: [&str; 12] = [
+    "checked_add_months",
+    "checked_sub_months",
+    "checked_add_days",
+    "checked_sub_days",
+    "Months::new",
+    "Days::new",
+    "TimeDelta::",
+    "pred_opt",
+    "succ_opt",
+    "from_timestamp_nanos",
+    "timestamp_nanos_opt",
+    "TimestampNanosecond",
+];
+
+#[test]
+fn the_period_calendar_is_the_engines() {
+    let root = crates_dir();
+    let mut sites = Vec::new();
+    for path in sources() {
+        let rel = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        if !rel.starts_with("session/src/") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for pattern in CALENDAR {
+                if line.contains(pattern) {
+                    sites.push(format!("{rel}:{}: `{pattern}`", i + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        sites.is_empty(),
+        "a second period calendar: the engine's date_trunc and interval arithmetic \
+         define a period (`crates/session/src/period.rs`), and a period travels in \
+         the lake's unit.\n    {}",
+        sites.join("\n    ")
+    );
+}
+
 /// The counts are the roadmap's gate: stage 2 takes the session's
 /// blocking and the thread-local to zero. This records where they stand
 /// so a drop is visible in the diff rather than only in a passing test.

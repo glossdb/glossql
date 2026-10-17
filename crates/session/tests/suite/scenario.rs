@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use datafusion::arrow::array::{
     Array, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
-    TimestampNanosecondArray,
+    TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::util::display::array_value_to_string;
@@ -94,7 +94,7 @@ impl FunctionRuntime for WhatIf {
             .column_by_name("period")
             .unwrap()
             .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
+            .downcast_ref::<TimestampMicrosecondArray>()
             .unwrap();
         let (mut m_col, mut p_col, mut s_col, mut l_col, mut v_col) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -145,7 +145,7 @@ impl FunctionRuntime for WhatIf {
                 Field::new("member", DataType::Utf8, false),
                 Field::new(
                     "period",
-                    DataType::Timestamp(TimeUnit::Nanosecond, None),
+                    DataType::Timestamp(TimeUnit::Microsecond, None),
                     false,
                 ),
                 Field::new("column", DataType::Utf8, false),
@@ -157,7 +157,7 @@ impl FunctionRuntime for WhatIf {
             ])),
             vec![
                 Arc::new(StringArray::from(m_col)),
-                Arc::new(TimestampNanosecondArray::from(p_col)),
+                Arc::new(TimestampMicrosecondArray::from(p_col)),
                 Arc::new(StringArray::from(vec!["value"; n])),
                 Arc::new(StringArray::from(s_col)),
                 Arc::new(Float64Array::from(l_col)),

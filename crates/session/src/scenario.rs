@@ -31,12 +31,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{Days, Months, NaiveDate};
 use datafusion::arrow::array::{
-    Array, ArrayRef, Float64Array, RecordBatch, StringArray, TimestampNanosecondArray,
+    Array, ArrayRef, Float64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::compute::cast;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::util::display::array_value_to_string;
 use datafusion::common::ScalarValue;
 use datafusion::sql::sqlparser::ast::{
@@ -46,9 +45,10 @@ use glossql_glossary::Scope;
 use serde_json::{Value, json};
 
 use crate::cube::{Resolution, World};
+use crate::period;
 use crate::reads::Shared;
 use crate::replay::{Factor, KeyAnchor, Override};
-use crate::search::{date_of, iso, nanos_of, step_date, whole_series};
+use crate::search::whole_series;
 use crate::session::{SessionError, WHATIF};
 use crate::subject::qi;
 
@@ -56,7 +56,7 @@ use crate::subject::qi;
 const LEVELS: [f64; 3] = [0.10, 0.50, 0.90];
 /// Periods ahead a scenario may name past the last actual — the
 /// service's own ceiling on a horizon.
-const MAX_AHEAD: u32 = 1024;
+const MAX_AHEAD: usize = 1024;
 
 /// One lever the scenario moves: the declared column and its factor
 /// per period, with the basis the author gave.
@@ -157,19 +157,43 @@ async fn placements(
 }
 
 /// A period as a scenario writes it: `YYYY-MM` a calendar month,
-/// `YYYY-MM-DD` a day. The half-open range of dates it covers.
-pub(crate) fn period_bounds(key: &str) -> Option<(NaiveDate, NaiveDate)> {
-    if key.len() == 10
-        && let Ok(d) = NaiveDate::parse_from_str(key, "%Y-%m-%d")
-    {
-        return Some((d, d.checked_add_days(Days::new(1))?));
+/// `YYYY-MM-DD` a day. Its start and its length.
+pub(crate) fn period_key(key: &str) -> Option<(i64, Resolution)> {
+    match key.len() {
+        10 => period::parse_date(key).map(|p| (p, Resolution::Day)),
+        7 => period::parse_date(&format!("{key}-01")).map(|p| (p, Resolution::Month)),
+        _ => None,
     }
-    if key.len() == 7
-        && let Ok(d) = NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d")
-    {
-        return Some((d, d.checked_add_months(Months::new(1))?));
+}
+
+/// The half-open range each period key covers, from the calendar: one
+/// pass per length. A key that is no period has no entry.
+pub(crate) async fn period_bounds(
+    keys: &[&str],
+) -> Result<HashMap<String, (i64, i64)>, SessionError> {
+    let mut out = HashMap::new();
+    for resolution in [Resolution::Day, Resolution::Month] {
+        let named: Vec<(&str, i64)> = keys
+            .iter()
+            .filter_map(|k| {
+                let (from, r) = period_key(k)?;
+                (r == resolution).then_some((*k, from))
+            })
+            .collect();
+        let froms: Vec<i64> = named.iter().map(|(_, from)| *from).collect();
+        let untils = period::over(
+            &froms,
+            &[format!("p + {}", period::interval(resolution, 1))],
+        )
+        .await
+        .map_err(period::refused)?;
+        for ((key, from), until) in named.iter().zip(&untils[0]) {
+            if let Some(until) = until {
+                out.insert((*key).to_string(), (*from, *until));
+            }
+        }
     }
-    None
+    Ok(out)
 }
 
 /// The scenario's body, checked for shape: `levers`, each with `column`
@@ -206,7 +230,7 @@ pub(crate) fn parse(name: &str, body: &Value) -> Result<Scenario, String> {
         }
         let mut factor = BTreeMap::new();
         for (period, f) in factors {
-            if period_bounds(period).is_none() {
+            if period_key(period).is_none() {
                 return Err(format!(
                     "lever `{column}`: `{period}` is not a period — `YYYY-MM` a month, \
                      `YYYY-MM-DD` a day"
@@ -339,6 +363,7 @@ async fn overrides(
     dataset: &str,
     scenario: &Scenario,
     placements: &HashMap<String, Placement>,
+    bounds: &HashMap<String, (i64, i64)>,
 ) -> Result<(Vec<Override>, HashMap<String, String>), SessionError> {
     let mut out = Vec::new();
     let mut unplaced = HashMap::new();
@@ -347,7 +372,7 @@ async fn overrides(
         let mut factors = Vec::new();
         let mut keys: Vec<Vec<ScalarValue>> = Vec::new();
         for (period, f) in &l.factor {
-            let Some((from, until)) = period_bounds(period) else {
+            let Some(&(from, until)) = bounds.get(period) else {
                 continue;
             };
             if let Some(Placement::Edge {
@@ -365,8 +390,8 @@ async fn overrides(
                     ds = qi(dataset),
                     t = qi(table),
                     d = qi(date),
-                    from = iso(from),
-                    until = iso(until),
+                    from = period::date(from),
+                    until = period::date(until),
                 );
                 let plan = crate::plan::build_plan(shared, ctx, &sql).await?;
                 let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
@@ -383,8 +408,8 @@ async fn overrides(
                 keys.push(found);
             }
             factors.push(Factor {
-                from: iso(from),
-                until: Some(iso(until)),
+                from: period::date(from),
+                until: Some(period::date(until)),
                 factor: *f,
             });
         }
@@ -412,14 +437,14 @@ async fn overrides(
     Ok((out, unplaced))
 }
 
-/// The lever's factor at a date: the period that holds it, else one.
-fn factor_at(lever: &Lever, at: NaiveDate) -> f64 {
+/// The lever's factor at a period: the period that holds it, else one.
+fn factor_at(lever: &Lever, bounds: &HashMap<String, (i64, i64)>, at: i64) -> f64 {
     lever
         .factor
         .iter()
         .filter_map(|(period, f)| {
-            let (from, until) = period_bounds(period)?;
-            (from <= at && at < until).then_some(*f)
+            let (from, until) = bounds.get(period)?;
+            (*from <= at && at < *until).then_some(*f)
         })
         .next_back()
         .unwrap_or(1.0)
@@ -454,8 +479,8 @@ struct Ask {
     metric: String,
     grain: &'static str,
     resolution: Resolution,
-    series: Vec<(NaiveDate, f64)>,
-    ahead: Vec<NaiveDate>,
+    series: Vec<(i64, f64)>,
+    ahead: Vec<i64>,
 }
 
 /// What one lever alone does to one metric over the periods ahead, by
@@ -499,19 +524,18 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
     let actual = crate::cube::metric_series_batch(shared, None, World::Actual, None).await?;
     let ctx = shared.session_ctx();
     let placements = placements(shared, &ctx, &dataset, &scenario).await?;
-    let (overrides, unplaced) = overrides(shared, &ctx, &dataset, &scenario, &placements).await?;
-    // The first date the scenario touches and the one past the last.
-    let mut first: Option<NaiveDate> = None;
-    let mut last: Option<NaiveDate> = None;
-    for (from, until) in scenario
+    let keys: Vec<&str> = scenario
         .levers
         .iter()
         .flat_map(|l| l.factor.keys())
-        .filter_map(|k| period_bounds(k))
-    {
-        first = Some(first.map_or(from, |f| f.min(from)));
-        last = Some(last.map_or(until, |l| l.max(until)));
-    }
+        .map(String::as_str)
+        .collect();
+    let bounds = period_bounds(&keys).await?;
+    let (overrides, unplaced) =
+        overrides(shared, &ctx, &dataset, &scenario, &placements, &bounds).await?;
+    // The first period the scenario touches and the one past the last.
+    let first = bounds.values().map(|(from, _)| *from).min();
+    let last = bounds.values().map(|(_, until)| *until).max();
     let (Some(first), Some(last)) = (first, last) else {
         return Ok(Read {
             points: Vec::new(),
@@ -539,10 +563,9 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
         // rewrite refuses, serves its cells without a value and with
         // the reason: a replay that changed nothing is no replay.
         if frame.scans.iter().any(|t| tables.contains(t.as_str())) {
-            let Some(first_ns) = nanos_of(first) else {
-                continue;
-            };
-            let since = crate::cube::bucket_start(first_ns, frame.resolution);
+            let since = period::start(first, frame.resolution)
+                .await
+                .map_err(period::refused)?;
             let blank = |why: String, out: &mut Vec<Point>| {
                 for (period, _) in whole_series(&actual.partitions, &frame.metric) {
                     if period < since {
@@ -609,20 +632,17 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
         }
         // Pass two: the periods ahead of the metric's last actual, up to
         // the last period the scenario names.
-        let series: Vec<(NaiveDate, f64)> = whole_series(&actual.partitions, &frame.metric)
-            .into_iter()
-            .map(|(p, v)| (date_of(p), v))
-            .collect();
+        let series = whole_series(&actual.partitions, &frame.metric);
         let Some(&(origin, _)) = series.last() else {
             continue;
         };
-        let mut ahead = Vec::new();
-        for k in 1..=MAX_AHEAD {
-            match step_date(origin, grain, k) {
-                Some(d) if d < last => ahead.push(d),
-                _ => break,
-            }
-        }
+        let ahead: Vec<i64> = period::ahead_until(origin, frame.resolution, last)
+            .await
+            .map_err(period::refused)?
+            .into_iter()
+            .filter(|d| *d < last)
+            .take(MAX_AHEAD)
+            .collect();
         if ahead.is_empty() {
             continue;
         }
@@ -634,8 +654,16 @@ pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, Sessi
             ahead,
         });
     }
-    let (estimated, mut parts) =
-        estimate(shared, &ctx, &dataset, &scenario, &placements, asks).await?;
+    let (estimated, mut parts) = estimate(
+        shared,
+        &ctx,
+        &dataset,
+        &scenario,
+        &placements,
+        &bounds,
+        asks,
+    )
+    .await?;
     out.extend(estimated);
     out.sort_by(|a, b| (&a.metric, a.period, a.pass).cmp(&(&b.metric, b.period, b.pass)));
     parts.sort_by(|a, b| (&a.metric, &a.lever).cmp(&(&b.metric, &b.lever)));
@@ -659,6 +687,7 @@ async fn estimate(
     dataset: &str,
     scenario: &Scenario,
     placements: &HashMap<String, Placement>,
+    bounds: &HashMap<String, (i64, i64)>,
     asks: Vec<Ask>,
 ) -> Result<(Vec<Point>, Vec<Part>), SessionError> {
     let mut out = Vec::new();
@@ -679,8 +708,7 @@ async fn estimate(
         let mut blanks = Vec::new();
         for &i in idx {
             let a = &asks[i];
-            for (k, d) in a.ahead.iter().enumerate() {
-                let Some(period) = nanos_of(*d) else { continue };
+            for (k, &period) in a.ahead.iter().enumerate() {
                 rows.push(Point {
                     metric: a.metric.clone(),
                     grain: a.grain,
@@ -738,7 +766,7 @@ async fn estimate(
         }
         let resolution = asks[idx[0]].resolution;
         // Every lever's series at the grain, placed in time by its table.
-        let mut inputs: Vec<HashMap<NaiveDate, f64>> = Vec::with_capacity(scenario.levers.len());
+        let mut inputs: Vec<HashMap<i64, f64>> = Vec::with_capacity(scenario.levers.len());
         let mut failed = None;
         for lever in &scenario.levers {
             let placement = placements
@@ -771,7 +799,7 @@ async fn estimate(
             let planned: Vec<Option<f64>> = inputs
                 .iter()
                 .map(|input| {
-                    let mut dated: Vec<(&NaiveDate, &f64)> = input
+                    let mut dated: Vec<(&i64, &f64)> = input
                         .iter()
                         .filter(|(d, _)| origin.is_some_and(|o| **d <= o))
                         .collect();
@@ -782,7 +810,7 @@ async fn estimate(
             planned_of.insert(a.metric.clone(), planned.clone());
             for (d, v) in &a.series {
                 members.push(a.metric.as_str());
-                periods.push(nanos_of(*d));
+                periods.push(Some(*d));
                 status.push("actual");
                 values.push(Some(*v));
                 for (l, input) in inputs.iter().enumerate() {
@@ -792,14 +820,14 @@ async fn estimate(
             for d in &a.ahead {
                 for s in ["plan", "scenario"] {
                     members.push(a.metric.as_str());
-                    periods.push(nanos_of(*d));
+                    periods.push(Some(*d));
                     status.push(s);
                     values.push(None);
                     for (l, lever) in scenario.levers.iter().enumerate() {
                         let factor = if s == "plan" {
                             1.0
                         } else {
-                            factor_at(lever, *d)
+                            factor_at(lever, bounds, *d)
                         };
                         columns[l].push(planned[l].map(|p| p * factor));
                     }
@@ -808,17 +836,13 @@ async fn estimate(
         }
         let mut fields = vec![
             Field::new("member", DataType::Utf8, false),
-            Field::new(
-                "period",
-                DataType::Timestamp(TimeUnit::Nanosecond, None),
-                true,
-            ),
+            period::field("period", true),
             Field::new("status", DataType::Utf8, false),
             Field::new("value", DataType::Float64, true),
         ];
         let mut arrays: Vec<ArrayRef> = vec![
             Arc::new(StringArray::from(members)),
-            Arc::new(TimestampNanosecondArray::from(periods)),
+            Arc::new(TimestampMicrosecondArray::from(periods)),
             Arc::new(StringArray::from(status)),
             Arc::new(Float64Array::from(values)),
         ];
@@ -883,10 +907,9 @@ async fn estimate(
                     })
                     .or_else(|| Some(default.to_string()))
             };
-            for (k, d) in a.ahead.iter().enumerate() {
-                let Some(period) = nanos_of(*d) else { continue };
+            for (k, &period) in a.ahead.iter().enumerate() {
                 let step = k as i64 + 1;
-                let point = said.and_then(|s| s.points.get(d));
+                let point = said.and_then(|s| s.points.get(&period));
                 let (held_80, held_90, held_from) = held.at(&a.metric, grain, step);
                 let basis = match point {
                     Some(_) => said.and_then(|s| s.basis.clone()),
@@ -948,12 +971,12 @@ async fn lever_series(
     lever: &Lever,
     placement: &Placement,
     resolution: Resolution,
-) -> Result<Vec<(NaiveDate, f64)>, String> {
+) -> Result<Vec<(i64, f64)>, String> {
     let sql = match placement {
         Placement::Date(tcol) => format!(
             "SELECT {p} AS period, avg(CAST({c} AS DOUBLE)) AS value FROM {ds}.{t} \
              WHERE {c} IS NOT NULL GROUP BY 1 ORDER BY 1",
-            p = crate::cube::period_expr(&qi(tcol), resolution),
+            p = period::bucket(&qi(tcol), resolution),
             c = qi(&lever.name),
             ds = qi(dataset),
             t = qi(&lever.table),
@@ -967,7 +990,7 @@ async fn lever_series(
             "SELECT {p} AS period, avg(CAST(l.{c} AS DOUBLE)) AS value \
              FROM {ds}.{t} l JOIN {ds}.{dim} d ON l.{k} = d.{dk} \
              WHERE l.{c} IS NOT NULL GROUP BY 1 ORDER BY 1",
-            p = crate::cube::period_expr(&format!("d.{}", qi(date)), resolution),
+            p = period::bucket(&format!("d.{}", qi(date)), resolution),
             c = qi(&lever.name),
             ds = qi(dataset),
             t = qi(&lever.table),
@@ -980,17 +1003,14 @@ async fn lever_series(
     let rows = crate::cube::replayed_series(shared, ctx, &sql, &[])
         .await
         .map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|(p, _, v, _, _)| (date_of(p), v))
-        .collect())
+    Ok(rows.into_iter().map(|(p, _, v, _, _)| (p, v)).collect())
 }
 
 /// What the what-if said of one member: its scenario rows folded to a
 /// point per period, and the sign and basis it gave the member.
 #[derive(Default)]
 struct Said {
-    points: HashMap<NaiveDate, Estimate>,
+    points: HashMap<i64, Estimate>,
     sign: Option<String>,
     basis: Option<String>,
 }
@@ -1024,7 +1044,11 @@ fn fold(answer: &RecordBatch) -> Result<HashMap<String, Said>, String> {
         }
     };
     let member = column("member")?;
-    let period = column("period")?;
+    // The service's own unit for the period; the cells' is the
+    // calendar's.
+    let period = cast(column("period")?, &period::data_type()).map_err(|e| e.to_string())?;
+    let period =
+        period::column(&period).ok_or_else(|| "`period` did not read as a period".to_string())?;
     let status = column("status")?;
     let level = floats("level")?;
     let value = floats("value")?;
@@ -1059,14 +1083,7 @@ fn fold(answer: &RecordBatch) -> Result<HashMap<String, Said>, String> {
         if level.is_null(i) || value.is_null(i) || period.is_null(i) {
             continue;
         }
-        let when = array_value_to_string(period, i).map_err(|e| e.to_string())?;
-        let Some(date) = when
-            .get(..10)
-            .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-        else {
-            continue;
-        };
-        let point = said.points.entry(date).or_default();
+        let point = said.points.entry(period.value(i)).or_default();
         let l = level.value(i);
         let v = value.value(i);
         if (l - LEVELS[0]).abs() < 1e-9 {
@@ -1118,7 +1135,7 @@ pub(crate) async fn scenario_points(
         .map(|p| {
             json!({
                 "scenario": name, "metric": p.metric, "grain": p.grain,
-                "period": period_text(p.period), "step": p.step, "pass": p.pass,
+                "period": period::short(p.period), "step": p.step, "pass": p.pass,
                 "value": p.value, "num": p.num, "den": p.den,
                 "low": p.low, "high": p.high,
                 "held_80": p.held_80, "held_90": p.held_90, "held_from": p.held_from,
@@ -1189,17 +1206,6 @@ pub(crate) async fn scenario_levers(
     crate::search::rows_batch(rows, fields)
 }
 
-/// A period as text: the date where the bucket starts at midnight, the
-/// full timestamp where it does not.
-fn period_text(period: i64) -> String {
-    let at = chrono::DateTime::from_timestamp_nanos(period).naive_utc();
-    if at.time() == chrono::NaiveTime::MIN {
-        iso(at.date())
-    } else {
-        at.format("%Y-%m-%dT%H:%M:%S").to_string()
-    }
-}
-
 /// The one argument of `scenario_points` and `scenario_levers`, and of
 /// `metric_series` in the scenario world: `scenario => '<name>'`.
 pub(crate) fn name_arg(door: &str, args: &[FunctionArg]) -> Result<String, SessionError> {
@@ -1246,20 +1252,23 @@ pub(crate) fn name_arg(door: &str, args: &[FunctionArg]) -> Result<String, Sessi
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_period_is_a_month_or_a_day() {
-        let (from, until) = period_bounds("2027-01").expect("a month");
+    #[tokio::test]
+    async fn a_period_is_a_month_or_a_day() {
+        let bounds = period_bounds(&["2027-01", "2027-02-28", "2027-12"])
+            .await
+            .expect("the calendar answers");
+        let dates = |key: &str| {
+            let (from, until) = bounds[key];
+            (period::date(from), period::date(until))
+        };
+        assert_eq!(dates("2027-01"), ("2027-01-01".into(), "2027-02-01".into()));
         assert_eq!(
-            (iso(from), iso(until)),
-            ("2027-01-01".into(), "2027-02-01".into())
-        );
-        let (from, until) = period_bounds("2027-02-28").expect("a day");
-        assert_eq!(
-            (iso(from), iso(until)),
+            dates("2027-02-28"),
             ("2027-02-28".into(), "2027-03-01".into())
         );
+        assert_eq!(dates("2027-12"), ("2027-12-01".into(), "2028-01-01".into()));
         for bad in ["2027", "2027-13", "2027-1", "soon", "2027-02-30"] {
-            assert!(period_bounds(bad).is_none(), "{bad}");
+            assert!(period_key(bad).is_none(), "{bad}");
         }
     }
 
@@ -1308,19 +1317,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_factor_at_a_date_is_its_periods_or_one() {
+    #[tokio::test]
+    async fn the_factor_at_a_date_is_its_periods_or_one() {
         let s = parse(
             "s",
             &json!({"levers": [{"column": "t.c", "factor": {"2027-01": 1.1, "2027-03-15": 2.0}, "basis": "x"}]}),
         )
         .expect("parses");
-        let at = |d: &str| {
-            factor_at(
-                &s.levers[0],
-                NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap(),
-            )
-        };
+        let bounds = period_bounds(&["2027-01", "2027-03-15"])
+            .await
+            .expect("the calendar answers");
+        let at = |d: &str| factor_at(&s.levers[0], &bounds, period::parse_date(d).unwrap());
         assert_eq!(at("2027-01-01"), 1.1);
         assert_eq!(at("2027-01-31"), 1.1);
         assert_eq!(at("2027-02-01"), 1.0);

@@ -24,6 +24,7 @@ mod library;
 mod measure;
 mod memo;
 mod misfit;
+mod period;
 mod plan;
 mod plan_world;
 mod plane;

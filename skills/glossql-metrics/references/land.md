@@ -92,8 +92,9 @@ re-import, where the drift is and where you can fix it.
 **Typing is authored.** The recipe carries the casts and the column
 choices; there is no typing machinery behind it. A failed cast lands
 NULL — a kept row with a NULL cell, not a dropped row. The period
-axis every metric is bucketed on is a nanosecond timestamp, and it
-ends at 2262-04-11: a date past it is never a period. Cast dates with
+axis every metric is bucketed on is a microsecond timestamp, but the
+engine buckets in nanoseconds, so the axis ends at 2262-04-11: a date
+past it is never a period. Cast dates with
 `try_cast(x AS TIMESTAMP)` or `try_to_date`, and check the cast
 account: a year past 2262 is a token the source wrote, not a date,
 and `try_cast(x AS TIMESTAMP)` lands it NULL where the account
