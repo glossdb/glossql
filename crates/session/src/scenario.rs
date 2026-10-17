@@ -48,7 +48,7 @@ use crate::cube::World;
 use crate::period::{self, Resolution};
 use crate::replay::{Factor, KeyAnchor, Override};
 use crate::search::whole_series;
-use crate::shared::{SessionError, Shared, WHATIF};
+use crate::shared::{SessionError, Shared, WHATIF, integer};
 use crate::subject::qi;
 
 /// The levels asked of the what-if: the 80% band around the median.
@@ -541,12 +541,7 @@ pub(crate) async fn points(shared: &Arc<Shared>, name: &str) -> Result<Vec<Point
 
 /// The two passes over the bound dataset for the named scenario.
 pub(crate) async fn read(shared: &Arc<Shared>, name: &str) -> Result<Read, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let scenario = load(shared, &dataset, name).await?;
     let frames = crate::cube::scenario_frames(shared).await?;
     let actual = crate::cube::metric_series_batch(shared, None, World::Actual, None).await?;
@@ -784,7 +779,7 @@ fn unanswered(
                 metric: a.metric.clone(),
                 grain: a.grain,
                 period,
-                step: Some(k as i64 + 1),
+                step: Some(integer(k) + 1),
                 pass: "estimated",
                 value: None,
                 num: None,
@@ -977,7 +972,7 @@ impl<'a> Answer<'a> {
                 .or_else(|| Some(default.to_string()))
         };
         for (k, &period) in a.ahead.iter().enumerate() {
-            let step = k as i64 + 1;
+            let step = integer(k) + 1;
             let point = said.and_then(|s| s.points.get(&period));
             let (held_80, held_90, held_from) = held.at(&a.metric, grain, step);
             let basis = match point {

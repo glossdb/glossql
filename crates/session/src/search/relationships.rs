@@ -12,7 +12,7 @@ use datafusion::functions_aggregate::expr_fn::count;
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, ident, lit};
 use serde_json::{Value, json};
 
-use crate::shared::{SessionError, Shared};
+use crate::shared::{SessionError, Shared, integer};
 
 use super::{dataset_pins, detector_state, int_column, rows_batch, run_plan};
 
@@ -598,7 +598,7 @@ fn candidate_rows(candidates: &[Candidate]) -> Vec<Value> {
     let mut out = Vec::new();
     for (seq, c) in candidates.iter().enumerate() {
         let mut row = serde_json::Map::new();
-        row.insert("seq".into(), json!(seq as i64));
+        row.insert("seq".into(), json!(integer(seq)));
         row.insert("from_col".into(), json!(c.from));
         row.insert("to_col".into(), json!(c.to));
         row.insert("cardinality".into(), json!(c.cardinality));
@@ -754,7 +754,8 @@ fn distinct_values(
             .copied()
             .filter(|&i| arms[i].table == table)
             .collect();
-        let mut lists = vec![make_array(mine.iter().map(|&i| lit(i as i64)).collect()).alias("ci")];
+        let mut lists =
+            vec![make_array(mine.iter().map(|&i| lit(integer(i))).collect()).alias("ci")];
         for (k, stored) in shape.iter().enumerate() {
             lists.push(
                 make_array(
@@ -874,7 +875,11 @@ async fn pair_counts(
             let j = int_column(one, "j").map_err(|e| bad(e.to_string()))?;
             let m = int_column(one, "m").map_err(|e| bad(e.to_string()))?;
             for r in 0..b.num_rows() {
-                counts.set(i[r] as usize, j[r] as usize, m[r]);
+                counts.set(
+                    super::offset(i[r], arms.len()).map_err(&bad)?,
+                    super::offset(j[r], arms.len()).map_err(&bad)?,
+                    m[r],
+                );
             }
         }
     }
@@ -916,7 +921,8 @@ async fn arm_distinct(
             let ci = int_column(one, "ci").map_err(|e| bad(e.to_string()))?;
             let d = int_column(one, "d").map_err(|e| bad(e.to_string()))?;
             for r in 0..b.num_rows() {
-                out[ci[r] as usize] = d[r];
+                let at = super::offset(ci[r], out.len()).map_err(&bad)?;
+                out[at] = d[r];
             }
         }
     }
@@ -968,7 +974,13 @@ async fn cross_counts(
             let j = int_column(one, "j").map_err(|e| bad(e.to_string()))?;
             let m = int_column(one, "m").map_err(|e| bad(e.to_string()))?;
             for r in 0..b.num_rows() {
-                out.insert((i[r] as usize, j[r] as usize), m[r]);
+                out.insert(
+                    (
+                        super::offset(i[r], arms.len()).map_err(&bad)?,
+                        super::offset(j[r], arms.len()).map_err(&bad)?,
+                    ),
+                    m[r],
+                );
             }
         }
     }

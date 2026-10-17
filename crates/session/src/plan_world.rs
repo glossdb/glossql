@@ -120,12 +120,7 @@ pub(crate) async fn unknown(shared: &Arc<Shared>, name: &str) -> SessionError {
             ))
         }
         Ok(Some(_)) => {
-            let dataset = shared
-                .dataset
-                .read()
-                .expect("state lock")
-                .clone()
-                .unwrap_or_else(|| "<dataset>".into());
+            let dataset = shared.dataset().unwrap_or_else(|| "<dataset>".into());
             bad(format!(
                 "nothing serves it on `{dataset}` — `GLOSS {name} ON {dataset} AS \
                  $${{\"sql\": \"…\"}}$$` grounds the plan; a contested slot is withheld"
@@ -314,8 +309,8 @@ pub(crate) async fn plan_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
                 .await
                 .map_err(period::refused)?;
             for (i, &(period, value, actual)) in g.rows.iter().enumerate() {
-                let end = calendar[0][i];
-                let last_inside = calendar.get(1).and_then(|c| c[i]);
+                let end = calendar.first().and_then(|c| c.get(i).copied()).flatten();
+                let last_inside = calendar.get(1).and_then(|c| c.get(i).copied()).flatten();
                 let begun = s.origin.is_some_and(|o| period <= o);
                 let complete = end.zip(origin_end).is_some_and(|(e, oe)| e <= oe);
                 let a = if begun { actual } else { None };

@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::shared::{ReadSet, Served, SessionError, Shared};
+use crate::shared::{Held, ReadSet, Served, SessionError, Shared};
 
 /// The shipped reads served this way. `workspace_next` is not one: it
 /// reads every dataset's landings, and no one dataset's pin keys that.
@@ -56,8 +56,7 @@ impl Shared {
     /// untyped where it is held; this is the one place that reads it.
     pub fn shipped(&self) -> ShippedCache {
         self.shipped
-            .read()
-            .expect("shipped lock")
+            .held()
             .downcast_ref::<ShippedCache>()
             .cloned()
             .expect("the shipped slot holds the shipped-read cache, set at construction")

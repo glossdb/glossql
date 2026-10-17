@@ -14,9 +14,9 @@ use datafusion::logical_expr::{
 };
 use serde_json::{Value, json};
 
-use crate::shared::{SessionError, Shared};
+use crate::shared::{SessionError, Shared, integer};
 
-use super::{dataset_pins, int_column, rows_batch};
+use super::{dataset_pins, int_value, rows_batch};
 
 /// `relationship_checks('dataset')` — what the declared joins assert,
 /// checked against the rows: DECLARED relationships only — the
@@ -94,7 +94,7 @@ pub(crate) async fn relationship_checks(
         };
 
         let fact = json!({
-            "applicable": true, "seq": seq as i64,
+            "applicable": true, "seq": integer(seq),
             "relationship": e.relationship, "filled": filled,
             "orphans": orphans, "orphan_rate": orphan_rate,
         });
@@ -103,7 +103,7 @@ pub(crate) async fn relationship_checks(
         } else {
             for (pair_seq, (cd, pd), n, pre) in &temporal {
                 let mut row = fact.as_object().expect("object").clone();
-                row.insert("pair_seq".into(), json!(*pair_seq as i64));
+                row.insert("pair_seq".into(), json!(integer(*pair_seq)));
                 row.insert("child_column".into(), json!(cd));
                 row.insert("parent_column".into(), json!(pd));
                 row.insert("joined".into(), json!(n));
@@ -193,7 +193,7 @@ impl Check<'_> {
 
     /// One named Int64 cell of a plan's one-row answer.
     async fn count(&self, plan: LogicalPlan, name: &str) -> Result<i64, SessionError> {
-        Ok(int_column(&self.run(plan).await?, name).map_err(|e| self.bad(e.to_string()))?[0])
+        int_value(&self.run(plan).await?, name).map_err(|e| self.bad(e.to_string()))
     }
 }
 
@@ -278,8 +278,8 @@ async fn is_nest(
         .and_then(|b| b.build())
         .map_err(|e| check.bad(e.to_string()))?;
     let counted = check.run(plan).await?;
-    let groups = int_column(&counted, "groups").map_err(|e| check.bad(e.to_string()))?[0];
-    let rows = int_column(&counted, "rows").map_err(|e| check.bad(e.to_string()))?[0];
+    let groups = int_value(&counted, "groups").map_err(|e| check.bad(e.to_string()))?;
+    let rows = int_value(&counted, "rows").map_err(|e| check.bad(e.to_string()))?;
     Ok(groups != rows)
 }
 
@@ -421,12 +421,11 @@ async fn temporal_pairs(
         .map_err(|e| check.bad(e.to_string()))?;
     let joined = check.run(plan).await?;
     for (k, pair) in pairs.into_iter().enumerate() {
-        let n = int_column(&joined, &format!("n_{k}")).map_err(|e| check.bad(e.to_string()))?[0];
+        let n = int_value(&joined, &format!("n_{k}")).map_err(|e| check.bad(e.to_string()))?;
         if n == 0 {
             continue;
         }
-        let pre =
-            int_column(&joined, &format!("pre_{k}")).map_err(|e| check.bad(e.to_string()))?[0];
+        let pre = int_value(&joined, &format!("pre_{k}")).map_err(|e| check.bad(e.to_string()))?;
         temporal.push((k, pair, n, pre));
     }
     Ok(temporal)

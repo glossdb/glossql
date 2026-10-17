@@ -34,6 +34,14 @@
 // An unwrap outside a test is a panic waiting for the row that has it;
 // tests are exempt (clippy.toml).
 #![warn(clippy::unwrap_used)]
+// A narrowing cast is a value the type did not promise: a count or an
+// offset converts through `try_from` or a named conversion that states
+// its bound.
+#![warn(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 
 mod auth;
 mod bootstrap;

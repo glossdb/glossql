@@ -24,9 +24,9 @@ linker_messages = "allow"
 # with a stack overflow or a profiler. A future above 16 KB is boxed
 # (the planner recursion has overflowed a 2 MB test thread before); a
 # clone the borrow checker did not need is a copy. `unwrap_used` — a
-# panic waiting for the row that has it — is `#![warn]`ed in each
-# library and binary root instead: a lint here would reach the
-# integration tests, where a panic is the assertion.
+# panic waiting for the row that has it — and the narrowing casts are
+# `#![warn]`ed in each library and binary root instead: a lint here
+# would reach the integration tests, where a panic is the assertion.
 [workspace.lints.clippy]
 large_futures = "warn"
 redundant_clone = "warn"

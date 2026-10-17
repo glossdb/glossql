@@ -7,7 +7,7 @@
 //! serves a shape depends on nothing else.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -390,11 +390,67 @@ impl FunctionRuntime for NoRuntime {}
 
 // -- the state ---------------------------------------------------------
 
+/// A lock's guard, poisoned or not. What every lock here holds is
+/// replaced whole — an option, an Arc, a map entry — so a holder that
+/// panicked left a value the next reader can use, and the poison flag
+/// carries nothing a refusal could act on.
+pub(crate) trait Held {
+    type Read<'a>
+    where
+        Self: 'a;
+    type Write<'a>
+    where
+        Self: 'a;
+    fn held(&self) -> Self::Read<'_>;
+    fn held_mut(&self) -> Self::Write<'_>;
+}
+
+impl<T> Held for RwLock<T> {
+    type Read<'a>
+        = RwLockReadGuard<'a, T>
+    where
+        T: 'a;
+    type Write<'a>
+        = RwLockWriteGuard<'a, T>
+    where
+        T: 'a;
+    fn held(&self) -> Self::Read<'_> {
+        self.read().unwrap_or_else(PoisonError::into_inner)
+    }
+    fn held_mut(&self) -> Self::Write<'_> {
+        self.write().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl<T> Held for Mutex<T> {
+    type Read<'a>
+        = MutexGuard<'a, T>
+    where
+        T: 'a;
+    type Write<'a>
+        = MutexGuard<'a, T>
+    where
+        T: 'a;
+    fn held(&self) -> Self::Read<'_> {
+        self.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    fn held_mut(&self) -> Self::Write<'_> {
+        self.held()
+    }
+}
+
+/// A count or an offset as the record's integer. A count is the length
+/// of something in memory, so it is under `i64::MAX` on every target;
+/// the saturation states that bound instead of assuming it.
+pub(crate) fn integer<N: TryInto<i64>>(n: N) -> i64 {
+    n.try_into().unwrap_or(i64::MAX)
+}
+
 /// State the planner shares with the router: the `USE`'d dataset, the data
 /// plane, and the script runtime (reads run detectors).
 pub(crate) struct Shared {
     pub store: Store,
-    pub dataset: RwLock<Option<String>>,
+    pub bound: RwLock<Option<String>>,
     pub runtime: RwLock<Arc<dyn FunctionRuntime>>,
     /// The session's own context, set right after construction (the planner
     /// is built before the context exists). The metric bind plans each
@@ -473,7 +529,7 @@ impl std::fmt::Debug for Shared {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // SessionContext is not Debug; the dataset is the identifying bit.
         f.debug_struct("Shared")
-            .field("dataset", &self.dataset)
+            .field("dataset", &self.bound)
             .finish_non_exhaustive()
     }
 }
@@ -499,6 +555,22 @@ impl Shared {
         self.store.lake()
     }
 
+    /// The bound dataset, or none while the session is unbound.
+    pub fn dataset(&self) -> Option<String> {
+        self.bound.held().clone()
+    }
+
+    /// Bind the session to a dataset. [`Session::bind`] moves the
+    /// planner's default schema with it.
+    pub(crate) fn bind(&self, name: &str) {
+        *self.bound.held_mut() = Some(name.to_string());
+    }
+
+    /// The statement's walk of a dataset, when one stands.
+    pub(crate) fn walk(&self, dataset: &str) -> Option<Arc<Vec<PinnedTable>>> {
+        self.pins.held().get(dataset).cloned()
+    }
+
     /// The dataset's tables from the catalog, walked once for the
     /// statement and served from [`Shared::pins`] after that.
     ///
@@ -510,13 +582,12 @@ impl Shared {
         &self,
         dataset: &str,
     ) -> Result<Arc<Vec<PinnedTable>>, SessionError> {
-        if let Some(held) = self.pins.read().expect("pins lock").get(dataset) {
-            return Ok(Arc::clone(held));
+        if let Some(held) = self.walk(dataset) {
+            return Ok(held);
         }
         let walked = Arc::new(self.lake().pin_dataset(dataset).await?);
         self.pins
-            .write()
-            .expect("pins lock")
+            .held_mut()
             .insert(dataset.to_string(), Arc::clone(&walked));
         Ok(walked)
     }
@@ -532,16 +603,16 @@ impl Shared {
     pub(crate) async fn views(
         &self,
     ) -> Result<std::collections::HashMap<String, String>, SessionError> {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+        let Some(dataset) = self.dataset() else {
             return Ok(Default::default());
         };
         Ok(self.lake().provider().await?.views(&dataset))
     }
 
     pub fn forget_pins(&self) {
-        self.pins.write().expect("pins lock").clear();
-        self.named.write().expect("named lock").clear();
-        self.contexts.write().expect("contexts lock").clear();
+        self.pins.held_mut().clear();
+        self.named.held_mut().clear();
+        self.contexts.held_mut().clear();
     }
 
     /// The bound dataset's tables, each pinned at its current snapshot —
@@ -553,7 +624,7 @@ impl Shared {
         std::collections::HashMap<String, Arc<dyn datafusion::catalog::TableProvider>>,
         SessionError,
     > {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+        let Some(dataset) = self.dataset() else {
             return Ok(Default::default());
         };
         Ok(self
@@ -565,7 +636,7 @@ impl Shared {
     }
 
     pub fn runtime(&self) -> Arc<dyn FunctionRuntime> {
-        Arc::clone(&self.runtime.read().expect("runtime lock"))
+        Arc::clone(&self.runtime.held())
     }
 
     /// The process's engine runtime — the one the session's own context
@@ -589,8 +660,7 @@ impl Shared {
     /// absence is a construction bug, never a runtime state.
     pub fn session_ctx(&self) -> SessionContext {
         self.ctx
-            .read()
-            .expect("ctx lock")
+            .held()
             .clone()
             .expect("the session context is set at construction")
     }
@@ -602,7 +672,7 @@ impl Shared {
     /// staleness comparison ride on this. What the *store* knows is
     /// held for us by [`Store::read_context`], keyed by its version.
     pub async fn read_context(&self) -> Result<ReadContext, SessionError> {
-        let Some(dataset) = self.dataset.read().expect("state lock").clone() else {
+        let Some(dataset) = self.dataset() else {
             return Ok(ReadContext::default());
         };
         self.read_context_for(&dataset).await
@@ -621,8 +691,7 @@ impl Shared {
         let writes = self.store.writes();
         let held = self
             .contexts
-            .read()
-            .expect("contexts lock")
+            .held()
             .get(dataset)
             .filter(|(at, _)| *at == writes)
             .map(|(_, ctx)| ctx.clone());
@@ -631,8 +700,7 @@ impl Shared {
         }
         let ctx = self.build_context(dataset).await?;
         self.contexts
-            .write()
-            .expect("contexts lock")
+            .held_mut()
             .insert(dataset.to_string(), (writes, ctx.clone()));
         Ok(ctx)
     }

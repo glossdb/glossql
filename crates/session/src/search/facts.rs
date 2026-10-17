@@ -25,12 +25,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
     use datafusion::arrow::array::Float64Array;
     use datafusion::arrow::compute::{CastOptions, cast_with_options};
 
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let kinds: HashMap<&str, String> = rctx
@@ -150,12 +145,7 @@ pub(crate) async fn fact_values(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
 /// feeds a metric without building the cube. Requires a bound
 /// dataset.
 pub(crate) async fn metric_sources(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let ctx = shared.session_ctx();
     let rctx = shared.read_context().await?;
     let mut out = Vec::new();

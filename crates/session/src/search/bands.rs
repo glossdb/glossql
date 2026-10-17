@@ -12,7 +12,7 @@ use datafusion::functions_aggregate::expr_fn::max;
 use datafusion::logical_expr::{cast, col, try_cast};
 use serde_json::{Value, json};
 
-use crate::shared::{Answered, FORECAST, SessionError, Shared};
+use crate::shared::{Answered, FORECAST, SessionError, Shared, integer};
 use crate::subject::qi;
 
 use super::{current_query_slots, rows_batch};
@@ -266,7 +266,7 @@ pub(crate) async fn metric_band_walk(
         if slot.is_plan() {
             continue;
         }
-        let seq = out.len() as i64;
+        let seq = integer(out.len());
         if let Some(row) = walk_metric(shared, &ctx, dataset, &anchors, &slot, seq).await? {
             out.push(row);
         }
@@ -582,11 +582,11 @@ fn metric_rows(
         row.insert("applicable".into(), json!(true));
         row.insert("grain".into(), json!("month"));
         row.insert("aggregation".into(), json!(aggregation));
-        row.insert("trained_on".into(), json!(n as i64));
+        row.insert("trained_on".into(), json!(integer(n)));
         row.insert("axis".into(), json!(tcol));
         row.insert("axis_judged".into(), json!(axis_judged));
         row.insert("served_by".into(), json!(served_by));
-        row.insert("point_seq".into(), json!(point_seq as i64));
+        row.insert("point_seq".into(), json!(integer(point_seq)));
         for (k, val) in p.as_object().expect("point object") {
             row.insert(k.clone(), val.clone());
         }
@@ -597,7 +597,7 @@ fn metric_rows(
             "seq": seq, "metric": aspect, "applicable": true,
             "grain": "month",
             "aggregation": aggregation,
-            "trained_on": n as i64,
+            "trained_on": integer(n),
             "axis": tcol, "axis_judged": axis_judged,
             "served_by": served_by,
         }));
@@ -737,12 +737,7 @@ pub(crate) fn walk_errors(answer: &Value) -> HashMap<String, Vec<String>> {
 /// row with its reason and no point; a dataset never walked serves no
 /// rows.
 pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, SessionError> {
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let rctx = shared.read_context().await?;
     let landed = crate::cube::judged_bodies(&rctx, &dataset, "metric_bands");
     let mut out = Vec::new();
@@ -752,7 +747,7 @@ pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
         for (seq, metric) in metrics.into_iter().flatten().enumerate() {
             let head = || {
                 let mut row = serde_json::Map::new();
-                row.insert("seq".into(), json!(seq as i64));
+                row.insert("seq".into(), json!(integer(seq)));
                 for key in [
                     "metric",
                     "applicable",
@@ -777,7 +772,7 @@ pub(crate) async fn band_points(shared: &Arc<Shared>) -> Result<RecordBatch, Ses
             };
             for (point_seq, point) in points.iter().enumerate() {
                 let mut row = head();
-                row.insert("point_seq".into(), json!(point_seq as i64));
+                row.insert("point_seq".into(), json!(integer(point_seq)));
                 for (k, v) in point.as_object().into_iter().flatten() {
                     row.insert(k.clone(), v.clone());
                 }

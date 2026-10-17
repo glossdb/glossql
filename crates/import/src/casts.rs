@@ -141,7 +141,7 @@ impl TryParse {
                         .map(|d| (d - epoch).num_days())
                 };
                 Arc::new(Date32Array::from_iter(
-                    (0..values.len()).map(|i| parsed(i, &day).map(|d| d as i32)),
+                    (0..values.len()).map(|i| parsed(i, &day).and_then(|d| i32::try_from(d).ok())),
                 ))
             }
             _ => {

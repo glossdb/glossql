@@ -463,8 +463,7 @@ impl RelationPlanner for GlossqlReads {
             [t] if args.is_none() => t.as_ident().and_then(|i| relation_of(&normal(i))),
             [d, t] if args.is_none() => match (d.as_ident(), t.as_ident()) {
                 (Some(d), Some(t))
-                    if self.shared.dataset.read().expect("state lock").as_deref()
-                        == Some(normal(d).as_str()) =>
+                    if self.shared.dataset().as_deref() == Some(normal(d).as_str()) =>
                 {
                     relation_of(&normal(t))
                 }
@@ -544,12 +543,7 @@ pub(crate) async fn served_grounding(
     if let Some(sql) = views.get(aspect) {
         return Ok(sql.clone());
     }
-    let dataset = shared
-        .dataset
-        .read()
-        .expect("state lock")
-        .clone()
-        .ok_or(SessionError::NoDataset)?;
+    let dataset = shared.dataset().ok_or(SessionError::NoDataset)?;
     let Some((_, kind, _)) = shared.store.aspect(aspect).await? else {
         return Err(SessionError::unknown(
             aspect,
@@ -626,7 +620,7 @@ pub(crate) async fn served_grounding(
 /// as a dataset, the source's name is a namespace the catalog does not
 /// hold, and the one read meant to run datasetless would refuse.
 async fn read_context_at(shared: &Shared, dataset: &str) -> Result<ReadContext, SessionError> {
-    let unbound = shared.dataset.read().expect("state lock").is_none();
+    let unbound = shared.dataset().is_none();
     if unbound
         && !shared.store.dataset_exists(dataset).await?
         && shared.store.source_settings(dataset).await?.is_some()
@@ -743,7 +737,7 @@ async fn decode_scope(
     shared: &Shared,
     subject: Option<&SQLExpr>,
 ) -> Result<((String, Scope), Option<String>), SessionError> {
-    let use_dataset = shared.dataset.read().expect("state lock").clone();
+    let use_dataset = shared.dataset();
     let use_dataset = use_dataset.as_deref();
     let store = &shared.store;
     let Some(expr) = subject else {

@@ -9,7 +9,7 @@ use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::arrow::util::display::array_value_to_string;
 use serde_json::{Value, json};
 
-use crate::shared::{SessionError, Shared};
+use crate::shared::{SessionError, Shared, integer};
 
 use super::{monthly_sql, rows_batch};
 
@@ -126,7 +126,7 @@ pub(crate) async fn grounding_collisions(
         series_collisions.push(Collision {
             kind: "served_series",
             sql: String::new(),
-            months: Some(fp.split(';').count() as i64 - 1),
+            months: Some(integer(fp.split(';').count()) - 1),
             aspects,
             subjects: dedup_sorted(members.iter().map(|(_, s, _)| *s).collect()),
         });
@@ -137,7 +137,7 @@ pub(crate) async fn grounding_collisions(
     let mut out = Vec::new();
     for (seq, c) in collisions.iter().enumerate() {
         out.push(json!({
-            "groundings": groundings, "seq": seq as i64,
+            "groundings": groundings, "seq": integer(seq),
             "kind": c.kind, "sql": c.sql, "months": c.months,
             "aspects": c.aspects, "subjects": c.subjects,
         }));
