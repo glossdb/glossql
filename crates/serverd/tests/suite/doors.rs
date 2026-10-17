@@ -1103,15 +1103,16 @@ async fn the_mcp_door_serves_the_skills_as_resources_and_prompts() {
 
     // A URI this door does not hold is refused, never served as an
     // empty page. The 2026-07-28 revision spells resource-not-found
-    // as invalid params (rmcp rewrites the older -32002), which the
-    // transport maps to HTTP 400.
+    // as invalid params (rmcp rewrites the older -32002), and the
+    // transport answers the handler's refusal in band: HTTP 200, the
+    // JSON-RPC error as the body.
     let response = mcp(
         app,
         json!({"jsonrpc": "2.0", "id": 7, "method": "resources/read",
                "params": {"_meta": meta(), "uri": "doc://README.md"}}),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"]["code"], -32602, "{body}");

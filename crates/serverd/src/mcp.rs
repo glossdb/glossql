@@ -14,7 +14,7 @@ use rmcp::model::{
     InitializeRequestParams, InitializeResult, InputRequest, InputRequests, InputRequiredResult,
     ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt,
     PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-    ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities, ServerInfo, Tool,
+    ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::model::{ListResourceTemplatesResult, ResourceTemplate};
 use rmcp::service::{RequestContext, RoleServer};
@@ -816,8 +816,8 @@ impl Question {
 }
 
 impl ServerHandler for GlossqlMcp {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
@@ -845,13 +845,19 @@ impl ServerHandler for GlossqlMcp {
         Ok(result)
     }
 
-    /// The one revision the door advertises and validates a request's
-    /// own version marker against. An older client's `initialize` is
-    /// still answered: the library falls back to the newest revision
-    /// it carries with an initialize handshake, and the door serves
-    /// that caller statelessly like every other ([`crate::router`]).
+    /// The revisions the door serves: the newest, whose handshake rides
+    /// every request's `_meta`, and the newest that still has an
+    /// `initialize` handshake, which is what the library answers any
+    /// `initialize` with — a 2026-07-28 client's as much as an older
+    /// one's, since the newest revision has no handshake to echo. The
+    /// library negotiates from this list alone, so without the second
+    /// entry every `initialize` is refused. The door serves either
+    /// caller statelessly like every other ([`crate::router`]).
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
-        std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+        std::borrow::Cow::Borrowed(&[
+            ProtocolVersion::LATEST_WITH_INITIALIZE,
+            ProtocolVersion::LATEST,
+        ])
     }
 
     /// The list is static per process — one tool, built from a constant
